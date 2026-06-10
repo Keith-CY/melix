@@ -11,7 +11,7 @@ public enum SessionLifecycleSmokeCommand {
         let options = try parseArguments(arguments)
         let report: SessionLifecycleSmokeReport
         if let reportBuilder {
-            report = try await reportBuilder(options.serverSessionID, options.modelID, environment)
+            report = try await reportBuilder(options.providerID, options.modelID, environment)
         } else {
             let client: any ControlPlaneXPCClient
             let flushMetrics: @Sendable () async -> Void
@@ -31,7 +31,7 @@ public enum SessionLifecycleSmokeCommand {
                 flushMetrics: flushMetrics
             )
             report = try await runner.run(
-                serverSessionID: options.serverSessionID,
+                providerID: options.providerID,
                 modelID: options.modelID
             )
         }
@@ -42,12 +42,12 @@ public enum SessionLifecycleSmokeCommand {
     }
 
     struct Options: Equatable {
-        let serverSessionID: String
+        let providerID: String
         let modelID: String
     }
 
     static func parseArguments(_ arguments: [String]) throws -> Options {
-        var serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        var providerID = MelixProviderDefaults.defaultProviderID
         var modelID = "melix-dev-text"
 
         var index = 0
@@ -55,12 +55,12 @@ public enum SessionLifecycleSmokeCommand {
             switch arguments[index] {
             case "--json":
                 index += 1
-            case "--server-session-id":
+            case "--provider-id":
                 let valueIndex = index + 1
                 guard valueIndex < arguments.count else {
-                    throw MelixCLIError.missingValue("--server-session-id")
+                    throw MelixCLIError.missingValue("--provider-id")
                 }
-                serverSessionID = arguments[valueIndex]
+                providerID = arguments[valueIndex]
                 index += 2
             case "--model-id":
                 let valueIndex = index + 1
@@ -73,12 +73,12 @@ public enum SessionLifecycleSmokeCommand {
                 throw MelixCLIError.usage(
                     """
                     Usage:
-                      melix-session-lifecycle-smoke [--server-session-id ID] [--model-id MODEL] [--json]
+                      melix-session-lifecycle-smoke [--provider-id ID] [--model-id MODEL] [--json]
                     """
                 )
             }
         }
 
-        return Options(serverSessionID: serverSessionID, modelID: modelID)
+        return Options(providerID: providerID, modelID: modelID)
     }
 }

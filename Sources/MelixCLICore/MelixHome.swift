@@ -21,7 +21,7 @@ public struct MelixHome: Equatable, Sendable {
     public let logsDirectoryURL: URL
     public let installDirectoryURL: URL
     public let operatorSessionFileURL: URL
-    public let serverSessionsFileURL: URL
+    public let providersFileURL: URL
     public let modelRootsFileURL: URL
     public let downloadQueueFileURL: URL
     public let localTrainingQueueFileURL: URL
@@ -29,7 +29,7 @@ public struct MelixHome: Equatable, Sendable {
     public let evaluationPromptsFileURL: URL
     public let loraTrainingJobsFileURL: URL
     public let runtimeSettingsFileURL: URL
-    public let serverSessionAPIKeysFileURL: URL
+    public let providerAPIKeysFileURL: URL
     public let remoteServerAPIKeysFileURL: URL
     public let huggingFaceTokenFileURL: URL
 
@@ -47,7 +47,7 @@ public struct MelixHome: Equatable, Sendable {
         self.logsDirectoryURL = layout.logsDirectoryURL
         self.installDirectoryURL = layout.installDirectoryURL
         self.operatorSessionFileURL = stateDirectoryURL.appendingPathComponent("operator-session.json")
-        self.serverSessionsFileURL = configDirectoryURL.appendingPathComponent("server-sessions.json")
+        self.providersFileURL = configDirectoryURL.appendingPathComponent("providers.json")
         self.modelRootsFileURL = configDirectoryURL.appendingPathComponent("model-roots.json")
         self.downloadQueueFileURL = stateDirectoryURL.appendingPathComponent("download-queue.json")
         self.localTrainingQueueFileURL = stateDirectoryURL.appendingPathComponent("local-training-queue.json")
@@ -55,7 +55,7 @@ public struct MelixHome: Equatable, Sendable {
         self.evaluationPromptsFileURL = configDirectoryURL.appendingPathComponent("evaluation-prompts.json")
         self.loraTrainingJobsFileURL = stateDirectoryURL.appendingPathComponent("lora-training-jobs.json")
         self.runtimeSettingsFileURL = rootURL.appendingPathComponent("runtime_settings.json")
-        self.serverSessionAPIKeysFileURL = secretsDirectoryURL.appendingPathComponent("server-session-api-keys.json")
+        self.providerAPIKeysFileURL = secretsDirectoryURL.appendingPathComponent("provider-api-keys.json")
         self.remoteServerAPIKeysFileURL = secretsDirectoryURL.appendingPathComponent("remote-server-api-keys.json")
         self.huggingFaceTokenFileURL = secretsDirectoryURL.appendingPathComponent("huggingface-token.json")
     }

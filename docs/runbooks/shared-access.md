@@ -106,12 +106,12 @@ Browser CORS is default-denied. Requests with an `Origin` header return
 `403 origin_not_allowed` unless the origin is explicitly allowlisted. Melix does
 not emit wildcard `Access-Control-Allow-Origin`.
 
-For a trusted browser client, prefer durable server-session controls so the
+For a trusted browser client, prefer durable provider controls so the
 policy follows the operator session rather than a shell environment:
 
 ```bash
-melix server session update \
-  --server-session-id server-session-1 \
+melix provider update \
+  --provider-id provider-1 \
   --allowed-host operator.lan:12436 \
   --allowed-origin http://localhost:5173
 ```
@@ -127,12 +127,12 @@ melix server start "Local Workbench" \
   --allowed-origin http://localhost:5173
 ```
 
-`--allowed-host` and `--allowed-origin` are repeatable. `server session update`
+`--allowed-host` and `--allowed-origin` are repeatable. `provider update`
 can remove previously persisted browser access with:
 
 ```bash
-melix server session update \
-  --server-session-id server-session-1 \
+melix provider update \
+  --provider-id provider-1 \
   --clear-allowed-hosts \
   --clear-allowed-origins
 ```

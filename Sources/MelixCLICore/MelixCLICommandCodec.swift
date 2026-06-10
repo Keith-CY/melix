@@ -116,16 +116,16 @@ public enum MelixCLICommandCodec {
             return "model.roots.rescan"
         case .serverSnapshot:
             return "server.snapshot"
-        case .serverSessionList:
-            return "server.session.list"
-        case .serverSessionCreate:
-            return "server.session.create"
-        case .serverSessionUpdate:
-            return "server.session.update"
-        case .serverSessionRemove:
-            return "server.session.remove"
-        case .serverSessionSelect:
-            return "server.session.select"
+        case .providerList:
+            return "provider.list"
+        case .providerCreate:
+            return "provider.create"
+        case .providerUpdate:
+            return "provider.update"
+        case .providerRemove:
+            return "provider.remove"
+        case .providerSelect:
+            return "provider.select"
         case .serverStart:
             return "server.start"
         case .serverPause:
@@ -516,9 +516,9 @@ public enum MelixCLICommandCodec {
             appendOption("--path", value: options.path, into: &arguments)
             appendPositiveInt("--index", value: options.index, into: &arguments)
             json = options.json
-        case .serverSessionUpdate(let options):
-            arguments = ["server", "session", "update"]
-            appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+        case .providerUpdate(let options):
+            arguments = ["provider", "update"]
+            appendOption("--provider-id", value: options.providerID, into: &arguments)
             appendOption("--title", value: options.title, into: &arguments)
             for modelID in options.servedModelIDs {
                 appendOption("--model", value: modelID, into: &arguments)
@@ -541,8 +541,8 @@ public enum MelixCLICommandCodec {
             appendOption("--draft-model-id", value: options.draftModelID, into: &arguments)
             appendPositiveInt("--num-draft-tokens", value: options.numDraftTokens, into: &arguments)
             json = options.json
-        case .serverSessionCreate(let options):
-            arguments = ["server", "session", "create"]
+        case .providerCreate(let options):
+            arguments = ["provider", "create"]
             appendOption("--title", value: options.title, into: &arguments)
             for modelID in options.servedModelIDs {
                 appendOption("--model", value: modelID, into: &arguments)
@@ -563,20 +563,20 @@ public enum MelixCLICommandCodec {
             appendOption("--draft-model-id", value: options.draftModelID, into: &arguments)
             appendPositiveInt("--num-draft-tokens", value: options.numDraftTokens, into: &arguments)
             json = options.json
-        case .serverSessionRemove(let options):
-            arguments = ["server", "session", "remove"]
-            appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+        case .providerRemove(let options):
+            arguments = ["provider", "remove"]
+            appendOption("--provider-id", value: options.providerID, into: &arguments)
             json = options.json
-        case .serverSessionSelect(let options):
-            arguments = ["server", "session", "select"]
-            appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+        case .providerSelect(let options):
+            arguments = ["provider", "select"]
+            appendOption("--provider-id", value: options.providerID, into: &arguments)
             json = options.json
         case .serverStart(let options):
             arguments = ["server", "start"]
             if options.serverTitle.isEmpty == false {
                 arguments.append(options.serverTitle)
             } else {
-                appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+                appendOption("--provider-id", value: options.providerID, into: &arguments)
             }
             for modelID in options.servedModelIDs {
                 appendOption("--model", value: modelID, into: &arguments)
@@ -595,23 +595,23 @@ public enum MelixCLICommandCodec {
             json = options.json
         case .serverPause(let options):
             arguments = ["server", "pause"]
-            appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+            appendOption("--provider-id", value: options.providerID, into: &arguments)
             json = options.json
         case .serverResume(let options):
             arguments = ["server", "resume"]
-            appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+            appendOption("--provider-id", value: options.providerID, into: &arguments)
             json = options.json
         case .serverWake(let options):
             arguments = ["server", "wake"]
-            appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+            appendOption("--provider-id", value: options.providerID, into: &arguments)
             json = options.json
         case .serverStop(let options):
             arguments = ["server", "stop"]
-            appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+            appendOption("--provider-id", value: options.providerID, into: &arguments)
             json = options.json
         case .serverSetIdlePolicy(let options):
             arguments = ["server", "set-idle-policy"]
-            appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+            appendOption("--provider-id", value: options.providerID, into: &arguments)
             appendOption("--auto-sleep", value: options.autoSleepEnabled ? "true" : "false", into: &arguments)
             appendPositiveUInt32("--light-sleep-after", value: options.lightSleepAfterSeconds, into: &arguments)
             appendPositiveUInt32("--deep-sleep-after", value: options.deepSleepAfterSeconds, into: &arguments)
@@ -646,7 +646,7 @@ public enum MelixCLICommandCodec {
             }
             appendOption("--message", value: options.message, into: &arguments)
             appendOption("--system", value: options.systemPrompt, into: &arguments)
-            appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+            appendOption("--provider-id", value: options.providerID, into: &arguments)
             json = options.json
         case .loraTrain(let options):
             arguments = ["lora", "train"]

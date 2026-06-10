@@ -15,7 +15,7 @@ struct MelixCLIRunnerTests {
         let output = try await MelixCLIRunner(client: client).run(.serverSnapshot(.init()))
 
         #expect(output.contains("server_state\tprovider_id\tlifecycle_state"))
-        #expect(output.contains("server_ready\tserver-session-1\tready\tactive\tinitial_boot"))
+        #expect(output.contains("server_ready\tprovider-1\tready\tactive\tinitial_boot"))
     }
 
     @Test("model hub search renders typed search results")
@@ -1554,10 +1554,10 @@ struct MelixCLIRunnerTests {
               "command": "model.roots.rescan"
             },
             {
-              "id": "update_session",
-              "command": "server.session.update",
+              "id": "update_provider",
+              "command": "provider.update",
               "args": {
-                "server_session_id": "server-session-1",
+                "provider_id": "provider-1",
                 "title": 123,
                 "default_model_id": "${inputs.model_id}",
                 "served_model_ids": ["${inputs.model_id}"],
@@ -1569,7 +1569,7 @@ struct MelixCLIRunnerTests {
             },
             {
               "id": "select_session",
-              "command": "server.session.select"
+              "command": "provider.select"
             },
             {
               "id": "start_server",
@@ -1903,8 +1903,8 @@ struct MelixCLIRunnerTests {
         #expect(quantizeArguments.contains("runtime_generate"))
     }
 
-    @Test("pipeline server session update accepts legacy model id alias")
-    func pipelineServerSessionUpdateAcceptsLegacyModelIDAlias() async throws {
+    @Test("pipeline provider update accepts legacy model id alias")
+    func pipelineProviderUpdateAcceptsModelIDAlias() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let pipelineURL = root.appendingPathComponent("legacy-model-id.pipeline.json")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -1919,10 +1919,10 @@ struct MelixCLIRunnerTests {
           },
           "steps": [
             {
-              "id": "update_session",
-              "command": "server.session.update",
+              "id": "update_provider",
+              "command": "provider.update",
               "args": {
-                "server_session_id": "server-session-1",
+                "provider_id": "provider-1",
                 "model_id": "${inputs.model_id}"
               }
             }
@@ -2124,7 +2124,7 @@ struct MelixCLIRunnerTests {
             "model_id": "melix-dev-text",
             "derived_model_alias": "melix-dev-text-derived",
             "model_path": "/tmp/melix-dev-text",
-            "server_session_id": "server-session-1",
+            "provider_id": "provider-1",
             "bench_job_id": "bench-1",
             "artifact_dir": "\#(artifactRoot.path)"
           },
@@ -2147,10 +2147,10 @@ struct MelixCLIRunnerTests {
               "args": {}
             },
             {
-              "id": "update_server_session",
-              "command": "server.session.update",
+              "id": "update_provider",
+              "command": "provider.update",
               "args": {
-                "server_session_id": "${inputs.server_session_id}",
+                "provider_id": "${inputs.provider_id}",
                 "title": "Fake Phase 8",
                 "default_model_id": "${inputs.model_id}",
                 "served_model_ids": ["${inputs.model_id}"],
@@ -2162,7 +2162,7 @@ struct MelixCLIRunnerTests {
               "id": "start_server",
               "command": "server.start",
               "args": {
-                "server_session_id": "${inputs.server_session_id}"
+                "provider_id": "${inputs.provider_id}"
               }
             },
             {
@@ -2170,7 +2170,7 @@ struct MelixCLIRunnerTests {
               "command": "chat.run",
               "args": {
                 "model_id": "${inputs.model_id}",
-                "server_session_id": "${inputs.server_session_id}",
+                "provider_id": "${inputs.provider_id}",
                 "message": "Reply with BASE_OK only."
               },
               "checks": {
@@ -2208,7 +2208,7 @@ struct MelixCLIRunnerTests {
               "command": "chat.run",
               "args": {
                 "model_id": "${inputs.derived_model_alias}",
-                "server_session_id": "${inputs.server_session_id}",
+                "provider_id": "${inputs.provider_id}",
                 "message": "Reply with DERIVED_OK only."
               },
               "checks": {
@@ -2376,10 +2376,10 @@ struct MelixCLIRunnerTests {
         )
         try await store.save(
             MelixOperatorSessionState(
-                selectedServerSessionID: "server-session-1",
-                serverSessions: [
+                selectedProviderID: "provider-1",
+                providers: [
                     .init(
-                        id: "server-session-1",
+                        id: "provider-1",
                         title: "Fake Phase 8",
                         defaultModelID: "melix-dev-text",
                         servedModelIDs: ["melix-dev-text"]
@@ -2433,7 +2433,7 @@ struct MelixCLIRunnerTests {
           "inputs": {
             "base_model_id": "melix-dev-text",
             "quantized_model_id": "melix-dev-text-aligned-q4",
-            "server_session_id": "server-session-issue365"
+            "provider_id": "provider-issue365"
           },
           "steps": [
             {
@@ -2530,7 +2530,7 @@ struct MelixCLIRunnerTests {
               "command": "chat.run",
               "args": {
                 "model_id": "${inputs.quantized_model_id}",
-                "server_session_id": "${inputs.server_session_id}",
+                "provider_id": "${inputs.provider_id}",
                 "message": "Reply with ISSUE365_OK only."
               },
               "checks": {
@@ -5113,7 +5113,7 @@ struct MelixCLIRunnerTests {
                     modelID: "melix-dev-qwen-local",
                     message: "Reply with BASE_OK",
                     systemPrompt: "Be terse.",
-                    serverSessionID: "server-session-1",
+                    providerID: "provider-1",
                     json: true
                 )
             )
@@ -5128,11 +5128,12 @@ struct MelixCLIRunnerTests {
                     messages: [
                         .init(role: "system", content: "Be terse."),
                         .init(role: "user", content: "Reply with BASE_OK"),
-                    ]
+                    ],
+                    providerID: "provider-1"
                 )
         )
         #expect(payload["model_id"] as? String == "melix-dev-qwen-local")
-        #expect(payload["server_session_id"] as? String == "server-session-1")
+        #expect(payload["provider_id"] as? String == "provider-1")
         #expect(payload["assistant_text"] as? String == "Echo: Reply with BASE_OK")
         #expect(payload["finish_reason"] as? String == "stop")
         #expect(payload["request_id"] as? String == "chat-run-1")
@@ -5681,18 +5682,18 @@ struct MelixCLIRunnerTests {
             requestID: "chat-run-failed",
             modelID: "melix-dev-qwen-local",
             events: [
-                .failed(code: "unavailable", message: "server session is not ready"),
+                .failed(code: "unavailable", message: "provider is not ready"),
             ]
         )
 
-        await #expect(throws: MelixCLIError.runtime("melix chat run failed [unavailable]: server session is not ready")) {
+        await #expect(throws: MelixCLIError.runtime("melix chat run failed [unavailable]: provider is not ready")) {
             try await MelixCLIRunner(client: client).run(
                 .chatRun(
                     .init(
                         modelID: "melix-dev-qwen-local",
                         message: "Reply with BASE_OK",
                         systemPrompt: "",
-                        serverSessionID: "server-session-1",
+                        providerID: "provider-1",
                         json: true
                     )
                 )
@@ -5718,7 +5719,7 @@ struct MelixCLIRunnerTests {
                     modelID: "melix-dev-qwen-local",
                     message: "Reply with BASE_OK",
                     systemPrompt: "",
-                    serverSessionID: "server-session-1",
+                    providerID: "provider-1",
                     json: false
                 )
             )
@@ -5745,7 +5746,7 @@ struct MelixCLIRunnerTests {
                     modelID: "melix-dev-qwen-local",
                     message: "Reply with BASE_OK",
                     systemPrompt: "",
-                    serverSessionID: "server-session-1",
+                    providerID: "provider-1",
                     json: false
                 )
             )
@@ -5772,7 +5773,7 @@ struct MelixCLIRunnerTests {
                         modelID: "melix-dev-qwen-local",
                         message: "Reply with BASE_OK",
                         systemPrompt: "",
-                        serverSessionID: "server-session-1",
+                        providerID: "provider-1",
                         json: true
                     )
                 )
@@ -5977,8 +5978,8 @@ struct MelixCLIRunnerTests {
         )
         try store.save(
             MelixOperatorSessionState(
-                selectedServerSessionID: "",
-                serverSessions: [],
+                selectedProviderID: "",
+                providers: [],
                 registryRoots: []
             )
         )
@@ -6121,8 +6122,8 @@ struct MelixCLIRunnerTests {
         )
         try store.save(
             MelixOperatorSessionState(
-                selectedServerSessionID: "",
-                serverSessions: [],
+                selectedProviderID: "",
+                providers: [],
                 registryRoots: ["/tmp/model-root-a"]
             )
         )
@@ -6339,27 +6340,27 @@ struct MelixCLIRunnerTests {
         await client.setServerSnapshot(makeServerSnapshot())
 
         let startOutput = try await MelixCLIRunner(client: client).run(
-            .serverStart(.init(serverSessionID: "server-session-2"))
+            .serverStart(.init(providerID: "provider-2"))
         )
         let resumeOutput = try await MelixCLIRunner(client: client).run(
-            .serverResume(.init(serverSessionID: "server-session-2", json: true))
+            .serverResume(.init(providerID: "provider-2", json: true))
         )
         let wakeOutput = try await MelixCLIRunner(client: client).run(
-            .serverWake(.init(serverSessionID: "server-session-2", json: true))
+            .serverWake(.init(providerID: "provider-2", json: true))
         )
         let stopOutput = try await MelixCLIRunner(client: client).run(
-            .serverStop(.init(serverSessionID: "server-session-2"))
+            .serverStop(.init(providerID: "provider-2"))
         )
 
         let wakePayload = try #require(parseJSONObject(wakeOutput))
         let wakeProviders = try #require(wakePayload["providers"] as? [[String: Any]])
         let wakeProvider = try #require(wakeProviders.first)
 
-        #expect(startOutput.contains("server_ready\tserver-session-2\tready\tactive\toperator_resume"))
+        #expect(startOutput.contains("server_ready\tprovider-2\tready\tactive\toperator_resume"))
         #expect(resumeOutput.contains(#""wake_reason" : "operator_resume""#))
         #expect(wakeProvider["wake_reason"] as? String == "request_activity")
-        #expect(stopOutput.contains("server_stopped\tserver-session-2\tstopped\tstopped\trequest_activity"))
-        #expect(await client.lastServerAction == .stop("server-session-2"))
+        #expect(stopOutput.contains("server_stopped\tprovider-2\tstopped\tstopped\trequest_activity"))
+        #expect(await client.lastServerAction == .stop("provider-2"))
     }
 
     @Test("server pause forwards the target session and returns json output")
@@ -6368,16 +6369,16 @@ struct MelixCLIRunnerTests {
         await client.setServerSnapshot(makeServerSnapshot(runtimeSessions: [makeRuntimeSession()]))
 
         let output = try await MelixCLIRunner(client: client).run(
-            .serverPause(.init(serverSessionID: "server-session-1", json: true))
+            .serverPause(.init(providerID: "provider-1", json: true))
         )
         let action = try #require(await client.lastServerAction)
         let payload = try #require(parseJSONObject(output))
         let providers = try #require(payload["providers"] as? [[String: Any]])
         let firstProvider = try #require(providers.first)
 
-        #expect(action == .pause("server-session-1"))
+        #expect(action == .pause("provider-1"))
         #expect(payload["server_state"] as? String == "server_degraded")
-        #expect(firstProvider["provider_id"] as? String == "server-session-1")
+        #expect(firstProvider["provider_id"] as? String == "provider-1")
         #expect(firstProvider["lifecycle_state"] as? String == "paused")
         #expect(firstProvider["power_state"] as? String == "active")
     }
@@ -6390,7 +6391,7 @@ struct MelixCLIRunnerTests {
         let output = try await MelixCLIRunner(client: client).run(
             .serverSetIdlePolicy(
                 .init(
-                    serverSessionID: "server-session-1",
+                    providerID: "provider-1",
                     autoSleepEnabled: true,
                     lightSleepAfterSeconds: 60,
                     deepSleepAfterSeconds: 600,
@@ -6403,7 +6404,7 @@ struct MelixCLIRunnerTests {
         let providers = try #require(payload["providers"] as? [[String: Any]])
         let firstProvider = try #require(providers.first)
 
-        #expect(call.serverSessionID == "server-session-1")
+        #expect(call.providerID == "provider-1")
         #expect(call.autoSleepEnabled)
         #expect(call.lightSleepAfterSeconds == 60)
         #expect(call.deepSleepAfterSeconds == 600)
@@ -6412,8 +6413,235 @@ struct MelixCLIRunnerTests {
         #expect(firstProvider["deep_sleep_after_seconds"] as? Int == 600)
     }
 
-    @Test("server session commands persist shared operator state and start validates serveable bindings")
-    func serverSessionCommandsPersistSharedOperatorStateAndStartValidatesServeableBindings() async throws {
+    @Test("operator session state encodes provider keys")
+    func operatorSessionStateEncodesProviderKeys() throws {
+        let state = MelixOperatorSessionState(
+            selectedSurfaceID: "server",
+            selectedToolSectionID: "modelsLibrary",
+            selectedProviderID: "provider-1",
+            providers: [
+                .init(
+                    id: "provider-1",
+                    title: "Qwen Provider",
+                    defaultModelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    servedModelIDs: ["mlx-community/Qwen3.5-0.8B-OptiQ-4bit"]
+                ),
+            ]
+        )
+
+        let data = try JSONEncoder().encode(state)
+        let payload = try #require(parseJSONObject(String(decoding: data, as: UTF8.self)))
+        let decoded = try JSONDecoder().decode(MelixOperatorSessionState.self, from: data)
+
+        #expect(payload["selected_provider_id"] as? String == "provider-1")
+        #expect(payload["providers"] as? [[String: Any]] != nil)
+        #expect(decoded.selectedProviderID == "provider-1")
+        #expect(decoded.providers.first?.id == "provider-1")
+    }
+
+    @Test("provider list renders empty state")
+    func providerListRendersEmptyState() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+
+        let output = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            operatorSessionStore: store
+        ).run(.providerList(.init(json: false)))
+
+        #expect(output == "No providers configured.\n")
+    }
+
+    @Test("provider remove and select render provider payloads")
+    func providerRemoveAndSelectRenderProviderPayloads() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        try store.save(
+            MelixOperatorSessionState(
+                selectedSurfaceID: "server",
+                selectedToolSectionID: "modelsLibrary",
+                selectedProviderID: "provider-1",
+                providers: [
+                    .init(
+                        id: "provider-1",
+                        title: "Qwen Provider",
+                        defaultModelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        servedModelIDs: ["mlx-community/Qwen3.5-0.8B-OptiQ-4bit"]
+                    ),
+                    .init(
+                        id: "provider-2",
+                        title: "Gemma Provider",
+                        defaultModelID: "mlx-community/gemma-4-31b-it-4bit",
+                        servedModelIDs: ["mlx-community/gemma-4-31b-it-4bit"]
+                    ),
+                ]
+            )
+        )
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient(), operatorSessionStore: store)
+
+        let selectOutput = try await runner.run(.providerSelect(.init(providerID: "provider-2", json: true)))
+        let removeJSONOutput = try await runner.run(.providerRemove(.init(providerID: "provider-1", json: true)))
+        let removeTextOutput = try await runner.run(.providerRemove(.init(providerID: "provider-2", json: false)))
+        let selectPayload = try #require(parseJSONObject(selectOutput))
+        let removePayload = try #require(parseJSONObject(removeJSONOutput))
+
+        #expect(selectPayload["selected_provider_id"] as? String == "provider-2")
+        #expect(removePayload["removed_id"] as? String == "provider-1")
+        #expect(removePayload["selected_provider_id"] as? String == "provider-2")
+        #expect(removeTextOutput == "No providers configured.\n")
+    }
+
+    @Test("configured provider helpers apply persisted gateway and serving defaults")
+    func configuredProviderHelpersApplyPersistedGatewayAndServingDefaults() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let client = StubControlPlaneXPCClient()
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        try store.save(
+            MelixOperatorSessionState(
+                selectedSurfaceID: "server",
+                selectedToolSectionID: "modelsLibrary",
+                selectedProviderID: "provider-1",
+                providers: [
+                    .init(
+                        id: "provider-1",
+                        title: "Qwen Provider",
+                        defaultModelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        servedModelIDs: [
+                            "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                            "mlx-community/Qwen3.5-27B-4bit",
+                        ],
+                        host: "0.0.0.0",
+                        port: 12434,
+                        allowedHosts: ["operator.lan"],
+                        allowedOrigins: ["http://localhost:5173"],
+                        rateLimitPerMinute: 42,
+                        timeoutSeconds: 90,
+                        modelIdleTimeoutSeconds: 300,
+                        servingDefaults: .init(
+                            temperature: 0.2,
+                            topP: 0.8,
+                            maxTokens: 512,
+                            streamIntervalTokens: 2,
+                            maxConcurrentRequests: 1,
+                            concurrentProcessingEnabled: false,
+                            prefillBatchSize: 1,
+                            completionBatchSize: 1,
+                            accelerationProfile: "low-memory",
+                            accelerationMode: "baseline"
+                        )
+                    ),
+                ]
+            )
+        )
+        let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
+
+        _ = try await runner.applyConfiguredServerSessionGatewayConfig(providerID: "provider-1")
+        _ = try await runner.applyConfiguredServerSessionServingDefaults(providerID: "provider-1")
+        let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
+        let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
+
+        #expect(gatewayConfigCall.providerID == "provider-1")
+        #expect(gatewayConfigCall.host == "0.0.0.0")
+        #expect(gatewayConfigCall.port == 12434)
+        #expect(gatewayConfigCall.defaultModelID == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(gatewayConfigCall.servedModelIDs == [
+            "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "mlx-community/Qwen3.5-27B-4bit",
+        ])
+        #expect(gatewayConfigCall.rateLimitPerMinute == 42)
+        #expect(gatewayConfigCall.timeoutSeconds == 90)
+        #expect(gatewayConfigCall.modelIdleTimeoutSeconds == 300)
+        #expect(gatewayConfigCall.allowedHosts == ["operator.lan"])
+        #expect(gatewayConfigCall.allowedOrigins == ["http://localhost:5173"])
+        #expect(servingDefaultsCall.providerID == "provider-1")
+        #expect(servingDefaultsCall.temperature == 0.2)
+        #expect(servingDefaultsCall.topP == 0.8)
+        #expect(servingDefaultsCall.maxTokens == 512)
+        #expect(servingDefaultsCall.streamIntervalTokens == 2)
+        #expect(servingDefaultsCall.maxConcurrentRequests == 1)
+        #expect(servingDefaultsCall.concurrentProcessingEnabled == false)
+        #expect(servingDefaultsCall.prefillBatchSize == 1)
+        #expect(servingDefaultsCall.completionBatchSize == 1)
+        #expect(servingDefaultsCall.accelerationMode == .baseline)
+        #expect(servingDefaultsCall.accelerationProfile == "low-memory")
+    }
+
+    @Test("server idle policy persists configured provider thresholds")
+    func serverIdlePolicyPersistsConfiguredProviderThresholds() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(runtimeSessions: [makeRuntimeSession()]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        try store.save(
+            MelixOperatorSessionState(
+                selectedSurfaceID: "server",
+                selectedToolSectionID: "modelsLibrary",
+                selectedProviderID: "provider-1",
+                providers: [
+                    .init(
+                        id: "provider-1",
+                        title: "Qwen Provider",
+                        defaultModelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        servedModelIDs: ["mlx-community/Qwen3.5-0.8B-OptiQ-4bit"]
+                    ),
+                ]
+            )
+        )
+
+        _ = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .serverSetIdlePolicy(
+                .init(
+                    providerID: "provider-1",
+                    autoSleepEnabled: true,
+                    lightSleepAfterSeconds: 42,
+                    deepSleepAfterSeconds: 420,
+                    json: true
+                )
+            )
+        )
+        let state = try #require(try store.load())
+        let provider = try #require(state.providers.first)
+
+        #expect(provider.autoSleepEnabled)
+        #expect(provider.lightSleepAfterSeconds == 42)
+        #expect(provider.deepSleepAfterSeconds == 420)
+        #expect(provider.lifecycle == .draft)
+    }
+
+    @Test("provider commands persist shared operator state and start validates serveable bindings")
+    func serverProviderCommandsPersistSharedOperatorStateAndStartValidatesServeableBindings() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -6432,7 +6660,7 @@ struct MelixCLIRunnerTests {
         let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
 
         _ = try await runner.run(
-            .serverSessionCreate(
+            .providerCreate(
                 .init(
                     title: "Vision Session",
                     servedModelIDs: ["melix-dev-vlm"],
@@ -6447,15 +6675,15 @@ struct MelixCLIRunnerTests {
             )
         )
         _ = try await runner.run(
-            .serverSessionSelect(.init(serverSessionID: "server-session-1"))
+            .providerSelect(.init(providerID: "provider-1"))
         )
-        let listOutput = try await runner.run(.serverSessionList(.init(json: true)))
+        let listOutput = try await runner.run(.providerList(.init(json: true)))
 
         let payload = try #require(parseJSONObject(listOutput))
-        let selectedServerSessionID = try #require(payload["selected_server_session_id"] as? String)
-        let sessions = try #require(payload["server_sessions"] as? [[String: Any]])
+        let selectedProviderID = try #require(payload["selected_provider_id"] as? String)
+        let sessions = try #require(payload["providers"] as? [[String: Any]])
 
-        #expect(selectedServerSessionID == "server-session-1")
+        #expect(selectedProviderID == "provider-1")
         #expect(sessions.count == 1)
         #expect(sessions.first?["default_model_id"] as? String == "melix-dev-vlm")
         #expect(sessions.first?["served_model_ids"] as? [String] == ["melix-dev-vlm"])
@@ -6463,18 +6691,18 @@ struct MelixCLIRunnerTests {
         #expect(sessions.first?["allowed_origins"] as? [String] == ["http://localhost:5173/app"])
 
         _ = try await runner.run(
-            .serverStart(.init(serverSessionID: "server-session-1"))
+            .serverStart(.init(providerID: "provider-1"))
         )
 
         let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
         let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
 
-        #expect(gatewayConfigCall.serverSessionID == "server-session-1")
+        #expect(gatewayConfigCall.providerID == "provider-1")
         #expect(gatewayConfigCall.defaultModelID == "melix-dev-vlm")
         #expect(gatewayConfigCall.servedModelIDs == ["melix-dev-vlm"])
         #expect(gatewayConfigCall.allowedHosts == ["operator.lan:12436"])
         #expect(gatewayConfigCall.allowedOrigins == ["http://localhost:5173/app"])
-        #expect(servingDefaultsCall.serverSessionID == "server-session-1")
+        #expect(servingDefaultsCall.providerID == "provider-1")
         #expect(servingDefaultsCall.accelerationMode == .speculativeDecode)
         #expect(servingDefaultsCall.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(servingDefaultsCall.numDraftTokens == 4)
@@ -6483,10 +6711,10 @@ struct MelixCLIRunnerTests {
             MelixOperatorSessionState(
                 selectedSurfaceID: "server",
                 selectedToolSectionID: "modelsLibrary",
-                selectedServerSessionID: "server-session-1",
-                serverSessions: [
+                selectedProviderID: "provider-1",
+                providers: [
                     .init(
-                        id: "server-session-1",
+                        id: "provider-1",
                         title: "Broken Session",
                         defaultModelID: "melix-dev-ocr",
                         servedModelIDs: ["melix-dev-ocr"]
@@ -6499,12 +6727,61 @@ struct MelixCLIRunnerTests {
         ]))
 
         await #expect(throws: MelixCLIError.self) {
-            _ = try await runner.run(.serverStart(.init(serverSessionID: "server-session-1")))
+            _ = try await runner.run(.serverStart(.init(providerID: "provider-1")))
         }
     }
 
-    @Test("server session update persists draft serving defaults for start")
-    func serverSessionUpdatePersistsDraftServingDefaultsForStart() async throws {
+    @Test("server start marks configured provider unavailable when a bound model is missing")
+    func serverStartMarksConfiguredProviderUnavailableWhenBoundModelIsMissing() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        try store.save(
+            MelixOperatorSessionState(
+                selectedSurfaceID: "server",
+                selectedToolSectionID: "modelsLibrary",
+                selectedProviderID: "provider-1",
+                providers: [
+                    .init(
+                        id: "provider-1",
+                        title: "Missing Provider",
+                        defaultModelID: "missing-model",
+                        servedModelIDs: ["missing-model"]
+                    ),
+                ]
+            )
+        )
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: []))
+        await client.setModelInfoError(
+            modelID: "missing-model",
+            error: ControlPlaneXPCClientError.requestFailed(
+                code: "not_found",
+                message: "missing-model was not found"
+            )
+        )
+        let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
+
+        await #expect(throws: MelixCLIError.runtime("Bound model missing-model is missing.")) {
+            _ = try await runner.run(.serverStart(.init(providerID: "provider-1")))
+        }
+        let state = try #require(try store.load())
+        let provider = try #require(state.providers.first)
+
+        #expect(provider.lifecycle == .unavailable)
+        #expect(provider.lastKnownModelStateText == "Unavailable")
+        #expect(provider.lastError == "Bound model missing-model is missing.")
+    }
+
+    @Test("provider update persists draft serving defaults for start")
+    func providerUpdatePersistsDraftServingDefaultsForStart() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -6522,7 +6799,7 @@ struct MelixCLIRunnerTests {
         let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
 
         _ = try await runner.run(
-            .serverSessionCreate(
+            .providerCreate(
                 .init(
                     title: "Qwen Session",
                     servedModelIDs: ["mlx-community/Qwen3.5-27B-4bit"]
@@ -6530,15 +6807,15 @@ struct MelixCLIRunnerTests {
             )
         )
         _ = try await runner.run(
-            .serverSessionUpdate(
+            .providerUpdate(
                 .init(
-                    serverSessionID: "server-session-1",
+                    providerID: "provider-1",
                     draftModelID: "z-lab/Qwen3.5-27B-DFlash"
                 )
             )
         )
         _ = try await runner.run(
-            .serverStart(.init(serverSessionID: "server-session-1"))
+            .serverStart(.init(providerID: "provider-1"))
         )
 
         let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
@@ -6547,8 +6824,8 @@ struct MelixCLIRunnerTests {
         #expect(servingDefaultsCall.numDraftTokens == 4)
     }
 
-    @Test("server session update clears persisted gateway allowlists before start")
-    func serverSessionUpdateClearsPersistedGatewayAllowlistsBeforeStart() async throws {
+    @Test("provider update clears persisted gateway allowlists before start")
+    func providerUpdateClearsPersistedGatewayAllowlistsBeforeStart() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -6567,7 +6844,7 @@ struct MelixCLIRunnerTests {
         let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
 
         _ = try await runner.run(
-            .serverSessionCreate(
+            .providerCreate(
                 .init(
                     title: "Qwen Session",
                     servedModelIDs: [modelID],
@@ -6577,20 +6854,20 @@ struct MelixCLIRunnerTests {
             )
         )
         _ = try await runner.run(
-            .serverSessionUpdate(
+            .providerUpdate(
                 .init(
-                    serverSessionID: "server-session-1",
+                    providerID: "provider-1",
                     clearAllowedHosts: true,
                     clearAllowedOrigins: true
                 )
             )
         )
         _ = try await runner.run(
-            .serverStart(.init(serverSessionID: "server-session-1"))
+            .serverStart(.init(providerID: "provider-1"))
         )
 
         let state = try #require(try store.load())
-        let session = try #require(state.serverSessions.first)
+        let session = try #require(state.providers.first)
         let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
 
         #expect(session.allowedHosts.isEmpty)
@@ -6599,8 +6876,8 @@ struct MelixCLIRunnerTests {
         #expect(gatewayConfigCall.allowedOrigins.isEmpty)
     }
 
-    @Test("server session update preserves roster when only default model changes")
-    func serverSessionUpdatePreservesRosterWhenOnlyDefaultModelChanges() async throws {
+    @Test("provider update preserves roster when only default model changes")
+    func providerUpdatePreservesRosterWhenOnlyDefaultModelChanges() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -6616,7 +6893,7 @@ struct MelixCLIRunnerTests {
         let runner = MelixCLIRunner(client: StubControlPlaneXPCClient(), operatorSessionStore: store)
 
         _ = try await runner.run(
-            .serverSessionCreate(
+            .providerCreate(
                 .init(
                     title: "Qwen Session",
                     defaultModelID: primaryModelID,
@@ -6625,23 +6902,23 @@ struct MelixCLIRunnerTests {
             )
         )
         _ = try await runner.run(
-            .serverSessionUpdate(
+            .providerUpdate(
                 .init(
-                    serverSessionID: "server-session-1",
+                    providerID: "provider-1",
                     defaultModelID: secondaryModelID
                 )
             )
         )
 
         let state = try #require(try store.load())
-        let session = try #require(state.serverSessions.first)
+        let session = try #require(state.providers.first)
 
         #expect(session.defaultModelID == secondaryModelID)
         #expect(session.servedModelIDs == [primaryModelID, secondaryModelID])
     }
 
-    @Test("server session low memory profile persists serving defaults for start")
-    func serverSessionLowMemoryProfilePersistsServingDefaultsForStart() async throws {
+    @Test("provider low memory profile persists serving defaults for start")
+    func serverProviderLowMemoryProfilePersistsServingDefaultsForStart() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -6659,7 +6936,7 @@ struct MelixCLIRunnerTests {
         let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
 
         _ = try await runner.run(
-            .serverSessionCreate(
+            .providerCreate(
                 .init(
                     title: "Low Memory Session",
                     servedModelIDs: ["mlx-community/Qwen3.5-0.8B-OptiQ-4bit"],
@@ -6668,7 +6945,7 @@ struct MelixCLIRunnerTests {
             )
         )
         _ = try await runner.run(
-            .serverStart(.init(serverSessionID: "server-session-1"))
+            .serverStart(.init(providerID: "provider-1"))
         )
 
         let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
@@ -6717,13 +6994,13 @@ struct MelixCLIRunnerTests {
         )
 
         let state = try #require(try store.load())
-        let session = try #require(state.serverSessions.first)
+        let session = try #require(state.providers.first)
         let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
         let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
         let startedAction = try #require(await client.lastServerAction)
 
-        #expect(state.selectedServerSessionID == "server-session-1")
-        #expect(session.id == "server-session-1")
+        #expect(state.selectedProviderID == "provider-1")
+        #expect(session.id == "provider-1")
         #expect(session.title == "Gemma 31B")
         #expect(session.defaultModelID == modelID)
         #expect(session.servedModelIDs == [modelID])
@@ -6733,17 +7010,17 @@ struct MelixCLIRunnerTests {
         #expect(session.allowedOrigins == ["http://localhost:5173"])
         #expect(session.rateLimitPerMinute == 60)
         #expect(session.timeoutSeconds == 240)
-        #expect(gatewayConfigCall.serverSessionID == "server-session-1")
+        #expect(gatewayConfigCall.providerID == "provider-1")
         #expect(gatewayConfigCall.defaultModelID == modelID)
         #expect(gatewayConfigCall.servedModelIDs == [modelID])
         #expect(gatewayConfigCall.allowedHosts == ["operator.lan"])
         #expect(gatewayConfigCall.allowedOrigins == ["http://localhost:5173"])
         #expect(gatewayConfigCall.port == 12434)
-        #expect(servingDefaultsCall.serverSessionID == "server-session-1")
-        #expect(startedAction == .start("server-session-1"))
+        #expect(servingDefaultsCall.providerID == "provider-1")
+        #expect(startedAction == .start("provider-1"))
     }
 
-    @Test("server start shortcut uses slug title as the server session id")
+    @Test("server start shortcut uses slug title as the provider id")
     func serverStartShortcutUsesSlugTitleAsServerSessionID() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
@@ -6773,16 +7050,16 @@ struct MelixCLIRunnerTests {
         )
 
         let state = try #require(try store.load())
-        let session = try #require(state.serverSessions.first(where: { $0.id == "gemma-31b" }))
+        let session = try #require(state.providers.first(where: { $0.id == "gemma-31b" }))
         let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
         let startedAction = try #require(await client.lastServerAction)
 
-        #expect(state.selectedServerSessionID == "gemma-31b")
+        #expect(state.selectedProviderID == "gemma-31b")
         #expect(session.title == "gemma-31b")
         #expect(session.defaultModelID == modelID)
         #expect(session.servedModelIDs == [modelID])
         #expect(session.port == 12434)
-        #expect(gatewayConfigCall.serverSessionID == "gemma-31b")
+        #expect(gatewayConfigCall.providerID == "gemma-31b")
         #expect(gatewayConfigCall.defaultModelID == modelID)
         #expect(gatewayConfigCall.servedModelIDs == [modelID])
         #expect(startedAction == .start("gemma-31b"))
@@ -6828,11 +7105,11 @@ struct MelixCLIRunnerTests {
         )
 
         let state = try #require(try store.load())
-        let session = try #require(state.serverSessions.first(where: { $0.id == "gemma-31b" }))
+        let session = try #require(state.providers.first(where: { $0.id == "gemma-31b" }))
         let startedAction = try #require(await client.lastServerAction)
 
-        #expect(state.serverSessions.count == 1)
-        #expect(state.selectedServerSessionID == "gemma-31b")
+        #expect(state.providers.count == 1)
+        #expect(state.selectedProviderID == "gemma-31b")
         #expect(session.title == "Gemma-31B")
         #expect(session.port == 12434)
         #expect(startedAction == .start("gemma-31b"))
@@ -6859,8 +7136,8 @@ struct MelixCLIRunnerTests {
             MelixOperatorSessionState(
                 selectedSurfaceID: "server",
                 selectedToolSectionID: "modelsLibrary",
-                selectedServerSessionID: "gemma-31b",
-                serverSessions: [
+                selectedProviderID: "gemma-31b",
+                providers: [
                     .init(
                         id: "gemma-31b",
                         title: "Existing Gemma",
@@ -6868,7 +7145,7 @@ struct MelixCLIRunnerTests {
                         servedModelIDs: [modelID]
                     ),
                     .init(
-                        id: "server-session-1",
+                        id: "provider-1",
                         title: "Existing One",
                         defaultModelID: modelID,
                         servedModelIDs: [modelID]
@@ -6880,7 +7157,7 @@ struct MelixCLIRunnerTests {
         _ = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
             .serverStart(
                 .init(
-                    serverSessionID: "gemma-31b",
+                    providerID: "gemma-31b",
                     serverTitle: "Gemma Archive",
                     servedModelIDs: [modelID],
                     port: 12434
@@ -6889,12 +7166,12 @@ struct MelixCLIRunnerTests {
         )
 
         let state = try #require(try store.load())
-        let created = try #require(state.serverSessions.first(where: { $0.title == "Gemma Archive" }))
+        let created = try #require(state.providers.first(where: { $0.title == "Gemma Archive" }))
         let startedAction = try #require(await client.lastServerAction)
 
-        #expect(created.id == "server-session-2")
-        #expect(state.selectedServerSessionID == "server-session-2")
-        #expect(startedAction == .start("server-session-2"))
+        #expect(created.id == "provider-2")
+        #expect(state.selectedProviderID == "provider-2")
+        #expect(startedAction == .start("provider-2"))
     }
 
     @Test("server start shortcut reuses an existing titled session")
@@ -6920,10 +7197,10 @@ struct MelixCLIRunnerTests {
             MelixOperatorSessionState(
                 selectedSurfaceID: "server",
                 selectedToolSectionID: "modelsLibrary",
-                selectedServerSessionID: "server-session-1",
-                serverSessions: [
+                selectedProviderID: "provider-1",
+                providers: [
                     .init(
-                        id: "server-session-1",
+                        id: "provider-1",
                         title: "Qwen Dev",
                         defaultModelID: originalModelID,
                         servedModelIDs: [originalModelID],
@@ -6948,13 +7225,13 @@ struct MelixCLIRunnerTests {
         )
 
         let state = try #require(try store.load())
-        let session = try #require(state.serverSessions.first)
+        let session = try #require(state.providers.first)
         let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
         let startedAction = try #require(await client.lastServerAction)
 
-        #expect(state.serverSessions.count == 1)
-        #expect(state.selectedServerSessionID == "server-session-1")
-        #expect(session.id == "server-session-1")
+        #expect(state.providers.count == 1)
+        #expect(state.selectedProviderID == "provider-1")
+        #expect(session.id == "provider-1")
         #expect(session.title == "Qwen Dev")
         #expect(session.defaultModelID == updatedModelID)
         #expect(session.servedModelIDs == [updatedModelID])
@@ -6962,11 +7239,11 @@ struct MelixCLIRunnerTests {
         #expect(session.port == 12435)
         #expect(session.rateLimitPerMinute == 90)
         #expect(session.timeoutSeconds == 300)
-        #expect(gatewayConfigCall.serverSessionID == "server-session-1")
+        #expect(gatewayConfigCall.providerID == "provider-1")
         #expect(gatewayConfigCall.defaultModelID == updatedModelID)
         #expect(gatewayConfigCall.servedModelIDs == [updatedModelID])
         #expect(gatewayConfigCall.port == 12435)
-        #expect(startedAction == .start("server-session-1"))
+        #expect(startedAction == .start("provider-1"))
     }
 
     @Test("server start shortcut preserves roster when only default model changes")
@@ -6992,10 +7269,10 @@ struct MelixCLIRunnerTests {
             MelixOperatorSessionState(
                 selectedSurfaceID: "server",
                 selectedToolSectionID: "modelsLibrary",
-                selectedServerSessionID: "server-session-1",
-                serverSessions: [
+                selectedProviderID: "provider-1",
+                providers: [
                     .init(
-                        id: "server-session-1",
+                        id: "provider-1",
                         title: "Qwen Dev",
                         defaultModelID: originalModelID,
                         servedModelIDs: [originalModelID, updatedDefaultID],
@@ -7017,7 +7294,7 @@ struct MelixCLIRunnerTests {
         )
 
         let state = try #require(try store.load())
-        let session = try #require(state.serverSessions.first)
+        let session = try #require(state.providers.first)
         let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
 
         #expect(session.defaultModelID == updatedDefaultID)
@@ -7047,16 +7324,16 @@ struct MelixCLIRunnerTests {
             MelixOperatorSessionState(
                 selectedSurfaceID: "server",
                 selectedToolSectionID: "modelsLibrary",
-                selectedServerSessionID: "server-session-3",
-                serverSessions: [
+                selectedProviderID: "provider-3",
+                providers: [
                     .init(
-                        id: "server-session-1",
+                        id: "provider-1",
                         title: "Existing One",
                         defaultModelID: modelID,
                         servedModelIDs: [modelID]
                     ),
                     .init(
-                        id: "server-session-3",
+                        id: "provider-3",
                         title: "Existing Three",
                         defaultModelID: modelID,
                         servedModelIDs: [modelID]
@@ -7076,12 +7353,12 @@ struct MelixCLIRunnerTests {
         )
 
         let state = try #require(try store.load())
-        let created = try #require(state.serverSessions.first(where: { $0.title == "Gemma 31B" }))
+        let created = try #require(state.providers.first(where: { $0.title == "Gemma 31B" }))
         let startedAction = try #require(await client.lastServerAction)
 
-        #expect(created.id == "server-session-2")
-        #expect(state.selectedServerSessionID == "server-session-2")
-        #expect(startedAction == .start("server-session-2"))
+        #expect(created.id == "provider-2")
+        #expect(state.selectedProviderID == "provider-2")
+        #expect(startedAction == .start("provider-2"))
     }
 
     @Test("server start shortcut requires title and model arguments")
@@ -7103,7 +7380,7 @@ struct MelixCLIRunnerTests {
         await #expect(throws: MelixCLIError.missingRequired("TITLE is required when passing --model, --models, --default-model, --host, --port, --allowed-host, --allowed-origin, --rate-limit-per-minute, --timeout-seconds, or --model-idle-timeout-seconds to melix server start.")) {
             _ = try await runner.run(.serverStart(.init(servedModelIDs: ["mlx-community/gemma-4-31b-it-4bit"])))
         }
-        await #expect(throws: MelixCLIError.missingRequired("--model or --models is required when starting a titled server session.")) {
+        await #expect(throws: MelixCLIError.missingRequired("--model or --models is required when starting a titled provider.")) {
             _ = try await runner.run(.serverStart(.init(serverTitle: "Gemma 31B")))
         }
     }
@@ -7139,10 +7416,10 @@ struct MelixCLIRunnerTests {
             MelixOperatorSessionState(
                 selectedSurfaceID: "server",
                 selectedToolSectionID: "modelsLibrary",
-                selectedServerSessionID: "server-session-1",
-                serverSessions: [
+                selectedProviderID: "provider-1",
+                providers: [
                     .init(
-                        id: "server-session-1",
+                        id: "provider-1",
                         title: "Imported Session",
                         defaultModelID: importedModelID,
                         servedModelIDs: [importedModelID]
@@ -7152,7 +7429,7 @@ struct MelixCLIRunnerTests {
         )
 
         _ = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
-            .serverStart(.init(serverSessionID: "server-session-1"))
+            .serverStart(.init(providerID: "provider-1"))
         )
 
         let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
@@ -7160,7 +7437,7 @@ struct MelixCLIRunnerTests {
 
         #expect(gatewayConfigCall.defaultModelID == importedModelID)
         #expect(gatewayConfigCall.servedModelIDs == [importedModelID])
-        #expect(startedAction == .start("server-session-1"))
+        #expect(startedAction == .start("provider-1"))
     }
 
     @Test("server snapshot renders empty sessions and fallback labels")
@@ -7172,19 +7449,19 @@ struct MelixCLIRunnerTests {
         await client.setServerSnapshot(emptySnapshot)
         let emptyOutput = try await MelixCLIRunner(client: client).run(.serverSnapshot(.init()))
 
-        var loadingSession = makeRuntimeSession(serverSessionID: "server-session-loading")
+        var loadingSession = makeRuntimeSession(providerID: "provider-loading")
         loadingSession.lifecycleState = .loading
         loadingSession.powerState = .lightSleep
         loadingSession.wakeReason = .toolActivity
-        var stoppedSession = makeRuntimeSession(serverSessionID: "server-session-stopped")
+        var stoppedSession = makeRuntimeSession(providerID: "provider-stopped")
         stoppedSession.lifecycleState = .stopped
         stoppedSession.powerState = .stopped
         stoppedSession.wakeReason = .policyApply
-        var failedSession = makeRuntimeSession(serverSessionID: "server-session-failed")
+        var failedSession = makeRuntimeSession(providerID: "provider-failed")
         failedSession.lifecycleState = .error
         failedSession.powerState = .deepSleep
         failedSession.wakeReason = .operatorResume
-        var unknownSession = makeRuntimeSession(serverSessionID: "server-session-unknown")
+        var unknownSession = makeRuntimeSession(providerID: "provider-unknown")
         unknownSession.lifecycleState = .UNRECOGNIZED(999)
         unknownSession.powerState = .UNRECOGNIZED(999)
         unknownSession.wakeReason = .UNRECOGNIZED(999)
@@ -7211,9 +7488,9 @@ struct MelixCLIRunnerTests {
         let unknownOutput = try await MelixCLIRunner(client: client).run(.serverSnapshot(.init(json: true)))
 
         #expect(emptyOutput == "server_state=server_booting\nNo providers found.\n")
-        #expect(loadingOutput.contains("server_draining\tserver-session-loading\tloading\tlight_sleep\ttool_activity"))
-        #expect(stoppedOutput.contains("server_stopped\tserver-session-stopped\tstopped\tstopped\tpolicy_apply"))
-        #expect(failedOutput.contains("server_failed\tserver-session-failed\terror\tdeep_sleep\toperator_resume"))
+        #expect(loadingOutput.contains("server_draining\tprovider-loading\tloading\tlight_sleep\ttool_activity"))
+        #expect(stoppedOutput.contains("server_stopped\tprovider-stopped\tstopped\tstopped\tpolicy_apply"))
+        #expect(failedOutput.contains("server_failed\tprovider-failed\terror\tdeep_sleep\toperator_resume"))
         #expect(unknownOutput.contains(#""server_state" : "server_state_unspecified""#))
         #expect(unknownOutput.contains(#""lifecycle_state" : "lifecycle_unspecified""#))
         #expect(unknownOutput.contains(#""power_state" : "power_unspecified""#))
@@ -13090,13 +13367,13 @@ struct MelixCLIRunnerTests {
         let doctor = try await client.runDoctor()
         let cancelled = try await client.cancelRequest(requestID: "request-1")
         try await client.applyServerSessionGatewayAccess(
-            serverSessionID: "session-1",
+            serverSessionID: "provider-1",
             primaryKey: "pk",
             keyID: "key",
             label: "demo",
             tokenHint: "***"
         )
-        try await client.clearServerSessionGatewayAccess(serverSessionID: "session-1")
+        try await client.clearServerSessionGatewayAccess(serverSessionID: "provider-1")
 
         #expect(handshake.protocolVersion.isEmpty)
         #expect(await iterator.next() == nil)
@@ -13491,7 +13768,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     struct IdlePolicyCall: Sendable, Equatable {
-        let serverSessionID: String
+        let providerID: String
         let autoSleepEnabled: Bool
         let lightSleepAfterSeconds: UInt32
         let deepSleepAfterSeconds: UInt32
@@ -13508,7 +13785,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     struct GatewayConfigApplyCall: Sendable, Equatable {
-        let serverSessionID: String
+        let providerID: String
         let host: String
         let port: Int
         let defaultModelID: String
@@ -13521,7 +13798,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     struct ServingDefaultsApplyCall: Sendable, Equatable {
-        let serverSessionID: String
+        let providerID: String
         let temperature: Double
         let topP: Double
         let maxTokens: Int
@@ -13567,6 +13844,7 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     private(set) var maxConcurrentEvaluationCalls = 0
     private var exportResult = ControlPlaneExportResult(exportBundleJSON: #"{"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[],"benchmark_results":[]}"#)
     private var modelInfoByID: [String: Melix_Controlplane_V1_ModelInfo] = [:]
+    private var modelInfoErrorsByID: [String: Error] = [:]
     private var loadError: Error?
     private var modelOperationError: Error?
     private var chatError: Error?
@@ -13637,6 +13915,10 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         modelInfoByID[modelID] = info
     }
 
+    func setModelInfoError(modelID: String, error: Error) {
+        modelInfoErrorsByID[modelID] = error
+    }
+
     func setLoadError(_ error: Error?) {
         loadError = error
     }
@@ -13685,8 +13967,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        lastServerAction = .start(serverSessionID)
-        mutateRuntimeSession(serverSessionID: serverSessionID) { session in
+        let providerID = serverSessionID
+        lastServerAction = .start(providerID)
+        mutateRuntimeSession(providerID: providerID) { session in
             session.lifecycleState = .ready
             session.powerState = .active
             session.wakeReason = .operatorResume
@@ -13696,8 +13979,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func pauseServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        lastServerAction = .pause(serverSessionID)
-        mutateRuntimeSession(serverSessionID: serverSessionID) { session in
+        let providerID = serverSessionID
+        lastServerAction = .pause(providerID)
+        mutateRuntimeSession(providerID: providerID) { session in
             session.lifecycleState = .paused
             session.powerState = .active
         }
@@ -13706,8 +13990,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func resumeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        lastServerAction = .resume(serverSessionID)
-        mutateRuntimeSession(serverSessionID: serverSessionID) { session in
+        let providerID = serverSessionID
+        lastServerAction = .resume(providerID)
+        mutateRuntimeSession(providerID: providerID) { session in
             session.lifecycleState = .ready
             session.powerState = .active
             session.wakeReason = .operatorResume
@@ -13717,8 +14002,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func wakeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        lastServerAction = .wake(serverSessionID)
-        mutateRuntimeSession(serverSessionID: serverSessionID) { session in
+        let providerID = serverSessionID
+        lastServerAction = .wake(providerID)
+        mutateRuntimeSession(providerID: providerID) { session in
             session.lifecycleState = .ready
             session.powerState = .active
             session.wakeReason = .requestActivity
@@ -13728,8 +14014,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func stopServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        lastServerAction = .stop(serverSessionID)
-        mutateRuntimeSession(serverSessionID: serverSessionID) { session in
+        let providerID = serverSessionID
+        lastServerAction = .stop(providerID)
+        mutateRuntimeSession(providerID: providerID) { session in
             session.lifecycleState = .stopped
             session.powerState = .stopped
         }
@@ -13743,13 +14030,14 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         lightSleepAfterSeconds: UInt32,
         deepSleepAfterSeconds: UInt32
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        let providerID = serverSessionID
         lastIdlePolicyCall = IdlePolicyCall(
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             autoSleepEnabled: autoSleepEnabled,
             lightSleepAfterSeconds: lightSleepAfterSeconds,
             deepSleepAfterSeconds: deepSleepAfterSeconds
         )
-        mutateRuntimeSession(serverSessionID: serverSessionID) { session in
+        mutateRuntimeSession(providerID: providerID) { session in
             session.autoSleepEnabled = autoSleepEnabled
             session.lightSleepAfterSeconds = lightSleepAfterSeconds
             session.deepSleepAfterSeconds = deepSleepAfterSeconds
@@ -13778,7 +14066,10 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func modelInfo(modelID: String) async throws -> Melix_Controlplane_V1_ModelInfo {
-        modelInfoByID[modelID] ?? Melix_Controlplane_V1_ModelInfo()
+        if let error = modelInfoErrorsByID[modelID] {
+            throw error
+        }
+        return modelInfoByID[modelID] ?? Melix_Controlplane_V1_ModelInfo()
     }
 
     func runModelOperation(
@@ -13916,8 +14207,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         allowedHosts: [String],
         allowedOrigins: [String]
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        let providerID = serverSessionID
         lastGatewayConfigApplyRequest = GatewayConfigApplyCall(
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             host: host,
             port: port,
             defaultModelID: defaultModelID,
@@ -13946,8 +14238,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         numDraftTokens: Int,
         accelerationProfile: String
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        let providerID = serverSessionID
         lastServingDefaultsApplyRequest = ServingDefaultsApplyCall(
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             temperature: temperature,
             topP: topP,
             maxTokens: maxTokens,
@@ -13965,15 +14258,15 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     private func mutateRuntimeSession(
-        serverSessionID: String,
+        providerID: String,
         update: (inout Melix_Controlplane_V1_ProviderRuntimeState) -> Void
     ) {
-        if let index = snapshot.providers.firstIndex(where: { $0.providerID == serverSessionID }) {
+        if let index = snapshot.providers.firstIndex(where: { $0.providerID == providerID }) {
             update(&snapshot.providers[index])
             return
         }
 
-        var session = makeRuntimeSession(serverSessionID: serverSessionID)
+        var session = makeRuntimeSession(providerID: providerID)
         update(&session)
         snapshot.providers.append(session)
     }
@@ -13993,10 +14286,10 @@ private func makeServerSnapshot(
 }
 
 private func makeRuntimeSession(
-    serverSessionID: String = "server-session-1"
+    providerID: String = "provider-1"
 ) -> Melix_Controlplane_V1_ProviderRuntimeState {
     var session = Melix_Controlplane_V1_ProviderRuntimeState()
-    session.providerID = serverSessionID
+    session.providerID = providerID
     session.lifecycleState = .ready
     session.powerState = .active
     session.wakeReason = .initialBoot

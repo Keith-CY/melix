@@ -413,13 +413,13 @@ struct DesktopFoundationViewTests {
         snapshot.serverState = .serverReady
         snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
         var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
-        runtimeSession.providerID = "server-session-1"
+        runtimeSession.providerID = "provider-1"
         runtimeSession.lifecycleState = .ready
         runtimeSession.powerState = .active
         runtimeSession.wakeReason = .initialBoot
         snapshot.providers = [runtimeSession]
         var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
-        listener.providerID = "server-session-1"
+        listener.providerID = "provider-1"
         listener.requestedHost = "0.0.0.0"
         listener.requestedPort = 18080
         listener.effectiveHost = "127.0.0.1"
@@ -433,7 +433,7 @@ struct DesktopFoundationViewTests {
         listener.requiresRestart = true
         snapshot.gatewayConfig.listeners = [listener]
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.providerID = "server-session-1"
+        servingDefaults.providerID = "provider-1"
         servingDefaults.defaultModelID = desktopTestReadyModelID
         servingDefaults.requestedTemperature = 0.33
         servingDefaults.requestedTopP = 0.92
@@ -488,7 +488,7 @@ struct DesktopFoundationViewTests {
         snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
         snapshot.providers = [makeDesktopRuntimeSession()]
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.providerID = "server-session-1"
+        servingDefaults.providerID = "provider-1"
         servingDefaults.defaultModelID = desktopTestReadyModelID
         servingDefaults.requestedTemperature = 0.44
         servingDefaults.requestedTopP = 0.91
@@ -572,6 +572,46 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedServerSession?.servingDefaults.accelerationProfile == "low-memory")
     }
 
+    @Test("workspace server surface renders read-only acceleration modes")
+    @MainActor
+    func workspaceServerSurfaceRendersReadOnlyAccelerationModes() async throws {
+        let cases: [(String, Melix_Controlplane_V1_AccelerationMode, String)] = [
+            ("accelerated_prefill", .acceleratedPrefill, "Accelerated Prefill"),
+            ("active_kv_quantized", .activeKvQuantized, "Active KV Quantized"),
+            ("sparse_prefill", .sparsePrefill, "Sparse Prefill"),
+        ]
+
+        for (mode, accelerationMode, expectedModeText) in cases {
+            let client = FakeControlPlaneXPCClient()
+            var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+            snapshot.serverState = .serverReady
+            snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
+            snapshot.providers = [makeDesktopRuntimeSession()]
+            var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+            servingDefaults.providerID = "provider-1"
+            servingDefaults.defaultModelID = desktopTestReadyModelID
+            servingDefaults.requestedAccelerationMode = accelerationMode
+            servingDefaults.effectiveAccelerationMode = accelerationMode
+            servingDefaults.source = .operatorOverride
+            snapshot.servingDefaults.sessions = [servingDefaults]
+            await client.configureSnapshot(snapshot)
+
+            let viewModel = RuntimeViewModel(client: client)
+            await viewModel.start()
+            viewModel.selectSurface(.server)
+
+            let view = hostView(
+                DesktopWorkspaceShellView(viewModel: viewModel),
+                size: CGSize(width: 1_280, height: 1_400)
+            )
+            let renderedTexts = renderedTextValues(in: view)
+
+            #expect(viewModel.selectedServerSession?.servingDefaults.accelerationMode == mode)
+            #expect(renderedTexts.contains(expectedModeText))
+            #expect(renderedTexts.contains("Resolved defaults: \(expectedModeText) • sequences 0 • prefill 1 • completion 1"))
+        }
+    }
+
     @Test("workspace server surface renders requested and effective acceleration profile receipts")
     @MainActor
     func workspaceServerSurfaceRendersRequestedAndEffectiveAccelerationProfileReceipts() async throws {
@@ -581,7 +621,7 @@ struct DesktopFoundationViewTests {
         snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
         snapshot.providers = [makeDesktopRuntimeSession()]
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.providerID = "server-session-1"
+        servingDefaults.providerID = "provider-1"
         servingDefaults.defaultModelID = desktopTestReadyModelID
         servingDefaults.requestedTemperature = 0.4
         servingDefaults.requestedTopP = 0.9
@@ -628,7 +668,7 @@ struct DesktopFoundationViewTests {
     @Test("profile regression renders requested effective and resolved serving receipts")
     @MainActor
     func profileRegressionRendersRequestedEffectiveAndResolvedServingReceipts() throws {
-        let servingDefaults = DesktopServerServingDefaultsState(
+        let servingDefaults = DesktopProviderServingDefaultsState(
             maxConcurrentRequests: 2,
             concurrentProcessingEnabled: true,
             prefillBatchSize: 2,
@@ -810,7 +850,7 @@ struct DesktopFoundationViewTests {
             DesktopCommandCenterView(
                 foundation: viewModel.desktopFoundationState,
                 chatSessions: viewModel.chatSessions,
-                serverSessions: viewModel.serverSessions
+                providers: viewModel.providers
             )
         )
 
@@ -4624,8 +4664,8 @@ struct DesktopFoundationViewTests {
             lastError: nil,
             recentEvents: []
         )
-        let session = DesktopServerSessionState(
-            id: "server-session-1",
+        let session = DesktopProviderState(
+            id: "provider-1",
             title: "Primary Session",
             modelID: "melix-dev-text",
             effectiveHost: "127.0.0.1",
@@ -4710,8 +4750,8 @@ struct DesktopFoundationViewTests {
             apiSurfaces: [],
             apiReference: []
         )
-        let session = DesktopServerSessionState(
-            id: "server-session-empty-api",
+        let session = DesktopProviderState(
+            id: "provider-empty-api",
             title: "Primary Session",
             modelID: "melix-dev-text",
             effectiveHost: "127.0.0.1",
@@ -4765,7 +4805,7 @@ struct DesktopFoundationViewTests {
             recentEvents: []
         )
 
-        let disabledSession = DesktopServerSessionState(
+        let disabledSession = DesktopProviderState(
             id: "disabled-session",
             title: "Disabled Session",
             modelID: "melix-dev-text",
@@ -4777,7 +4817,7 @@ struct DesktopFoundationViewTests {
             accessKeyHints: ["desktop-agent"],
             lifecycle: .running
         )
-        let unauthenticatedSession = DesktopServerSessionState(
+        let unauthenticatedSession = DesktopProviderState(
             id: "none-session",
             title: "Unauthenticated Session",
             modelID: "melix-dev-text",
@@ -4787,7 +4827,7 @@ struct DesktopFoundationViewTests {
             sharedAccessState: .enabled,
             lifecycle: .running
         )
-        let bearerSession = DesktopServerSessionState(
+        let bearerSession = DesktopProviderState(
             id: "bearer-session",
             title: "Bearer Session",
             modelID: "melix-dev-text",
@@ -4866,12 +4906,16 @@ struct DesktopFoundationViewTests {
             desktopAPIAuthenticationReferenceText(selectedExport: selectedExport)
                 .contains("Selected target:")
         )
+        #expect(
+            desktopAPIAuthenticationReferenceText(selectedExport: nil)
+                == "Select a provider to render auth guidance."
+        )
     }
 
     @Test("gateway access summary and auth guidance cover bearer disabled and enabled shared access")
     @MainActor
     func gatewayAccessSummaryAndAuthGuidanceCoverBearerDisabledAndEnabledStates() throws {
-        let bearerSession = DesktopServerSessionState(
+        let bearerSession = DesktopProviderState(
             id: "bearer-session",
             title: "Bearer Session",
             modelID: "melix-dev-text",
@@ -4882,7 +4926,7 @@ struct DesktopFoundationViewTests {
             accessKeyHints: ["desktop-agent"],
             lifecycle: .running
         )
-        let configuredDisabledSession = DesktopServerSessionState(
+        let configuredDisabledSession = DesktopProviderState(
             id: "disabled-session",
             title: "Disabled Session",
             modelID: "melix-dev-text",
@@ -4891,7 +4935,7 @@ struct DesktopFoundationViewTests {
             accessKeyHints: ["desktop-agent", "codex"],
             lifecycle: .running
         )
-        let enabledSession = DesktopServerSessionState(
+        let enabledSession = DesktopProviderState(
             id: "enabled-session",
             title: "Enabled Session",
             modelID: "melix-dev-text",
@@ -4909,7 +4953,7 @@ struct DesktopFoundationViewTests {
 
         #expect(
             desktopAPIAuthenticationReferenceText(selectedSession: nil, selectedExport: nil)
-                == "Select a server session to render auth guidance."
+                == "Select a provider to render auth guidance."
         )
         #expect(
             desktopAPIAuthenticationReferenceText(selectedSession: bearerSession, selectedExport: nil)
@@ -4928,7 +4972,7 @@ struct DesktopFoundationViewTests {
     @Test("gateway access summary renders persistent session summary and sign-out latency")
     @MainActor
     func gatewayAccessSummaryRendersPersistentSessionSummaryAndSignOutLatency() throws {
-        let session = DesktopServerSessionState(
+        let session = DesktopProviderState(
             id: "persistent-session",
             title: "Persistent Session",
             modelID: "melix-dev-text",
@@ -7436,8 +7480,8 @@ struct DesktopFoundationViewTests {
         var resumeCount = 0
         var wakeCount = 0
 
-        let baseSession = DesktopServerSessionState(
-            id: "server-session-chat-controls",
+        let baseSession = DesktopProviderState(
+            id: "provider-chat-controls",
             title: "Chat Runtime",
             modelID: "melix-dev-text",
             lifecycle: .running,
@@ -7562,8 +7606,8 @@ struct DesktopFoundationViewTests {
             isStreaming: false,
             statusText: "Ready",
             usageText: "12 prompt • 24 completion",
-            serverSession: DesktopServerSessionState(
-                id: "server-session-compose",
+            serverSession: DesktopProviderState(
+                id: "provider-compose",
                 title: "Compose Runtime",
                 modelID: "melix-dev-text",
                 lifecycle: .running,
@@ -7642,13 +7686,13 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedSurface == .server)
 
         workspace.startSelectedChatServerSession()
-        try await waitForRecordedClientAction("server.start:server-session-1", client: client)
+        try await waitForRecordedClientAction("server.start:provider-1", client: client)
 
         workspace.resumeSelectedChatServerSession()
-        try await waitForRecordedClientAction("server.resume:server-session-1", client: client)
+        try await waitForRecordedClientAction("server.resume:provider-1", client: client)
 
         workspace.wakeSelectedChatServerSession()
-        try await waitForRecordedClientAction("server.wake:server-session-1", client: client)
+        try await waitForRecordedClientAction("server.wake:provider-1", client: client)
 
         let emptyClient = FakeControlPlaneXPCClient()
         var emptySnapshot = Melix_Controlplane_V1_ServerSnapshot()
@@ -7696,8 +7740,8 @@ struct DesktopFoundationViewTests {
         #expect(hostView(streamingComposer.primaryActionLabel).fittingSize.width >= 0)
 
         let emptyCapsule = DesktopChatRuntimeServerCapsule(serverSession: nil)
-        var errorSession = DesktopServerSessionState(
-            id: "server-session-error",
+        var errorSession = DesktopProviderState(
+            id: "provider-error",
             title: "Broken Runtime",
             modelID: "melix-dev-text",
             lifecycle: .error,
@@ -8623,14 +8667,14 @@ struct DesktopFoundationViewTests {
         let mainSession = DesktopChatSessionState(
             id: "chat-main",
             title: "Chat 1",
-            serverSessionID: "server-main",
+            providerID: "server-main",
             branchID: "main",
             branchTitle: "Main"
         )
         let forkSession = DesktopChatSessionState(
             id: "chat-fork",
             title: "Chat 2",
-            serverSessionID: "server-main",
+            providerID: "server-main",
             branchID: "branch-2",
             branchTitle: "Branch 2"
         )
@@ -8928,12 +8972,12 @@ struct DesktopFoundationViewTests {
         #expect(pausedNotice.severity == .warning)
         #expect(viewModel.selectedChatServerSession?.isInteractiveReady == false)
 
-        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        let providerID = try #require(viewModel.selectedServerSession?.id)
         await client.sendServerStateChanged(
             state: .serverReady,
             runtimeSessions: [
                 makeDesktopRuntimeSession(
-                    serverSessionID: serverSessionID,
+                    providerID: providerID,
                     lifecycleState: .sleeping,
                     powerState: .deepSleep,
                     wakeReason: .requestActivity,
@@ -8944,7 +8988,7 @@ struct DesktopFoundationViewTests {
                 )
             ]
         )
-        try await waitForDesktopFoundationCondition("expected chat-bound server session to enter sleeping state") {
+        try await waitForDesktopFoundationCondition("expected chat-bound provider to enter sleeping state") {
             viewModel.selectedChatServerSession?.lifecycle == .sleeping
         }
 
@@ -9596,7 +9640,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                 "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_MATRIX_SUITES": "   ",
                 "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_EVALUATION_SUITES": " mmlu , gsm8k ",
                 "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_EVALUATION_DATASET": "   ",
-                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_SERVER_SESSION_ID": "   ",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_PROVIDER_ID": "   ",
                 "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_CLI_BUNDLE_PATH": "   ",
                 "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_TIMESTAMP": "   ",
             ]
@@ -9611,12 +9655,16 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         #expect(config.matrixSuites == ["smoke"])
         #expect(config.evaluationSuites == ["mmlu", "gsm8k"])
         #expect(config.evaluationDataset == "mmlu.dev.v1")
-        #expect(config.serverSessionID == "server-session-1")
+        #expect(config.providerID == "provider-1")
         #expect(
             URL(fileURLWithPath: config.cliEvidenceBundlePath).resolvingSymlinksInPath().path
                 == cliBundlePath.resolvingSymlinksInPath().path
         )
         #expect(config.timestamp.isEmpty == false)
+        #expect(
+            Phase8WindowUIAcceptanceError.missingServerSession("provider-missing").errorDescription
+                == "Window UI acceptance could not find provider provider-missing."
+        )
     }
 
     @Test("phase 8 window ui downloads surface exposes quantization modes")
@@ -9788,7 +9836,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         derivedModel.modelID = derivedModelID
         snapshot.models = [baseModel, derivedModel]
         var runtimeSession = makeDesktopRuntimeSession()
-        runtimeSession.providerID = "server-session-1"
+        runtimeSession.providerID = "provider-1"
         runtimeSession.lifecycleState = .ready
         runtimeSession.powerState = .active
         snapshot.providers = [runtimeSession]
@@ -9809,21 +9857,21 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                 )
             case .modelRootsRescan:
                 return .success("{\"registry_roots\":[\"/tmp/melix-managed\"]}\n")
-            case .serverSessionCreate:
-                return .success("{\"server_session_id\":\"server-session-1\"}\n")
-            case .serverSessionUpdate:
-                return .success("{\"server_session_id\":\"server-session-1\"}\n")
-            case .serverSessionSelect:
-                return .success("{\"selected_server_session_id\":\"server-session-1\"}\n")
+            case .providerCreate:
+                return .success("{\"provider_id\":\"provider-1\"}\n")
+            case .providerUpdate:
+                return .success("{\"provider_id\":\"provider-1\"}\n")
+            case .providerSelect:
+                return .success("{\"selected_provider_id\":\"provider-1\"}\n")
             case .serverStart(let options):
-                return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
+                return .success(makeCLIServerSnapshotJSON(providerID: options.providerID))
             case .chatRun(let options):
                 let assistantText = options.modelID == derivedModelID ? "DERIVED_OK" : "BASE_OK"
                 return .success(
                     """
                     {
                       "model_id": "\(options.modelID)",
-                      "server_session_id": "server-session-1",
+                      "provider_id": "provider-1",
                       "assistant_text": "\(assistantText)",
                       "finish_reason": "stop",
                       "request_id": "chat-\(assistantText.lowercased())"
@@ -9932,7 +9980,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                 matrixSuites: ["smoke"],
                 evaluationSuites: ["mmlu"],
                 evaluationDataset: "mmlu.dev.v1",
-                serverSessionID: "server-session-1",
+                providerID: "provider-1",
                 cliEvidenceBundlePath: cliBundlePath.path,
                 timestamp: "2026-04-09T120000Z"
             ),
@@ -10057,7 +10105,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         derivedModel.modelID = derivedModelID
         snapshot.models = [fallbackTextModel, derivedModel]
         var runtimeSession = makeDesktopRuntimeSession()
-        runtimeSession.providerID = "server-session-1"
+        runtimeSession.providerID = "provider-1"
         runtimeSession.lifecycleState = .ready
         runtimeSession.powerState = .active
         snapshot.providers = [runtimeSession]
@@ -10122,21 +10170,21 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                 )
             case .modelRootsRescan:
                 return .success("{\"registry_roots\":[\"/tmp/melix-managed\"]}\n")
-            case .serverSessionCreate:
-                return .success("{\"server_session_id\":\"server-session-1\"}\n")
-            case .serverSessionUpdate:
-                return .success("{\"server_session_id\":\"server-session-1\"}\n")
-            case .serverSessionSelect:
-                return .success("{\"selected_server_session_id\":\"server-session-1\"}\n")
+            case .providerCreate:
+                return .success("{\"provider_id\":\"provider-1\"}\n")
+            case .providerUpdate:
+                return .success("{\"provider_id\":\"provider-1\"}\n")
+            case .providerSelect:
+                return .success("{\"selected_provider_id\":\"provider-1\"}\n")
             case .serverStart(let options):
-                return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
+                return .success(makeCLIServerSnapshotJSON(providerID: options.providerID))
             case .chatRun(let options):
                 let assistantText = options.modelID == derivedModelID ? "DERIVED_OK" : "BASE_OK"
                 return .success(
                     """
                     {
                       "model_id": "\(options.modelID)",
-                      "server_session_id": "server-session-1",
+                      "provider_id": "provider-1",
                       "assistant_text": "\(assistantText)",
                       "finish_reason": "stop",
                       "request_id": "chat-\(assistantText.lowercased())"
@@ -10275,7 +10323,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                 matrixSuites: ["smoke"],
                 evaluationSuites: ["mmlu"],
                 evaluationDataset: "mmlu.dev.v1",
-                serverSessionID: "server-session-1",
+                providerID: "provider-1",
                 cliEvidenceBundlePath: cliBundlePath.path,
                 timestamp: "2026-04-09T120000Z"
             ),
@@ -10346,7 +10394,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         derivedModel.modelID = "\(materializedModelID)-lora-adapter"
         snapshot.models = [fallbackTextModel, importedModel, derivedModel]
         var runtimeSession = makeDesktopRuntimeSession()
-        runtimeSession.providerID = "server-session-1"
+        runtimeSession.providerID = "provider-1"
         runtimeSession.lifecycleState = .ready
         runtimeSession.powerState = .active
         snapshot.providers = [runtimeSession]
@@ -10367,20 +10415,20 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                 )
             case .modelRootsRescan:
                 return .success("{\"registry_roots\":[\"/tmp/melix-managed\"]}\n")
-            case .serverSessionCreate:
-                return .success("{\"server_session_id\":\"server-session-1\"}\n")
-            case .serverSessionUpdate:
-                return .success("{\"server_session_id\":\"server-session-1\"}\n")
-            case .serverSessionSelect:
-                return .success("{\"selected_server_session_id\":\"server-session-1\"}\n")
+            case .providerCreate:
+                return .success("{\"provider_id\":\"provider-1\"}\n")
+            case .providerUpdate:
+                return .success("{\"provider_id\":\"provider-1\"}\n")
+            case .providerSelect:
+                return .success("{\"selected_provider_id\":\"provider-1\"}\n")
             case .serverStart(let options):
-                return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
+                return .success(makeCLIServerSnapshotJSON(providerID: options.providerID))
             case .chatRun:
                 return .success(
                     """
                     {
                       "model_id": "\(materializedModelID)",
-                      "server_session_id": "server-session-1",
+                      "provider_id": "provider-1",
                       "assistant_text": "BASE_OK",
                       "finish_reason": "stop",
                       "request_id": "chat-base"
@@ -10417,7 +10465,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                 matrixSuites: ["smoke"],
                 evaluationSuites: ["mmlu"],
                 evaluationDataset: "mmlu.dev.v1",
-                serverSessionID: "server-session-1",
+                providerID: "provider-1",
                 cliEvidenceBundlePath: cliBundlePath.path,
                 timestamp: "2026-04-09T120000Z"
             ),
@@ -10484,18 +10532,18 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                 )
             case .modelRootsRescan:
                 return .success("{\"registry_roots\":[\"/tmp/melix-managed\"]}\n")
-            case .serverSessionUpdate:
-                return .success("{\"server_session_id\":\"server-session-1\"}\n")
-            case .serverSessionSelect:
-                return .success("{\"selected_server_session_id\":\"server-session-1\"}\n")
+            case .providerUpdate:
+                return .success("{\"provider_id\":\"provider-1\"}\n")
+            case .providerSelect:
+                return .success("{\"selected_provider_id\":\"provider-1\"}\n")
             case .serverStart(let options):
-                return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
+                return .success(makeCLIServerSnapshotJSON(providerID: options.providerID))
             case .chatRun:
                 return .success(
                     """
                     {
                       "model_id": "melix-dev-text",
-                      "server_session_id": "server-session-1",
+                      "provider_id": "provider-1",
                       "assistant_text": "BASE_OK",
                       "finish_reason": "stop",
                       "request_id": "chat-base"
@@ -10602,7 +10650,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                 matrixSuites: ["smoke"],
                 evaluationSuites: ["mmlu"],
                 evaluationDataset: "mmlu.dev.v1",
-                serverSessionID: "server-session-1",
+                providerID: "provider-1",
                 cliEvidenceBundlePath: cliBundlePath.path,
                 timestamp: "2026-04-09T120000Z"
             ),
@@ -10976,8 +11024,8 @@ private func expectedDesktopJobTimestampText(_ unixMS: Int64) -> String {
 
 @MainActor
 private func bindSelectedChatSessionToPrimaryServer(_ viewModel: RuntimeViewModel) throws {
-    let serverSessionID = try #require(viewModel.selectedServerSession?.id)
-    viewModel.bindSelectedChatSessionToServer(serverSessionID: serverSessionID)
+    let providerID = try #require(viewModel.selectedServerSession?.id)
+    viewModel.bindSelectedChatSessionToServer(providerID: providerID)
 }
 
 @MainActor
@@ -11042,7 +11090,7 @@ private func waitForRecordedCLICommandCount(
 }
 
 private func makeDesktopRuntimeSession(
-    serverSessionID: String = "server-session-1",
+    providerID: String = "provider-1",
     lifecycleState: Melix_Controlplane_V1_ProviderLifecycleState = .ready,
     powerState: Melix_Controlplane_V1_ProviderPowerState = .active,
     wakeReason: Melix_Controlplane_V1_ProviderWakeReason = .initialBoot,
@@ -11052,7 +11100,7 @@ private func makeDesktopRuntimeSession(
     deepSleepAfterSeconds: UInt32 = 1800
 ) -> Melix_Controlplane_V1_ProviderRuntimeState {
     var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
-    runtimeSession.providerID = serverSessionID
+    runtimeSession.providerID = providerID
     runtimeSession.lifecycleState = lifecycleState
     runtimeSession.powerState = powerState
     runtimeSession.wakeReason = wakeReason

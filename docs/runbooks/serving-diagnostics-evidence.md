@@ -36,7 +36,7 @@ comparisons.
 
 Serving acceleration profiles are stable operator-facing intents that resolve
 before lower-level serving overrides. Use them when creating or updating a
-server session so reports, diagnostics, and benchmark artifacts can state the
+provider so reports, diagnostics, and benchmark artifacts can state the
 chosen serving intent instead of only listing individual knobs.
 
 Initial profiles:
@@ -51,14 +51,14 @@ Initial profiles:
 Examples:
 
 ```bash
-melix server session create \
+melix provider create \
   --title "Qwen low-memory" \
   --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --acceleration-profile low-memory \
   --json
 
-melix server session update \
-  --server-session-id server-session-qwen \
+melix provider update \
+  --provider-id provider-qwen \
   --acceleration-profile throughput \
   --draft-model-id z-lab/Qwen3.5-27B-DFlash \
   --json

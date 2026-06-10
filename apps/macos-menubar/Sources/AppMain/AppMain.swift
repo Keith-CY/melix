@@ -429,7 +429,7 @@ public final class MelixMenuBarBootstrap {
         operatorSessionStore: (any OperatorSessionStoring)? = nil,
         cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
         operatorCommandRunner: MelixCLIRunner? = nil,
-        serverSessionAPIKeyStore: (any ServerSessionAPIKeyStoring)? = nil,
+        providerAPIKeyStore: (any ProviderAPIKeyStoring)? = nil,
         remoteServerStore: (any RemoteServerStoring)? = nil,
         evaluationPromptStore: (any EvaluationPromptStoring)? = nil,
         loraTrainingJobStore: (any LoraTrainingJobStoring)? = nil,
@@ -468,7 +468,7 @@ public final class MelixMenuBarBootstrap {
                 )
                 : nil
         )
-        let resolvedServerSessionAPIKeyStore = serverSessionAPIKeyStore ?? ServerSessionAPIKeyStore(melixHome: melixHome)
+        let resolvedProviderAPIKeyStore = providerAPIKeyStore ?? ProviderAPIKeyStore(melixHome: melixHome)
         let resolvedRemoteServerStore = remoteServerStore ?? RemoteServerStore(melixHome: melixHome)
         let resolvedEvaluationPromptStore = evaluationPromptStore ?? EvaluationPromptStore(melixHome: melixHome)
         let resolvedLoraTrainingJobStore = loraTrainingJobStore ?? LoraTrainingJobStore(melixHome: melixHome)
@@ -479,7 +479,7 @@ public final class MelixMenuBarBootstrap {
             operatorSessionStore: resolvedOperatorSessionStore,
             cliWorkflowRunner: cliWorkflowRunner,
             operatorCommandRunner: resolvedOperatorCommandRunner,
-            serverSessionAPIKeyStore: resolvedServerSessionAPIKeyStore,
+            providerAPIKeyStore: resolvedProviderAPIKeyStore,
             remoteServerStore: resolvedRemoteServerStore,
             evaluationPromptStore: resolvedEvaluationPromptStore,
             loraTrainingJobStore: resolvedLoraTrainingJobStore,
@@ -557,7 +557,7 @@ public final class MelixMenuBarBootstrap {
             melixHome: melixHome,
             operatorSessionStore: OperatorSessionStore(melixHome: melixHome),
             cliWorkflowRunner: cliWorkflowRunner,
-            serverSessionAPIKeyStore: ServerSessionAPIKeyStore(melixHome: melixHome),
+            providerAPIKeyStore: ProviderAPIKeyStore(melixHome: melixHome),
             remoteServerStore: RemoteServerStore(melixHome: melixHome),
             evaluationPromptStore: EvaluationPromptStore(melixHome: melixHome),
             loraTrainingJobStore: LoraTrainingJobStore(melixHome: melixHome),

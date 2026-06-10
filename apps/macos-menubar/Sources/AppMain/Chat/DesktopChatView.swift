@@ -365,31 +365,31 @@ struct DesktopChatSessionWorkspace: View {
 
     func startSelectedChatServerSession() {
         Task {
-            guard let serverSessionID = viewModel.selectedChatServerSession?.id else {
+            guard let providerID = viewModel.selectedChatServerSession?.id else {
                 openServerSurface()
                 return
             }
-            await viewModel.startServerSession(id: serverSessionID)
+            await viewModel.startServerSession(id: providerID)
         }
     }
 
     func resumeSelectedChatServerSession() {
         Task {
-            guard let serverSessionID = viewModel.selectedChatServerSession?.id else {
+            guard let providerID = viewModel.selectedChatServerSession?.id else {
                 openServerSurface()
                 return
             }
-            await viewModel.resumeServerSession(id: serverSessionID)
+            await viewModel.resumeServerSession(id: providerID)
         }
     }
 
     func wakeSelectedChatServerSession() {
         Task {
-            guard let serverSessionID = viewModel.selectedChatServerSession?.id else {
+            guard let providerID = viewModel.selectedChatServerSession?.id else {
                 openServerSurface()
                 return
             }
-            await viewModel.wakeServerSession(id: serverSessionID)
+            await viewModel.wakeServerSession(id: providerID)
         }
     }
 
@@ -704,13 +704,13 @@ private struct DesktopChatServerPicker: View {
 
     private var selectedServerBinding: Binding<String> {
         Binding(
-            get: { viewModel.selectedChatSession?.serverSessionID ?? "" },
-            set: { viewModel.bindSelectedChatSessionToServer(serverSessionID: $0) }
+            get: { viewModel.selectedChatSession?.providerID ?? "" },
+            set: { viewModel.bindSelectedChatSessionToServer(providerID: $0) }
         )
     }
 
     var body: some View {
-        if viewModel.serverSessions.isEmpty {
+        if viewModel.providers.isEmpty {
             Button {
                 viewModel.selectSurface(.server)
             } label: {
@@ -724,7 +724,7 @@ private struct DesktopChatServerPicker: View {
         } else {
             Picker("Server", selection: selectedServerBinding) {
                 Text("Choose Server").tag("")
-                ForEach(viewModel.serverSessions) { session in
+                ForEach(viewModel.providers) { session in
                     Text(session.title).tag(session.id)
                 }
             }
@@ -868,7 +868,7 @@ struct DesktopChatComposerSurface: View {
     let isStreaming: Bool
     let statusText: String
     let usageText: String
-    let serverSession: DesktopServerSessionState?
+    let serverSession: DesktopProviderState?
     let capabilities: [DesktopChatCapabilityRow]
     let onCommandSubmit: (String) -> Void
     let onSubmit: () -> Void
@@ -978,7 +978,7 @@ struct DesktopChatRuntimeControlStrip: View {
         let isProminent: Bool
     }
 
-    let serverSession: DesktopServerSessionState?
+    let serverSession: DesktopProviderState?
     let capabilities: [DesktopChatCapabilityRow]
     let onOpenServer: () -> Void
     let onStartServer: () -> Void
@@ -1062,7 +1062,7 @@ struct DesktopChatRuntimeControlStrip: View {
 }
 
 struct DesktopChatRuntimeServerCapsule: View {
-    let serverSession: DesktopServerSessionState?
+    let serverSession: DesktopProviderState?
 
     var body: some View {
         HStack(spacing: 6) {

@@ -7,7 +7,7 @@
     "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
     "repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
     "revision": "main",
-    "server_session_id": "server-session-1",
+    "provider_id": "provider-1",
     "server_title": "Phase 8 Acceptance",
     "host": "127.0.0.1",
     "port": 8080,
@@ -110,10 +110,10 @@
       "args": {}
     },
     {
-      "id": "update_server_session",
-      "command": "server.session.update",
+      "id": "update_provider",
+      "command": "provider.update",
       "args": {
-        "server_session_id": "${inputs.server_session_id}",
+        "provider_id": "${inputs.provider_id}",
         "title": "${inputs.server_title}",
         "default_model_id": "${inputs.model_id}",
         "served_model_ids": ["${inputs.model_id}"],
@@ -127,7 +127,7 @@
       "id": "start_server",
       "command": "server.start",
       "args": {
-        "server_session_id": "${inputs.server_session_id}"
+        "provider_id": "${inputs.provider_id}"
       }
     },
     {
@@ -135,7 +135,7 @@
       "command": "chat.run",
       "args": {
         "model_id": "${inputs.model_id}",
-        "server_session_id": "${inputs.server_session_id}",
+        "provider_id": "${inputs.provider_id}",
         "message": "${inputs.base_chat_message}"
       },
       "checks": {
@@ -182,7 +182,7 @@
       "command": "chat.run",
       "args": {
         "model_id": "${inputs.derived_model_alias}",
-        "server_session_id": "${inputs.server_session_id}",
+        "provider_id": "${inputs.provider_id}",
         "message": "${inputs.derived_chat_message}"
       },
       "checks": {

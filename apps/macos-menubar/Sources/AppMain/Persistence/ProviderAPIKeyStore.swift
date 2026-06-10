@@ -1,38 +1,38 @@
 import Foundation
 
-public struct ServerSessionPrimaryAPIKeyRecord: Codable, Equatable, Sendable {
-    public var serverSessionID: String
+public struct ProviderPrimaryAPIKeyRecord: Codable, Equatable, Sendable {
+    public var providerID: String
     public var keyID: String
     public var primaryKey: String
     public var updatedAt: Date
 
     public init(
-        serverSessionID: String,
+        providerID: String,
         keyID: String,
         primaryKey: String,
         updatedAt: Date
     ) {
-        self.serverSessionID = serverSessionID
+        self.providerID = providerID
         self.keyID = keyID
         self.primaryKey = primaryKey
         self.updatedAt = updatedAt
     }
 
     enum CodingKeys: String, CodingKey {
-        case serverSessionID = "server_session_id"
+        case providerID = "provider_id"
         case keyID = "key_id"
         case primaryKey = "primary_key"
         case updatedAt = "updated_at"
     }
 }
 
-private struct ServerSessionAPIKeyStoreDocument: Codable, Equatable, Sendable {
+private struct ProviderAPIKeyStoreDocument: Codable, Equatable, Sendable {
     var schemaVersion: Int
-    var sessions: [ServerSessionPrimaryAPIKeyRecord]
+    var sessions: [ProviderPrimaryAPIKeyRecord]
 
     init(
         schemaVersion: Int = 1,
-        sessions: [ServerSessionPrimaryAPIKeyRecord] = []
+        sessions: [ProviderPrimaryAPIKeyRecord] = []
     ) {
         self.schemaVersion = schemaVersion
         self.sessions = sessions
@@ -44,31 +44,31 @@ private struct ServerSessionAPIKeyStoreDocument: Codable, Equatable, Sendable {
     }
 }
 
-public protocol ServerSessionAPIKeyStoring: Sendable {
-    func loadPrimaryKey(serverSessionID: String) throws -> ServerSessionPrimaryAPIKeyRecord?
+public protocol ProviderAPIKeyStoring: Sendable {
+    func loadPrimaryKey(providerID: String) throws -> ProviderPrimaryAPIKeyRecord?
     @discardableResult
     func savePrimaryKey(
-        serverSessionID: String,
+        providerID: String,
         primaryKey: String,
         keyID: String
-    ) throws -> ServerSessionPrimaryAPIKeyRecord
+    ) throws -> ProviderPrimaryAPIKeyRecord
 }
 
-public struct NullServerSessionAPIKeyStore: ServerSessionAPIKeyStoring {
+public struct NullProviderAPIKeyStore: ProviderAPIKeyStoring {
     public init() {}
 
-    public func loadPrimaryKey(serverSessionID: String) throws -> ServerSessionPrimaryAPIKeyRecord? {
-        _ = serverSessionID
+    public func loadPrimaryKey(providerID: String) throws -> ProviderPrimaryAPIKeyRecord? {
+        _ = providerID
         return nil
     }
 
     public func savePrimaryKey(
-        serverSessionID: String,
+        providerID: String,
         primaryKey: String,
         keyID: String
-    ) throws -> ServerSessionPrimaryAPIKeyRecord {
-        ServerSessionPrimaryAPIKeyRecord(
-            serverSessionID: serverSessionID,
+    ) throws -> ProviderPrimaryAPIKeyRecord {
+        ProviderPrimaryAPIKeyRecord(
+            providerID: providerID,
             keyID: keyID,
             primaryKey: primaryKey,
             updatedAt: Date()
@@ -76,50 +76,50 @@ public struct NullServerSessionAPIKeyStore: ServerSessionAPIKeyStoring {
     }
 }
 
-public struct ServerSessionAPIKeyStore: ServerSessionAPIKeyStoring {
+public struct ProviderAPIKeyStore: ProviderAPIKeyStoring {
     private let melixHome: MelixHome
 
     public init(melixHome: MelixHome) {
         self.melixHome = melixHome
     }
 
-    public func loadPrimaryKey(serverSessionID: String) throws -> ServerSessionPrimaryAPIKeyRecord? {
+    public func loadPrimaryKey(providerID: String) throws -> ProviderPrimaryAPIKeyRecord? {
         let document = try loadDocument()
-        return document.sessions.first(where: { $0.serverSessionID == serverSessionID })
+        return document.sessions.first(where: { $0.providerID == providerID })
     }
 
     @discardableResult
     public func savePrimaryKey(
-        serverSessionID: String,
+        providerID: String,
         primaryKey: String,
         keyID: String = "primary"
-    ) throws -> ServerSessionPrimaryAPIKeyRecord {
+    ) throws -> ProviderPrimaryAPIKeyRecord {
         var document = try loadDocument()
-        let record = ServerSessionPrimaryAPIKeyRecord(
-            serverSessionID: serverSessionID,
+        let record = ProviderPrimaryAPIKeyRecord(
+            providerID: providerID,
             keyID: keyID,
             primaryKey: primaryKey,
             updatedAt: Date()
         )
-        if let index = document.sessions.firstIndex(where: { $0.serverSessionID == serverSessionID }) {
+        if let index = document.sessions.firstIndex(where: { $0.providerID == providerID }) {
             document.sessions[index] = record
         } else {
             document.sessions.append(record)
-            document.sessions.sort { $0.serverSessionID < $1.serverSessionID }
+            document.sessions.sort { $0.providerID < $1.providerID }
         }
         let data = try Self.encoder.encode(document)
-        try melixHome.writeAtomically(data, to: melixHome.serverSessionAPIKeysFileURL)
+        try melixHome.writeAtomically(data, to: melixHome.providerAPIKeysFileURL)
         return record
     }
 
-    private func loadDocument() throws -> ServerSessionAPIKeyStoreDocument {
+    private func loadDocument() throws -> ProviderAPIKeyStoreDocument {
         let fileManager = FileManager.default
-        let fileURL = melixHome.serverSessionAPIKeysFileURL
+        let fileURL = melixHome.providerAPIKeysFileURL
         guard fileManager.fileExists(atPath: fileURL.path) else {
-            return ServerSessionAPIKeyStoreDocument()
+            return ProviderAPIKeyStoreDocument()
         }
         let data = try Data(contentsOf: fileURL)
-        return try Self.decoder.decode(ServerSessionAPIKeyStoreDocument.self, from: data)
+        return try Self.decoder.decode(ProviderAPIKeyStoreDocument.self, from: data)
     }
 
     private static let encoder: JSONEncoder = {

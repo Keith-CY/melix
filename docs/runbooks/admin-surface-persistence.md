@@ -16,8 +16,8 @@ The current payload includes:
 
 - `selected_surface`
 - `selected_tool_section`
-- `selected_server_session_id`
-- `server_sessions`
+- `selected_provider_id`
+- `providers`
 
 `selected_tool_section` is persisted even when the operator is not currently focused on the Tools
 surface. This keeps the last-selected tools workspace deterministic the next time the operator

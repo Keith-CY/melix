@@ -332,7 +332,8 @@ public actor ControlPlaneService {
             throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: request coordinator is not configured")
         }
 
-        switch await prepareDefaultServerSessionForServingActivity() {
+        let chatProviderID = normalizedProviderID(request.providerID)
+        switch await prepareServerSessionForServingActivity(providerID: chatProviderID) {
         case .blocked(let code, let message):
             let detail = message.isEmpty ? code : "\(code): \(message)"
             throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: \(detail)")
@@ -423,7 +424,7 @@ public actor ControlPlaneService {
             modelOCRPolicy: modelOCRPolicy,
             modelSamplingPolicy: modelSamplingPolicy,
             gatewayServingDefaults: await gatewayServingDefaultsStore.requestedDefaults(
-                serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID
+                serverSessionID: chatProviderID
             ).resolvingAccelerationCompatibility(for: resolvedModel),
             mcpToolCatalog: mcpToolCatalog
         )
@@ -4792,13 +4793,17 @@ public actor ControlPlaneService {
         }
     }
 
-    private func prepareDefaultServerSessionForServingActivity() async -> ServingSessionPreparation {
+    private func prepareServerSessionForServingActivity(providerID: String) async -> ServingSessionPreparation {
+        let normalizedProviderID = normalizedProviderID(providerID)
         let runtimeSessions = await serverSessionRuntimeStore.snapshot(
             hasActiveRequests: await schedulerReadModel.hasActiveRequests()
         )
         let defaultSession = runtimeSessions.first(where: {
-            $0.providerID == ServerSessionRuntimeStore.defaultServerSessionID
-        }) ?? runtimeSessions.first ?? ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 0)
+            $0.providerID == normalizedProviderID
+        }) ?? ServerSessionRuntimeStore.defaultRuntimeSession(
+            serverSessionID: normalizedProviderID,
+            updatedAtUnixMS: 0
+        )
 
         switch defaultSession.lifecycleState {
         case .paused:
@@ -4829,6 +4834,15 @@ public actor ControlPlaneService {
             )
             return .ready(publishStateChanged: false)
         }
+    }
+
+    private func prepareDefaultServerSessionForServingActivity() async -> ServingSessionPreparation {
+        await prepareServerSessionForServingActivity(providerID: ServerSessionRuntimeStore.defaultServerSessionID)
+    }
+
+    private func normalizedProviderID(_ providerID: String) -> String {
+        let trimmedProviderID = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedProviderID.isEmpty ? ServerSessionRuntimeStore.defaultServerSessionID : trimmedProviderID
     }
 
     private func publishCurrentServerState(source: String) async {

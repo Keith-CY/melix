@@ -5,9 +5,9 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
     public var schemaVersion: Int
     public var selectedSurface: DesktopSurface
     public var selectedToolSection: DesktopToolSection
-    public var selectedServerSessionID: String
+    public var selectedProviderID: String
     public var selectedRuntimeJobID: String
-    public var serverSessions: [DesktopServerSessionState]
+    public var providers: [DesktopProviderState]
     public var dismissedBannerIDs: [String]
     public var downloadQueue: [RuntimeDownloadQueueEntryState]
     public var registryRoots: [String]
@@ -17,9 +17,9 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         schemaVersion: Int = 6,
         selectedSurface: DesktopSurface,
         selectedToolSection: DesktopToolSection = .modelsLibrary,
-        selectedServerSessionID: String,
+        selectedProviderID: String,
         selectedRuntimeJobID: String = "",
-        serverSessions: [DesktopServerSessionState],
+        providers: [DesktopProviderState],
         dismissedBannerIDs: [String] = [],
         downloadQueue: [RuntimeDownloadQueueEntryState] = [],
         registryRoots: [String] = [],
@@ -28,9 +28,9 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         self.schemaVersion = max(schemaVersion, 6)
         self.selectedSurface = selectedSurface
         self.selectedToolSection = selectedToolSection
-        self.selectedServerSessionID = selectedServerSessionID
+        self.selectedProviderID = selectedProviderID
         self.selectedRuntimeJobID = selectedRuntimeJobID
-        self.serverSessions = serverSessions
+        self.providers = providers
         self.dismissedBannerIDs = dismissedBannerIDs
         self.downloadQueue = downloadQueue
         self.registryRoots = registryRoots
@@ -41,9 +41,9 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         case schemaVersion = "schema_version"
         case selectedSurface = "selected_surface"
         case selectedToolSection = "selected_tool_section"
-        case selectedServerSessionID = "selected_server_session_id"
+        case selectedProviderID = "selected_provider_id"
         case selectedRuntimeJobID = "selected_runtime_job_id"
-        case serverSessions = "server_sessions"
+        case providers = "providers"
         case dismissedBannerIDs = "dismissed_banner_ids"
         case downloadQueue = "download_queue"
         case registryRoots = "registry_roots"
@@ -59,9 +59,9 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
             schemaVersion: try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 4,
             selectedSurface: DesktopSurface(operatorSessionID: selectedSurfaceID, selectedToolSection: selectedToolSection),
             selectedToolSection: selectedToolSection,
-            selectedServerSessionID: try container.decodeIfPresent(String.self, forKey: .selectedServerSessionID) ?? "",
+            selectedProviderID: try container.decodeIfPresent(String.self, forKey: .selectedProviderID) ?? "",
             selectedRuntimeJobID: try container.decodeIfPresent(String.self, forKey: .selectedRuntimeJobID) ?? "",
-            serverSessions: try container.decodeIfPresent([DesktopServerSessionState].self, forKey: .serverSessions) ?? [],
+            providers: try container.decodeIfPresent([DesktopProviderState].self, forKey: .providers) ?? [],
             dismissedBannerIDs: try container.decodeIfPresent([String].self, forKey: .dismissedBannerIDs) ?? [],
             downloadQueue: try container.decodeIfPresent([RuntimeDownloadQueueEntryState].self, forKey: .downloadQueue) ?? [],
             registryRoots: try container.decodeIfPresent([String].self, forKey: .registryRoots) ?? [],
@@ -75,9 +75,9 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         try container.encode(schemaVersion, forKey: .schemaVersion)
         try container.encode(selectedSurface.operatorSessionID, forKey: .selectedSurface)
         try container.encode(selectedToolSection.operatorSessionID, forKey: .selectedToolSection)
-        try container.encode(selectedServerSessionID, forKey: .selectedServerSessionID)
+        try container.encode(selectedProviderID, forKey: .selectedProviderID)
         try container.encode(selectedRuntimeJobID, forKey: .selectedRuntimeJobID)
-        try container.encode(serverSessions, forKey: .serverSessions)
+        try container.encode(providers, forKey: .providers)
         try container.encode(dismissedBannerIDs, forKey: .dismissedBannerIDs)
         try container.encode(downloadQueue, forKey: .downloadQueue)
         try container.encode(registryRoots, forKey: .registryRoots)
@@ -133,9 +133,9 @@ private extension OperatorSessionState {
                 selectedToolSection: selectedToolSection
             ),
             selectedToolSection: selectedToolSection,
-            selectedServerSessionID: sharedState.selectedServerSessionID,
+            selectedProviderID: sharedState.selectedProviderID,
             selectedRuntimeJobID: sharedState.selectedRuntimeJobID,
-            serverSessions: sharedState.serverSessions.map(DesktopServerSessionState.init(sharedState:)),
+            providers: sharedState.providers.map(DesktopProviderState.init(sharedState:)),
             dismissedBannerIDs: sharedState.dismissedBannerIDs,
             downloadQueue: sharedState.downloadQueue.map(RuntimeDownloadQueueEntryState.init(sharedState:)),
             registryRoots: sharedState.registryRoots,
@@ -148,9 +148,9 @@ private extension OperatorSessionState {
             schemaVersion: schemaVersion,
             selectedSurfaceID: selectedSurface.operatorSessionID,
             selectedToolSectionID: selectedToolSection.operatorSessionID,
-            selectedServerSessionID: selectedServerSessionID,
+            selectedProviderID: selectedProviderID,
             selectedRuntimeJobID: selectedRuntimeJobID,
-            serverSessions: serverSessions.map(\.sharedState),
+            providers: providers.map(\.sharedState),
             dismissedBannerIDs: dismissedBannerIDs,
             downloadQueue: downloadQueue.map(\.sharedState),
             registryRoots: registryRoots,
@@ -177,8 +177,8 @@ private extension DesktopPaneVisibilityState {
     }
 }
 
-private extension DesktopServerServingDefaultsState {
-    init(sharedState: MelixOperatorServerServingDefaultsState) {
+private extension DesktopProviderServingDefaultsState {
+    init(sharedState: MelixOperatorProviderServingDefaultsState) {
         self.init(
             temperature: sharedState.temperature,
             topP: sharedState.topP,
@@ -196,8 +196,8 @@ private extension DesktopServerServingDefaultsState {
         )
     }
 
-    var sharedState: MelixOperatorServerServingDefaultsState {
-        MelixOperatorServerServingDefaultsState(
+    var sharedState: MelixOperatorProviderServingDefaultsState {
+        MelixOperatorProviderServingDefaultsState(
             temperature: temperature,
             topP: topP,
             maxTokens: maxTokens,
@@ -214,8 +214,8 @@ private extension DesktopServerServingDefaultsState {
     }
 }
 
-private extension DesktopServerSessionState {
-    init(sharedState: MelixOperatorServerSessionState) {
+private extension DesktopProviderState {
+    init(sharedState: MelixOperatorProviderState) {
         self.init(
             id: sharedState.id,
             title: sharedState.title,
@@ -228,8 +228,8 @@ private extension DesktopServerSessionState {
             rateLimitPerMinute: sharedState.rateLimitPerMinute,
             timeoutSeconds: sharedState.timeoutSeconds,
             modelIdleTimeoutSeconds: sharedState.modelIdleTimeoutSeconds,
-            servingDefaults: DesktopServerServingDefaultsState(sharedState: sharedState.servingDefaults),
-            lifecycle: DesktopServerSessionLifecycle(sharedState: sharedState.lifecycle),
+            servingDefaults: DesktopProviderServingDefaultsState(sharedState: sharedState.servingDefaults),
+            lifecycle: DesktopProviderLifecycle(sharedState: sharedState.lifecycle),
             autoSleepEnabled: sharedState.autoSleepEnabled,
             lightSleepAfterSeconds: sharedState.lightSleepAfterSeconds,
             deepSleepAfterSeconds: sharedState.deepSleepAfterSeconds,
@@ -240,8 +240,8 @@ private extension DesktopServerSessionState {
         )
     }
 
-    var sharedState: MelixOperatorServerSessionState {
-        MelixOperatorServerSessionState(
+    var sharedState: MelixOperatorProviderState {
+        MelixOperatorProviderState(
             id: id,
             title: title,
             defaultModelID: defaultModelID,
@@ -314,8 +314,8 @@ private extension RuntimeDownloadQueueEntryState {
     }
 }
 
-private extension DesktopServerSessionLifecycle {
-    init(sharedState: MelixOperatorServerSessionLifecycle) {
+private extension DesktopProviderLifecycle {
+    init(sharedState: MelixOperatorProviderLifecycle) {
         switch sharedState {
         case .draft:
             self = .draft
@@ -338,7 +338,7 @@ private extension DesktopServerSessionLifecycle {
         }
     }
 
-    var sharedState: MelixOperatorServerSessionLifecycle {
+    var sharedState: MelixOperatorProviderLifecycle {
         switch self {
         case .draft:
             return .draft

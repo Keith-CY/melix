@@ -121,7 +121,7 @@ class AcceptanceBundleConfig:
     matrix_suites: list[str]
     evaluation_suites: list[str]
     evaluation_dataset: str
-    server_session_id: str
+    provider_id: str
     local_model_path: str
     live: bool
     timestamp: str
@@ -353,37 +353,36 @@ def run_acceptance_bundle(
     )
     _write_json(cli_receipts_root / "02-registry-rescan.json", registry_rescan_receipt)
 
-    server_update = _expect_mapping(
+    provider_update = _expect_mapping(
         executor.run_json(
             [
-                "server",
-                "session",
+                "provider",
                 "update",
-                "--server-session-id",
-                config.server_session_id,
+                "--provider-id",
+                config.provider_id,
                 "--model",
                 model_id,
                 "--json",
             ]
         ),
-        context="melix server session update",
+        context="melix provider update",
     )
-    _write_json(cli_receipts_root / "03-server-session-update.json", server_update)
+    _write_json(cli_receipts_root / "03-provider-update.json", provider_update)
 
     server_start = _expect_mapping(
         executor.run_json(
             [
                 "server",
                 "start",
-                "--server-session-id",
-                config.server_session_id,
+                "--provider-id",
+                config.provider_id,
                 "--json",
             ]
         ),
         context="melix server start",
     )
     _write_json(cli_receipts_root / "04-server-start.json", server_start)
-    timings["phase8.cli.session_rebind_ms"] = _elapsed_ms(rebind_started_at)
+    timings["phase8.cli.provider_rebind_ms"] = _elapsed_ms(rebind_started_at)
 
     base_chat_started_at = time.perf_counter()
     base_chat_receipt = _expect_mapping(
@@ -703,8 +702,8 @@ def run_acceptance_bundle(
             "manifest_path": str(lora_activate_receipt.get("manifest_path", "")),
         },
         "server": {
-            "server_session_id": config.server_session_id,
-            "update": server_update,
+            "provider_id": config.provider_id,
+            "update": provider_update,
             "start": server_start,
         },
         "datasets": {
@@ -815,9 +814,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--evaluation-suite", action="append", default=[], help="Evaluation suite to execute.")
     parser.add_argument("--evaluation-dataset", required=True, help="Evaluation dataset identifier.")
     parser.add_argument(
-        "--server-session-id",
-        default="server-session-1",
-        help="Server session to rebind and start during acceptance.",
+        "--provider-id",
+        default="provider-1",
+        help="Provider to rebind and start during acceptance.",
     )
     parser.add_argument("--activation-mode", default="", help="Override melix lora activate mode.")
     parser.add_argument("--training-preset", default="", help="Override melix lora train preset.")
@@ -869,7 +868,7 @@ def parse_args(argv: list[str] | None = None) -> AcceptanceBundleConfig:
         matrix_suites=list(args.matrix_suite),
         evaluation_suites=list(args.evaluation_suite),
         evaluation_dataset=args.evaluation_dataset,
-        server_session_id=args.server_session_id,
+        provider_id=args.provider_id,
         local_model_path=local_model_path,
         live=live,
         timestamp=timestamp,
@@ -1083,8 +1082,8 @@ def _cli_step_label(args: list[str]) -> str:
         return f"bench matrix {args[2]}"
     if len(args) >= 3 and args[0] == "model" and args[1] in {"hub", "roots"}:
         return f"model {args[1]} {args[2]}"
-    if len(args) >= 3 and args[0] == "server" and args[1] == "session":
-        return f"server session {args[2]}"
+    if len(args) >= 2 and args[0] == "provider":
+        return f"provider {args[1]}"
     if len(args) >= 2:
         return f"{args[0]} {args[1]}"
     if args:

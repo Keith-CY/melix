@@ -1239,7 +1239,7 @@ public struct ServerSnapshotOptions: Equatable, Sendable {
 }
 
 public struct ServerControlOptions: Equatable, Sendable {
-    public let serverSessionID: String
+    public let providerID: String
     public let serverTitle: String
     public let defaultModelID: String
     public let servedModelIDs: [String]
@@ -1253,7 +1253,7 @@ public struct ServerControlOptions: Equatable, Sendable {
     public let json: Bool
 
     public init(
-        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        providerID: String = MelixProviderDefaults.defaultProviderID,
         serverTitle: String = "",
         defaultModelID: String = "",
         servedModelIDs: [String] = [],
@@ -1266,11 +1266,11 @@ public struct ServerControlOptions: Equatable, Sendable {
         modelIdleTimeoutSeconds: Int = 0,
         json: Bool = false
     ) {
-        if serverSessionID.isEmpty || serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID {
-            self.serverSessionID = MelixServerStartShortcutName.sessionIDCandidate(for: serverTitle)
-                ?? ServerSessionRuntimeStore.defaultServerSessionID
+        if providerID.isEmpty || providerID == MelixProviderDefaults.defaultProviderID {
+            self.providerID = MelixServerStartShortcutName.sessionIDCandidate(for: serverTitle)
+                ?? MelixProviderDefaults.defaultProviderID
         } else {
-            self.serverSessionID = serverSessionID
+            self.providerID = providerID
         }
         self.serverTitle = serverTitle
         let resolvedDefaultModelID = MelixServerModelRosterNormalizer.resolvedDefaultModelID(
@@ -1314,22 +1314,22 @@ private enum MelixServerStartShortcutName {
 }
 
 public struct ServerIdlePolicyOptions: Equatable, Sendable {
-    public let serverSessionID: String
+    public let providerID: String
     public let autoSleepEnabled: Bool
     public let lightSleepAfterSeconds: UInt32
     public let deepSleepAfterSeconds: UInt32
     public let json: Bool
 
     public init(
-        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        providerID: String = MelixProviderDefaults.defaultProviderID,
         autoSleepEnabled: Bool,
         lightSleepAfterSeconds: UInt32,
         deepSleepAfterSeconds: UInt32,
         json: Bool = false
     ) {
-        self.serverSessionID = serverSessionID.isEmpty
-            ? ServerSessionRuntimeStore.defaultServerSessionID
-            : serverSessionID
+        self.providerID = providerID.isEmpty
+            ? MelixProviderDefaults.defaultProviderID
+            : providerID
         self.autoSleepEnabled = autoSleepEnabled
         self.lightSleepAfterSeconds = lightSleepAfterSeconds
         self.deepSleepAfterSeconds = deepSleepAfterSeconds
@@ -1799,7 +1799,7 @@ public struct ChatRunOptions: Equatable, Sendable {
     public let remoteModelID: String
     public let message: String
     public let systemPrompt: String
-    public let serverSessionID: String
+    public let providerID: String
     public let json: Bool
 
     public init(
@@ -1808,7 +1808,7 @@ public struct ChatRunOptions: Equatable, Sendable {
         remoteModelID: String = "",
         message: String,
         systemPrompt: String = "",
-        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        providerID: String = MelixProviderDefaults.defaultProviderID,
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -1816,29 +1816,29 @@ public struct ChatRunOptions: Equatable, Sendable {
         self.remoteModelID = remoteModelID
         self.message = message
         self.systemPrompt = systemPrompt
-        self.serverSessionID = serverSessionID.isEmpty
-            ? ServerSessionRuntimeStore.defaultServerSessionID
-            : serverSessionID
+        self.providerID = providerID.isEmpty
+            ? MelixProviderDefaults.defaultProviderID
+            : providerID
         self.json = json
     }
 }
 
 public struct ChatRunReceipt: Codable, Equatable, Sendable {
     public let modelID: String
-    public let serverSessionID: String
+    public let providerID: String
     public let assistantText: String
     public let finishReason: String
     public let requestID: String
 
     public init(
         modelID: String,
-        serverSessionID: String,
+        providerID: String,
         assistantText: String,
         finishReason: String,
         requestID: String
     ) {
         self.modelID = modelID
-        self.serverSessionID = serverSessionID
+        self.providerID = providerID
         self.assistantText = assistantText
         self.finishReason = finishReason
         self.requestID = requestID
@@ -1883,7 +1883,7 @@ public struct ModelRootsRescanOptions: Equatable, Sendable {
     }
 }
 
-public struct ServerSessionListOptions: Equatable, Sendable {
+public struct ProviderListOptions: Equatable, Sendable {
     public let json: Bool
 
     public init(json: Bool = false) {
@@ -1891,7 +1891,7 @@ public struct ServerSessionListOptions: Equatable, Sendable {
     }
 }
 
-public struct ServerSessionCreateOptions: Equatable, Sendable {
+public struct ProviderCreateOptions: Equatable, Sendable {
     public let title: String
     public let defaultModelID: String
     public let servedModelIDs: [String]
@@ -1954,8 +1954,8 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
 
 }
 
-public struct ServerSessionUpdateOptions: Equatable, Sendable {
-    public let serverSessionID: String
+public struct ProviderUpdateOptions: Equatable, Sendable {
+    public let providerID: String
     public let title: String
     public let defaultModelID: String
     public let servedModelIDs: [String]
@@ -1975,7 +1975,7 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
     public let json: Bool
 
     public init(
-        serverSessionID: String,
+        providerID: String,
         title: String = "",
         defaultModelID: String = "",
         servedModelIDs: [String] = [],
@@ -1994,7 +1994,7 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
         numDraftTokens: Int = 0,
         json: Bool = false
     ) {
-        self.serverSessionID = serverSessionID
+        self.providerID = providerID
         self.title = title
         let resolvedDefaultModelID = MelixServerModelRosterNormalizer.resolvedDefaultModelID(
             defaultModelID,
@@ -2029,12 +2029,12 @@ private func normalizedServerAllowlist(_ values: [String]) -> [String] {
     values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
 }
 
-public struct ServerSessionIDOptions: Equatable, Sendable {
-    public let serverSessionID: String
+public struct ProviderIDOptions: Equatable, Sendable {
+    public let providerID: String
     public let json: Bool
 
-    public init(serverSessionID: String, json: Bool = false) {
-        self.serverSessionID = serverSessionID
+    public init(providerID: String, json: Bool = false) {
+        self.providerID = providerID
         self.json = json
     }
 }
@@ -2388,11 +2388,11 @@ public enum MelixCLICommand: Equatable, Sendable {
     case modelRootsMove(ModelRootsMoveOptions)
     case modelRootsRescan(ModelRootsRescanOptions)
     case serverSnapshot(ServerSnapshotOptions)
-    case serverSessionList(ServerSessionListOptions)
-    case serverSessionCreate(ServerSessionCreateOptions)
-    case serverSessionUpdate(ServerSessionUpdateOptions)
-    case serverSessionRemove(ServerSessionIDOptions)
-    case serverSessionSelect(ServerSessionIDOptions)
+    case providerList(ProviderListOptions)
+    case providerCreate(ProviderCreateOptions)
+    case providerUpdate(ProviderUpdateOptions)
+    case providerRemove(ProviderIDOptions)
+    case providerSelect(ProviderIDOptions)
     case serverStart(ServerControlOptions)
     case serverPause(ServerControlOptions)
     case serverResume(ServerControlOptions)
@@ -2557,6 +2557,8 @@ public enum MelixCLIParser {
             return try parseCookbook(tail)
         case "server":
             return try parseServer(tail)
+        case "provider":
+            return try parseProvider(tail)
         case "remote-server":
             return try parseRemoteServer(tail)
         case "chat":
@@ -2646,23 +2648,23 @@ public enum MelixCLIParser {
       melix model roots move --path PATH --index N [--json]
       melix model roots rescan [--json]
       melix server snapshot [--json]
-      melix server session list [--json]
-      melix server session create --title TITLE (--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]) [--default-model MODEL_ID] [--host HOST] [--port PORT] [--allowed-host HOST ...] [--allowed-origin ORIGIN ...] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
-      melix server session update --server-session-id ID [--title TITLE] [--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]] [--default-model MODEL_ID] [--host HOST] [--port PORT] [--allowed-host HOST ... | --clear-allowed-hosts] [--allowed-origin ORIGIN ... | --clear-allowed-origins] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
-      melix server session remove --server-session-id ID [--json]
-      melix server session select --server-session-id ID [--json]
-      melix server start [TITLE] [--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]] [--default-model MODEL_ID] [--host HOST] [--port PORT] [--allowed-host HOST ...] [--allowed-origin ORIGIN ...] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--server-session-id ID] [--json]
-      melix server pause [--server-session-id ID] [--json]
-      melix server resume [--server-session-id ID] [--json]
-      melix server wake [--server-session-id ID] [--json]
-      melix server stop [--server-session-id ID] [--json]
-      melix server set-idle-policy [--server-session-id ID] --auto-sleep (true|false) --light-sleep-after N --deep-sleep-after N [--json]
+      melix provider list [--json]
+      melix provider create --title TITLE (--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]) [--default-model MODEL_ID] [--host HOST] [--port PORT] [--allowed-host HOST ...] [--allowed-origin ORIGIN ...] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
+      melix provider update --provider-id ID [--title TITLE] [--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]] [--default-model MODEL_ID] [--host HOST] [--port PORT] [--allowed-host HOST ... | --clear-allowed-hosts] [--allowed-origin ORIGIN ... | --clear-allowed-origins] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
+      melix provider remove --provider-id ID [--json]
+      melix provider select --provider-id ID [--json]
+      melix server start [TITLE] [--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]] [--default-model MODEL_ID] [--host HOST] [--port PORT] [--allowed-host HOST ...] [--allowed-origin ORIGIN ...] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--provider-id ID] [--json]
+      melix server pause [--provider-id ID] [--json]
+      melix server resume [--provider-id ID] [--json]
+      melix server wake [--provider-id ID] [--json]
+      melix server stop [--provider-id ID] [--json]
+      melix server set-idle-policy [--provider-id ID] --auto-sleep (true|false) --light-sleep-after N --deep-sleep-after N [--json]
       melix remote-server list [--json]
       melix remote-server add --remote-server-id ID --title TITLE --provider kimi|gemini|deepseek|glm|custom [--base-url URL] --model MODEL [--api-key KEY] [--timeout-seconds N] [--rate-limit-per-minute N] [--tool-support-mode auto|force-on|force-off] [--json]
       melix remote-server update --remote-server-id ID [--title TITLE] [--provider PROVIDER] [--base-url URL] [--model MODEL] [--api-key KEY] [--timeout-seconds N] [--rate-limit-per-minute N] [--tool-support-mode auto|force-on|force-off] [--json]
       melix remote-server remove --remote-server-id ID [--json]
       melix remote-server test --remote-server-id ID [--model MODEL] [--json]
-      melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--server-session-id ID] [--json]
+      melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--provider-id ID] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
       melix lora run --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --eval-dataset-id DATASET_ID [--eval-suite SUITE ...] [--output-dir PATH] [--activation-mode (adapter_backed_runtime|fused_derived_model)] [--training-mode auto|lora|qlora|dora] [training options...] [evaluation options...] [--json]
       melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora|dora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--preflight-fit-check] [--allow-memory-risk] [--json]
@@ -3778,26 +3780,23 @@ public enum MelixCLIParser {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
         }
-        if action == "session" {
-            return try parseServerSession(Array(arguments.dropFirst()))
-        }
         if action == "start" {
             return try parseServerStart(Array(arguments.dropFirst()))
         }
         let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
-        let serverSessionID = values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID
+        let providerID = values.single["--provider-id"] ?? MelixProviderDefaults.defaultProviderID
         let json = values.flags.contains("--json")
         switch action {
         case "snapshot":
             return .serverSnapshot(.init(json: json))
         case "pause":
-            return .serverPause(.init(serverSessionID: serverSessionID, json: json))
+            return .serverPause(.init(providerID: providerID, json: json))
         case "resume":
-            return .serverResume(.init(serverSessionID: serverSessionID, json: json))
+            return .serverResume(.init(providerID: providerID, json: json))
         case "wake":
-            return .serverWake(.init(serverSessionID: serverSessionID, json: json))
+            return .serverWake(.init(providerID: providerID, json: json))
         case "stop":
-            return .serverStop(.init(serverSessionID: serverSessionID, json: json))
+            return .serverStop(.init(providerID: providerID, json: json))
         case "set-idle-policy":
             guard let autoSleepValue = values.single["--auto-sleep"] else {
                 throw MelixCLIError.missingRequired("--auto-sleep is required for melix server set-idle-policy.")
@@ -3819,7 +3818,7 @@ public enum MelixCLIParser {
             }
             return .serverSetIdlePolicy(
                 .init(
-                    serverSessionID: serverSessionID,
+                    providerID: providerID,
                     autoSleepEnabled: autoSleepEnabled,
                     lightSleepAfterSeconds: lightSleepAfterSeconds,
                     deepSleepAfterSeconds: deepSleepAfterSeconds,
@@ -3844,7 +3843,7 @@ public enum MelixCLIParser {
         let values = try ArgumentCursor(arguments: optionArguments).parse(
             multiValueOptions: ["--model", "--models", "--allowed-host", "--allowed-origin"]
         )
-        let serverSessionID = values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID
+        let providerID = values.single["--provider-id"] ?? MelixProviderDefaults.defaultProviderID
         let json = values.flags.contains("--json")
         let modelIDs = parsedModelRoster(
             singleModel: "",
@@ -3854,7 +3853,7 @@ public enum MelixCLIParser {
         let defaultModelID = (values.single["--default-model"] ?? modelIDs.first ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return .serverStart(.init(
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             serverTitle: serverTitle,
             defaultModelID: defaultModelID,
             servedModelIDs: modelIDs,
@@ -3881,7 +3880,7 @@ public enum MelixCLIParser {
         ))
     }
 
-    private static func parseServerSession(_ arguments: [String]) throws -> MelixCLICommand {
+    private static func parseProvider(_ arguments: [String]) throws -> MelixCLICommand {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
         }
@@ -3894,10 +3893,10 @@ public enum MelixCLIParser {
         )
         switch action {
         case "list":
-            return .serverSessionList(.init(json: values.flags.contains("--json")))
+            return .providerList(.init(json: values.flags.contains("--json")))
         case "create":
             guard let title = values.single["--title"], !title.isEmpty else {
-                throw MelixCLIError.missingRequired("--title is required for melix server session create.")
+                throw MelixCLIError.missingRequired("--title is required for melix provider create.")
             }
             let modelIDs = parsedModelRoster(
                 singleModel: "",
@@ -3907,7 +3906,7 @@ public enum MelixCLIParser {
             let defaultModelID = (values.single["--default-model"] ?? modelIDs.first ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !defaultModelID.isEmpty else {
-                throw MelixCLIError.missingRequired("--model or --models is required for melix server session create.")
+                throw MelixCLIError.missingRequired("--model or --models is required for melix provider create.")
             }
             let port = try parseIntValue(
                 values.single["--port"],
@@ -3929,8 +3928,8 @@ public enum MelixCLIParser {
                 option: "--model-idle-timeout-seconds",
                 defaultValue: 600
             ) ?? 600
-            let servingDefaults = try parseCreateServerSessionServingDefaults(values)
-            return .serverSessionCreate(
+            let servingDefaults = try parseCreateProviderServingDefaults(values)
+            return .providerCreate(
                 .init(
                     title: title,
                     defaultModelID: defaultModelID,
@@ -3950,8 +3949,8 @@ public enum MelixCLIParser {
                 )
             )
         case "update":
-            guard let serverSessionID = values.single["--server-session-id"], !serverSessionID.isEmpty else {
-                throw MelixCLIError.missingRequired("--server-session-id is required for melix server session update.")
+            guard let providerID = values.single["--provider-id"], !providerID.isEmpty else {
+                throw MelixCLIError.missingRequired("--provider-id is required for melix provider update.")
             }
             let clearAllowedHosts = values.flags.contains("--clear-allowed-hosts")
             let clearAllowedOrigins = values.flags.contains("--clear-allowed-origins")
@@ -3968,10 +3967,10 @@ public enum MelixCLIParser {
             )
             let defaultModelID = (values.single["--default-model"] ?? modelIDs.first ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let servingDefaults = try parseUpdateServerSessionServingDefaults(values)
-            return .serverSessionUpdate(
+            let servingDefaults = try parseUpdateProviderServingDefaults(values)
+            return .providerUpdate(
                 .init(
-                    serverSessionID: serverSessionID,
+                    providerID: providerID,
                     title: values.single["--title"] ?? "",
                     defaultModelID: defaultModelID,
                     servedModelIDs: modelIDs,
@@ -4004,21 +4003,21 @@ public enum MelixCLIParser {
                 )
             )
         case "remove":
-            guard let serverSessionID = values.single["--server-session-id"], !serverSessionID.isEmpty else {
-                throw MelixCLIError.missingRequired("--server-session-id is required for melix server session remove.")
+            guard let providerID = values.single["--provider-id"], !providerID.isEmpty else {
+                throw MelixCLIError.missingRequired("--provider-id is required for melix provider remove.")
             }
-            return .serverSessionRemove(.init(serverSessionID: serverSessionID, json: values.flags.contains("--json")))
+            return .providerRemove(.init(providerID: providerID, json: values.flags.contains("--json")))
         case "select":
-            guard let serverSessionID = values.single["--server-session-id"], !serverSessionID.isEmpty else {
-                throw MelixCLIError.missingRequired("--server-session-id is required for melix server session select.")
+            guard let providerID = values.single["--provider-id"], !providerID.isEmpty else {
+                throw MelixCLIError.missingRequired("--provider-id is required for melix provider select.")
             }
-            return .serverSessionSelect(.init(serverSessionID: serverSessionID, json: values.flags.contains("--json")))
+            return .providerSelect(.init(providerID: providerID, json: values.flags.contains("--json")))
         default:
             throw MelixCLIError.usage(usageText)
         }
     }
 
-    private static func parseCreateServerSessionServingDefaults(
+    private static func parseCreateProviderServingDefaults(
         _ values: ParsedArguments
     ) throws -> (accelerationProfile: String, accelerationMode: String, draftModelID: String, numDraftTokens: Int) {
         let profileID = try normalizedServingDefaultsAccelerationProfile(
@@ -4056,7 +4055,7 @@ public enum MelixCLIParser {
         return (profileID, accelerationMode, draftModelID, numDraftTokens)
     }
 
-    private static func parseUpdateServerSessionServingDefaults(
+    private static func parseUpdateProviderServingDefaults(
         _ values: ParsedArguments
     ) throws -> (accelerationProfile: String, accelerationMode: String, draftModelID: String, numDraftTokens: Int) {
         let profileID = try normalizedServingDefaultsAccelerationProfile(
@@ -4138,7 +4137,7 @@ public enum MelixCLIParser {
                     remoteModelID: remoteModelID,
                     message: message,
                     systemPrompt: values.single["--system"] ?? "",
-                    serverSessionID: values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID,
+                    providerID: values.single["--provider-id"] ?? MelixProviderDefaults.defaultProviderID,
                     json: values.flags.contains("--json")
                 )
             )
@@ -7054,9 +7053,9 @@ public actor MelixCLIRunner {
     }
 
     public func applyConfiguredServerSessionGatewayConfig(
-        serverSessionID: String
+        providerID: String
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        let configuredSession = try loadConfiguredServerSession(id: serverSessionID)
+        let configuredSession = try loadConfiguredProvider(id: providerID)
         return try await client.applyServerSessionGatewayConfig(
             serverSessionID: configuredSession.id,
             host: configuredSession.host,
@@ -7072,9 +7071,9 @@ public actor MelixCLIRunner {
     }
 
     public func applyConfiguredServerSessionServingDefaults(
-        serverSessionID: String
+        providerID: String
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        let configuredSession = try loadConfiguredServerSession(id: serverSessionID)
+        let configuredSession = try loadConfiguredProvider(id: providerID)
         return try await client.applyServerSessionServingDefaults(
             serverSessionID: configuredSession.id,
             temperature: configuredSession.servingDefaults.temperature,
@@ -8180,20 +8179,20 @@ public actor MelixCLIRunner {
         case .serverSnapshot(let options):
             let snapshot = try await client.serverSnapshot()
             return try renderServerSnapshot(snapshot, json: options.json)
-        case .serverSessionList(let options):
+        case .providerList(let options):
             let state = try loadOperatorState()
             if options.json {
-                return try prettyJSON(ServerSessionListResponse(
-                    serverSessions: state.serverSessions,
-                    selectedServerSessionID: state.selectedServerSessionID
+                return try prettyJSON(ProviderListResponse(
+                    providers: state.providers,
+                    selectedProviderID: state.selectedProviderID
                 ))
             }
-            return renderServerSessions(state)
-        case .serverSessionCreate(let options):
+            return renderProviders(state)
+        case .providerCreate(let options):
             var createdID = ""
             let state = try mutateOperatorState { current in
-                let created = MelixOperatorServerSessionState(
-                    id: nextGeneratedServerSessionID(in: current.serverSessions),
+                let created = MelixOperatorProviderState(
+                    id: nextGeneratedProviderID(in: current.providers),
                     title: options.title,
                     defaultModelID: options.defaultModelID,
                     servedModelIDs: options.servedModelIDs,
@@ -8207,23 +8206,23 @@ public actor MelixCLIRunner {
                     servingDefaults: try servingDefaults(for: options),
                     lifecycle: .draft
                 )
-                current.serverSessions.append(created)
-                current.selectedServerSessionID = created.id
+                current.providers.append(created)
+                current.selectedProviderID = created.id
                 createdID = created.id
             }
             if options.json {
-                guard let created = state.serverSessions.first(where: { $0.id == createdID }) else {
-                    throw MelixCLIError.runtime("Created server session \(createdID) was not found in persisted state.")
+                guard let created = state.providers.first(where: { $0.id == createdID }) else {
+                    throw MelixCLIError.runtime("Created provider \(createdID) was not found in persisted state.")
                 }
                 return try prettyJSON(created)
             }
-            return renderServerSessions(state)
-        case .serverSessionUpdate(let options):
+            return renderProviders(state)
+        case .providerUpdate(let options):
             let state = try mutateOperatorState { current in
-                guard let index = current.serverSessions.firstIndex(where: { $0.id == options.serverSessionID }) else {
+                guard let index = current.providers.firstIndex(where: { $0.id == options.providerID }) else {
                     return
                 }
-                var session = current.serverSessions[index]
+                var session = current.providers[index]
                 if options.title.isEmpty == false {
                     session.title = options.title
                 }
@@ -8268,45 +8267,45 @@ public actor MelixCLIRunner {
                 }
                 try applyServingDefaultsUpdate(options, to: &session)
                 session.updatedAt = Date()
-                current.serverSessions[index] = session
+                current.providers[index] = session
             }
             if options.json {
-                guard let updated = state.serverSessions.first(where: { $0.id == options.serverSessionID }) else {
-                    throw MelixCLIError.runtime("Server session \(options.serverSessionID) was not found.")
+                guard let updated = state.providers.first(where: { $0.id == options.providerID }) else {
+                    throw MelixCLIError.runtime("Provider \(options.providerID) was not found.")
                 }
                 return try prettyJSON(updated)
             }
-            return renderServerSessions(state)
-        case .serverSessionRemove(let options):
+            return renderProviders(state)
+        case .providerRemove(let options):
             let state = try mutateOperatorState { current in
-                current.serverSessions.removeAll { $0.id == options.serverSessionID }
-                if current.selectedServerSessionID == options.serverSessionID {
-                    current.selectedServerSessionID = current.serverSessions.first?.id ?? ""
+                current.providers.removeAll { $0.id == options.providerID }
+                if current.selectedProviderID == options.providerID {
+                    current.selectedProviderID = current.providers.first?.id ?? ""
                 }
             }
             if options.json {
                 return try prettyJSON([
-                    "removed_id": options.serverSessionID,
-                    "selected_server_session_id": state.selectedServerSessionID,
+                    "removed_id": options.providerID,
+                    "selected_provider_id": state.selectedProviderID,
                 ])
             }
-            return renderServerSessions(state)
-        case .serverSessionSelect(let options):
+            return renderProviders(state)
+        case .providerSelect(let options):
             let state = try mutateOperatorState { current in
-                if current.serverSessions.contains(where: { $0.id == options.serverSessionID }) {
-                    current.selectedServerSessionID = options.serverSessionID
+                if current.providers.contains(where: { $0.id == options.providerID }) {
+                    current.selectedProviderID = options.providerID
                 }
             }
             if options.json {
                 return try prettyJSON([
-                    "selected_server_session_id": state.selectedServerSessionID,
+                    "selected_provider_id": state.selectedProviderID,
                 ])
             }
-            return renderServerSessions(state)
+            return renderProviders(state)
         case .serverStart(let options):
-            let targetServerSessionID = try upsertServerSessionForStartIfNeeded(options)
-            guard let configuredSession = try configuredServerSessionIfAvailable(id: targetServerSessionID) else {
-                let snapshot = try await client.startServerSession(serverSessionID: targetServerSessionID)
+            let targetProviderID = try upsertProviderForStartIfNeeded(options)
+            guard let configuredSession = try configuredProviderIfAvailable(id: targetProviderID) else {
+                let snapshot = try await client.startServerSession(serverSessionID: targetProviderID)
                 return try renderServerSnapshot(snapshot, json: options.json)
             }
             let serverSnapshot = try await client.serverSnapshot()
@@ -8315,7 +8314,7 @@ public actor MelixCLIRunner {
                     modelID: modelID,
                     serverSnapshot: serverSnapshot
                 ) else {
-                    try markServerSessionUnavailable(
+                    try markProviderUnavailable(
                         id: configuredSession.id,
                         message: "Unavailable",
                         lastError: "Bound model \(modelID) is missing."
@@ -8326,7 +8325,7 @@ public actor MelixCLIRunner {
                     modelID: modelID,
                     serverSnapshot: serverSnapshot
                 ) else {
-                    try markServerSessionUnavailable(
+                    try markProviderUnavailable(
                         id: configuredSession.id,
                         message: "Unavailable",
                         lastError: "Bound model \(modelID) is not serveable."
@@ -8364,31 +8363,31 @@ public actor MelixCLIRunner {
             let snapshot = try await client.startServerSession(serverSessionID: configuredSession.id)
             return try renderServerSnapshot(snapshot, json: options.json)
         case .serverPause(let options):
-            let snapshot = try await client.pauseServerSession(serverSessionID: options.serverSessionID)
+            let snapshot = try await client.pauseServerSession(serverSessionID: options.providerID)
             return try renderServerSnapshot(snapshot, json: options.json)
         case .serverResume(let options):
-            let snapshot = try await client.resumeServerSession(serverSessionID: options.serverSessionID)
+            let snapshot = try await client.resumeServerSession(serverSessionID: options.providerID)
             return try renderServerSnapshot(snapshot, json: options.json)
         case .serverWake(let options):
-            let snapshot = try await client.wakeServerSession(serverSessionID: options.serverSessionID)
+            let snapshot = try await client.wakeServerSession(serverSessionID: options.providerID)
             return try renderServerSnapshot(snapshot, json: options.json)
         case .serverStop(let options):
-            let snapshot = try await client.stopServerSession(serverSessionID: options.serverSessionID)
+            let snapshot = try await client.stopServerSession(serverSessionID: options.providerID)
             return try renderServerSnapshot(snapshot, json: options.json)
         case .serverSetIdlePolicy(let options):
-            if let configuredSession = try configuredServerSessionIfAvailable(id: options.serverSessionID) {
+            if let configuredSession = try configuredProviderIfAvailable(id: options.providerID) {
                 _ = try mutateOperatorState { state in
-                    guard let index = state.serverSessions.firstIndex(where: { $0.id == configuredSession.id }) else {
+                    guard let index = state.providers.firstIndex(where: { $0.id == configuredSession.id }) else {
                         return
                     }
-                    state.serverSessions[index].autoSleepEnabled = options.autoSleepEnabled
-                    state.serverSessions[index].lightSleepAfterSeconds = Int(options.lightSleepAfterSeconds)
-                    state.serverSessions[index].deepSleepAfterSeconds = Int(options.deepSleepAfterSeconds)
-                    state.serverSessions[index].updatedAt = Date()
+                    state.providers[index].autoSleepEnabled = options.autoSleepEnabled
+                    state.providers[index].lightSleepAfterSeconds = Int(options.lightSleepAfterSeconds)
+                    state.providers[index].deepSleepAfterSeconds = Int(options.deepSleepAfterSeconds)
+                    state.providers[index].updatedAt = Date()
                 }
             }
             let snapshot = try await client.updateServerIdlePolicy(
-                serverSessionID: options.serverSessionID,
+                serverSessionID: options.providerID,
                 autoSleepEnabled: options.autoSleepEnabled,
                 lightSleepAfterSeconds: options.lightSleepAfterSeconds,
                 deepSleepAfterSeconds: options.deepSleepAfterSeconds
@@ -8489,7 +8488,8 @@ public actor MelixCLIRunner {
                     ControlPlaneChatRequest(
                         modelID: options.modelID,
                         messages: buildChatMessages(options: options),
-                        remoteTarget: remoteTarget
+                        remoteTarget: remoteTarget,
+                        providerID: options.providerID
                     )
                 )
             } catch {
@@ -8498,7 +8498,7 @@ public actor MelixCLIRunner {
             let result = try await collectChatResult(from: execution)
             let receipt = ChatRunReceipt(
                 modelID: execution.modelID,
-                serverSessionID: options.serverSessionID,
+                providerID: options.providerID,
                 assistantText: result.assistantText,
                 finishReason: result.finishReason,
                 requestID: execution.requestID
@@ -9489,7 +9489,7 @@ public actor MelixCLIRunner {
     }
 
     private func loadOperatorState() throws -> MelixOperatorSessionState {
-        try operatorSessionStore.load() ?? MelixOperatorSessionState(selectedServerSessionID: "", serverSessions: [])
+        try operatorSessionStore.load() ?? MelixOperatorSessionState(selectedProviderID: "", providers: [])
     }
 
     private func commandRequiresConfiguredRegistryRootPriming(_ command: MelixCLICommand) -> Bool {
@@ -9584,9 +9584,9 @@ public actor MelixCLIRunner {
             return try loadOperatorState()
         } catch CocoaError.fileReadNoPermission,
                 CocoaError.fileReadNoSuchFile {
-            return MelixOperatorSessionState(selectedServerSessionID: "", serverSessions: [])
+            return MelixOperatorSessionState(selectedProviderID: "", providers: [])
         } catch {
-            return MelixOperatorSessionState(selectedServerSessionID: "", serverSessions: [])
+            return MelixOperatorSessionState(selectedProviderID: "", providers: [])
         }
     }
 
@@ -9600,13 +9600,13 @@ public actor MelixCLIRunner {
         return state
     }
 
-    private func loadConfiguredServerSession(id: String) throws -> MelixOperatorServerSessionState {
+    private func loadConfiguredProvider(id: String) throws -> MelixOperatorProviderState {
         let state = try loadOperatorState()
-        let resolvedID = id.isEmpty ? state.selectedServerSessionID : id
-        if let session = state.serverSessions.first(where: { $0.id == resolvedID }) {
+        let resolvedID = id.isEmpty ? state.selectedProviderID : id
+        if let session = state.providers.first(where: { $0.id == resolvedID }) {
             return session
         }
-        throw MelixCLIError.runtime("Server session \(resolvedID) is not configured.")
+        throw MelixCLIError.runtime("Provider \(resolvedID) is not configured.")
     }
 
     private func remoteServerStore() -> RemoteServerStore {
@@ -9826,11 +9826,11 @@ public actor MelixCLIRunner {
         return trimmed.isEmpty ? code : trimmed
     }
 
-    private func configuredServerSessionIfAvailable(
+    private func configuredProviderIfAvailable(
         id: String
-    ) throws -> MelixOperatorServerSessionState? {
+    ) throws -> MelixOperatorProviderState? {
         do {
-            return try loadConfiguredServerSession(id: id)
+            return try loadConfiguredProvider(id: id)
         } catch let error as MelixCLIError {
             if case .runtime = error {
                 return nil
@@ -9847,7 +9847,7 @@ public actor MelixCLIRunner {
 
     private func applyServerControlOptions(
         _ options: ServerControlOptions,
-        to session: inout MelixOperatorServerSessionState
+        to session: inout MelixOperatorProviderState
     ) {
         if !options.defaultModelID.isEmpty {
             session.defaultModelID = options.defaultModelID
@@ -9884,7 +9884,7 @@ public actor MelixCLIRunner {
         )
     }
 
-    private func upsertServerSessionForStartIfNeeded(_ options: ServerControlOptions) throws -> String {
+    private func upsertProviderForStartIfNeeded(_ options: ServerControlOptions) throws -> String {
         let title = options.serverTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let host = options.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let titleSessionID = MelixServerStartShortcutName.sessionIDCandidate(for: title)
@@ -9899,23 +9899,23 @@ public actor MelixCLIRunner {
             || options.timeoutSeconds > 0
             || options.modelIdleTimeoutSeconds > 0
         guard hasShortcutConfiguration else {
-            return options.serverSessionID
+            return options.providerID
         }
         guard title.isEmpty == false else {
             throw MelixCLIError.missingRequired("TITLE is required when passing --model, --models, --default-model, --host, --port, --allowed-host, --allowed-origin, --rate-limit-per-minute, --timeout-seconds, or --model-idle-timeout-seconds to melix server start.")
         }
         guard !options.defaultModelID.isEmpty else {
-            throw MelixCLIError.missingRequired("--model or --models is required when starting a titled server session.")
+            throw MelixCLIError.missingRequired("--model or --models is required when starting a titled provider.")
         }
 
         var resolvedID = ""
         let state = try mutateOperatorState { current in
-            if let index = current.serverSessions.firstIndex(where: { session in
+            if let index = current.providers.firstIndex(where: { session in
                 session.id == title
                     || session.title == title
                     || titleSessionID.map { session.id == $0 } == true
             }) {
-                var session = current.serverSessions[index]
+                var session = current.providers[index]
                 session.title = title
                 applyServerControlOptions(options, to: &session)
                 if host.isEmpty == false {
@@ -9931,15 +9931,15 @@ public actor MelixCLIRunner {
                     session.timeoutSeconds = options.timeoutSeconds
                 }
                 session.updatedAt = Date()
-                current.serverSessions[index] = session
-                current.selectedServerSessionID = session.id
+                current.providers[index] = session
+                current.selectedProviderID = session.id
                 resolvedID = session.id
             } else {
                 let createdID = nextServerStartShortcutSessionID(
                     options: options,
-                    existingSessions: current.serverSessions
+                    existingSessions: current.providers
                 )
-                let created = MelixOperatorServerSessionState(
+                let created = MelixOperatorProviderState(
                     id: createdID,
                     title: title,
                     defaultModelID: options.defaultModelID,
@@ -9955,59 +9955,59 @@ public actor MelixCLIRunner {
                         : 600,
                     lifecycle: .draft
                 )
-                current.serverSessions.append(created)
-                current.selectedServerSessionID = created.id
+                current.providers.append(created)
+                current.selectedProviderID = created.id
                 resolvedID = created.id
             }
         }
         guard resolvedID.isEmpty == false,
-              state.serverSessions.contains(where: { $0.id == resolvedID }) else {
-            throw MelixCLIError.runtime("Server session titled \(title) could not be created.")
+              state.providers.contains(where: { $0.id == resolvedID }) else {
+            throw MelixCLIError.runtime("Provider titled \(title) could not be created.")
         }
         return resolvedID
     }
 
-    private func nextGeneratedServerSessionID(in sessions: [MelixOperatorServerSessionState]) -> String {
+    private func nextGeneratedProviderID(in sessions: [MelixOperatorProviderState]) -> String {
         let existingIDs = Set(sessions.map(\.id))
         var index = 1
-        while existingIDs.contains("server-session-\(index)") {
+        while existingIDs.contains("provider-\(index)") {
             index += 1
         }
-        return "server-session-\(index)"
+        return "provider-\(index)"
     }
 
     private func nextServerStartShortcutSessionID(
         options: ServerControlOptions,
-        existingSessions: [MelixOperatorServerSessionState]
+        existingSessions: [MelixOperatorProviderState]
     ) -> String {
-        let id = options.serverSessionID
-        guard id != ServerSessionRuntimeStore.defaultServerSessionID,
+        let id = options.providerID
+        guard id != MelixProviderDefaults.defaultProviderID,
               !existingSessions.contains(where: { $0.id == id })
         else {
-            return nextGeneratedServerSessionID(in: existingSessions)
+            return nextGeneratedProviderID(in: existingSessions)
         }
         return id
     }
 
-    private func markServerSessionUnavailable(
+    private func markProviderUnavailable(
         id: String,
         message: String,
         lastError: String
     ) throws {
         _ = try mutateOperatorState { state in
-            guard let index = state.serverSessions.firstIndex(where: { $0.id == id }) else {
+            guard let index = state.providers.firstIndex(where: { $0.id == id }) else {
                 return
             }
-            state.serverSessions[index].lifecycle = .unavailable
-            state.serverSessions[index].lastKnownModelStateText = message
-            state.serverSessions[index].lastError = lastError
-            state.serverSessions[index].updatedAt = Date()
+            state.providers[index].lifecycle = .unavailable
+            state.providers[index].lastKnownModelStateText = message
+            state.providers[index].lastError = lastError
+            state.providers[index].updatedAt = Date()
         }
     }
 
     private func applyAccelerationProfile(
         _ profileID: String,
-        to defaults: inout MelixOperatorServerServingDefaultsState
+        to defaults: inout MelixOperatorProviderServingDefaultsState
     ) throws {
         let normalizedProfileID = profileID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalizedProfileID.isEmpty == false else {
@@ -10030,9 +10030,9 @@ public actor MelixCLIRunner {
     }
 
     private func servingDefaults(
-        for options: ServerSessionCreateOptions
-    ) throws -> MelixOperatorServerServingDefaultsState {
-        var defaults = MelixOperatorServerServingDefaultsState()
+        for options: ProviderCreateOptions
+    ) throws -> MelixOperatorProviderServingDefaultsState {
+        var defaults = MelixOperatorProviderServingDefaultsState()
         try applyAccelerationProfile(options.accelerationProfile, to: &defaults)
         let rawAccelerationMode = options.accelerationMode.trimmingCharacters(in: .whitespacesAndNewlines)
         let accelerationMode = normalizedServingDefaultsAccelerationMode(options.accelerationMode)
@@ -10067,8 +10067,8 @@ public actor MelixCLIRunner {
     }
 
     private func applyServingDefaultsUpdate(
-        _ options: ServerSessionUpdateOptions,
-        to session: inout MelixOperatorServerSessionState
+        _ options: ProviderUpdateOptions,
+        to session: inout MelixOperatorProviderState
     ) throws {
         let rawAccelerationMode = options.accelerationMode.trimmingCharacters(in: .whitespacesAndNewlines)
         let accelerationMode = normalizedServingDefaultsAccelerationMode(options.accelerationMode)
@@ -10460,16 +10460,16 @@ public actor MelixCLIRunner {
         }.joined(separator: "\n") + "\n"
     }
 
-    private func renderServerSessions(_ state: MelixOperatorSessionState) -> String {
-        guard state.serverSessions.isEmpty == false else {
-            return "No server sessions configured.\n"
+    private func renderProviders(_ state: MelixOperatorSessionState) -> String {
+        guard state.providers.isEmpty == false else {
+            return "No providers configured.\n"
         }
-        let rows = state.serverSessions.map { session in
-            let selectedMarker = session.id == state.selectedServerSessionID ? "*" : ""
+        let rows = state.providers.map { session in
+            let selectedMarker = session.id == state.selectedProviderID ? "*" : ""
             let modelIDs = session.servedModelIDs.joined(separator: ",")
             return "\(selectedMarker)\(session.id)\t\(session.title)\t\(modelIDs)\t\(session.lifecycle.rawValue)"
         }
-        return (["server_session_id\ttitle\tmodel_ids\tlifecycle"] + rows).joined(separator: "\n") + "\n"
+        return (["provider_id\ttitle\tmodel_ids\tlifecycle"] + rows).joined(separator: "\n") + "\n"
     }
 
     private func renderRemoteServers(_ servers: [RemoteServer]) -> String {
@@ -13116,13 +13116,13 @@ private struct BenchExportCSVResponse: Encodable {
     let rowCount: Int
 }
 
-private struct ServerSessionListResponse: Encodable {
-    let serverSessions: [MelixOperatorServerSessionState]
-    let selectedServerSessionID: String
+private struct ProviderListResponse: Encodable {
+    let providers: [MelixOperatorProviderState]
+    let selectedProviderID: String
 
     enum CodingKeys: String, CodingKey {
-        case serverSessions = "server_sessions"
-        case selectedServerSessionID = "selected_server_session_id"
+        case providers = "providers"
+        case selectedProviderID = "selected_provider_id"
     }
 }
 

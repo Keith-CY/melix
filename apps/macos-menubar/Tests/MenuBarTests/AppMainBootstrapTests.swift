@@ -1172,10 +1172,10 @@ struct AppMainBootstrapTests {
         try await withEnvironmentValue("MELIX_HOME", melixHomePath.path) {
             let melixHome = MelixHome(environment: ProcessInfo.processInfo.environment)
             let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-            let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+            let apiKeyStore = ProviderAPIKeyStore(melixHome: melixHome)
             let hfTokenStore = HuggingFaceTokenStore(melixHome: melixHome)
-            let serverSession = DesktopServerSessionState(
-                id: "server-session-1",
+            let serverSession = DesktopProviderState(
+                id: "provider-1",
                 title: "Primary Server",
                 modelID: "melix-dev-text"
             )
@@ -1183,12 +1183,12 @@ struct AppMainBootstrapTests {
             try operatorSessionStore.save(
                 OperatorSessionState(
                     selectedSurface: .server,
-                    selectedServerSessionID: serverSession.id,
-                    serverSessions: [serverSession]
+                    selectedProviderID: serverSession.id,
+                    providers: [serverSession]
                 )
             )
             try apiKeyStore.savePrimaryKey(
-                serverSessionID: serverSession.id,
+                providerID: serverSession.id,
                 primaryKey: "melix_sk_test_primary"
             )
             try hfTokenStore.saveToken("hf_secret_token")
@@ -1198,8 +1198,8 @@ struct AppMainBootstrapTests {
             #expect(try posixPermissions(at: melixHome.stateDirectoryURL) == 0o700)
             #expect(try posixPermissions(at: melixHome.secretsDirectoryURL) == 0o700)
             #expect(try posixPermissions(at: melixHome.operatorSessionFileURL) == 0o600)
-            #expect(try posixPermissions(at: melixHome.serverSessionsFileURL) == 0o600)
-            #expect(try posixPermissions(at: melixHome.serverSessionAPIKeysFileURL) == 0o600)
+            #expect(try posixPermissions(at: melixHome.providersFileURL) == 0o600)
+            #expect(try posixPermissions(at: melixHome.providerAPIKeysFileURL) == 0o600)
             #expect(try posixPermissions(at: melixHome.huggingFaceTokenFileURL) == 0o600)
         }
     }
@@ -1211,7 +1211,7 @@ struct AppMainBootstrapTests {
             client: FakeControlPlaneXPCClient(),
             melixHome: MelixHome(environment: ProcessInfo.processInfo.environment),
             operatorSessionStore: nil,
-            serverSessionAPIKeyStore: nil,
+            providerAPIKeyStore: nil,
             statusMenuFactory: { _, _, _ in RecordingInstallStatusMenu() }
         )
 

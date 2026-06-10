@@ -2475,7 +2475,7 @@ public final class RuntimeViewModel {
     public private(set) var models: [RuntimeModelRow] = [] {
         didSet { refreshModelRegistryEntries() }
     }
-    public private(set) var serverSessions: [DesktopServerSessionState] = []
+    public private(set) var providers: [DesktopProviderState] = []
     public private(set) var remoteServers: [RemoteServer] = []
     public private(set) var chatSessions: [DesktopChatSessionState] = []
     public private(set) var lastError: String?
@@ -2786,7 +2786,7 @@ public final class RuntimeViewModel {
     }
 
     public var serverTargets: [RuntimeServerTargetState] {
-        let localTargets = serverSessions.filter { session in
+        let localTargets = providers.filter { session in
             Self.isHiddenPlaceholderModelID(session.modelID) == false
         }.map { session in
             let modelName = serverTargetModelName(for: session.modelID)
@@ -2854,8 +2854,8 @@ public final class RuntimeViewModel {
         {
             return selected
         }
-        if selectedServerSessionID.isEmpty == false,
-           let selected = targets.first(where: { $0.kind == .localServer && $0.serverID == selectedServerSessionID })
+        if selectedProviderID.isEmpty == false,
+           let selected = targets.first(where: { $0.kind == .localServer && $0.serverID == selectedProviderID })
         {
             return selected
         }
@@ -2911,7 +2911,7 @@ public final class RuntimeViewModel {
                 return nil
             }
             let profileSummaryText = Self.diagnosticsProfileSummaryText(
-                for: serverSessions.first(where: { $0.id == target.serverID })
+                for: providers.first(where: { $0.id == target.serverID })
             )
             let detailText = [target.detailText, target.statusText, profileSummaryText]
                 .filter { $0.isEmpty == false }
@@ -2961,7 +2961,7 @@ public final class RuntimeViewModel {
         return targets.first
     }
 
-    private static func diagnosticsProfileSummaryText(for session: DesktopServerSessionState?) -> String {
+    private static func diagnosticsProfileSummaryText(for session: DesktopProviderState?) -> String {
         guard let session else {
             return ""
         }
@@ -3140,7 +3140,7 @@ public final class RuntimeViewModel {
     private let operatorSessionStore: any OperatorSessionStoring
     private let cliWorkflowRunner: (any MelixCLIWorkflowRunning)?
     private let operatorCommandRunner: MelixCLIRunner?
-    private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
+    private let providerAPIKeyStore: any ProviderAPIKeyStoring
     private let remoteServerStore: any RemoteServerStoring
     private let evaluationPromptStore: any EvaluationPromptStoring
     private let loraTrainingJobStore: any LoraTrainingJobStoring
@@ -3160,7 +3160,7 @@ public final class RuntimeViewModel {
     private var chatPresentationLastFlushAt: ContinuousClock.Instant?
     private var chatPresentationMaxLagMs = 0.0
     private var chatPresentationFlushCount = 0.0
-    private var persistedServerSessions: [DesktopServerSessionState] = []
+    private var persistedServerSessions: [DesktopProviderState] = []
     private var diagnosticsServerTargetSelectionUserOverridden = false
     private var dismissedBannerIDs: Set<String> = []
     private var modelSettingsDraftModelID = ""
@@ -3401,7 +3401,7 @@ public final class RuntimeViewModel {
         operatorSessionStore: any OperatorSessionStoring = NullOperatorSessionStore(),
         cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
         operatorCommandRunner: MelixCLIRunner? = nil,
-        serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
+        providerAPIKeyStore: any ProviderAPIKeyStoring = NullProviderAPIKeyStore(),
         remoteServerStore: any RemoteServerStoring = NullRemoteServerStore(),
         evaluationPromptStore: any EvaluationPromptStoring = NullEvaluationPromptStore(),
         loraTrainingJobStore: any LoraTrainingJobStoring = NullLoraTrainingJobStore(),
@@ -3413,7 +3413,7 @@ public final class RuntimeViewModel {
         self.operatorSessionStore = operatorSessionStore
         self.cliWorkflowRunner = cliWorkflowRunner
         self.operatorCommandRunner = operatorCommandRunner
-        self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
+        self.providerAPIKeyStore = providerAPIKeyStore
         self.remoteServerStore = remoteServerStore
         self.evaluationPromptStore = evaluationPromptStore
         self.loraTrainingJobStore = loraTrainingJobStore
@@ -5675,7 +5675,7 @@ public final class RuntimeViewModel {
         diagnosticsServerTargetSelectionUserOverridden = true
         switch target.kind {
         case .localServer:
-            selectedServerSessionID = target.serverID
+            selectedProviderID = target.serverID
             selectedServerTargetID = Self.serverTargetID(kind: .localServer, serverID: target.serverID)
         case .remoteServer:
             selectedEvaluationRemoteServerID = target.serverID
@@ -5722,7 +5722,7 @@ public final class RuntimeViewModel {
             notifyStateChanged()
             return
         }
-        let nextIndex = serverSessions.count + 1
+        let nextIndex = providers.count + 1
         let defaultTitle = nextIndex == 1 ? "Primary Server" : "Server \(nextIndex)"
         let title = titleOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? defaultTitle
@@ -5730,12 +5730,12 @@ public final class RuntimeViewModel {
         let host = hostOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? MelixGatewayDefaults.host
             : hostOverride.trimmingCharacters(in: .whitespacesAndNewlines)
-        let port = max(1, portOverride ?? Self.defaultLocalServerPort(sessionOffset: serverSessions.count))
+        let port = max(1, portOverride ?? Self.defaultLocalServerPort(sessionOffset: providers.count))
         if let commandWorkflowRunner {
             Task {
                 do {
                     _ = try await commandWorkflowRunner.run(
-                        .serverSessionCreate(
+                        .providerCreate(
                             .init(
                                 title: title,
                                 defaultModelID: modelID,
@@ -5762,8 +5762,8 @@ public final class RuntimeViewModel {
             }
             return
         }
-        let session = DesktopServerSessionState(
-            id: "server-session-\(UUID().uuidString)",
+        let session = DesktopProviderState(
+            id: "provider-\(UUID().uuidString)",
             title: title,
             modelID: modelID,
             host: host,
@@ -5771,7 +5771,7 @@ public final class RuntimeViewModel {
             lifecycle: .draft
         )
         persistedServerSessions.append(session)
-        selectedServerSessionID = session.id
+        selectedProviderID = session.id
         selectedServerTargetID = Self.serverTargetID(kind: .localServer, serverID: session.id)
         isCreatingServerTarget = false
         syncServerSessionsWithModels()
@@ -5798,7 +5798,7 @@ public final class RuntimeViewModel {
     }
 
     public func selectServerSession(id: String) {
-        guard serverSessions.contains(where: { $0.id == id }) else {
+        guard providers.contains(where: { $0.id == id }) else {
             return
         }
         selectedServerTargetID = Self.serverTargetID(kind: .localServer, serverID: id)
@@ -5807,7 +5807,7 @@ public final class RuntimeViewModel {
             Task {
                 do {
                     _ = try await commandWorkflowRunner.run(
-                        .serverSessionSelect(.init(serverSessionID: id, json: true))
+                        .providerSelect(.init(providerID: id, json: true))
                     )
                     restoreOperatorSessionState()
                     syncServerSessionsWithModels()
@@ -5822,7 +5822,7 @@ public final class RuntimeViewModel {
             }
             return
         }
-        selectedServerSessionID = id
+        selectedProviderID = id
         selectedChatModelID = selectedServerSession?.modelID ?? selectedChatModelID
         refreshAgentIntegrationExports()
         maybeApplyStoredGatewayAccessForSelectedRunningSession()
@@ -5980,7 +5980,7 @@ public final class RuntimeViewModel {
     private static func applyServingAccelerationProfileDefaults(
         _ nextProfile: ServingAccelerationProfile,
         replacing previousProfile: ServingAccelerationProfile,
-        to servingDefaults: inout DesktopServerServingDefaultsState
+        to servingDefaults: inout DesktopProviderServingDefaultsState
     ) {
         let previousAccelerationMode = ServingAccelerationProfiles.controlPlaneRawValue(previousProfile.accelerationMode)
         if servingDefaults.accelerationMode == previousAccelerationMode {
@@ -6050,8 +6050,8 @@ public final class RuntimeViewModel {
 
         do {
             let primaryKey = try Self.makePrimaryAPIKey()
-            let persistedRecord = try serverSessionAPIKeyStore.savePrimaryKey(
-                serverSessionID: selectedServerSession.id,
+            let persistedRecord = try providerAPIKeyStore.savePrimaryKey(
+                providerID: selectedServerSession.id,
                 primaryKey: primaryKey,
                 keyID: "primary"
             )
@@ -6145,7 +6145,7 @@ public final class RuntimeViewModel {
         if await executeServerLifecycleCommand(
             .serverSetIdlePolicy(
                 .init(
-                    serverSessionID: serverSession.id,
+                    providerID: serverSession.id,
                     autoSleepEnabled: serverSession.autoSleepEnabled,
                     lightSleepAfterSeconds: UInt32(max(0, serverSession.lightSleepAfterSeconds)),
                     deepSleepAfterSeconds: UInt32(max(0, serverSession.deepSleepAfterSeconds)),
@@ -6156,88 +6156,88 @@ public final class RuntimeViewModel {
         ) {
             return
         }
-        await performServerIdlePolicyUpdate(serverSessionID: serverSession.id)
+        await performServerIdlePolicyUpdate(providerID: serverSession.id)
     }
 
-    public func startServerSession(id serverSessionID: String) async {
+    public func startServerSession(id providerID: String) async {
         if cliWorkflowRunner != nil {
-            await startServerSessionViaCLI(serverSessionID: serverSessionID)
+            await startServerSessionViaCLI(providerID: providerID)
             return
         }
         if await executeServerLifecycleCommand(
-            .serverStart(.init(serverSessionID: serverSessionID, json: true)),
+            .serverStart(.init(providerID: providerID, json: true)),
             metricName: "menu.server_start_ms"
         ) {
             return
         }
-        guard await persistGatewayConfig(for: serverSessionID) else {
+        guard await persistGatewayConfig(for: providerID) else {
             return
         }
-        guard await persistServingDefaults(for: serverSessionID) else {
+        guard await persistServingDefaults(for: providerID) else {
             return
         }
         await performServerLifecycleAction(
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             metricName: "menu.server_start_ms"
         ) { [client] targetServerSessionID in
             try await client.startServerSession(serverSessionID: targetServerSessionID)
         }
     }
 
-    public func pauseServerSession(id serverSessionID: String) async {
+    public func pauseServerSession(id providerID: String) async {
         if await executeServerLifecycleCommand(
-            .serverPause(.init(serverSessionID: serverSessionID, json: true)),
+            .serverPause(.init(providerID: providerID, json: true)),
             metricName: "menu.server_pause_ms"
         ) {
             return
         }
         await performServerLifecycleAction(
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             metricName: "menu.server_pause_ms"
         ) { [client] targetServerSessionID in
             try await client.pauseServerSession(serverSessionID: targetServerSessionID)
         }
     }
 
-    public func resumeServerSession(id serverSessionID: String) async {
+    public func resumeServerSession(id providerID: String) async {
         if await executeServerLifecycleCommand(
-            .serverResume(.init(serverSessionID: serverSessionID, json: true)),
+            .serverResume(.init(providerID: providerID, json: true)),
             metricName: "menu.server_resume_ms"
         ) {
             return
         }
         await performServerLifecycleAction(
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             metricName: "menu.server_resume_ms"
         ) { [client] targetServerSessionID in
             try await client.resumeServerSession(serverSessionID: targetServerSessionID)
         }
     }
 
-    public func wakeServerSession(id serverSessionID: String) async {
+    public func wakeServerSession(id providerID: String) async {
         if await executeServerLifecycleCommand(
-            .serverWake(.init(serverSessionID: serverSessionID, json: true)),
+            .serverWake(.init(providerID: providerID, json: true)),
             metricName: "menu.server_wake_ms"
         ) {
             return
         }
         await performServerLifecycleAction(
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             metricName: "menu.server_wake_ms"
         ) { [client] targetServerSessionID in
             try await client.wakeServerSession(serverSessionID: targetServerSessionID)
         }
     }
 
-    public func stopServerSession(id serverSessionID: String) async {
+    public func stopServerSession(id providerID: String) async {
         if await executeServerLifecycleCommand(
-            .serverStop(.init(serverSessionID: serverSessionID, json: true)),
+            .serverStop(.init(providerID: providerID, json: true)),
             metricName: "menu.server_stop_ms"
         ) {
             return
         }
         await performServerLifecycleAction(
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             metricName: "menu.server_stop_ms"
         ) { [client] targetServerSessionID in
             try await client.stopServerSession(serverSessionID: targetServerSessionID)
@@ -6245,9 +6245,9 @@ public final class RuntimeViewModel {
     }
 
     public func createChatSession() {
-        guard operatorStateRestored || serverSessions.isEmpty == false else {
-            setLastError("Create a Server Session before opening chat.")
-            chatStatusText = "No Server Session"
+        guard operatorStateRestored || providers.isEmpty == false else {
+            setLastError("Create a Provider before opening chat.")
+            chatStatusText = "No Provider"
             selectedSurface = .server
             notifyStateChanged()
             return
@@ -6257,7 +6257,7 @@ public final class RuntimeViewModel {
         let session = DesktopChatSessionState(
             id: "chat-session-\(UUID().uuidString)",
             title: nextIndex == 1 ? "Chat 1" : "Chat \(nextIndex)",
-            serverSessionID: "",
+            providerID: "",
             statusText: "Choose Server"
         )
         chatSessions.append(session)
@@ -6276,7 +6276,7 @@ public final class RuntimeViewModel {
         let forked = DesktopChatSessionState(
             id: "chat-session-\(UUID().uuidString)",
             title: "\(source.title) Fork",
-            serverSessionID: source.serverSessionID,
+            providerID: source.providerID,
             branchID: "branch-\(nextIndex)",
             branchTitle: "Branch \(nextIndex)",
             transcript: source.transcript,
@@ -6323,25 +6323,25 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
-    public func bindSelectedChatSessionToServer(serverSessionID: String) {
+    public func bindSelectedChatSessionToServer(providerID: String) {
         guard
             let selectedChatSession,
-            let serverSession = serverSession(id: serverSessionID)
+            let serverSession = serverSession(id: providerID)
         else {
             return
         }
 
         replaceChatSession(id: selectedChatSession.id) { session in
-            session.serverSessionID = serverSession.id
-            if session.statusText == "Choose Server" || session.statusText == "No Server Session" {
+            session.providerID = serverSession.id
+            if session.statusText == "Choose Server" || session.statusText == "No Provider" {
                 session.statusText = "Idle"
             }
             session.updatedAt = Date()
         }
-        selectedServerSessionID = serverSession.id
+        selectedProviderID = serverSession.id
         selectedChatModelID = serverSession.modelID
         if selectedChatSessionID == selectedChatSession.id {
-            chatStatusText = chatStatusText == "Choose Server" || chatStatusText == "No Server Session"
+            chatStatusText = chatStatusText == "Choose Server" || chatStatusText == "No Provider"
                 ? "Idle"
                 : chatStatusText
         }
@@ -6365,7 +6365,7 @@ public final class RuntimeViewModel {
         let payload = """
         # \(sanitizedRichText(session.title))
 
-        - Server Session: \(session.serverSessionID)
+        - Provider: \(session.providerID)
         - Branch: \(sanitizedRichText(session.branchTitle))
         - Status: \(sanitizedRichText(session.statusText))
 
@@ -6390,8 +6390,8 @@ public final class RuntimeViewModel {
         }
     }
 
-    public func serverSession(id: String) -> DesktopServerSessionState? {
-        serverSessions.first(where: { $0.id == id })
+    public func serverSession(id: String) -> DesktopProviderState? {
+        providers.first(where: { $0.id == id })
     }
 
     public var primaryModel: RuntimeModelRow? {
@@ -6435,7 +6435,7 @@ public final class RuntimeViewModel {
             return .fallback
         }
         return DesktopRuntimeEndpointState(
-            serverSessionID: session.id,
+            providerID: session.id,
             serverTitle: session.title,
             modelID: session.modelID,
             requestedBaseURL: session.baseURL,
@@ -6451,11 +6451,11 @@ public final class RuntimeViewModel {
         return latestSnapshot.models.first(where: { $0.modelID == modelID })
     }
 
-    public var selectedServerSession: DesktopServerSessionState? {
-        guard !selectedServerSessionID.isEmpty else {
-            return serverSessions.first
+    public var selectedServerSession: DesktopProviderState? {
+        guard !selectedProviderID.isEmpty else {
+            return providers.first
         }
-        return serverSessions.first(where: { $0.id == selectedServerSessionID }) ?? serverSessions.first
+        return providers.first(where: { $0.id == selectedProviderID }) ?? providers.first
     }
 
     public var selectedChatSession: DesktopChatSessionState? {
@@ -6465,14 +6465,14 @@ public final class RuntimeViewModel {
         return chatSessions.first(where: { $0.id == selectedChatSessionID }) ?? chatSessions.first
     }
 
-    public var selectedChatServerSession: DesktopServerSessionState? {
+    public var selectedChatServerSession: DesktopProviderState? {
         guard
             let selectedChatSession,
             selectedChatSession.hasServerBinding
         else {
             return nil
         }
-        return serverSession(id: selectedChatSession.serverSessionID)
+        return serverSession(id: selectedChatSession.providerID)
     }
 
     public var selectedAgentIntegrationExport: AgentIntegrationExport? {
@@ -6540,10 +6540,10 @@ public final class RuntimeViewModel {
                 )
             )
         }
-        if let failingServer = serverSessions.first(where: { $0.lifecycle == .error }) {
+        if let failingServer = providers.first(where: { $0.lifecycle == .error }) {
             signals.append(
                 DesktopBannerState(
-                    id: "server-session-\(failingServer.id)-critical",
+                    id: "provider-\(failingServer.id)-critical",
                     title: "\(failingServer.title) Needs Recovery",
                     detail: failingServer.lastError,
                     severity: .critical
@@ -7164,7 +7164,7 @@ public final class RuntimeViewModel {
         }
     }
 
-    private var selectedServerSessionID = ""
+    private var selectedProviderID = ""
     private var selectedChatSessionID = ""
 
     public func start() async {
@@ -7294,15 +7294,15 @@ public final class RuntimeViewModel {
         }
 
         guard let serverSession = selectedChatServerSession else {
-            guard selectedChatSession != nil || serverSessions.isEmpty == false else {
-                chatStatusText = "No Server Session"
-                setLastError("Create a Server Session before sending chat prompts.")
+            guard selectedChatSession != nil || providers.isEmpty == false else {
+                chatStatusText = "No Provider"
+                setLastError("Create a Provider before sending chat prompts.")
                 selectedSurface = .server
                 notifyStateChanged()
                 return
             }
             chatStatusText = "Choose Server"
-            setLastError("Choose a Server Session before sending chat prompts.")
+            setLastError("Choose a Provider before sending chat prompts.")
             selectedSurface = .chat
             if let selectedChatSession {
                 replaceChatSession(id: selectedChatSession.id) { session in
@@ -7383,7 +7383,8 @@ public final class RuntimeViewModel {
             let execution = try await client.startChat(
                 ControlPlaneChatRequest(
                     modelID: modelID,
-                    messages: chatConversationMessages
+                    messages: chatConversationMessages,
+                    providerID: serverSession.id
                 )
             )
             lastChatRequestID = execution.requestID
@@ -10948,7 +10949,7 @@ public final class RuntimeViewModel {
         if let modelID = normalizedModelOperationAnchor(selectedServerSession?.modelID) {
             return modelID
         }
-        if let modelID = serverSessions.lazy.compactMap({ self.normalizedModelOperationAnchor($0.modelID) }).first {
+        if let modelID = providers.lazy.compactMap({ self.normalizedModelOperationAnchor($0.modelID) }).first {
             return modelID
         }
         if let modelID = primaryModel?.modelID, !modelID.isEmpty {
@@ -11109,50 +11110,50 @@ public final class RuntimeViewModel {
     }
 
     private func updateSelectedServerSession(
-        _ update: (inout DesktopServerSessionState) -> Void
+        _ update: (inout DesktopProviderState) -> Void
     ) {
-        replaceServerSession(id: selectedServerSessionID, update)
+        replaceServerSession(id: selectedProviderID, update)
         refreshAgentIntegrationExports()
         notifyStateChanged()
     }
 
     private func replaceServerSession(
         id: String,
-        _ update: (inout DesktopServerSessionState) -> Void
+        _ update: (inout DesktopProviderState) -> Void
     ) {
         if let index = persistedServerSessions.firstIndex(where: { $0.id == id }) {
             var session = persistedServerSessions[index]
             update(&session)
             persistedServerSessions[index] = session
         }
-        if let index = serverSessions.firstIndex(where: { $0.id == id }) {
-            var session = serverSessions[index]
+        if let index = providers.firstIndex(where: { $0.id == id }) {
+            var session = providers[index]
             update(&session)
-            serverSessions[index] = session
+            providers[index] = session
         }
     }
 
     private func performServerLifecycleAction(
-        serverSessionID: String,
+        providerID: String,
         metricName: String,
         action: @escaping @Sendable (String) async throws -> Melix_Controlplane_V1_ServerSnapshot
     ) async {
-        guard !serverSessionID.isEmpty else {
+        guard !providerID.isEmpty else {
             return
         }
 
-        selectedServerSessionID = serverSessionID
+        selectedProviderID = providerID
 
         let startedAt = Date()
         do {
-            let snapshot = try await action(serverSessionID)
+            let snapshot = try await action(providerID)
             await metrics.record(
                 name: metricName,
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
             apply(snapshot: snapshot)
         } catch {
-            replaceServerSession(id: serverSessionID) { session in
+            replaceServerSession(id: providerID) { session in
                 session.lastError = String(describing: error)
                 session.updatedAt = Date()
             }
@@ -11161,8 +11162,8 @@ public final class RuntimeViewModel {
         }
     }
 
-    private func performServerIdlePolicyUpdate(serverSessionID: String) async {
-        guard let serverSession = serverSession(id: serverSessionID) else {
+    private func performServerIdlePolicyUpdate(providerID: String) async {
+        guard let serverSession = serverSession(id: providerID) else {
             return
         }
 
@@ -11186,8 +11187,8 @@ public final class RuntimeViewModel {
     }
 
     @discardableResult
-    private func persistGatewayConfig(for serverSessionID: String) async -> Bool {
-        guard let serverSession = serverSession(id: serverSessionID) else {
+    private func persistGatewayConfig(for providerID: String) async -> Bool {
+        guard let serverSession = serverSession(id: providerID) else {
             return false
         }
 
@@ -11196,7 +11197,7 @@ public final class RuntimeViewModel {
             let snapshot: Melix_Controlplane_V1_ServerSnapshot
             if let operatorCommandRunner {
                 snapshot = try await operatorCommandRunner.applyConfiguredServerSessionGatewayConfig(
-                    serverSessionID: serverSession.id
+                    providerID: serverSession.id
                 )
             } else {
                 snapshot = try await client.applyServerSessionGatewayConfig(
@@ -11226,8 +11227,8 @@ public final class RuntimeViewModel {
     }
 
     @discardableResult
-    private func persistServingDefaults(for serverSessionID: String) async -> Bool {
-        guard let serverSession = serverSession(id: serverSessionID) else {
+    private func persistServingDefaults(for providerID: String) async -> Bool {
+        guard let serverSession = serverSession(id: providerID) else {
             return false
         }
 
@@ -11236,7 +11237,7 @@ public final class RuntimeViewModel {
             let snapshot: Melix_Controlplane_V1_ServerSnapshot
             if let operatorCommandRunner {
                 snapshot = try await operatorCommandRunner.applyConfiguredServerSessionServingDefaults(
-                    serverSessionID: serverSession.id
+                    providerID: serverSession.id
                 )
             } else {
                 snapshot = try await client.applyServerSessionServingDefaults(
@@ -11270,20 +11271,20 @@ public final class RuntimeViewModel {
         }
     }
 
-    private func chatSubmissionBlockedMessage(for serverSession: DesktopServerSessionState) -> String {
+    private func chatSubmissionBlockedMessage(for serverSession: DesktopProviderState) -> String {
         switch serverSession.lifecycle {
         case .paused:
-            return "Resume the paused Server Session before sending chat prompts."
+            return "Resume the paused Provider before sending chat prompts."
         case .starting:
-            return "Wait for the Server Session to finish starting before sending chat prompts."
+            return "Wait for the Provider to finish starting before sending chat prompts."
         case .stopping:
-            return "Wait for the Server Session to finish stopping or start it again before sending chat prompts."
+            return "Wait for the Provider to finish stopping or start it again before sending chat prompts."
         case .stopped, .draft, .unavailable:
-            return "Start the bound Server Session before sending chat prompts."
+            return "Start the bound Provider before sending chat prompts."
         case .error:
             return serverSession.lastError.isEmpty
-                ? "Recover the failed Server Session before sending chat prompts."
-                : "Recover the failed Server Session before sending chat prompts. \(serverSession.lastError)"
+                ? "Recover the failed Provider before sending chat prompts."
+                : "Recover the failed Provider before sending chat prompts. \(serverSession.lastError)"
         case .running, .sleeping:
             return ""
         }
@@ -11304,8 +11305,8 @@ public final class RuntimeViewModel {
     private func loadChatSession(_ session: DesktopChatSessionState) {
         selectedChatSessionID = session.id
         if session.hasServerBinding,
-           (selectedServerSessionID.isEmpty || serverSession(id: session.serverSessionID) != nil) {
-            selectedServerSessionID = session.serverSessionID
+           (selectedProviderID.isEmpty || serverSession(id: session.providerID) != nil) {
+            selectedProviderID = session.providerID
         }
         chatTranscript = session.transcript
         chatStatusText = session.statusText
@@ -11322,21 +11323,21 @@ public final class RuntimeViewModel {
                 return nil
             }
         }
-        if let boundServer = serverSession(id: session.serverSessionID) {
+        if let boundServer = serverSession(id: session.providerID) {
             selectedChatModelID = boundServer.modelID
         }
     }
 
     private func ensureChatSessionsBoundToServerSessions() {
         if selectedServerSession == nil {
-            selectedServerSessionID = serverSessions.first?.id ?? ""
+            selectedProviderID = providers.first?.id ?? ""
         }
 
         if chatSessions.isEmpty {
             let session = DesktopChatSessionState(
                 id: "chat-session-\(UUID().uuidString)",
                 title: "Chat 1",
-                serverSessionID: "",
+                providerID: "",
                 statusText: "Choose Server"
             )
             chatSessions = [session]
@@ -11345,11 +11346,11 @@ public final class RuntimeViewModel {
         }
 
         chatSessions = chatSessions.map { session in
-            guard session.hasServerBinding, serverSession(id: session.serverSessionID) == nil else {
+            guard session.hasServerBinding, serverSession(id: session.providerID) == nil else {
                 return session
             }
             var unbound = session
-            unbound.serverSessionID = ""
+            unbound.providerID = ""
             unbound.statusText = "Choose Server"
             unbound.updatedAt = Date()
             return unbound
@@ -11366,10 +11367,10 @@ public final class RuntimeViewModel {
         let textModels = serverModelOptions.isEmpty ? serveableModels : serverModelOptions
 
         if persistedServerSessions.isEmpty, let firstTextModel = textModels.first {
-            let seededServerSessionID = latestSnapshot.providers.first?.providerID ?? "server-session-1"
+            let seededServerSessionID = latestSnapshot.providers.first?.providerID ?? "provider-1"
             let projectedConfig = Self.gatewayConfigProjection(
                 from: latestSnapshot,
-                serverSessionID: seededServerSessionID
+                providerID: seededServerSessionID
             )
             let projectedDefaultModelID = projectedConfig?.defaultModelID
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -11379,7 +11380,7 @@ public final class RuntimeViewModel {
                 } ?? firstTextModel,
                 title: "Primary Server",
                 port: projectedConfig?.port ?? MelixGatewayDefaults.port,
-                serverSessionID: seededServerSessionID,
+                providerID: seededServerSessionID,
                 modelIDOverride: projectedDefaultModelID?.isEmpty == false ? projectedDefaultModelID : nil
             )
             if projectedConfig != nil {
@@ -11389,15 +11390,15 @@ public final class RuntimeViewModel {
             } else {
                 persistedServerSessions = [seeded]
             }
-            selectedServerSessionID = seeded.id
+            selectedProviderID = seeded.id
         }
 
         guard persistedServerSessions.isEmpty == false else {
-            serverSessions = []
+            providers = []
             return
         }
 
-        serverSessions = persistedServerSessions.enumerated().map { offset, session in
+        providers = persistedServerSessions.enumerated().map { offset, session in
             var updated = session
             applyGatewayConfigProjection(to: &updated)
             applyServingDefaultsProjection(to: &updated)
@@ -11429,7 +11430,7 @@ public final class RuntimeViewModel {
         }
 
         if selectedServerSession == nil {
-            selectedServerSessionID = serverSessions.first?.id ?? ""
+            selectedProviderID = providers.first?.id ?? ""
         }
 
         maybeApplyStoredGatewayAccessForSelectedRunningSession()
@@ -11451,7 +11452,7 @@ public final class RuntimeViewModel {
             newLocalServerHostDraft = MelixGatewayDefaults.host
         }
         if newLocalServerPortDraft <= 0 {
-            newLocalServerPortDraft = Self.defaultLocalServerPort(sessionOffset: serverSessions.count)
+            newLocalServerPortDraft = Self.defaultLocalServerPort(sessionOffset: providers.count)
         }
     }
 
@@ -11467,8 +11468,8 @@ public final class RuntimeViewModel {
         {
             return
         }
-        if selectedServerSessionID.isEmpty == false,
-           let localTarget = targets.first(where: { $0.kind == .localServer && $0.serverID == selectedServerSessionID })
+        if selectedProviderID.isEmpty == false,
+           let localTarget = targets.first(where: { $0.kind == .localServer && $0.serverID == selectedProviderID })
         {
             selectedServerTargetID = localTarget.id
             return
@@ -11505,12 +11506,12 @@ public final class RuntimeViewModel {
         for model: RuntimeModelRow,
         title: String,
         port: Int,
-        serverSessionID: String = "server-session-\(UUID().uuidString)",
+        providerID: String = "provider-\(UUID().uuidString)",
         modelIDOverride: String? = nil,
         servedModelIDs: [String] = []
-    ) -> DesktopServerSessionState {
-        var session = DesktopServerSessionState(
-            id: serverSessionID,
+    ) -> DesktopProviderState {
+        var session = DesktopProviderState(
+            id: providerID,
             title: title,
             modelID: modelIDOverride ?? model.modelID,
             servedModelIDs: servedModelIDs,
@@ -11526,10 +11527,10 @@ public final class RuntimeViewModel {
 
     private func markServerSessions(
         for modelID: String,
-        lifecycle: DesktopServerSessionLifecycle,
+        lifecycle: DesktopProviderLifecycle,
         error: String
     ) {
-        serverSessions = serverSessions.map { session in
+        providers = providers.map { session in
             guard session.servedModelIDs.contains(modelID) else {
                 return session
             }
@@ -11551,15 +11552,15 @@ public final class RuntimeViewModel {
             if selectedSurface.isDomainSurface {
                 selectedToolSection = defaultToolSection(for: selectedSurface, current: selectedToolSection)
             }
-            selectedServerSessionID = restoredState.selectedServerSessionID
+            selectedProviderID = restoredState.selectedProviderID
             selectedRuntimeJobID = restoredState.selectedRuntimeJobID
             desktopPaneVisibility = DesktopPaneVisibilityState.mergedWithDefaults(restoredState.paneVisibility)
             dismissedBannerIDs = Set(restoredState.dismissedBannerIDs)
             registryConfiguredRootPaths = Self.normalizedRegistryRootPaths(restoredState.registryRoots)
             registryHasConfiguredRootOverride = registryConfiguredRootPaths.isEmpty == false
-            if restoredState.serverSessions.isEmpty == false {
-                persistedServerSessions = restoredState.serverSessions
-                serverSessions = restoredState.serverSessions
+            if restoredState.providers.isEmpty == false {
+                persistedServerSessions = restoredState.providers
+                providers = restoredState.providers
             }
             downloadQueue = restoredState.downloadQueue
             lastPersistedOperatorSessionState = restoredState
@@ -11572,9 +11573,9 @@ public final class RuntimeViewModel {
         OperatorSessionState(
             selectedSurface: selectedSurface,
             selectedToolSection: selectedToolSection,
-            selectedServerSessionID: selectedServerSessionID,
+            selectedProviderID: selectedProviderID,
             selectedRuntimeJobID: selectedRuntimeJobID,
-            serverSessions: persistedServerSessions,
+            providers: persistedServerSessions,
             dismissedBannerIDs: dismissedBannerIDs.sorted(),
             downloadQueue: downloadQueue,
             registryRoots: registryConfiguredRootPaths,
@@ -11635,17 +11636,17 @@ public final class RuntimeViewModel {
         return true
     }
 
-    private func startServerSessionViaCLI(serverSessionID: String) async {
-        guard let cliWorkflowRunner, let serverSession = serverSession(id: serverSessionID) else {
+    private func startServerSessionViaCLI(providerID: String) async {
+        guard let cliWorkflowRunner, let serverSession = serverSession(id: providerID) else {
             return
         }
 
         let startedAt = Date()
         do {
             _ = try await cliWorkflowRunner.run(
-                .serverSessionUpdate(
+                .providerUpdate(
                     .init(
-                        serverSessionID: serverSession.id,
+                        providerID: serverSession.id,
                         title: serverSession.title,
                         defaultModelID: serverSession.defaultModelID,
                         servedModelIDs: serverSession.servedModelIDs,
@@ -11664,15 +11665,15 @@ public final class RuntimeViewModel {
             )
             restoreOperatorSessionState()
             _ = try await cliWorkflowRunner.run(
-                .serverSessionSelect(.init(serverSessionID: serverSession.id, json: true))
+                .providerSelect(.init(providerID: serverSession.id, json: true))
             )
             restoreOperatorSessionState()
             let snapshotOutput = try await cliWorkflowRunner.run(
-                .serverStart(.init(serverSessionID: serverSession.id, json: true))
+                .serverStart(.init(providerID: serverSession.id, json: true))
             )
             try applyCLIServerSnapshotIfPresent(
                 output: snapshotOutput,
-                command: .serverStart(.init(serverSessionID: serverSession.id, json: true)),
+                command: .serverStart(.init(providerID: serverSession.id, json: true)),
                 surface: cliWorkflowRunner.surface
             )
             clearCLIWorkflowFailure()
@@ -11689,30 +11690,30 @@ public final class RuntimeViewModel {
 
     private func maybeApplyStoredGatewayAccessForSelectedRunningSession() {
         guard let selectedServerSession else {
-            scheduleGatewayAccessClear(serverSessionID: lastAppliedGatewaySessionID)
+            scheduleGatewayAccessClear(providerID: lastAppliedGatewaySessionID)
             return
         }
         guard selectedServerSession.retainsGatewayAccessConfiguration else {
-            scheduleGatewayAccessClear(serverSessionID: selectedServerSession.id)
+            scheduleGatewayAccessClear(providerID: selectedServerSession.id)
             return
         }
 
         do {
             guard
-                let persistedRecord = try serverSessionAPIKeyStore.loadPrimaryKey(
-                    serverSessionID: selectedServerSession.id
+                let persistedRecord = try providerAPIKeyStore.loadPrimaryKey(
+                    providerID: selectedServerSession.id
                 )
             else {
-                scheduleGatewayAccessClear(serverSessionID: selectedServerSession.id)
+                scheduleGatewayAccessClear(providerID: selectedServerSession.id)
                 return
             }
             guard persistedRecord.primaryKey.isEmpty == false else {
-                scheduleGatewayAccessClear(serverSessionID: selectedServerSession.id)
+                scheduleGatewayAccessClear(providerID: selectedServerSession.id)
                 return
             }
 
             scheduleGatewayAccessApply(
-                serverSessionID: selectedServerSession.id,
+                providerID: selectedServerSession.id,
                 primaryKey: persistedRecord.primaryKey,
                 keyID: persistedRecord.keyID,
                 label: persistedRecord.keyID,
@@ -11723,11 +11724,11 @@ public final class RuntimeViewModel {
         }
     }
 
-    private func scheduleGatewayAccessClear(serverSessionID: String) {
+    private func scheduleGatewayAccessClear(providerID: String) {
         guard lastAppliedGatewaySessionID.isEmpty == false else {
             return
         }
-        let targetServerSessionID = serverSessionID.isEmpty ? lastAppliedGatewaySessionID : serverSessionID
+        let targetServerSessionID = providerID.isEmpty ? lastAppliedGatewaySessionID : providerID
         gatewayApplyTask?.cancel()
         gatewayApplyTask = Task { @MainActor in
             do {
@@ -11741,7 +11742,7 @@ public final class RuntimeViewModel {
     }
 
     private func scheduleGatewayAccessApply(
-        serverSessionID: String,
+        providerID: String,
         primaryKey: String,
         keyID: String,
         label: String,
@@ -11752,7 +11753,7 @@ public final class RuntimeViewModel {
             return
         }
         if force == false,
-           lastAppliedGatewaySessionID == serverSessionID,
+           lastAppliedGatewaySessionID == providerID,
            lastAppliedGatewayPrimaryKey == primaryKey
         {
             return
@@ -11762,13 +11763,13 @@ public final class RuntimeViewModel {
         gatewayApplyTask = Task { @MainActor in
             do {
                 try await client.applyServerSessionGatewayAccess(
-                    serverSessionID: serverSessionID,
+                    serverSessionID: providerID,
                     primaryKey: primaryKey,
                     keyID: keyID,
                     label: label,
                     tokenHint: tokenHint
                 )
-                lastAppliedGatewaySessionID = serverSessionID
+                lastAppliedGatewaySessionID = providerID
                 lastAppliedGatewayPrimaryKey = primaryKey
             } catch {
                 recordLocalError("Gateway access apply failed: \(error)")
@@ -12526,7 +12527,7 @@ public final class RuntimeViewModel {
     private func selectedDiagnosticsEffectiveAccelerationProfileID() -> String {
         guard let target = selectedDiagnosticsServerTarget,
               target.kind == .localServer,
-              let session = serverSessions.first(where: { $0.id == target.serverID })
+              let session = providers.first(where: { $0.id == target.serverID })
         else {
             return ""
         }
@@ -13211,7 +13212,7 @@ public final class RuntimeViewModel {
         }
     }
 
-    private func applyGatewayAccessProjection(to session: inout DesktopServerSessionState) {
+    private func applyGatewayAccessProjection(to session: inout DesktopProviderState) {
         guard let projection = Self.gatewayAccessProjection(from: latestSnapshot) else {
             return
         }
@@ -13227,8 +13228,8 @@ public final class RuntimeViewModel {
         session.lastAuthSessionSignOutLatencyMs = projection.lastAuthSessionSignOutLatencyMs
     }
 
-    private func applyGatewayConfigProjection(to session: inout DesktopServerSessionState) {
-        guard let projection = Self.gatewayConfigProjection(from: latestSnapshot, serverSessionID: session.id) else {
+    private func applyGatewayConfigProjection(to session: inout DesktopProviderState) {
+        guard let projection = Self.gatewayConfigProjection(from: latestSnapshot, providerID: session.id) else {
             session.effectiveHost = session.host
             session.effectivePort = session.port
             return
@@ -13253,7 +13254,7 @@ public final class RuntimeViewModel {
 
     private func shouldAdoptGatewayRosterProjection(
         _ projection: GatewayConfigProjection,
-        for session: DesktopServerSessionState
+        for session: DesktopProviderState
     ) -> Bool {
         // Config-file projections can lag behind explicit operator edits.
         // Keep local roster intent unless the defaults still match, while an
@@ -13270,8 +13271,8 @@ public final class RuntimeViewModel {
         return localDefaultModelID == projectedDefaultModelID || session.servedModelIDs.isEmpty
     }
 
-    private func applyServingDefaultsProjection(to session: inout DesktopServerSessionState) {
-        guard let projection = Self.servingDefaultsProjection(from: latestSnapshot, serverSessionID: session.id) else {
+    private func applyServingDefaultsProjection(to session: inout DesktopProviderState) {
+        guard let projection = Self.servingDefaultsProjection(from: latestSnapshot, providerID: session.id) else {
             let effectiveBatchingDefaults = Self.effectiveBatchingDefaults(
                 concurrentProcessingEnabled: session.servingDefaults.concurrentProcessingEnabled,
                 maxConcurrentRequests: session.servingDefaults.maxConcurrentRequests,
@@ -13435,13 +13436,13 @@ public final class RuntimeViewModel {
 
     private static func gatewayConfigProjection(
         from snapshot: Melix_Controlplane_V1_ServerSnapshot,
-        serverSessionID: String
+        providerID: String
     ) -> GatewayConfigProjection? {
         guard snapshot.hasGatewayConfig else {
             return nil
         }
         guard
-            let listener = snapshot.gatewayConfig.listeners.first(where: { $0.providerID == serverSessionID })
+            let listener = snapshot.gatewayConfig.listeners.first(where: { $0.providerID == providerID })
                 ?? (snapshot.gatewayConfig.listeners.count == 1 ? snapshot.gatewayConfig.listeners.first : nil)
         else {
             return nil
@@ -13474,13 +13475,13 @@ public final class RuntimeViewModel {
 
     private static func servingDefaultsProjection(
         from snapshot: Melix_Controlplane_V1_ServerSnapshot,
-        serverSessionID: String
+        providerID: String
     ) -> ServingDefaultsProjection? {
         guard snapshot.hasServingDefaults else {
             return nil
         }
         guard
-            let summary = snapshot.servingDefaults.sessions.first(where: { $0.providerID == serverSessionID })
+            let summary = snapshot.servingDefaults.sessions.first(where: { $0.providerID == providerID })
                 ?? (snapshot.servingDefaults.sessions.count == 1 ? snapshot.servingDefaults.sessions.first : nil)
         else {
             return nil
@@ -13705,10 +13706,10 @@ public final class RuntimeViewModel {
     }
 
     private func runtimeSession(
-        for serverSessionID: String,
+        for providerID: String,
         fallbackIndex: Int
     ) -> Melix_Controlplane_V1_ProviderRuntimeState? {
-        if let exactMatch = latestSnapshot.providers.first(where: { $0.providerID == serverSessionID }) {
+        if let exactMatch = latestSnapshot.providers.first(where: { $0.providerID == providerID }) {
             return exactMatch
         }
         if latestSnapshot.providers.count == 1, fallbackIndex == 0 {
@@ -13718,7 +13719,7 @@ public final class RuntimeViewModel {
     }
 
     private func applyRuntimeSessionProjection(
-        to session: inout DesktopServerSessionState,
+        to session: inout DesktopProviderState,
         runtimeSession: Melix_Controlplane_V1_ProviderRuntimeState
     ) {
         session.lifecycle = Self.serverSessionLifecycle(runtimeSession.lifecycleState)
@@ -13823,7 +13824,7 @@ public final class RuntimeViewModel {
         statusTitle = "Melix \(serverStateText)"
 
         for provider in payload.providers {
-            updateServerSessionCollections(serverSessionID: provider.providerID) { session in
+            updateServerSessionCollections(providerID: provider.providerID) { session in
                 session.lifecycle = Self.cliServerSessionLifecycle(provider.lifecycleState)
                 session.powerState = Self.cliServerSessionPowerState(provider.powerState)
                 session.wakeReason = Self.cliServerWakeReason(provider.wakeReason)
@@ -13837,18 +13838,18 @@ public final class RuntimeViewModel {
     }
 
     private func updateServerSessionCollections(
-        serverSessionID: String,
-        update: (inout DesktopServerSessionState) -> Void
+        providerID: String,
+        update: (inout DesktopProviderState) -> Void
     ) {
-        if let index = persistedServerSessions.firstIndex(where: { $0.id == serverSessionID }) {
+        if let index = persistedServerSessions.firstIndex(where: { $0.id == providerID }) {
             var session = persistedServerSessions[index]
             update(&session)
             persistedServerSessions[index] = session
         }
-        if let index = serverSessions.firstIndex(where: { $0.id == serverSessionID }) {
-            var session = serverSessions[index]
+        if let index = providers.firstIndex(where: { $0.id == providerID }) {
+            var session = providers[index]
             update(&session)
-            serverSessions[index] = session
+            providers[index] = session
         }
     }
 
@@ -14033,7 +14034,7 @@ public final class RuntimeViewModel {
         }
     }
 
-    private static func cliServerSessionLifecycle(_ value: String) -> DesktopServerSessionLifecycle {
+    private static func cliServerSessionLifecycle(_ value: String) -> DesktopProviderLifecycle {
         switch value {
         case "ready":
             return .running
@@ -15319,7 +15320,7 @@ public final class RuntimeViewModel {
 
     private static func serverSessionLifecycle(
         _ state: Melix_Controlplane_V1_ProviderLifecycleState
-    ) -> DesktopServerSessionLifecycle {
+    ) -> DesktopProviderLifecycle {
         switch state {
         case .loading:
             return .starting

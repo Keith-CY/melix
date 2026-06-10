@@ -158,12 +158,12 @@ Treat regressions in these flows as bugs, not as future roadmap work:
 - [x] Ordered registry-root management, including `list`, `add`, `remove`, `move`, `rescan`, and managed-root precedence.
 - [x] Registry-driven model library flows for `list`, `inspect`, `load`, and `unload`.
 - [x] Download-queue hydration, status rendering, and resumable download recovery.
-- [x] Serveable-model filtering for `Server Session` binding and start-time validation.
-- [x] `Server Session` create, update, remove, select, start, pause, resume, wake, stop, and unavailable-binding preservation.
-- [x] CLI-first server-session rebinding and `chat run` execution against managed base or derived models without `MELIX_DEV_TEXT_MODEL_PATH`.
+- [x] Serveable-model filtering for `Provider` binding and start-time validation.
+- [x] `Provider` create, update, remove, select, start, pause, resume, wake, stop, and unavailable-binding preservation.
+- [x] CLI-first provider rebinding and `chat run` execution against managed base or derived models without `MELIX_DEV_TEXT_MODEL_PATH`.
 - [x] Shared CLI-core execution for LoRA train, activate, remove-derived, benchmark, matrix benchmark, evaluation, evaluation compare, and export actions.
 - [x] Shared CLI-core execution for LoRA train, activate, remove-derived, benchmark, matrix benchmark, evaluation, evaluation compare, export, and acceptance-bundle orchestration.
-- [x] Window UI subprocess-backed CLI shell coverage for managed Hub download, local import, server-session mutation and start, LoRA train, activate, remove-derived, benchmark, matrix benchmark, evaluation, evaluation compare, and export.
+- [x] Window UI subprocess-backed CLI shell coverage for managed Hub download, local import, provider mutation and start, LoRA train, activate, remove-derived, benchmark, matrix benchmark, evaluation, evaluation compare, and export.
 - [x] Production Window UI uses the public `melix` subprocess path while test-only Window acceptance uses the shared CLI runner seam directly.
 - [x] Repository-owned deterministic LoRA CLI acceptance smoke exists at `scripts/phase8_lora_cli_smoke.py`.
 - [x] Repository-owned deterministic LoRA Window acceptance smoke exists at `scripts/phase8_lora_window_smoke.py`.
@@ -173,7 +173,7 @@ Treat regressions in these flows as bugs, not as future roadmap work:
 These flows exist in code, but still need fresh real-runtime acceptance evidence before
 release sign-off:
 
-- [x] Run one real desktop flow for `download -> registry refresh -> Server Session select -> server start` through the native Window UI CLI subprocess bridge using a downloaded Hugging Face text model without fallback environment model-path injection.
+- [x] Run one real desktop flow for `download -> registry refresh -> Provider select -> server start` through the native Window UI CLI subprocess bridge using a downloaded Hugging Face text model without fallback environment model-path injection.
 
 ### Live CLI Evidence Captured
 
@@ -189,7 +189,7 @@ release sign-off:
 - [x] The live Window UI evidence bundle is preserved at `/Users/ChenYu/Library/Application Support/Melix/acceptance/phase8/window-ui/2026-04-09T192003Z/bundle.json`.
 - [x] The live Window UI screenshot is preserved at `/Users/ChenYu/Library/Application Support/Melix/acceptance/phase8/window-ui/2026-04-09T192003Z/window-ui.png`.
 - [x] The live Window UI bundle chains back to the live CLI evidence bundle at `/Users/ChenYu/Library/Application Support/Melix/acceptance/phase8/cli/2026-04-09T162920Z/bundle.json`.
-- [x] The live Window UI bundle records `selected_surface=Server`, `selected_server_session_id=server-session-1`, `lora_train_job_id=model-ops-0137`, `lora_activate_job_id=model-ops-0141`, `bench_job_id=model-ops-0149`, `bench_matrix_job_id=model-ops-0154`, and `evaluation_job_id=eval-0004`; see `progress.md` for the exact measured timings.
+- [x] The live Window UI bundle records `selected_surface=Server`, `selected_provider_id=provider-1`, `lora_train_job_id=model-ops-0137`, `lora_activate_job_id=model-ops-0141`, `bench_job_id=model-ops-0149`, `bench_matrix_job_id=model-ops-0154`, and `evaluation_job_id=eval-0004`; see `progress.md` for the exact measured timings.
 
 ### Bucket 3: Open Product Gaps
 

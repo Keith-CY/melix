@@ -291,31 +291,31 @@ struct DesktopCommandCenterView: View {
 
     let foundation: DesktopFoundationState
     let chatSessions: [DesktopChatSessionState]
-    let serverSessions: [DesktopServerSessionState]
+    let providers: [DesktopProviderState]
     private let viewModel: RuntimeViewModel?
 
     init(
         foundation: DesktopFoundationState,
         chatSessions: [DesktopChatSessionState],
-        serverSessions: [DesktopServerSessionState]
+        providers: [DesktopProviderState]
     ) {
         self.foundation = foundation
         self.chatSessions = chatSessions
-        self.serverSessions = serverSessions
+        self.providers = providers
         self.viewModel = nil
     }
 
     init(viewModel: RuntimeViewModel) {
         self.foundation = viewModel.desktopFoundationState
         self.chatSessions = viewModel.chatSessions
-        self.serverSessions = viewModel.serverSessions
+        self.providers = viewModel.providers
         self.viewModel = viewModel
     }
 
     var body: some View {
         let foundation = liveFoundation
         let chatSessions = liveChatSessions
-        let serverSessions = liveServerSessions
+        let providers = liveServerSessions
         let horizontalPadding = DesktopCommandCenterVisuals.contentPadding
 
         ScrollView {
@@ -337,12 +337,12 @@ struct DesktopCommandCenterView: View {
                         VStack(alignment: .leading, spacing: DesktopCommandCenterVisuals.sectionSpacing) {
                             DesktopCommandCenterRecoveryPanel(
                                 viewModel: viewModel,
-                                serverSessions: serverSessions
+                                providers: providers
                             )
                             DesktopCommandCenterWorkflowPanel(viewModel: viewModel)
                             DesktopCommandCenterSessionSummaryPanel(
                                 chatSessions: chatSessions,
-                                serverSessions: serverSessions
+                                providers: providers
                             )
                         }
                         .frame(width: DesktopCommandCenterVisuals.secondaryColumnWidth, alignment: .topLeading)
@@ -353,14 +353,14 @@ struct DesktopCommandCenterView: View {
                         DesktopCommandCenterRuntimePanel(foundation: foundation)
                         DesktopCommandCenterRecoveryPanel(
                             viewModel: viewModel,
-                            serverSessions: serverSessions
+                            providers: providers
                         )
                         DesktopCommandCenterPressurePanel(foundation: foundation)
                         DesktopCommandCenterWorkflowPanel(viewModel: viewModel)
                         DesktopCommandCenterActivityPanel(foundation: foundation)
                         DesktopCommandCenterSessionSummaryPanel(
                             chatSessions: chatSessions,
-                            serverSessions: serverSessions
+                            providers: providers
                         )
                     }
                 }
@@ -384,8 +384,8 @@ struct DesktopCommandCenterView: View {
         viewModel?.chatSessions ?? chatSessions
     }
 
-    private var liveServerSessions: [DesktopServerSessionState] {
-        viewModel?.serverSessions ?? serverSessions
+    private var liveServerSessions: [DesktopProviderState] {
+        viewModel?.providers ?? providers
     }
 }
 
@@ -662,10 +662,10 @@ private struct DesktopCommandCenterQueueLaneView: View {
 
 private struct DesktopCommandCenterRecoveryPanel: View {
     let viewModel: RuntimeViewModel?
-    let serverSessions: [DesktopServerSessionState]
+    let providers: [DesktopProviderState]
 
     var body: some View {
-        let recoverySessions = serverSessions.filter {
+        let recoverySessions = providers.filter {
             $0.lifecycle == .error || $0.lifecycle == .stopped || $0.lifecycle == .unavailable
         }
         let recoverableDownloads = viewModel?.recoverableDownloads ?? []
@@ -788,7 +788,7 @@ private struct DesktopCommandCenterDownloadRecoveryRow: View {
 }
 
 private struct DesktopCommandCenterServerRecoveryRow: View {
-    let session: DesktopServerSessionState
+    let session: DesktopProviderState
 
     var body: some View {
         VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
@@ -898,7 +898,7 @@ private struct DesktopCommandCenterActivityRow: View {
 
 private struct DesktopCommandCenterSessionSummaryPanel: View {
     let chatSessions: [DesktopChatSessionState]
-    let serverSessions: [DesktopServerSessionState]
+    let providers: [DesktopProviderState]
 
     var body: some View {
         DesktopCommandCenterPanel(
@@ -912,9 +912,9 @@ private struct DesktopCommandCenterSessionSummaryPanel: View {
                     detail: chatSessions.first?.summaryText ?? "No chat sessions"
                 )
                 DesktopCommandCenterSessionMetricView(
-                    title: "Server Sessions",
-                    value: "\(serverSessions.count)",
-                    detail: serverSessions.first?.effectiveListenerLabel ?? "No listener configured"
+                    title: "Providers",
+                    value: "\(providers.count)",
+                    detail: providers.first?.effectiveListenerLabel ?? "No listener configured"
                 )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -992,7 +992,7 @@ enum DesktopServerWorkspaceDefaults {
 }
 
 private struct DesktopServerOverviewCardsView: View {
-    let session: DesktopServerSessionState
+    let session: DesktopProviderState
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
@@ -1566,7 +1566,7 @@ private struct DesktopServerSessionEditor: View {
             VStack(alignment: .leading, spacing: 18) {
                 DesktopWorkspaceHeader(
                     title: "Server",
-                    subtitle: "Choose model, configure listener, then start the server session."
+                    subtitle: "Choose model, configure listener, then start the provider."
                 ) {}
 
                 if viewModel.isCreatingServerTarget {
@@ -1785,13 +1785,13 @@ private struct DesktopServerSessionEditor: View {
         }
     }
 
-    private func servingDefaultsCompactSummary(for session: DesktopServerSessionState) -> String {
+    private func servingDefaultsCompactSummary(for session: DesktopProviderState) -> String {
         let servingDefaults = session.servingDefaults
         return "Source: \(servingDefaults.sourceText) • requested temp \(String(format: "%.2f", servingDefaults.temperature)) • top_p \(String(format: "%.2f", servingDefaults.topP)) • max \(servingDefaults.maxTokens) • stream \(servingDefaults.streamIntervalTokens) • sequences \(servingDefaults.maxConcurrentRequests)"
     }
 
     @ViewBuilder
-    private func advancedServingDefaultsForm(for session: DesktopServerSessionState) -> some View {
+    private func advancedServingDefaultsForm(for session: DesktopProviderState) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                                     TextField(
@@ -1943,13 +1943,13 @@ private struct DesktopServerSessionEditor: View {
             .padding(10)
             .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
         case "accelerated_prefill":
-            accelerationModeReadOnlyCard("Uses the backend accelerated prefill profile for this server session.")
+            accelerationModeReadOnlyCard("Uses the backend accelerated prefill profile for this provider.")
         case "active_kv_quantized":
-            accelerationModeReadOnlyCard("Uses the backend active KV quantization profile for this server session.")
+            accelerationModeReadOnlyCard("Uses the backend active KV quantization profile for this provider.")
         case "sparse_prefill":
-            accelerationModeReadOnlyCard("Uses the backend sparse prefill profile for this server session.")
+            accelerationModeReadOnlyCard("Uses the backend sparse prefill profile for this provider.")
         default:
-            accelerationModeReadOnlyCard("No additional acceleration settings are enabled for this server session.")
+            accelerationModeReadOnlyCard("No additional acceleration settings are enabled for this provider.")
         }
     }
 
@@ -7064,7 +7064,7 @@ struct DesktopServingAccelerationProfilePicker: View {
 }
 
 struct DesktopServingAccelerationProfileSummary: View {
-    let servingDefaults: DesktopServerServingDefaultsState
+    let servingDefaults: DesktopProviderServingDefaultsState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -10137,7 +10137,7 @@ struct DesktopAgentIntegrationExportsPanel: View {
                     ContentUnavailableView(
                         "No Integration Export",
                         systemImage: "square.and.arrow.up.on.square",
-                        description: Text("Start or select a server session to render reproducible agent integration exports.")
+                        description: Text("Start or select a provider to render reproducible agent integration exports.")
                     )
                 }
             }
@@ -10267,7 +10267,7 @@ struct DesktopAPIQuickStartGroup: Identifiable {
 
 struct DesktopAPIQuickStartPanel: View {
     let foundation: DesktopFoundationState
-    let selectedSession: DesktopServerSessionState?
+    let selectedSession: DesktopProviderState?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -10317,9 +10317,9 @@ struct DesktopAPIQuickStartPanel: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ContentUnavailableView(
-                    "No Server Session Selected",
+                    "No Provider Selected",
                     systemImage: "network.slash",
-                    description: Text("Start or select a server session to render session-aware quick-start snippets.")
+                    description: Text("Start or select a provider to render session-aware quick-start snippets.")
                 )
             }
         }
@@ -10330,7 +10330,7 @@ struct DesktopAPIQuickStartPanel: View {
 
 func desktopAPIQuickStartGroups(
     foundation: DesktopFoundationState,
-    selectedSession: DesktopServerSessionState
+    selectedSession: DesktopProviderState
 ) -> [DesktopAPIQuickStartGroup] {
     let serviceBaseURL = selectedSession.effectiveBaseURL
     let serviceRootURL = serviceBaseURL.hasSuffix("/v1")
@@ -10653,7 +10653,7 @@ private func javascriptHeaderBlock(
 }
 
 private func primaryGatewayHeader(
-    for session: DesktopServerSessionState
+    for session: DesktopProviderState
 ) -> (String, String)? {
     switch session.sharedAccessState {
     case .localOnly:
@@ -10675,7 +10675,7 @@ private func primaryGatewayHeader(
 }
 
 struct DesktopServerGatewayAccessSummaryView: View {
-    let session: DesktopServerSessionState
+    let session: DesktopProviderState
 
     var body: some View {
         GroupBox("Gateway Access") {
@@ -10949,7 +10949,7 @@ struct DesktopAPIWorkspaceView: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
-                            Text("No server session selected.")
+                            Text("No provider selected.")
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -10967,7 +10967,7 @@ struct DesktopAPIWorkspaceView: View {
 
 private struct DesktopAPIEndpointConsoleView: View {
     let baseURL: String
-    let selectedSession: DesktopServerSessionState?
+    let selectedSession: DesktopProviderState?
     let selectedExport: AgentIntegrationExport?
 
     private var modelID: String {
@@ -11005,7 +11005,7 @@ private struct DesktopAPIEndpointConsoleView: View {
                     DesktopAPIEndpointRow(
                         title: "Chat Completions",
                         endpoint: chatEndpoint,
-                        detail: selectedSession?.lifecycleSummaryText ?? "No server session selected."
+                        detail: selectedSession?.lifecycleSummaryText ?? "No provider selected."
                     )
                     DesktopAPIEndpointRow(
                         title: "Models",
@@ -11064,11 +11064,11 @@ private struct DesktopAPIEndpointRow: View {
 }
 
 func desktopAPIAuthenticationReferenceText(
-    selectedSession: DesktopServerSessionState?,
+    selectedSession: DesktopProviderState?,
     selectedExport: AgentIntegrationExport?
 ) -> String {
     guard let selectedSession else {
-        return "Select a server session to render auth guidance."
+        return "Select a provider to render auth guidance."
     }
 
     let exportLead = if let selectedExport {
@@ -11090,7 +11090,7 @@ func desktopAPIAuthenticationReferenceText(
     }
 }
 
-private func gatewayAccessHeaderText(_ session: DesktopServerSessionState) -> String {
+private func gatewayAccessHeaderText(_ session: DesktopProviderState) -> String {
     switch session.sharedAccessState {
     case .localOnly:
         if session.authMode == .bearerToken {
@@ -11129,7 +11129,7 @@ func desktopAPIAuthenticationReferenceText(selectedExport: AgentIntegrationExpor
     if let export = selectedExport {
         return "Selected target: \(export.target.rawValue). Use \(export.authPlaceholder) as the reproducible credential placeholder for \(export.baseURL)."
     }
-    return "Select a server session to render auth guidance."
+    return "Select a provider to render auth guidance."
 }
 
 enum RuntimeDiagnosticsArtifactClipboard {

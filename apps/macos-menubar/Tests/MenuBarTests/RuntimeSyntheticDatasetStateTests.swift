@@ -792,8 +792,8 @@ struct RuntimeSyntheticDatasetStateTests {
         let state = OperatorSessionState(
             selectedSurface: .tools,
             selectedToolSection: .syntheticDatasets,
-            selectedServerSessionID: "",
-            serverSessions: []
+            selectedProviderID: "",
+            providers: []
         )
         let encoded = try JSONEncoder().encode(state)
         let decoded = try JSONDecoder().decode(OperatorSessionState.self, from: encoded)

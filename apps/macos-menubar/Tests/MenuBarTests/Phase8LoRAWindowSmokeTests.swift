@@ -389,7 +389,7 @@ private func phase8LoRAWindowSnapshot(
 
 private func phase8LoRAWindowRuntimeSession() -> Melix_Controlplane_V1_ProviderRuntimeState {
     var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
-    runtimeSession.providerID = "server-session-1"
+    runtimeSession.providerID = "provider-1"
     runtimeSession.lifecycleState = .ready
     runtimeSession.powerState = .active
     runtimeSession.wakeReason = .initialBoot

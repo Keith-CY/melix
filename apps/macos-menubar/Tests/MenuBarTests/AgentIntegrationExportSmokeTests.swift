@@ -7,8 +7,8 @@ import Testing
 struct AgentIntegrationExportSmokeTests {
     @Test("agent integration export smoke fixture produces all targets")
     func agentIntegrationExportSmokeFixtureProducesAllTargets() throws {
-        let session = DesktopServerSessionState(
-            id: "server-session-smoke",
+        let session = DesktopProviderState(
+            id: "provider-smoke",
             title: "Smoke Server",
             modelID: "melix-dev-text",
             host: "127.0.0.1",

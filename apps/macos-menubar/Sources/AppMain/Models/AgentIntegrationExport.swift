@@ -56,7 +56,7 @@ public struct AgentIntegrationExport: Identifiable, Equatable, Sendable {
     }
 
     public static func exports(
-        from session: DesktopServerSessionState
+        from session: DesktopProviderState
     ) -> [AgentIntegrationExport] {
         AgentIntegrationExportTarget.allCases.map { target in
             makeExport(target: target, session: session)
@@ -65,7 +65,7 @@ public struct AgentIntegrationExport: Identifiable, Equatable, Sendable {
 
     private static func makeExport(
         target: AgentIntegrationExportTarget,
-        session: DesktopServerSessionState
+        session: DesktopProviderState
     ) -> AgentIntegrationExport {
         let baseURL = session.effectiveBaseURL
         let modelID = session.modelID

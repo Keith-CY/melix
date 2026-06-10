@@ -929,7 +929,7 @@ struct MelixCLIParserTests {
                 modelID: "melix-dev-text",
                 message: "Reply with OK",
                 systemPrompt: "Be concise.",
-                serverSessionID: "server-session-1",
+                providerID: "provider-1",
                 json: true
             )
         )
@@ -942,7 +942,7 @@ struct MelixCLIParserTests {
             "--model-id", "melix-dev-text",
             "--message", "Reply with OK",
             "--system", "Be concise.",
-            "--server-session-id", "server-session-1",
+            "--provider-id", "provider-1",
             "--json",
         ])
         #expect(try MelixCLIParser.parse(arguments) == command)
@@ -1179,25 +1179,25 @@ struct MelixCLIParserTests {
             (.modelRootsMove(.init(path: "/models", index: 1, json: true)), "model.roots.move"),
             (.modelRootsRescan(.init(json: true)), "model.roots.rescan"),
             (.serverSnapshot(.init(json: true)), "server.snapshot"),
-            (.serverSessionList(.init(json: true)), "server.session.list"),
-            (.serverSessionCreate(.init(title: "Server", servedModelIDs: ["model"], host: MelixGatewayDefaults.host, port: MelixGatewayDefaults.port, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)), "server.session.create"),
-            (.serverSessionUpdate(.init(serverSessionID: "server-session-1", title: "Server", servedModelIDs: ["model"], host: "127.0.0.1", port: 8081, rateLimitPerMinute: 60, timeoutSeconds: 30, json: true)), "server.session.update"),
-            (.serverSessionRemove(.init(serverSessionID: "server-session-1", json: true)), "server.session.remove"),
-            (.serverSessionSelect(.init(serverSessionID: "server-session-1", json: true)), "server.session.select"),
-            (.serverStart(.init(serverSessionID: "server-session-1", json: true)), "server.start"),
+            (.providerList(.init(json: true)), "provider.list"),
+            (.providerCreate(.init(title: "Server", servedModelIDs: ["model"], host: MelixGatewayDefaults.host, port: MelixGatewayDefaults.port, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)), "provider.create"),
+            (.providerUpdate(.init(providerID: "provider-1", title: "Server", servedModelIDs: ["model"], host: "127.0.0.1", port: 8081, rateLimitPerMinute: 60, timeoutSeconds: 30, json: true)), "provider.update"),
+            (.providerRemove(.init(providerID: "provider-1", json: true)), "provider.remove"),
+            (.providerSelect(.init(providerID: "provider-1", json: true)), "provider.select"),
+            (.serverStart(.init(providerID: "provider-1", json: true)), "server.start"),
             (.serverStart(.init(serverTitle: "Gemma 31B", servedModelIDs: ["mlx-community/gemma-4-31b-it-4bit"], host: "127.0.0.1", port: 12434, json: true)), "server.start"),
-            (.serverPause(.init(serverSessionID: "server-session-1", json: true)), "server.pause"),
-            (.serverResume(.init(serverSessionID: "server-session-1", json: true)), "server.resume"),
-            (.serverWake(.init(serverSessionID: "server-session-1", json: true)), "server.wake"),
-            (.serverStop(.init(serverSessionID: "server-session-1", json: true)), "server.stop"),
-            (.serverSetIdlePolicy(.init(serverSessionID: "server-session-1", autoSleepEnabled: true, lightSleepAfterSeconds: 30, deepSleepAfterSeconds: 60, json: true)), "server.set-idle-policy"),
+            (.serverPause(.init(providerID: "provider-1", json: true)), "server.pause"),
+            (.serverResume(.init(providerID: "provider-1", json: true)), "server.resume"),
+            (.serverWake(.init(providerID: "provider-1", json: true)), "server.wake"),
+            (.serverStop(.init(providerID: "provider-1", json: true)), "server.stop"),
+            (.serverSetIdlePolicy(.init(providerID: "provider-1", autoSleepEnabled: true, lightSleepAfterSeconds: 30, deepSleepAfterSeconds: 60, json: true)), "server.set-idle-policy"),
             (.remoteServerList(.init(json: true)), "remote-server.list"),
             (.remoteServerAdd(.init(remoteServerID: "custom", title: "Custom", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/v1", defaultModelID: "remote-model", apiKey: "sk-secret", timeoutSeconds: 60, rateLimitPerMinute: 10, json: true)), "remote-server.add"),
             (.remoteServerUpdate(.init(remoteServerID: "custom", title: "Custom Updated", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/updated/v1", defaultModelID: "remote-model-2", apiKey: "sk-new", timeoutSeconds: 90, rateLimitPerMinute: 20, toolSupportMode: .forceOff, json: true)), "remote-server.update"),
             (.remoteServerRemove(.init(remoteServerID: "custom", json: true)), "remote-server.remove"),
             (.remoteServerTest(.init(remoteServerID: "custom", remoteModelID: "remote-model", json: true)), "remote-server.test"),
-            (.chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
-            (.chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
+            (.chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", providerID: "provider-1", json: true)), "chat.run"),
+            (.chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", providerID: "provider-1", json: true)), "chat.run"),
             (.loraList(.init(modelID: "model", json: true)), "lora.list"),
             (.loraRun(.init(training: .init(modelID: "model-8bit", datasetSourceKind: "hf_dataset", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "auto", parameters: ["derived_model_alias": "derived", "response_only": "true"], preflightFitCheck: true, allowMemoryRisk: true), evaluation: .init(modelID: "model-8bit", suites: ["event_extraction"], datasetID: "top200", sampleSize: 4, parameters: ["dataset_root": "evaluation"], json: false), outputDir: "/tmp/lora-run", json: true)), "lora.run"),
             (.loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], preflightFitCheck: true, allowMemoryRisk: true, json: true)), "lora.train"),
@@ -1276,23 +1276,23 @@ struct MelixCLIParserTests {
             .modelRootsRemove(.init(path: "/models", json: true)),
             .modelRootsMove(.init(path: "/models", index: 1, json: true)),
             .modelRootsRescan(.init(json: true)),
-            .serverSessionCreate(.init(title: "Server", servedModelIDs: ["model"], host: MelixGatewayDefaults.host, port: MelixGatewayDefaults.port, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)),
-            .serverSessionUpdate(.init(serverSessionID: "server-session-1", title: "Server", servedModelIDs: ["model"], host: "127.0.0.1", port: 8081, rateLimitPerMinute: 60, timeoutSeconds: 30, json: true)),
-            .serverSessionRemove(.init(serverSessionID: "server-session-1", json: true)),
-            .serverSessionSelect(.init(serverSessionID: "server-session-1", json: true)),
-            .serverStart(.init(serverSessionID: "server-session-1", json: true)),
-            .serverPause(.init(serverSessionID: "server-session-1", json: true)),
-            .serverResume(.init(serverSessionID: "server-session-1", json: true)),
-            .serverWake(.init(serverSessionID: "server-session-1", json: true)),
-            .serverStop(.init(serverSessionID: "server-session-1", json: true)),
-            .serverSetIdlePolicy(.init(serverSessionID: "server-session-1", autoSleepEnabled: false, lightSleepAfterSeconds: 30, deepSleepAfterSeconds: 60, json: true)),
+            .providerCreate(.init(title: "Server", servedModelIDs: ["model"], host: MelixGatewayDefaults.host, port: MelixGatewayDefaults.port, rateLimitPerMinute: 120, timeoutSeconds: 60, json: true)),
+            .providerUpdate(.init(providerID: "provider-1", title: "Server", servedModelIDs: ["model"], host: "127.0.0.1", port: 8081, rateLimitPerMinute: 60, timeoutSeconds: 30, json: true)),
+            .providerRemove(.init(providerID: "provider-1", json: true)),
+            .providerSelect(.init(providerID: "provider-1", json: true)),
+            .serverStart(.init(providerID: "provider-1", json: true)),
+            .serverPause(.init(providerID: "provider-1", json: true)),
+            .serverResume(.init(providerID: "provider-1", json: true)),
+            .serverWake(.init(providerID: "provider-1", json: true)),
+            .serverStop(.init(providerID: "provider-1", json: true)),
+            .serverSetIdlePolicy(.init(providerID: "provider-1", autoSleepEnabled: false, lightSleepAfterSeconds: 30, deepSleepAfterSeconds: 60, json: true)),
             .remoteServerList(.init(json: true)),
             .remoteServerAdd(.init(remoteServerID: "custom", title: "Custom", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/v1", defaultModelID: "remote-model", apiKey: "sk-secret", timeoutSeconds: 60, rateLimitPerMinute: 10, json: true)),
             .remoteServerUpdate(.init(remoteServerID: "custom", title: "Custom Updated", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/updated/v1", defaultModelID: "remote-model-2", apiKey: "sk-new", timeoutSeconds: 90, rateLimitPerMinute: 20, toolSupportMode: .forceOff, json: true)),
             .remoteServerRemove(.init(remoteServerID: "custom", json: true)),
             .remoteServerTest(.init(remoteServerID: "custom", remoteModelID: "remote-model", json: true)),
-            .chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
-            .chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
+            .chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", providerID: "provider-1", json: true)),
+            .chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", providerID: "provider-1", json: true)),
             .workspacePreflight(.init(manifestPath: "/tmp/workspace/workspace-manifest.json", outputPath: "/tmp/workspace/workspace-preflight-receipt.json", json: true)),
             .loraRun(.init(training: .init(modelID: "model-8bit", datasetSourceKind: "hf_dataset", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "auto", parameters: ["derived_model_alias": "derived", "response_only": "true"], preflightFitCheck: true, allowMemoryRisk: true), evaluation: .init(modelID: "model-8bit", suites: ["event_extraction"], datasetID: "top200", sampleSize: 4, parameters: ["dataset_root": "evaluation"], json: false), outputDir: "/tmp/lora-run", json: true)),
             .loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)),
@@ -1492,7 +1492,7 @@ struct MelixCLIParserTests {
         }
 
         #expect(snapshotOptions.json)
-        #expect(pauseOptions.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(pauseOptions.providerID == "provider-1")
         #expect(!pauseOptions.json)
     }
 
@@ -2044,7 +2044,7 @@ struct MelixCLIParserTests {
             "--model-id", "melix-dev-qwen-local",
             "--message", "Reply with BASE_OK",
             "--system", "Be terse.",
-            "--server-session-id", "server-session-1",
+            "--provider-id", "provider-1",
             "--json",
         ])
 
@@ -2055,7 +2055,7 @@ struct MelixCLIParserTests {
                         modelID: "melix-dev-qwen-local",
                         message: "Reply with BASE_OK",
                         systemPrompt: "Be terse.",
-                        serverSessionID: "server-session-1",
+                        providerID: "provider-1",
                         json: true
                     )
                 )
@@ -2094,11 +2094,15 @@ struct MelixCLIParserTests {
         }
     }
 
-    @Test("parses server session create update remove and select commands")
-    func parsesServerSessionCRUDCommands() throws {
+    @Test("parses provider create update remove and select commands")
+    func parsesProviderCRUDCommands() throws {
+        let listCommand = try MelixCLIParser.parse([
+            "provider",
+            "list",
+            "--json",
+        ])
         let createCommand = try MelixCLIParser.parse([
-            "server",
-            "session",
+            "provider",
             "create",
             "--title", "Qwen Session",
             "--models", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit,melix-secondary",
@@ -2114,10 +2118,9 @@ struct MelixCLIParserTests {
             "--json",
         ])
         let updateCommand = try MelixCLIParser.parse([
-            "server",
-            "session",
+            "provider",
             "update",
-            "--server-session-id", "server-session-qwen",
+            "--provider-id", "provider-qwen",
             "--model", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
             "--model", "melix-secondary",
             "--default-model", "melix-secondary",
@@ -2132,35 +2135,38 @@ struct MelixCLIParserTests {
             "--num-draft-tokens", "8",
         ])
         let removeCommand = try MelixCLIParser.parse([
-            "server",
-            "session",
+            "provider",
             "remove",
-            "--server-session-id", "server-session-qwen",
+            "--provider-id", "provider-qwen",
         ])
         let selectCommand = try MelixCLIParser.parse([
-            "server",
-            "session",
+            "provider",
             "select",
-            "--server-session-id", "server-session-qwen",
+            "--provider-id", "provider-qwen",
         ])
 
-        guard case .serverSessionCreate(let createOptions) = createCommand else {
-            Issue.record("Expected serverSessionCreate command")
+        guard case .providerList(let listOptions) = listCommand else {
+            Issue.record("Expected providerList command")
             return
         }
-        guard case .serverSessionUpdate(let updateOptions) = updateCommand else {
-            Issue.record("Expected serverSessionUpdate command")
+        guard case .providerCreate(let createOptions) = createCommand else {
+            Issue.record("Expected providerCreate command")
             return
         }
-        guard case .serverSessionRemove(let removeOptions) = removeCommand else {
-            Issue.record("Expected serverSessionRemove command")
+        guard case .providerUpdate(let updateOptions) = updateCommand else {
+            Issue.record("Expected providerUpdate command")
             return
         }
-        guard case .serverSessionSelect(let selectOptions) = selectCommand else {
-            Issue.record("Expected serverSessionSelect command")
+        guard case .providerRemove(let removeOptions) = removeCommand else {
+            Issue.record("Expected providerRemove command")
+            return
+        }
+        guard case .providerSelect(let selectOptions) = selectCommand else {
+            Issue.record("Expected providerSelect command")
             return
         }
 
+        #expect(listOptions.json)
         #expect(createOptions.title == "Qwen Session")
         #expect(createOptions.defaultModelID == "melix-secondary")
         #expect(createOptions.servedModelIDs == [
@@ -2177,7 +2183,7 @@ struct MelixCLIParserTests {
         #expect(createOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(createOptions.numDraftTokens == 4)
         #expect(createOptions.json)
-        #expect(updateOptions.serverSessionID == "server-session-qwen")
+        #expect(updateOptions.providerID == "provider-qwen")
         #expect(updateOptions.defaultModelID == "melix-secondary")
         #expect(updateOptions.servedModelIDs == [
             "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
@@ -2194,46 +2200,83 @@ struct MelixCLIParserTests {
         #expect(updateOptions.accelerationMode == "speculative_decode")
         #expect(updateOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(updateOptions.numDraftTokens == 8)
-        #expect(removeOptions.serverSessionID == "server-session-qwen")
-        #expect(selectOptions.serverSessionID == "server-session-qwen")
+        #expect(removeOptions.providerID == "provider-qwen")
+        #expect(selectOptions.providerID == "provider-qwen")
     }
 
-    @Test("server session acceleration profiles resolve defaults and reject unknown profiles")
-    func serverSessionAccelerationProfilesResolveDefaultsAndRejectUnknownProfiles() throws {
+    @Test("provider parser rejects missing required fields")
+    func providerParserRejectsMissingRequiredFields() throws {
+        #expect(throws: MelixCLIError.missingRequired("--title is required for melix provider create.")) {
+            try MelixCLIParser.parse([
+                "provider",
+                "create",
+                "--model", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--model or --models is required for melix provider create.")) {
+            try MelixCLIParser.parse([
+                "provider",
+                "create",
+                "--title", "Qwen Session",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--provider-id is required for melix provider update.")) {
+            try MelixCLIParser.parse([
+                "provider",
+                "update",
+                "--title", "Qwen Session",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--provider-id is required for melix provider remove.")) {
+            try MelixCLIParser.parse([
+                "provider",
+                "remove",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--provider-id is required for melix provider select.")) {
+            try MelixCLIParser.parse([
+                "provider",
+                "select",
+            ])
+        }
+    }
+
+    @Test("provider acceleration profiles resolve defaults and reject unknown profiles")
+    func providerAccelerationProfilesResolveDefaultsAndRejectUnknownProfiles() throws {
         let createCommand = try MelixCLIParser.parse([
-            "server",
-            "session",
+            "provider",
             "create",
             "--title", "Low Memory",
             "--model", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
             "--acceleration-profile", "low_memory",
         ])
         let updateCommand = try MelixCLIParser.parse([
-            "server",
-            "session",
+            "provider",
             "update",
-            "--server-session-id", "server-session-qwen",
+            "--provider-id", "provider-qwen",
             "--acceleration-profile", "throughput",
             "--draft-model-id", "z-lab/Qwen3.5-27B-DFlash",
         ])
         let baselineUpdateCommand = try MelixCLIParser.parse([
-            "server",
-            "session",
+            "provider",
             "update",
-            "--server-session-id", "server-session-qwen",
+            "--provider-id", "provider-qwen",
             "--acceleration-profile", "low-memory",
         ])
         let noOpUpdateCommand = try MelixCLIParser.parse([
-            "server",
-            "session",
+            "provider",
             "update",
-            "--server-session-id", "server-session-qwen",
+            "--provider-id", "provider-qwen",
         ])
 
-        let createOptions = try #require(createCommand.serverSessionCreateOptions)
-        let updateOptions = try #require(updateCommand.serverSessionUpdateOptions)
-        let baselineUpdateOptions = try #require(baselineUpdateCommand.serverSessionUpdateOptions)
-        let noOpUpdateOptions = try #require(noOpUpdateCommand.serverSessionUpdateOptions)
+        let createOptions = try #require(createCommand.providerCreateOptions)
+        let updateOptions = try #require(updateCommand.providerUpdateOptions)
+        let baselineUpdateOptions = try #require(baselineUpdateCommand.providerUpdateOptions)
+        let noOpUpdateOptions = try #require(noOpUpdateCommand.providerUpdateOptions)
 
         #expect(createOptions.accelerationProfile == "low-memory")
         #expect(createOptions.accelerationMode == "baseline")
@@ -2252,9 +2295,8 @@ struct MelixCLIParserTests {
         #expect(noOpUpdateOptions.numDraftTokens == 0)
         #expect(throws: MelixCLIError.usage("Invalid value for --acceleration-profile. Expected balanced, throughput, low-memory, long-session.")) {
             try MelixCLIParser.parse([
-                "server",
-                "session",
-                "create",
+                "provider",
+            "create",
                 "--title", "Invalid",
                 "--model", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                 "--acceleration-profile", "fastest",
@@ -2262,9 +2304,8 @@ struct MelixCLIParserTests {
         }
         #expect(throws: MelixCLIError.usage("Invalid value for --acceleration-profile. Expected balanced, throughput, low-memory, long-session.")) {
             try MelixCLIParser.parse([
-                "server",
-                "session",
-                "create",
+                "provider",
+            "create",
                 "--title", "Invalid",
                 "--model", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                 "--acceleration-profile", " ",
@@ -2272,9 +2313,8 @@ struct MelixCLIParserTests {
         }
         #expect(throws: MelixCLIError.usage("Invalid value for --acceleration-mode. Expected baseline or speculative_decode.")) {
             try MelixCLIParser.parse([
-                "server",
-                "session",
-                "create",
+                "provider",
+            "create",
                 "--title", "Invalid",
                 "--model", "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
                 "--acceleration-mode", " ",
@@ -2282,20 +2322,19 @@ struct MelixCLIParserTests {
         }
     }
 
-    @Test("server session update parses allowlist clear flags and rejects mixed clear and set")
-    func serverSessionUpdateParsesAllowlistClearFlags() throws {
+    @Test("provider update parses allowlist clear flags and rejects mixed clear and set")
+    func providerUpdateParsesAllowlistClearFlags() throws {
         let command = try MelixCLIParser.parse([
-            "server",
-            "session",
+            "provider",
             "update",
-            "--server-session-id", "server-session-qwen",
+            "--provider-id", "provider-qwen",
             "--clear-allowed-hosts",
             "--clear-allowed-origins",
             "--json",
         ])
 
-        let options = try #require(command.serverSessionUpdateOptions)
-        #expect(options.serverSessionID == "server-session-qwen")
+        let options = try #require(command.providerUpdateOptions)
+        #expect(options.providerID == "provider-qwen")
         #expect(options.allowedHosts.isEmpty)
         #expect(options.allowedOrigins.isEmpty)
         #expect(options.clearAllowedHosts)
@@ -2310,31 +2349,28 @@ struct MelixCLIParserTests {
 
         #expect(throws: MelixCLIError.usage("--allowed-host and --clear-allowed-hosts are mutually exclusive.")) {
             _ = try MelixCLIParser.parse([
-                "server",
-                "session",
-                "update",
-                "--server-session-id", "server-session-qwen",
+                "provider",
+            "update",
+                "--provider-id", "provider-qwen",
                 "--allowed-host", "operator.lan",
                 "--clear-allowed-hosts",
             ])
         }
         #expect(throws: MelixCLIError.usage("--allowed-origin and --clear-allowed-origins are mutually exclusive.")) {
             _ = try MelixCLIParser.parse([
-                "server",
-                "session",
-                "update",
-                "--server-session-id", "server-session-qwen",
+                "provider",
+            "update",
+                "--provider-id", "provider-qwen",
                 "--allowed-origin", "http://localhost:5173",
                 "--clear-allowed-origins",
             ])
         }
     }
 
-    @Test("server session codec normalizes equals-form profile launch flags")
-    func serverSessionCodecNormalizesEqualsFormProfileLaunchFlags() throws {
+    @Test("provider codec normalizes equals-form profile launch flags")
+    func providerCodecNormalizesEqualsFormProfileLaunchFlags() throws {
         let createCommand = try MelixCLIParser.parse([
-            "server",
-            "session",
+            "provider",
             "create",
             "--title=Qwen Throughput",
             "--model=mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
@@ -2353,10 +2389,9 @@ struct MelixCLIParserTests {
             "--json",
         ])
         let updateCommand = try MelixCLIParser.parse([
-            "server",
-            "session",
+            "provider",
             "update",
-            "--server-session-id=server-session-qwen",
+            "--provider-id=provider-qwen",
             "--models=mlx-community/Qwen3.5-0.8B-OptiQ-4bit,melix-secondary",
             "--default-model=melix-secondary",
             "--allowed-host=dev.local",
@@ -2366,15 +2401,15 @@ struct MelixCLIParserTests {
             "--json",
         ])
 
-        let createOptions = try #require(createCommand.serverSessionCreateOptions)
-        let updateOptions = try #require(updateCommand.serverSessionUpdateOptions)
+        let createOptions = try #require(createCommand.providerCreateOptions)
+        let updateOptions = try #require(updateCommand.providerUpdateOptions)
         #expect(createOptions.accelerationProfile == "throughput")
         #expect(createOptions.allowedHosts == ["operator.lan:12436"])
         #expect(createOptions.allowedOrigins == ["http://localhost:5173/app"])
         #expect(createOptions.accelerationMode == "speculative_decode")
         #expect(createOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(createOptions.numDraftTokens == 8)
-        #expect(updateOptions.serverSessionID == "server-session-qwen")
+        #expect(updateOptions.providerID == "provider-qwen")
         #expect(updateOptions.servedModelIDs == [
             "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
             "melix-secondary",
@@ -2404,10 +2439,9 @@ struct MelixCLIParserTests {
         #expect(Self.optionValue("--draft-model-id", in: updateArguments) == nil)
         #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
             try MelixCLIParser.parse([
-                "server",
-                "session",
-                "update",
-                "--server-session-id=server-session-qwen",
+                "provider",
+            "update",
+                "--provider-id=provider-qwen",
                 "--json=true",
             ])
         }
@@ -2420,7 +2454,7 @@ struct MelixCLIParserTests {
         let startCommand = try MelixCLIParser.parse([
             "server",
             "start",
-            "--server-session-id", "server-session-2",
+            "--provider-id", "provider-2",
             "--json",
         ])
         let titledStartCommand = try MelixCLIParser.parse([
@@ -2448,17 +2482,17 @@ struct MelixCLIParserTests {
         let resumeCommand = try MelixCLIParser.parse([
             "server",
             "resume",
-            "--server-session-id", "server-session-3",
+            "--provider-id", "provider-3",
         ])
         let wakeCommand = try MelixCLIParser.parse([
             "server",
             "wake",
-            "--server-session-id", "server-session-4",
+            "--provider-id", "provider-4",
         ])
         let stopCommand = try MelixCLIParser.parse([
             "server",
             "stop",
-            "--server-session-id", "server-session-5",
+            "--provider-id", "provider-5",
         ])
 
         guard case .serverStart(let startOptions) = startCommand else {
@@ -2486,9 +2520,9 @@ struct MelixCLIParserTests {
             return
         }
 
-        #expect(startOptions.serverSessionID == "server-session-2")
+        #expect(startOptions.providerID == "provider-2")
         #expect(startOptions.json)
-        #expect(titledStartOptions.serverSessionID == "server-session-1")
+        #expect(titledStartOptions.providerID == "provider-1")
         #expect(titledStartOptions.serverTitle == "Gemma 31B")
         #expect(titledStartOptions.defaultModelID == "melix-secondary")
         #expect(titledStartOptions.servedModelIDs == [
@@ -2503,15 +2537,15 @@ struct MelixCLIParserTests {
         #expect(titledStartOptions.timeoutSeconds == 240)
         #expect(titledStartOptions.modelIdleTimeoutSeconds == 300)
         #expect(titledStartOptions.json)
-        #expect(namedStartOptions.serverSessionID == "gemma-31b")
+        #expect(namedStartOptions.providerID == "gemma-31b")
         #expect(namedStartOptions.serverTitle == "gemma-31b")
         #expect(namedStartOptions.defaultModelID == "mlx-community/gemma-4-31b-it-4bit")
         #expect(namedStartOptions.servedModelIDs == ["mlx-community/gemma-4-31b-it-4bit"])
         #expect(namedStartOptions.port == 12434)
-        #expect(resumeOptions.serverSessionID == "server-session-3")
+        #expect(resumeOptions.providerID == "provider-3")
         #expect(!resumeOptions.json)
-        #expect(wakeOptions.serverSessionID == "server-session-4")
-        #expect(stopOptions.serverSessionID == "server-session-5")
+        #expect(wakeOptions.providerID == "provider-4")
+        #expect(stopOptions.providerID == "provider-5")
     }
 
     @Test("parses server idle-policy command with explicit thresholds")
@@ -2519,7 +2553,7 @@ struct MelixCLIParserTests {
         let command = try MelixCLIParser.parse([
             "server",
             "set-idle-policy",
-            "--server-session-id", "server-session-2",
+            "--provider-id", "provider-2",
             "--auto-sleep", "true",
             "--light-sleep-after", "60",
             "--deep-sleep-after", "600",
@@ -2531,7 +2565,7 @@ struct MelixCLIParserTests {
             return
         }
 
-        #expect(options.serverSessionID == "server-session-2")
+        #expect(options.providerID == "provider-2")
         #expect(options.autoSleepEnabled)
         #expect(options.lightSleepAfterSeconds == 60)
         #expect(options.deepSleepAfterSeconds == 600)
@@ -2553,7 +2587,7 @@ struct MelixCLIParserTests {
             return
         }
 
-        #expect(options.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(options.providerID == MelixProviderDefaults.defaultProviderID)
         #expect(options.autoSleepEnabled == false)
         #expect(options.lightSleepAfterSeconds == 30)
         #expect(options.deepSleepAfterSeconds == 300)
@@ -4984,15 +5018,15 @@ private func assertSchemaUsageError(schemaPath: String, contains expectedText: S
 }
 
 private extension MelixCLICommand {
-    var serverSessionCreateOptions: ServerSessionCreateOptions? {
-        if case .serverSessionCreate(let options) = self {
+    var providerCreateOptions: ProviderCreateOptions? {
+        if case .providerCreate(let options) = self {
             return options
         }
         return nil
     }
 
-    var serverSessionUpdateOptions: ServerSessionUpdateOptions? {
-        if case .serverSessionUpdate(let options) = self {
+    var providerUpdateOptions: ProviderUpdateOptions? {
+        if case .providerUpdate(let options) = self {
             return options
         }
         return nil

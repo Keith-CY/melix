@@ -334,7 +334,7 @@ public struct DesktopPaneVisibilityState: Identifiable, Codable, Equatable, Send
 }
 
 public struct DesktopRuntimeEndpointState: Equatable, Sendable {
-    public let serverSessionID: String
+    public let providerID: String
     public let serverTitle: String
     public let modelID: String
     public let requestedBaseURL: String
@@ -342,12 +342,12 @@ public struct DesktopRuntimeEndpointState: Equatable, Sendable {
     public let sharedAccessSummaryText: String
 
     public static let fallback = DesktopRuntimeEndpointState(
-        serverSessionID: "",
+        providerID: "",
         serverTitle: "No Server",
         modelID: "",
         requestedBaseURL: "http://\(MelixGatewayDefaults.host):\(MelixGatewayDefaults.port)/v1",
         effectiveBaseURL: "http://\(MelixGatewayDefaults.host):\(MelixGatewayDefaults.port)/v1",
-        sharedAccessSummaryText: "No server session selected."
+        sharedAccessSummaryText: "No provider selected."
     )
 }
 
@@ -992,7 +992,7 @@ public enum DesktopSharedAccessState: String, Codable, Sendable {
     case enabled = "Enabled"
 }
 
-public enum DesktopServerSessionLifecycle: String, Codable, Sendable {
+public enum DesktopProviderLifecycle: String, Codable, Sendable {
     case draft = "Draft"
     case starting = "Starting"
     case running = "Running"
@@ -1021,7 +1021,7 @@ public enum DesktopServerWakeReason: String, Codable, Sendable {
     case policyApply = "Policy Apply"
 }
 
-public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
+public struct DesktopProviderServingDefaultsState: Codable, Equatable, Sendable {
     public var temperature: Double
     public var topP: Double
     public var maxTokens: Int
@@ -1226,7 +1226,7 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
     }
 }
 
-public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Sendable {
+public struct DesktopProviderState: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public var title: String
     public var defaultModelID: String
@@ -1248,8 +1248,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
     public var rateLimitPerMinute: Int
     public var timeoutSeconds: Int
     public var modelIdleTimeoutSeconds: Int
-    public var servingDefaults: DesktopServerServingDefaultsState
-    public var lifecycle: DesktopServerSessionLifecycle
+    public var servingDefaults: DesktopProviderServingDefaultsState
+    public var lifecycle: DesktopProviderLifecycle
     public var powerState: DesktopServerPowerState
     public var wakeReason: DesktopServerWakeReason
     public var idleTimerSeconds: Int
@@ -1299,8 +1299,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
         modelIdleTimeoutSeconds: Int = 600,
-        servingDefaults: DesktopServerServingDefaultsState = DesktopServerServingDefaultsState(),
-        lifecycle: DesktopServerSessionLifecycle = .draft,
+        servingDefaults: DesktopProviderServingDefaultsState = DesktopProviderServingDefaultsState(),
+        lifecycle: DesktopProviderLifecycle = .draft,
         powerState: DesktopServerPowerState = .unavailable,
         wakeReason: DesktopServerWakeReason = .unspecified,
         idleTimerSeconds: Int = 0,
@@ -1506,9 +1506,9 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         rateLimitPerMinute = try container.decodeIfPresent(Int.self, forKey: .rateLimitPerMinute) ?? 120
         timeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .timeoutSeconds) ?? 120
         modelIdleTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .modelIdleTimeoutSeconds) ?? 600
-        servingDefaults = try container.decodeIfPresent(DesktopServerServingDefaultsState.self, forKey: .servingDefaults)
-            ?? DesktopServerServingDefaultsState()
-        lifecycle = try container.decodeIfPresent(DesktopServerSessionLifecycle.self, forKey: .lifecycle) ?? .draft
+        servingDefaults = try container.decodeIfPresent(DesktopProviderServingDefaultsState.self, forKey: .servingDefaults)
+            ?? DesktopProviderServingDefaultsState()
+        lifecycle = try container.decodeIfPresent(DesktopProviderLifecycle.self, forKey: .lifecycle) ?? .draft
         powerState = try container.decodeIfPresent(DesktopServerPowerState.self, forKey: .powerState) ?? .unavailable
         wakeReason = try container.decodeIfPresent(DesktopServerWakeReason.self, forKey: .wakeReason) ?? .unspecified
         idleTimerSeconds = try container.decodeIfPresent(Int.self, forKey: .idleTimerSeconds) ?? 0
@@ -1572,7 +1572,7 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
 public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
     public let id: String
     public var title: String
-    public var serverSessionID: String
+    public var providerID: String
     public var branchID: String
     public var branchTitle: String
     public var transcript: [DesktopChatTranscriptEntry]
@@ -1587,7 +1587,7 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
     public init(
         id: String,
         title: String,
-        serverSessionID: String,
+        providerID: String,
         branchID: String = "main",
         branchTitle: String = "Main",
         transcript: [DesktopChatTranscriptEntry] = [],
@@ -1601,7 +1601,7 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
     ) {
         self.id = id
         self.title = title
-        self.serverSessionID = serverSessionID
+        self.providerID = providerID
         self.branchID = branchID
         self.branchTitle = branchTitle
         self.transcript = transcript
@@ -1619,7 +1619,7 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
     }
 
     public var hasServerBinding: Bool {
-        serverSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        providerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     public var displayBranchTitle: String? {
@@ -1703,7 +1703,7 @@ public struct DesktopBannerState: Equatable, Sendable {
     }
 }
 
-public extension DesktopServerSessionState {
+public extension DesktopProviderState {
     var isInteractiveReady: Bool {
         lifecycle == .running || lifecycle == .sleeping
     }
@@ -1839,37 +1839,37 @@ public extension DesktopServerSessionState {
         case .paused:
             return DesktopBannerState(
                 title: "\(title) Is Paused",
-                detail: "Resume the bound server session before sending prompts from this chat.",
+                detail: "Resume the bound provider before sending prompts from this chat.",
                 severity: .warning
             )
         case .starting:
             return DesktopBannerState(
                 title: "\(title) Is Starting",
-                detail: "Chat stays read-only until the server session finishes booting.",
+                detail: "Chat stays read-only until the provider finishes booting.",
                 severity: .info
             )
         case .stopping:
             return DesktopBannerState(
                 title: "\(title) Is Stopping",
-                detail: "This chat stays read-only while the bound server session drains.",
+                detail: "This chat stays read-only while the bound provider drains.",
                 severity: .warning
             )
         case .stopped:
             return DesktopBannerState(
                 title: "\(title) Is Stopped",
-                detail: "Start the bound server session before sending prompts from this chat.",
+                detail: "Start the bound provider before sending prompts from this chat.",
                 severity: .warning
             )
         case .error:
             return DesktopBannerState(
                 title: "\(title) Needs Recovery",
-                detail: lastError.isEmpty ? "The bound server session failed." : lastError,
+                detail: lastError.isEmpty ? "The bound provider failed." : lastError,
                 severity: .critical
             )
         case .draft, .unavailable:
             return DesktopBannerState(
-                title: "No Active Server Session",
-                detail: "Choose a valid server session and start it before sending prompts from this chat.",
+                title: "No Active Provider",
+                detail: "Choose a valid provider and start it before sending prompts from this chat.",
                 severity: .warning
             )
         }

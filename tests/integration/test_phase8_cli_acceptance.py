@@ -379,18 +379,17 @@ def test_cli_chat_run_rebinds_primary_session_without_dev_text_model_path(tmp_pa
         created_state = run_cli_json(
             repo_root,
             [
-                "server",
-                "session",
+                "provider",
                 "create",
                 "--title",
-                "Primary Session",
+                "Primary Provider",
                 "--model",
                 "melix-dev-text",
                 "--json",
             ],
             env_overrides=env,
         )
-        assert created_state["id"] == "server-session-1"
+        assert created_state["id"] == "provider-1"
 
         run_cli_json(
             repo_root,
@@ -405,11 +404,10 @@ def test_cli_chat_run_rebinds_primary_session_without_dev_text_model_path(tmp_pa
         run_cli_json(
             repo_root,
             [
-                "server",
-                "session",
+                "provider",
                 "update",
-                "--server-session-id",
-                "server-session-1",
+                "--provider-id",
+                "provider-1",
                 "--model",
                 receipt["model_id"],
                 "--json",
@@ -419,24 +417,23 @@ def test_cli_chat_run_rebinds_primary_session_without_dev_text_model_path(tmp_pa
         selected_state = run_cli_json(
             repo_root,
             [
-                "server",
-                "session",
+                "provider",
                 "select",
-                "--server-session-id",
-                "server-session-1",
+                "--provider-id",
+                "provider-1",
                 "--json",
             ],
             env_overrides=env,
         )
-        assert selected_state["selected_server_session_id"] == "server-session-1"
+        assert selected_state["selected_provider_id"] == "provider-1"
 
         snapshot = run_cli_json(
             repo_root,
             [
                 "server",
                 "start",
-                "--server-session-id",
-                "server-session-1",
+                "--provider-id",
+                "provider-1",
                 "--json",
             ],
             env_overrides=env,
@@ -452,14 +449,14 @@ def test_cli_chat_run_rebinds_primary_session_without_dev_text_model_path(tmp_pa
                 receipt["model_id"],
                 "--message",
                 "Reply with BASE_OK",
-                "--server-session-id",
-                "server-session-1",
+                "--provider-id",
+                "provider-1",
                 "--json",
             ],
             env_overrides=env,
         )
         assert chat_receipt["model_id"] == receipt["model_id"]
-        assert chat_receipt["server_session_id"] == "server-session-1"
+        assert chat_receipt["provider_id"] == "provider-1"
         assert chat_receipt["finish_reason"] == "stop"
         assert chat_receipt["assistant_text"] == "Echo: Reply with BASE_OK"
         assert chat_receipt["request_id"]
@@ -494,18 +491,17 @@ def test_phase8_acceptance_bundle_closes_lora_bench_eval_and_export_paths(tmp_pa
         created_state = run_cli_json(
             repo_root,
             [
-                "server",
-                "session",
+                "provider",
                 "create",
                 "--title",
-                "Primary Session",
+                "Primary Provider",
                 "--model",
                 "melix-dev-text",
                 "--json",
             ],
             env_overrides=env,
         )
-        assert created_state["id"] == "server-session-1"
+        assert created_state["id"] == "provider-1"
 
         payload = run_python_script_json(
             repo_root,
@@ -527,8 +523,8 @@ def test_phase8_acceptance_bundle_closes_lora_bench_eval_and_export_paths(tmp_pa
                 "mmlu",
                 "--evaluation-dataset",
                 "mmlu.dev.v1",
-                "--server-session-id",
-                "server-session-1",
+                "--provider-id",
+                "provider-1",
                 "--timestamp",
                 "2026-04-09T120000Z",
                 "--json",
@@ -609,18 +605,17 @@ def test_phase8_acceptance_bundle_real_small_model_profile_closes_real_lora_chai
         created_state = run_cli_json(
             repo_root,
             [
-                "server",
-                "session",
+                "provider",
                 "create",
                 "--title",
-                "Real Small Model Session",
+                "Real Small Model Provider",
                 "--model",
                 _REAL_SMALL_MODEL_ID,
                 "--json",
             ],
             env_overrides=env,
         )
-        assert created_state["id"] == "server-session-1"
+        assert created_state["id"] == "provider-1"  # pragma: no cover - opt-in real model E2E.
 
         bundle_args = [
             "--execution-profile",
@@ -635,8 +630,8 @@ def test_phase8_acceptance_bundle_real_small_model_profile_closes_real_lora_chai
             "mmlu",
             "--evaluation-dataset",
             "mmlu.dev.v1",
-            "--server-session-id",
-            "server-session-1",
+            "--provider-id",
+            "provider-1",
             "--timestamp",
             "2026-04-16T000000Z",
             "--json",

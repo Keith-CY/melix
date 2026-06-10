@@ -178,7 +178,7 @@ struct MelixSubprocessCLIWorkflowRunnerTests {
             """
             {
               "model_id": "melix-dev-text",
-              "server_session_id": "server-session-1",
+              "provider_id": "provider-1",
               "assistant_text": "BASE_OK",
               "finish_reason": "stop",
               "request_id": "chat-base"
@@ -198,7 +198,7 @@ struct MelixSubprocessCLIWorkflowRunnerTests {
                     modelID: "melix-dev-text",
                     message: "Reply with BASE_OK",
                     systemPrompt: "You are Melix.",
-                    serverSessionID: "server-session-1",
+                    providerID: "provider-1",
                     json: true
                 )
             )
@@ -216,8 +216,8 @@ struct MelixSubprocessCLIWorkflowRunnerTests {
                 "Reply with BASE_OK",
                 "--system",
                 "You are Melix.",
-                "--server-session-id",
-                "server-session-1",
+                "--provider-id",
+                "provider-1",
                 "--json",
             ]
         )

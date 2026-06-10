@@ -56,42 +56,42 @@ struct ControlPlaneXPCClientTests {
         let service = ControlPlaneService()
         let client = LocalControlPlaneXPCClient(service: service)
         let initialSnapshot = try await client.serverSnapshot()
-        let serverSessionID = try #require(initialSnapshot.providers.first?.providerID)
+        let providerID = try #require(initialSnapshot.providers.first?.providerID)
 
-        let pausedSnapshot = try await client.pauseServerSession(serverSessionID: serverSessionID)
+        let pausedSnapshot = try await client.pauseServerSession(serverSessionID: providerID)
         let pausedSession = try #require(
-            pausedSnapshot.providers.first(where: { $0.providerID == serverSessionID })
+            pausedSnapshot.providers.first(where: { $0.providerID == providerID })
         )
         #expect(pausedSession.lifecycleState == .paused)
 
         let idlePolicySnapshot = try await client.updateServerIdlePolicy(
-            serverSessionID: serverSessionID,
+            serverSessionID: providerID,
             autoSleepEnabled: true,
             lightSleepAfterSeconds: 300,
             deepSleepAfterSeconds: 900
         )
         let idlePolicySession = try #require(
-            idlePolicySnapshot.providers.first(where: { $0.providerID == serverSessionID })
+            idlePolicySnapshot.providers.first(where: { $0.providerID == providerID })
         )
         #expect(idlePolicySession.autoSleepEnabled)
         #expect(idlePolicySession.lightSleepAfterSeconds == 300)
         #expect(idlePolicySession.deepSleepAfterSeconds == 900)
 
-        let resumedSnapshot = try await client.resumeServerSession(serverSessionID: serverSessionID)
+        let resumedSnapshot = try await client.resumeServerSession(serverSessionID: providerID)
         let resumedSession = try #require(
-            resumedSnapshot.providers.first(where: { $0.providerID == serverSessionID })
+            resumedSnapshot.providers.first(where: { $0.providerID == providerID })
         )
         #expect(resumedSession.lifecycleState == .ready)
 
-        let stoppedSnapshot = try await client.stopServerSession(serverSessionID: serverSessionID)
+        let stoppedSnapshot = try await client.stopServerSession(serverSessionID: providerID)
         let stoppedSession = try #require(
-            stoppedSnapshot.providers.first(where: { $0.providerID == serverSessionID })
+            stoppedSnapshot.providers.first(where: { $0.providerID == providerID })
         )
         #expect(stoppedSession.lifecycleState == .stopped)
 
-        let startedSnapshot = try await client.startServerSession(serverSessionID: serverSessionID)
+        let startedSnapshot = try await client.startServerSession(serverSessionID: providerID)
         let startedSession = try #require(
-            startedSnapshot.providers.first(where: { $0.providerID == serverSessionID })
+            startedSnapshot.providers.first(where: { $0.providerID == providerID })
         )
         #expect(startedSession.lifecycleState == .ready)
     }
@@ -351,7 +351,7 @@ struct ControlPlaneXPCClientTests {
 
         do {
             _ = try await client.applyServerSessionServingDefaults(
-                serverSessionID: "server-session-1",
+                serverSessionID: "provider-1",
                 temperature: 0.7,
                 topP: 1.0,
                 maxTokens: 256,
@@ -382,7 +382,7 @@ struct ControlPlaneXPCClientTests {
 
         do {
             _ = try await client.applyServerSessionGatewayConfig(
-                serverSessionID: "server-session-1",
+                serverSessionID: "provider-1",
                 host: "127.0.0.1",
                 port: 12_436,
                 defaultModelID: "melix-dev-text",
@@ -800,7 +800,7 @@ struct ControlPlaneXPCClientTests {
         let client = LocalControlPlaneXPCClient(service: service)
 
         try await client.applyServerSessionGatewayAccess(
-            serverSessionID: "server-session-123",
+                serverSessionID: "provider-123",
             primaryKey: "melix_sk_primary_123",
             keyID: "primary",
             label: "primary",
@@ -808,10 +808,10 @@ struct ControlPlaneXPCClientTests {
         )
         let request = try #require(await service.lastExecuteRequest)
 
-        #expect(request.requestID == "menubar-apply-gateway-access-server-session-123")
+        #expect(request.requestID == "menubar-apply-gateway-access-provider-123")
         #expect(request.commandType == "server.apply_gateway_access")
-        #expect(request.targetID == "server-session-123")
-        #expect(request.server.applyGatewayAccess.providerID == "server-session-123")
+        #expect(request.targetID == "provider-123")
+        #expect(request.server.applyGatewayAccess.providerID == "provider-123")
         #expect(request.server.applyGatewayAccess.mode == .apiKeys)
         #expect(request.server.applyGatewayAccess.sharedAccessEnabled)
         #expect(request.server.applyGatewayAccess.primaryKey.keyID == "primary")
@@ -825,13 +825,13 @@ struct ControlPlaneXPCClientTests {
         let service = RecordingExecuteControlPlaneService()
         let client = LocalControlPlaneXPCClient(service: service)
 
-        try await client.clearServerSessionGatewayAccess(serverSessionID: "server-session-123")
+        try await client.clearServerSessionGatewayAccess(serverSessionID: "provider-123")
         let request = try #require(await service.lastExecuteRequest)
 
-        #expect(request.requestID == "menubar-clear-gateway-access-server-session-123")
+        #expect(request.requestID == "menubar-clear-gateway-access-provider-123")
         #expect(request.commandType == "server.apply_gateway_access")
-        #expect(request.targetID == "server-session-123")
-        #expect(request.server.applyGatewayAccess.providerID == "server-session-123")
+        #expect(request.targetID == "provider-123")
+        #expect(request.server.applyGatewayAccess.providerID == "provider-123")
         #expect(request.server.applyGatewayAccess.mode == .none)
         #expect(request.server.applyGatewayAccess.sharedAccessEnabled == false)
         #expect(request.server.applyGatewayAccess.hasPrimaryKey == false)
@@ -845,7 +845,7 @@ struct ControlPlaneXPCClientTests {
         response.server = Melix_Controlplane_V1_ServerReply()
         response.server.snapshot.serverState = .serverReady
         var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
-        listener.providerID = "server-session-123"
+        listener.providerID = "provider-123"
         listener.requestedHost = "0.0.0.0"
         listener.requestedPort = 18080
         listener.effectiveHost = "127.0.0.1"
@@ -865,7 +865,7 @@ struct ControlPlaneXPCClientTests {
         let client = LocalControlPlaneXPCClient(service: service)
 
         let snapshot = try await client.applyServerSessionGatewayConfig(
-            serverSessionID: "server-session-123",
+                serverSessionID: "provider-123",
             host: "0.0.0.0",
             port: 18080,
             defaultModelID: "melix-dev-text",
@@ -878,10 +878,10 @@ struct ControlPlaneXPCClientTests {
         )
         let request = try #require(await service.lastExecuteRequest)
 
-        #expect(request.requestID == "menubar-apply-gateway-config-server-session-123")
+        #expect(request.requestID == "menubar-apply-gateway-config-provider-123")
         #expect(request.commandType == "server.apply_gateway_config")
-        #expect(request.targetID == "server-session-123")
-        #expect(request.server.applyGatewayConfig.providerID == "server-session-123")
+        #expect(request.targetID == "provider-123")
+        #expect(request.server.applyGatewayConfig.providerID == "provider-123")
         #expect(request.server.applyGatewayConfig.host == "0.0.0.0")
         #expect(request.server.applyGatewayConfig.port == 18_080)
         #expect(request.server.applyGatewayConfig.defaultModelID == "melix-dev-text")
@@ -904,7 +904,7 @@ struct ControlPlaneXPCClientTests {
         response.ok = true
         response.server = Melix_Controlplane_V1_ServerReply()
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.providerID = "server-session-123"
+        servingDefaults.providerID = "provider-123"
         servingDefaults.requestedTemperature = 0.33
         servingDefaults.requestedTopP = 0.92
         servingDefaults.requestedMaxTokens = 384
@@ -921,7 +921,7 @@ struct ControlPlaneXPCClientTests {
         let client = LocalControlPlaneXPCClient(service: service)
 
         let snapshot = try await client.applyServerSessionServingDefaults(
-            serverSessionID: "server-session-123",
+                serverSessionID: "provider-123",
             temperature: 0.33,
             topP: 0.92,
             maxTokens: 384,
@@ -937,10 +937,10 @@ struct ControlPlaneXPCClientTests {
         )
         let request = try #require(await service.lastExecuteRequest)
 
-        #expect(request.requestID == "menubar-apply-serving-defaults-server-session-123")
+        #expect(request.requestID == "menubar-apply-serving-defaults-provider-123")
         #expect(request.commandType == "server.apply_serving_defaults")
-        #expect(request.targetID == "server-session-123")
-        #expect(request.server.applyServingDefaults.providerID == "server-session-123")
+        #expect(request.targetID == "provider-123")
+        #expect(request.server.applyServingDefaults.providerID == "provider-123")
         #expect(request.server.applyServingDefaults.temperature == 0.33)
         #expect(request.server.applyServingDefaults.topP == 0.92)
         #expect(request.server.applyServingDefaults.maxTokens == 384)
@@ -1158,7 +1158,7 @@ struct ControlPlaneXPCClientTests {
 
         do {
             try await client.applyServerSessionGatewayAccess(
-                serverSessionID: "server-session-default",
+                serverSessionID: "provider-default",
                 primaryKey: "melix_sk_default",
                 keyID: "primary",
                 label: "primary",
@@ -1175,7 +1175,7 @@ struct ControlPlaneXPCClientTests {
         }
 
         do {
-            try await client.clearServerSessionGatewayAccess(serverSessionID: "server-session-default")
+            try await client.clearServerSessionGatewayAccess(serverSessionID: "provider-default")
             Issue.record("Expected clearServerSessionGatewayAccess to throw for the default protocol implementation")
         } catch let error as ControlPlaneXPCClientError {
             #expect(

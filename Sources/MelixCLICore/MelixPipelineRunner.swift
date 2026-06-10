@@ -959,10 +959,10 @@ private enum MelixPipelineCommandBuilder {
                     hfToken: string("hf_token", args) ?? ""
                 )
             )
-        case "server.session.update":
-            return .serverSessionUpdate(
-                ServerSessionUpdateOptions(
-                    serverSessionID: string("server_session_id", args) ?? ServerSessionRuntimeStore.defaultServerSessionID,
+        case "provider.update":
+            return .providerUpdate(
+                ProviderUpdateOptions(
+                    providerID: string("provider_id", args) ?? MelixProviderDefaults.defaultProviderID,
                     title: string("title", args) ?? "",
                     defaultModelID: string("default_model_id", args) ?? string("model_id", args) ?? "",
                     servedModelIDs: try firstStringArray(["served_model_ids"], args),
@@ -976,16 +976,16 @@ private enum MelixPipelineCommandBuilder {
                     numDraftTokens: try int("num_draft_tokens", args) ?? 0
                 )
             )
-        case "server.session.select":
-            return .serverSessionSelect(
-                ServerSessionIDOptions(
-                    serverSessionID: string("server_session_id", args) ?? ServerSessionRuntimeStore.defaultServerSessionID
+        case "provider.select":
+            return .providerSelect(
+                ProviderIDOptions(
+                    providerID: string("provider_id", args) ?? MelixProviderDefaults.defaultProviderID
                 )
             )
         case "server.start":
             return .serverStart(
                 ServerControlOptions(
-                    serverSessionID: string("server_session_id", args) ?? ServerSessionRuntimeStore.defaultServerSessionID
+                    providerID: string("provider_id", args) ?? MelixProviderDefaults.defaultProviderID
                 )
             )
         case "chat.run":
@@ -994,7 +994,7 @@ private enum MelixPipelineCommandBuilder {
                     modelID: try requiredString("model_id", args),
                     message: try requiredString("message", args),
                     systemPrompt: string("system", args) ?? string("system_prompt", args) ?? "",
-                    serverSessionID: string("server_session_id", args) ?? ServerSessionRuntimeStore.defaultServerSessionID
+                    providerID: string("provider_id", args) ?? MelixProviderDefaults.defaultProviderID
                 )
             )
         case "lora.train":
@@ -1198,8 +1198,8 @@ private enum MelixPipelineCommandBuilder {
         "model.inspect",
         "model.roots.rescan",
         "dataset.hub.download",
-        "server.session.update",
-        "server.session.select",
+        "provider.update",
+        "provider.select",
         "server.start",
         "chat.run",
         "lora.train",

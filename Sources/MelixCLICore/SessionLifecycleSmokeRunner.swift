@@ -32,20 +32,20 @@ public struct SessionLifecycleSmokeScenario: Encodable, Equatable, Sendable {
 
 public struct SessionLifecycleSmokeReport: Encodable, Equatable, Sendable {
     public let ok: Bool
-    public let serverSessionID: String
+    public let providerID: String
     public let modelID: String
     public let metrics: [String: Double]
     public let scenarios: [String: SessionLifecycleSmokeScenario]
 
     public init(
         ok: Bool,
-        serverSessionID: String,
+        providerID: String,
         modelID: String,
         metrics: [String: Double],
         scenarios: [String: SessionLifecycleSmokeScenario]
     ) {
         self.ok = ok
-        self.serverSessionID = serverSessionID
+        self.providerID = providerID
         self.modelID = modelID
         self.metrics = metrics
         self.scenarios = scenarios
@@ -94,15 +94,15 @@ public struct SessionLifecycleSmokeRunner: Sendable {
     }
 
     public func run(
-        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        providerID: String = MelixProviderDefaults.defaultProviderID,
         modelID: String = "melix-dev-text"
     ) async throws -> SessionLifecycleSmokeReport {
         _ = try await client.handshake()
         _ = try await client.loadModel(modelID: modelID)
 
         let pauseStartedAt = now()
-        let pausedSnapshot = try await client.pauseServerSession(serverSessionID: serverSessionID)
-        let pausedSession = try runtimeSession(in: pausedSnapshot, serverSessionID: serverSessionID)
+        let pausedSnapshot = try await client.pauseServerSession(serverSessionID: providerID)
+        let pausedSession = try runtimeSession(in: pausedSnapshot, providerID: providerID)
         let pauseAckMS = elapsedMS(since: pauseStartedAt)
 
         var blockedStatus = "unexpected_success"
@@ -110,7 +110,8 @@ public struct SessionLifecycleSmokeRunner: Sendable {
             _ = try await client.startChat(
                 ControlPlaneChatRequest(
                     modelID: modelID,
-                    messages: [.init(role: "user", content: "confirm the paused server blocks chat")]
+                    messages: [.init(role: "user", content: "confirm the paused server blocks chat")],
+                    providerID: providerID
                 )
             )
         } catch ControlPlaneChatExecutionError.unavailable {
@@ -120,24 +121,24 @@ public struct SessionLifecycleSmokeRunner: Sendable {
             blockedStatus = "unavailable"
         }
 
-        _ = try await client.resumeServerSession(serverSessionID: serverSessionID)
+        _ = try await client.resumeServerSession(serverSessionID: providerID)
 
         let idleStartedAt = now()
         _ = try await client.updateServerIdlePolicy(
-            serverSessionID: serverSessionID,
+            serverSessionID: providerID,
             autoSleepEnabled: true,
             lightSleepAfterSeconds: 1,
             deepSleepAfterSeconds: 5
         )
         let sleepingSession = try await waitForLifecycle(
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             expectedLifecycle: .sleeping,
             timeoutSeconds: 3
         )
         let idleToSleepMS = elapsedMS(since: idleStartedAt)
 
         _ = try await client.updateServerIdlePolicy(
-            serverSessionID: serverSessionID,
+            serverSessionID: providerID,
             autoSleepEnabled: true,
             lightSleepAfterSeconds: 10,
             deepSleepAfterSeconds: 30
@@ -147,12 +148,13 @@ public struct SessionLifecycleSmokeRunner: Sendable {
         let wakeExecution = try await client.startChat(
             ControlPlaneChatRequest(
                 modelID: modelID,
-                messages: [.init(role: "user", content: "wake the server")]
+                messages: [.init(role: "user", content: "wake the server")],
+                providerID: providerID
             )
         )
         async let wakeAssistantTask = collectAssistantText(from: wakeExecution)
         let readyAfterWake = try await waitForLifecycle(
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             expectedLifecycle: .ready,
             timeoutSeconds: 2
         )
@@ -160,21 +162,22 @@ public struct SessionLifecycleSmokeRunner: Sendable {
         let wakeAssistant = try await wakeAssistantTask
 
         _ = try await client.updateServerIdlePolicy(
-            serverSessionID: serverSessionID,
+            serverSessionID: providerID,
             autoSleepEnabled: false,
             lightSleepAfterSeconds: 1,
             deepSleepAfterSeconds: 5
         )
 
         let restartStartedAt = now()
-        _ = try await stopServerSessionWhenQuiescent(serverSessionID: serverSessionID, timeoutSeconds: 2)
-        let restartedSnapshot = try await client.startServerSession(serverSessionID: serverSessionID)
-        let restartedSession = try runtimeSession(in: restartedSnapshot, serverSessionID: serverSessionID)
+        _ = try await stopServerSessionWhenQuiescent(providerID: providerID, timeoutSeconds: 2)
+        let restartedSnapshot = try await client.startServerSession(serverSessionID: providerID)
+        let restartedSession = try runtimeSession(in: restartedSnapshot, providerID: providerID)
         let restartRecoveryMS = elapsedMS(since: restartStartedAt)
         let restartExecution = try await client.startChat(
             ControlPlaneChatRequest(
                 modelID: modelID,
-                messages: [.init(role: "user", content: "confirm restart recovery")]
+                messages: [.init(role: "user", content: "confirm restart recovery")],
+                providerID: providerID
             )
         )
         let restartAssistant = try await collectAssistantText(from: restartExecution)
@@ -191,7 +194,7 @@ public struct SessionLifecycleSmokeRunner: Sendable {
 
         return SessionLifecycleSmokeReport(
             ok: true,
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             modelID: modelID,
             metrics: metrics,
             scenarios: [
@@ -224,9 +227,9 @@ public struct SessionLifecycleSmokeRunner: Sendable {
 
     private func runtimeSession(
         in snapshot: Melix_Controlplane_V1_ServerSnapshot,
-        serverSessionID: String
+        providerID: String
     ) throws -> Melix_Controlplane_V1_ProviderRuntimeState {
-        let trimmedID = normalizedServerSessionID(serverSessionID)
+        let trimmedID = normalizedServerSessionID(providerID)
         guard let session = snapshot.providers.first(where: { $0.providerID == trimmedID }) else {
             throw SessionLifecycleSmokeRunnerError.missingRuntimeSession(trimmedID)
         }
@@ -234,7 +237,7 @@ public struct SessionLifecycleSmokeRunner: Sendable {
     }
 
     private func waitForLifecycle(
-        serverSessionID: String,
+        providerID: String,
         expectedLifecycle: Melix_Controlplane_V1_ProviderLifecycleState,
         timeoutSeconds: TimeInterval
     ) async throws -> Melix_Controlplane_V1_ProviderRuntimeState {
@@ -243,7 +246,7 @@ public struct SessionLifecycleSmokeRunner: Sendable {
 
         while now() <= deadline {
             let snapshot = try await client.serverSnapshot()
-            let session = try runtimeSession(in: snapshot, serverSessionID: serverSessionID)
+            let session = try runtimeSession(in: snapshot, providerID: providerID)
             observedLifecycle = session.lifecycleState
             if session.lifecycleState == expectedLifecycle {
                 return session
@@ -279,13 +282,13 @@ public struct SessionLifecycleSmokeRunner: Sendable {
     }
 
     private func stopServerSessionWhenQuiescent(
-        serverSessionID: String,
+        providerID: String,
         timeoutSeconds: TimeInterval
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         let deadline = now() + timeoutSeconds
         while now() <= deadline {
             do {
-                return try await client.stopServerSession(serverSessionID: serverSessionID)
+                return try await client.stopServerSession(serverSessionID: providerID)
             } catch let error as ControlPlaneXPCClientError {
                 if case .requestFailed(let code, _) = error, code == "conflict" {
                     try await sleep(0.05)
@@ -294,7 +297,7 @@ public struct SessionLifecycleSmokeRunner: Sendable {
                 throw error
             }
         }
-        return try await client.stopServerSession(serverSessionID: serverSessionID)
+        return try await client.stopServerSession(serverSessionID: providerID)
     }
 
     private func readExportedMetrics(
@@ -344,9 +347,9 @@ public struct SessionLifecycleSmokeRunner: Sendable {
         max(0, (now() - startedAt) * 1_000)
     }
 
-    private func normalizedServerSessionID(_ serverSessionID: String) -> String {
-        let trimmedID = serverSessionID.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedID.isEmpty ? ServerSessionRuntimeStore.defaultServerSessionID : trimmedID
+    private func normalizedServerSessionID(_ providerID: String) -> String {
+        let trimmedID = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedID.isEmpty ? MelixProviderDefaults.defaultProviderID : trimmedID
     }
 }
 

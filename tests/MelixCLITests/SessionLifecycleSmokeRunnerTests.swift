@@ -28,7 +28,7 @@ struct SessionLifecycleSmokeRunnerTests {
         let report = try await runner.run()
 
         #expect(report.ok)
-        #expect(report.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(report.providerID == MelixProviderDefaults.defaultProviderID)
         #expect(report.modelID == "melix-dev-text")
         #expect(report.metrics["control_plane.server_pause_ms"] == 4.5)
         #expect(report.metrics["lifecycle.pause_ack_ms"] != nil)
@@ -105,12 +105,12 @@ struct SessionLifecycleSmokeRunnerTests {
     @Test("command parser accepts explicit smoke arguments")
     func commandParserAcceptsExplicitArguments() throws {
         let options = try SessionLifecycleSmokeCommand.parseArguments([
-            "--server-session-id", "server-session-9",
+            "--provider-id", "provider-9",
             "--model-id", "melix-dev-text-alt",
             "--json",
         ])
 
-        #expect(options == .init(serverSessionID: "server-session-9", modelID: "melix-dev-text-alt"))
+        #expect(options == .init(providerID: "provider-9", modelID: "melix-dev-text-alt"))
     }
 
     @Test("command renderer prints machine-readable payload")
@@ -118,10 +118,10 @@ struct SessionLifecycleSmokeRunnerTests {
         let output = try await SessionLifecycleSmokeCommand.renderReport(
             arguments: ["--json"],
             environment: [:],
-            reportBuilder: { serverSessionID, modelID, _ in
+            reportBuilder: { providerID, modelID, _ in
                 SessionLifecycleSmokeReport(
                     ok: true,
-                    serverSessionID: serverSessionID,
+                    providerID: providerID,
                     modelID: modelID,
                     metrics: ["lifecycle.pause_ack_ms": 4.2],
                     scenarios: [
@@ -163,15 +163,15 @@ struct SessionLifecycleSmokeRunnerTests {
 
     @Test("command parser rejects missing values and unexpected arguments")
     func commandParserRejectsInvalidArguments() async throws {
-        #expect(throws: MelixCLIError.missingValue("--server-session-id")) {
-            _ = try SessionLifecycleSmokeCommand.parseArguments(["--server-session-id"])
+        #expect(throws: MelixCLIError.missingValue("--provider-id")) {
+            _ = try SessionLifecycleSmokeCommand.parseArguments(["--provider-id"])
         }
         #expect(throws: MelixCLIError.missingValue("--model-id")) {
             _ = try SessionLifecycleSmokeCommand.parseArguments(["--model-id"])
         }
         #expect(throws: MelixCLIError.usage("""
             Usage:
-              melix-session-lifecycle-smoke [--server-session-id ID] [--model-id MODEL] [--json]
+              melix-session-lifecycle-smoke [--provider-id ID] [--model-id MODEL] [--json]
             """)) {
             _ = try SessionLifecycleSmokeCommand.parseArguments(["--unexpected"])
         }
@@ -225,6 +225,30 @@ struct SessionLifecycleSmokeRunnerTests {
         #expect(report.scenarios["restart"]?.assistantText == "Echo: confirm restart recovery")
     }
 
+    @Test("runner surfaces stop conflict after retry deadline")
+    func runnerSurfacesStopConflictAfterRetryDeadline() async throws {
+        let clock = LifecycleSmokeFakeClock()
+        let runner = SessionLifecycleSmokeRunner(
+            client: LifecycleSmokeStubClient(stopConflictCount: 1000),
+            now: { clock.now() },
+            sleep: { seconds in
+                clock.sleep(seconds)
+            }
+        )
+
+        do {
+            _ = try await runner.run()
+            Issue.record("Expected stop conflict after retry deadline")
+        } catch let error as ControlPlaneXPCClientError {
+            guard case .requestFailed(let code, let message) = error else {
+                Issue.record("Expected requestFailed conflict, got \(error)")
+                return
+            }
+            #expect(code == "conflict")
+            #expect(message == "Cannot stop the provider while requests are active.")
+        }
+    }
+
     @Test("runner fails when the requested runtime session is missing")
     func runnerFailsWhenRequestedRuntimeSessionIsMissing() async throws {
         let runner = SessionLifecycleSmokeRunner(
@@ -232,8 +256,8 @@ struct SessionLifecycleSmokeRunnerTests {
             sleep: { _ in try await Task.sleep(for: .milliseconds(1)) }
         )
 
-        await #expect(throws: SessionLifecycleSmokeRunnerError.missingRuntimeSession("server-session-missing")) {
-            _ = try await runner.run(serverSessionID: "server-session-missing")
+        await #expect(throws: SessionLifecycleSmokeRunnerError.missingRuntimeSession("provider-missing")) {
+            _ = try await runner.run(providerID: "provider-missing")
         }
     }
 
@@ -259,9 +283,9 @@ struct SessionLifecycleSmokeRunnerTests {
             Issue.record("subscription stream should complete immediately")
         }
 
-        _ = try await client.wakeServerSession(serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID)
+        _ = try await client.wakeServerSession(serverSessionID: MelixProviderDefaults.defaultProviderID)
         _ = try await client.updateServerIdlePolicy(
-            serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID,
+            serverSessionID: MelixProviderDefaults.defaultProviderID,
             autoSleepEnabled: true,
             lightSleepAfterSeconds: 1,
             deepSleepAfterSeconds: 5
@@ -269,7 +293,7 @@ struct SessionLifecycleSmokeRunnerTests {
         _ = try await client.serverSnapshot()
         _ = try await client.serverSnapshot()
         let resumedSnapshot = try await client.updateServerIdlePolicy(
-            serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID,
+            serverSessionID: MelixProviderDefaults.defaultProviderID,
             autoSleepEnabled: false,
             lightSleepAfterSeconds: 1,
             deepSleepAfterSeconds: 5
@@ -300,6 +324,25 @@ struct SessionLifecycleSmokeRunnerTests {
 
         #expect(output.contains("\"server_state\""))
         #expect(output.contains("\"providers\""))
+    }
+}
+
+private final class LifecycleSmokeFakeClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var currentTime: TimeInterval = 0
+
+    func now() -> TimeInterval {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        return currentTime
+    }
+
+    func sleep(_ seconds: TimeInterval) {
+        lock.lock()
+        currentTime += seconds
+        lock.unlock()
     }
 }
 
@@ -334,7 +377,7 @@ private actor LifecycleMetricsExportDelay {
 }
 
 private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
-    nonisolated let serverSessionID: String
+    nonisolated let providerID: String
     private let allowSleepTransition: Bool
     private let chatModes: [String: LifecycleSmokeChatMode]
     private let pausedChatErrorReason: String?
@@ -346,21 +389,21 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
     private var remainingStopConflicts: Int
 
     init(
-        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        providerID: String = MelixProviderDefaults.defaultProviderID,
         allowSleepTransition: Bool = true,
         chatModes: [String: LifecycleSmokeChatMode] = [:],
         pausedChatErrorReason: String? = nil,
         deferWakeUntilStreamConsumption: Bool = false,
         stopConflictCount: Int = 0
     ) {
-        self.serverSessionID = serverSessionID
+        self.providerID = providerID
         self.allowSleepTransition = allowSleepTransition
         self.chatModes = chatModes
         self.pausedChatErrorReason = pausedChatErrorReason
         self.deferWakeUntilStreamConsumption = deferWakeUntilStreamConsumption
         self.remainingStopConflicts = stopConflictCount
         self.snapshot = LifecycleSmokeStubClient.makeSnapshot(
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             lifecycleState: .ready,
             powerState: .active,
             wakeReason: .initialBoot
@@ -434,36 +477,36 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
     }
 
     func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        _ = serverSessionID
+        _ = providerID
         mutateSession(lifecycleState: .ready, powerState: .active, wakeReason: .operatorResume)
         return snapshot
     }
 
     func pauseServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        _ = serverSessionID
+        _ = providerID
         mutateSession(lifecycleState: .paused, powerState: .active, wakeReason: .operatorResume)
         return snapshot
     }
 
     func resumeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        _ = serverSessionID
+        _ = providerID
         mutateSession(lifecycleState: .ready, powerState: .active, wakeReason: .operatorResume)
         return snapshot
     }
 
     func wakeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        _ = serverSessionID
+        _ = providerID
         mutateSession(lifecycleState: .ready, powerState: .active, wakeReason: .operatorResume)
         return snapshot
     }
 
     func stopServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        _ = serverSessionID
+        _ = providerID
         if remainingStopConflicts > 0 {
             remainingStopConflicts -= 1
             throw ControlPlaneXPCClientError.requestFailed(
                 code: "conflict",
-                message: "Cannot stop the server session while requests are active."
+                message: "Cannot stop the provider while requests are active."
             )
         }
         mutateSession(lifecycleState: .stopped, powerState: .stopped, wakeReason: .operatorResume)
@@ -476,7 +519,7 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
         lightSleepAfterSeconds: UInt32,
         deepSleepAfterSeconds: UInt32
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        _ = serverSessionID
+        _ = providerID
         snapshot.providers[0].autoSleepEnabled = autoSleepEnabled
         snapshot.providers[0].lightSleepAfterSeconds = lightSleepAfterSeconds
         snapshot.providers[0].deepSleepAfterSeconds = deepSleepAfterSeconds
@@ -575,13 +618,13 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
     }
 
     private static func makeSnapshot(
-        serverSessionID: String,
+        providerID: String,
         lifecycleState: Melix_Controlplane_V1_ProviderLifecycleState,
         powerState: Melix_Controlplane_V1_ProviderPowerState,
         wakeReason: Melix_Controlplane_V1_ProviderWakeReason
     ) -> Melix_Controlplane_V1_ServerSnapshot {
         var session = Melix_Controlplane_V1_ProviderRuntimeState()
-        session.providerID = serverSessionID
+        session.providerID = providerID
         session.lifecycleState = lifecycleState
         session.powerState = powerState
         session.wakeReason = wakeReason
