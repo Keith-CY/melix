@@ -418,19 +418,24 @@ boundary for evidence admitted by those later surfaces.
 
 The Python worker retrieval admission primitives are
 `worker.runtime.retrieval_context.admit_retrieved_document_context` and
-`worker.runtime.retrieval_context.admit_retrieved_image_context`. Future live
-RAG stores, document retrieval, image retrieval, and local source integration
-entrypoints must pass already-redacted evidence dictionaries through these
-helpers before projecting that evidence into user-role prompt context. Each
-helper records one `source_type = retrieved_document` or `source_type =
-retrieved_image` receipt with `source_field` matching the source type and
-`source_id` set to the redacted retrieved source identifier. Malformed source
-IDs, payload objects, or owner-scope metadata produce `included = false`
-refusal receipts with `reason = invalid_retrieved_document_context_field` or
+`worker.runtime.retrieval_context.admit_retrieved_image_context`. Deterministic
+text search, image search, and local visit source receipts pass already-redacted
+evidence dictionaries through these helpers before projecting that evidence
+into tool-observation prompt context. Future live RAG stores, document
+retrieval, image retrieval, and local source integration entrypoints must reuse
+the same helpers. By default, each helper records one `source_type =
+retrieved_document` or `source_type = retrieved_image` receipt with
+`source_field` matching the source type and `source_id` set to the redacted
+retrieved source identifier. Concrete result-list and visit entrypoints may
+provide entrypoint-local `segment_id`, `source_field`, `reason`, and
+`corrective_action` values so their public receipt locations remain stable.
+Malformed source IDs, payload objects, owner-scope metadata, or entrypoint
+receipt fields produce `included = false` refusal receipts with `reason =
+invalid_retrieved_document_context_field` or
 `invalid_retrieved_image_context_field` and no user payload. These helpers do
 not implement retrieval storage, ranking, indexing, ingestion, or chat/session
 wiring; they are only the prompt-context boundary for evidence admitted by
-those later surfaces.
+those surfaces.
 
 The v1 control-plane rerank document-boundary slice applies the same receipt
 schema to the OpenAI-compatible `/v1/rerank` HTTP response. The handler emits
