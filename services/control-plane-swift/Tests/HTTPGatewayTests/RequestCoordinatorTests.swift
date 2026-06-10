@@ -2139,11 +2139,7 @@ struct RequestCoordinatorTests {
             )
         )
         let consumer = Task {
-            do {
-                for try await _ in execution.stream {
-                }
-            } catch {
-                Issue.record(error)
+            for try await _ in execution.stream {
             }
         }
         defer { consumer.cancel() }
@@ -2171,7 +2167,7 @@ struct RequestCoordinatorTests {
 
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.finishDecode(requestID: "req-explicit-restore")
-        _ = await consumer.result
+        _ = try await consumer.value
     }
 
     @Test("explicit restore receipts do not require a session graph store")
@@ -2190,11 +2186,7 @@ struct RequestCoordinatorTests {
             )
         )
         let consumer = Task {
-            do {
-                for try await _ in execution.stream {
-                }
-            } catch {
-                Issue.record(error)
+            for try await _ in execution.stream {
             }
         }
         defer { consumer.cancel() }
@@ -2214,7 +2206,7 @@ struct RequestCoordinatorTests {
 
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.finishDecode(requestID: "req-explicit-restore-no-store")
-        _ = await consumer.result
+        _ = try await consumer.value
     }
 
     @Test("explicit restore receipts preserve existing receipt ext metadata")
@@ -2239,11 +2231,7 @@ struct RequestCoordinatorTests {
             )
         )
         let consumer = Task {
-            do {
-                for try await _ in execution.stream {
-                }
-            } catch {
-                Issue.record(error)
+            for try await _ in execution.stream {
             }
         }
         defer { consumer.cancel() }
@@ -2259,7 +2247,7 @@ struct RequestCoordinatorTests {
 
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.finishDecode(requestID: "req-explicit-restore-existing-ext")
-        _ = await consumer.result
+        _ = try await consumer.value
     }
 
     @Test("empty session context receipt inputs do not attach ext metadata")

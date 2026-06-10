@@ -322,6 +322,23 @@ skill entrypoints, memory entrypoints, and background-job continuations must
 reuse this receipt shape when they add their prompt-context boundary evidence
 under #1761.
 
+The v1 MCP tool catalog prompt-adjacent metadata slice records the same receipt
+shape when `TextRequestShaper` auto-injects MCP catalog sources into
+`ToolParserSelection`. These receipts are stored in `ExecutionMetadata.ext` as:
+
+- `melix.mcp.prompt_context.receipt_schema`
+- `melix.mcp.prompt_context.receipt_count`
+- `melix.mcp.prompt_context.receipts_json`
+
+The MCP receipt records one admitted segment per selected MCP source ID after
+catalog normalization, high-risk namespace refusal, and enabled-source
+filtering. Each receipt uses `source_type = skill`, `source_field =
+mcp_tool_catalog`, and `source_id` set to the redacted MCP source ID. This
+records that the catalog source is prompt-adjacent skill/tool evidence and not
+trusted instructions. The receipt must not include MCP config paths, tool
+namespaces, tool schemas, tool arguments, private prompt text, or raw source
+payloads.
+
 The v1 control-plane session-context slice records the same receipt shape when
 `RequestCoordinator` resolves an implicit follow-up restore snapshot from
 `SessionGraphStore`. These receipts are stored in `ExecutionMetadata.ext` as:
