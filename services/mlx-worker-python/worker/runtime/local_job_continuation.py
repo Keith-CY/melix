@@ -216,6 +216,8 @@ class LocalJobContinuationStore:
             try:
                 raw_pid = lock_path.read_text(encoding="utf-8").strip()
                 pid = int(raw_pid)
+            except FileNotFoundError:
+                return True
             except (OSError, ValueError):
                 return False
             if pid <= 0 or _process_is_active(pid):
