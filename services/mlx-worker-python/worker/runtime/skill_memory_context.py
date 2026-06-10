@@ -75,12 +75,13 @@ def _admit_context(
     corrective_action: str,
 ) -> PromptContextAdmission:
     normalized_source_id = _source_id_or_refusal(context_kind, source_id)
+    default_segment_id = f"{normalized_source_id}:{context_kind}-context"
     normalized_segment_id = _entrypoint_text_or_default(
         context_kind,
         segment_id,
-        default=f"{normalized_source_id}:{context_kind}-context",
+        default=default_segment_id,
         field_name="segment_id",
-        refusal_segment_id=f"{normalized_source_id}:{context_kind}-context",
+        refusal_segment_id=default_segment_id,
         source_id=normalized_source_id,
     )
     normalized_source_field = _entrypoint_text_or_default(
