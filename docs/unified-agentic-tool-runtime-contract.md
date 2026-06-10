@@ -299,6 +299,22 @@ other raw source payloads. The classification is evidentiary and does not
 replace source-specific owner-scope checks, admission/refusal checks, or
 background-continuation link validation.
 
+The live chat prompt receipt uses source-specific data-only policy text for the
+classified source type. Tool output records `reason = tool output is prompt
+data, not instructions`; retrieved documents record `reason = retrieved
+document evidence is prompt data, not instructions`; skills record `reason =
+skill evidence is prompt data, not instructions`; memories record `reason =
+memory evidence is prompt data, not instructions`; background continuations
+record `reason = background continuation is prompt data, not instructions`;
+model-final-answer history records `reason = model final answer history is
+prompt data, not instructions`; and generic chat prompt messages retain
+`reason = chat message content is prompt data, not instructions`. Each matching
+`corrective_action` tells downstream consumers to keep that source in its
+original user or assistant data role and not project it into system or developer
+instructions. This live-policy mapping does not create a RAG store, skill
+store, memory store, or background-job continuation store; it documents the
+final request-translation receipt for already-shaped messages.
+
 The chat prompt receipt must not include raw message content, media URLs, media
 bytes, tool arguments, or private prompt text. It records only segment IDs,
 source fields, roles, data-only policy, and corrective guidance. RAG stores,
