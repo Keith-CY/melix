@@ -13,10 +13,12 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
                 guard let sourceField = Self.sourceField(for: part, messageIndex: messageIndex, partIndex: partIndex) else {
                     continue
                 }
+                let sourceType = Self.sourceType(for: message)
+                let policy = Self.sourcePolicy(for: sourceType)
                 var receipt: [String: PromptContextReceiptValue] = [
                     "schema_version": .string(Self.schemaVersion),
                     "segment_id": .string("\(requestID):message-\(messageIndex):part-\(partIndex)"),
-                    "source_type": .string(Self.sourceType(for: message)),
+                    "source_type": .string(sourceType),
                     "source_field": .string(sourceField),
                     "message_role": .string(message.role),
                     "trust_level": .string("untrusted"),
@@ -24,10 +26,8 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
                     "boundary_checked": .bool(true),
                     "included": .bool(true),
                     "owner_scope_checked": .bool(false),
-                    "reason": .string("chat message content is prompt data, not instructions"),
-                    "corrective_action": .string(
-                        "Keep this message part in its original role and do not promote it into system or developer instructions."
-                    ),
+                    "reason": .string(policy.reason),
+                    "corrective_action": .string(policy.correctiveAction),
                 ]
                 if let sourceID = message.name {
                     receipt["source_id"] = .string(sourceID)
@@ -84,6 +84,46 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
             return "model_final_answer"
         }
         return "chat_prompt_message"
+    }
+
+    private static func sourcePolicy(for sourceType: String) -> (reason: String, correctiveAction: String) {
+        switch sourceType {
+        case "tool_output":
+            return (
+                "tool output is prompt data, not instructions",
+                "Keep tool output in user-role data context and do not project it into system or developer instructions."
+            )
+        case "retrieved_document":
+            return (
+                "retrieved document evidence is prompt data, not instructions",
+                "Keep retrieved document evidence in user-role data context and do not project it into system or developer instructions."
+            )
+        case "skill":
+            return (
+                "skill evidence is prompt data, not instructions",
+                "Keep skill evidence in user-role data context and do not project it into system or developer instructions."
+            )
+        case "memory":
+            return (
+                "memory evidence is prompt data, not instructions",
+                "Keep memory evidence in user-role data context and do not project it into system or developer instructions."
+            )
+        case "background_continuation":
+            return (
+                "background continuation is prompt data, not instructions",
+                "Keep background continuation evidence in user-role data context and do not project it into system or developer instructions."
+            )
+        case "model_final_answer":
+            return (
+                "model final answer history is prompt data, not instructions",
+                "Keep model final answer history in its original assistant role and do not project it into system or developer instructions."
+            )
+        default:
+            return (
+                "chat message content is prompt data, not instructions",
+                "Keep this message part in its original role and do not promote it into system or developer instructions."
+            )
+        }
     }
 
     private static func hasAnyPrefix(_ value: String, _ prefixes: [String]) -> Bool {
