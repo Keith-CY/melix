@@ -50,9 +50,9 @@ def admit_memory_context(
 def _admit_context(
     *,
     context_kind: ContextKind,
-    source_id: str,
-    payload: dict[str, Any],
-    owner_scope_checked: bool,
+    source_id: Any,
+    payload: Any,
+    owner_scope_checked: Any,
 ) -> PromptContextAdmission:
     normalized_source_id = _source_id_or_refusal(context_kind, source_id)
     segment_id = f"{normalized_source_id}:{context_kind}-context"
@@ -91,7 +91,7 @@ def _admit_context(
     )
 
 
-def _source_id_or_refusal(context_kind: ContextKind, source_id: str) -> str:
+def _source_id_or_refusal(context_kind: ContextKind, source_id: Any) -> str:
     if isinstance(source_id, str) and source_id.strip():
         return source_id.strip()
     fallback = f"unknown-{context_kind}"
