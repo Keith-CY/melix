@@ -89,6 +89,7 @@ def test_stale_completed_record_with_live_progress_is_revived() -> None:
         "session_id": "session-7",
         "exit_status": None,
         "followup_status": "not_started",
+        "followup_session_id": "",
         "duplicate_launch_refused": True,
         "completion_evidence_available": False,
         "corrective_action": (
@@ -247,6 +248,144 @@ def test_store_reconcile_persists_stale_done_self_heal_and_completion_evidence(
     assert store.load_record("job-7") == accepted.record
 
 
+def test_store_claim_followup_marks_completed_job_in_progress_once(tmp_path: Path) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    completed = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            success_marker_path="/workspace/.runtime/jobs/job-7.success",
+        )
+    )
+
+    claimed = store.claim_followup("job-7", followup_session_id=" followup-session-7 ")
+
+    assert claimed is not None
+    assert claimed.record == replace(
+        completed,
+        followup_status="in_progress",
+        followup_session_id="followup-session-7",
+        revision=1,
+    )
+    assert claimed.receipt["reason"] == "followup_claimed"
+    assert claimed.receipt["followup_status"] == "in_progress"
+    assert claimed.receipt["followup_session_id"] == "followup-session-7"
+    assert claimed.receipt["completion_evidence_available"] is True
+    assert store.load_record("job-7") == claimed.record
+
+    duplicate = store.claim_followup("job-7", followup_session_id="other-followup")
+
+    assert duplicate is not None
+    assert duplicate.record == claimed.record
+    assert duplicate.receipt["reason"] == "followup_already_claimed"
+    assert duplicate.receipt["followup_session_id"] == "followup-session-7"
+    assert store.load_record("job-7") == claimed.record
+
+
+def test_store_claim_followup_blocks_completed_record_without_evidence(tmp_path: Path) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    completed = store.save_record(_record(status="completed", exit_status=0))
+
+    blocked = store.claim_followup("job-7", followup_session_id="followup-session-7")
+
+    assert blocked is not None
+    assert blocked.record == replace(completed, status="blocked", revision=1)
+    assert blocked.receipt["reason"] == "missing_completion_evidence"
+    assert blocked.receipt["completion_evidence_available"] is False
+    assert blocked.receipt["followup_status"] == "not_started"
+    assert blocked.receipt["followup_session_id"] == ""
+    assert store.load_record("job-7") == blocked.record
+
+
+def test_store_claim_followup_persists_live_completion_evidence_before_claim(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    completed = store.save_record(_record(status="completed", exit_status=0))
+
+    claimed = store.claim_followup(
+        "job-7",
+        followup_session_id="followup-session-7",
+        live_evidence=LocalJobLiveEvidence(
+            session_id="session-7",
+            active=False,
+            progress_excerpt="completed",
+            artifact_paths=(" /workspace/out/final.json ",),
+        ),
+    )
+
+    assert claimed is not None
+    assert claimed.record == replace(
+        completed,
+        followup_status="in_progress",
+        followup_session_id="followup-session-7",
+        artifact_paths=("/workspace/out/final.json",),
+        revision=1,
+    )
+    assert claimed.receipt["reason"] == "followup_claimed"
+    assert claimed.receipt["completion_evidence_available"] is True
+    assert store.load_record("job-7") == claimed.record
+
+
+def test_store_claim_followup_preserves_non_completed_records(tmp_path: Path) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    running = store.save_record(_record(status="running"))
+
+    result = store.claim_followup("job-7", followup_session_id="followup-session-7")
+
+    assert result is not None
+    assert result.record == running
+    assert result.receipt["reason"] == "followup_not_ready"
+    assert result.receipt["followup_status"] == "not_started"
+    assert store.load_record("job-7") == running
+
+
+def test_store_claim_followup_uses_revision_guard_for_concurrent_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    completed = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/final.json",),
+        )
+    )
+    original_save_record = store.save_record
+    injected_race = False
+
+    def race_before_claim_write(
+        record: LocalJobContinuationRecord,
+        *,
+        expected_revision: int | None = None,
+    ) -> LocalJobContinuationRecord:
+        nonlocal injected_race
+        if not injected_race and expected_revision == completed.revision:
+            injected_race = True
+            original_save_record(
+                replace(
+                    completed,
+                    followup_status="in_progress",
+                    followup_session_id="other-followup",
+                ),
+                expected_revision=completed.revision,
+            )
+        return original_save_record(record, expected_revision=expected_revision)
+
+    monkeypatch.setattr(store, "save_record", race_before_claim_write)
+
+    with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+        store.claim_followup("job-7", followup_session_id="followup-session-7")
+
+    assert exc_info.value.receipt["reason"] == "record_revision_mismatch"
+    assert store.load_record("job-7") == replace(
+        completed,
+        followup_status="in_progress",
+        followup_session_id="other-followup",
+        revision=1,
+    )
+
+
 def test_store_reconcile_returns_none_for_missing_record(tmp_path: Path) -> None:
     store = LocalJobContinuationStore(tmp_path)
 
@@ -368,6 +507,7 @@ def test_store_lock_guard_rejects_active_writer(tmp_path: Path) -> None:
         "session_id": "",
         "exit_status": None,
         "followup_status": "blocked",
+        "followup_session_id": "",
         "duplicate_launch_refused": False,
         "completion_evidence_available": False,
         "corrective_action": "Retry after the active local job record writer finishes.",

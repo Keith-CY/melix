@@ -487,10 +487,20 @@ running state or live completion evidence with the same optimistic revision
 guard used by normal writes, and returns `None` when no record exists for the
 job ID. If another writer changes the record during reconciliation, the write
 must fail closed with the existing `record_revision_mismatch` receipt. The
-primitive does not start processes, tail logs, inject prompt follow-ups, or
-resume workflows; those later surfaces must first call the reconciliation
-primitive and then pass any already-redacted completion summary through
-`admit_background_continuation` before prompt projection.
+same store owns follow-up claiming through `LocalJobContinuationStore.claim_followup`.
+Claiming first reconciles the latest persisted record with optional live
+completion evidence, then marks an evidence-backed completed record
+`followup_status = in_progress` with the claiming follow-up session ID. Duplicate
+claims must return `reason = followup_already_claimed` without changing the
+record. Non-completed records return `reason = followup_not_ready`, and
+completed records without success or artifact evidence keep the existing
+`missing_completion_evidence` blocker. Claim writes use the record revision
+guard so two monitor loops cannot silently enqueue two follow-ups.
+
+The primitive does not start processes, tail logs, inject prompt follow-ups, or
+resume workflows; those later surfaces must first call reconciliation and
+follow-up claiming, and then pass any already-redacted completion summary
+through `admit_background_continuation` before prompt projection.
 
 The Python worker skill and memory admission primitives are
 `worker.runtime.skill_memory_context.admit_skill_context` and
