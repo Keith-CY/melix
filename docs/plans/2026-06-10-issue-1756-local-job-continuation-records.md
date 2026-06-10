@@ -18,6 +18,9 @@ This slice covers:
   stale lock recovery, and revision guards for concurrent writer detection;
 - live-session reconciliation for stale `completed` records without success or
   artifact evidence;
+- a store-backed reconciliation entrypoint that loads the latest persisted
+  record, applies live evidence, and writes revived or evidence-enriched state
+  back with the record revision guard;
 - typed receipts for `live_session_reused`, `stale_done_revived`,
   `completion_evidence_accepted`, `missing_completion_evidence`, and store
   write refusal cases;
@@ -56,6 +59,8 @@ Success metrics:
 - atomic store writes touch one temporary JSON file and one lock file per write,
   with one liveness probe and one short-lived recovery guard when a stale lock
   candidate exists;
+- store-backed reconciliation performs one bounded record read and, only when
+  state changes, one guarded atomic record write;
 - changed-line Python coverage for the touched runtime module and tests is at
   least 95 percent;
 - local and hosted PR-scoped performance reports are `Status: ok` with zero
@@ -75,9 +80,11 @@ Success metrics:
      and revision mismatch write guards.
 2. Implement `LocalJobContinuationRecord`, `LocalJobLiveEvidence`,
    `LocalJobContinuationStore`, and `reconcile_local_job_continuation`.
-3. Record the contract in the unified agentic runtime document beside the
+3. Add store-backed reconciliation so future monitors can self-heal stale
+   persisted state in place without bypassing revision guards.
+4. Record the contract in the unified agentic runtime document beside the
    existing background-continuation prompt-boundary primitive.
-4. Run focused tests, changed-line coverage, full local pre-commit, and the PR
+5. Run focused tests, changed-line coverage, full local pre-commit, and the PR
    performance gate before merge.
 
 ## Success Criteria
@@ -88,6 +95,8 @@ Success metrics:
 - A stale `completed` record without completion evidence cannot be accepted as
   final.
 - A live matching session is reused instead of duplicated, with a typed receipt.
+- Store-backed reconciliation persists revived running state and live completion
+  evidence with optimistic revision protection.
 - Concurrent record writes are rejected before silent overwrite, while stale
   lock files left by dead writer processes may be recovered without human
   cleanup after the stale file is guarded, renamed, and revalidated.

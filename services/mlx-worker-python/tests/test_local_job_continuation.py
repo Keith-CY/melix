@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -154,8 +155,115 @@ def test_live_completion_evidence_accepts_completed_record() -> None:
     )
 
     assert result.record.status == "completed"
+    assert result.record.artifact_paths == ("/workspace/out/final.json",)
     assert result.receipt["reason"] == "completion_evidence_accepted"
     assert result.receipt["completion_evidence_available"] is True
+
+
+def test_store_reconcile_persists_stale_done_self_heal_and_completion_evidence(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    stale_done = store.save_record(_record(status="completed", exit_status=0))
+
+    revived = store.reconcile_record(
+        stale_done.job_id,
+        live_evidence=LocalJobLiveEvidence(
+            session_id="session-7",
+            active=True,
+            progress_excerpt="shard 3/12 still running",
+        ),
+    )
+
+    assert revived is not None
+    assert revived.record.status == "running"
+    assert revived.record.exit_status is None
+    assert revived.record.revision == 1
+    assert revived.receipt["reason"] == "stale_done_revived"
+    assert store.load_record("job-7") == revived.record
+
+    done_without_evidence = store.save_record(
+        replace(revived.record, status="completed", exit_status=0),
+        expected_revision=revived.record.revision,
+    )
+    blocked = store.reconcile_record(done_without_evidence.job_id)
+
+    assert blocked is not None
+    assert blocked.record.status == "blocked"
+    assert blocked.record.revision == 3
+    assert blocked.receipt["reason"] == "missing_completion_evidence"
+    assert store.load_record("job-7") == blocked.record
+
+    done_with_live_artifact = store.save_record(
+        replace(blocked.record, status="completed", exit_status=0),
+        expected_revision=blocked.record.revision,
+    )
+    accepted = store.reconcile_record(
+        done_with_live_artifact.job_id,
+        live_evidence=LocalJobLiveEvidence(
+            session_id="session-7",
+            active=False,
+            progress_excerpt="completed",
+            artifact_paths=("/workspace/out/final.json",),
+        ),
+    )
+
+    assert accepted is not None
+    assert accepted.record.status == "completed"
+    assert accepted.record.artifact_paths == ("/workspace/out/final.json",)
+    assert accepted.record.revision == 5
+    assert accepted.receipt["reason"] == "completion_evidence_accepted"
+    assert accepted.receipt["completion_evidence_available"] is True
+    assert store.load_record("job-7") == accepted.record
+
+
+def test_store_reconcile_returns_none_for_missing_record(tmp_path: Path) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+
+    assert store.reconcile_record("job-7") is None
+
+
+def test_store_reconcile_uses_revision_guard_for_concurrent_updates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    stale_done = store.save_record(_record(status="completed", exit_status=0))
+    original_save_record = store.save_record
+    injected_race = False
+
+    def race_before_reconcile_write(
+        record: LocalJobContinuationRecord,
+        *,
+        expected_revision: int | None = None,
+    ) -> LocalJobContinuationRecord:
+        nonlocal injected_race
+        if not injected_race and expected_revision == stale_done.revision:
+            injected_race = True
+            original_save_record(
+                replace(stale_done, status="running", exit_status=None),
+                expected_revision=stale_done.revision,
+            )
+        return original_save_record(record, expected_revision=expected_revision)
+
+    monkeypatch.setattr(store, "save_record", race_before_reconcile_write)
+
+    with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+        store.reconcile_record(
+            stale_done.job_id,
+            live_evidence=LocalJobLiveEvidence(
+                session_id="session-7",
+                active=True,
+                progress_excerpt="shard 3/12 still running",
+            ),
+        )
+
+    assert exc_info.value.receipt["reason"] == "record_revision_mismatch"
+    assert store.load_record("job-7") == replace(
+        stale_done,
+        status="running",
+        exit_status=None,
+        revision=1,
+    )
 
 
 def test_non_completed_record_without_matching_live_evidence_is_preserved() -> None:

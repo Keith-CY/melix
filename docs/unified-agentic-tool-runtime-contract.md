@@ -459,10 +459,20 @@ active live progress must emit `reason = live_session_reused` and
 `duplicate_launch_refused = true` so future runners reattach instead of
 launching duplicate local work. Completed records without evidence emit
 `reason = missing_completion_evidence` and remain blocked until explicit
-completion evidence appears. The primitive does not start processes, tail logs,
-inject prompt follow-ups, or resume workflows; those later surfaces must first
-call the reconciliation primitive and then pass any already-redacted completion
-summary through `admit_background_continuation` before prompt projection.
+completion evidence appears.
+
+Callers that are reconciling persisted state must use
+`LocalJobContinuationStore.reconcile_record` instead of separately loading,
+reconciling, and saving records. The store-backed entrypoint loads the latest
+record, applies the side-effect-free reconciliation primitive, persists revived
+running state or live completion evidence with the same optimistic revision
+guard used by normal writes, and returns `None` when no record exists for the
+job ID. If another writer changes the record during reconciliation, the write
+must fail closed with the existing `record_revision_mismatch` receipt. The
+primitive does not start processes, tail logs, inject prompt follow-ups, or
+resume workflows; those later surfaces must first call the reconciliation
+primitive and then pass any already-redacted completion summary through
+`admit_background_continuation` before prompt projection.
 
 The Python worker skill and memory admission primitives are
 `worker.runtime.skill_memory_context.admit_skill_context` and

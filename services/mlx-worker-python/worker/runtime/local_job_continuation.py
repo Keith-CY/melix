@@ -161,6 +161,23 @@ class LocalJobContinuationStore:
             tmp_path.replace(path)
             return next_record
 
+    def reconcile_record(
+        self,
+        job_id: str,
+        *,
+        live_evidence: LocalJobLiveEvidence | None = None,
+    ) -> LocalJobContinuationReconciliation | None:
+        record = self.load_record(job_id)
+        if record is None:
+            return None
+
+        result = reconcile_local_job_continuation(record, live_evidence=live_evidence)
+        if result.record == record:
+            return result
+
+        saved = self.save_record(result.record, expected_revision=record.revision)
+        return LocalJobContinuationReconciliation(record=saved, receipt=result.receipt)
+
     def _record_path(self, job_id: str) -> Path:
         safe_job_id = _safe_job_id(job_id)
         return self.root / f"{safe_job_id}.json"
@@ -344,8 +361,9 @@ def reconcile_local_job_continuation(
 
     if record.status == "completed":
         if evidence_available:
+            completed = _record_with_live_completion_evidence(record, live_evidence)
             return LocalJobContinuationReconciliation(
-                record=record,
+                record=completed,
                 receipt=_receipt(
                     job_id=record.job_id,
                     status="completed",
@@ -429,6 +447,32 @@ def _has_completion_evidence(
     return bool(
         live_evidence.success_marker_path.strip()
         or any(path.strip() for path in live_evidence.artifact_paths)
+    )
+
+
+def _record_with_live_completion_evidence(
+    record: LocalJobContinuationRecord,
+    live_evidence: LocalJobLiveEvidence | None,
+) -> LocalJobContinuationRecord:
+    if live_evidence is None:
+        return record
+    success_marker_path = record.success_marker_path or live_evidence.success_marker_path
+    artifact_paths = tuple(
+        dict.fromkeys(
+            path
+            for path in (*record.artifact_paths, *live_evidence.artifact_paths)
+            if path.strip()
+        )
+    )
+    if (
+        success_marker_path == record.success_marker_path
+        and artifact_paths == record.artifact_paths
+    ):
+        return record
+    return replace(
+        record,
+        success_marker_path=success_marker_path,
+        artifact_paths=artifact_paths,
     )
 
 
