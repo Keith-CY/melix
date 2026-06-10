@@ -115,8 +115,8 @@ struct DesktopShellStateTests {
               "schema_version": 5,
               "selected_surface": "tools",
               "selected_tool_section": "jobs",
-              "selected_server_session_id": "",
-              "server_sessions": []
+              "selected_provider_id": "",
+              "providers": []
             }
             """#.utf8
         )
@@ -146,8 +146,8 @@ struct DesktopShellStateTests {
           "schema_version": 4,
           "selected_surface": "api",
           "selected_tool_section": "settings",
-          "selected_server_session_id": "server-session-1",
-          "server_sessions": [],
+          "selected_provider_id": "provider-1",
+          "providers": [],
           "dismissed_banner_ids": [],
           "download_queue": [],
           "registry_roots": []
@@ -158,8 +158,8 @@ struct DesktopShellStateTests {
 
         #expect(restored.schemaVersion == OperatorSessionState(
             selectedSurface: .chat,
-            selectedServerSessionID: "",
-            serverSessions: []
+            selectedProviderID: "",
+            providers: []
         ).schemaVersion)
         #expect(restored.paneVisibility.count == DesktopSurface.allCases.count)
         #expect(restored.paneVisibility.first(where: { $0.surface == .api })?.showsSidebar == true)
@@ -168,8 +168,8 @@ struct DesktopShellStateTests {
         var customized = OperatorSessionState(
             selectedSurface: .tools,
             selectedToolSection: .settings,
-            selectedServerSessionID: "server-session-1",
-            serverSessions: [],
+            selectedProviderID: "provider-1",
+            providers: [],
             paneVisibility: [
                 DesktopPaneVisibilityState(surface: .tools, showsSidebar: false, showsInspector: true),
             ]
@@ -343,25 +343,25 @@ struct DesktopShellStateTests {
         #expect(stopping.chatWorkspaceNoticeState?.title == "Server Is Stopping")
 
         #expect(stopped.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(stopped.chatWorkspaceNoticeState?.detail.contains("Start the bound server session") ?? false)
+        #expect(stopped.chatWorkspaceNoticeState?.detail.contains("Start the bound provider") ?? false)
 
         #expect(failedEmpty.chatWorkspaceNoticeState?.severity == .critical)
-        #expect(failedEmpty.chatWorkspaceNoticeState?.detail == "The bound server session failed.")
+        #expect(failedEmpty.chatWorkspaceNoticeState?.detail == "The bound provider failed.")
 
         #expect(failedFilled.chatWorkspaceNoticeState?.severity == .critical)
         #expect(failedFilled.chatWorkspaceNoticeState?.detail == "gpu lost")
 
         #expect(draft.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(draft.chatWorkspaceNoticeState?.title == "No Active Server Session")
+        #expect(draft.chatWorkspaceNoticeState?.title == "No Active Provider")
 
         #expect(unavailable.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(unavailable.chatWorkspaceNoticeState?.detail.contains("Choose a valid server session") ?? false)
+        #expect(unavailable.chatWorkspaceNoticeState?.detail.contains("Choose a valid provider") ?? false)
     }
 
     @Test("effective listener helpers and codable restore preserve gateway config projection")
     func effectiveListenerHelpersAndCodableRestorePreserveGatewayConfigProjection() throws {
-        let session = DesktopServerSessionState(
-            id: "server-session-1",
+        let session = DesktopProviderState(
+            id: "provider-1",
             title: "Server",
             modelID: "melix-dev-text",
             host: "0.0.0.0",
@@ -373,7 +373,7 @@ struct DesktopShellStateTests {
             gatewayConfigSourceText: "Operator Override",
             gatewayConfigActiveBinding: true,
             gatewayConfigRequiresRestart: true,
-            servingDefaults: DesktopServerServingDefaultsState(
+            servingDefaults: DesktopProviderServingDefaultsState(
                 temperature: 0.33,
                 topP: 0.92,
                 maxTokens: 384,
@@ -409,7 +409,7 @@ struct DesktopShellStateTests {
         #expect(session.effectiveListenerLabel == "127.0.0.1:12436")
 
         let encoded = try JSONEncoder().encode(session)
-        let decoded = try JSONDecoder().decode(DesktopServerSessionState.self, from: encoded)
+        let decoded = try JSONDecoder().decode(DesktopProviderState.self, from: encoded)
 
         #expect(decoded.host == "0.0.0.0")
         #expect(decoded.port == 18080)
@@ -437,7 +437,7 @@ struct DesktopShellStateTests {
 }
 
 private func makeDesktopShellSession(
-    lifecycle: DesktopServerSessionLifecycle,
+    lifecycle: DesktopProviderLifecycle,
     powerState: DesktopServerPowerState,
     idleTimerSeconds: Int = 0,
     autoSleepEnabled: Bool = false,
@@ -445,9 +445,9 @@ private func makeDesktopShellSession(
     deepSleepAfterSeconds: Int = 900,
     wakeReason: DesktopServerWakeReason = .initialBoot,
     lastError: String = ""
-) -> DesktopServerSessionState {
-    DesktopServerSessionState(
-        id: "server-session-1",
+) -> DesktopProviderState {
+    DesktopProviderState(
+        id: "provider-1",
         title: "Server",
         modelID: "melix-dev-text",
         lifecycle: lifecycle,

@@ -46,7 +46,7 @@ def test_session_lifecycle_smoke_records_live_pause_sleep_wake_and_restart_metri
         payload = json.loads(result.stdout)
 
         assert payload["ok"] is True
-        assert payload["serverSessionID"] == "server-session-1"
+        assert payload["providerID"] == "provider-1"
         assert payload["modelID"] == "melix-dev-text"
         assert payload["scenarios"]["pause"]["lifecycle"] == "paused"
         assert payload["scenarios"]["pause"]["blockedStatus"] == "unavailable"

@@ -1,7 +1,7 @@
 import Foundation
 import MelixControlPlaneCore
 
-public enum MelixOperatorServerSessionLifecycle: String, Codable, Sendable {
+public enum MelixOperatorProviderLifecycle: String, Codable, Sendable {
     case draft = "Draft"
     case starting = "Starting"
     case running = "Running"
@@ -13,7 +13,7 @@ public enum MelixOperatorServerSessionLifecycle: String, Codable, Sendable {
     case unavailable = "Unavailable"
 }
 
-public struct MelixOperatorServerServingDefaultsState: Codable, Equatable, Sendable {
+public struct MelixOperatorProviderServingDefaultsState: Codable, Equatable, Sendable {
     public var temperature: Double
     public var topP: Double
     public var maxTokens: Int
@@ -107,7 +107,7 @@ public struct MelixOperatorServerServingDefaultsState: Codable, Equatable, Senda
     }
 }
 
-public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
+public struct MelixOperatorProviderState: Codable, Equatable, Sendable {
     public let id: String
     public var title: String
     public var defaultModelID: String
@@ -119,11 +119,11 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
     public var rateLimitPerMinute: Int
     public var timeoutSeconds: Int
     public var modelIdleTimeoutSeconds: Int
-    public var servingDefaults: MelixOperatorServerServingDefaultsState
+    public var servingDefaults: MelixOperatorProviderServingDefaultsState
     public var autoSleepEnabled: Bool
     public var lightSleepAfterSeconds: Int
     public var deepSleepAfterSeconds: Int
-    public var lifecycle: MelixOperatorServerSessionLifecycle
+    public var lifecycle: MelixOperatorProviderLifecycle
     public var lastError: String
     public var lastKnownModelStateText: String
     public var createdAt: Date
@@ -141,11 +141,11 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
         modelIdleTimeoutSeconds: Int = 600,
-        servingDefaults: MelixOperatorServerServingDefaultsState = .init(),
+        servingDefaults: MelixOperatorProviderServingDefaultsState = .init(),
         autoSleepEnabled: Bool = false,
         lightSleepAfterSeconds: Int = 0,
         deepSleepAfterSeconds: Int = 0,
-        lifecycle: MelixOperatorServerSessionLifecycle = .draft,
+        lifecycle: MelixOperatorProviderLifecycle = .draft,
         lastError: String = "",
         lastKnownModelStateText: String = "",
         createdAt: Date = Date(),
@@ -222,13 +222,13 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
                 forKey: .modelIdleTimeoutSeconds
             ) ?? 600,
             servingDefaults: try container.decodeIfPresent(
-                MelixOperatorServerServingDefaultsState.self,
+                MelixOperatorProviderServingDefaultsState.self,
                 forKey: .servingDefaults
             ) ?? .init(),
             autoSleepEnabled: try container.decodeIfPresent(Bool.self, forKey: .autoSleepEnabled) ?? false,
             lightSleepAfterSeconds: try container.decodeIfPresent(Int.self, forKey: .lightSleepAfterSeconds) ?? 0,
             deepSleepAfterSeconds: try container.decodeIfPresent(Int.self, forKey: .deepSleepAfterSeconds) ?? 0,
-            lifecycle: try container.decodeIfPresent(MelixOperatorServerSessionLifecycle.self, forKey: .lifecycle) ?? .draft,
+            lifecycle: try container.decodeIfPresent(MelixOperatorProviderLifecycle.self, forKey: .lifecycle) ?? .draft,
             lastError: try container.decodeIfPresent(String.self, forKey: .lastError) ?? "",
             lastKnownModelStateText: try container.decodeIfPresent(String.self, forKey: .lastKnownModelStateText) ?? "",
             createdAt: try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
@@ -353,9 +353,9 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
     public var schemaVersion: Int
     public var selectedSurfaceID: String
     public var selectedToolSectionID: String
-    public var selectedServerSessionID: String
+    public var selectedProviderID: String
     public var selectedRuntimeJobID: String
-    public var serverSessions: [MelixOperatorServerSessionState]
+    public var providers: [MelixOperatorProviderState]
     public var dismissedBannerIDs: [String]
     public var downloadQueue: [MelixOperatorDownloadQueueEntryState]
     public var registryRoots: [String]
@@ -365,9 +365,9 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
         schemaVersion: Int = 6,
         selectedSurfaceID: String = "chat",
         selectedToolSectionID: String = "modelsLibrary",
-        selectedServerSessionID: String,
+        selectedProviderID: String,
         selectedRuntimeJobID: String = "",
-        serverSessions: [MelixOperatorServerSessionState],
+        providers: [MelixOperatorProviderState],
         dismissedBannerIDs: [String] = [],
         downloadQueue: [MelixOperatorDownloadQueueEntryState] = [],
         registryRoots: [String] = [],
@@ -376,9 +376,9 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
         self.schemaVersion = max(schemaVersion, 6)
         self.selectedSurfaceID = selectedSurfaceID
         self.selectedToolSectionID = selectedToolSectionID
-        self.selectedServerSessionID = selectedServerSessionID
+        self.selectedProviderID = selectedProviderID
         self.selectedRuntimeJobID = selectedRuntimeJobID
-        self.serverSessions = serverSessions
+        self.providers = providers
         self.dismissedBannerIDs = dismissedBannerIDs
         self.downloadQueue = downloadQueue
         self.registryRoots = registryRoots
@@ -389,9 +389,9 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
         case schemaVersion = "schema_version"
         case selectedSurfaceID = "selected_surface"
         case selectedToolSectionID = "selected_tool_section"
-        case selectedServerSessionID = "selected_server_session_id"
+        case selectedProviderID = "selected_provider_id"
         case selectedRuntimeJobID = "selected_runtime_job_id"
-        case serverSessions = "server_sessions"
+        case providers = "providers"
         case dismissedBannerIDs = "dismissed_banner_ids"
         case downloadQueue = "download_queue"
         case registryRoots = "registry_roots"
@@ -404,9 +404,9 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
             schemaVersion: try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 4,
             selectedSurfaceID: try container.decodeIfPresent(String.self, forKey: .selectedSurfaceID) ?? "chat",
             selectedToolSectionID: try container.decodeIfPresent(String.self, forKey: .selectedToolSectionID) ?? "modelsLibrary",
-            selectedServerSessionID: try container.decodeIfPresent(String.self, forKey: .selectedServerSessionID) ?? "",
+            selectedProviderID: try container.decodeIfPresent(String.self, forKey: .selectedProviderID) ?? "",
             selectedRuntimeJobID: try container.decodeIfPresent(String.self, forKey: .selectedRuntimeJobID) ?? "",
-            serverSessions: try container.decodeIfPresent([MelixOperatorServerSessionState].self, forKey: .serverSessions) ?? [],
+            providers: try container.decodeIfPresent([MelixOperatorProviderState].self, forKey: .providers) ?? [],
             dismissedBannerIDs: try container.decodeIfPresent([String].self, forKey: .dismissedBannerIDs) ?? [],
             downloadQueue: try container.decodeIfPresent([MelixOperatorDownloadQueueEntryState].self, forKey: .downloadQueue) ?? [],
             registryRoots: try container.decodeIfPresent([String].self, forKey: .registryRoots) ?? [],
@@ -420,9 +420,9 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
         try container.encode(schemaVersion, forKey: .schemaVersion)
         try container.encode(selectedSurfaceID, forKey: .selectedSurfaceID)
         try container.encode(selectedToolSectionID, forKey: .selectedToolSectionID)
-        try container.encode(selectedServerSessionID, forKey: .selectedServerSessionID)
+        try container.encode(selectedProviderID, forKey: .selectedProviderID)
         try container.encode(selectedRuntimeJobID, forKey: .selectedRuntimeJobID)
-        try container.encode(serverSessions, forKey: .serverSessions)
+        try container.encode(providers, forKey: .providers)
         try container.encode(dismissedBannerIDs, forKey: .dismissedBannerIDs)
         try container.encode(downloadQueue, forKey: .downloadQueue)
         try container.encode(registryRoots, forKey: .registryRoots)
@@ -520,7 +520,7 @@ public struct MelixOperatorSessionStore: MelixOperatorSessionStoring {
         let fileManager = FileManager.default
         guard [
             melixHome.operatorSessionFileURL,
-            melixHome.serverSessionsFileURL,
+            melixHome.providersFileURL,
             melixHome.modelRootsFileURL,
             melixHome.downloadQueueFileURL,
         ].contains(where: { fileManager.fileExists(atPath: $0.path) }) else {
@@ -531,8 +531,8 @@ public struct MelixOperatorSessionStore: MelixOperatorSessionStoring {
 
         let ui = try loadDocument(OperatorSessionUIDocument.self, from: melixHome.operatorSessionFileURL)
             ?? OperatorSessionUIDocument()
-        let serverSessions = try loadDocument(ServerSessionsDocument.self, from: melixHome.serverSessionsFileURL)?
-            .serverSessions ?? []
+        let providers = try loadDocument(ServerSessionsDocument.self, from: melixHome.providersFileURL)?
+            .providers ?? []
         let modelRoots = try loadDocument(ModelRootsDocument.self, from: melixHome.modelRootsFileURL)?
             .registryRoots ?? []
         let downloadQueue = try loadDocument(DownloadQueueDocument.self, from: melixHome.downloadQueueFileURL)?
@@ -542,9 +542,9 @@ public struct MelixOperatorSessionStore: MelixOperatorSessionStoring {
             schemaVersion: ui.schemaVersion,
             selectedSurfaceID: ui.selectedSurfaceID,
             selectedToolSectionID: ui.selectedToolSectionID,
-            selectedServerSessionID: ui.selectedServerSessionID,
+            selectedProviderID: ui.selectedProviderID,
             selectedRuntimeJobID: ui.selectedRuntimeJobID,
-            serverSessions: serverSessions,
+            providers: providers,
             dismissedBannerIDs: ui.dismissedBannerIDs,
             downloadQueue: downloadQueue,
             registryRoots: modelRoots,
@@ -558,8 +558,8 @@ public struct MelixOperatorSessionStore: MelixOperatorSessionStoring {
             to: melixHome.operatorSessionFileURL
         )
         try saveDocument(
-            ServerSessionsDocument(serverSessions: state.serverSessions),
-            to: melixHome.serverSessionsFileURL
+            ServerSessionsDocument(providers: state.providers),
+            to: melixHome.providersFileURL
         )
         try saveDocument(
             ModelRootsDocument(registryRoots: state.registryRoots),
@@ -576,7 +576,7 @@ public struct MelixOperatorSessionStore: MelixOperatorSessionStoring {
             return
         }
         let splitFileURLs = [
-            melixHome.serverSessionsFileURL,
+            melixHome.providersFileURL,
             melixHome.modelRootsFileURL,
             melixHome.downloadQueueFileURL,
         ]
@@ -623,7 +623,7 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
     var schemaVersion: Int
     var selectedSurfaceID: String
     var selectedToolSectionID: String
-    var selectedServerSessionID: String
+    var selectedProviderID: String
     var selectedRuntimeJobID: String
     var dismissedBannerIDs: [String]
     var paneVisibility: [MelixOperatorPaneVisibilityState]
@@ -632,7 +632,7 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
         schemaVersion: Int = 7,
         selectedSurfaceID: String = "chat",
         selectedToolSectionID: String = "modelsLibrary",
-        selectedServerSessionID: String = "",
+        selectedProviderID: String = "",
         selectedRuntimeJobID: String = "",
         dismissedBannerIDs: [String] = [],
         paneVisibility: [MelixOperatorPaneVisibilityState] = MelixOperatorPaneVisibilityState.defaultStates
@@ -640,7 +640,7 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
         self.schemaVersion = max(schemaVersion, 7)
         self.selectedSurfaceID = selectedSurfaceID
         self.selectedToolSectionID = selectedToolSectionID
-        self.selectedServerSessionID = selectedServerSessionID
+        self.selectedProviderID = selectedProviderID
         self.selectedRuntimeJobID = selectedRuntimeJobID
         self.dismissedBannerIDs = dismissedBannerIDs
         self.paneVisibility = MelixOperatorPaneVisibilityState.mergedWithDefaults(paneVisibility)
@@ -651,7 +651,7 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
             schemaVersion: state.schemaVersion,
             selectedSurfaceID: state.selectedSurfaceID,
             selectedToolSectionID: state.selectedToolSectionID,
-            selectedServerSessionID: state.selectedServerSessionID,
+            selectedProviderID: state.selectedProviderID,
             selectedRuntimeJobID: state.selectedRuntimeJobID,
             dismissedBannerIDs: state.dismissedBannerIDs,
             paneVisibility: state.paneVisibility
@@ -664,7 +664,7 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
             schemaVersion: try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 6,
             selectedSurfaceID: try container.decodeIfPresent(String.self, forKey: .selectedSurfaceID) ?? "chat",
             selectedToolSectionID: try container.decodeIfPresent(String.self, forKey: .selectedToolSectionID) ?? "modelsLibrary",
-            selectedServerSessionID: try container.decodeIfPresent(String.self, forKey: .selectedServerSessionID) ?? "",
+            selectedProviderID: try container.decodeIfPresent(String.self, forKey: .selectedProviderID) ?? "",
             selectedRuntimeJobID: try container.decodeIfPresent(String.self, forKey: .selectedRuntimeJobID) ?? "",
             dismissedBannerIDs: try container.decodeIfPresent([String].self, forKey: .dismissedBannerIDs) ?? [],
             paneVisibility: try container.decodeIfPresent(
@@ -678,7 +678,7 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
         case schemaVersion = "schema_version"
         case selectedSurfaceID = "selected_surface"
         case selectedToolSectionID = "selected_tool_section"
-        case selectedServerSessionID = "selected_server_session_id"
+        case selectedProviderID = "selected_provider_id"
         case selectedRuntimeJobID = "selected_runtime_job_id"
         case dismissedBannerIDs = "dismissed_banner_ids"
         case paneVisibility = "pane_visibility"
@@ -687,16 +687,16 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
 
 private struct ServerSessionsDocument: Codable, Equatable, Sendable {
     var schemaVersion: Int
-    var serverSessions: [MelixOperatorServerSessionState]
+    var providers: [MelixOperatorProviderState]
 
-    init(schemaVersion: Int = 1, serverSessions: [MelixOperatorServerSessionState]) {
+    init(schemaVersion: Int = 1, providers: [MelixOperatorProviderState]) {
         self.schemaVersion = max(schemaVersion, 1)
-        self.serverSessions = serverSessions
+        self.providers = providers
     }
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
-        case serverSessions = "server_sessions"
+        case providers = "providers"
     }
 }
 

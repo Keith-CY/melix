@@ -27,13 +27,13 @@ struct RuntimeViewModelTests {
         #expect(viewModel.primaryModel?.actionTitle == "Load")
         #expect(viewModel.selectedSurface == .chat)
         #expect(viewModel.selectedToolSection == .modelsLibrary)
-        #expect(viewModel.serverSessions.isEmpty == false)
+        #expect(viewModel.providers.isEmpty == false)
         #expect(viewModel.selectedServerSession?.modelID == "melix-dev-text")
         #expect(await metrics.snapshot()["menu.handshake_ms"] != nil)
         #expect(await metrics.snapshot()["menu.hydration_ms"] != nil)
     }
 
-    @Test("server session seed skips placeholders and uses the first ready model")
+    @Test("provider seed skips placeholders and uses the first ready model")
     @MainActor
     func serverSessionSeedSkipsPlaceholdersAndUsesTheFirstReadyModel() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -425,7 +425,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureExportResult(
@@ -569,7 +569,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let store = FakeEvaluationPromptStore()
@@ -611,8 +611,8 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let restoredSession = DesktopServerSessionState(
-            id: "server-session-allowlist",
+        let restoredSession = DesktopProviderState(
+            id: "provider-allowlist",
             title: "Allowlist Server",
             modelID: "melix-dev-text",
             allowedHosts: ["operator.lan"],
@@ -621,8 +621,8 @@ struct RuntimeViewModelTests {
         try operatorSessionStore.save(
             OperatorSessionState(
                 selectedSurface: .api,
-                selectedServerSessionID: restoredSession.id,
-                serverSessions: [restoredSession]
+                selectedProviderID: restoredSession.id,
+                providers: [restoredSession]
             )
         )
         let client = FakeControlPlaneXPCClient()
@@ -645,7 +645,7 @@ struct RuntimeViewModelTests {
         let request = try #require(await client.recordedGatewayConfigApplyRequests.last)
         let session = try #require(viewModel.selectedServerSession)
 
-        #expect(request.serverSessionID == session.id)
+        #expect(request.providerID == session.id)
         #expect(request.host == "0.0.0.0")
         #expect(request.port == 18_080)
         #expect(request.defaultModelID == "melix-dev-text")
@@ -693,7 +693,7 @@ struct RuntimeViewModelTests {
         let request = try #require(await client.recordedServingDefaultsApplyRequests.last)
         let session = try #require(viewModel.selectedServerSession)
 
-        #expect(request.serverSessionID == session.id)
+        #expect(request.providerID == session.id)
         #expect(request.temperature == 0.33)
         #expect(request.topP == 0.92)
         #expect(request.maxTokens == 384)
@@ -741,7 +741,7 @@ struct RuntimeViewModelTests {
         await viewModel.applySelectedServerServingDefaults()
 
         let request = try #require(await client.recordedServingDefaultsApplyRequests.last)
-        #expect(request.serverSessionID == viewModel.selectedServerSession?.id)
+        #expect(request.providerID == viewModel.selectedServerSession?.id)
         #expect(request.accelerationMode == .speculativeDecode)
         #expect(await client.recordedModelSettingsUpdates.isEmpty)
         #expect(viewModel.modelSettingsLoadTrustModeText == "Unspecified")
@@ -904,7 +904,7 @@ struct RuntimeViewModelTests {
             runtimeSessions: [makeRuntimeSession()]
         )
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.providerID = "server-session-1"
+        servingDefaults.providerID = "provider-1"
         servingDefaults.defaultModelID = "melix-dev-text"
         servingDefaults.requestedTemperature = 0.7
         servingDefaults.requestedTopP = 1.0
@@ -967,7 +967,7 @@ struct RuntimeViewModelTests {
         #expect(session.servingDefaults.modelOverrideApplied == false)
     }
 
-    @Test("starting a selected server session persists gateway config and serving defaults before the lifecycle mutation")
+    @Test("starting a selected provider persists gateway config and serving defaults before the lifecycle mutation")
     @MainActor
     func startingASelectedServerSessionPersistsGatewayConfigAndServingDefaultsBeforeTheLifecycleMutation() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
@@ -977,8 +977,8 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let restoredSession = DesktopServerSessionState(
-            id: "server-session-start-allowlist",
+        let restoredSession = DesktopProviderState(
+            id: "provider-start-allowlist",
             title: "Start Allowlist Server",
             modelID: "melix-dev-text",
             allowedHosts: ["operator.lan"],
@@ -987,15 +987,15 @@ struct RuntimeViewModelTests {
         try operatorSessionStore.save(
             OperatorSessionState(
                 selectedSurface: .api,
-                selectedServerSessionID: restoredSession.id,
-                serverSessions: [restoredSession]
+                selectedProviderID: restoredSession.id,
+                providers: [restoredSession]
             )
         )
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(client: client, operatorSessionStore: operatorSessionStore)
 
         await viewModel.start()
-        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        let providerID = try #require(viewModel.selectedServerSession?.id)
         viewModel.updateSelectedServerSessionHost("127.0.0.1")
         viewModel.updateSelectedServerSessionPort(18081)
         viewModel.updateSelectedServerSessionStreamIntervalTokens(2)
@@ -1003,9 +1003,9 @@ struct RuntimeViewModelTests {
         await viewModel.startSelectedServerSession()
 
         let actions = await client.recordedActions
-        let applyConfigIndex = try #require(actions.firstIndex(of: "gateway.config:\(serverSessionID)"))
-        let applyServingDefaultsIndex = try #require(actions.firstIndex(of: "serving-defaults.apply:\(serverSessionID)"))
-        let startIndex = try #require(actions.firstIndex(of: "server.start:\(serverSessionID)"))
+        let applyConfigIndex = try #require(actions.firstIndex(of: "gateway.config:\(providerID)"))
+        let applyServingDefaultsIndex = try #require(actions.firstIndex(of: "serving-defaults.apply:\(providerID)"))
+        let startIndex = try #require(actions.firstIndex(of: "server.start:\(providerID)"))
 
         #expect(applyConfigIndex < startIndex)
         #expect(applyServingDefaultsIndex < startIndex)
@@ -1017,7 +1017,7 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedServerSession?.lifecycle == .running)
     }
 
-    @Test("server session template start does not grant model load trust")
+    @Test("provider template start does not grant model load trust")
     @MainActor
     func serverSessionTemplateStartDoesNotGrantModelLoadTrust() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -1031,13 +1031,13 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
         viewModel.createServerSession()
-        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        let providerID = try #require(viewModel.selectedServerSession?.id)
 
         await viewModel.startSelectedServerSession()
 
         let actions = await client.recordedActions
-        #expect(actions.contains("serving-defaults.apply:\(serverSessionID)"))
-        #expect(actions.contains("server.start:\(serverSessionID)"))
+        #expect(actions.contains("serving-defaults.apply:\(providerID)"))
+        #expect(actions.contains("server.start:\(providerID)"))
         #expect(await client.recordedModelSettingsUpdates.isEmpty)
         #expect(viewModel.modelSettingsLoadTrustModeText == "Unspecified")
     }
@@ -1050,14 +1050,14 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
         viewModel.createServerSession()
-        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        let providerID = try #require(viewModel.selectedServerSession?.id)
         await client.configureErrors(applyGatewayConfig: MenuBarTestError(description: "persist failed"))
 
         await viewModel.startSelectedServerSession()
 
         let actions = await client.recordedActions
-        #expect(actions.contains("gateway.config:\(serverSessionID)"))
-        #expect(actions.contains("server.start:\(serverSessionID)") == false)
+        #expect(actions.contains("gateway.config:\(providerID)"))
+        #expect(actions.contains("server.start:\(providerID)") == false)
         #expect(viewModel.lastError?.contains("Gateway config apply failed") == true)
         #expect(viewModel.lastError?.contains("persist failed") == true)
     }
@@ -1070,15 +1070,15 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
         viewModel.createServerSession()
-        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        let providerID = try #require(viewModel.selectedServerSession?.id)
         await client.configureServingDefaultsApplyError(MenuBarTestError(description: "defaults persist failed"))
 
         await viewModel.startSelectedServerSession()
 
         let actions = await client.recordedActions
-        #expect(actions.contains("gateway.config:\(serverSessionID)"))
-        #expect(actions.contains("serving-defaults.apply:\(serverSessionID)"))
-        #expect(actions.contains("server.start:\(serverSessionID)") == false)
+        #expect(actions.contains("gateway.config:\(providerID)"))
+        #expect(actions.contains("serving-defaults.apply:\(providerID)"))
+        #expect(actions.contains("server.start:\(providerID)") == false)
         #expect(viewModel.lastError?.contains("Serving defaults apply failed") == true)
         #expect(viewModel.lastError?.contains("defaults persist failed") == true)
     }
@@ -1093,7 +1093,7 @@ struct RuntimeViewModelTests {
             runtimeSessions: [makeRuntimeSession()],
             gatewayConfig: makeGatewayConfigSummary(
                 listener: makeGatewayConfigListener(
-                    serverSessionID: "server-session-1",
+                    providerID: "provider-1",
                     requestedHost: "0.0.0.0",
                     requestedPort: 18_090,
                     effectiveHost: "127.0.0.1",
@@ -1143,7 +1143,7 @@ struct RuntimeViewModelTests {
                 runtimeSessions: [makeRuntimeSession()],
                 gatewayConfig: makeGatewayConfigSummary(
                     listener: makeGatewayConfigListener(
-                        serverSessionID: "server-session-1",
+                        providerID: "provider-1",
                         requestedHost: "127.0.0.1",
                         requestedPort: 11_434,
                         effectiveHost: "127.0.0.1",
@@ -1176,7 +1176,7 @@ struct RuntimeViewModelTests {
             runtimeSessions: [makeRuntimeSession()],
             gatewayConfig: makeGatewayConfigSummary(
                 listener: makeGatewayConfigListener(
-                    serverSessionID: "server-session-1",
+                    providerID: "provider-1",
                     requestedHost: "127.0.0.1",
                     requestedPort: 11_434,
                     effectiveHost: "127.0.0.1",
@@ -1191,7 +1191,7 @@ struct RuntimeViewModelTests {
             )
         )
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.providerID = "server-session-1"
+        servingDefaults.providerID = "provider-1"
         servingDefaults.defaultModelID = "melix-dev-text"
         servingDefaults.requestedTemperature = 0.31
         servingDefaults.requestedTopP = 0.89
@@ -1332,9 +1332,9 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
-        let restoredServerSession = DesktopServerSessionState(
-            id: "server-session-restored",
+        let apiKeyStore = ProviderAPIKeyStore(melixHome: melixHome)
+        let restoredServerSession = DesktopProviderState(
+            id: "provider-restored",
             title: "Restored Server",
             modelID: "melix-dev-text",
             lifecycle: .running
@@ -1342,8 +1342,8 @@ struct RuntimeViewModelTests {
         try operatorSessionStore.save(
             OperatorSessionState(
                 selectedSurface: .api,
-                selectedServerSessionID: restoredServerSession.id,
-                serverSessions: [restoredServerSession]
+                selectedProviderID: restoredServerSession.id,
+                providers: [restoredServerSession]
             )
         )
 
@@ -1351,7 +1351,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: operatorSessionStore,
-            serverSessionAPIKeyStore: apiKeyStore
+            providerAPIKeyStore: apiKeyStore
         )
 
         await viewModel.start()
@@ -1403,8 +1403,8 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let restoredServerSession = DesktopServerSessionState(
-            id: "server-session-restored",
+        let restoredServerSession = DesktopProviderState(
+            id: "provider-restored",
             title: "Restored Server",
             modelID: "melix-dev-text",
             lifecycle: .running
@@ -1413,8 +1413,8 @@ struct RuntimeViewModelTests {
         try operatorSessionStore.save(
             OperatorSessionState(
                 selectedSurface: .tools,
-                selectedServerSessionID: restoredServerSession.id,
-                serverSessions: [restoredServerSession]
+                selectedProviderID: restoredServerSession.id,
+                providers: [restoredServerSession]
             )
         )
 
@@ -1519,7 +1519,7 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let apiKeyStore = ProviderAPIKeyStore(melixHome: melixHome)
         let client = FakeControlPlaneXPCClient()
         await client.configureSnapshot(
             makeSnapshot(
@@ -1532,13 +1532,13 @@ struct RuntimeViewModelTests {
             client: client,
             metrics: metrics,
             operatorSessionStore: operatorSessionStore,
-            serverSessionAPIKeyStore: apiKeyStore
+            providerAPIKeyStore: apiKeyStore
         )
 
         await viewModel.start()
-        let selectedServerSessionID = try #require(viewModel.selectedServerSession?.id)
+        let selectedProviderID = try #require(viewModel.selectedServerSession?.id)
         let generatedPrimaryKey = try #require(await viewModel.generatePrimaryAPIKeyForSelectedServerSession())
-        let persistedPrimaryKey = try #require(try apiKeyStore.loadPrimaryKey(serverSessionID: selectedServerSessionID))
+        let persistedPrimaryKey = try #require(try apiKeyStore.loadPrimaryKey(providerID: selectedProviderID))
 
         #expect(generatedPrimaryKey.hasPrefix("melix_sk_"))
         #expect(persistedPrimaryKey.primaryKey == generatedPrimaryKey)
@@ -1560,7 +1560,7 @@ struct RuntimeViewModelTests {
         #expect(metricValues["gateway.api_key_persist_failures"] == 0)
     }
 
-    @Test("defers gateway apply when selected server session is not running")
+    @Test("defers gateway apply when selected provider is not running")
     @MainActor
     func defersGatewayApplyWhenSelectedServerSessionIsNotRunning() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
@@ -1570,7 +1570,7 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let apiKeyStore = ProviderAPIKeyStore(melixHome: melixHome)
         let client = FakeControlPlaneXPCClient()
         await client.configureSnapshot(
             makeSnapshot(
@@ -1581,7 +1581,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: operatorSessionStore,
-            serverSessionAPIKeyStore: apiKeyStore
+            providerAPIKeyStore: apiKeyStore
         )
 
         await viewModel.start()
@@ -1603,7 +1603,7 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let apiKeyStore = ProviderAPIKeyStore(melixHome: melixHome)
         let client = FakeControlPlaneXPCClient()
         await client.configureSnapshot(
             makeSnapshot(
@@ -1614,12 +1614,12 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: operatorSessionStore,
-            serverSessionAPIKeyStore: apiKeyStore
+            providerAPIKeyStore: apiKeyStore
         )
 
         await viewModel.start()
         viewModel.createServerSession()
-        let selectedServerSessionID = try #require(viewModel.selectedServerSession?.id)
+        let selectedProviderID = try #require(viewModel.selectedServerSession?.id)
         let primaryKey = try #require(await viewModel.generatePrimaryAPIKeyForSelectedServerSession())
         #expect(await client.recordedGatewayAccessApplyRequests.isEmpty)
 
@@ -1632,11 +1632,11 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedGatewayAccessApplyRequests.isEmpty == false)
 
         let appliedRequest = try #require(await client.recordedGatewayAccessApplyRequests.last)
-        #expect(appliedRequest.serverSessionID == selectedServerSessionID)
+        #expect(appliedRequest.providerID == selectedProviderID)
         #expect(appliedRequest.primaryKey == primaryKey)
     }
 
-    @Test("selecting a keyless server session clears previously applied gateway access")
+    @Test("selecting a keyless provider clears previously applied gateway access")
     @MainActor
     func selectingAKeylessServerSessionClearsPreviouslyAppliedGatewayAccess() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
@@ -1646,7 +1646,7 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let apiKeyStore = ProviderAPIKeyStore(melixHome: melixHome)
         let client = FakeControlPlaneXPCClient()
         await client.configureSnapshot(
             makeSnapshot(
@@ -1657,7 +1657,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: operatorSessionStore,
-            serverSessionAPIKeyStore: apiKeyStore
+            providerAPIKeyStore: apiKeyStore
         )
 
         await viewModel.start()
@@ -1679,7 +1679,7 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedGatewayAccessClearRequests == [try #require(viewModel.selectedServerSession?.id)])
     }
 
-    @Test("stopping a keyed server session clears previously applied gateway access")
+    @Test("stopping a keyed provider clears previously applied gateway access")
     @MainActor
     func stoppingAKeyedServerSessionClearsPreviouslyAppliedGatewayAccess() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
@@ -1689,7 +1689,7 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let apiKeyStore = ProviderAPIKeyStore(melixHome: melixHome)
         let client = FakeControlPlaneXPCClient()
         await client.configureSnapshot(
             makeSnapshot(
@@ -1700,11 +1700,11 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: operatorSessionStore,
-            serverSessionAPIKeyStore: apiKeyStore
+            providerAPIKeyStore: apiKeyStore
         )
 
         await viewModel.start()
-        let selectedServerSessionID = try #require(viewModel.selectedServerSession?.id)
+        let selectedProviderID = try #require(viewModel.selectedServerSession?.id)
         _ = await viewModel.generatePrimaryAPIKeyForSelectedServerSession()
         var applyAttempts = 0
         while await client.recordedGatewayAccessApplyRequests.isEmpty, applyAttempts < 200 {
@@ -1720,7 +1720,7 @@ struct RuntimeViewModelTests {
             clearAttempts += 1
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(await client.recordedGatewayAccessClearRequests == [selectedServerSessionID])
+        #expect(await client.recordedGatewayAccessClearRequests == [selectedProviderID])
     }
 
     @Test("gateway access clear failures surface as recoverable local errors")
@@ -1733,7 +1733,7 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let apiKeyStore = ProviderAPIKeyStore(melixHome: melixHome)
         let client = FakeControlPlaneXPCClient()
         await client.configureSnapshot(
             makeSnapshot(
@@ -1744,7 +1744,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: operatorSessionStore,
-            serverSessionAPIKeyStore: apiKeyStore
+            providerAPIKeyStore: apiKeyStore
         )
 
         await viewModel.start()
@@ -1764,7 +1764,7 @@ struct RuntimeViewModelTests {
         }
     }
 
-    @Test("generate primary key returns nil when no server session exists")
+    @Test("generate primary key returns nil when no provider exists")
     @MainActor
     func generatePrimaryKeyReturnsNilWhenNoServerSessionExists() async throws {
         let client = EmptySnapshotControlPlaneXPCClient()
@@ -1785,7 +1785,7 @@ struct RuntimeViewModelTests {
             client: client,
             metrics: metrics,
             operatorSessionStore: NullOperatorSessionStore(),
-            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+            providerAPIKeyStore: ThrowingProviderAPIKeyStore(
                 throwOnLoad: false,
                 throwOnSave: true,
                 loadPrimaryKeyValue: nil
@@ -1811,7 +1811,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: ThrowingOperatorSessionStore(throwOnLoad: true, throwOnSave: false),
-            serverSessionAPIKeyStore: NullServerSessionAPIKeyStore()
+            providerAPIKeyStore: NullProviderAPIKeyStore()
         )
 
         await viewModel.start()
@@ -1826,7 +1826,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: ThrowingOperatorSessionStore(throwOnLoad: false, throwOnSave: true),
-            serverSessionAPIKeyStore: NullServerSessionAPIKeyStore()
+            providerAPIKeyStore: NullProviderAPIKeyStore()
         )
 
         await viewModel.start()
@@ -1843,7 +1843,7 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: NullOperatorSessionStore(),
-            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+            providerAPIKeyStore: ThrowingProviderAPIKeyStore(
                 throwOnLoad: true,
                 throwOnSave: false,
                 loadPrimaryKeyValue: nil
@@ -1857,7 +1857,7 @@ struct RuntimeViewModelTests {
         let applyFailureViewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: NullOperatorSessionStore(),
-            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+            providerAPIKeyStore: ThrowingProviderAPIKeyStore(
                 throwOnLoad: false,
                 throwOnSave: false,
                 loadPrimaryKeyValue: "melix_sk_apply_failure"
@@ -1877,7 +1877,7 @@ struct RuntimeViewModelTests {
         let emptyKeyViewModel = RuntimeViewModel(
             client: emptyKeyClient,
             operatorSessionStore: NullOperatorSessionStore(),
-            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+            providerAPIKeyStore: ThrowingProviderAPIKeyStore(
                 throwOnLoad: false,
                 throwOnSave: false,
                 loadPrimaryKeyValue: ""
@@ -1893,7 +1893,7 @@ struct RuntimeViewModelTests {
         let dedupeViewModel = RuntimeViewModel(
             client: dedupeClient,
             operatorSessionStore: NullOperatorSessionStore(),
-            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+            providerAPIKeyStore: ThrowingProviderAPIKeyStore(
                 throwOnLoad: false,
                 throwOnSave: false,
                 loadPrimaryKeyValue: "melix_sk_dedupe"
@@ -1908,7 +1908,7 @@ struct RuntimeViewModelTests {
         #expect(await dedupeClient.recordedGatewayAccessApplyRequests.count == 1)
     }
 
-    @Test("chat requires an interactive server session before sending prompts")
+    @Test("chat requires an interactive provider before sending prompts")
     @MainActor
     func chatRequiresInteractiveServerSession() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -1923,7 +1923,7 @@ struct RuntimeViewModelTests {
         let actions = await client.recordedActions
         #expect(actions.contains(where: { $0.hasPrefix("chat:") }) == false)
         #expect(viewModel.chatStatusText == "Stopped")
-        #expect(viewModel.lastError == "Start the bound Server Session before sending chat prompts.")
+        #expect(viewModel.lastError == "Start the bound Provider before sending chat prompts.")
     }
 
     @Test("sleeping chat stays interactive while paused chat is blocked")
@@ -1957,12 +1957,12 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedChatServerSession?.isInteractiveReady == true)
         #expect(viewModel.selectedChatServerSession?.chatWorkspaceNoticeState?.severity == .info)
 
-        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        let providerID = try #require(viewModel.selectedServerSession?.id)
         await client.sendServerStateChanged(
             state: .serverReady,
             runtimeSessions: [
                 makeRuntimeSession(
-                    serverSessionID: serverSessionID,
+                    providerID: providerID,
                     lifecycleState: .paused,
                     powerState: .active,
                     wakeReason: .policyApply,
@@ -1974,7 +1974,7 @@ struct RuntimeViewModelTests {
             ]
         )
 
-        try await waitForRuntimeViewModelCondition("expected selected chat server session to enter paused state") {
+        try await waitForRuntimeViewModelCondition("expected selected chat provider to enter paused state") {
             viewModel.selectedChatServerSession?.lifecycle == .paused
         }
 
@@ -1984,7 +1984,7 @@ struct RuntimeViewModelTests {
 
         #expect(await client.recordedActions.filter { $0.hasPrefix("chat:") }.count == recordedChatCount)
         #expect(viewModel.chatStatusText == "Paused")
-        #expect(viewModel.lastError == "Resume the paused Server Session before sending chat prompts.")
+        #expect(viewModel.lastError == "Resume the paused Provider before sending chat prompts.")
     }
 
     @Test("new chat sessions require an explicit server selection before sending")
@@ -1999,7 +1999,7 @@ struct RuntimeViewModelTests {
         viewModel.createChatSession()
 
         #expect(viewModel.chatSessions.count == 2)
-        #expect(viewModel.selectedChatSession?.serverSessionID == "")
+        #expect(viewModel.selectedChatSession?.providerID == "")
         #expect(viewModel.selectedChatServerSession == nil)
 
         viewModel.chatComposerText = "should wait for server choice"
@@ -2007,13 +2007,13 @@ struct RuntimeViewModelTests {
 
         #expect(await client.recordedActions.contains(where: { $0.hasPrefix("chat:") }) == false)
         #expect(viewModel.chatStatusText == "Choose Server")
-        #expect(viewModel.lastError == "Choose a Server Session before sending chat prompts.")
+        #expect(viewModel.lastError == "Choose a Provider before sending chat prompts.")
 
-        viewModel.bindSelectedChatSessionToServer(serverSessionID: originalServerID)
+        viewModel.bindSelectedChatSessionToServer(providerID: originalServerID)
         viewModel.chatComposerText = "send after server choice"
         await viewModel.submitChatPrompt()
 
-        #expect(viewModel.selectedChatSession?.serverSessionID == originalServerID)
+        #expect(viewModel.selectedChatSession?.providerID == originalServerID)
         #expect(await client.recordedActions.contains("chat:melix-dev-text"))
     }
 
@@ -2044,7 +2044,7 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError == "Hugging Face cache files are missing. Re-download this model to restore it.")
     }
 
-    @Test("surface selection command center and server session controls update shell state")
+    @Test("surface selection command center and provider controls update shell state")
     @MainActor
     func shellStateSelectionAndServerSessionControlsUpdateState() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -2133,15 +2133,15 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client, metrics: metrics)
 
         await viewModel.start()
-        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        let providerID = try #require(viewModel.selectedServerSession?.id)
 
         await viewModel.pauseSelectedServerSession()
-        #expect(await client.recordedActions.contains("server.pause:\(serverSessionID)"))
+        #expect(await client.recordedActions.contains("server.pause:\(providerID)"))
         #expect(viewModel.selectedServerSession?.lifecycle == .paused)
         #expect(viewModel.selectedServerSession?.wakeReason == .policyApply)
 
         await viewModel.resumeSelectedServerSession()
-        #expect(await client.recordedActions.contains("server.resume:\(serverSessionID)"))
+        #expect(await client.recordedActions.contains("server.resume:\(providerID)"))
         #expect(viewModel.selectedServerSession?.lifecycle == .running)
         #expect(viewModel.selectedServerSession?.wakeReason == .operatorResume)
 
@@ -2149,7 +2149,7 @@ struct RuntimeViewModelTests {
             state: .serverReady,
             runtimeSessions: [
                 makeRuntimeSession(
-                    serverSessionID: serverSessionID,
+                    providerID: providerID,
                     lifecycleState: .sleeping,
                     powerState: .lightSleep,
                     wakeReason: .requestActivity,
@@ -2160,12 +2160,12 @@ struct RuntimeViewModelTests {
                 )
             ]
         )
-        try await waitForRuntimeViewModelCondition("expected server session to enter sleeping state") {
+        try await waitForRuntimeViewModelCondition("expected provider to enter sleeping state") {
             viewModel.selectedServerSession?.lifecycle == .sleeping
         }
 
         await viewModel.wakeSelectedServerSession()
-        #expect(await client.recordedActions.contains("server.wake:\(serverSessionID)"))
+        #expect(await client.recordedActions.contains("server.wake:\(providerID)"))
         #expect(viewModel.selectedServerSession?.lifecycle == .running)
 
         viewModel.updateSelectedServerSessionAutoSleepEnabled(true)
@@ -2174,7 +2174,7 @@ struct RuntimeViewModelTests {
         await viewModel.applySelectedServerIdlePolicy()
 
         let idlePolicyRequest = try #require(await client.recordedServerIdlePolicyRequests.last)
-        #expect(idlePolicyRequest.serverSessionID == serverSessionID)
+        #expect(idlePolicyRequest.providerID == providerID)
         #expect(idlePolicyRequest.autoSleepEnabled)
         #expect(idlePolicyRequest.lightSleepAfterSeconds == 300)
         #expect(idlePolicyRequest.deepSleepAfterSeconds == 900)
@@ -2229,19 +2229,19 @@ struct RuntimeViewModelTests {
         await viewModel.resumeSelectedServerSession()
         #expect(viewModel.lastError?.contains("resume failed") == true)
 
-        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        let providerID = try #require(viewModel.selectedServerSession?.id)
         await client.sendServerStateChanged(
             state: .serverReady,
             runtimeSessions: [
                 makeRuntimeSession(
-                    serverSessionID: serverSessionID,
+                    providerID: providerID,
                     lifecycleState: .sleeping,
                     powerState: .lightSleep,
                     wakeReason: .requestActivity
                 )
             ]
         )
-        try await waitForRuntimeViewModelCondition("expected server session to enter sleeping state before wake failure") {
+        try await waitForRuntimeViewModelCondition("expected provider to enter sleeping state before wake failure") {
             viewModel.selectedServerSession?.lifecycle == .sleeping
         }
 
@@ -2277,7 +2277,7 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError?.contains("idle policy failed") == true)
     }
 
-    @Test("chat blocked messages cover starting restored stopped and failed server sessions")
+    @Test("chat blocked messages cover starting restored stopped and failed providers")
     @MainActor
     func chatBlockedMessagesCoverStartingStoppedAndFailedServerSessions() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -2299,7 +2299,7 @@ struct RuntimeViewModelTests {
         try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "starting blocked"
         await viewModel.submitChatPrompt()
-        #expect(viewModel.lastError == "Wait for the Server Session to finish starting before sending chat prompts.")
+        #expect(viewModel.lastError == "Wait for the Provider to finish starting before sending chat prompts.")
 
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-menubar-stopping-chat-\(UUID().uuidString)")
@@ -2308,8 +2308,8 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let stoppingServer = DesktopServerSessionState(
-            id: "server-session-stopping",
+        let stoppingServer = DesktopProviderState(
+            id: "provider-stopping",
             title: "Stopping Server",
             modelID: "melix-dev-text",
             lifecycle: .stopping,
@@ -2318,8 +2318,8 @@ struct RuntimeViewModelTests {
         try operatorSessionStore.save(
             OperatorSessionState(
                 selectedSurface: .chat,
-                selectedServerSessionID: stoppingServer.id,
-                serverSessions: [stoppingServer]
+                selectedProviderID: stoppingServer.id,
+                providers: [stoppingServer]
             )
         )
 
@@ -2332,11 +2332,11 @@ struct RuntimeViewModelTests {
         stoppingViewModel.selectServerSession(id: stoppingServer.id)
         #expect(stoppingViewModel.selectedServerSession?.lifecycle == .stopped)
         stoppingViewModel.createChatSession()
-        stoppingViewModel.bindSelectedChatSessionToServer(serverSessionID: stoppingServer.id)
+        stoppingViewModel.bindSelectedChatSessionToServer(providerID: stoppingServer.id)
         #expect(stoppingViewModel.selectedChatServerSession?.lifecycle == .stopped)
         stoppingViewModel.chatComposerText = "stopping blocked"
         await stoppingViewModel.submitChatPrompt()
-        #expect(stoppingViewModel.lastError == "Start the bound Server Session before sending chat prompts.")
+        #expect(stoppingViewModel.lastError == "Start the bound Provider before sending chat prompts.")
 
         let failingClient = FakeControlPlaneXPCClient()
         let failingSnapshot = makeSnapshot(
@@ -2358,10 +2358,10 @@ struct RuntimeViewModelTests {
         await failingViewModel.pauseSelectedServerSession()
         failingViewModel.chatComposerText = "error blocked"
         await failingViewModel.submitChatPrompt()
-        #expect(failingViewModel.lastError == "Recover the failed Server Session before sending chat prompts. gpu lost")
+        #expect(failingViewModel.lastError == "Recover the failed Provider before sending chat prompts. gpu lost")
     }
 
-    @Test("agent integration exports mirror the selected server session and record metrics")
+    @Test("agent integration exports mirror the selected provider and record metrics")
     @MainActor
     func agentIntegrationExportsMirrorTheSelectedServerSessionAndRecordMetrics() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -2414,7 +2414,7 @@ struct RuntimeViewModelTests {
         #expect(reboundExport.configFragment.contains("not-required"))
     }
 
-    @Test("shared-access snapshot hydrates server-session state and agent exports")
+    @Test("shared-access snapshot hydrates provider state and agent exports")
     @MainActor
     func sharedAccessSnapshotHydratesServerSessionStateAndAgentExports() async throws {
         let snapshot = makeSnapshot(
@@ -2513,7 +2513,7 @@ struct RuntimeViewModelTests {
 
     @Test("persistent session summary covers active-only and empty session states")
     func persistentSessionSummaryCoversActiveOnlyAndEmptyStates() {
-        let activeOnly = DesktopServerSessionState(
+        let activeOnly = DesktopProviderState(
             id: "active-only",
             title: "Active Only",
             modelID: "melix-dev-text",
@@ -2522,7 +2522,7 @@ struct RuntimeViewModelTests {
             expiredRememberedSessionCount: 0,
             authSessionRetentionSeconds: 300
         )
-        let empty = DesktopServerSessionState(
+        let empty = DesktopProviderState(
             id: "empty",
             title: "Empty",
             modelID: "melix-dev-text",
@@ -2614,22 +2614,22 @@ struct RuntimeViewModelTests {
         #expect(unknownSession.authTokenHint.isEmpty)
     }
 
-    @Test("server session shared-access summary text covers configured disabled and enabled states")
+    @Test("provider shared-access summary text covers configured disabled and enabled states")
     func serverSessionSharedAccessSummaryTextCoversConfiguredDisabledAndEnabledStates() {
-        let configuredDisabled = DesktopServerSessionState(
+        let configuredDisabled = DesktopProviderState(
             id: "configured-disabled",
             title: "Configured Disabled",
             modelID: "melix-dev-text",
             sharedAccessState: .configuredDisabled
         )
-        let enabledSingleKey = DesktopServerSessionState(
+        let enabledSingleKey = DesktopProviderState(
             id: "enabled-single",
             title: "Enabled Single",
             modelID: "melix-dev-text",
             sharedAccessState: .enabled,
             accessKeyCount: 1
         )
-        let enabledMultipleKeys = DesktopServerSessionState(
+        let enabledMultipleKeys = DesktopProviderState(
             id: "enabled-multi",
             title: "Enabled Multiple",
             modelID: "melix-dev-text",
@@ -2642,7 +2642,7 @@ struct RuntimeViewModelTests {
         #expect(enabledMultipleKeys.sharedAccessSummaryText == "Shared access is enabled for 2 keys.")
     }
 
-    @Test("agent integration exports stay empty when no server session is available")
+    @Test("agent integration exports stay empty when no provider is available")
     @MainActor
     func agentIntegrationExportsStayEmptyWhenNoServerSessionIsAvailable() async throws {
         let client = EmptySnapshotControlPlaneXPCClient()
@@ -2650,7 +2650,7 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
 
-        #expect(viewModel.serverSessions.isEmpty)
+        #expect(viewModel.providers.isEmpty)
         #expect(viewModel.agentIntegrationExports.isEmpty)
         #expect(viewModel.selectedAgentIntegrationExport == nil)
     }
@@ -2662,37 +2662,37 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
-        #expect(viewModel.serverSessions.isEmpty)
+        #expect(viewModel.providers.isEmpty)
         #expect(viewModel.chatSessions.count == 1)
-        #expect(viewModel.selectedChatSession?.serverSessionID == "")
+        #expect(viewModel.selectedChatSession?.providerID == "")
 
         viewModel.createChatSession()
         #expect(viewModel.chatSessions.count == 2)
-        #expect(viewModel.selectedChatSession?.serverSessionID == "")
+        #expect(viewModel.selectedChatSession?.providerID == "")
         #expect(viewModel.selectedSurface == .chat)
 
         viewModel.chatComposerText = "wait for server"
         await viewModel.submitChatPrompt()
         #expect(viewModel.chatStatusText == "Choose Server")
-        #expect(viewModel.lastError == "Choose a Server Session before sending chat prompts.")
+        #expect(viewModel.lastError == "Choose a Provider before sending chat prompts.")
 
         viewModel.createServerSession()
-        #expect(viewModel.serverSessions.isEmpty)
+        #expect(viewModel.providers.isEmpty)
         #expect(viewModel.lastError == "No Ready to Run model is available. Rescan or download a model before creating a local server.")
 
         viewModel.createServerSession(modelID: "melix-dev-text")
 
         let seededServer = try #require(viewModel.selectedServerSession)
         let seededChat = try #require(viewModel.selectedChatSession)
-        #expect(viewModel.serverSessions.count == 1)
+        #expect(viewModel.providers.count == 1)
         #expect(viewModel.chatSessions.count == 2)
         #expect(seededServer.title == "Primary Server")
         #expect(seededServer.modelID == "melix-dev-text")
         #expect(seededServer.port == 12436)
-        #expect(seededChat.serverSessionID == "")
+        #expect(seededChat.providerID == "")
 
-        viewModel.bindSelectedChatSessionToServer(serverSessionID: seededServer.id)
-        #expect(viewModel.selectedChatSession?.serverSessionID == seededServer.id)
+        viewModel.bindSelectedChatSessionToServer(providerID: seededServer.id)
+        #expect(viewModel.selectedChatSession?.providerID == seededServer.id)
         #expect(viewModel.selectedSurface == .server)
     }
 
@@ -2717,7 +2717,7 @@ struct RuntimeViewModelTests {
         let forkedSession = try #require(viewModel.selectedChatSession)
         #expect(viewModel.chatSessions.count == 2)
         #expect(forkedSession.title == "\(originalSession.title) Fork")
-        #expect(forkedSession.serverSessionID == originalSession.serverSessionID)
+        #expect(forkedSession.providerID == originalSession.providerID)
         #expect(forkedSession.branchID == "branch-2")
         #expect(forkedSession.branchTitle == "Branch 2")
         #expect(forkedSession.transcript == originalSession.transcript)
@@ -2790,12 +2790,12 @@ struct RuntimeViewModelTests {
 
         #expect(exportPath == nil)
         #expect(await client.recordedActions.isEmpty)
-        #expect(viewModel.chatStatusText == "No Server Session")
-        #expect(viewModel.lastError == "Create a Server Session before sending chat prompts.")
+        #expect(viewModel.chatStatusText == "No Provider")
+        #expect(viewModel.lastError == "Create a Provider before sending chat prompts.")
         #expect(viewModel.selectedSurface == .server)
     }
 
-    @Test("server session sync keeps missing bindings unavailable and surfaces recovery banners")
+    @Test("provider sync keeps missing bindings unavailable and surfaces recovery banners")
     @MainActor
     func serverSessionSyncKeepsMissingBindingsUnavailableAndSurfacesRecoveryBanners() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -2931,7 +2931,7 @@ struct RuntimeViewModelTests {
             features: ["chat"]
         )
         let listener = makeGatewayConfigListener(
-            serverSessionID: "server-session-1",
+            providerID: "provider-1",
             requestedHost: "127.0.0.1",
             requestedPort: 12436,
             effectiveHost: "127.0.0.1",
@@ -2947,7 +2947,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [baseModel, selectedModel],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")],
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")],
                 gatewayConfig: makeGatewayConfigSummary(listener: listener)
             )
         )
@@ -2975,8 +2975,8 @@ struct RuntimeViewModelTests {
         let staleGatewayModelID = "melix-dev-qwen-local"
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let restoredServerSession = DesktopServerSessionState(
-            id: "server-session-1",
+        let restoredServerSession = DesktopProviderState(
+            id: "provider-1",
             title: "Primary Session",
             modelID: selectedModelID,
             lifecycle: .running
@@ -2984,14 +2984,14 @@ struct RuntimeViewModelTests {
         try operatorSessionStore.save(
             OperatorSessionState(
                 selectedSurface: .chat,
-                selectedServerSessionID: restoredServerSession.id,
-                serverSessions: [restoredServerSession]
+                selectedProviderID: restoredServerSession.id,
+                providers: [restoredServerSession]
             )
         )
 
         let client = FakeControlPlaneXPCClient()
         let listener = makeGatewayConfigListener(
-            serverSessionID: restoredServerSession.id,
+            providerID: restoredServerSession.id,
             requestedHost: "127.0.0.1",
             requestedPort: 12436,
             effectiveHost: "127.0.0.1",
@@ -3010,7 +3010,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: staleGatewayModelID, state: .modelWarm),
                     makeModelSummary(modelID: selectedModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: restoredServerSession.id)],
+                runtimeSessions: [makeRuntimeSession(providerID: restoredServerSession.id)],
                 gatewayConfig: makeGatewayConfigSummary(listener: listener)
             )
         )
@@ -3038,7 +3038,7 @@ struct RuntimeViewModelTests {
         let client = FakeControlPlaneXPCClient()
         let selectedModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
         let listener = makeGatewayConfigListener(
-            serverSessionID: "server-session-1",
+            providerID: "provider-1",
             requestedHost: "127.0.0.1",
             requestedPort: 12436,
             effectiveHost: "127.0.0.1",
@@ -3059,7 +3059,7 @@ struct RuntimeViewModelTests {
                     state: .modelWarm,
                     features: ["chat"]
                 )],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")],
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")],
                 gatewayConfig: makeGatewayConfigSummary(listener: listener)
             )
         )
@@ -3975,13 +3975,13 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
         viewModel.createServerSession()
-        try await waitForRuntimeViewModelCondition("expected CLI-created server session to hydrate") {
-            viewModel.serverSessions.count >= 2
+        try await waitForRuntimeViewModelCondition("expected CLI-created provider to hydrate") {
+            viewModel.providers.count >= 2
         }
-        let serverSessionID = try #require(viewModel.serverSessions.map(\.id).sorted().last)
-        viewModel.selectServerSession(id: serverSessionID)
-        try await waitForRuntimeViewModelCondition("expected CLI-created server session to become selected") {
-            viewModel.selectedServerSession?.id == serverSessionID
+        let providerID = try #require(viewModel.providers.map(\.id).sorted().last)
+        viewModel.selectServerSession(id: providerID)
+        try await waitForRuntimeViewModelCondition("expected CLI-created provider to become selected") {
+            viewModel.selectedServerSession?.id == providerID
         }
         viewModel.updateSelectedServerSessionHost("127.0.0.1")
         viewModel.updateSelectedServerSessionPort(18081)
@@ -4008,12 +4008,12 @@ struct RuntimeViewModelTests {
         let gatewayRequest = try #require(await runnerClient.recordedGatewayConfigApplyRequests.first)
         let servingRequest = try #require(await runnerClient.recordedServingDefaultsApplyRequests.first)
 
-        #expect(gatewayRequest.serverSessionID == serverSessionID)
+        #expect(gatewayRequest.providerID == providerID)
         #expect(gatewayRequest.host == "127.0.0.1")
         #expect(gatewayRequest.port == 18081)
         #expect(gatewayRequest.rateLimitPerMinute == 360)
         #expect(gatewayRequest.timeoutSeconds == 75)
-        #expect(servingRequest.serverSessionID == serverSessionID)
+        #expect(servingRequest.providerID == providerID)
         #expect(servingRequest.temperature == 0.33)
         #expect(servingRequest.topP == 0.91)
         #expect(servingRequest.maxTokens == 640)
@@ -4876,14 +4876,14 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["desktop.reconnect_success_ms"] != nil)
     }
 
-    @Test("subscription reconnect reapplies stored gateway access for the selected running server session")
+    @Test("subscription reconnect reapplies stored gateway access for the selected running provider")
     @MainActor
     func subscriptionReconnectReappliesStoredGatewayAccessForSelectedRunningServerSession() async throws {
         let client = FakeControlPlaneXPCClient()
         let viewModel = RuntimeViewModel(
             client: client,
             operatorSessionStore: NullOperatorSessionStore(),
-            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+            providerAPIKeyStore: ThrowingProviderAPIKeyStore(
                 throwOnLoad: false,
                 throwOnSave: false,
                 loadPrimaryKeyValue: "melix_sk_reconnect"
@@ -5047,7 +5047,7 @@ struct RuntimeViewModelTests {
         #expect(hasCachePressureMetric)
     }
 
-    @Test("snapshot runtime sessions project typed lifecycle and power metadata into server sessions")
+    @Test("snapshot runtime sessions project typed lifecycle and power metadata into providers")
     @MainActor
     func snapshotRuntimeSessionsProjectTypedLifecycleAndPowerMetadataIntoServerSessions() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -5071,8 +5071,8 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
 
-        let session = try #require(viewModel.serverSessions.first)
-        #expect(session.id == "server-session-1")
+        let session = try #require(viewModel.providers.first)
+        #expect(session.id == "provider-1")
         #expect(session.lifecycle == .sleeping)
         #expect(session.powerState == .deepSleep)
         #expect(session.wakeReason == .requestActivity)
@@ -5089,12 +5089,12 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
-        let serverSessionID = viewModel.serverSessions.first?.id ?? "server-session-1"
+        let providerID = viewModel.providers.first?.id ?? "provider-1"
         await client.sendServerStateChanged(
             state: .serverReady,
             runtimeSessions: [
                 makeRuntimeSession(
-                    serverSessionID: serverSessionID,
+                    providerID: providerID,
                     lifecycleState: .paused,
                     powerState: .active,
                     wakeReason: .policyApply,
@@ -5107,11 +5107,11 @@ struct RuntimeViewModelTests {
         )
 
         try await waitForRuntimeViewModelCondition("server runtime session event should project paused state") {
-            viewModel.serverSessions.first?.lifecycle == .paused
-                && viewModel.serverSessions.first?.wakeReason == .policyApply
+            viewModel.providers.first?.lifecycle == .paused
+                && viewModel.providers.first?.wakeReason == .policyApply
         }
 
-        let session = try #require(viewModel.serverSessions.first)
+        let session = try #require(viewModel.providers.first)
         let foundation = viewModel.desktopFoundationState
         #expect(session.lifecycle == .paused)
         #expect(session.powerState == .active)
@@ -5132,8 +5132,8 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
-        let restoredServerSession = DesktopServerSessionState(
-            id: "server-session-restored",
+        let restoredServerSession = DesktopProviderState(
+            id: "provider-restored",
             title: "Restored Server",
             modelID: "melix-dev-text",
             lifecycle: .running
@@ -5141,8 +5141,8 @@ struct RuntimeViewModelTests {
         try operatorSessionStore.save(
             OperatorSessionState(
                 selectedSurface: .server,
-                selectedServerSessionID: restoredServerSession.id,
-                serverSessions: [restoredServerSession]
+                selectedProviderID: restoredServerSession.id,
+                providers: [restoredServerSession]
             )
         )
 
@@ -5152,7 +5152,7 @@ struct RuntimeViewModelTests {
             models: [makeModelSummary(state: .modelWarm)],
             runtimeSessions: [
                 makeRuntimeSession(
-                    serverSessionID: "detached-runtime-session",
+                    providerID: "detached-runtime-session",
                     lifecycleState: .loading,
                     powerState: .lightSleep,
                     wakeReason: .operatorResume
@@ -5164,8 +5164,8 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
 
-        let sessionID = try #require(viewModel.serverSessions.first?.id)
-        let hydrated = try #require(viewModel.serverSessions.first)
+        let sessionID = try #require(viewModel.providers.first?.id)
+        let hydrated = try #require(viewModel.providers.first)
         #expect(hydrated.lifecycle == .starting)
         #expect(hydrated.powerState == .lightSleep)
         #expect(hydrated.wakeReason == .operatorResume)
@@ -5174,7 +5174,7 @@ struct RuntimeViewModelTests {
             state: .serverReady,
             runtimeSessions: [
                 makeRuntimeSession(
-                    serverSessionID: sessionID,
+                    providerID: sessionID,
                     lifecycleState: .stopped,
                     powerState: .stopped,
                     wakeReason: .toolActivity
@@ -5183,16 +5183,16 @@ struct RuntimeViewModelTests {
         )
 
         try await waitForRuntimeViewModelCondition("runtime session should project stopped/tool activity state") {
-            viewModel.serverSessions.first?.lifecycle == .stopped
-                && viewModel.serverSessions.first?.powerState == .stopped
-                && viewModel.serverSessions.first?.wakeReason == .toolActivity
+            viewModel.providers.first?.lifecycle == .stopped
+                && viewModel.providers.first?.powerState == .stopped
+                && viewModel.providers.first?.wakeReason == .toolActivity
         }
 
         await client.sendServerStateChanged(
             state: .serverReady,
             runtimeSessions: [
                 makeRuntimeSession(
-                    serverSessionID: sessionID,
+                    providerID: sessionID,
                     lifecycleState: .error,
                     powerState: .UNRECOGNIZED(777),
                     wakeReason: .initialBoot
@@ -5201,16 +5201,16 @@ struct RuntimeViewModelTests {
         )
 
         try await waitForRuntimeViewModelCondition("runtime session should project error and unavailable power state") {
-            viewModel.serverSessions.first?.lifecycle == .error
-                && viewModel.serverSessions.first?.powerState == .unavailable
-                && viewModel.serverSessions.first?.wakeReason == .initialBoot
+            viewModel.providers.first?.lifecycle == .error
+                && viewModel.providers.first?.powerState == .unavailable
+                && viewModel.providers.first?.wakeReason == .initialBoot
         }
 
         await client.sendServerStateChanged(
             state: .serverReady,
             runtimeSessions: [
                 makeRuntimeSession(
-                    serverSessionID: sessionID,
+                    providerID: sessionID,
                     lifecycleState: .ready,
                     powerState: .active,
                     wakeReason: .UNRECOGNIZED(888)
@@ -5219,16 +5219,16 @@ struct RuntimeViewModelTests {
         )
 
         try await waitForRuntimeViewModelCondition("runtime session should project ready state and unknown wake reason fallback") {
-            viewModel.serverSessions.first?.lifecycle == .running
-                && viewModel.serverSessions.first?.powerState == .active
-                && viewModel.serverSessions.first?.wakeReason == .unspecified
+            viewModel.providers.first?.lifecycle == .running
+                && viewModel.providers.first?.powerState == .active
+                && viewModel.providers.first?.wakeReason == .unspecified
         }
 
         await client.sendServerStateChanged(
             state: .serverReady,
             runtimeSessions: [
                 makeRuntimeSession(
-                    serverSessionID: sessionID,
+                    providerID: sessionID,
                     lifecycleState: .UNRECOGNIZED(999),
                     powerState: .active,
                     wakeReason: .initialBoot
@@ -5237,7 +5237,7 @@ struct RuntimeViewModelTests {
         )
 
         try await waitForRuntimeViewModelCondition("runtime session should fall back to unavailable lifecycle for unknown values") {
-            viewModel.serverSessions.first?.lifecycle == .unavailable
+            viewModel.providers.first?.lifecycle == .unavailable
         }
     }
 
@@ -5752,7 +5752,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureModelOperation(
@@ -5905,7 +5905,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureBenchResponse(
@@ -6040,7 +6040,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureBenchResponse(
@@ -6090,7 +6090,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureDoctorResponse("# <b>Doctor</b> [open](file:///tmp/melix)")
@@ -6151,7 +6151,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let viewModel = RuntimeViewModel(client: client)
@@ -6186,7 +6186,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [makeMenuBarImageModelSummary()],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let imageOnlyViewModel = RuntimeViewModel(client: imageOnlyClient)
@@ -6221,7 +6221,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [model],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let viewModel = RuntimeViewModel(client: client)
@@ -6261,7 +6261,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [supportedModel],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-2")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-2")]
             )
         )
         let supportedViewModel = RuntimeViewModel(client: supportedClient)
@@ -6277,7 +6277,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [makeModelSummary(modelID: modelID, state: .modelWarm)],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-3")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-3")]
             )
         )
         let noReceiptViewModel = RuntimeViewModel(client: noReceiptClient)
@@ -6295,7 +6295,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureModelOperation(
@@ -6353,7 +6353,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
@@ -6447,7 +6447,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [model],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureModelOperation(
@@ -6546,7 +6546,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [model],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureExportResult(
@@ -6585,7 +6585,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [model],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-2")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-2")]
             )
         )
         await pendingClient.configureExportResult(
@@ -6679,7 +6679,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [model],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let viewModel = RuntimeViewModel(client: client)
@@ -6770,7 +6770,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [makeModelSummary(modelID: localModelID, state: .modelWarm)],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let remoteStore = FakeRemoteServerStore(
@@ -6827,13 +6827,13 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError == "Remote Server benchmark is not supported yet; select a local running server.")
 
         let startNewTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .startNewServer })
-        let serverSessionCount = viewModel.serverSessions.count
+        let serverSessionCount = viewModel.providers.count
         viewModel.selectDiagnosticsServerTarget(id: startNewTarget.id)
 
         #expect(viewModel.selectedSurface == .server)
         #expect(viewModel.isCreatingServerTarget)
         #expect(viewModel.selectedServerCreationKind == .localServer)
-        #expect(viewModel.serverSessions.count == serverSessionCount)
+        #expect(viewModel.providers.count == serverSessionCount)
         #expect(await client.recordedBenchRequests.isEmpty)
     }
 
@@ -6850,7 +6850,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: localModelID, state: .modelWarm),
                     makeModelSummary(modelID: alternateModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let viewModel = RuntimeViewModel(client: client)
@@ -6887,10 +6887,10 @@ struct RuntimeViewModelTests {
         var snapshot = makeSnapshot(
             serverState: .serverReady,
             models: [makeModelSummary(modelID: localModelID, state: .modelWarm)],
-            runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
         )
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.providerID = "server-session-1"
+        servingDefaults.providerID = "provider-1"
         servingDefaults.defaultModelID = localModelID
         servingDefaults.requestedTemperature = 0.4
         servingDefaults.requestedTopP = 0.9
@@ -6937,10 +6937,10 @@ struct RuntimeViewModelTests {
         var snapshot = makeSnapshot(
             serverState: .serverReady,
             models: [makeModelSummary(modelID: localModelID, state: .modelWarm)],
-            runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
         )
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.providerID = "server-session-1"
+        servingDefaults.providerID = "provider-1"
         servingDefaults.defaultModelID = localModelID
         servingDefaults.requestedAccelerationProfile = "throughput"
         servingDefaults.effectiveAccelerationProfile = "throughput"
@@ -7024,7 +7024,7 @@ struct RuntimeViewModelTests {
         })
     }
 
-    @Test("chat sends through a server session created from a text capable Hugging Face cache VLM model")
+    @Test("chat sends through a provider created from a text capable Hugging Face cache VLM model")
     @MainActor
     func chatSendsThroughServerCreatedFromTextCapableHFCacheVLMModel() async throws {
         let modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
@@ -7046,7 +7046,7 @@ struct RuntimeViewModelTests {
         let server = try #require(viewModel.selectedServerSession)
 
         await viewModel.startSelectedServerSession()
-        viewModel.bindSelectedChatSessionToServer(serverSessionID: server.id)
+        viewModel.bindSelectedChatSessionToServer(providerID: server.id)
         viewModel.chatComposerText = "Explain this image-ready model in text."
 
         await viewModel.submitChatPrompt()
@@ -7089,8 +7089,8 @@ struct RuntimeViewModelTests {
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
         let runningModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
-        let restoredServerSession = DesktopServerSessionState(
-            id: "server-session-qwen",
+        let restoredServerSession = DesktopProviderState(
+            id: "provider-qwen",
             title: "Primary Session",
             modelID: runningModelID,
             lifecycle: .running
@@ -7098,8 +7098,8 @@ struct RuntimeViewModelTests {
         try operatorSessionStore.save(
             OperatorSessionState(
                 selectedSurface: .chat,
-                selectedServerSessionID: restoredServerSession.id,
-                serverSessions: [restoredServerSession]
+                selectedProviderID: restoredServerSession.id,
+                providers: [restoredServerSession]
             )
         )
 
@@ -7158,12 +7158,12 @@ struct RuntimeViewModelTests {
         viewModel.beginServerCreation()
         viewModel.newLocalServerTitleDraft = "   "
         viewModel.newLocalServerModelID = modelID
-        let sessionCount = viewModel.serverSessions.count
+        let sessionCount = viewModel.providers.count
         let targetCount = viewModel.serverTargets.count
 
         viewModel.createLocalServerFromDraft()
 
-        #expect(viewModel.serverSessions.count == sessionCount)
+        #expect(viewModel.providers.count == sessionCount)
         #expect(viewModel.serverTargets.count == targetCount)
         #expect(viewModel.isCreatingServerTarget)
         #expect(viewModel.lastError == "Local Server requires a session name.")
@@ -7216,7 +7216,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: baseModelID, state: .modelWarm),
                     makeModelSummary(modelID: derivedModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureModelOperation(
@@ -7260,7 +7260,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let remoteStore = FakeRemoteServerStore(
@@ -7513,7 +7513,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         var matrixJob = Melix_Controlplane_V1_BenchmarkMatrixJobSummary()
@@ -7651,7 +7651,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let viewModel = RuntimeViewModel(client: client)
@@ -7684,7 +7684,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [makeMenuBarImageModelSummary()],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let imageViewModel = RuntimeViewModel(client: imageClient)
@@ -7702,7 +7702,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let requestsViewModel = RuntimeViewModel(client: requestsClient)
@@ -7726,7 +7726,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let viewModel = RuntimeViewModel(client: client)
@@ -7776,7 +7776,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureExportResult(
@@ -7905,14 +7905,14 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [baseModel, targetModel],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await runnerClient.configureSnapshot(
             makeSnapshot(
                 serverState: .serverReady,
                 models: [baseModel, targetModel],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         var evaluationJob = Melix_Controlplane_V1_EvaluationJobSummary()
@@ -7996,7 +7996,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureExportResult(
@@ -8060,7 +8060,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let viewModel = RuntimeViewModel(client: client)
@@ -8124,7 +8124,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureExportResult(
@@ -8198,7 +8198,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await runnerClient.configureBenchResponse(
@@ -8283,8 +8283,8 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorStore = OperatorSessionStore(melixHome: melixHome)
-        let initialServerSession = DesktopServerSessionState(
-            id: "server-session-1",
+        let initialServerSession = DesktopProviderState(
+            id: "provider-1",
             title: "Primary Server",
             modelID: testReadyModelID,
             host: "127.0.0.1",
@@ -8293,8 +8293,8 @@ struct RuntimeViewModelTests {
         try operatorStore.save(
             OperatorSessionState(
                 selectedSurface: .server,
-                selectedServerSessionID: initialServerSession.id,
-                serverSessions: [initialServerSession]
+                selectedProviderID: initialServerSession.id,
+                providers: [initialServerSession]
             )
         )
 
@@ -8306,7 +8306,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await directClient.configureExportResult(
@@ -8320,13 +8320,13 @@ struct RuntimeViewModelTests {
                 {
                   "selected_surface": "server",
                   "selected_tool_section": "models_library",
-                  "selected_server_session_id": "server-session-1",
+                  "selected_provider_id": "provider-1",
                   "dismissed_banner_ids": [],
                   "download_queue": [],
                   "registry_roots": [],
-                  "server_sessions": [
+                  "providers": [
                     {
-                      "id": "server-session-1",
+                      "id": "provider-1",
                       "title": "Primary Server",
                       "model_id": "\(modelID)",
                       "host": "127.0.0.1",
@@ -8353,12 +8353,12 @@ struct RuntimeViewModelTests {
                 )
             case .modelRootsRescan:
                 return .success("{\"operation\":\"registry_snapshot\"}\n")
-            case .serverSessionUpdate(let options):
+            case .providerUpdate(let options):
                 return .success(sessionJSON(modelID: options.defaultModelID.isEmpty ? testReadyModelID : options.defaultModelID))
-            case .serverSessionSelect:
+            case .providerSelect:
                 return .success(sessionJSON(modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"))
             case .serverStart(let options):
-                return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
+                return .success(makeCLIServerSnapshotJSON(providerID: options.providerID))
             case .loraTrain:
                 return .success(
                     """
@@ -8450,11 +8450,11 @@ struct RuntimeViewModelTests {
             return false
         })
         #expect(recordedCommands.contains {
-            if case .serverSessionUpdate = $0 { return true }
+            if case .providerUpdate = $0 { return true }
             return false
         })
         #expect(recordedCommands.contains {
-            if case .serverSessionSelect = $0 { return true }
+            if case .providerSelect = $0 { return true }
             return false
         })
         #expect(recordedCommands.contains {
@@ -8534,8 +8534,8 @@ struct RuntimeViewModelTests {
 
         let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
         let operatorStore = OperatorSessionStore(melixHome: melixHome)
-        let initialServerSession = DesktopServerSessionState(
-            id: "server-session-1",
+        let initialServerSession = DesktopProviderState(
+            id: "provider-1",
             title: "Qwen DFlash",
             modelID: "mlx-community/Qwen3.5-27B-4bit",
             host: "127.0.0.1",
@@ -8544,8 +8544,8 @@ struct RuntimeViewModelTests {
         try operatorStore.save(
             OperatorSessionState(
                 selectedSurface: .server,
-                selectedServerSessionID: initialServerSession.id,
-                serverSessions: [initialServerSession]
+                selectedProviderID: initialServerSession.id,
+                providers: [initialServerSession]
             )
         )
         await directClient.configureSnapshot(
@@ -8561,7 +8561,7 @@ struct RuntimeViewModelTests {
         await workflowRunner.configureHandler { command in
             switch command {
             case .serverStart(let options):
-                return .success(makeCLIServerSnapshotJSON(serverSessionID: options.serverSessionID))
+                return .success(makeCLIServerSnapshotJSON(providerID: options.providerID))
             default:
                 return .success("{}\n")
             }
@@ -8581,12 +8581,12 @@ struct RuntimeViewModelTests {
 
         let recordedCommands = await workflowRunner.snapshotRecordedCommands()
         let updateCommand = try #require(recordedCommands.compactMap { command in
-            if case .serverSessionUpdate(let options) = command {
+            if case .providerUpdate(let options) = command {
                 return options
             }
             return nil
         }.first)
-        #expect(updateCommand.serverSessionID == "server-session-1")
+        #expect(updateCommand.providerID == "provider-1")
         #expect(updateCommand.accelerationMode == "speculative_decode")
         #expect(updateCommand.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(updateCommand.numDraftTokens == 4)
@@ -8667,9 +8667,9 @@ struct RuntimeViewModelTests {
         }
     }
 
-    @Test("cli create and select server session failures surface local error state")
+    @Test("cli create and select provider failures surface local error state")
     @MainActor
-    func cliCreateAndSelectServerSessionFailuresSurfaceLocalErrorState() async throws {
+    func cliCreateAndSelectProviderFailuresSurfaceLocalErrorState() async throws {
         let directClient = FakeControlPlaneXPCClient()
         let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
         await directClient.configureSnapshot(
@@ -8680,19 +8680,19 @@ struct RuntimeViewModelTests {
         )
         await workflowRunner.configureHandler { command in
             switch command {
-            case .serverSessionCreate:
+            case .providerCreate:
                 return .failure(
                     .processFailed(
-                        commandID: "server.session.create",
+                        commandID: "provider.create",
                         surface: .subprocess,
                         exitCode: 3,
                         stderr: "create failed"
                     )
                 )
-            case .serverSessionSelect:
+            case .providerSelect:
                 return .failure(
                     .processFailed(
-                        commandID: "server.session.select",
+                        commandID: "provider.select",
                         surface: .subprocess,
                         exitCode: 4,
                         stderr: "select failed"
@@ -8708,16 +8708,16 @@ struct RuntimeViewModelTests {
 
         viewModel.createServerSession()
         try await waitForRuntimeViewModelCondition("expected create session CLI failure") {
-            viewModel.lastCLIWorkflowFailure?.commandID == "server.session.create"
+            viewModel.lastCLIWorkflowFailure?.commandID == "provider.create"
         }
-        #expect(viewModel.lastError?.contains("server.session.create") == true)
+        #expect(viewModel.lastError?.contains("provider.create") == true)
 
-        let selectedServerSessionID = try #require(viewModel.selectedServerSession?.id)
-        viewModel.selectServerSession(id: selectedServerSessionID)
+        let selectedProviderID = try #require(viewModel.selectedServerSession?.id)
+        viewModel.selectServerSession(id: selectedProviderID)
         try await waitForRuntimeViewModelCondition("expected select session CLI failure") {
-            viewModel.lastCLIWorkflowFailure?.commandID == "server.session.select"
+            viewModel.lastCLIWorkflowFailure?.commandID == "provider.select"
         }
-        #expect(viewModel.lastError?.contains("server.session.select") == true)
+        #expect(viewModel.lastError?.contains("provider.select") == true)
     }
 
     @Test("cli download and train failures surface typed local errors")
@@ -8865,7 +8865,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureExportResult(
@@ -8926,7 +8926,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
 
@@ -8984,7 +8984,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await viewModel.start()
@@ -9065,7 +9065,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureExportResult(
@@ -9114,7 +9114,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
 
@@ -9146,7 +9146,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
 
@@ -9190,7 +9190,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let viewModel = RuntimeViewModel(client: client)
@@ -10277,7 +10277,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await client.configureModelOperation(
@@ -10405,7 +10405,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm)],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await diagnosticsClient.configureBenchResponse(
@@ -10431,8 +10431,8 @@ struct RuntimeViewModelTests {
         let diagnosticsOperatorStore = OperatorSessionStore(
             melixHome: MelixHome(environment: ["MELIX_HOME": diagnosticsRoot.path])
         )
-        let diagnosticsServerSession = DesktopServerSessionState(
-            id: "server-session-1",
+        let diagnosticsServerSession = DesktopProviderState(
+            id: "provider-1",
             title: "Follow-up Server",
             modelID: "melix-dev-text-lora",
             lifecycle: .running
@@ -10440,8 +10440,8 @@ struct RuntimeViewModelTests {
         try diagnosticsOperatorStore.save(
             OperatorSessionState(
                 selectedSurface: .tools,
-                selectedServerSessionID: diagnosticsServerSession.id,
-                serverSessions: [diagnosticsServerSession]
+                selectedProviderID: diagnosticsServerSession.id,
+                providers: [diagnosticsServerSession]
             )
         )
         let diagnosticsViewModel = RuntimeViewModel(
@@ -10452,8 +10452,8 @@ struct RuntimeViewModelTests {
         await diagnosticsViewModel.start()
         diagnosticsViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
         diagnosticsViewModel.selectedEvaluationSuiteIDs = ["mmlu"]
-        #expect(diagnosticsViewModel.serverSessions.map(\.id).contains("server-session-1"))
-        #expect(diagnosticsViewModel.serverSessions.first?.lifecycle == .running)
+        #expect(diagnosticsViewModel.providers.map(\.id).contains("provider-1"))
+        #expect(diagnosticsViewModel.providers.first?.lifecycle == .running)
         #expect(diagnosticsViewModel.serverTargets.contains { $0.kind == .localServer && $0.isRunning })
         #expect(diagnosticsViewModel.diagnosticsServerTargets.contains { $0.kind == .localServer })
 
@@ -10569,7 +10569,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: "melix-dev-text-lora", state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         await runnerClient.configureSnapshot(
@@ -10691,7 +10691,7 @@ struct RuntimeViewModelTests {
             makeSnapshot(
                 serverState: .serverReady,
                 models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let viewModel = RuntimeViewModel(client: client)
@@ -10852,7 +10852,7 @@ struct RuntimeViewModelTests {
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeModelSummary(modelID: testReadyModelID, state: .modelWarm),
                 ],
-                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+                runtimeSessions: [makeRuntimeSession(providerID: "provider-1")]
             )
         )
         let viewModel = RuntimeViewModel(client: client)
@@ -13390,8 +13390,8 @@ struct RuntimeViewModelTests {
 
 @MainActor
 private func bindSelectedChatSessionToPrimaryServer(_ viewModel: RuntimeViewModel) throws {
-    let serverSessionID = try #require(viewModel.selectedServerSession?.id)
-    viewModel.bindSelectedChatSessionToServer(serverSessionID: serverSessionID)
+    let providerID = try #require(viewModel.selectedServerSession?.id)
+    viewModel.bindSelectedChatSessionToServer(providerID: providerID)
 }
 
 @MainActor
@@ -13721,20 +13721,20 @@ private struct ThrowingOperatorSessionStore: OperatorSessionStoring {
     }
 }
 
-private struct ThrowingServerSessionAPIKeyStore: ServerSessionAPIKeyStoring {
+private struct ThrowingProviderAPIKeyStore: ProviderAPIKeyStoring {
     let throwOnLoad: Bool
     let throwOnSave: Bool
     let loadPrimaryKeyValue: String?
 
-    func loadPrimaryKey(serverSessionID: String) throws -> ServerSessionPrimaryAPIKeyRecord? {
+    func loadPrimaryKey(providerID: String) throws -> ProviderPrimaryAPIKeyRecord? {
         if throwOnLoad {
             throw MenuBarTestError(description: "load-key-failed")
         }
         guard let loadPrimaryKeyValue else {
             return nil
         }
-        return ServerSessionPrimaryAPIKeyRecord(
-            serverSessionID: serverSessionID,
+        return ProviderPrimaryAPIKeyRecord(
+            providerID: providerID,
             keyID: "primary",
             primaryKey: loadPrimaryKeyValue,
             updatedAt: Date()
@@ -13742,15 +13742,15 @@ private struct ThrowingServerSessionAPIKeyStore: ServerSessionAPIKeyStoring {
     }
 
     func savePrimaryKey(
-        serverSessionID: String,
+        providerID: String,
         primaryKey: String,
         keyID: String
-    ) throws -> ServerSessionPrimaryAPIKeyRecord {
+    ) throws -> ProviderPrimaryAPIKeyRecord {
         if throwOnSave {
             throw MenuBarTestError(description: "save-key-failed")
         }
-        return ServerSessionPrimaryAPIKeyRecord(
-            serverSessionID: serverSessionID,
+        return ProviderPrimaryAPIKeyRecord(
+            providerID: providerID,
             keyID: keyID,
             primaryKey: primaryKey,
             updatedAt: Date()
@@ -13779,7 +13779,7 @@ private func makeSnapshot(
 }
 
 private func makeRuntimeSession(
-    serverSessionID: String = "server-session-1",
+    providerID: String = "provider-1",
     lifecycleState: Melix_Controlplane_V1_ProviderLifecycleState = .ready,
     powerState: Melix_Controlplane_V1_ProviderPowerState = .active,
     wakeReason: Melix_Controlplane_V1_ProviderWakeReason = .initialBoot,
@@ -13789,7 +13789,7 @@ private func makeRuntimeSession(
     deepSleepAfterSeconds: UInt32 = 1800
 ) -> Melix_Controlplane_V1_ProviderRuntimeState {
     var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
-    runtimeSession.providerID = serverSessionID
+    runtimeSession.providerID = providerID
     runtimeSession.lifecycleState = lifecycleState
     runtimeSession.powerState = powerState
     runtimeSession.wakeReason = wakeReason
@@ -13832,7 +13832,7 @@ private func makeGatewayConfigSummary(
 }
 
 private func makeGatewayConfigListener(
-    serverSessionID: String,
+    providerID: String,
     requestedHost: String,
     requestedPort: UInt32,
     effectiveHost: String,
@@ -13845,7 +13845,7 @@ private func makeGatewayConfigListener(
     requiresRestart: Bool
 ) -> Melix_Controlplane_V1_GatewayListenerConfigSummary {
     var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
-    listener.providerID = serverSessionID
+    listener.providerID = providerID
     listener.requestedHost = requestedHost
     listener.requestedPort = requestedPort
     listener.effectiveHost = effectiveHost

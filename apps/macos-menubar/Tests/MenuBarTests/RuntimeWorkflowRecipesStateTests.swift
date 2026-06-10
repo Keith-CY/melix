@@ -917,8 +917,8 @@ struct RuntimeWorkflowRecipesStateTests {
         let state = OperatorSessionState(
             selectedSurface: .tools,
             selectedToolSection: .workflowRecipes,
-            selectedServerSessionID: "",
-            serverSessions: []
+            selectedProviderID: "",
+            providers: []
         )
         let decodedState = try JSONDecoder().decode(OperatorSessionState.self, from: encoder.encode(state))
         #expect(decodedState.selectedToolSection == .workflowRecipes)

@@ -4,7 +4,7 @@
 idle-power policy, desktop visibility, and reproducible smoke evidence.
 
 This runbook covers repository-local diagnosis and recovery for paused, sleeping, stopped, and
-failed server sessions.
+failed providers.
 
 ## Scope
 
@@ -107,7 +107,7 @@ swift run melix server wake --json
 swift run melix server start --json
 ```
 
-- To create or rebind a titled local server session and start it in one command, pass the session
+- To create or rebind a titled local provider and start it in one command, pass the session
   title plus the model and listener options:
 
 ```bash
@@ -118,7 +118,7 @@ swift run melix server start "Gemma 31B" \
 ```
 
 - The positional value is the session title. New sessions still receive generated identifiers such as
-  `server-session-1`; later shortcut starts reuse an existing session when its identifier or title
+  `provider-1`; later shortcut starts reuse an existing session when its identifier or title
   matches the supplied value.
 
 - If the restart path fails with a `conflict`, wait for in-flight requests to finish and retry.
@@ -138,5 +138,5 @@ swift run melix server start "Gemma 31B" \
 - Use `server snapshot` and the lifecycle smoke first for session-state faults.
 - Use [`connection-lifecycle.md`](./connection-lifecycle.md) for stream disconnects, resume grace,
   keepalive gaps, and client reconnect timing.
-- Do not treat a successful reconnect as proof that a paused or sleeping server session recovered;
+- Do not treat a successful reconnect as proof that a paused or sleeping provider recovered;
   lifecycle and connection evidence are separate.

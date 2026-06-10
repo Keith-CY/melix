@@ -233,7 +233,7 @@ struct StatusMenuTests {
         snapshot.serverState = .serverReady
         snapshot.models = [ModelCatalog.devTextModel()]
         var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
-        runtimeSession.providerID = "server-session-1"
+        runtimeSession.providerID = "provider-1"
         runtimeSession.lifecycleState = .sleeping
         runtimeSession.powerState = .deepSleep
         runtimeSession.wakeReason = .policyApply
@@ -263,7 +263,7 @@ struct StatusMenuTests {
         try await eventually("wake action should reach the selected server", timeout: .seconds(2)) {
             viewModel.selectedServerSession?.lifecycle == .running
         }
-        #expect(await client.recordedActions.contains("server.wake:server-session-1"))
+        #expect(await client.recordedActions.contains("server.wake:provider-1"))
     }
 
     @Test("perform routes primary model actions to the view model")
@@ -605,7 +605,7 @@ private func makeStatusMenuSnapshot(
     snapshot.serverState = .serverReady
     snapshot.models = models
     var session = Melix_Controlplane_V1_ProviderRuntimeState()
-    session.providerID = "server-session-1"
+    session.providerID = "provider-1"
     session.lifecycleState = .ready
     session.powerState = .active
     snapshot.providers = [session]

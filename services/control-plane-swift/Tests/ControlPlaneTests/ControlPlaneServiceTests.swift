@@ -1509,6 +1509,100 @@ struct ControlPlaneServiceTests {
         #expect(snapshotAfterWake.server.snapshot.providers.first?.wakeReason == .requestActivity)
     }
 
+    @Test("startChat uses explicit provider target for local serving activity")
+    func startChatUsesExplicitProviderTargetForLocalServingActivity() async throws {
+        var defaultSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        defaultSession.lifecycleState = .sleeping
+        defaultSession.powerState = .deepSleep
+        var providerSession = ServerSessionRuntimeStore.defaultRuntimeSession(
+            serverSessionID: "provider-1",
+            updatedAtUnixMS: 1_000
+        )
+        providerSession.lifecycleState = .sleeping
+        providerSession.powerState = .lightSleep
+        let runtimeStore = ServerSessionRuntimeStore(
+            runtimeSessions: [defaultSession, providerSession],
+            nowUnixMS: { 3_000 }
+        )
+        let modelCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await modelCatalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::local")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-provider-wake"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-provider-wake",
+                finishReason: "stop",
+                assistant: "awake",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            serverSessionRuntimeStore: runtimeStore,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-provider-wake" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "wake provider")],
+                providerID: "provider-1"
+            )
+        )
+        _ = try await Array(execution.stream)
+        let snapshotAfterWake = try await service.execute(makeServerSnapshotRequest())
+        let defaultAfterWake = try #require(
+            snapshotAfterWake.server.snapshot.providers.first { $0.providerID == "server-session-1" }
+        )
+        let providerAfterWake = try #require(
+            snapshotAfterWake.server.snapshot.providers.first { $0.providerID == "provider-1" }
+        )
+
+        #expect(defaultAfterWake.lifecycleState == .sleeping)
+        #expect(defaultAfterWake.powerState == .deepSleep)
+        #expect(providerAfterWake.lifecycleState == .ready)
+        #expect(providerAfterWake.powerState == .active)
+        #expect(providerAfterWake.wakeReason == .requestActivity)
+    }
+
+    @Test("startChat creates an explicit provider target when no runtime session exists")
+    func startChatCreatesExplicitProviderTargetWhenNoRuntimeSessionExists() async throws {
+        let runtimeStore = ServerSessionRuntimeStore(runtimeSessions: [], nowUnixMS: { 3_000 })
+        let modelCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await modelCatalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::local")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-provider-create"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-provider-create",
+                finishReason: "stop",
+                assistant: "created",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            serverSessionRuntimeStore: runtimeStore,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-provider-create" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "create provider")],
+                providerID: "provider-1"
+            )
+        )
+        _ = try await Array(execution.stream)
+        let snapshotAfterCreate = try await service.execute(makeServerSnapshotRequest())
+        let providerAfterCreate = try #require(
+            snapshotAfterCreate.server.snapshot.providers.first { $0.providerID == "provider-1" }
+        )
+
+        #expect(providerAfterCreate.lifecycleState == .ready)
+        #expect(providerAfterCreate.powerState == .active)
+    }
+
     @Test("startChat syncs managed registry models before lazy load")
     func startChatSyncsManagedRegistryModelsBeforeLazyLoad() async throws {
         let importedModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"

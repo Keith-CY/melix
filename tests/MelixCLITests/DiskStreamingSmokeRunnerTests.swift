@@ -294,38 +294,38 @@ private actor DiskStreamingSmokeStubClient: ControlPlaneXPCClient {
         return snapshot
     }
 
-    func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        _ = serverSessionID
+    func startServerSession(providerID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = providerID
         return try await serverSnapshot()
     }
 
-    func pauseServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        _ = serverSessionID
+    func pauseServerSession(providerID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = providerID
         return try await serverSnapshot()
     }
 
-    func resumeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        _ = serverSessionID
+    func resumeServerSession(providerID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = providerID
         return try await serverSnapshot()
     }
 
-    func wakeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        _ = serverSessionID
+    func wakeServerSession(providerID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = providerID
         return try await serverSnapshot()
     }
 
-    func stopServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        _ = serverSessionID
+    func stopServerSession(providerID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = providerID
         return try await serverSnapshot()
     }
 
     func updateServerIdlePolicy(
-        serverSessionID: String,
+        providerID: String,
         autoSleepEnabled: Bool,
         lightSleepAfterSeconds: UInt32,
         deepSleepAfterSeconds: UInt32
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        _ = serverSessionID
+        _ = providerID
         _ = autoSleepEnabled
         _ = lightSleepAfterSeconds
         _ = deepSleepAfterSeconds
@@ -425,20 +425,20 @@ private actor DiskStreamingSmokeStubClient: ControlPlaneXPCClient {
     }
 
     func applyServerSessionGatewayAccess(
-        serverSessionID: String,
+        providerID: String,
         primaryKey: String,
         keyID: String,
         label: String,
         tokenHint: String
     ) async throws {
-        _ = serverSessionID
+        _ = providerID
         _ = primaryKey
         _ = keyID
         _ = label
         _ = tokenHint
     }
 
-    func clearServerSessionGatewayAccess(serverSessionID: String) async throws {
-        _ = serverSessionID
+    func clearServerSessionGatewayAccess(providerID: String) async throws {
+        _ = providerID
     }
 }

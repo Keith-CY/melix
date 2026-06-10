@@ -92,7 +92,7 @@ struct DesktopPolishSmokeTests {
         await viewModel.refreshDownloadQueueState()
 
         let chatServerSessionID = try #require(viewModel.selectedServerSession?.id)
-        viewModel.bindSelectedChatSessionToServer(serverSessionID: chatServerSessionID)
+        viewModel.bindSelectedChatSessionToServer(providerID: chatServerSessionID)
         viewModel.chatComposerText = "Smooth bursty deltas"
         let submitTask = Task { @MainActor in
             await viewModel.submitChatPrompt()
@@ -287,9 +287,9 @@ private func makeDesktopPolishNamedModelOperationResult(
     return result
 }
 
-private func makeDesktopPolishServerSession() -> DesktopServerSessionState {
-    DesktopServerSessionState(
-        id: "server-session-1",
+private func makeDesktopPolishServerSession() -> DesktopProviderState {
+    DesktopProviderState(
+        id: "provider-1",
         title: "Dev Text Session",
         modelID: "melix-dev-text",
         host: "0.0.0.0",
@@ -317,7 +317,7 @@ private func makeDesktopPolishServerSession() -> DesktopServerSessionState {
 
 private func makeDesktopPolishRuntimeSession() -> Melix_Controlplane_V1_ProviderRuntimeState {
     var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
-    runtimeSession.providerID = "server-session-1"
+    runtimeSession.providerID = "provider-1"
     runtimeSession.lifecycleState = .ready
     runtimeSession.powerState = .active
     runtimeSession.wakeReason = .initialBoot

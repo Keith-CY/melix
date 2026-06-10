@@ -55,7 +55,7 @@ make swift-test
 MELIX_RUNTIME_DIR=.runtime/phase6 bash scripts/dev_app_up.sh
 ```
 
-5. Open the `Chat` tab, choose the intended Server Session from the chat header, and submit a prompt.
+5. Open the `Chat` tab, choose the intended Provider from the chat header, and submit a prompt.
    - Confirm the transcript records the user prompt and assistant output.
    - Confirm reasoning and tool-call sections appear when the runtime emits those deltas.
    - Confirm user and assistant bubbles do not expose internal model IDs or request IDs.
@@ -74,7 +74,7 @@ tail -n 50 .runtime/phase6/swift-text-worker.log
 
 - The local stack was started without the `MELIX_RUNTIME_DIR=.runtime/phase6` override, so the operator is reading the wrong logs.
 - The text model is not warm, so the control plane cannot route the desktop chat request.
-- The Chat session has not been bound to a Server Session yet; choose one from the chat header before submitting.
+- The Chat session has not been bound to a Provider yet; choose one from the chat header before submitting.
 - The desktop app was started before the control plane or workers were ready.
 - The local model snapshot does not expose multimodal capability classes, so the model capability section remains empty.
 

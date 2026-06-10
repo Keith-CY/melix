@@ -71,6 +71,7 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
     public let topP: Double?
     public let maxTokens: UInt32?
     public let remoteTarget: RemoteTarget?
+    public let providerID: String
 
     public init(
         modelID: String,
@@ -82,7 +83,8 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
         temperature: Double? = nil,
         topP: Double? = nil,
         maxTokens: UInt32? = nil,
-        remoteTarget: RemoteTarget? = nil
+        remoteTarget: RemoteTarget? = nil,
+        providerID: String = ""
     ) {
         self.modelID = modelID
         self.messages = messages
@@ -94,6 +96,7 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
         self.topP = topP
         self.maxTokens = maxTokens
         self.remoteTarget = remoteTarget
+        self.providerID = providerID
     }
 }
 

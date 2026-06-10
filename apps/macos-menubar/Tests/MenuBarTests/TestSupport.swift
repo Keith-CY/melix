@@ -432,7 +432,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     struct RecordedGatewayAccessApplyRequest: Equatable, Sendable {
-        let serverSessionID: String
+        let providerID: String
         let primaryKey: String
         let keyID: String
         let label: String
@@ -440,7 +440,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     struct RecordedGatewayConfigApplyRequest: Equatable, Sendable {
-        let serverSessionID: String
+        let providerID: String
         let host: String
         let port: Int
         let defaultModelID: String
@@ -453,7 +453,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     struct RecordedServingDefaultsApplyRequest: Equatable, Sendable {
-        let serverSessionID: String
+        let providerID: String
         let temperature: Double
         let topP: Double
         let maxTokens: Int
@@ -508,7 +508,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     struct RecordedServerIdlePolicyRequest: Equatable, Sendable {
-        let serverSessionID: String
+        let providerID: String
         let autoSleepEnabled: Bool
         let lightSleepAfterSeconds: UInt32
         let deepSleepAfterSeconds: UInt32
@@ -1296,13 +1296,14 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         label: String,
         tokenHint: String
     ) async throws {
-        recordedActions.append("gateway.apply:\(serverSessionID)")
+        let providerID = serverSessionID
+        recordedActions.append("gateway.apply:\(providerID)")
         if let applyGatewayAccessError {
             throw applyGatewayAccessError
         }
         recordedGatewayAccessApplyRequests.append(
             RecordedGatewayAccessApplyRequest(
-                serverSessionID: serverSessionID,
+                providerID: providerID,
                 primaryKey: primaryKey,
                 keyID: keyID,
                 label: label,
@@ -1312,11 +1313,12 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func clearServerSessionGatewayAccess(serverSessionID: String) async throws {
-        recordedActions.append("gateway.clear:\(serverSessionID)")
+        let providerID = serverSessionID
+        recordedActions.append("gateway.clear:\(providerID)")
         if let clearGatewayAccessError {
             throw clearGatewayAccessError
         }
-        recordedGatewayAccessClearRequests.append(serverSessionID)
+        recordedGatewayAccessClearRequests.append(providerID)
     }
 
     func applyServerSessionGatewayConfig(
@@ -1331,14 +1333,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         allowedHosts: [String],
         allowedOrigins: [String]
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        recordedActions.append("gateway.config:\(serverSessionID)")
+        let providerID = serverSessionID
+        recordedActions.append("gateway.config:\(providerID)")
         if let applyGatewayConfigError {
             throw applyGatewayConfigError
         }
         let normalizedServedModelIDs = servedModelIDs.isEmpty ? [defaultModelID] : servedModelIDs
         recordedGatewayConfigApplyRequests.append(
             RecordedGatewayConfigApplyRequest(
-                serverSessionID: serverSessionID,
+                providerID: providerID,
                 host: host,
                 port: port,
                 defaultModelID: defaultModelID,
@@ -1353,7 +1356,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
         var snapshot = makeSnapshot(state: modelState)
         var config = snapshot.gatewayConfig
-        if let existingIndex = config.listeners.firstIndex(where: { $0.providerID == serverSessionID }) {
+        if let existingIndex = config.listeners.firstIndex(where: { $0.providerID == providerID }) {
             config.listeners[existingIndex].requestedHost = host
             config.listeners[existingIndex].requestedPort = UInt32(max(1, port))
             config.listeners[existingIndex].effectiveHost = host
@@ -1370,7 +1373,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             config.listeners[existingIndex].requiresRestart = false
         } else {
             var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
-            listener.providerID = serverSessionID
+            listener.providerID = providerID
             listener.requestedHost = host
             listener.requestedPort = UInt32(max(1, port))
             listener.effectiveHost = host
@@ -1407,13 +1410,14 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         numDraftTokens: Int,
         accelerationProfile: String
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        recordedActions.append("serving-defaults.apply:\(serverSessionID)")
+        let providerID = serverSessionID
+        recordedActions.append("serving-defaults.apply:\(providerID)")
         if let applyServingDefaultsError {
             throw applyServingDefaultsError
         }
         recordedServingDefaultsApplyRequests.append(
             RecordedServingDefaultsApplyRequest(
-                serverSessionID: serverSessionID,
+                providerID: providerID,
                 temperature: temperature,
                 topP: topP,
                 maxTokens: maxTokens,
@@ -1439,7 +1443,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
         var snapshot = snapshotOverride ?? makeSnapshot(state: modelState)
         var summary = snapshot.servingDefaults
-        if let existingIndex = summary.sessions.firstIndex(where: { $0.providerID == serverSessionID }) {
+        if let existingIndex = summary.sessions.firstIndex(where: { $0.providerID == providerID }) {
             summary.sessions[existingIndex].requestedTemperature = temperature
             summary.sessions[existingIndex].requestedTopP = topP
             summary.sessions[existingIndex].requestedMaxTokens = UInt32(max(1, maxTokens))
@@ -1466,8 +1470,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             summary.sessions[existingIndex].modelOverrideApplied = false
         } else {
             var session = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-            session.providerID = serverSessionID
-            session.defaultModelID = snapshot.gatewayConfig.listeners.first(where: { $0.providerID == serverSessionID })?.defaultModelID ?? "melix-dev-text"
+            session.providerID = providerID
+            session.defaultModelID = snapshot.gatewayConfig.listeners.first(where: { $0.providerID == providerID })?.defaultModelID ?? "melix-dev-text"
             session.requestedTemperature = temperature
             session.requestedTopP = topP
             session.requestedMaxTokens = UInt32(max(1, maxTokens))
@@ -1499,11 +1503,12 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        recordedActions.append("server.start:\(serverSessionID)")
+        let providerID = serverSessionID
+        recordedActions.append("server.start:\(providerID)")
         if let startServerError {
             throw startServerError
         }
-        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+        return mutateRuntimeSession(providerID: providerID) { runtimeSession in
             runtimeSession.lifecycleState = .ready
             runtimeSession.powerState = .active
             runtimeSession.wakeReason = .initialBoot
@@ -1511,11 +1516,12 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func pauseServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        recordedActions.append("server.pause:\(serverSessionID)")
+        let providerID = serverSessionID
+        recordedActions.append("server.pause:\(providerID)")
         if let pauseServerError {
             throw pauseServerError
         }
-        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+        return mutateRuntimeSession(providerID: providerID) { runtimeSession in
             runtimeSession.lifecycleState = .paused
             runtimeSession.powerState = .active
             runtimeSession.wakeReason = .policyApply
@@ -1523,11 +1529,12 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func resumeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        recordedActions.append("server.resume:\(serverSessionID)")
+        let providerID = serverSessionID
+        recordedActions.append("server.resume:\(providerID)")
         if let resumeServerError {
             throw resumeServerError
         }
-        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+        return mutateRuntimeSession(providerID: providerID) { runtimeSession in
             runtimeSession.lifecycleState = .ready
             runtimeSession.powerState = .active
             runtimeSession.wakeReason = .operatorResume
@@ -1535,11 +1542,12 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func wakeServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        recordedActions.append("server.wake:\(serverSessionID)")
+        let providerID = serverSessionID
+        recordedActions.append("server.wake:\(providerID)")
         if let wakeServerError {
             throw wakeServerError
         }
-        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+        return mutateRuntimeSession(providerID: providerID) { runtimeSession in
             runtimeSession.lifecycleState = .ready
             runtimeSession.powerState = .active
             runtimeSession.wakeReason = .operatorResume
@@ -1547,11 +1555,12 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     func stopServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        recordedActions.append("server.stop:\(serverSessionID)")
+        let providerID = serverSessionID
+        recordedActions.append("server.stop:\(providerID)")
         if let stopServerError {
             throw stopServerError
         }
-        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+        return mutateRuntimeSession(providerID: providerID) { runtimeSession in
             runtimeSession.lifecycleState = .stopped
             runtimeSession.powerState = .stopped
             runtimeSession.wakeReason = .policyApply
@@ -1564,19 +1573,20 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         lightSleepAfterSeconds: UInt32,
         deepSleepAfterSeconds: UInt32
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
-        recordedActions.append("server.idle_policy:\(serverSessionID)")
+        let providerID = serverSessionID
+        recordedActions.append("server.idle_policy:\(providerID)")
         if let updateServerIdlePolicyError {
             throw updateServerIdlePolicyError
         }
         recordedServerIdlePolicyRequests.append(
             RecordedServerIdlePolicyRequest(
-                serverSessionID: serverSessionID,
+                providerID: providerID,
                 autoSleepEnabled: autoSleepEnabled,
                 lightSleepAfterSeconds: lightSleepAfterSeconds,
                 deepSleepAfterSeconds: deepSleepAfterSeconds
             )
         )
-        return mutateRuntimeSession(serverSessionID: serverSessionID) { runtimeSession in
+        return mutateRuntimeSession(providerID: providerID) { runtimeSession in
             runtimeSession.autoSleepEnabled = autoSleepEnabled
             runtimeSession.lightSleepAfterSeconds = lightSleepAfterSeconds
             runtimeSession.deepSleepAfterSeconds = deepSleepAfterSeconds
@@ -1887,16 +1897,16 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     }
 
     private func mutateRuntimeSession(
-        serverSessionID: String,
+        providerID: String,
         _ update: (inout Melix_Controlplane_V1_ProviderRuntimeState) -> Void
     ) -> Melix_Controlplane_V1_ServerSnapshot {
         var snapshot = makeSnapshot(state: modelState)
-        let existingIndex = snapshot.providers.firstIndex(where: { $0.providerID == serverSessionID })
+        let existingIndex = snapshot.providers.firstIndex(where: { $0.providerID == providerID })
         if let existingIndex {
             update(&snapshot.providers[existingIndex])
         } else {
             var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
-            runtimeSession.providerID = serverSessionID
+            runtimeSession.providerID = providerID
             runtimeSession.lifecycleState = .ready
             runtimeSession.powerState = .active
             runtimeSession.wakeReason = .initialBoot
@@ -2747,7 +2757,7 @@ func makeManagedModelReceiptJSON(
 }
 
 func makeCLIServerSnapshotJSON(
-    serverSessionID: String,
+    providerID: String,
     lifecycleState: String = "ready",
     powerState: String = "active",
     serverState: String = "server_ready"
@@ -2757,7 +2767,7 @@ func makeCLIServerSnapshotJSON(
       "server_state": "\(serverState)",
       "providers": [
         {
-          "provider_id": "\(serverSessionID)",
+          "provider_id": "\(providerID)",
           "lifecycle_state": "\(lifecycleState)",
           "power_state": "\(powerState)",
           "wake_reason": "operator_resume",

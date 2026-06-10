@@ -49,8 +49,8 @@ public enum Phase8WindowUIAcceptanceError: Error, LocalizedError {
             return "Window UI acceptance could not resolve the adapter manifest path from the LoRA training receipt."
         case .missingDerivedModelID:
             return "Window UI acceptance could not resolve the derived model id after activation."
-        case .missingServerSession(let serverSessionID):
-            return "Window UI acceptance could not find server session \(serverSessionID)."
+        case .missingServerSession(let providerID):
+            return "Window UI acceptance could not find provider \(providerID)."
         case .timeout(let description):
             return "Window UI acceptance timed out while waiting for \(description)."
         case .workflowFailed(let detail):
@@ -71,7 +71,7 @@ public struct Phase8WindowUIAcceptanceConfig: Equatable, Sendable {
     public let matrixSuites: [String]
     public let evaluationSuites: [String]
     public let evaluationDataset: String
-    public let serverSessionID: String
+    public let providerID: String
     public let cliEvidenceBundlePath: String
     public let timestamp: String
 
@@ -85,7 +85,7 @@ public struct Phase8WindowUIAcceptanceConfig: Equatable, Sendable {
         matrixSuites: [String],
         evaluationSuites: [String],
         evaluationDataset: String,
-        serverSessionID: String,
+        providerID: String,
         cliEvidenceBundlePath: String,
         timestamp: String
     ) {
@@ -98,7 +98,7 @@ public struct Phase8WindowUIAcceptanceConfig: Equatable, Sendable {
         self.matrixSuites = matrixSuites
         self.evaluationSuites = evaluationSuites
         self.evaluationDataset = evaluationDataset
-        self.serverSessionID = serverSessionID
+        self.providerID = providerID
         self.cliEvidenceBundlePath = cliEvidenceBundlePath
         self.timestamp = timestamp
     }
@@ -126,8 +126,8 @@ public struct Phase8WindowUIAcceptanceConfig: Equatable, Sendable {
         )
         self.evaluationDataset = Self.normalized(environment["MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_EVALUATION_DATASET"])
             ?? "mmlu.dev.v1"
-        self.serverSessionID = Self.normalized(environment["MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_SERVER_SESSION_ID"])
-            ?? "server-session-1"
+        self.providerID = Self.normalized(environment["MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_PROVIDER_ID"])
+            ?? "provider-1"
         self.cliEvidenceBundlePath = Self.normalized(environment["MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_CLI_BUNDLE_PATH"])
             ?? Self.discoverLatestCLIBundlePath(melixHome: melixHome.rootURL)
         self.timestamp = Self.normalized(environment["MELIX_PHASE8_WINDOW_UI_ACCEPTANCE_TIMESTAMP"])
@@ -195,7 +195,7 @@ public struct Phase8WindowUIAcceptanceResult: Codable, Equatable, Sendable {
 private struct Phase8WindowUIAcceptanceUIState: Codable, Equatable, Sendable {
     let selectedSurface: String
     let selectedToolSection: String
-    let selectedServerSessionID: String
+    let selectedProviderID: String
     let selectedServerLifecycle: String
 }
 
@@ -441,7 +441,7 @@ private struct Phase8WindowUIAcceptanceBundle: Codable, Equatable, Sendable {
     let managedModelPath: String
     let sourceKind: String
     let sourceLocator: String
-    let serverSessionID: String
+    let providerID: String
     let derivedModelID: String
     let trainingFixture: String
     let benchmarkSuites: [String]
@@ -531,7 +531,7 @@ public final class Phase8WindowUIAcceptanceRunner {
 
         await viewModel.start()
         try await waitFor("initial desktop foundation state") {
-            self.viewModel.serverSessions.isEmpty == false || self.viewModel.models.isEmpty == false
+            self.viewModel.providers.isEmpty == false || self.viewModel.models.isEmpty == false
         }
 
         var timings: [String: Double] = [:]
@@ -553,11 +553,11 @@ public final class Phase8WindowUIAcceptanceRunner {
             self.viewModel.serverModelOptions.contains(where: { $0.modelID == materializeReceipt.modelID })
         }
 
-        let serverSessionID = try await prepareServerSession(modelID: materializeReceipt.modelID)
+        let providerID = try await prepareServerSession(modelID: materializeReceipt.modelID)
         let sessionRebindStartedAt = Date()
         await viewModel.startSelectedServerSession()
-        try await waitFor("interactive server session readiness") {
-            self.viewModel.selectedServerSession?.id == serverSessionID
+        try await waitFor("interactive provider readiness") {
+            self.viewModel.selectedServerSession?.id == providerID
                 && self.viewModel.selectedServerSession?.isInteractiveReady == true
         }
         timings["phase8.ui.session_rebind_ms"] = elapsedMS(since: sessionRebindStartedAt)
@@ -645,7 +645,7 @@ public final class Phase8WindowUIAcceptanceRunner {
 
         await viewModel.refreshDesktopFoundation()
         viewModel.selectSurface(.server)
-        viewModel.selectServerSession(id: serverSessionID)
+        viewModel.selectServerSession(id: providerID)
 
         let renderStartedAt = Date()
         do {
@@ -666,7 +666,7 @@ public final class Phase8WindowUIAcceptanceRunner {
             managedModelPath: materializeReceipt.managedModelPath,
             sourceKind: materializeReceipt.sourceKind,
             sourceLocator: materializeReceipt.sourceLocator,
-            serverSessionID: serverSessionID,
+            providerID: providerID,
             derivedModelID: derivedModelID,
             trainingFixture: config.trainingFixture,
             benchmarkSuites: config.benchSuites,
@@ -693,7 +693,7 @@ public final class Phase8WindowUIAcceptanceRunner {
             uiState: Phase8WindowUIAcceptanceUIState(
                 selectedSurface: viewModel.selectedSurface.rawValue,
                 selectedToolSection: viewModel.selectedToolSection.rawValue,
-                selectedServerSessionID: viewModel.selectedServerSession?.id ?? "",
+                selectedProviderID: viewModel.selectedServerSession?.id ?? "",
                 selectedServerLifecycle: viewModel.selectedServerSession?.lifecycle.rawValue ?? ""
             )
         )
@@ -877,34 +877,34 @@ public final class Phase8WindowUIAcceptanceRunner {
 
     private func prepareServerSession(modelID: String) async throws -> String {
         await viewModel.refreshDesktopFoundation()
-        if viewModel.serverSessions.isEmpty {
+        if viewModel.providers.isEmpty {
             viewModel.createServerSession()
-            try await waitFor("server session creation") {
-                self.viewModel.serverSessions.isEmpty == false
+            try await waitFor("provider creation") {
+                self.viewModel.providers.isEmpty == false
             }
         }
 
-        let serverSessionID: String
-        if viewModel.serverSessions.contains(where: { $0.id == config.serverSessionID }) {
-            serverSessionID = config.serverSessionID
-        } else if let first = viewModel.serverSessions.first?.id {
-            serverSessionID = first
+        let providerID: String
+        if viewModel.providers.contains(where: { $0.id == config.providerID }) {
+            providerID = config.providerID
+        } else if let first = viewModel.providers.first?.id {
+            providerID = first
         } else {
-            throw Phase8WindowUIAcceptanceError.missingServerSession(config.serverSessionID)
+            throw Phase8WindowUIAcceptanceError.missingServerSession(config.providerID)
         }
 
-        viewModel.selectServerSession(id: serverSessionID)
-        try await waitFor("server session selection") {
-            self.viewModel.selectedServerSession?.id == serverSessionID
+        viewModel.selectServerSession(id: providerID)
+        try await waitFor("provider selection") {
+            self.viewModel.selectedServerSession?.id == providerID
         }
         viewModel.updateSelectedServerSessionModelID(modelID)
-        return serverSessionID
+        return providerID
     }
 
     private func runChat(modelID: String, message: String) async throws -> ChatRunReceipt {
         try await cliWorkflowRunner.decodeJSON(
             ChatRunReceipt.self,
-            command: .chatRun(.init(modelID: modelID, message: message, systemPrompt: "", serverSessionID: "", json: true))
+            command: .chatRun(.init(modelID: modelID, message: message, systemPrompt: "", providerID: "", json: true))
         )
     }
 

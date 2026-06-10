@@ -92,14 +92,14 @@ struct OperatorSessionPersistenceSmokeTests {
             OperatorSessionState(
                 selectedSurface: .server,
                 selectedToolSection: .jobs,
-                selectedServerSessionID: "server-session-shared",
+                selectedProviderID: "provider-shared",
                 selectedRuntimeJobID: "job-shared-selection",
-                serverSessions: [
-                    DesktopServerSessionState(
-                        id: "server-session-shared",
+                providers: [
+                    DesktopProviderState(
+                        id: "provider-shared",
                         title: "Shared Server",
                         modelID: "melix-dev-vlm",
-                        servingDefaults: DesktopServerServingDefaultsState(
+                        servingDefaults: DesktopProviderServingDefaultsState(
                             maxConcurrentRequests: 3,
                             concurrentProcessingEnabled: false,
                             prefillBatchSize: 1,
@@ -130,8 +130,8 @@ struct OperatorSessionPersistenceSmokeTests {
         let uiPayload = try #require(
             JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.operatorSessionFileURL)) as? [String: Any]
         )
-        let serverSessionsPayload = try #require(
-            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.serverSessionsFileURL)) as? [String: Any]
+        let providersPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.providersFileURL)) as? [String: Any]
         )
         let modelRootsPayload = try #require(
             JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.modelRootsFileURL)) as? [String: Any]
@@ -142,32 +142,32 @@ struct OperatorSessionPersistenceSmokeTests {
         #expect(sharedState.selectedRuntimeJobID == "job-shared-selection")
         #expect(restoredAppState.selectedToolSection == .jobs)
         #expect(restoredAppState.selectedRuntimeJobID == "job-shared-selection")
-        #expect(sharedState.selectedServerSessionID == "server-session-shared")
-        #expect(sharedState.serverSessions.first?.defaultModelID == "melix-dev-vlm")
-        #expect(sharedState.serverSessions.first?.servedModelIDs == ["melix-dev-vlm"])
-        #expect(sharedState.serverSessions.first?.servingDefaults.accelerationProfile == "long-session")
-        #expect(sharedState.serverSessions.first?.servingDefaults.accelerationMode == "sparse_prefill")
-        #expect(sharedState.serverSessions.first?.servingDefaults.maxConcurrentRequests == 3)
-        #expect(sharedState.serverSessions.first?.servingDefaults.concurrentProcessingEnabled == false)
-        #expect(sharedState.serverSessions.first?.servingDefaults.prefillBatchSize == 1)
-        #expect(sharedState.serverSessions.first?.servingDefaults.completionBatchSize == 1)
-        #expect(restoredAppState.serverSessions.first?.servingDefaults.accelerationProfile == "long-session")
-        #expect(restoredAppState.serverSessions.first?.servingDefaults.effectiveAccelerationProfile == "long-session")
-        #expect(restoredAppState.serverSessions.first?.servingDefaults.accelerationProfileIntent ==
+        #expect(sharedState.selectedProviderID == "provider-shared")
+        #expect(sharedState.providers.first?.defaultModelID == "melix-dev-vlm")
+        #expect(sharedState.providers.first?.servedModelIDs == ["melix-dev-vlm"])
+        #expect(sharedState.providers.first?.servingDefaults.accelerationProfile == "long-session")
+        #expect(sharedState.providers.first?.servingDefaults.accelerationMode == "sparse_prefill")
+        #expect(sharedState.providers.first?.servingDefaults.maxConcurrentRequests == 3)
+        #expect(sharedState.providers.first?.servingDefaults.concurrentProcessingEnabled == false)
+        #expect(sharedState.providers.first?.servingDefaults.prefillBatchSize == 1)
+        #expect(sharedState.providers.first?.servingDefaults.completionBatchSize == 1)
+        #expect(restoredAppState.providers.first?.servingDefaults.accelerationProfile == "long-session")
+        #expect(restoredAppState.providers.first?.servingDefaults.effectiveAccelerationProfile == "long-session")
+        #expect(restoredAppState.providers.first?.servingDefaults.accelerationProfileIntent ==
             "Repeated-session serving with bounded batching and baseline decode."
         )
-        #expect(sharedState.serverSessions.first?.autoSleepEnabled == true)
-        #expect(sharedState.serverSessions.first?.lightSleepAfterSeconds == 60)
-        #expect(sharedState.serverSessions.first?.deepSleepAfterSeconds == 600)
+        #expect(sharedState.providers.first?.autoSleepEnabled == true)
+        #expect(sharedState.providers.first?.lightSleepAfterSeconds == 60)
+        #expect(sharedState.providers.first?.deepSleepAfterSeconds == 600)
         #expect(sharedState.registryRoots == ["/tmp/models-a", "/tmp/models-b"])
         #expect(sharedState.paneVisibility.first(where: { $0.surfaceID == "server" })?.showsInspector == true)
         #expect(sharedState.paneVisibility.first(where: { $0.surfaceID == "api" })?.showsSidebar == false)
         #expect(uiPayload["selected_runtime_job_id"] as? String == "job-shared-selection")
-        #expect(uiPayload["server_sessions"] == nil)
+        #expect(uiPayload["providers"] == nil)
         #expect(uiPayload["registry_roots"] == nil)
-        #expect((serverSessionsPayload["server_sessions"] as? [[String: Any]])?.first?["id"] as? String == "server-session-shared")
+        #expect((providersPayload["providers"] as? [[String: Any]])?.first?["id"] as? String == "provider-shared")
         let persistedServingDefaults = try #require(
-            (serverSessionsPayload["server_sessions"] as? [[String: Any]])?.first?["serving_defaults"] as? [String: Any]
+            (providersPayload["providers"] as? [[String: Any]])?.first?["serving_defaults"] as? [String: Any]
         )
         #expect(persistedServingDefaults["acceleration_profile"] as? String == "long-session")
         #expect(persistedServingDefaults["acceleration_mode"] as? String == "sparse_prefill")
@@ -182,9 +182,9 @@ struct OperatorSessionPersistenceSmokeTests {
             schemaVersion: 1,
             selectedSurface: .jobs,
             selectedToolSection: .jobs,
-            selectedServerSessionID: "",
+            selectedProviderID: "",
             selectedRuntimeJobID: "job-codable-selection",
-            serverSessions: [],
+            providers: [],
             paneVisibility: []
         )
 
@@ -206,8 +206,8 @@ struct OperatorSessionPersistenceSmokeTests {
               "schema_version": 5,
               "selected_surface": "tools",
               "selected_tool_section": "jobs",
-              "selected_server_session_id": "",
-              "server_sessions": []
+              "selected_provider_id": "",
+              "providers": []
             }
             """#.utf8
         )
@@ -232,8 +232,8 @@ struct OperatorSessionPersistenceSmokeTests {
             OperatorSessionState(
                 selectedSurface: .tools,
                 selectedToolSection: .batchRuns,
-                selectedServerSessionID: "",
-                serverSessions: []
+                selectedProviderID: "",
+                providers: []
             )
         )
 
@@ -257,9 +257,9 @@ struct OperatorSessionPersistenceSmokeTests {
         let legacyState = MelixOperatorSessionState(
             selectedSurfaceID: "server",
             selectedToolSectionID: "downloads",
-            selectedServerSessionID: "legacy-server",
-            serverSessions: [
-                MelixOperatorServerSessionState(
+            selectedProviderID: "legacy-server",
+            providers: [
+                MelixOperatorProviderState(
                     id: "legacy-server",
                     title: "Legacy Server",
                     defaultModelID: "melix-dev-text",
@@ -297,7 +297,7 @@ struct OperatorSessionPersistenceSmokeTests {
         encoder.dateEncodingStrategy = .iso8601
         try melixHome.writeAtomically(try encoder.encode(legacyState), to: melixHome.operatorSessionFileURL)
 
-        #expect(FileManager.default.fileExists(atPath: melixHome.serverSessionsFileURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: melixHome.providersFileURL.path) == false)
         #expect(FileManager.default.fileExists(atPath: melixHome.modelRootsFileURL.path) == false)
         #expect(FileManager.default.fileExists(atPath: melixHome.downloadQueueFileURL.path) == false)
 
@@ -305,8 +305,8 @@ struct OperatorSessionPersistenceSmokeTests {
         let uiPayload = try #require(
             JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.operatorSessionFileURL)) as? [String: Any]
         )
-        let serverSessionsPayload = try #require(
-            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.serverSessionsFileURL)) as? [String: Any]
+        let providersPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.providersFileURL)) as? [String: Any]
         )
         let modelRootsPayload = try #require(
             JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.modelRootsFileURL)) as? [String: Any]
@@ -317,14 +317,14 @@ struct OperatorSessionPersistenceSmokeTests {
 
         #expect(restoredState.selectedSurfaceID == "server")
         #expect(restoredState.selectedToolSectionID == "downloads")
-        #expect(restoredState.selectedServerSessionID == "legacy-server")
-        #expect(restoredState.serverSessions.first?.title == "Legacy Server")
+        #expect(restoredState.selectedProviderID == "legacy-server")
+        #expect(restoredState.providers.first?.title == "Legacy Server")
         #expect(restoredState.registryRoots == ["/tmp/legacy-models-a", "/tmp/legacy-models-b"])
         #expect(restoredState.downloadQueue.first?.jobID == "job-legacy-download")
-        #expect(uiPayload["server_sessions"] == nil)
+        #expect(uiPayload["providers"] == nil)
         #expect(uiPayload["registry_roots"] == nil)
         #expect(uiPayload["download_queue"] == nil)
-        #expect((serverSessionsPayload["server_sessions"] as? [[String: Any]])?.first?["id"] as? String == "legacy-server")
+        #expect((providersPayload["providers"] as? [[String: Any]])?.first?["id"] as? String == "legacy-server")
         #expect(modelRootsPayload["registry_roots"] as? [String] == ["/tmp/legacy-models-a", "/tmp/legacy-models-b"])
         #expect((downloadQueuePayload["download_queue"] as? [[String: Any]])?.first?["job_id"] as? String == "job-legacy-download")
     }
