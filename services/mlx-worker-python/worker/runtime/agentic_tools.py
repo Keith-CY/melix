@@ -497,7 +497,7 @@ def _visit_payload(
             _visit_document_receipt(
                 tool_call_id=tool_call_id,
                 source_id=url,
-                value=payload,
+                value=payload.copy(),
                 owner_scope_checked=_owner_scope_is_configured(fixture_context),
             )
         ]
@@ -526,7 +526,7 @@ def _visit_payload(
         _visit_document_receipt(
             tool_call_id=tool_call_id,
             source_id=url,
-            value=payload,
+            value=payload.copy(),
             owner_scope_checked=False,
         )
     ]
@@ -563,7 +563,7 @@ def _workspace_file_visit_payload(
             _visit_document_receipt(
                 tool_call_id=tool_call_id,
                 source_id=url,
-                value=payload,
+                value=payload.copy(),
                 owner_scope_checked=False,
             )
         ]
