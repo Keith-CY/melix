@@ -1561,11 +1561,12 @@ public actor RequestCoordinator {
         _ translatedRequest: TranslatedChatRequest
     ) async -> TranslatedChatRequest {
         var workerRequest = translatedRequest.workerRequest
-        if !workerRequest.execution.cacheHints.restoreSnapshotID.isEmpty {
+        let restoreSnapshotID = workerRequest.execution.cacheHints.restoreSnapshotID
+        if !restoreSnapshotID.isEmpty {
             workerRequest.execution.ext.merge(
                 SessionContextBoundaryReceipts(
                     requestID: workerRequest.execution.id.requestID,
-                    restoreSnapshotID: workerRequest.execution.cacheHints.restoreSnapshotID,
+                    restoreSnapshotID: restoreSnapshotID,
                     ownerScopeChecked: false
                 ).extFields,
                 uniquingKeysWith: { existingValue, _ in existingValue }
