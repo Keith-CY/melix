@@ -225,9 +225,9 @@ public struct SessionLifecycleSmokeRunner: Sendable {
     private func runtimeSession(
         in snapshot: Melix_Controlplane_V1_ServerSnapshot,
         serverSessionID: String
-    ) throws -> Melix_Controlplane_V1_ServerSessionRuntimeState {
+    ) throws -> Melix_Controlplane_V1_ProviderRuntimeState {
         let trimmedID = normalizedServerSessionID(serverSessionID)
-        guard let session = snapshot.runtimeSessions.first(where: { $0.serverSessionID == trimmedID }) else {
+        guard let session = snapshot.providers.first(where: { $0.providerID == trimmedID }) else {
             throw SessionLifecycleSmokeRunnerError.missingRuntimeSession(trimmedID)
         }
         return session
@@ -235,11 +235,11 @@ public struct SessionLifecycleSmokeRunner: Sendable {
 
     private func waitForLifecycle(
         serverSessionID: String,
-        expectedLifecycle: Melix_Controlplane_V1_ServerSessionLifecycleState,
+        expectedLifecycle: Melix_Controlplane_V1_ProviderLifecycleState,
         timeoutSeconds: TimeInterval
-    ) async throws -> Melix_Controlplane_V1_ServerSessionRuntimeState {
+    ) async throws -> Melix_Controlplane_V1_ProviderRuntimeState {
         let deadline = now() + timeoutSeconds
-        var observedLifecycle = Melix_Controlplane_V1_ServerSessionLifecycleState.unspecified
+        var observedLifecycle = Melix_Controlplane_V1_ProviderLifecycleState.unspecified
 
         while now() <= deadline {
             let snapshot = try await client.serverSnapshot()
@@ -350,7 +350,7 @@ public struct SessionLifecycleSmokeRunner: Sendable {
     }
 }
 
-private extension Melix_Controlplane_V1_ServerSessionLifecycleState {
+private extension Melix_Controlplane_V1_ProviderLifecycleState {
     var description: String {
         switch self {
         case .ready:
@@ -371,7 +371,7 @@ private extension Melix_Controlplane_V1_ServerSessionLifecycleState {
     }
 }
 
-private extension Melix_Controlplane_V1_ServerSessionPowerState {
+private extension Melix_Controlplane_V1_ProviderPowerState {
     var description: String {
         switch self {
         case .active:
@@ -388,7 +388,7 @@ private extension Melix_Controlplane_V1_ServerSessionPowerState {
     }
 }
 
-private extension Melix_Controlplane_V1_ServerWakeReason {
+private extension Melix_Controlplane_V1_ProviderWakeReason {
     var description: String {
         switch self {
         case .initialBoot:

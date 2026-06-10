@@ -205,7 +205,7 @@ struct OpenAIConformanceMatrixTests {
             defaults: [:]
         )
         var command = Melix_Controlplane_V1_ApplyGatewayConfig()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.host = "127.0.0.1"
         command.port = 12_434
         command.defaultModelID = "melix-primary"

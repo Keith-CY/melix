@@ -232,12 +232,12 @@ struct StatusMenuTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [ModelCatalog.devTextModel()]
-        var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
-        runtimeSession.serverSessionID = "server-session-1"
+        var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
+        runtimeSession.providerID = "server-session-1"
         runtimeSession.lifecycleState = .sleeping
         runtimeSession.powerState = .deepSleep
         runtimeSession.wakeReason = .policyApply
-        snapshot.runtimeSessions = [runtimeSession]
+        snapshot.providers = [runtimeSession]
         await client.configureSnapshot(snapshot)
 
         let viewModel = RuntimeViewModel(client: client)
@@ -604,11 +604,11 @@ private func makeStatusMenuSnapshot(
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = .serverReady
     snapshot.models = models
-    var session = Melix_Controlplane_V1_ServerSessionRuntimeState()
-    session.serverSessionID = "server-session-1"
+    var session = Melix_Controlplane_V1_ProviderRuntimeState()
+    session.providerID = "server-session-1"
     session.lifecycleState = .ready
     session.powerState = .active
-    snapshot.runtimeSessions = [session]
+    snapshot.providers = [session]
     return snapshot
 }
 

@@ -340,17 +340,17 @@ private func phase8LoRAWaitForCondition(
 
 private func phase8LoRAWindowSnapshot(
     models: [Melix_Controlplane_V1_ModelSummary],
-    runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = [],
+    runtimeSessions: [Melix_Controlplane_V1_ProviderRuntimeState] = [],
     defaultModelID: String = ""
 ) -> Melix_Controlplane_V1_ServerSnapshot {
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = .serverReady
     snapshot.models = models
-    snapshot.runtimeSessions = runtimeSessions
+    snapshot.providers = runtimeSessions
     let normalizedDefaultModelID = defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
     if let runtimeSession = runtimeSessions.first, normalizedDefaultModelID.isEmpty == false {
         var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
-        listener.serverSessionID = runtimeSession.serverSessionID
+        listener.providerID = runtimeSession.providerID
         listener.requestedHost = "127.0.0.1"
         listener.requestedPort = 8080
         listener.effectiveHost = "127.0.0.1"
@@ -365,7 +365,7 @@ private func phase8LoRAWindowSnapshot(
         snapshot.gatewayConfig.listeners = [listener]
 
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.serverSessionID = runtimeSession.serverSessionID
+        servingDefaults.providerID = runtimeSession.providerID
         servingDefaults.defaultModelID = normalizedDefaultModelID
         servingDefaults.requestedTemperature = 0.7
         servingDefaults.requestedTopP = 0.9
@@ -387,9 +387,9 @@ private func phase8LoRAWindowSnapshot(
     return snapshot
 }
 
-private func phase8LoRAWindowRuntimeSession() -> Melix_Controlplane_V1_ServerSessionRuntimeState {
-    var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
-    runtimeSession.serverSessionID = "server-session-1"
+private func phase8LoRAWindowRuntimeSession() -> Melix_Controlplane_V1_ProviderRuntimeState {
+    var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
+    runtimeSession.providerID = "server-session-1"
     runtimeSession.lifecycleState = .ready
     runtimeSession.powerState = .active
     runtimeSession.wakeReason = .initialBoot

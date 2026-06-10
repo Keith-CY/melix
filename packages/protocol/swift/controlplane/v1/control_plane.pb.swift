@@ -1607,7 +1607,7 @@ public nonisolated enum Melix_Controlplane_V1_CacheMode: SwiftProtobuf.Enum, Swi
 
 }
 
-public nonisolated enum Melix_Controlplane_V1_ServerSessionLifecycleState: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ProviderLifecycleState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case loading // = 1
@@ -1649,7 +1649,7 @@ public nonisolated enum Melix_Controlplane_V1_ServerSessionLifecycleState: Swift
   }
 
   // The compiler won't synthesize support with the UNRECOGNIZED case.
-  public static let allCases: [Melix_Controlplane_V1_ServerSessionLifecycleState] = [
+  public static let allCases: [Melix_Controlplane_V1_ProviderLifecycleState] = [
     .unspecified,
     .loading,
     .ready,
@@ -1661,7 +1661,7 @@ public nonisolated enum Melix_Controlplane_V1_ServerSessionLifecycleState: Swift
 
 }
 
-public nonisolated enum Melix_Controlplane_V1_ServerSessionPowerState: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ProviderPowerState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case active // = 1
@@ -1697,7 +1697,7 @@ public nonisolated enum Melix_Controlplane_V1_ServerSessionPowerState: SwiftProt
   }
 
   // The compiler won't synthesize support with the UNRECOGNIZED case.
-  public static let allCases: [Melix_Controlplane_V1_ServerSessionPowerState] = [
+  public static let allCases: [Melix_Controlplane_V1_ProviderPowerState] = [
     .unspecified,
     .active,
     .lightSleep,
@@ -1707,7 +1707,7 @@ public nonisolated enum Melix_Controlplane_V1_ServerSessionPowerState: SwiftProt
 
 }
 
-public nonisolated enum Melix_Controlplane_V1_ServerWakeReason: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ProviderWakeReason: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case initialBoot // = 1
@@ -1746,7 +1746,7 @@ public nonisolated enum Melix_Controlplane_V1_ServerWakeReason: SwiftProtobuf.En
   }
 
   // The compiler won't synthesize support with the UNRECOGNIZED case.
-  public static let allCases: [Melix_Controlplane_V1_ServerWakeReason] = [
+  public static let allCases: [Melix_Controlplane_V1_ProviderWakeReason] = [
     .unspecified,
     .initialBoot,
     .operatorResume,
@@ -3090,7 +3090,7 @@ public nonisolated struct Melix_Controlplane_V1_StartServer: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var providerID: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -3102,7 +3102,7 @@ public nonisolated struct Melix_Controlplane_V1_StopServer: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var providerID: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -3114,7 +3114,7 @@ public nonisolated struct Melix_Controlplane_V1_RestartServer: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var providerID: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -3126,7 +3126,7 @@ public nonisolated struct Melix_Controlplane_V1_PauseServer: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var providerID: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -3138,7 +3138,7 @@ public nonisolated struct Melix_Controlplane_V1_ResumeServer: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var providerID: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -3150,7 +3150,7 @@ public nonisolated struct Melix_Controlplane_V1_WakeServer: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var providerID: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -3184,7 +3184,7 @@ public nonisolated struct Melix_Controlplane_V1_SetServerIdlePolicy: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var providerID: String = String()
 
   public var autoSleepEnabled: Bool = false
 
@@ -3220,7 +3220,7 @@ public nonisolated struct Melix_Controlplane_V1_ApplyGatewayAccess: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var providerID: String = String()
 
   public var mode: Melix_Controlplane_V1_GatewayAccessMode = .unspecified
 
@@ -3247,7 +3247,7 @@ public nonisolated struct Melix_Controlplane_V1_ApplyGatewayConfig: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var providerID: String = String()
 
   public var host: String = String()
 
@@ -3277,7 +3277,7 @@ public nonisolated struct Melix_Controlplane_V1_ApplyServingDefaults: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var providerID: String = String()
 
   public var temperature: Double = 0
 
@@ -5734,7 +5734,7 @@ public nonisolated struct Melix_Controlplane_V1_GatewayListenerConfigSummary: Se
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var providerID: String = String()
 
   public var requestedHost: String = String()
 
@@ -5788,9 +5788,9 @@ public nonisolated struct Melix_Controlplane_V1_ServingDefaultsSessionSummary: @
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String {
-    get {_storage._serverSessionID}
-    set {_uniqueStorage()._serverSessionID = newValue}
+  public var providerID: String {
+    get {_storage._providerID}
+    set {_uniqueStorage()._providerID = newValue}
   }
 
   public var defaultModelID: String {
@@ -6193,9 +6193,9 @@ public nonisolated struct Melix_Controlplane_V1_ServerSnapshot: @unchecked Senda
   /// Clears the value of `gatewayAccess`. Subsequent reads from it will return its default value.
   public mutating func clearGatewayAccess() {_uniqueStorage()._gatewayAccess = nil}
 
-  public var runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] {
-    get {_storage._runtimeSessions}
-    set {_uniqueStorage()._runtimeSessions = newValue}
+  public var providers: [Melix_Controlplane_V1_ProviderRuntimeState] {
+    get {_storage._providers}
+    set {_uniqueStorage()._providers = newValue}
   }
 
   public var gatewayConfig: Melix_Controlplane_V1_GatewayConfigSummary {
@@ -7186,18 +7186,18 @@ public nonisolated struct Melix_Controlplane_V1_SessionSummary: Sendable {
   public init() {}
 }
 
-public nonisolated struct Melix_Controlplane_V1_ServerSessionRuntimeState: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ProviderRuntimeState: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var serverSessionID: String = String()
+  public var providerID: String = String()
 
-  public var lifecycleState: Melix_Controlplane_V1_ServerSessionLifecycleState = .unspecified
+  public var lifecycleState: Melix_Controlplane_V1_ProviderLifecycleState = .unspecified
 
-  public var powerState: Melix_Controlplane_V1_ServerSessionPowerState = .unspecified
+  public var powerState: Melix_Controlplane_V1_ProviderPowerState = .unspecified
 
-  public var wakeReason: Melix_Controlplane_V1_ServerWakeReason = .unspecified
+  public var wakeReason: Melix_Controlplane_V1_ProviderWakeReason = .unspecified
 
   public var idleTimerSeconds: UInt32 = 0
 
@@ -7213,14 +7213,14 @@ public nonisolated struct Melix_Controlplane_V1_ServerSessionRuntimeState: Senda
 
   public var effectiveDiskStreamingMode: Melix_Controlplane_V1_DiskStreamingMode = .unspecified
 
-  public var modelRuntimeStates: [Melix_Controlplane_V1_ServerSessionModelRuntimeState] = []
+  public var modelRuntimeStates: [Melix_Controlplane_V1_ProviderModelRuntimeState] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 }
 
-public nonisolated struct Melix_Controlplane_V1_ServerSessionModelRuntimeState: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ProviderModelRuntimeState: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7411,7 +7411,7 @@ public nonisolated struct Melix_Controlplane_V1_ServerStateChanged: Sendable {
 
   public var state: Melix_Controlplane_V1_ServerState = .unspecified
 
-  public var runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = []
+  public var providers: [Melix_Controlplane_V1_ProviderRuntimeState] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -7829,16 +7829,16 @@ nonisolated extension Melix_Controlplane_V1_CacheMode: SwiftProtobuf._ProtoNameP
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CACHE_MODE_UNSPECIFIED\0\u{1}CACHE_MODE_TIERED\0\u{1}CACHE_MODE_ROTATING\0\u{1}CACHE_MODE_HYBRID\0")
 }
 
-nonisolated extension Melix_Controlplane_V1_ServerSessionLifecycleState: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SERVER_SESSION_LIFECYCLE_STATE_UNSPECIFIED\0\u{1}SERVER_SESSION_LIFECYCLE_STATE_LOADING\0\u{1}SERVER_SESSION_LIFECYCLE_STATE_READY\0\u{1}SERVER_SESSION_LIFECYCLE_STATE_PAUSED\0\u{1}SERVER_SESSION_LIFECYCLE_STATE_SLEEPING\0\u{1}SERVER_SESSION_LIFECYCLE_STATE_STOPPED\0\u{1}SERVER_SESSION_LIFECYCLE_STATE_ERROR\0")
+nonisolated extension Melix_Controlplane_V1_ProviderLifecycleState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PROVIDER_LIFECYCLE_STATE_UNSPECIFIED\0\u{1}PROVIDER_LIFECYCLE_STATE_LOADING\0\u{1}PROVIDER_LIFECYCLE_STATE_READY\0\u{1}PROVIDER_LIFECYCLE_STATE_PAUSED\0\u{1}PROVIDER_LIFECYCLE_STATE_SLEEPING\0\u{1}PROVIDER_LIFECYCLE_STATE_STOPPED\0\u{1}PROVIDER_LIFECYCLE_STATE_ERROR\0")
 }
 
-nonisolated extension Melix_Controlplane_V1_ServerSessionPowerState: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SERVER_SESSION_POWER_STATE_UNSPECIFIED\0\u{1}SERVER_SESSION_POWER_STATE_ACTIVE\0\u{1}SERVER_SESSION_POWER_STATE_LIGHT_SLEEP\0\u{1}SERVER_SESSION_POWER_STATE_DEEP_SLEEP\0\u{1}SERVER_SESSION_POWER_STATE_STOPPED\0")
+nonisolated extension Melix_Controlplane_V1_ProviderPowerState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PROVIDER_POWER_STATE_UNSPECIFIED\0\u{1}PROVIDER_POWER_STATE_ACTIVE\0\u{1}PROVIDER_POWER_STATE_LIGHT_SLEEP\0\u{1}PROVIDER_POWER_STATE_DEEP_SLEEP\0\u{1}PROVIDER_POWER_STATE_STOPPED\0")
 }
 
-nonisolated extension Melix_Controlplane_V1_ServerWakeReason: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SERVER_WAKE_REASON_UNSPECIFIED\0\u{1}SERVER_WAKE_REASON_INITIAL_BOOT\0\u{1}SERVER_WAKE_REASON_OPERATOR_RESUME\0\u{1}SERVER_WAKE_REASON_REQUEST_ACTIVITY\0\u{1}SERVER_WAKE_REASON_TOOL_ACTIVITY\0\u{1}SERVER_WAKE_REASON_POLICY_APPLY\0")
+nonisolated extension Melix_Controlplane_V1_ProviderWakeReason: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PROVIDER_WAKE_REASON_UNSPECIFIED\0\u{1}PROVIDER_WAKE_REASON_INITIAL_BOOT\0\u{1}PROVIDER_WAKE_REASON_OPERATOR_RESUME\0\u{1}PROVIDER_WAKE_REASON_REQUEST_ACTIVITY\0\u{1}PROVIDER_WAKE_REASON_TOOL_ACTIVITY\0\u{1}PROVIDER_WAKE_REASON_POLICY_APPLY\0")
 }
 
 nonisolated extension Melix_Controlplane_V1_ErrorStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -10293,7 +10293,7 @@ nonisolated extension Melix_Controlplane_V1_ImageReply: SwiftProtobuf.Message, S
 
 nonisolated extension Melix_Controlplane_V1_StartServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartServer"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10301,21 +10301,21 @@ nonisolated extension Melix_Controlplane_V1_StartServer: SwiftProtobuf.Message, 
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_StartServer, rhs: Melix_Controlplane_V1_StartServer) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.providerID != rhs.providerID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -10323,7 +10323,7 @@ nonisolated extension Melix_Controlplane_V1_StartServer: SwiftProtobuf.Message, 
 
 nonisolated extension Melix_Controlplane_V1_StopServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StopServer"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10331,21 +10331,21 @@ nonisolated extension Melix_Controlplane_V1_StopServer: SwiftProtobuf.Message, S
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_StopServer, rhs: Melix_Controlplane_V1_StopServer) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.providerID != rhs.providerID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -10353,7 +10353,7 @@ nonisolated extension Melix_Controlplane_V1_StopServer: SwiftProtobuf.Message, S
 
 nonisolated extension Melix_Controlplane_V1_RestartServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RestartServer"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10361,21 +10361,21 @@ nonisolated extension Melix_Controlplane_V1_RestartServer: SwiftProtobuf.Message
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_RestartServer, rhs: Melix_Controlplane_V1_RestartServer) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.providerID != rhs.providerID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -10383,7 +10383,7 @@ nonisolated extension Melix_Controlplane_V1_RestartServer: SwiftProtobuf.Message
 
 nonisolated extension Melix_Controlplane_V1_PauseServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PauseServer"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10391,21 +10391,21 @@ nonisolated extension Melix_Controlplane_V1_PauseServer: SwiftProtobuf.Message, 
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_PauseServer, rhs: Melix_Controlplane_V1_PauseServer) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.providerID != rhs.providerID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -10413,7 +10413,7 @@ nonisolated extension Melix_Controlplane_V1_PauseServer: SwiftProtobuf.Message, 
 
 nonisolated extension Melix_Controlplane_V1_ResumeServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ResumeServer"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10421,21 +10421,21 @@ nonisolated extension Melix_Controlplane_V1_ResumeServer: SwiftProtobuf.Message,
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_ResumeServer, rhs: Melix_Controlplane_V1_ResumeServer) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.providerID != rhs.providerID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -10443,7 +10443,7 @@ nonisolated extension Melix_Controlplane_V1_ResumeServer: SwiftProtobuf.Message,
 
 nonisolated extension Melix_Controlplane_V1_WakeServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WakeServer"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10451,21 +10451,21 @@ nonisolated extension Melix_Controlplane_V1_WakeServer: SwiftProtobuf.Message, S
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_WakeServer, rhs: Melix_Controlplane_V1_WakeServer) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.providerID != rhs.providerID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -10522,7 +10522,7 @@ nonisolated extension Melix_Controlplane_V1_SetGlobalPolicy: SwiftProtobuf.Messa
 
 nonisolated extension Melix_Controlplane_V1_SetServerIdlePolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SetServerIdlePolicy"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}auto_sleep_enabled\0\u{3}light_sleep_after_seconds\0\u{3}deep_sleep_after_seconds\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0\u{3}auto_sleep_enabled\0\u{3}light_sleep_after_seconds\0\u{3}deep_sleep_after_seconds\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10530,7 +10530,7 @@ nonisolated extension Melix_Controlplane_V1_SetServerIdlePolicy: SwiftProtobuf.M
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
       case 2: try { try decoder.decodeSingularBoolField(value: &self.autoSleepEnabled) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.lightSleepAfterSeconds) }()
       case 4: try { try decoder.decodeSingularUInt32Field(value: &self.deepSleepAfterSeconds) }()
@@ -10540,8 +10540,8 @@ nonisolated extension Melix_Controlplane_V1_SetServerIdlePolicy: SwiftProtobuf.M
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
     }
     if self.autoSleepEnabled != false {
       try visitor.visitSingularBoolField(value: self.autoSleepEnabled, fieldNumber: 2)
@@ -10556,7 +10556,7 @@ nonisolated extension Melix_Controlplane_V1_SetServerIdlePolicy: SwiftProtobuf.M
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_SetServerIdlePolicy, rhs: Melix_Controlplane_V1_SetServerIdlePolicy) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.providerID != rhs.providerID {return false}
     if lhs.autoSleepEnabled != rhs.autoSleepEnabled {return false}
     if lhs.lightSleepAfterSeconds != rhs.lightSleepAfterSeconds {return false}
     if lhs.deepSleepAfterSeconds != rhs.deepSleepAfterSeconds {return false}
@@ -10612,7 +10612,7 @@ nonisolated extension Melix_Controlplane_V1_GatewayAccessKeyRecord: SwiftProtobu
 
 nonisolated extension Melix_Controlplane_V1_ApplyGatewayAccess: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyGatewayAccess"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}mode\0\u{3}shared_access_enabled\0\u{3}primary_key\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0\u{1}mode\0\u{3}shared_access_enabled\0\u{3}primary_key\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10620,7 +10620,7 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayAccess: SwiftProtobuf.Me
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
       case 2: try { try decoder.decodeSingularEnumField(value: &self.mode) }()
       case 3: try { try decoder.decodeSingularBoolField(value: &self.sharedAccessEnabled) }()
       case 4: try { try decoder.decodeSingularMessageField(value: &self._primaryKey) }()
@@ -10634,8 +10634,8 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayAccess: SwiftProtobuf.Me
     // allocates stack space for every if/case branch local when no optimizations
     // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
     // https://github.com/apple/swift-protobuf/issues/1182
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
     }
     if self.mode != .unspecified {
       try visitor.visitSingularEnumField(value: self.mode, fieldNumber: 2)
@@ -10650,7 +10650,7 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayAccess: SwiftProtobuf.Me
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_ApplyGatewayAccess, rhs: Melix_Controlplane_V1_ApplyGatewayAccess) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.providerID != rhs.providerID {return false}
     if lhs.mode != rhs.mode {return false}
     if lhs.sharedAccessEnabled != rhs.sharedAccessEnabled {return false}
     if lhs._primaryKey != rhs._primaryKey {return false}
@@ -10661,7 +10661,7 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayAccess: SwiftProtobuf.Me
 
 nonisolated extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyGatewayConfig"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}host\0\u{1}port\0\u{3}default_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{3}served_model_ids\0\u{3}model_idle_timeout_seconds\0\u{3}allowed_hosts\0\u{3}allowed_origins\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0\u{1}host\0\u{1}port\0\u{3}default_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{3}served_model_ids\0\u{3}model_idle_timeout_seconds\0\u{3}allowed_hosts\0\u{3}allowed_origins\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10669,7 +10669,7 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Me
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.host) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.port) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.defaultModelID) }()
@@ -10685,8 +10685,8 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Me
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
     }
     if !self.host.isEmpty {
       try visitor.visitSingularStringField(value: self.host, fieldNumber: 2)
@@ -10719,7 +10719,7 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Me
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_ApplyGatewayConfig, rhs: Melix_Controlplane_V1_ApplyGatewayConfig) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.providerID != rhs.providerID {return false}
     if lhs.host != rhs.host {return false}
     if lhs.port != rhs.port {return false}
     if lhs.defaultModelID != rhs.defaultModelID {return false}
@@ -10736,7 +10736,7 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Me
 
 nonisolated extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyServingDefaults"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}temperature\0\u{3}top_p\0\u{3}max_tokens\0\u{3}stream_interval_tokens\0\u{3}max_concurrent_requests\0\u{3}concurrent_processing_enabled\0\u{3}prefill_batch_size\0\u{3}completion_batch_size\0\u{3}acceleration_mode\0\u{3}draft_model_id\0\u{3}num_draft_tokens\0\u{3}acceleration_profile\0\u{3}multimodal_route_policy\0\u{3}speculative_route_policy\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0\u{1}temperature\0\u{3}top_p\0\u{3}max_tokens\0\u{3}stream_interval_tokens\0\u{3}max_concurrent_requests\0\u{3}concurrent_processing_enabled\0\u{3}prefill_batch_size\0\u{3}completion_batch_size\0\u{3}acceleration_mode\0\u{3}draft_model_id\0\u{3}num_draft_tokens\0\u{3}acceleration_profile\0\u{3}multimodal_route_policy\0\u{3}speculative_route_policy\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10744,7 +10744,7 @@ nonisolated extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
       case 2: try { try decoder.decodeSingularDoubleField(value: &self.temperature) }()
       case 3: try { try decoder.decodeSingularDoubleField(value: &self.topP) }()
       case 4: try { try decoder.decodeSingularUInt32Field(value: &self.maxTokens) }()
@@ -10765,8 +10765,8 @@ nonisolated extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
     }
     if self.temperature.bitPattern != 0 {
       try visitor.visitSingularDoubleField(value: self.temperature, fieldNumber: 2)
@@ -10814,7 +10814,7 @@ nonisolated extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_ApplyServingDefaults, rhs: Melix_Controlplane_V1_ApplyServingDefaults) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.providerID != rhs.providerID {return false}
     if lhs.temperature != rhs.temperature {return false}
     if lhs.topP != rhs.topP {return false}
     if lhs.maxTokens != rhs.maxTokens {return false}
@@ -16016,7 +16016,7 @@ nonisolated extension Melix_Controlplane_V1_GatewayAccessSummary: SwiftProtobuf.
 
 nonisolated extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GatewayListenerConfigSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}requested_host\0\u{3}requested_port\0\u{3}effective_host\0\u{3}effective_port\0\u{3}default_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{1}source\0\u{3}active_binding\0\u{3}requires_restart\0\u{3}updated_at_unix_ms\0\u{3}served_model_ids\0\u{3}model_idle_timeout_seconds\0\u{3}allowed_hosts\0\u{3}allowed_origins\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0\u{3}requested_host\0\u{3}requested_port\0\u{3}effective_host\0\u{3}effective_port\0\u{3}default_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{1}source\0\u{3}active_binding\0\u{3}requires_restart\0\u{3}updated_at_unix_ms\0\u{3}served_model_ids\0\u{3}model_idle_timeout_seconds\0\u{3}allowed_hosts\0\u{3}allowed_origins\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -16024,7 +16024,7 @@ nonisolated extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftP
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.requestedHost) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.requestedPort) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.effectiveHost) }()
@@ -16046,8 +16046,8 @@ nonisolated extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftP
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
     }
     if !self.requestedHost.isEmpty {
       try visitor.visitSingularStringField(value: self.requestedHost, fieldNumber: 2)
@@ -16098,7 +16098,7 @@ nonisolated extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftP
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_GatewayListenerConfigSummary, rhs: Melix_Controlplane_V1_GatewayListenerConfigSummary) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.providerID != rhs.providerID {return false}
     if lhs.requestedHost != rhs.requestedHost {return false}
     if lhs.requestedPort != rhs.requestedPort {return false}
     if lhs.effectiveHost != rhs.effectiveHost {return false}
@@ -16151,10 +16151,10 @@ nonisolated extension Melix_Controlplane_V1_GatewayConfigSummary: SwiftProtobuf.
 
 nonisolated extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServingDefaultsSessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}default_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0\u{3}requested_concurrent_processing_enabled\0\u{3}requested_prefill_batch_size\0\u{3}requested_completion_batch_size\0\u{3}effective_concurrent_processing_enabled\0\u{3}effective_prefill_batch_size\0\u{3}effective_completion_batch_size\0\u{3}requested_acceleration_mode\0\u{3}requested_draft_model_id\0\u{3}requested_num_draft_tokens\0\u{3}effective_acceleration_mode\0\u{3}effective_draft_model_id\0\u{3}effective_num_draft_tokens\0\u{3}requested_acceleration_profile\0\u{3}effective_acceleration_profile\0\u{3}acceleration_profile_intent\0\u{3}override_receipt_schema\0\u{3}suppressed_overrides\0\u{3}batch_disabled_reason\0\u{3}speculative_disabled_reason\0\u{3}multimodal_route_policy\0\u{3}effective_multimodal_route\0\u{3}speculative_route_policy\0\u{3}effective_speculative_mode\0\u{3}cache_quantization_disabled_reason\0\u{3}paged_cache_disabled_reason\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0\u{3}default_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0\u{3}requested_concurrent_processing_enabled\0\u{3}requested_prefill_batch_size\0\u{3}requested_completion_batch_size\0\u{3}effective_concurrent_processing_enabled\0\u{3}effective_prefill_batch_size\0\u{3}effective_completion_batch_size\0\u{3}requested_acceleration_mode\0\u{3}requested_draft_model_id\0\u{3}requested_num_draft_tokens\0\u{3}effective_acceleration_mode\0\u{3}effective_draft_model_id\0\u{3}effective_num_draft_tokens\0\u{3}requested_acceleration_profile\0\u{3}effective_acceleration_profile\0\u{3}acceleration_profile_intent\0\u{3}override_receipt_schema\0\u{3}suppressed_overrides\0\u{3}batch_disabled_reason\0\u{3}speculative_disabled_reason\0\u{3}multimodal_route_policy\0\u{3}effective_multimodal_route\0\u{3}speculative_route_policy\0\u{3}effective_speculative_mode\0\u{3}cache_quantization_disabled_reason\0\u{3}paged_cache_disabled_reason\0")
 
   fileprivate class _StorageClass {
-    var _serverSessionID: String = String()
+    var _providerID: String = String()
     var _defaultModelID: String = String()
     var _requestedTemperature: Double = 0
     var _requestedTopP: Double = 0
@@ -16204,7 +16204,7 @@ nonisolated extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: Swift
     private init() {}
 
     init(copying source: _StorageClass) {
-      _serverSessionID = source._serverSessionID
+      _providerID = source._providerID
       _defaultModelID = source._defaultModelID
       _requestedTemperature = source._requestedTemperature
       _requestedTopP = source._requestedTopP
@@ -16262,7 +16262,7 @@ nonisolated extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: Swift
         // allocates stack space for every case branch when no optimizations are
         // enabled. https://github.com/apple/swift-protobuf/issues/1034
         switch fieldNumber {
-        case 1: try { try decoder.decodeSingularStringField(value: &_storage._serverSessionID) }()
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._providerID) }()
         case 2: try { try decoder.decodeSingularStringField(value: &_storage._defaultModelID) }()
         case 3: try { try decoder.decodeSingularDoubleField(value: &_storage._requestedTemperature) }()
         case 4: try { try decoder.decodeSingularDoubleField(value: &_storage._requestedTopP) }()
@@ -16310,8 +16310,8 @@ nonisolated extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: Swift
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
     try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
-      if !_storage._serverSessionID.isEmpty {
-        try visitor.visitSingularStringField(value: _storage._serverSessionID, fieldNumber: 1)
+      if !_storage._providerID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._providerID, fieldNumber: 1)
       }
       if !_storage._defaultModelID.isEmpty {
         try visitor.visitSingularStringField(value: _storage._defaultModelID, fieldNumber: 2)
@@ -16439,7 +16439,7 @@ nonisolated extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: Swift
       let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
         let _storage = _args.0
         let rhs_storage = _args.1
-        if _storage._serverSessionID != rhs_storage._serverSessionID {return false}
+        if _storage._providerID != rhs_storage._providerID {return false}
         if _storage._defaultModelID != rhs_storage._defaultModelID {return false}
         if _storage._requestedTemperature != rhs_storage._requestedTemperature {return false}
         if _storage._requestedTopP != rhs_storage._requestedTopP {return false}
@@ -16698,7 +16698,7 @@ nonisolated extension Melix_Controlplane_V1_ImageDefaultsSummary: SwiftProtobuf.
 
 nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerSnapshot"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_state\0\u{1}workers\0\u{1}models\0\u{1}queues\0\u{1}cache\0\u{1}resources\0\u{1}metrics\0\u{1}sessions\0\u{3}recent_errors\0\u{3}image_jobs\0\u{3}mcp_tools\0\u{3}gateway_access\0\u{3}runtime_sessions\0\u{3}gateway_config\0\u{3}serving_defaults\0\u{3}tooling_settings\0\u{3}api_onboarding\0\u{3}image_defaults\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_state\0\u{1}workers\0\u{1}models\0\u{1}queues\0\u{1}cache\0\u{1}resources\0\u{1}metrics\0\u{1}sessions\0\u{3}recent_errors\0\u{3}image_jobs\0\u{3}mcp_tools\0\u{3}gateway_access\0\u{1}providers\0\u{3}gateway_config\0\u{3}serving_defaults\0\u{3}tooling_settings\0\u{3}api_onboarding\0\u{3}image_defaults\0")
 
   fileprivate class _StorageClass {
     var _serverState: Melix_Controlplane_V1_ServerState = .unspecified
@@ -16713,7 +16713,7 @@ nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Messag
     var _imageJobs: [Melix_Controlplane_V1_ImageJobSummary] = []
     var _mcpTools: Melix_Controlplane_V1_MCPToolCatalogSummary? = nil
     var _gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil
-    var _runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = []
+    var _providers: [Melix_Controlplane_V1_ProviderRuntimeState] = []
     var _gatewayConfig: Melix_Controlplane_V1_GatewayConfigSummary? = nil
     var _servingDefaults: Melix_Controlplane_V1_ServingDefaultsSummary? = nil
     var _toolingSettings: Melix_Controlplane_V1_ToolingSettingsSummary? = nil
@@ -16741,7 +16741,7 @@ nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Messag
       _imageJobs = source._imageJobs
       _mcpTools = source._mcpTools
       _gatewayAccess = source._gatewayAccess
-      _runtimeSessions = source._runtimeSessions
+      _providers = source._providers
       _gatewayConfig = source._gatewayConfig
       _servingDefaults = source._servingDefaults
       _toolingSettings = source._toolingSettings
@@ -16777,7 +16777,7 @@ nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Messag
         case 10: try { try decoder.decodeRepeatedMessageField(value: &_storage._imageJobs) }()
         case 11: try { try decoder.decodeSingularMessageField(value: &_storage._mcpTools) }()
         case 12: try { try decoder.decodeSingularMessageField(value: &_storage._gatewayAccess) }()
-        case 13: try { try decoder.decodeRepeatedMessageField(value: &_storage._runtimeSessions) }()
+        case 13: try { try decoder.decodeRepeatedMessageField(value: &_storage._providers) }()
         case 14: try { try decoder.decodeSingularMessageField(value: &_storage._gatewayConfig) }()
         case 15: try { try decoder.decodeSingularMessageField(value: &_storage._servingDefaults) }()
         case 16: try { try decoder.decodeSingularMessageField(value: &_storage._toolingSettings) }()
@@ -16831,8 +16831,8 @@ nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Messag
       try { if let v = _storage._gatewayAccess {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
       } }()
-      if !_storage._runtimeSessions.isEmpty {
-        try visitor.visitRepeatedMessageField(value: _storage._runtimeSessions, fieldNumber: 13)
+      if !_storage._providers.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._providers, fieldNumber: 13)
       }
       try { if let v = _storage._gatewayConfig {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
@@ -16870,7 +16870,7 @@ nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Messag
         if _storage._imageJobs != rhs_storage._imageJobs {return false}
         if _storage._mcpTools != rhs_storage._mcpTools {return false}
         if _storage._gatewayAccess != rhs_storage._gatewayAccess {return false}
-        if _storage._runtimeSessions != rhs_storage._runtimeSessions {return false}
+        if _storage._providers != rhs_storage._providers {return false}
         if _storage._gatewayConfig != rhs_storage._gatewayConfig {return false}
         if _storage._servingDefaults != rhs_storage._servingDefaults {return false}
         if _storage._toolingSettings != rhs_storage._toolingSettings {return false}
@@ -18764,9 +18764,9 @@ nonisolated extension Melix_Controlplane_V1_SessionSummary: SwiftProtobuf.Messag
   }
 }
 
-nonisolated extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".ServerSessionRuntimeState"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}lifecycle_state\0\u{3}power_state\0\u{3}wake_reason\0\u{3}idle_timer_seconds\0\u{3}auto_sleep_enabled\0\u{3}light_sleep_after_seconds\0\u{3}deep_sleep_after_seconds\0\u{3}updated_at_unix_ms\0\u{3}requested_disk_streaming_mode\0\u{3}effective_disk_streaming_mode\0\u{3}model_runtime_states\0")
+nonisolated extension Melix_Controlplane_V1_ProviderRuntimeState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ProviderRuntimeState"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}provider_id\0\u{3}lifecycle_state\0\u{3}power_state\0\u{3}wake_reason\0\u{3}idle_timer_seconds\0\u{3}auto_sleep_enabled\0\u{3}light_sleep_after_seconds\0\u{3}deep_sleep_after_seconds\0\u{3}updated_at_unix_ms\0\u{3}requested_disk_streaming_mode\0\u{3}effective_disk_streaming_mode\0\u{3}model_runtime_states\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -18774,7 +18774,7 @@ nonisolated extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProt
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.providerID) }()
       case 2: try { try decoder.decodeSingularEnumField(value: &self.lifecycleState) }()
       case 3: try { try decoder.decodeSingularEnumField(value: &self.powerState) }()
       case 4: try { try decoder.decodeSingularEnumField(value: &self.wakeReason) }()
@@ -18792,8 +18792,8 @@ nonisolated extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProt
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.serverSessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 1)
+    if !self.providerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerID, fieldNumber: 1)
     }
     if self.lifecycleState != .unspecified {
       try visitor.visitSingularEnumField(value: self.lifecycleState, fieldNumber: 2)
@@ -18831,8 +18831,8 @@ nonisolated extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProt
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Melix_Controlplane_V1_ServerSessionRuntimeState, rhs: Melix_Controlplane_V1_ServerSessionRuntimeState) -> Bool {
-    if lhs.serverSessionID != rhs.serverSessionID {return false}
+  public static func ==(lhs: Melix_Controlplane_V1_ProviderRuntimeState, rhs: Melix_Controlplane_V1_ProviderRuntimeState) -> Bool {
+    if lhs.providerID != rhs.providerID {return false}
     if lhs.lifecycleState != rhs.lifecycleState {return false}
     if lhs.powerState != rhs.powerState {return false}
     if lhs.wakeReason != rhs.wakeReason {return false}
@@ -18849,8 +18849,8 @@ nonisolated extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProt
   }
 }
 
-nonisolated extension Melix_Controlplane_V1_ServerSessionModelRuntimeState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".ServerSessionModelRuntimeState"
+nonisolated extension Melix_Controlplane_V1_ProviderModelRuntimeState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ProviderModelRuntimeState"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{3}model_state\0\u{3}active_request_count\0\u{3}last_request_started_at_unix_ms\0\u{3}last_request_finished_at_unix_ms\0\u{3}idle_deadline_unix_ms\0\u{3}idle_unload_eligible\0\u{1}pinned\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -18900,7 +18900,7 @@ nonisolated extension Melix_Controlplane_V1_ServerSessionModelRuntimeState: Swif
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Melix_Controlplane_V1_ServerSessionModelRuntimeState, rhs: Melix_Controlplane_V1_ServerSessionModelRuntimeState) -> Bool {
+  public static func ==(lhs: Melix_Controlplane_V1_ProviderModelRuntimeState, rhs: Melix_Controlplane_V1_ProviderModelRuntimeState) -> Bool {
     if lhs.modelID != rhs.modelID {return false}
     if lhs.modelState != rhs.modelState {return false}
     if lhs.activeRequestCount != rhs.activeRequestCount {return false}
@@ -19279,7 +19279,7 @@ nonisolated extension Melix_Controlplane_V1_PresetSummary: SwiftProtobuf.Message
 
 nonisolated extension Melix_Controlplane_V1_ServerStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerStateChanged"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{3}runtime_sessions\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}providers\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -19288,7 +19288,7 @@ nonisolated extension Melix_Controlplane_V1_ServerStateChanged: SwiftProtobuf.Me
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.state) }()
-      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.runtimeSessions) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.providers) }()
       default: break
       }
     }
@@ -19298,15 +19298,15 @@ nonisolated extension Melix_Controlplane_V1_ServerStateChanged: SwiftProtobuf.Me
     if self.state != .unspecified {
       try visitor.visitSingularEnumField(value: self.state, fieldNumber: 1)
     }
-    if !self.runtimeSessions.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.runtimeSessions, fieldNumber: 2)
+    if !self.providers.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.providers, fieldNumber: 2)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Controlplane_V1_ServerStateChanged, rhs: Melix_Controlplane_V1_ServerStateChanged) -> Bool {
     if lhs.state != rhs.state {return false}
-    if lhs.runtimeSessions != rhs.runtimeSessions {return false}
+    if lhs.providers != rhs.providers {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -1502,7 +1502,7 @@ struct OpenAIHandlerTests {
             defaults: [:]
         )
         var command = Melix_Controlplane_V1_ApplyGatewayConfig()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.host = "127.0.0.1"
         command.port = 11_434
         command.defaultModelID = "melix-primary"
@@ -1589,7 +1589,7 @@ struct OpenAIHandlerTests {
             defaults: [:]
         )
         var command = Melix_Controlplane_V1_ApplyGatewayConfig()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.host = "127.0.0.1"
         command.port = 11_434
         command.defaultModelID = "melix-active"
@@ -1669,7 +1669,7 @@ struct OpenAIHandlerTests {
             defaults: [:]
         )
         var command = Melix_Controlplane_V1_ApplyGatewayConfig()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.host = "127.0.0.1"
         command.port = 11_434
         command.defaultModelID = "melix-primary"
@@ -3227,7 +3227,7 @@ struct OpenAIHandlerTests {
             defaults: [:]
         )
         var defaults = Melix_Controlplane_V1_ApplyServingDefaults()
-        defaults.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        defaults.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         defaults.temperature = 0.7
         defaults.topP = 1.0
         defaults.maxTokens = 256
@@ -3326,7 +3326,7 @@ struct OpenAIHandlerTests {
             defaults: [:]
         )
         var defaults = Melix_Controlplane_V1_ApplyServingDefaults()
-        defaults.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        defaults.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         defaults.temperature = 0.7
         defaults.topP = 1.0
         defaults.maxTokens = 256
@@ -3665,7 +3665,7 @@ struct OpenAIHandlerTests {
             defaults: [:]
         )
         var defaults = Melix_Controlplane_V1_ApplyServingDefaults()
-        defaults.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        defaults.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         defaults.temperature = 0.7
         defaults.topP = 1.0
         defaults.maxTokens = 256
@@ -4931,7 +4931,7 @@ struct OpenAIHandlerTests {
             defaults: [:]
         )
         var command = Melix_Controlplane_V1_ApplyGatewayConfig()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.host = "127.0.0.1"
         command.port = 11_434
         command.defaultModelID = "missing-vlm"
@@ -5343,7 +5343,7 @@ struct OpenAIHandlerTests {
             defaults: [:]
         )
         var defaults = Melix_Controlplane_V1_ApplyServingDefaults()
-        defaults.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        defaults.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         defaults.temperature = 0.7
         defaults.topP = 1.0
         defaults.maxTokens = 256
@@ -5421,7 +5421,7 @@ struct OpenAIHandlerTests {
             defaults: [:]
         )
         var defaults = Melix_Controlplane_V1_ApplyServingDefaults()
-        defaults.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        defaults.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         defaults.temperature = 0.7
         defaults.topP = 1.0
         defaults.maxTokens = 256
@@ -6430,7 +6430,7 @@ struct OpenAIHandlerTests {
             defaults: [:]
         )
         var defaults = Melix_Controlplane_V1_ApplyServingDefaults()
-        defaults.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        defaults.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         defaults.temperature = 0.37
         defaults.topP = 0.91
         defaults.maxTokens = 448

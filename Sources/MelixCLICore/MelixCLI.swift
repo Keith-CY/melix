@@ -11925,25 +11925,25 @@ public actor MelixCLIRunner {
     }
 
     private func renderServerSnapshotText(_ snapshot: Melix_Controlplane_V1_ServerSnapshot) -> String {
-        guard snapshot.runtimeSessions.isEmpty == false else {
-            return "server_state=\(serverStateLabel(snapshot.serverState))\nNo runtime sessions found.\n"
+        guard snapshot.providers.isEmpty == false else {
+            return "server_state=\(serverStateLabel(snapshot.serverState))\nNo providers found.\n"
         }
-        let lines = snapshot.runtimeSessions.map { session in
+        let lines = snapshot.providers.map { provider in
             [
                 serverStateLabel(snapshot.serverState),
-                session.serverSessionID,
-                lifecycleStateLabel(session.lifecycleState),
-                powerStateLabel(session.powerState),
-                wakeReasonLabel(session.wakeReason),
-                session.autoSleepEnabled ? "true" : "false",
-                String(session.lightSleepAfterSeconds),
-                String(session.deepSleepAfterSeconds),
-                String(session.idleTimerSeconds),
-                String(session.updatedAtUnixMs),
+                provider.providerID,
+                lifecycleStateLabel(provider.lifecycleState),
+                powerStateLabel(provider.powerState),
+                wakeReasonLabel(provider.wakeReason),
+                provider.autoSleepEnabled ? "true" : "false",
+                String(provider.lightSleepAfterSeconds),
+                String(provider.deepSleepAfterSeconds),
+                String(provider.idleTimerSeconds),
+                String(provider.updatedAtUnixMs),
             ].joined(separator: "\t")
         }
         return ([
-            "server_state\tserver_session_id\tlifecycle_state\tpower_state\twake_reason\tauto_sleep_enabled\tlight_sleep_after_seconds\tdeep_sleep_after_seconds\tidle_timer_seconds\tupdated_at_unix_ms",
+            "server_state\tprovider_id\tlifecycle_state\tpower_state\twake_reason\tauto_sleep_enabled\tlight_sleep_after_seconds\tdeep_sleep_after_seconds\tidle_timer_seconds\tupdated_at_unix_ms",
         ] + lines).joined(separator: "\n") + "\n"
     }
 
@@ -12280,17 +12280,17 @@ public actor MelixCLIRunner {
     ) -> [String: Any] {
         [
             "server_state": serverStateLabel(snapshot.serverState),
-            "runtime_sessions": snapshot.runtimeSessions.map { session in
+            "providers": snapshot.providers.map { provider in
                 [
-                    "server_session_id": session.serverSessionID,
-                    "lifecycle_state": lifecycleStateLabel(session.lifecycleState),
-                    "power_state": powerStateLabel(session.powerState),
-                    "wake_reason": wakeReasonLabel(session.wakeReason),
-                    "idle_timer_seconds": Int(session.idleTimerSeconds),
-                    "auto_sleep_enabled": session.autoSleepEnabled,
-                    "light_sleep_after_seconds": Int(session.lightSleepAfterSeconds),
-                    "deep_sleep_after_seconds": Int(session.deepSleepAfterSeconds),
-                    "updated_at_unix_ms": session.updatedAtUnixMs,
+                    "provider_id": provider.providerID,
+                    "lifecycle_state": lifecycleStateLabel(provider.lifecycleState),
+                    "power_state": powerStateLabel(provider.powerState),
+                    "wake_reason": wakeReasonLabel(provider.wakeReason),
+                    "idle_timer_seconds": Int(provider.idleTimerSeconds),
+                    "auto_sleep_enabled": provider.autoSleepEnabled,
+                    "light_sleep_after_seconds": Int(provider.lightSleepAfterSeconds),
+                    "deep_sleep_after_seconds": Int(provider.deepSleepAfterSeconds),
+                    "updated_at_unix_ms": provider.updatedAtUnixMs,
                 ]
             },
         ]
@@ -12316,7 +12316,7 @@ public actor MelixCLIRunner {
     }
 
     private func lifecycleStateLabel(
-        _ value: Melix_Controlplane_V1_ServerSessionLifecycleState
+        _ value: Melix_Controlplane_V1_ProviderLifecycleState
     ) -> String {
         switch value {
         case .ready:
@@ -12337,7 +12337,7 @@ public actor MelixCLIRunner {
     }
 
     private func powerStateLabel(
-        _ value: Melix_Controlplane_V1_ServerSessionPowerState
+        _ value: Melix_Controlplane_V1_ProviderPowerState
     ) -> String {
         switch value {
         case .active:
@@ -12354,7 +12354,7 @@ public actor MelixCLIRunner {
     }
 
     private func wakeReasonLabel(
-        _ value: Melix_Controlplane_V1_ServerWakeReason
+        _ value: Melix_Controlplane_V1_ProviderWakeReason
     ) -> String {
         switch value {
         case .initialBoot:

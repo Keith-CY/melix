@@ -1223,7 +1223,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.start = Melix_Controlplane_V1_StartServer()
-        request.server.start.serverSessionID = serverSessionID
+        request.server.start.providerID = serverSessionID
         return request
     }
 
@@ -1234,7 +1234,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.pause = Melix_Controlplane_V1_PauseServer()
-        request.server.pause.serverSessionID = serverSessionID
+        request.server.pause.providerID = serverSessionID
         return request
     }
 
@@ -1245,7 +1245,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.resume = Melix_Controlplane_V1_ResumeServer()
-        request.server.resume.serverSessionID = serverSessionID
+        request.server.resume.providerID = serverSessionID
         return request
     }
 
@@ -1256,7 +1256,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.wake = Melix_Controlplane_V1_WakeServer()
-        request.server.wake.serverSessionID = serverSessionID
+        request.server.wake.providerID = serverSessionID
         return request
     }
 
@@ -1267,7 +1267,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.stop = Melix_Controlplane_V1_StopServer()
-        request.server.stop.serverSessionID = serverSessionID
+        request.server.stop.providerID = serverSessionID
         return request
     }
 
@@ -1283,7 +1283,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.setIdlePolicy = Melix_Controlplane_V1_SetServerIdlePolicy()
-        request.server.setIdlePolicy.serverSessionID = serverSessionID
+        request.server.setIdlePolicy.providerID = serverSessionID
         request.server.setIdlePolicy.autoSleepEnabled = autoSleepEnabled
         request.server.setIdlePolicy.lightSleepAfterSeconds = lightSleepAfterSeconds
         request.server.setIdlePolicy.deepSleepAfterSeconds = deepSleepAfterSeconds
@@ -1599,7 +1599,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.applyGatewayAccess = Melix_Controlplane_V1_ApplyGatewayAccess()
-        request.server.applyGatewayAccess.serverSessionID = serverSessionID
+        request.server.applyGatewayAccess.providerID = serverSessionID
         request.server.applyGatewayAccess.mode = .apiKeys
         request.server.applyGatewayAccess.sharedAccessEnabled = true
         request.server.applyGatewayAccess.primaryKey = Melix_Controlplane_V1_GatewayAccessKeyRecord()
@@ -1619,7 +1619,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.applyGatewayAccess = Melix_Controlplane_V1_ApplyGatewayAccess()
-        request.server.applyGatewayAccess.serverSessionID = serverSessionID
+        request.server.applyGatewayAccess.providerID = serverSessionID
         request.server.applyGatewayAccess.mode = .none
         request.server.applyGatewayAccess.sharedAccessEnabled = false
         return request
@@ -1643,7 +1643,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.applyGatewayConfig = Melix_Controlplane_V1_ApplyGatewayConfig()
-        request.server.applyGatewayConfig.serverSessionID = serverSessionID
+        request.server.applyGatewayConfig.providerID = serverSessionID
         request.server.applyGatewayConfig.host = host
         request.server.applyGatewayConfig.port = UInt32(max(0, min(port, Int(UInt16.max))))
         request.server.applyGatewayConfig.defaultModelID = defaultModelID
@@ -1677,7 +1677,7 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.applyServingDefaults = Melix_Controlplane_V1_ApplyServingDefaults()
-        request.server.applyServingDefaults.serverSessionID = serverSessionID
+        request.server.applyServingDefaults.providerID = serverSessionID
         request.server.applyServingDefaults.temperature = temperature
         request.server.applyServingDefaults.topP = topP
         request.server.applyServingDefaults.maxTokens = UInt32(max(0, maxTokens))

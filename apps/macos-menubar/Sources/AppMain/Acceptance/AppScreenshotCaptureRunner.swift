@@ -374,7 +374,7 @@ actor AppScreenshotCaptureControlPlaneClient: ControlPlaneXPCClient {
         snapshot.queues = makeQueueSummary()
         snapshot.cache = makeCacheSummary()
         snapshot.metrics = makeMetricsSummary()
-        snapshot.runtimeSessions = [makeRuntimeSession()]
+        snapshot.providers = [makeRuntimeSession()]
         return snapshot
     }
 
@@ -443,9 +443,9 @@ actor AppScreenshotCaptureControlPlaneClient: ControlPlaneXPCClient {
         return metrics
     }
 
-    private static func makeRuntimeSession() -> Melix_Controlplane_V1_ServerSessionRuntimeState {
-        var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
-        runtimeSession.serverSessionID = "screenshot-local-server"
+    private static func makeRuntimeSession() -> Melix_Controlplane_V1_ProviderRuntimeState {
+        var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
+        runtimeSession.providerID = "screenshot-local-server"
         runtimeSession.lifecycleState = .ready
         runtimeSession.powerState = .active
         runtimeSession.wakeReason = .initialBoot

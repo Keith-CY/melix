@@ -161,7 +161,7 @@ public struct GatewayAccessPolicy: Equatable, Sendable {
     public static let localTrust = GatewayAccessPolicy()
 
     public init?(apply command: Melix_Controlplane_V1_ApplyGatewayAccess) {
-        guard Self.trimmed(command.serverSessionID).isEmpty == false else {
+        guard Self.trimmed(command.providerID).isEmpty == false else {
             return nil
         }
         guard let mode = Mode(protoValue: command.mode) else {

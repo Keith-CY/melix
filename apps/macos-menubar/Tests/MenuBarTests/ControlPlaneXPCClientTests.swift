@@ -56,11 +56,11 @@ struct ControlPlaneXPCClientTests {
         let service = ControlPlaneService()
         let client = LocalControlPlaneXPCClient(service: service)
         let initialSnapshot = try await client.serverSnapshot()
-        let serverSessionID = try #require(initialSnapshot.runtimeSessions.first?.serverSessionID)
+        let serverSessionID = try #require(initialSnapshot.providers.first?.providerID)
 
         let pausedSnapshot = try await client.pauseServerSession(serverSessionID: serverSessionID)
         let pausedSession = try #require(
-            pausedSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+            pausedSnapshot.providers.first(where: { $0.providerID == serverSessionID })
         )
         #expect(pausedSession.lifecycleState == .paused)
 
@@ -71,7 +71,7 @@ struct ControlPlaneXPCClientTests {
             deepSleepAfterSeconds: 900
         )
         let idlePolicySession = try #require(
-            idlePolicySnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+            idlePolicySnapshot.providers.first(where: { $0.providerID == serverSessionID })
         )
         #expect(idlePolicySession.autoSleepEnabled)
         #expect(idlePolicySession.lightSleepAfterSeconds == 300)
@@ -79,19 +79,19 @@ struct ControlPlaneXPCClientTests {
 
         let resumedSnapshot = try await client.resumeServerSession(serverSessionID: serverSessionID)
         let resumedSession = try #require(
-            resumedSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+            resumedSnapshot.providers.first(where: { $0.providerID == serverSessionID })
         )
         #expect(resumedSession.lifecycleState == .ready)
 
         let stoppedSnapshot = try await client.stopServerSession(serverSessionID: serverSessionID)
         let stoppedSession = try #require(
-            stoppedSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+            stoppedSnapshot.providers.first(where: { $0.providerID == serverSessionID })
         )
         #expect(stoppedSession.lifecycleState == .stopped)
 
         let startedSnapshot = try await client.startServerSession(serverSessionID: serverSessionID)
         let startedSession = try #require(
-            startedSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID })
+            startedSnapshot.providers.first(where: { $0.providerID == serverSessionID })
         )
         #expect(startedSession.lifecycleState == .ready)
     }
@@ -811,7 +811,7 @@ struct ControlPlaneXPCClientTests {
         #expect(request.requestID == "menubar-apply-gateway-access-server-session-123")
         #expect(request.commandType == "server.apply_gateway_access")
         #expect(request.targetID == "server-session-123")
-        #expect(request.server.applyGatewayAccess.serverSessionID == "server-session-123")
+        #expect(request.server.applyGatewayAccess.providerID == "server-session-123")
         #expect(request.server.applyGatewayAccess.mode == .apiKeys)
         #expect(request.server.applyGatewayAccess.sharedAccessEnabled)
         #expect(request.server.applyGatewayAccess.primaryKey.keyID == "primary")
@@ -831,7 +831,7 @@ struct ControlPlaneXPCClientTests {
         #expect(request.requestID == "menubar-clear-gateway-access-server-session-123")
         #expect(request.commandType == "server.apply_gateway_access")
         #expect(request.targetID == "server-session-123")
-        #expect(request.server.applyGatewayAccess.serverSessionID == "server-session-123")
+        #expect(request.server.applyGatewayAccess.providerID == "server-session-123")
         #expect(request.server.applyGatewayAccess.mode == .none)
         #expect(request.server.applyGatewayAccess.sharedAccessEnabled == false)
         #expect(request.server.applyGatewayAccess.hasPrimaryKey == false)
@@ -845,7 +845,7 @@ struct ControlPlaneXPCClientTests {
         response.server = Melix_Controlplane_V1_ServerReply()
         response.server.snapshot.serverState = .serverReady
         var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
-        listener.serverSessionID = "server-session-123"
+        listener.providerID = "server-session-123"
         listener.requestedHost = "0.0.0.0"
         listener.requestedPort = 18080
         listener.effectiveHost = "127.0.0.1"
@@ -881,7 +881,7 @@ struct ControlPlaneXPCClientTests {
         #expect(request.requestID == "menubar-apply-gateway-config-server-session-123")
         #expect(request.commandType == "server.apply_gateway_config")
         #expect(request.targetID == "server-session-123")
-        #expect(request.server.applyGatewayConfig.serverSessionID == "server-session-123")
+        #expect(request.server.applyGatewayConfig.providerID == "server-session-123")
         #expect(request.server.applyGatewayConfig.host == "0.0.0.0")
         #expect(request.server.applyGatewayConfig.port == 18_080)
         #expect(request.server.applyGatewayConfig.defaultModelID == "melix-dev-text")
@@ -904,7 +904,7 @@ struct ControlPlaneXPCClientTests {
         response.ok = true
         response.server = Melix_Controlplane_V1_ServerReply()
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.serverSessionID = "server-session-123"
+        servingDefaults.providerID = "server-session-123"
         servingDefaults.requestedTemperature = 0.33
         servingDefaults.requestedTopP = 0.92
         servingDefaults.requestedMaxTokens = 384
@@ -940,7 +940,7 @@ struct ControlPlaneXPCClientTests {
         #expect(request.requestID == "menubar-apply-serving-defaults-server-session-123")
         #expect(request.commandType == "server.apply_serving_defaults")
         #expect(request.targetID == "server-session-123")
-        #expect(request.server.applyServingDefaults.serverSessionID == "server-session-123")
+        #expect(request.server.applyServingDefaults.providerID == "server-session-123")
         #expect(request.server.applyServingDefaults.temperature == 0.33)
         #expect(request.server.applyServingDefaults.topP == 0.92)
         #expect(request.server.applyServingDefaults.maxTokens == 384)

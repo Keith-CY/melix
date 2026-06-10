@@ -115,7 +115,7 @@ struct GatewayServingDefaultsStoreTests {
         )
         let session = try #require(summary.sessions.first)
 
-        #expect(session.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(session.providerID == ServerSessionRuntimeStore.defaultServerSessionID)
         #expect(session.requestedTemperature == 0.7)
         #expect(session.requestedTopP == 1.0)
         #expect(session.requestedMaxTokens == 32_768)
@@ -160,7 +160,7 @@ struct GatewayServingDefaultsStoreTests {
         )
 
         var command = Melix_Controlplane_V1_ApplyServingDefaults()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.temperature = 0.4
         command.topP = 0.91
         command.maxTokens = 640
@@ -263,7 +263,7 @@ struct GatewayServingDefaultsStoreTests {
         )
 
         var invalidTopP = Melix_Controlplane_V1_ApplyServingDefaults()
-        invalidTopP.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        invalidTopP.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         invalidTopP.temperature = 0.3
         invalidTopP.topP = 0
         invalidTopP.maxTokens = 128
@@ -312,7 +312,7 @@ struct GatewayServingDefaultsStoreTests {
         )
 
         var command = Melix_Controlplane_V1_ApplyServingDefaults()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.temperature = 0.4
         command.topP = 0.9
         command.maxTokens = 256
@@ -352,7 +352,7 @@ struct GatewayServingDefaultsStoreTests {
         )
 
         var command = Melix_Controlplane_V1_ApplyServingDefaults()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.temperature = 0.4
         command.topP = 0.9
         command.maxTokens = 256
@@ -404,7 +404,7 @@ struct GatewayServingDefaultsStoreTests {
         )
 
         var command = Melix_Controlplane_V1_ApplyServingDefaults()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.temperature = 0.4
         command.topP = 0.9
         command.maxTokens = 256
@@ -450,7 +450,7 @@ struct GatewayServingDefaultsStoreTests {
         )
 
         var command = Melix_Controlplane_V1_ApplyServingDefaults()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.temperature = 0.4
         command.topP = 0.9
         command.maxTokens = 256
@@ -495,7 +495,7 @@ struct GatewayServingDefaultsStoreTests {
         )
 
         var command = Melix_Controlplane_V1_ApplyServingDefaults()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.temperature = 0.4
         command.topP = 0.9
         command.maxTokens = 256
@@ -542,7 +542,7 @@ struct GatewayServingDefaultsStoreTests {
         )
 
         var command = Melix_Controlplane_V1_ApplyServingDefaults()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.temperature = 0.4
         command.topP = 0.9
         command.maxTokens = 256

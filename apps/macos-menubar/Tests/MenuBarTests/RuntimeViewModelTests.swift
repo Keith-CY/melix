@@ -904,7 +904,7 @@ struct RuntimeViewModelTests {
             runtimeSessions: [makeRuntimeSession()]
         )
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.providerID = "server-session-1"
         servingDefaults.defaultModelID = "melix-dev-text"
         servingDefaults.requestedTemperature = 0.7
         servingDefaults.requestedTopP = 1.0
@@ -1191,7 +1191,7 @@ struct RuntimeViewModelTests {
             )
         )
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.providerID = "server-session-1"
         servingDefaults.defaultModelID = "melix-dev-text"
         servingDefaults.requestedTemperature = 0.31
         servingDefaults.requestedTopP = 0.89
@@ -6890,7 +6890,7 @@ struct RuntimeViewModelTests {
             runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
         )
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.providerID = "server-session-1"
         servingDefaults.defaultModelID = localModelID
         servingDefaults.requestedTemperature = 0.4
         servingDefaults.requestedTopP = 0.9
@@ -6940,7 +6940,7 @@ struct RuntimeViewModelTests {
             runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
         )
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.providerID = "server-session-1"
         servingDefaults.defaultModelID = localModelID
         servingDefaults.requestedAccelerationProfile = "throughput"
         servingDefaults.effectiveAccelerationProfile = "throughput"
@@ -13761,14 +13761,14 @@ private struct ThrowingServerSessionAPIKeyStore: ServerSessionAPIKeyStoring {
 private func makeSnapshot(
     serverState: Melix_Controlplane_V1_ServerState,
     models: [Melix_Controlplane_V1_ModelSummary],
-    runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = [],
+    runtimeSessions: [Melix_Controlplane_V1_ProviderRuntimeState] = [],
     gatewayAccess: Melix_Controlplane_V1_GatewayAccessSummary? = nil,
     gatewayConfig: Melix_Controlplane_V1_GatewayConfigSummary? = nil
 ) -> Melix_Controlplane_V1_ServerSnapshot {
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = serverState
     snapshot.models = models
-    snapshot.runtimeSessions = runtimeSessions
+    snapshot.providers = runtimeSessions
     if let gatewayAccess {
         snapshot.gatewayAccess = gatewayAccess
     }
@@ -13780,16 +13780,16 @@ private func makeSnapshot(
 
 private func makeRuntimeSession(
     serverSessionID: String = "server-session-1",
-    lifecycleState: Melix_Controlplane_V1_ServerSessionLifecycleState = .ready,
-    powerState: Melix_Controlplane_V1_ServerSessionPowerState = .active,
-    wakeReason: Melix_Controlplane_V1_ServerWakeReason = .initialBoot,
+    lifecycleState: Melix_Controlplane_V1_ProviderLifecycleState = .ready,
+    powerState: Melix_Controlplane_V1_ProviderPowerState = .active,
+    wakeReason: Melix_Controlplane_V1_ProviderWakeReason = .initialBoot,
     idleTimerSeconds: UInt32 = 0,
     autoSleepEnabled: Bool = false,
     lightSleepAfterSeconds: UInt32 = 300,
     deepSleepAfterSeconds: UInt32 = 1800
-) -> Melix_Controlplane_V1_ServerSessionRuntimeState {
-    var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
-    runtimeSession.serverSessionID = serverSessionID
+) -> Melix_Controlplane_V1_ProviderRuntimeState {
+    var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
+    runtimeSession.providerID = serverSessionID
     runtimeSession.lifecycleState = lifecycleState
     runtimeSession.powerState = powerState
     runtimeSession.wakeReason = wakeReason
@@ -13845,7 +13845,7 @@ private func makeGatewayConfigListener(
     requiresRestart: Bool
 ) -> Melix_Controlplane_V1_GatewayListenerConfigSummary {
     var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
-    listener.serverSessionID = serverSessionID
+    listener.providerID = serverSessionID
     listener.requestedHost = requestedHost
     listener.requestedPort = requestedPort
     listener.effectiveHost = effectiveHost

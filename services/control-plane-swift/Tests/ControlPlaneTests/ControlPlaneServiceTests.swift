@@ -23,8 +23,8 @@ struct ControlPlaneServiceTests {
         #expect(!response.serverVersion.isEmpty)
         #expect(!response.daemonInstanceID.isEmpty)
         #expect(response.snapshot.serverState == .serverReady)
-        #expect(response.snapshot.runtimeSessions.first?.serverSessionID == "server-session-1")
-        #expect(response.snapshot.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(response.snapshot.providers.first?.providerID == "server-session-1")
+        #expect(response.snapshot.providers.first?.lifecycleState == .ready)
         #expect(response.features.contains("cache-metadata"))
         #expect(response.features.contains("session-graph"))
         #expect(response.features.contains("server-session-runtime"))
@@ -363,7 +363,7 @@ struct ControlPlaneServiceTests {
         request.targetID = "server-session-1"
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.applyGatewayAccess = Melix_Controlplane_V1_ApplyGatewayAccess()
-        request.server.applyGatewayAccess.serverSessionID = "server-session-1"
+        request.server.applyGatewayAccess.providerID = "server-session-1"
         request.server.applyGatewayAccess.mode = .none
         request.server.applyGatewayAccess.sharedAccessEnabled = false
         let response = try await service.execute(request)
@@ -387,8 +387,8 @@ struct ControlPlaneServiceTests {
         #expect(response.requestID == request.requestID)
         #expect(response.commandType == request.commandType)
         #expect(response.server.snapshot.serverState == .serverReady)
-        #expect(response.server.snapshot.runtimeSessions.first?.serverSessionID == "server-session-1")
-        #expect(response.server.snapshot.runtimeSessions.first?.powerState == .active)
+        #expect(response.server.snapshot.providers.first?.providerID == "server-session-1")
+        #expect(response.server.snapshot.providers.first?.powerState == .active)
     }
 
     @Test("execute syncs imported registry models before server snapshots")
@@ -480,7 +480,7 @@ struct ControlPlaneServiceTests {
         let listener = try #require(response.server.snapshot.gatewayConfig.listeners.first)
 
         #expect(response.ok)
-        #expect(listener.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(listener.providerID == ServerSessionRuntimeStore.defaultServerSessionID)
         #expect(listener.requestedHost == "0.0.0.0")
         #expect(listener.requestedPort == 18_080)
         #expect(listener.effectiveHost == "127.0.0.1")
@@ -702,7 +702,7 @@ struct ControlPlaneServiceTests {
         let session = try #require(response.server.snapshot.servingDefaults.sessions.first)
 
         #expect(response.ok)
-        #expect(session.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(session.providerID == ServerSessionRuntimeStore.defaultServerSessionID)
         #expect(session.requestedTemperature == 0.33)
         #expect(session.requestedTopP == 0.9)
         #expect(session.requestedMaxTokens == 640)
@@ -1327,32 +1327,32 @@ struct ControlPlaneServiceTests {
 
         #expect(pauseResponse.ok)
         #expect(pauseResponse.server.snapshot.serverState == .serverDegraded)
-        #expect(pauseResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .paused)
+        #expect(pauseResponse.server.snapshot.providers.first?.lifecycleState == .paused)
 
         #expect(wakeResponse.ok)
         #expect(wakeResponse.server.snapshot.serverState == .serverReady)
-        #expect(wakeResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
-        #expect(wakeResponse.server.snapshot.runtimeSessions.first?.wakeReason == .operatorResume)
+        #expect(wakeResponse.server.snapshot.providers.first?.lifecycleState == .ready)
+        #expect(wakeResponse.server.snapshot.providers.first?.wakeReason == .operatorResume)
 
         #expect(resumeResponse.ok)
         #expect(resumeResponse.server.snapshot.serverState == .serverReady)
-        #expect(resumeResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
-        #expect(resumeResponse.server.snapshot.runtimeSessions.first?.wakeReason == .operatorResume)
+        #expect(resumeResponse.server.snapshot.providers.first?.lifecycleState == .ready)
+        #expect(resumeResponse.server.snapshot.providers.first?.wakeReason == .operatorResume)
 
         #expect(stopResponse.ok)
         #expect(stopResponse.server.snapshot.serverState == .serverStopped)
-        #expect(stopResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .stopped)
-        #expect(stopResponse.server.snapshot.runtimeSessions.first?.powerState == .stopped)
+        #expect(stopResponse.server.snapshot.providers.first?.lifecycleState == .stopped)
+        #expect(stopResponse.server.snapshot.providers.first?.powerState == .stopped)
 
         #expect(startResponse.ok)
         #expect(startResponse.server.snapshot.serverState == .serverReady)
-        #expect(startResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
-        #expect(startResponse.server.snapshot.runtimeSessions.first?.wakeReason == .operatorResume)
+        #expect(startResponse.server.snapshot.providers.first?.lifecycleState == .ready)
+        #expect(startResponse.server.snapshot.providers.first?.wakeReason == .operatorResume)
 
         #expect(restartResponse.ok)
         #expect(restartResponse.server.snapshot.serverState == .serverReady)
-        #expect(restartResponse.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
-        #expect(restartResponse.server.snapshot.runtimeSessions.first?.wakeReason == .operatorResume)
+        #expect(restartResponse.server.snapshot.providers.first?.lifecycleState == .ready)
+        #expect(restartResponse.server.snapshot.providers.first?.wakeReason == .operatorResume)
     }
 
     @Test("execute handles server idle policy updates")
@@ -1369,9 +1369,9 @@ struct ControlPlaneServiceTests {
 
         #expect(response.ok)
         #expect(response.server.snapshot.serverState == .serverReady)
-        #expect(response.server.snapshot.runtimeSessions.first?.autoSleepEnabled == true)
-        #expect(response.server.snapshot.runtimeSessions.first?.lightSleepAfterSeconds == 60)
-        #expect(response.server.snapshot.runtimeSessions.first?.deepSleepAfterSeconds == 600)
+        #expect(response.server.snapshot.providers.first?.autoSleepEnabled == true)
+        #expect(response.server.snapshot.providers.first?.lightSleepAfterSeconds == 60)
+        #expect(response.server.snapshot.providers.first?.deepSleepAfterSeconds == 600)
     }
 
     @Test("execute rejects invalid server idle policy thresholds")
@@ -1444,9 +1444,9 @@ struct ControlPlaneServiceTests {
         #expect(!wakingResponse.ok)
         #expect(wakingResponse.error.code == "not_ready")
         #expect(snapshotAfterWake.server.snapshot.serverState == .serverReady)
-        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
-        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.powerState == .active)
-        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.wakeReason == .requestActivity)
+        #expect(snapshotAfterWake.server.snapshot.providers.first?.lifecycleState == .ready)
+        #expect(snapshotAfterWake.server.snapshot.providers.first?.powerState == .active)
+        #expect(snapshotAfterWake.server.snapshot.providers.first?.wakeReason == .requestActivity)
     }
 
     @Test("startChat blocks paused sessions and wakes sleeping sessions before dispatch")
@@ -1504,9 +1504,9 @@ struct ControlPlaneServiceTests {
         let snapshotAfterWake = try await sleepingService.execute(makeServerSnapshotRequest())
 
         #expect(snapshotAfterWake.server.snapshot.serverState == .serverReady)
-        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
-        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.powerState == .active)
-        #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.wakeReason == .requestActivity)
+        #expect(snapshotAfterWake.server.snapshot.providers.first?.lifecycleState == .ready)
+        #expect(snapshotAfterWake.server.snapshot.providers.first?.powerState == .active)
+        #expect(snapshotAfterWake.server.snapshot.providers.first?.wakeReason == .requestActivity)
     }
 
     @Test("startChat syncs managed registry models before lazy load")
@@ -1678,8 +1678,8 @@ struct ControlPlaneServiceTests {
         #expect(pausedResponse.error.code == "server_paused")
         #expect(!wakingResponse.ok)
         #expect(wakingResponse.error.code == "not_ready")
-        #expect(wakingSnapshot.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
-        #expect(wakingSnapshot.server.snapshot.runtimeSessions.first?.powerState == .active)
+        #expect(wakingSnapshot.server.snapshot.providers.first?.lifecycleState == .ready)
+        #expect(wakingSnapshot.server.snapshot.providers.first?.powerState == .active)
         #expect(!stoppedResponse.ok)
         #expect(stoppedResponse.error.code == "server_stopped")
         #expect(!failedResponse.ok)
@@ -1697,7 +1697,7 @@ struct ControlPlaneServiceTests {
         request.targetID = "server-session-1"
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.applyGatewayAccess = Melix_Controlplane_V1_ApplyGatewayAccess()
-        request.server.applyGatewayAccess.serverSessionID = "server-session-1"
+        request.server.applyGatewayAccess.providerID = "server-session-1"
         request.server.applyGatewayAccess.mode = .none
         request.server.applyGatewayAccess.sharedAccessEnabled = false
 
@@ -1710,9 +1710,9 @@ struct ControlPlaneServiceTests {
         #expect(response.ok)
         #expect(event?.eventType == "server.state_changed")
         #expect(event?.source == "server_runtime")
-        #expect(event?.serverState.runtimeSessions.first?.serverSessionID == "server-session-1")
-        #expect(event?.serverState.runtimeSessions.first?.wakeReason == .policyApply)
-        #expect(event?.serverState.runtimeSessions.first?.lifecycleState == .ready)
+        #expect(event?.serverState.providers.first?.providerID == "server-session-1")
+        #expect(event?.serverState.providers.first?.wakeReason == .policyApply)
+        #expect(event?.serverState.providers.first?.lifecycleState == .ready)
     }
 
     @Test("execute handles model.list")
@@ -6461,12 +6461,12 @@ struct ControlPlaneServiceTests {
                     lastServerRequest = request
                     response.server.snapshot = Melix_Controlplane_V1_ServerSnapshot()
                     response.server.snapshot.serverState = .serverReady
-                    var runtime = Melix_Controlplane_V1_ServerSessionRuntimeState()
-                    runtime.serverSessionID = request.targetID.isEmpty ? ServerSessionRuntimeStore.defaultServerSessionID : request.targetID
+                    var runtime = Melix_Controlplane_V1_ProviderRuntimeState()
+                    runtime.providerID = request.targetID.isEmpty ? ServerSessionRuntimeStore.defaultServerSessionID : request.targetID
                     runtime.lifecycleState = .ready
                     runtime.powerState = .active
                     runtime.wakeReason = .operatorResume
-                    response.server.snapshot.runtimeSessions = [runtime]
+                    response.server.snapshot.providers = [runtime]
                 case .ops(let command):
                     switch command.kind {
                     case .runDoctor:
@@ -6686,27 +6686,27 @@ struct ControlPlaneServiceTests {
         var serverRequest = try #require(await service.lastServerRequest)
         #expect(serverRequest.commandType == "server.start")
         #expect(serverRequest.targetID == "server-session-2")
-        #expect(serverRequest.server.start.serverSessionID == "server-session-2")
+        #expect(serverRequest.server.start.providerID == "server-session-2")
 
         _ = try await client.pauseServerSession(serverSessionID: "server-session-2")
         serverRequest = try #require(await service.lastServerRequest)
         #expect(serverRequest.commandType == "server.pause")
-        #expect(serverRequest.server.pause.serverSessionID == "server-session-2")
+        #expect(serverRequest.server.pause.providerID == "server-session-2")
 
         _ = try await client.resumeServerSession(serverSessionID: "server-session-2")
         serverRequest = try #require(await service.lastServerRequest)
         #expect(serverRequest.commandType == "server.resume")
-        #expect(serverRequest.server.resume.serverSessionID == "server-session-2")
+        #expect(serverRequest.server.resume.providerID == "server-session-2")
 
         _ = try await client.wakeServerSession(serverSessionID: "server-session-2")
         serverRequest = try #require(await service.lastServerRequest)
         #expect(serverRequest.commandType == "server.wake")
-        #expect(serverRequest.server.wake.serverSessionID == "server-session-2")
+        #expect(serverRequest.server.wake.providerID == "server-session-2")
 
         _ = try await client.stopServerSession(serverSessionID: "server-session-2")
         serverRequest = try #require(await service.lastServerRequest)
         #expect(serverRequest.commandType == "server.stop")
-        #expect(serverRequest.server.stop.serverSessionID == "server-session-2")
+        #expect(serverRequest.server.stop.providerID == "server-session-2")
 
         _ = try await client.updateServerIdlePolicy(
             serverSessionID: "server-session-2",
@@ -6716,7 +6716,7 @@ struct ControlPlaneServiceTests {
         )
         serverRequest = try #require(await service.lastServerRequest)
         #expect(serverRequest.commandType == "server.set_idle_policy")
-        #expect(serverRequest.server.setIdlePolicy.serverSessionID == "server-session-2")
+        #expect(serverRequest.server.setIdlePolicy.providerID == "server-session-2")
         #expect(serverRequest.server.setIdlePolicy.autoSleepEnabled == true)
         #expect(serverRequest.server.setIdlePolicy.lightSleepAfterSeconds == 60)
         #expect(serverRequest.server.setIdlePolicy.deepSleepAfterSeconds == 600)
@@ -6734,7 +6734,7 @@ struct ControlPlaneServiceTests {
         serverRequest = try #require(await service.lastServerRequest)
         #expect(serverRequest.commandType == "server.apply_gateway_config")
         #expect(serverRequest.targetID == "server-session-2")
-        #expect(serverRequest.server.applyGatewayConfig.serverSessionID == "server-session-2")
+        #expect(serverRequest.server.applyGatewayConfig.providerID == "server-session-2")
         #expect(serverRequest.server.applyGatewayConfig.host == "0.0.0.0")
         #expect(serverRequest.server.applyGatewayConfig.port == 18_080)
         #expect(serverRequest.server.applyGatewayConfig.defaultModelID == "melix-dev-text")
@@ -6742,7 +6742,7 @@ struct ControlPlaneServiceTests {
         #expect(serverRequest.server.applyGatewayConfig.rateLimitPerMinute == 240)
         #expect(serverRequest.server.applyGatewayConfig.timeoutSeconds == 90)
         #expect(serverRequest.server.applyGatewayConfig.modelIdleTimeoutSeconds == 300)
-        #expect(gatewaySnapshot.runtimeSessions.first?.serverSessionID == "server-session-2")
+        #expect(gatewaySnapshot.providers.first?.providerID == "server-session-2")
 
         let servingDefaultsSnapshot = try await client.applyServerSessionServingDefaults(
             serverSessionID: "server-session-2",
@@ -6762,7 +6762,7 @@ struct ControlPlaneServiceTests {
         serverRequest = try #require(await service.lastServerRequest)
         #expect(serverRequest.commandType == "server.apply_serving_defaults")
         #expect(serverRequest.targetID == "server-session-2")
-        #expect(serverRequest.server.applyServingDefaults.serverSessionID == "server-session-2")
+        #expect(serverRequest.server.applyServingDefaults.providerID == "server-session-2")
         #expect(serverRequest.server.applyServingDefaults.temperature == 0.42)
         #expect(serverRequest.server.applyServingDefaults.topP == 0.91)
         #expect(serverRequest.server.applyServingDefaults.maxTokens == 768)
@@ -6775,7 +6775,7 @@ struct ControlPlaneServiceTests {
         #expect(serverRequest.server.applyServingDefaults.draftModelID == "melix-dev-draft")
         #expect(serverRequest.server.applyServingDefaults.numDraftTokens == 6)
         #expect(serverRequest.server.applyServingDefaults.accelerationProfile == "throughput")
-        #expect(servingDefaultsSnapshot.runtimeSessions.first?.serverSessionID == "server-session-2")
+        #expect(servingDefaultsSnapshot.providers.first?.providerID == "server-session-2")
     }
 
     @Test("control-plane xpc client server lifecycle defaults surface unimplemented errors")
@@ -9658,7 +9658,7 @@ struct ControlPlaneServiceTests {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.start = Melix_Controlplane_V1_StartServer()
-        request.server.start.serverSessionID = serverSessionID
+        request.server.start.providerID = serverSessionID
         return request
     }
 
@@ -9671,7 +9671,7 @@ struct ControlPlaneServiceTests {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.pause = Melix_Controlplane_V1_PauseServer()
-        request.server.pause.serverSessionID = serverSessionID
+        request.server.pause.providerID = serverSessionID
         return request
     }
 
@@ -9684,7 +9684,7 @@ struct ControlPlaneServiceTests {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.resume = Melix_Controlplane_V1_ResumeServer()
-        request.server.resume.serverSessionID = serverSessionID
+        request.server.resume.providerID = serverSessionID
         return request
     }
 
@@ -9697,7 +9697,7 @@ struct ControlPlaneServiceTests {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.wake = Melix_Controlplane_V1_WakeServer()
-        request.server.wake.serverSessionID = serverSessionID
+        request.server.wake.providerID = serverSessionID
         return request
     }
 
@@ -9710,7 +9710,7 @@ struct ControlPlaneServiceTests {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.stop = Melix_Controlplane_V1_StopServer()
-        request.server.stop.serverSessionID = serverSessionID
+        request.server.stop.providerID = serverSessionID
         return request
     }
 
@@ -9723,7 +9723,7 @@ struct ControlPlaneServiceTests {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.restart = Melix_Controlplane_V1_RestartServer()
-        request.server.restart.serverSessionID = serverSessionID
+        request.server.restart.providerID = serverSessionID
         return request
     }
 
@@ -9739,7 +9739,7 @@ struct ControlPlaneServiceTests {
         request.targetID = serverSessionID
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.setIdlePolicy = Melix_Controlplane_V1_SetServerIdlePolicy()
-        request.server.setIdlePolicy.serverSessionID = serverSessionID
+        request.server.setIdlePolicy.providerID = serverSessionID
         request.server.setIdlePolicy.autoSleepEnabled = autoSleepEnabled
         request.server.setIdlePolicy.lightSleepAfterSeconds = lightSleepAfterSeconds
         request.server.setIdlePolicy.deepSleepAfterSeconds = deepSleepAfterSeconds
@@ -9848,7 +9848,7 @@ struct ControlPlaneServiceTests {
         modelIdleTimeoutSeconds: UInt32 = 600
     ) -> Melix_Controlplane_V1_ApplyGatewayConfig {
         var command = Melix_Controlplane_V1_ApplyGatewayConfig()
-        command.serverSessionID = serverSessionID
+        command.providerID = serverSessionID
         command.host = host
         command.port = port
         command.defaultModelID = defaultModelID
@@ -9874,7 +9874,7 @@ struct ControlPlaneServiceTests {
         numDraftTokens: UInt32 = 0
     ) -> Melix_Controlplane_V1_ApplyServingDefaults {
         var command = Melix_Controlplane_V1_ApplyServingDefaults()
-        command.serverSessionID = serverSessionID
+        command.providerID = serverSessionID
         command.temperature = temperature
         command.topP = topP
         command.maxTokens = maxTokens

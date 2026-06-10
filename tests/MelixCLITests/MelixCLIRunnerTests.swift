@@ -14,7 +14,7 @@ struct MelixCLIRunnerTests {
 
         let output = try await MelixCLIRunner(client: client).run(.serverSnapshot(.init()))
 
-        #expect(output.contains("server_state\tserver_session_id\tlifecycle_state"))
+        #expect(output.contains("server_state\tprovider_id\tlifecycle_state"))
         #expect(output.contains("server_ready\tserver-session-1\tready\tactive\tinitial_boot"))
     }
 
@@ -6352,12 +6352,12 @@ struct MelixCLIRunnerTests {
         )
 
         let wakePayload = try #require(parseJSONObject(wakeOutput))
-        let wakeSessions = try #require(wakePayload["runtime_sessions"] as? [[String: Any]])
-        let wakeSession = try #require(wakeSessions.first)
+        let wakeProviders = try #require(wakePayload["providers"] as? [[String: Any]])
+        let wakeProvider = try #require(wakeProviders.first)
 
         #expect(startOutput.contains("server_ready\tserver-session-2\tready\tactive\toperator_resume"))
         #expect(resumeOutput.contains(#""wake_reason" : "operator_resume""#))
-        #expect(wakeSession["wake_reason"] as? String == "request_activity")
+        #expect(wakeProvider["wake_reason"] as? String == "request_activity")
         #expect(stopOutput.contains("server_stopped\tserver-session-2\tstopped\tstopped\trequest_activity"))
         #expect(await client.lastServerAction == .stop("server-session-2"))
     }
@@ -6372,14 +6372,14 @@ struct MelixCLIRunnerTests {
         )
         let action = try #require(await client.lastServerAction)
         let payload = try #require(parseJSONObject(output))
-        let runtimeSessions = try #require(payload["runtime_sessions"] as? [[String: Any]])
-        let firstSession = try #require(runtimeSessions.first)
+        let providers = try #require(payload["providers"] as? [[String: Any]])
+        let firstProvider = try #require(providers.first)
 
         #expect(action == .pause("server-session-1"))
         #expect(payload["server_state"] as? String == "server_degraded")
-        #expect(firstSession["server_session_id"] as? String == "server-session-1")
-        #expect(firstSession["lifecycle_state"] as? String == "paused")
-        #expect(firstSession["power_state"] as? String == "active")
+        #expect(firstProvider["provider_id"] as? String == "server-session-1")
+        #expect(firstProvider["lifecycle_state"] as? String == "paused")
+        #expect(firstProvider["power_state"] as? String == "active")
     }
 
     @Test("server idle policy forwards thresholds and returns updated runtime metadata")
@@ -6400,16 +6400,16 @@ struct MelixCLIRunnerTests {
         )
         let call = try #require(await client.lastIdlePolicyCall)
         let payload = try #require(parseJSONObject(output))
-        let runtimeSessions = try #require(payload["runtime_sessions"] as? [[String: Any]])
-        let firstSession = try #require(runtimeSessions.first)
+        let providers = try #require(payload["providers"] as? [[String: Any]])
+        let firstProvider = try #require(providers.first)
 
         #expect(call.serverSessionID == "server-session-1")
         #expect(call.autoSleepEnabled)
         #expect(call.lightSleepAfterSeconds == 60)
         #expect(call.deepSleepAfterSeconds == 600)
-        #expect(firstSession["auto_sleep_enabled"] as? Bool == true)
-        #expect(firstSession["light_sleep_after_seconds"] as? Int == 60)
-        #expect(firstSession["deep_sleep_after_seconds"] as? Int == 600)
+        #expect(firstProvider["auto_sleep_enabled"] as? Bool == true)
+        #expect(firstProvider["light_sleep_after_seconds"] as? Int == 60)
+        #expect(firstProvider["deep_sleep_after_seconds"] as? Int == 600)
     }
 
     @Test("server session commands persist shared operator state and start validates serveable bindings")
@@ -7191,26 +7191,26 @@ struct MelixCLIRunnerTests {
 
         var richSnapshot = Melix_Controlplane_V1_ServerSnapshot()
         richSnapshot.serverState = .serverDraining
-        richSnapshot.runtimeSessions = [loadingSession]
+        richSnapshot.providers = [loadingSession]
         await client.setServerSnapshot(richSnapshot)
         let loadingOutput = try await MelixCLIRunner(client: client).run(.serverSnapshot(.init()))
 
         richSnapshot.serverState = .serverStopped
-        richSnapshot.runtimeSessions = [stoppedSession]
+        richSnapshot.providers = [stoppedSession]
         await client.setServerSnapshot(richSnapshot)
         let stoppedOutput = try await MelixCLIRunner(client: client).run(.serverSnapshot(.init()))
 
         richSnapshot.serverState = .serverFailed
-        richSnapshot.runtimeSessions = [failedSession]
+        richSnapshot.providers = [failedSession]
         await client.setServerSnapshot(richSnapshot)
         let failedOutput = try await MelixCLIRunner(client: client).run(.serverSnapshot(.init()))
 
         richSnapshot.serverState = .UNRECOGNIZED(999)
-        richSnapshot.runtimeSessions = [unknownSession]
+        richSnapshot.providers = [unknownSession]
         await client.setServerSnapshot(richSnapshot)
         let unknownOutput = try await MelixCLIRunner(client: client).run(.serverSnapshot(.init(json: true)))
 
-        #expect(emptyOutput == "server_state=server_booting\nNo runtime sessions found.\n")
+        #expect(emptyOutput == "server_state=server_booting\nNo providers found.\n")
         #expect(loadingOutput.contains("server_draining\tserver-session-loading\tloading\tlight_sleep\ttool_activity"))
         #expect(stoppedOutput.contains("server_stopped\tserver-session-stopped\tstopped\tstopped\tpolicy_apply"))
         #expect(failedOutput.contains("server_failed\tserver-session-failed\terror\tdeep_sleep\toperator_resume"))
@@ -13966,37 +13966,37 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
 
     private func mutateRuntimeSession(
         serverSessionID: String,
-        update: (inout Melix_Controlplane_V1_ServerSessionRuntimeState) -> Void
+        update: (inout Melix_Controlplane_V1_ProviderRuntimeState) -> Void
     ) {
-        if let index = snapshot.runtimeSessions.firstIndex(where: { $0.serverSessionID == serverSessionID }) {
-            update(&snapshot.runtimeSessions[index])
+        if let index = snapshot.providers.firstIndex(where: { $0.providerID == serverSessionID }) {
+            update(&snapshot.providers[index])
             return
         }
 
         var session = makeRuntimeSession(serverSessionID: serverSessionID)
         update(&session)
-        snapshot.runtimeSessions.append(session)
+        snapshot.providers.append(session)
     }
 }
 
 private func makeServerSnapshot(
     models: [Melix_Controlplane_V1_ModelSummary] = [],
-    runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = []
+    runtimeSessions: [Melix_Controlplane_V1_ProviderRuntimeState] = []
 ) -> Melix_Controlplane_V1_ServerSnapshot {
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = runtimeSessions.contains(where: { $0.lifecycleState == .paused || $0.lifecycleState == .sleeping })
         ? .serverDegraded
         : (runtimeSessions.allSatisfy { $0.lifecycleState == .stopped } && !runtimeSessions.isEmpty ? .serverStopped : .serverReady)
     snapshot.models = models
-    snapshot.runtimeSessions = runtimeSessions
+    snapshot.providers = runtimeSessions
     return snapshot
 }
 
 private func makeRuntimeSession(
     serverSessionID: String = "server-session-1"
-) -> Melix_Controlplane_V1_ServerSessionRuntimeState {
-    var session = Melix_Controlplane_V1_ServerSessionRuntimeState()
-    session.serverSessionID = serverSessionID
+) -> Melix_Controlplane_V1_ProviderRuntimeState {
+    var session = Melix_Controlplane_V1_ProviderRuntimeState()
+    session.providerID = serverSessionID
     session.lifecycleState = .ready
     session.powerState = .active
     session.wakeReason = .initialBoot

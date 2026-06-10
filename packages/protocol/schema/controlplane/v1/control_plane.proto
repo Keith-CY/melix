@@ -233,29 +233,29 @@ message ImageReply {
 }
 
 message StartServer {
-  string server_session_id = 1;
+  string provider_id = 1;
 }
 message StopServer {
-  string server_session_id = 1;
+  string provider_id = 1;
 }
 message RestartServer {
-  string server_session_id = 1;
+  string provider_id = 1;
 }
 message PauseServer {
-  string server_session_id = 1;
+  string provider_id = 1;
 }
 message ResumeServer {
-  string server_session_id = 1;
+  string provider_id = 1;
 }
 message WakeServer {
-  string server_session_id = 1;
+  string provider_id = 1;
 }
 message GetServerSnapshot {}
 message SetGlobalPolicy {
   map<string, string> values = 1;
 }
 message SetServerIdlePolicy {
-  string server_session_id = 1;
+  string provider_id = 1;
   bool auto_sleep_enabled = 2;
   uint32 light_sleep_after_seconds = 3;
   uint32 deep_sleep_after_seconds = 4;
@@ -267,13 +267,13 @@ message GatewayAccessKeyRecord {
   string token = 4;
 }
 message ApplyGatewayAccess {
-  string server_session_id = 1;
+  string provider_id = 1;
   GatewayAccessMode mode = 2;
   bool shared_access_enabled = 3;
   GatewayAccessKeyRecord primary_key = 4;
 }
 message ApplyGatewayConfig {
-  string server_session_id = 1;
+  string provider_id = 1;
   string host = 2;
   uint32 port = 3;
   string default_model_id = 4;
@@ -285,7 +285,7 @@ message ApplyGatewayConfig {
   repeated string allowed_origins = 10;
 }
 message ApplyServingDefaults {
-  string server_session_id = 1;
+  string provider_id = 1;
   double temperature = 2;
   double top_p = 3;
   uint32 max_tokens = 4;
@@ -1253,7 +1253,7 @@ message GatewayAccessSummary {
 }
 
 message GatewayListenerConfigSummary {
-  string server_session_id = 1;
+  string provider_id = 1;
   string requested_host = 2;
   uint32 requested_port = 3;
   string effective_host = 4;
@@ -1292,7 +1292,7 @@ enum ImageDefaultsSource {
 }
 
 message ServingDefaultsSessionSummary {
-  string server_session_id = 1;
+  string provider_id = 1;
   string default_model_id = 2;
   double requested_temperature = 3;
   double requested_top_p = 4;
@@ -1371,7 +1371,7 @@ message ServerSnapshot {
   repeated ImageJobSummary image_jobs = 10;
   MCPToolCatalogSummary mcp_tools = 11;
   GatewayAccessSummary gateway_access = 12;
-  repeated ServerSessionRuntimeState runtime_sessions = 13;
+  repeated ProviderRuntimeState providers = 13;
   GatewayConfigSummary gateway_config = 14;
   ServingDefaultsSummary serving_defaults = 15;
   ToolingSettingsSummary tooling_settings = 16;
@@ -1658,38 +1658,38 @@ message SessionSummary {
   string latest_snapshot_id = 5;
 }
 
-enum ServerSessionLifecycleState {
-  SERVER_SESSION_LIFECYCLE_STATE_UNSPECIFIED = 0;
-  SERVER_SESSION_LIFECYCLE_STATE_LOADING = 1;
-  SERVER_SESSION_LIFECYCLE_STATE_READY = 2;
-  SERVER_SESSION_LIFECYCLE_STATE_PAUSED = 3;
-  SERVER_SESSION_LIFECYCLE_STATE_SLEEPING = 4;
-  SERVER_SESSION_LIFECYCLE_STATE_STOPPED = 5;
-  SERVER_SESSION_LIFECYCLE_STATE_ERROR = 6;
+enum ProviderLifecycleState {
+  PROVIDER_LIFECYCLE_STATE_UNSPECIFIED = 0;
+  PROVIDER_LIFECYCLE_STATE_LOADING = 1;
+  PROVIDER_LIFECYCLE_STATE_READY = 2;
+  PROVIDER_LIFECYCLE_STATE_PAUSED = 3;
+  PROVIDER_LIFECYCLE_STATE_SLEEPING = 4;
+  PROVIDER_LIFECYCLE_STATE_STOPPED = 5;
+  PROVIDER_LIFECYCLE_STATE_ERROR = 6;
 }
 
-enum ServerSessionPowerState {
-  SERVER_SESSION_POWER_STATE_UNSPECIFIED = 0;
-  SERVER_SESSION_POWER_STATE_ACTIVE = 1;
-  SERVER_SESSION_POWER_STATE_LIGHT_SLEEP = 2;
-  SERVER_SESSION_POWER_STATE_DEEP_SLEEP = 3;
-  SERVER_SESSION_POWER_STATE_STOPPED = 4;
+enum ProviderPowerState {
+  PROVIDER_POWER_STATE_UNSPECIFIED = 0;
+  PROVIDER_POWER_STATE_ACTIVE = 1;
+  PROVIDER_POWER_STATE_LIGHT_SLEEP = 2;
+  PROVIDER_POWER_STATE_DEEP_SLEEP = 3;
+  PROVIDER_POWER_STATE_STOPPED = 4;
 }
 
-enum ServerWakeReason {
-  SERVER_WAKE_REASON_UNSPECIFIED = 0;
-  SERVER_WAKE_REASON_INITIAL_BOOT = 1;
-  SERVER_WAKE_REASON_OPERATOR_RESUME = 2;
-  SERVER_WAKE_REASON_REQUEST_ACTIVITY = 3;
-  SERVER_WAKE_REASON_TOOL_ACTIVITY = 4;
-  SERVER_WAKE_REASON_POLICY_APPLY = 5;
+enum ProviderWakeReason {
+  PROVIDER_WAKE_REASON_UNSPECIFIED = 0;
+  PROVIDER_WAKE_REASON_INITIAL_BOOT = 1;
+  PROVIDER_WAKE_REASON_OPERATOR_RESUME = 2;
+  PROVIDER_WAKE_REASON_REQUEST_ACTIVITY = 3;
+  PROVIDER_WAKE_REASON_TOOL_ACTIVITY = 4;
+  PROVIDER_WAKE_REASON_POLICY_APPLY = 5;
 }
 
-message ServerSessionRuntimeState {
-  string server_session_id = 1;
-  ServerSessionLifecycleState lifecycle_state = 2;
-  ServerSessionPowerState power_state = 3;
-  ServerWakeReason wake_reason = 4;
+message ProviderRuntimeState {
+  string provider_id = 1;
+  ProviderLifecycleState lifecycle_state = 2;
+  ProviderPowerState power_state = 3;
+  ProviderWakeReason wake_reason = 4;
   uint32 idle_timer_seconds = 5;
   bool auto_sleep_enabled = 6;
   uint32 light_sleep_after_seconds = 7;
@@ -1697,10 +1697,10 @@ message ServerSessionRuntimeState {
   int64 updated_at_unix_ms = 9;
   DiskStreamingMode requested_disk_streaming_mode = 10;
   DiskStreamingMode effective_disk_streaming_mode = 11;
-  repeated ServerSessionModelRuntimeState model_runtime_states = 12;
+  repeated ProviderModelRuntimeState model_runtime_states = 12;
 }
 
-message ServerSessionModelRuntimeState {
+message ProviderModelRuntimeState {
   string model_id = 1;
   ModelState model_state = 2;
   uint32 active_request_count = 3;
@@ -1762,7 +1762,7 @@ message PresetSummary {
 
 message ServerStateChanged {
   ServerState state = 1;
-  repeated ServerSessionRuntimeState runtime_sessions = 2;
+  repeated ProviderRuntimeState providers = 2;
 }
 
 message WorkerStateChanged {

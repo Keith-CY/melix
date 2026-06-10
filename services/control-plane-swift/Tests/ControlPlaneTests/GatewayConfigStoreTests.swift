@@ -56,7 +56,7 @@ struct GatewayConfigStoreTests {
         #expect(binding.port == 14_567)
         #expect(binding.allowedHosts == ["operator.lan"])
         #expect(binding.allowedOrigins == ["http://localhost:5173", "https://app.example.test"])
-        #expect(listener.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(listener.providerID == ServerSessionRuntimeStore.defaultServerSessionID)
         #expect(listener.requestedHost == "0.0.0.0")
         #expect(listener.requestedPort == 14_567)
         #expect(listener.effectiveHost == "0.0.0.0")
@@ -88,7 +88,7 @@ struct GatewayConfigStoreTests {
         )
 
         var command = Melix_Controlplane_V1_ApplyGatewayConfig()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.host = "localhost"
         command.port = 18080
         command.defaultModelID = "melix-alt-text"
@@ -143,7 +143,7 @@ struct GatewayConfigStoreTests {
         )
 
         var command = Melix_Controlplane_V1_ApplyGatewayConfig()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.host = "localhost"
         command.port = 18080
         command.defaultModelID = "melix-dev-text"
@@ -170,7 +170,7 @@ struct GatewayConfigStoreTests {
         )
 
         var command = Melix_Controlplane_V1_ApplyGatewayConfig()
-        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.providerID = ServerSessionRuntimeStore.defaultServerSessionID
         command.host = "0.0.0.0"
         command.port = 18081
         command.defaultModelID = "melix-dev-text"
@@ -208,7 +208,7 @@ struct GatewayConfigStoreTests {
         )
 
         var command = Melix_Controlplane_V1_ApplyGatewayConfig()
-        command.serverSessionID = "server-session-secondary"
+        command.providerID = "server-session-secondary"
         command.host = "192.168.1.55"
         command.port = 19090
         command.defaultModelID = "melix-alt-text"
@@ -224,7 +224,7 @@ struct GatewayConfigStoreTests {
             fallbackDefaultModelID: "melix-dev-text"
         )
         let secondary = try #require(
-            summary.listeners.first(where: { $0.serverSessionID == "server-session-secondary" })
+            summary.listeners.first(where: { $0.providerID == "server-session-secondary" })
         )
 
         #expect(secondary.requestedHost == "192.168.1.55")

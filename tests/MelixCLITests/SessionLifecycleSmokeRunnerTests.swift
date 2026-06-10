@@ -274,7 +274,7 @@ struct SessionLifecycleSmokeRunnerTests {
             lightSleepAfterSeconds: 1,
             deepSleepAfterSeconds: 5
         )
-        #expect(resumedSnapshot.runtimeSessions[0].lifecycleState == .ready)
+        #expect(resumedSnapshot.providers[0].lifecycleState == .ready)
 
         _ = try await client.unloadModel(modelID: "melix-dev-text")
         _ = try await client.updateModelSettings(modelID: "melix-dev-text", values: ["temperature": "0.1"])
@@ -299,7 +299,7 @@ struct SessionLifecycleSmokeRunnerTests {
         let output = try await runner.run(.serverSnapshot(.init(json: true)))
 
         #expect(output.contains("\"server_state\""))
-        #expect(output.contains("\"runtime_sessions\""))
+        #expect(output.contains("\"providers\""))
     }
 }
 
@@ -383,7 +383,7 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
     }
 
     func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
-        let session = snapshot.runtimeSessions[0]
+        let session = snapshot.providers[0]
         if session.lifecycleState == .paused {
             if let pausedChatErrorReason {
                 throw ControlPlaneChatExecutionError.unavailableReason(pausedChatErrorReason)
@@ -419,8 +419,8 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
 
     func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot {
         if allowSleepTransition,
-           snapshot.runtimeSessions[0].autoSleepEnabled,
-           snapshot.runtimeSessions[0].lifecycleState == .ready {
+           snapshot.providers[0].autoSleepEnabled,
+           snapshot.providers[0].lifecycleState == .ready {
             if awakeGraceSnapshots > 0 {
                 awakeGraceSnapshots -= 1
                 return snapshot
@@ -477,10 +477,10 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
         deepSleepAfterSeconds: UInt32
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         _ = serverSessionID
-        snapshot.runtimeSessions[0].autoSleepEnabled = autoSleepEnabled
-        snapshot.runtimeSessions[0].lightSleepAfterSeconds = lightSleepAfterSeconds
-        snapshot.runtimeSessions[0].deepSleepAfterSeconds = deepSleepAfterSeconds
-        if !autoSleepEnabled, snapshot.runtimeSessions[0].lifecycleState == .sleeping {
+        snapshot.providers[0].autoSleepEnabled = autoSleepEnabled
+        snapshot.providers[0].lightSleepAfterSeconds = lightSleepAfterSeconds
+        snapshot.providers[0].deepSleepAfterSeconds = deepSleepAfterSeconds
+        if !autoSleepEnabled, snapshot.providers[0].lifecycleState == .sleeping {
             mutateSession(lifecycleState: .ready, powerState: .active, wakeReason: .operatorResume)
         }
         sleepPollCount = 0
@@ -557,13 +557,13 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
     }
 
     private func mutateSession(
-        lifecycleState: Melix_Controlplane_V1_ServerSessionLifecycleState,
-        powerState: Melix_Controlplane_V1_ServerSessionPowerState,
-        wakeReason: Melix_Controlplane_V1_ServerWakeReason
+        lifecycleState: Melix_Controlplane_V1_ProviderLifecycleState,
+        powerState: Melix_Controlplane_V1_ProviderPowerState,
+        wakeReason: Melix_Controlplane_V1_ProviderWakeReason
     ) {
-        snapshot.runtimeSessions[0].lifecycleState = lifecycleState
-        snapshot.runtimeSessions[0].powerState = powerState
-        snapshot.runtimeSessions[0].wakeReason = wakeReason
+        snapshot.providers[0].lifecycleState = lifecycleState
+        snapshot.providers[0].powerState = powerState
+        snapshot.providers[0].wakeReason = wakeReason
         switch lifecycleState {
         case .paused, .sleeping:
             snapshot.serverState = .serverDegraded
@@ -576,12 +576,12 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
 
     private static func makeSnapshot(
         serverSessionID: String,
-        lifecycleState: Melix_Controlplane_V1_ServerSessionLifecycleState,
-        powerState: Melix_Controlplane_V1_ServerSessionPowerState,
-        wakeReason: Melix_Controlplane_V1_ServerWakeReason
+        lifecycleState: Melix_Controlplane_V1_ProviderLifecycleState,
+        powerState: Melix_Controlplane_V1_ProviderPowerState,
+        wakeReason: Melix_Controlplane_V1_ProviderWakeReason
     ) -> Melix_Controlplane_V1_ServerSnapshot {
-        var session = Melix_Controlplane_V1_ServerSessionRuntimeState()
-        session.serverSessionID = serverSessionID
+        var session = Melix_Controlplane_V1_ProviderRuntimeState()
+        session.providerID = serverSessionID
         session.lifecycleState = lifecycleState
         session.powerState = powerState
         session.wakeReason = wakeReason
@@ -589,7 +589,7 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
         session.deepSleepAfterSeconds = 5
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
-        snapshot.runtimeSessions = [session]
+        snapshot.providers = [session]
         return snapshot
     }
 }
