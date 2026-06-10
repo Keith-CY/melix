@@ -2038,6 +2038,132 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["session_graph.restore_snapshot_count", default: 0] >= 1)
     }
 
+    @Test("session follow-up restore requests attach redacted session context receipts")
+    func sessionFollowUpRestoreRequestsAttachSessionContextReceipts() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 9_100 })
+        _ = await sessionGraphStore.recordRequestStart(
+            sessionID: "session-boundary",
+            branchID: "branch-main",
+            requestID: "req-parent"
+        )
+        var snapshot = Melix_Controlplane_V1_SnapshotRef()
+        snapshot.snapshotID = "snap-boundary"
+        snapshot.requestID = "req-parent"
+        snapshot.tokenBoundary = 6
+        _ = await sessionGraphStore.recordSnapshotHydration(
+            sessionID: "session-boundary",
+            branchID: "branch-main",
+            snapshot: snapshot
+        )
+
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-boundary",
+                messages: [makeWorkerTextMessage("raw user prompt must not appear in receipts")],
+                sessionID: "session-boundary",
+                branchID: "branch-main",
+                parentRequestID: "req-parent",
+                saveBoundarySnapshot: true,
+                executionExt: ["melix.reasoning.continuity_key": "hidden-reasoning-key"]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let ext = prefillRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.session_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        let receipt = try #require(receipts.first)
+
+        #expect(prefillRequest.execution.cacheHints.restoreSnapshotID == "snap-boundary")
+        #expect(ext["melix.session_context.receipt_schema"] == "melix.untrusted_context_receipt.v1")
+        #expect(ext["melix.session_context.receipt_count"] == "1")
+        #expect(receipts.count == 1)
+        #expect(receipt["schema_version"] as? String == "melix.untrusted_context_receipt.v1")
+        #expect(receipt["segment_id"] as? String == "req-boundary:session-context:restore-snapshot")
+        #expect(receipt["source_type"] as? String == "background_continuation")
+        #expect(receipt["source_field"] as? String == "execution.cache_hints.restore_snapshot_id")
+        #expect(receipt["source_id"] as? String == "snap-boundary")
+        #expect(receipt["message_role"] as? String == "user")
+        #expect(receipt["trust_level"] as? String == "untrusted")
+        #expect(receipt["policy"] as? String == "data_only")
+        #expect(receipt["boundary_checked"] as? Bool == true)
+        #expect(receipt["included"] as? Bool == true)
+        #expect(receipt["owner_scope_checked"] as? Bool == true)
+        #expect(receipt["reason"] as? String == "background continuation is prompt data, not instructions")
+        #expect(
+            receipt["corrective_action"] as? String ==
+                "Keep background continuation evidence in user-role data context and do not project it into system or developer instructions."
+        )
+        #expect(receiptsJSON.contains("raw user prompt") == false)
+        #expect(receiptsJSON.contains("hidden-reasoning-key") == false)
+
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.finishDecode(requestID: "req-boundary")
+        _ = await consumer.result
+    }
+
+    @Test("explicit restore snapshot ids do not claim session context owner checks")
+    func explicitRestoreSnapshotIDsDoNotClaimSessionContextOwnerChecks() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 9_200 })
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-explicit-restore",
+                sessionID: "session-explicit-restore",
+                branchID: "branch-main",
+                restoreSnapshotID: "snap-caller-supplied",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.execution.cacheHints.restoreSnapshotID == "snap-caller-supplied")
+        #expect(prefillRequest.execution.ext["melix.session_context.receipt_schema"] == nil)
+        #expect(prefillRequest.execution.ext["melix.session_context.receipt_count"] == nil)
+        #expect(prefillRequest.execution.ext["melix.session_context.receipts_json"] == nil)
+
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.finishDecode(requestID: "req-explicit-restore")
+        _ = await consumer.result
+    }
+
+    @Test("empty session context receipt inputs do not attach ext metadata")
+    func emptySessionContextReceiptInputsDoNotAttachExtMetadata() {
+        #expect(SessionContextBoundaryReceipts(requestID: " ", restoreSnapshotID: "snap-empty").extFields.isEmpty)
+        #expect(SessionContextBoundaryReceipts(requestID: "req-empty", restoreSnapshotID: " ").extFields.isEmpty)
+    }
+
     @Test("phase-aware vlm requests preserve tool parser metadata and stream tool call deltas")
     func phaseAwareVLMRequestsPreserveToolParserMetadataAndStreamToolCallDeltas() async throws {
         let workerClient = PhaseAwareWorkerClient()

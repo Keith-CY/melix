@@ -1582,6 +1582,13 @@ public actor RequestCoordinator {
                 ?? session.branches.first(where: { $0.branchID == session.activeBranchID })
             if let branch, !branch.resumeSnapshotID.isEmpty {
                 workerRequest.execution.cacheHints.restoreSnapshotID = branch.resumeSnapshotID
+                workerRequest.execution.ext.merge(
+                    SessionContextBoundaryReceipts(
+                        requestID: workerRequest.execution.id.requestID,
+                        restoreSnapshotID: branch.resumeSnapshotID
+                    ).extFields,
+                    uniquingKeysWith: { _, receiptValue in receiptValue }
+                )
             }
         }
 
