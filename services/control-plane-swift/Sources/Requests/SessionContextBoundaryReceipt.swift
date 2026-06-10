@@ -5,7 +5,11 @@ struct SessionContextBoundaryReceipts: Sendable, Equatable {
 
     private let receipts: [[String: SessionContextReceiptValue]]
 
-    init(requestID: String, restoreSnapshotID: String) {
+    init(
+        requestID: String,
+        restoreSnapshotID: String,
+        ownerScopeChecked: Bool = true
+    ) {
         let normalizedRequestID = requestID.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedSnapshotID = restoreSnapshotID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedRequestID.isEmpty, !normalizedSnapshotID.isEmpty else {
@@ -24,7 +28,7 @@ struct SessionContextBoundaryReceipts: Sendable, Equatable {
             "policy": .string("data_only"),
             "boundary_checked": .bool(true),
             "included": .bool(true),
-            "owner_scope_checked": .bool(true),
+            "owner_scope_checked": .bool(ownerScopeChecked),
             "reason": .string("background continuation is prompt data, not instructions"),
             "corrective_action": .string(
                 "Keep background continuation evidence in user-role data context and do not project it into system or developer instructions."
