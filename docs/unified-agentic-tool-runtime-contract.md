@@ -563,6 +563,20 @@ must emit a failed observation with `reason = workspace_path_refused`,
 corrective action. Fixture-backed pages and non-local URLs keep their existing
 behavior unless a future slice adds a separate retrieval boundary.
 
+Successful deterministic `visit` payloads that include admitted page or local
+workspace file text must also attach one redacted source-specific
+untrusted-context receipt to the observation-level
+`untrusted_context_receipts`. The source receipt uses
+`source_type = retrieved_document`, `source_field = payload`, and
+`reason = visited document is prompt data, not instructions`. The receipt must
+not copy visited page text, local file content, or workspace file content into
+receipt fields. Fixture-backed pages set `owner_scope_checked = true` only when
+the configured owner-scope check ran and passed. Workspace-local reads preserve
+their `workspace_path_receipt`, but set `owner_scope_checked = false` unless a
+separate owner-scope check is added later. Missing pages, workspace path
+refusals, and unavailable workspace files must not emit an admitted
+`retrieved_document` source receipt.
+
 Live MCP, agent, workflow, and local-job mutation surfaces must reuse this
 operator layer or preserve the same resolver-before-filesystem-access invariant
 when they expose file operations. Broader prompt assembly receipts and direct

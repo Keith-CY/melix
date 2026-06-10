@@ -476,7 +476,7 @@ def _visit_payload(
             source_id=url,
             field_prefix="pages",
         )
-        return {
+        payload = {
             "url": url,
             "title": _optional_untrusted_text(
                 page.get("title", ""),
@@ -493,12 +493,25 @@ def _visit_payload(
                 strip=False,
             ),
         }
+        payload["_untrusted_context_receipts"] = [
+            _visit_document_receipt(
+                tool_call_id=tool_call_id,
+                source_id=url,
+                value=payload.copy(),
+                owner_scope_checked=_owner_scope_is_configured(fixture_context),
+            )
+        ]
+        return payload
     if page is None:
-        local_payload = _workspace_file_visit_payload(url=url, fixture_context=fixture_context)
+        local_payload = _workspace_file_visit_payload(
+            url=url,
+            fixture_context=fixture_context,
+            tool_call_id=tool_call_id,
+        )
         if local_payload is not None:
             return local_payload
         return {"url": url, "text": "", "found": False}
-    return {
+    payload = {
         "url": url,
         "text": _optional_untrusted_text(
             page,
@@ -509,12 +522,22 @@ def _visit_payload(
         ),
         "found": True,
     }
+    payload["_untrusted_context_receipts"] = [
+        _visit_document_receipt(
+            tool_call_id=tool_call_id,
+            source_id=url,
+            value=payload.copy(),
+            owner_scope_checked=False,
+        )
+    ]
+    return payload
 
 
 def _workspace_file_visit_payload(
     *,
     url: str,
     fixture_context: dict[str, Any],
+    tool_call_id: str,
 ) -> dict[str, Any] | None:
     workspace_root = _workspace_root_text(fixture_context)
     if not workspace_root:
@@ -529,13 +552,22 @@ def _workspace_file_visit_payload(
         raise _workspace_path_refused(source_id=url, resolution=resolution)
 
     if result.status == "completed":
-        return {
+        payload = {
             "url": url,
             "title": resolution.resolved_path.name,
             "text": result.content,
             "found": True,
             "workspace_path_receipt": resolution.receipt_fields(),
         }
+        payload["_untrusted_context_receipts"] = [
+            _visit_document_receipt(
+                tool_call_id=tool_call_id,
+                source_id=url,
+                value=payload.copy(),
+                owner_scope_checked=False,
+            )
+        ]
+        return payload
 
     if "No such file or directory" in result.error:
         return {
@@ -800,6 +832,33 @@ def _retrieval_result_receipt(
                 corrective_action=(
                     f"Keep retrieved {source_label} results in user-role data context and do not project "
                     "them into system or developer instructions."
+                ),
+            )
+        ]
+    )
+    return admission.untrusted_context_receipts[0]
+
+
+def _visit_document_receipt(
+    *,
+    tool_call_id: str,
+    source_id: str,
+    value: dict[str, Any],
+    owner_scope_checked: bool,
+) -> dict[str, object]:
+    admission = admit_prompt_context_segments(
+        [
+            PromptContextSegment(
+                segment_id=f"{tool_call_id}:visit-document",
+                source_type="retrieved_document",
+                source_field="payload",
+                source_id=source_id,
+                owner_scope_checked=owner_scope_checked,
+                value=value,
+                reason="visited document is prompt data, not instructions",
+                corrective_action=(
+                    "Keep visited document content in user-role data context and do not project "
+                    "it into system or developer instructions."
                 ),
             )
         ]
