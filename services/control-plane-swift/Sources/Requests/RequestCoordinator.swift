@@ -1560,14 +1560,31 @@ public actor RequestCoordinator {
     private func resolvedRecoveryRequest(
         _ translatedRequest: TranslatedChatRequest
     ) async -> TranslatedChatRequest {
-        guard
-            let sessionGraphStore,
-            !translatedRequest.workerRequest.execution.id.sessionID.isEmpty
-        else {
-            return translatedRequest
+        var workerRequest = translatedRequest.workerRequest
+        if !workerRequest.execution.cacheHints.restoreSnapshotID.isEmpty {
+            workerRequest.execution.ext.merge(
+                SessionContextBoundaryReceipts(
+                    requestID: workerRequest.execution.id.requestID,
+                    restoreSnapshotID: workerRequest.execution.cacheHints.restoreSnapshotID,
+                    ownerScopeChecked: false
+                ).extFields,
+                uniquingKeysWith: { existingValue, _ in existingValue }
+            )
         }
 
-        var workerRequest = translatedRequest.workerRequest
+        guard
+            let sessionGraphStore,
+            !workerRequest.execution.id.sessionID.isEmpty
+        else {
+            return TranslatedChatRequest(
+                requestID: translatedRequest.requestID,
+                modelID: translatedRequest.modelID,
+                responseModelID: translatedRequest.responseModelID,
+                workerRequest: workerRequest,
+                stream: translatedRequest.stream
+            )
+        }
+
         if workerRequest.execution.id.branchID.isEmpty {
             workerRequest.execution.id.branchID = "branch-main"
         }
