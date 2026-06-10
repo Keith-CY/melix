@@ -427,6 +427,31 @@ closed before prompt admission with the same `invalid_background_continuation_fi
 refusal receipt and must not include raw logs, command text, session contents,
 or workflow payloads.
 
+The Python worker local-job continuation primitive is
+`worker.runtime.local_job_continuation`. It defines a versioned
+`melix.local_job_continuation_record.v1` record for durable background local
+jobs before runner and monitor side effects are added. The record persists the
+job ID, command vector, working directory, log path, exit status, timeout,
+originating session ID, follow-up status, follow-up session ID,
+`followed_up_at`, and explicit completion evidence paths. Store writes use
+atomic JSON replacement plus per-record write locks and revision checks so
+concurrent writers fail closed instead of silently overwriting each other.
+
+Persisted local-job state is advisory. A record marked `completed` is accepted
+as final only when a success marker path or artifact path is present on the
+record or matching live evidence. A stale `completed` record without completion
+evidence must reconcile back to `running` when a matching live session still
+shows progress, emitting a `melix.local_job_continuation_receipt.v1` receipt
+with `reason = stale_done_revived`. A pending or running record with matching
+active live progress must emit `reason = live_session_reused` and
+`duplicate_launch_refused = true` so future runners reattach instead of
+launching duplicate local work. Completed records without evidence emit
+`reason = missing_completion_evidence` and remain blocked until explicit
+completion evidence appears. The primitive does not start processes, tail logs,
+inject prompt follow-ups, or resume workflows; those later surfaces must first
+call the reconciliation primitive and then pass any already-redacted completion
+summary through `admit_background_continuation` before prompt projection.
+
 The Python worker skill and memory admission primitives are
 `worker.runtime.skill_memory_context.admit_skill_context` and
 `worker.runtime.skill_memory_context.admit_memory_context`. Future skill,
