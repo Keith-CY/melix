@@ -264,22 +264,210 @@ def test_store_recovers_stale_lock_for_dead_writer_pid(tmp_path: Path) -> None:
     assert not lock_path.exists()
 
 
+def test_record_lock_cleanup_failure_is_non_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    lock_path = tmp_path / "job-7.json.lock"
+    original_unlink = Path.unlink
+
+    def fail_lock_cleanup(path: Path, *args: object, **kwargs: object) -> None:
+        if path == lock_path:
+            raise OSError("cleanup denied")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_lock_cleanup)
+
+    saved = store.save_record(_record(status="running"))
+
+    assert saved.status == "running"
+    monkeypatch.undo()
+    lock_path.unlink(missing_ok=True)
+
+
 def test_stale_lock_cleanup_tolerates_concurrent_lock_removal(tmp_path: Path) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("999999\n", encoding="utf-8")
+    original_rename = os.rename
+
+    def remove_before_rename(src: Path | str, dst: Path | str) -> None:
+        if Path(src) == lock_path and lock_path.exists():
+            lock_path.unlink()
+            raise FileNotFoundError(src)
+        original_rename(src, dst)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(os, "rename", remove_before_rename)
+        saved = store.save_record(_record(status="running"))
+
+    assert saved.status == "running"
+    assert not lock_path.exists()
+
+
+def test_stale_lock_recovery_blocks_when_guard_is_active(tmp_path: Path) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    guard_path = tmp_path / "job-7.json.lock.recovery"
+    lock_path.write_text("999999\n", encoding="utf-8")
+    guard_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+
+    try:
+        with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+            store.save_record(_record(status="running"))
+    finally:
+        lock_path.unlink(missing_ok=True)
+        guard_path.unlink(missing_ok=True)
+
+    assert exc_info.value.receipt["reason"] == "record_write_locked"
+
+
+def test_stale_lock_recovery_reclaims_dead_recovery_guard(tmp_path: Path) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    guard_path = tmp_path / "job-7.json.lock.recovery"
+    lock_path.write_text("999999\n", encoding="utf-8")
+    guard_path.write_text("999998\n", encoding="utf-8")
+
+    saved = store.save_record(_record(status="running"))
+
+    assert saved.status == "running"
+    assert not guard_path.exists()
+
+
+def test_stale_lock_recovery_blocks_when_recovery_guard_reacquired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    guard_path = tmp_path / "job-7.json.lock.recovery"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    guard_path.write_text("999998\n", encoding="utf-8")
+    original_open = os.open
+
+    def race_reacquire_guard(path: Path | str, flags: int, mode: int = 0o777) -> int:
+        if Path(path) == guard_path and not guard_path.exists():
+            raise FileExistsError(path)
+        return original_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "open", race_reacquire_guard)
+
+    assert store._open_record_lock_recovery_guard(guard_path) is None
+
+
+def test_stale_lock_recovery_blocks_when_lock_rename_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("999999\n", encoding="utf-8")
+
+    def fail_rename(src: Path | str, dst: Path | str) -> None:
+        if Path(src) == lock_path:
+            raise OSError("rename denied")
+        os.rename(src, dst)
+
+    monkeypatch.setattr(os, "rename", fail_rename)
+
+    with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+        store.save_record(_record(status="running"))
+
+    assert exc_info.value.receipt["reason"] == "record_write_locked"
+    assert lock_path.read_text(encoding="utf-8") == "999999\n"
+
+
+def test_stale_lock_recovery_restores_lock_when_renamed_pid_is_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("999999\n", encoding="utf-8")
+    original_rename = os.rename
+
+    def corrupt_temp_after_rename(src: Path | str, dst: Path | str) -> None:
+        original_rename(src, dst)
+        if Path(src) == lock_path:
+            Path(dst).write_text("not-a-pid\n", encoding="utf-8")
+
+    monkeypatch.setattr(os, "rename", corrupt_temp_after_rename)
+
+    with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+        store.save_record(_record(status="running"))
+
+    assert exc_info.value.receipt["reason"] == "record_write_locked"
+    assert lock_path.read_text(encoding="utf-8") == "not-a-pid\n"
+
+
+def test_stale_lock_recovery_preserves_new_lock_acquired_after_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = LocalJobContinuationStore(tmp_path)
     tmp_path.mkdir(parents=True, exist_ok=True)
     lock_path = tmp_path / "job-7.json.lock"
     lock_path.write_text("999999\n", encoding="utf-8")
     original_unlink = Path.unlink
 
-    def remove_before_unlink(path: Path, *args: object, **kwargs: object) -> None:
-        if path == lock_path and path.exists():
+    def acquire_new_lock_before_stale_temp_unlink(
+        path: Path, *args: object, **kwargs: object
+    ) -> None:
+        if path.name.startswith(f"{lock_path.name}.stale."):
+            lock_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", acquire_new_lock_before_stale_temp_unlink)
+
+    with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+        store.save_record(_record(status="running"))
+
+    assert exc_info.value.receipt["reason"] == "record_write_locked"
+    assert lock_path.read_text(encoding="utf-8") == f"{os.getpid()}\n"
+
+
+def test_stale_lock_recovery_restores_lock_when_renamed_pid_is_active(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("999999\n", encoding="utf-8")
+    original_rename = os.rename
+
+    def rewrite_temp_to_active_pid(src: Path | str, dst: Path | str) -> None:
+        original_rename(src, dst)
+        if Path(src) == lock_path:
+            Path(dst).write_text(f"{os.getpid()}\n", encoding="utf-8")
+
+    monkeypatch.setattr(os, "rename", rewrite_temp_to_active_pid)
+
+    with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+        store.save_record(_record(status="running"))
+
+    assert exc_info.value.receipt["reason"] == "record_write_locked"
+    assert lock_path.read_text(encoding="utf-8") == f"{os.getpid()}\n"
+
+
+def test_stale_lock_recovery_tolerates_temp_removed_before_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("999999\n", encoding="utf-8")
+    original_unlink = Path.unlink
+
+    def remove_temp_before_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        if path.name.startswith(f"{lock_path.name}.stale."):
             original_unlink(path)
             raise FileNotFoundError(path)
         return original_unlink(path, *args, **kwargs)
 
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(Path, "unlink", remove_before_unlink)
-        saved = store.save_record(_record(status="running"))
+    monkeypatch.setattr(Path, "unlink", remove_temp_before_unlink)
+
+    saved = store.save_record(_record(status="running"))
 
     assert saved.status == "running"
     assert not lock_path.exists()
@@ -292,11 +480,12 @@ def test_stale_lock_cleanup_preserves_lock_when_unlink_fails(
     tmp_path.mkdir(parents=True, exist_ok=True)
     lock_path = tmp_path / "job-7.json.lock"
     lock_path.write_text("999999\n", encoding="utf-8")
+    original_unlink = Path.unlink
 
     def fail_unlink(path: Path, *args: object, **kwargs: object) -> None:
-        if path == lock_path:
+        if path.name.startswith(f"{lock_path.name}.stale."):
             raise OSError("permission denied")
-        path.unlink(*args, **kwargs)
+        return original_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", fail_unlink)
 
@@ -304,6 +493,125 @@ def test_stale_lock_cleanup_preserves_lock_when_unlink_fails(
         store.save_record(_record(status="running"))
 
     assert exc_info.value.receipt["reason"] == "record_write_locked"
+    assert lock_path.read_text(encoding="utf-8") == "999999\n"
+
+
+def test_stale_lock_recovery_tolerates_recovery_guard_cleanup_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    guard_path = tmp_path / "job-7.json.lock.recovery"
+    lock_path.write_text("999999\n", encoding="utf-8")
+    original_unlink = Path.unlink
+
+    def fail_guard_cleanup(path: Path, *args: object, **kwargs: object) -> None:
+        if path == guard_path:
+            raise OSError("guard cleanup denied")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_guard_cleanup)
+
+    saved = store.save_record(_record(status="running"))
+
+    assert saved.status == "running"
+    monkeypatch.undo()
+    guard_path.unlink(missing_ok=True)
+
+
+def test_recovery_guard_refuses_unparseable_and_active_pids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    guard_path = tmp_path / "job-7.json.lock.recovery"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    guard_path.write_text("not-a-pid\n", encoding="utf-8")
+
+    assert store._remove_stale_record_lock_recovery_guard(guard_path) is False
+
+    guard_path.write_text("42\n", encoding="utf-8")
+
+    def deny_signal(pid: int, signal: int) -> None:
+        raise PermissionError("not owned")
+
+    monkeypatch.setattr(os, "kill", deny_signal)
+
+    assert store._remove_stale_record_lock_recovery_guard(guard_path) is False
+
+
+def test_recovery_guard_cleanup_handles_missing_and_failed_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    guard_path = tmp_path / "job-7.json.lock.recovery"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    guard_path.write_text("999998\n", encoding="utf-8")
+    original_unlink = Path.unlink
+
+    def remove_before_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        if path == guard_path:
+            original_unlink(path)
+            raise FileNotFoundError(path)
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", remove_before_unlink)
+
+    assert store._remove_stale_record_lock_recovery_guard(guard_path) is True
+
+    monkeypatch.undo()
+    guard_path.write_text("999998\n", encoding="utf-8")
+
+    def fail_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        if path == guard_path:
+            raise OSError("cleanup denied")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+    assert store._remove_stale_record_lock_recovery_guard(guard_path) is False
+
+
+def test_restore_renamed_lock_handles_restore_races(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    lock_path = tmp_path / "job-7.json.lock"
+    temp_path = tmp_path / "job-7.json.lock.stale.test"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    temp_path.write_text("999998\n", encoding="utf-8")
+
+    store._restore_renamed_record_lock(temp_path, lock_path)
+
+    assert lock_path.read_text(encoding="utf-8") == f"{os.getpid()}\n"
+    assert not temp_path.exists()
+
+    temp_path.write_text("999998\n", encoding="utf-8")
+
+    def fail_link(src: Path | str, dst: Path | str) -> None:
+        raise OSError("link denied")
+
+    monkeypatch.setattr(os, "link", fail_link)
+
+    store._restore_renamed_record_lock(temp_path, lock_path)
+
+    assert temp_path.exists()
+
+    monkeypatch.undo()
+    lock_path.unlink()
+    original_unlink = Path.unlink
+
+    def fail_temp_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        if path == temp_path:
+            raise OSError("unlink denied")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_temp_unlink)
+
+    store._restore_renamed_record_lock(temp_path, lock_path)
+
+    assert lock_path.read_text(encoding="utf-8") == "999998\n"
 
 
 def test_lock_cleanup_treats_permission_errors_as_active_process(
@@ -344,6 +652,46 @@ def test_lock_cleanup_treats_eperm_oserror_as_active_process(
         store.save_record(_record(status="running"))
 
     assert exc_info.value.receipt["reason"] == "record_write_locked"
+
+
+def test_lock_cleanup_treats_signal_value_error_as_active_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("42\n", encoding="utf-8")
+
+    def reject_signal(pid: int, signal: int) -> None:
+        raise ValueError("unsupported signal")
+
+    monkeypatch.setattr(os, "kill", reject_signal)
+
+    with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+        store.save_record(_record(status="running"))
+
+    assert exc_info.value.receipt["reason"] == "record_write_locked"
+
+
+def test_lock_cleanup_treats_windows_process_ids_as_active_without_signal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("999999\n", encoding="utf-8")
+
+    def fail_if_signalled(pid: int, signal: int) -> None:
+        raise AssertionError("os.kill(pid, 0) must not run on Windows")
+
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(os, "kill", fail_if_signalled)
+
+    with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+        store.save_record(_record(status="running"))
+
+    assert exc_info.value.receipt["reason"] == "record_write_locked"
+    assert lock_path.read_text(encoding="utf-8") == "999999\n"
 
 
 def test_with_revision_rejects_negative_revision() -> None:

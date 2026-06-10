@@ -441,9 +441,13 @@ originating session ID, follow-up status, follow-up session ID,
 atomic JSON replacement plus per-record write locks and revision checks so
 concurrent writers fail closed instead of silently overwriting each other. Job
 IDs must be cross-platform-safe record filenames. If a lock file belongs to a
-dead writer PID, the store may remove it before retrying the write; malformed
-lock files, permission-protected active processes, and failed lock cleanup all
-preserve the lock and emit a write-refusal receipt instead.
+dead writer PID, the store may recover it only after acquiring a short-lived
+recovery guard, renaming the stale file, and revalidating the lock identity
+before deletion. Windows process IDs are treated as active because
+`os.kill(pid, 0)` is not a portable liveness probe there. Malformed lock files,
+permission-protected active processes, active recovery guards, concurrent lock
+reacquisition, and failed lock cleanup all preserve the lock or refuse the write
+instead of deleting a possibly active writer lock.
 
 Persisted local-job state is advisory. A record marked `completed` is accepted
 as final only when a success marker path or artifact path is present on the
