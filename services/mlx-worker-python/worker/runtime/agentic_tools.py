@@ -7,7 +7,10 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
-from worker.runtime.prompt_context import PromptContextSegment, admit_prompt_context_segments
+from worker.runtime.retrieval_context import (
+    admit_retrieved_document_context,
+    admit_retrieved_image_context,
+)
 from worker.runtime.tool_observation import (
     ToolObservationPolicy,
     ToolObservationRecord,
@@ -819,23 +822,28 @@ def _retrieval_result_receipt(
     owner_scope_checked: bool,
 ) -> dict[str, object]:
     source_label = "document" if source_type == "retrieved_document" else "image"
-    admission = admit_prompt_context_segments(
-        [
-            PromptContextSegment(
-                segment_id=f"{tool_call_id}:result-{result_index}",
-                source_type=source_type,
-                source_field=f"results[{result_index - 1}]",
-                source_id=source_id,
-                owner_scope_checked=owner_scope_checked,
-                value=value,
-                reason=f"retrieved {source_label} result is prompt data, not instructions",
-                corrective_action=(
-                    f"Keep retrieved {source_label} results in user-role data context and do not project "
-                    "them into system or developer instructions."
-                ),
-            )
-        ]
-    )
+    kwargs = {
+        "owner_scope_checked": owner_scope_checked,
+        "segment_id": f"{tool_call_id}:result-{result_index}",
+        "source_field": f"results[{result_index - 1}]",
+        "reason": f"retrieved {source_label} result is prompt data, not instructions",
+        "corrective_action": (
+            f"Keep retrieved {source_label} results in user-role data context and do not project "
+            "them into system or developer instructions."
+        ),
+    }
+    if source_type == "retrieved_document":
+        admission = admit_retrieved_document_context(
+            document_id=source_id,
+            document_payload=value,
+            **kwargs,
+        )
+    else:
+        admission = admit_retrieved_image_context(
+            image_id=source_id,
+            image_payload=value,
+            **kwargs,
+        )
     return admission.untrusted_context_receipts[0]
 
 
@@ -846,22 +854,17 @@ def _visit_document_receipt(
     value: dict[str, Any],
     owner_scope_checked: bool,
 ) -> dict[str, object]:
-    admission = admit_prompt_context_segments(
-        [
-            PromptContextSegment(
-                segment_id=f"{tool_call_id}:visit-document",
-                source_type="retrieved_document",
-                source_field="payload",
-                source_id=source_id,
-                owner_scope_checked=owner_scope_checked,
-                value=value,
-                reason="visited document is prompt data, not instructions",
-                corrective_action=(
-                    "Keep visited document content in user-role data context and do not project "
-                    "it into system or developer instructions."
-                ),
-            )
-        ]
+    admission = admit_retrieved_document_context(
+        document_id=source_id,
+        document_payload=value,
+        owner_scope_checked=owner_scope_checked,
+        segment_id=f"{tool_call_id}:visit-document",
+        source_field="payload",
+        reason="visited document is prompt data, not instructions",
+        corrective_action=(
+            "Keep visited document content in user-role data context and do not project "
+            "it into system or developer instructions."
+        ),
     )
     return admission.untrusted_context_receipts[0]
 

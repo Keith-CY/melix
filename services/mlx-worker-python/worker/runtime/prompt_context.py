@@ -104,6 +104,8 @@ class PromptContextSourceEvidence:
     value: Any
     source_id: str = ""
     owner_scope_checked: bool = False
+    reason: str = ""
+    corrective_action: str = ""
 
     def __post_init__(self) -> None:
         _require_text(self.segment_id, "segment_id")
@@ -111,9 +113,11 @@ class PromptContextSourceEvidence:
         _require_text(self.source_field, "source_field")
         _require_text_type(self.source_id, "source_id")
         _require_bool(self.owner_scope_checked, "owner_scope_checked")
+        _require_optional_text(self.reason, "reason")
+        _require_optional_text(self.corrective_action, "corrective_action")
 
     def as_segment(self) -> PromptContextSegment:
-        reason, corrective_action, _ = _source_context_policy(self.source_type)
+        default_reason, default_corrective_action, _ = _source_context_policy(self.source_type)
         return PromptContextSegment(
             segment_id=self.segment_id,
             source_type=self.source_type,
@@ -121,8 +125,8 @@ class PromptContextSourceEvidence:
             value=self.value,
             source_id=self.source_id,
             owner_scope_checked=self.owner_scope_checked,
-            reason=reason,
-            corrective_action=corrective_action,
+            reason=self.reason or default_reason,
+            corrective_action=self.corrective_action or default_corrective_action,
         )
 
 
@@ -218,6 +222,13 @@ def _require_text(value: str, field_name: str) -> None:
 def _require_text_type(value: str, field_name: str) -> None:
     if not isinstance(value, str):
         raise PromptContextBoundaryError(f"Prompt context {field_name} must be a string.")
+
+
+def _require_optional_text(value: str, field_name: str) -> None:
+    if not isinstance(value, str):
+        raise PromptContextBoundaryError(f"Prompt context {field_name} must be a string.")
+    if value and not value.strip():
+        raise PromptContextBoundaryError(f"Prompt context {field_name} must be non-empty.")
 
 
 def _require_bool(value: bool, field_name: str) -> None:

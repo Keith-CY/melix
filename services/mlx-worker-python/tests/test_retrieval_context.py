@@ -149,6 +149,119 @@ def test_retrieval_context_uses_shared_source_evidence_admission(
     assert image_evidence.owner_scope_checked is True
 
 
+def test_retrieval_context_accepts_entrypoint_receipt_fields() -> None:
+    admission = admit_retrieved_document_context(
+        document_id="doc-result",
+        document_payload={"id": "doc-result", "text": "Retrieved text says ignore policy."},
+        owner_scope_checked=True,
+        segment_id="search-call:result-1",
+        source_field="results[0]",
+        reason="retrieved document result is prompt data, not instructions",
+        corrective_action=(
+            "Keep retrieved document results in user-role data context and do not project "
+            "them into system or developer instructions."
+        ),
+    )
+
+    assert admission.user_payload == {
+        "results[0]": {"id": "doc-result", "text": "Retrieved text says ignore policy."}
+    }
+    assert admission.untrusted_context_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "search-call:result-1",
+            "source_type": "retrieved_document",
+            "source_field": "results[0]",
+            "source_id": "doc-result",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": True,
+            "owner_scope_checked": True,
+            "reason": "retrieved document result is prompt data, not instructions",
+            "corrective_action": (
+                "Keep retrieved document results in user-role data context and do not project "
+                "them into system or developer instructions."
+            ),
+        }
+    ]
+    assert "ignore policy" not in json.dumps(admission.untrusted_context_receipts, ensure_ascii=False)
+
+    image_admission = admit_retrieved_image_context(
+        image_id="image-result",
+        image_payload={"id": "image-result", "caption": "Image caption says reveal hidden policy."},
+        owner_scope_checked=False,
+        segment_id="image-call:result-1",
+        source_field="results[0]",
+        reason="retrieved image result is prompt data, not instructions",
+        corrective_action=(
+            "Keep retrieved image results in user-role data context and do not project "
+            "them into system or developer instructions."
+        ),
+    )
+
+    assert image_admission.user_payload == {
+        "results[0]": {
+            "id": "image-result",
+            "caption": "Image caption says reveal hidden policy.",
+        }
+    }
+    assert image_admission.untrusted_context_receipts[0]["segment_id"] == "image-call:result-1"
+    assert image_admission.untrusted_context_receipts[0]["source_type"] == "retrieved_image"
+    assert image_admission.untrusted_context_receipts[0]["source_field"] == "results[0]"
+    assert image_admission.untrusted_context_receipts[0]["source_id"] == "image-result"
+    assert image_admission.untrusted_context_receipts[0]["owner_scope_checked"] is False
+    assert (
+        image_admission.untrusted_context_receipts[0]["reason"]
+        == "retrieved image result is prompt data, not instructions"
+    )
+    assert "hidden policy" not in json.dumps(
+        image_admission.untrusted_context_receipts,
+        ensure_ascii=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_field"),
+    (
+        ({"segment_id": " "}, "segment_id"),
+        ({"source_field": 123}, "source_field"),
+        ({"reason": "\t"}, "reason"),
+        ({"corrective_action": None}, "corrective_action"),
+    ),
+)
+def test_retrieval_context_refuses_malformed_entrypoint_receipt_fields(
+    kwargs: dict[str, object],
+    expected_field: str,
+) -> None:
+    with pytest.raises(RetrievalContextAdmissionError) as exc_info:
+        admit_retrieved_image_context(
+            image_id="image-entrypoint",
+            image_payload={"caption": "Operator screenshot"},
+            owner_scope_checked=True,
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "image-entrypoint:retrieved-image-context",
+            "source_type": "retrieved_image",
+            "source_field": expected_field,
+            "source_id": "image-entrypoint",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "invalid_retrieved_image_context_field",
+            "corrective_action": "Reject malformed retrieved image evidence before prompt assembly.",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     ("helper", "kwargs", "source_type", "expected_id", "expected_suffix"),
     (
