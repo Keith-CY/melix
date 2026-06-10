@@ -176,6 +176,33 @@ def test_prompt_context_source_refusal_receipt_records_policy_text_without_paylo
     }
 
 
+def test_prompt_context_source_refusal_receipt_accepts_corrective_action_override() -> None:
+    receipt = refused_source_prompt_context_receipt(
+        segment_id="memory:malformed:payload",
+        source_type="memory",
+        source_field="payload",
+        source_id="memory:malformed",
+        reason="invalid_memory_context_field",
+        corrective_action="Reject malformed memory context before prompt assembly.",
+    )
+
+    assert receipt == {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": "memory:malformed:payload",
+        "source_type": "memory",
+        "source_field": "payload",
+        "source_id": "memory:malformed",
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": False,
+        "owner_scope_checked": False,
+        "reason": "invalid_memory_context_field",
+        "corrective_action": "Reject malformed memory context before prompt assembly.",
+    }
+
+
 def test_prompt_context_source_evidence_rejects_unsupported_source_type() -> None:
     with pytest.raises(
         PromptContextBoundaryError,

@@ -429,9 +429,15 @@ matching the source type and `source_id` set to the redacted skill or memory
 identifier. Malformed source IDs, payload objects, or owner-scope metadata
 produce `included = false` refusal receipts with `reason =
 invalid_skill_context_field` or `invalid_memory_context_field` and no user
-payload. These helpers do not implement skill lookup, memory persistence,
-retrieval ranking, or chat/session wiring; they are only the prompt-context
-boundary for evidence admitted by those later surfaces.
+payload. Concrete entrypoints may pass entrypoint-local `segment_id`,
+`source_field`, `reason`, and `corrective_action` values so public receipt
+fields remain stable for agent-skill catalogs, skill stores, pinned memories,
+or retrieved-memory stores while receipt generation still routes through
+`PromptContextSourceEvidence`. Malformed entrypoint receipt metadata fails
+closed before prompt assembly with the same refusal reason. These helpers do
+not implement skill lookup, memory persistence, retrieval ranking, or
+chat/session wiring; they are only the prompt-context boundary for evidence
+admitted by those later surfaces.
 
 The Python worker retrieval admission primitives are
 `worker.runtime.retrieval_context.admit_retrieved_document_context` and

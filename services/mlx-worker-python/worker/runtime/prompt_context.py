@@ -193,8 +193,10 @@ def refused_source_prompt_context_receipt(
     reason: str,
     source_id: str = "",
     owner_scope_checked: bool = False,
+    corrective_action: str = "",
 ) -> dict[str, object]:
-    _, _, corrective_action = _source_context_policy(source_type)
+    _, _, default_corrective_action = _source_context_policy(source_type)
+    _require_optional_text(corrective_action, "corrective_action")
     return refused_prompt_context_receipt(
         segment_id=segment_id,
         source_type=source_type,
@@ -202,7 +204,7 @@ def refused_source_prompt_context_receipt(
         source_id=source_id,
         owner_scope_checked=owner_scope_checked,
         reason=reason,
-        corrective_action=corrective_action,
+        corrective_action=corrective_action or default_corrective_action,
     )
 
 
