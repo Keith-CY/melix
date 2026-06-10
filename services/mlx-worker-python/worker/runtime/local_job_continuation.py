@@ -458,12 +458,14 @@ def _record_with_live_completion_evidence(
 ) -> LocalJobContinuationRecord:
     if live_evidence is None:
         return record
-    success_marker_path = record.success_marker_path or live_evidence.success_marker_path
+    success_marker_path = (
+        record.success_marker_path.strip() or live_evidence.success_marker_path.strip()
+    )
     artifact_paths = tuple(
         dict.fromkeys(
-            path
+            stripped_path
             for path in (*record.artifact_paths, *live_evidence.artifact_paths)
-            if path.strip()
+            if (stripped_path := path.strip())
         )
     )
     if (

@@ -160,6 +160,36 @@ def test_live_completion_evidence_accepts_completed_record() -> None:
     assert result.receipt["completion_evidence_available"] is True
 
 
+def test_live_completion_evidence_is_normalized_before_persistence() -> None:
+    result = reconcile_local_job_continuation(
+        _record(
+            status="completed",
+            exit_status=0,
+            success_marker_path=" /workspace/.runtime/jobs/job-7.success ",
+            artifact_paths=(" /workspace/out/final.json ",),
+        ),
+        live_evidence=LocalJobLiveEvidence(
+            session_id="session-7",
+            active=False,
+            progress_excerpt="done",
+            artifact_paths=(
+                "/workspace/out/final.json",
+                " /workspace/out/summary.json ",
+                " ",
+            ),
+        ),
+    )
+
+    assert result.record.status == "completed"
+    assert result.record.success_marker_path == "/workspace/.runtime/jobs/job-7.success"
+    assert result.record.artifact_paths == (
+        "/workspace/out/final.json",
+        "/workspace/out/summary.json",
+    )
+    assert result.receipt["reason"] == "completion_evidence_accepted"
+    assert result.receipt["completion_evidence_available"] is True
+
+
 def test_store_reconcile_persists_stale_done_self_heal_and_completion_evidence(
     tmp_path: Path,
 ) -> None:
