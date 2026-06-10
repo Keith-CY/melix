@@ -11366,7 +11366,7 @@ public final class RuntimeViewModel {
         let textModels = serverModelOptions.isEmpty ? serveableModels : serverModelOptions
 
         if persistedServerSessions.isEmpty, let firstTextModel = textModels.first {
-            let seededServerSessionID = latestSnapshot.runtimeSessions.first?.serverSessionID ?? "server-session-1"
+            let seededServerSessionID = latestSnapshot.providers.first?.providerID ?? "server-session-1"
             let projectedConfig = Self.gatewayConfigProjection(
                 from: latestSnapshot,
                 serverSessionID: seededServerSessionID
@@ -11802,7 +11802,7 @@ public final class RuntimeViewModel {
         switch event.payload {
         case .serverState(let serverStateChanged):
             latestSnapshot.serverState = serverStateChanged.state
-            latestSnapshot.runtimeSessions = serverStateChanged.runtimeSessions
+            latestSnapshot.providers = serverStateChanged.providers
             serverStateText = Self.serverStateText(serverStateChanged.state)
             statusTitle = "Melix \(serverStateText)"
             syncServerSessionsWithModels()
@@ -13441,7 +13441,7 @@ public final class RuntimeViewModel {
             return nil
         }
         guard
-            let listener = snapshot.gatewayConfig.listeners.first(where: { $0.serverSessionID == serverSessionID })
+            let listener = snapshot.gatewayConfig.listeners.first(where: { $0.providerID == serverSessionID })
                 ?? (snapshot.gatewayConfig.listeners.count == 1 ? snapshot.gatewayConfig.listeners.first : nil)
         else {
             return nil
@@ -13480,7 +13480,7 @@ public final class RuntimeViewModel {
             return nil
         }
         guard
-            let summary = snapshot.servingDefaults.sessions.first(where: { $0.serverSessionID == serverSessionID })
+            let summary = snapshot.servingDefaults.sessions.first(where: { $0.providerID == serverSessionID })
                 ?? (snapshot.servingDefaults.sessions.count == 1 ? snapshot.servingDefaults.sessions.first : nil)
         else {
             return nil
@@ -13707,19 +13707,19 @@ public final class RuntimeViewModel {
     private func runtimeSession(
         for serverSessionID: String,
         fallbackIndex: Int
-    ) -> Melix_Controlplane_V1_ServerSessionRuntimeState? {
-        if let exactMatch = latestSnapshot.runtimeSessions.first(where: { $0.serverSessionID == serverSessionID }) {
+    ) -> Melix_Controlplane_V1_ProviderRuntimeState? {
+        if let exactMatch = latestSnapshot.providers.first(where: { $0.providerID == serverSessionID }) {
             return exactMatch
         }
-        if latestSnapshot.runtimeSessions.count == 1, fallbackIndex == 0 {
-            return latestSnapshot.runtimeSessions.first
+        if latestSnapshot.providers.count == 1, fallbackIndex == 0 {
+            return latestSnapshot.providers.first
         }
         return nil
     }
 
     private func applyRuntimeSessionProjection(
         to session: inout DesktopServerSessionState,
-        runtimeSession: Melix_Controlplane_V1_ServerSessionRuntimeState
+        runtimeSession: Melix_Controlplane_V1_ProviderRuntimeState
     ) {
         session.lifecycle = Self.serverSessionLifecycle(runtimeSession.lifecycleState)
         session.powerState = Self.serverSessionPowerState(runtimeSession.powerState)
@@ -13822,16 +13822,16 @@ public final class RuntimeViewModel {
         serverStateText = Self.cliServerStateText(payload.serverState)
         statusTitle = "Melix \(serverStateText)"
 
-        for runtime in payload.runtimeSessions {
-            updateServerSessionCollections(serverSessionID: runtime.serverSessionID) { session in
-                session.lifecycle = Self.cliServerSessionLifecycle(runtime.lifecycleState)
-                session.powerState = Self.cliServerSessionPowerState(runtime.powerState)
-                session.wakeReason = Self.cliServerWakeReason(runtime.wakeReason)
-                session.idleTimerSeconds = runtime.idleTimerSeconds
-                session.autoSleepEnabled = runtime.autoSleepEnabled
-                session.lightSleepAfterSeconds = runtime.lightSleepAfterSeconds
-                session.deepSleepAfterSeconds = runtime.deepSleepAfterSeconds
-                session.updatedAt = Date(timeIntervalSince1970: TimeInterval(runtime.updatedAtUnixMS) / 1_000)
+        for provider in payload.providers {
+            updateServerSessionCollections(serverSessionID: provider.providerID) { session in
+                session.lifecycle = Self.cliServerSessionLifecycle(provider.lifecycleState)
+                session.powerState = Self.cliServerSessionPowerState(provider.powerState)
+                session.wakeReason = Self.cliServerWakeReason(provider.wakeReason)
+                session.idleTimerSeconds = provider.idleTimerSeconds
+                session.autoSleepEnabled = provider.autoSleepEnabled
+                session.lightSleepAfterSeconds = provider.lightSleepAfterSeconds
+                session.deepSleepAfterSeconds = provider.deepSleepAfterSeconds
+                session.updatedAt = Date(timeIntervalSince1970: TimeInterval(provider.updatedAtUnixMS) / 1_000)
             }
         }
     }
@@ -15289,7 +15289,7 @@ public final class RuntimeViewModel {
     private static func eventMessage(for event: Melix_Controlplane_V1_ControlPlaneEvent) -> String {
         switch event.payload {
         case .serverState(let serverStateChanged):
-            if let runtimeSession = serverStateChanged.runtimeSessions.first {
+            if let runtimeSession = serverStateChanged.providers.first {
                 return "Server is now \(serverStateText(serverStateChanged.state)) • \(serverSessionLifecycle(runtimeSession.lifecycleState).rawValue) • \(serverSessionPowerState(runtimeSession.powerState).rawValue)"
             }
             return "Server is now \(serverStateText(serverStateChanged.state))"
@@ -15318,7 +15318,7 @@ public final class RuntimeViewModel {
     }
 
     private static func serverSessionLifecycle(
-        _ state: Melix_Controlplane_V1_ServerSessionLifecycleState
+        _ state: Melix_Controlplane_V1_ProviderLifecycleState
     ) -> DesktopServerSessionLifecycle {
         switch state {
         case .loading:
@@ -15339,7 +15339,7 @@ public final class RuntimeViewModel {
     }
 
     private static func serverSessionPowerState(
-        _ state: Melix_Controlplane_V1_ServerSessionPowerState
+        _ state: Melix_Controlplane_V1_ProviderPowerState
     ) -> DesktopServerPowerState {
         switch state {
         case .active:
@@ -15356,7 +15356,7 @@ public final class RuntimeViewModel {
     }
 
     private static func serverWakeReason(
-        _ reason: Melix_Controlplane_V1_ServerWakeReason
+        _ reason: Melix_Controlplane_V1_ProviderWakeReason
     ) -> DesktopServerWakeReason {
         switch reason {
         case .initialBoot:

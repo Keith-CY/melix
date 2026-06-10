@@ -1353,7 +1353,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
         var snapshot = makeSnapshot(state: modelState)
         var config = snapshot.gatewayConfig
-        if let existingIndex = config.listeners.firstIndex(where: { $0.serverSessionID == serverSessionID }) {
+        if let existingIndex = config.listeners.firstIndex(where: { $0.providerID == serverSessionID }) {
             config.listeners[existingIndex].requestedHost = host
             config.listeners[existingIndex].requestedPort = UInt32(max(1, port))
             config.listeners[existingIndex].effectiveHost = host
@@ -1370,7 +1370,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             config.listeners[existingIndex].requiresRestart = false
         } else {
             var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
-            listener.serverSessionID = serverSessionID
+            listener.providerID = serverSessionID
             listener.requestedHost = host
             listener.requestedPort = UInt32(max(1, port))
             listener.effectiveHost = host
@@ -1439,7 +1439,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
         var snapshot = snapshotOverride ?? makeSnapshot(state: modelState)
         var summary = snapshot.servingDefaults
-        if let existingIndex = summary.sessions.firstIndex(where: { $0.serverSessionID == serverSessionID }) {
+        if let existingIndex = summary.sessions.firstIndex(where: { $0.providerID == serverSessionID }) {
             summary.sessions[existingIndex].requestedTemperature = temperature
             summary.sessions[existingIndex].requestedTopP = topP
             summary.sessions[existingIndex].requestedMaxTokens = UInt32(max(1, maxTokens))
@@ -1466,8 +1466,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             summary.sessions[existingIndex].modelOverrideApplied = false
         } else {
             var session = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-            session.serverSessionID = serverSessionID
-            session.defaultModelID = snapshot.gatewayConfig.listeners.first(where: { $0.serverSessionID == serverSessionID })?.defaultModelID ?? "melix-dev-text"
+            session.providerID = serverSessionID
+            session.defaultModelID = snapshot.gatewayConfig.listeners.first(where: { $0.providerID == serverSessionID })?.defaultModelID ?? "melix-dev-text"
             session.requestedTemperature = temperature
             session.requestedTopP = topP
             session.requestedMaxTokens = UInt32(max(1, maxTokens))
@@ -1672,13 +1672,13 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func sendServerStateChanged(
         state: Melix_Controlplane_V1_ServerState,
-        runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = []
+        runtimeSessions: [Melix_Controlplane_V1_ProviderRuntimeState] = []
     ) {
         var event = Melix_Controlplane_V1_ControlPlaneEvent()
         event.eventType = "server.state_changed"
         event.serverState = Melix_Controlplane_V1_ServerStateChanged()
         event.serverState.state = state
-        event.serverState.runtimeSessions = runtimeSessions
+        event.serverState.providers = runtimeSessions
         emit(event)
     }
 
@@ -1888,20 +1888,20 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     private func mutateRuntimeSession(
         serverSessionID: String,
-        _ update: (inout Melix_Controlplane_V1_ServerSessionRuntimeState) -> Void
+        _ update: (inout Melix_Controlplane_V1_ProviderRuntimeState) -> Void
     ) -> Melix_Controlplane_V1_ServerSnapshot {
         var snapshot = makeSnapshot(state: modelState)
-        let existingIndex = snapshot.runtimeSessions.firstIndex(where: { $0.serverSessionID == serverSessionID })
+        let existingIndex = snapshot.providers.firstIndex(where: { $0.providerID == serverSessionID })
         if let existingIndex {
-            update(&snapshot.runtimeSessions[existingIndex])
+            update(&snapshot.providers[existingIndex])
         } else {
-            var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
-            runtimeSession.serverSessionID = serverSessionID
+            var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
+            runtimeSession.providerID = serverSessionID
             runtimeSession.lifecycleState = .ready
             runtimeSession.powerState = .active
             runtimeSession.wakeReason = .initialBoot
             update(&runtimeSession)
-            snapshot.runtimeSessions.append(runtimeSession)
+            snapshot.providers.append(runtimeSession)
         }
         snapshotOverride = snapshot
         return snapshot
@@ -2755,9 +2755,9 @@ func makeCLIServerSnapshotJSON(
     """
     {
       "server_state": "\(serverState)",
-      "runtime_sessions": [
+      "providers": [
         {
-          "server_session_id": "\(serverSessionID)",
+          "provider_id": "\(serverSessionID)",
           "lifecycle_state": "\(lifecycleState)",
           "power_state": "\(powerState)",
           "wake_reason": "operator_resume",

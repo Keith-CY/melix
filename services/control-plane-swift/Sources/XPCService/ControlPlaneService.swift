@@ -1669,14 +1669,14 @@ public actor ControlPlaneService {
         let gatewayAccessSummary = await gatewayAccessPolicyStore.summary()
         let fallbackDefaultModelID = defaultServedModelID(from: models)
         let gatewayConfigSummary = await gatewayConfigStore.summary(
-            serverSessionIDs: runtimeSessions.map(\.serverSessionID),
+            serverSessionIDs: runtimeSessions.map(\.providerID),
             runtimeBinding: gatewayRuntimeBinding,
             fallbackDefaultModelID: fallbackDefaultModelID
         )
         let servingDefaultsSummary = await gatewayServingDefaultsStore.summary(
-            serverSessionIDs: runtimeSessions.map(\.serverSessionID),
+            serverSessionIDs: runtimeSessions.map(\.providerID),
             defaultModelIDs: Dictionary(
-                uniqueKeysWithValues: gatewayConfigSummary.listeners.map { ($0.serverSessionID, $0.defaultModelID) }
+                uniqueKeysWithValues: gatewayConfigSummary.listeners.map { ($0.providerID, $0.defaultModelID) }
             ),
             modelSettingsByModelID: Dictionary(
                 uniqueKeysWithValues: models.map { ($0.modelID, $0.settings) }
@@ -1731,7 +1731,7 @@ public actor ControlPlaneService {
         command: Melix_Controlplane_V1_ApplyGatewayAccess
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         let startedAt = Date()
-        if request.targetID.isEmpty || request.targetID != command.serverSessionID {
+        if request.targetID.isEmpty || request.targetID != command.providerID {
             return errorResponse(
                 for: request,
                 code: "invalid_argument",
@@ -1761,13 +1761,13 @@ public actor ControlPlaneService {
             Date().timeIntervalSince(startedAt) * 1000,
             forKey: "gateway.api_key_apply_ms"
         )
-        _ = await serverSessionRuntimeStore.noteGatewayAccessApplied(serverSessionID: command.serverSessionID)
+        _ = await serverSessionRuntimeStore.noteGatewayAccessApplied(serverSessionID: command.providerID)
 
         var reply = Melix_Controlplane_V1_ServerReply()
         reply.snapshot = await buildSnapshot()
         await publishServerStateChanged(
             reply.snapshot.serverState,
-            runtimeSessions: reply.snapshot.runtimeSessions,
+            runtimeSessions: reply.snapshot.providers,
             source: "server_runtime"
         )
         return okResponse(for: request, server: reply)
@@ -1778,7 +1778,7 @@ public actor ControlPlaneService {
         command: Melix_Controlplane_V1_ApplyGatewayConfig
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         let startedAt = Date()
-        if request.targetID.isEmpty || request.targetID != command.serverSessionID {
+        if request.targetID.isEmpty || request.targetID != command.providerID {
             return errorResponse(
                 for: request,
                 code: "invalid_argument",
@@ -1792,7 +1792,7 @@ public actor ControlPlaneService {
                 Date().timeIntervalSince(startedAt) * 1000,
                 forKey: "gateway.config_apply_ms"
             )
-            let requiresRestart = command.serverSessionID == gatewayRuntimeBinding.activeServerSessionID
+            let requiresRestart = command.providerID == gatewayRuntimeBinding.activeServerSessionID
                 && (
                     command.host != gatewayRuntimeBinding.host
                         || command.port != gatewayRuntimeBinding.port
@@ -1807,7 +1807,7 @@ public actor ControlPlaneService {
             reply.snapshot = await buildSnapshot()
             await publishServerStateChanged(
                 reply.snapshot.serverState,
-                runtimeSessions: reply.snapshot.runtimeSessions,
+                runtimeSessions: reply.snapshot.providers,
                 source: "server_runtime"
             )
             return okResponse(for: request, server: reply)
@@ -1828,7 +1828,7 @@ public actor ControlPlaneService {
         command: Melix_Controlplane_V1_ApplyServingDefaults
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         let startedAt = Date()
-        if request.targetID.isEmpty || request.targetID != command.serverSessionID {
+        if request.targetID.isEmpty || request.targetID != command.providerID {
             return errorResponse(
                 for: request,
                 code: "invalid_argument",
@@ -1853,7 +1853,7 @@ public actor ControlPlaneService {
             reply.snapshot = await buildSnapshot()
             await publishServerStateChanged(
                 reply.snapshot.serverState,
-                runtimeSessions: reply.snapshot.runtimeSessions,
+                runtimeSessions: reply.snapshot.providers,
                 source: "server_runtime"
             )
             return okResponse(for: request, server: reply)
@@ -1934,11 +1934,11 @@ public actor ControlPlaneService {
         }
 
         let gatewayConfigSummary = await gatewayConfigStore.summary(
-            serverSessionIDs: [command.serverSessionID],
+            serverSessionIDs: [command.providerID],
             runtimeBinding: gatewayRuntimeBinding,
             fallbackDefaultModelID: ModelCatalog.devTextModel().modelID
         )
-        let listener = gatewayConfigSummary.listeners.first { $0.serverSessionID == command.serverSessionID }
+        let listener = gatewayConfigSummary.listeners.first { $0.providerID == command.providerID }
         let servedDefaultModelID = (listener?.defaultModelID ?? ModelCatalog.devTextModel().modelID)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if !servedDefaultModelID.isEmpty {
@@ -1982,7 +1982,7 @@ public actor ControlPlaneService {
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         await handleServerLifecycleMutation(
             request: request,
-            requestedServerSessionID: command.serverSessionID,
+            requestedServerSessionID: command.providerID,
             metricKey: "control_plane.server_start_ms",
             countKey: "control_plane.server_start_count",
             actionDescription: "start"
@@ -1997,7 +1997,7 @@ public actor ControlPlaneService {
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         await handleServerLifecycleMutation(
             request: request,
-            requestedServerSessionID: command.serverSessionID,
+            requestedServerSessionID: command.providerID,
             metricKey: "control_plane.server_pause_ms",
             countKey: "control_plane.server_pause_count",
             actionDescription: "pause",
@@ -2013,7 +2013,7 @@ public actor ControlPlaneService {
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         await handleServerLifecycleMutation(
             request: request,
-            requestedServerSessionID: command.serverSessionID,
+            requestedServerSessionID: command.providerID,
             metricKey: "control_plane.server_resume_ms",
             countKey: "control_plane.server_resume_count",
             actionDescription: "resume"
@@ -2028,7 +2028,7 @@ public actor ControlPlaneService {
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         await handleServerLifecycleMutation(
             request: request,
-            requestedServerSessionID: command.serverSessionID,
+            requestedServerSessionID: command.providerID,
             metricKey: "control_plane.server_wake_ms",
             countKey: "control_plane.server_wake_count",
             actionDescription: "wake"
@@ -2043,7 +2043,7 @@ public actor ControlPlaneService {
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         await handleServerLifecycleMutation(
             request: request,
-            requestedServerSessionID: command.serverSessionID,
+            requestedServerSessionID: command.providerID,
             metricKey: "control_plane.server_stop_ms",
             countKey: "control_plane.server_stop_count",
             actionDescription: "stop",
@@ -2059,7 +2059,7 @@ public actor ControlPlaneService {
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         await handleServerLifecycleMutation(
             request: request,
-            requestedServerSessionID: command.serverSessionID,
+            requestedServerSessionID: command.providerID,
             metricKey: "control_plane.server_restart_ms",
             countKey: "control_plane.server_restart_count",
             actionDescription: "restart",
@@ -2085,7 +2085,7 @@ public actor ControlPlaneService {
         }
         return await handleServerLifecycleMutation(
             request: request,
-            requestedServerSessionID: command.serverSessionID,
+            requestedServerSessionID: command.providerID,
             metricKey: "control_plane.server_idle_policy_ms",
             countKey: "control_plane.server_idle_policy_count",
             actionDescription: "update idle policy"
@@ -2103,7 +2103,7 @@ public actor ControlPlaneService {
         policy: GatewayAccessPolicy,
         command: Melix_Controlplane_V1_ApplyGatewayAccess
     ) -> String? {
-        policy.mode == .none ? nil : command.serverSessionID
+        policy.mode == .none ? nil : command.providerID
     }
 
     private func handleGenerateImage(
@@ -4797,7 +4797,7 @@ public actor ControlPlaneService {
             hasActiveRequests: await schedulerReadModel.hasActiveRequests()
         )
         let defaultSession = runtimeSessions.first(where: {
-            $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID
+            $0.providerID == ServerSessionRuntimeStore.defaultServerSessionID
         }) ?? runtimeSessions.first ?? ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 0)
 
         switch defaultSession.lifecycleState {
@@ -4818,13 +4818,13 @@ public actor ControlPlaneService {
             )
         case .sleeping:
             _ = await serverSessionRuntimeStore.noteRequestActivity(
-                serverSessionID: defaultSession.serverSessionID,
+                serverSessionID: defaultSession.providerID,
                 wakeReason: .requestActivity
             )
             return .ready(publishStateChanged: true)
         default:
             _ = await serverSessionRuntimeStore.noteRequestActivity(
-                serverSessionID: defaultSession.serverSessionID,
+                serverSessionID: defaultSession.providerID,
                 wakeReason: .requestActivity
             )
             return .ready(publishStateChanged: false)
@@ -4835,7 +4835,7 @@ public actor ControlPlaneService {
         let snapshot = await buildSnapshot()
         await publishServerStateChanged(
             snapshot.serverState,
-            runtimeSessions: snapshot.runtimeSessions,
+            runtimeSessions: snapshot.providers,
             source: source
         )
     }
@@ -4848,7 +4848,7 @@ public actor ControlPlaneService {
         actionDescription: String,
         requiresQuiescence: Bool = false,
         source: String = "server_runtime",
-        mutate: (String) async -> [Melix_Controlplane_V1_ServerSessionRuntimeState]
+        mutate: (String) async -> [Melix_Controlplane_V1_ProviderRuntimeState]
     ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
         let startedAt = Date()
         let resolvedServerSessionID: String
@@ -4881,7 +4881,7 @@ public actor ControlPlaneService {
         reply.snapshot = await buildSnapshot()
         await publishServerStateChanged(
             reply.snapshot.serverState,
-            runtimeSessions: reply.snapshot.runtimeSessions,
+            runtimeSessions: reply.snapshot.providers,
             source: source
         )
         return okResponse(for: request, server: reply)
@@ -4920,7 +4920,7 @@ public actor ControlPlaneService {
 
     private func publishServerStateChanged(
         _ state: Melix_Controlplane_V1_ServerState,
-        runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState],
+        runtimeSessions: [Melix_Controlplane_V1_ProviderRuntimeState],
         source: String
     ) async {
         var event = Melix_Controlplane_V1_ControlPlaneEvent()
@@ -4928,7 +4928,7 @@ public actor ControlPlaneService {
         event.source = source
         event.serverState = Melix_Controlplane_V1_ServerStateChanged()
         event.serverState.state = state
-        event.serverState.runtimeSessions = runtimeSessions
+        event.serverState.providers = runtimeSessions
         await eventHub.publish(event)
     }
 

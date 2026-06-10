@@ -412,14 +412,14 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
-        var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
-        runtimeSession.serverSessionID = "server-session-1"
+        var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
+        runtimeSession.providerID = "server-session-1"
         runtimeSession.lifecycleState = .ready
         runtimeSession.powerState = .active
         runtimeSession.wakeReason = .initialBoot
-        snapshot.runtimeSessions = [runtimeSession]
+        snapshot.providers = [runtimeSession]
         var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
-        listener.serverSessionID = "server-session-1"
+        listener.providerID = "server-session-1"
         listener.requestedHost = "0.0.0.0"
         listener.requestedPort = 18080
         listener.effectiveHost = "127.0.0.1"
@@ -433,7 +433,7 @@ struct DesktopFoundationViewTests {
         listener.requiresRestart = true
         snapshot.gatewayConfig.listeners = [listener]
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.providerID = "server-session-1"
         servingDefaults.defaultModelID = desktopTestReadyModelID
         servingDefaults.requestedTemperature = 0.33
         servingDefaults.requestedTopP = 0.92
@@ -486,9 +486,9 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.providerID = "server-session-1"
         servingDefaults.defaultModelID = desktopTestReadyModelID
         servingDefaults.requestedTemperature = 0.44
         servingDefaults.requestedTopP = 0.91
@@ -538,7 +538,7 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
 
         let viewModel = RuntimeViewModel(client: client)
@@ -579,9 +579,9 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.providerID = "server-session-1"
         servingDefaults.defaultModelID = desktopTestReadyModelID
         servingDefaults.requestedTemperature = 0.4
         servingDefaults.requestedTopP = 0.9
@@ -662,7 +662,7 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         let store = FakeRemoteServerStore(servers: [
             RemoteServer(
@@ -720,7 +720,7 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
@@ -1577,7 +1577,7 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [model]
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
 
         let viewModel = RuntimeViewModel(client: client)
@@ -2489,7 +2489,7 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
-        snapshot.runtimeSessions = [
+        snapshot.providers = [
             makeDesktopRuntimeSession(
                 lifecycleState: .paused,
                 powerState: .active,
@@ -2529,7 +2529,7 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
-        snapshot.runtimeSessions = [
+        snapshot.providers = [
             makeDesktopRuntimeSession(
                 lifecycleState: .stopped,
                 powerState: .stopped,
@@ -5601,7 +5601,7 @@ struct DesktopFoundationViewTests {
         var snapshot = makeAudioSetupSnapshot(
             models: [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
         )
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         await client.configureModelOperation(
             makeNamedModelOperationResult(
@@ -5838,7 +5838,7 @@ struct DesktopFoundationViewTests {
                 makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
             ]
         )
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         await client.configureModelOperation(
             makeNamedModelOperationResult(
@@ -5906,7 +5906,7 @@ struct DesktopFoundationViewTests {
                 makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
             ]
         )
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         await workflowRunner.configureHandler { command in
             switch command {
@@ -5960,7 +5960,7 @@ struct DesktopFoundationViewTests {
                 derivedModel,
             ]
         )
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         await client.configureExportResult(
             ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
@@ -5994,7 +5994,7 @@ struct DesktopFoundationViewTests {
                 derivedModel,
             ]
         )
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
 
         let viewModel = RuntimeViewModel(client: client)
@@ -6026,7 +6026,7 @@ struct DesktopFoundationViewTests {
                 makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
             ]
         )
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
@@ -6096,7 +6096,7 @@ struct DesktopFoundationViewTests {
                 makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
             ]
         )
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
@@ -6208,7 +6208,7 @@ struct DesktopFoundationViewTests {
                 makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
             ]
         )
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
@@ -6245,7 +6245,7 @@ struct DesktopFoundationViewTests {
                 makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
             ]
         )
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
@@ -6284,7 +6284,7 @@ struct DesktopFoundationViewTests {
                 makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
             ]
         )
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
@@ -6343,7 +6343,7 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [model]
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
 
         let viewModel = RuntimeViewModel(client: client)
@@ -7600,7 +7600,7 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [makeMenuBarModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
-        snapshot.runtimeSessions = [
+        snapshot.providers = [
             makeDesktopRuntimeSession(lifecycleState: .stopped, powerState: .stopped),
         ]
         await client.configureSnapshot(snapshot)
@@ -8560,7 +8560,7 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [makeMenuBarModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
@@ -8652,7 +8652,7 @@ struct DesktopFoundationViewTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
@@ -8898,7 +8898,7 @@ struct DesktopFoundationViewTests {
         var pausedSnapshot = Melix_Controlplane_V1_ServerSnapshot()
         pausedSnapshot.serverState = .serverReady
         pausedSnapshot.models = [makeMenuBarModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
-        pausedSnapshot.runtimeSessions = [
+        pausedSnapshot.providers = [
             makeDesktopRuntimeSession(
                 lifecycleState: .paused,
                 powerState: .active,
@@ -9788,10 +9788,10 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         derivedModel.modelID = derivedModelID
         snapshot.models = [baseModel, derivedModel]
         var runtimeSession = makeDesktopRuntimeSession()
-        runtimeSession.serverSessionID = "server-session-1"
+        runtimeSession.providerID = "server-session-1"
         runtimeSession.lifecycleState = .ready
         runtimeSession.powerState = .active
-        snapshot.runtimeSessions = [runtimeSession]
+        snapshot.providers = [runtimeSession]
         await client.configureSnapshot(snapshot)
         await configurePhase8ReadyRegistrySnapshot(client, modelID: materializedModelID)
 
@@ -10057,10 +10057,10 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         derivedModel.modelID = derivedModelID
         snapshot.models = [fallbackTextModel, derivedModel]
         var runtimeSession = makeDesktopRuntimeSession()
-        runtimeSession.serverSessionID = "server-session-1"
+        runtimeSession.providerID = "server-session-1"
         runtimeSession.lifecycleState = .ready
         runtimeSession.powerState = .active
-        snapshot.runtimeSessions = [runtimeSession]
+        snapshot.providers = [runtimeSession]
         await client.configureSnapshot(snapshot)
         await client.configureModelOperation(
             makeNamedModelOperationResult(
@@ -10346,10 +10346,10 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         derivedModel.modelID = "\(materializedModelID)-lora-adapter"
         snapshot.models = [fallbackTextModel, importedModel, derivedModel]
         var runtimeSession = makeDesktopRuntimeSession()
-        runtimeSession.serverSessionID = "server-session-1"
+        runtimeSession.providerID = "server-session-1"
         runtimeSession.lifecycleState = .ready
         runtimeSession.powerState = .active
-        snapshot.runtimeSessions = [runtimeSession]
+        snapshot.providers = [runtimeSession]
         await client.configureSnapshot(snapshot)
         await configurePhase8ReadyRegistrySnapshot(client, modelID: materializedModelID)
 
@@ -10466,7 +10466,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [ModelCatalog.devTextModel()]
-        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        snapshot.providers = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         await configurePhase8ReadyRegistrySnapshot(client, modelID: materializedModelID)
 
@@ -11043,16 +11043,16 @@ private func waitForRecordedCLICommandCount(
 
 private func makeDesktopRuntimeSession(
     serverSessionID: String = "server-session-1",
-    lifecycleState: Melix_Controlplane_V1_ServerSessionLifecycleState = .ready,
-    powerState: Melix_Controlplane_V1_ServerSessionPowerState = .active,
-    wakeReason: Melix_Controlplane_V1_ServerWakeReason = .initialBoot,
+    lifecycleState: Melix_Controlplane_V1_ProviderLifecycleState = .ready,
+    powerState: Melix_Controlplane_V1_ProviderPowerState = .active,
+    wakeReason: Melix_Controlplane_V1_ProviderWakeReason = .initialBoot,
     idleTimerSeconds: UInt32 = 0,
     autoSleepEnabled: Bool = false,
     lightSleepAfterSeconds: UInt32 = 300,
     deepSleepAfterSeconds: UInt32 = 1800
-) -> Melix_Controlplane_V1_ServerSessionRuntimeState {
-    var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
-    runtimeSession.serverSessionID = serverSessionID
+) -> Melix_Controlplane_V1_ProviderRuntimeState {
+    var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
+    runtimeSession.providerID = serverSessionID
     runtimeSession.lifecycleState = lifecycleState
     runtimeSession.powerState = powerState
     runtimeSession.wakeReason = wakeReason

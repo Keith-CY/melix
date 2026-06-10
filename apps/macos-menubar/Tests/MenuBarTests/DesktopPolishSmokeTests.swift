@@ -315,9 +315,9 @@ private func makeDesktopPolishServerSession() -> DesktopServerSessionState {
     )
 }
 
-private func makeDesktopPolishRuntimeSession() -> Melix_Controlplane_V1_ServerSessionRuntimeState {
-    var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
-    runtimeSession.serverSessionID = "server-session-1"
+private func makeDesktopPolishRuntimeSession() -> Melix_Controlplane_V1_ProviderRuntimeState {
+    var runtimeSession = Melix_Controlplane_V1_ProviderRuntimeState()
+    runtimeSession.providerID = "server-session-1"
     runtimeSession.lifecycleState = .ready
     runtimeSession.powerState = .active
     runtimeSession.wakeReason = .initialBoot
@@ -327,12 +327,12 @@ private func makeDesktopPolishRuntimeSession() -> Melix_Controlplane_V1_ServerSe
 
 private func makeDesktopPolishSnapshot(
     models: [Melix_Controlplane_V1_ModelSummary],
-    runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState]
+    runtimeSessions: [Melix_Controlplane_V1_ProviderRuntimeState]
 ) -> Melix_Controlplane_V1_ServerSnapshot {
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = .serverReady
     snapshot.models = models
-    snapshot.runtimeSessions = runtimeSessions
+    snapshot.providers = runtimeSessions
     return snapshot
 }
 

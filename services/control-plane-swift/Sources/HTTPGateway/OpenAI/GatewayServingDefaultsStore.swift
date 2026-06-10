@@ -556,7 +556,7 @@ public actor GatewayServingDefaultsStore {
     func apply(
         command: Melix_Controlplane_V1_ApplyServingDefaults
     ) throws {
-        let serverSessionID = Self.trimmed(command.serverSessionID)
+        let serverSessionID = Self.trimmed(command.providerID)
         guard !serverSessionID.isEmpty else {
             throw ServingDefaultsValidationError.missingServerSessionID
         }
@@ -679,7 +679,7 @@ public actor GatewayServingDefaultsStore {
             )
 
             var session = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
-            session.serverSessionID = serverSessionID
+            session.providerID = serverSessionID
             session.defaultModelID = defaultModelID
             session.requestedTemperature = requestedTemperature
             session.requestedTopP = requestedTopP

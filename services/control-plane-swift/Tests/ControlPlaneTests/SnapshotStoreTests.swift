@@ -127,7 +127,7 @@ struct SnapshotStoreTests {
         let snapshot = await store.snapshot()
 
         #expect(snapshot.count == 1)
-        #expect(snapshot.first?.serverSessionID == "server-session-seeded")
+        #expect(snapshot.first?.providerID == "server-session-seeded")
         #expect(snapshot.first?.lifecycleState == .paused)
         #expect(snapshot.first?.powerState == .lightSleep)
         #expect(snapshot.first?.updatedAtUnixMs == 9_000)
@@ -234,18 +234,18 @@ struct SnapshotStoreTests {
             deepSleepAfterSeconds: 5
         )
         let seededSnapshot = await store.snapshot()
-        #expect(seededSnapshot.contains(where: { $0.serverSessionID == "server-session-2" }))
+        #expect(seededSnapshot.contains(where: { $0.providerID == "server-session-2" }))
 
         clock.now = 12_000
         let inhibitedSnapshot = await store.snapshot(hasActiveRequests: true)
-        guard let inhibitedSession = inhibitedSnapshot.first(where: { $0.serverSessionID == "server-session-2" }) else {
+        guard let inhibitedSession = inhibitedSnapshot.first(where: { $0.providerID == "server-session-2" }) else {
             Issue.record("Expected inhibited session to exist")
             return
         }
         #expect(inhibitedSession.idleTimerSeconds == 0)
 
         let resumedSnapshot = await store.snapshot()
-        guard let resumedSession = resumedSnapshot.first(where: { $0.serverSessionID == "server-session-2" }) else {
+        guard let resumedSession = resumedSnapshot.first(where: { $0.providerID == "server-session-2" }) else {
             Issue.record("Expected resumed session to exist")
             return
         }
@@ -289,9 +289,9 @@ struct SnapshotStoreTests {
         )
 
         let snapshot = await store.snapshot()
-        guard let pausedSnapshot = snapshot.first(where: { $0.serverSessionID == "server-session-paused" }),
-              let stoppedSnapshot = snapshot.first(where: { $0.serverSessionID == "server-session-stopped" }),
-              let failedSnapshot = snapshot.first(where: { $0.serverSessionID == "server-session-failed" }) else {
+        guard let pausedSnapshot = snapshot.first(where: { $0.providerID == "server-session-paused" }),
+              let stoppedSnapshot = snapshot.first(where: { $0.providerID == "server-session-stopped" }),
+              let failedSnapshot = snapshot.first(where: { $0.providerID == "server-session-failed" }) else {
             Issue.record("Expected paused, stopped, and failed sessions to exist")
             return
         }

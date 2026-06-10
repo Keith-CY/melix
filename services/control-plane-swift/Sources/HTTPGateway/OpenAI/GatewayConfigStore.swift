@@ -260,7 +260,7 @@ public actor GatewayConfigStore {
         command: Melix_Controlplane_V1_ApplyGatewayConfig
     ) throws {
         // Validates then persists a listener record for the given server session.
-        let serverSessionID = Self.trimmed(command.serverSessionID)
+        let serverSessionID = Self.trimmed(command.providerID)
         guard !serverSessionID.isEmpty else {
             throw GatewayConfigValidationError.missingServerSessionID
         }
@@ -336,7 +336,7 @@ public actor GatewayConfigStore {
             let isActiveBinding = serverSessionID == runtimeBinding.activeServerSessionID
 
             var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
-            listener.serverSessionID = serverSessionID
+            listener.providerID = serverSessionID
             listener.requestedHost = requestedHost
             listener.requestedPort = requestedPort
             listener.effectiveHost = isActiveBinding ? runtimeBinding.host : requestedHost

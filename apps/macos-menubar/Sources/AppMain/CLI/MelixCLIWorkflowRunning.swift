@@ -63,11 +63,11 @@ public enum MelixCLIWorkflowError: Error, Equatable, Sendable, LocalizedError {
 
 public struct MelixCLIServerSnapshotPayload: Codable, Equatable, Sendable {
     public let serverState: String
-    public let runtimeSessions: [MelixCLIRuntimeSessionPayload]
+    public let providers: [MelixCLIProviderPayload]
 }
 
-public struct MelixCLIRuntimeSessionPayload: Codable, Equatable, Sendable {
-    public let serverSessionID: String
+public struct MelixCLIProviderPayload: Codable, Equatable, Sendable {
+    public let providerID: String
     public let lifecycleState: String
     public let powerState: String
     public let wakeReason: String

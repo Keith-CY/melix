@@ -179,7 +179,7 @@ func makeApplyGatewayAccessRequest(
     request.commandType = "server.apply_gateway_access"
     request.server = Melix_Controlplane_V1_ServerCommand()
     request.server.applyGatewayAccess = Melix_Controlplane_V1_ApplyGatewayAccess()
-    request.server.applyGatewayAccess.serverSessionID = serverSessionID
+    request.server.applyGatewayAccess.providerID = serverSessionID
     request.server.applyGatewayAccess.mode = mode
     request.server.applyGatewayAccess.sharedAccessEnabled = sharedAccessEnabled
     if let primaryKey {

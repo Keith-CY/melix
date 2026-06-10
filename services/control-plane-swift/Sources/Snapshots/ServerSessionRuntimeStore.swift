@@ -5,12 +5,12 @@ public actor ServerSessionRuntimeStore {
     public static let defaultServerSessionID = "server-session-1"
 
     private let nowUnixMS: @Sendable () -> Int64
-    private var runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState]
+    private var runtimeSessions: [Melix_Controlplane_V1_ProviderRuntimeState]
     private var lastActivityAtUnixMSByServerSessionID: [String: Int64]
     private var activeRequestInhibitedSessions: Set<String>
 
     public init(
-        runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = [],
+        runtimeSessions: [Melix_Controlplane_V1_ProviderRuntimeState] = [],
         nowUnixMS: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1000)
         }
@@ -22,7 +22,7 @@ public actor ServerSessionRuntimeStore {
         self.runtimeSessions = seededSessions
         self.lastActivityAtUnixMSByServerSessionID = Dictionary(
             uniqueKeysWithValues: seededSessions.map { session in
-                (session.serverSessionID, session.updatedAtUnixMs)
+                (session.providerID, session.updatedAtUnixMs)
             }
         )
         self.activeRequestInhibitedSessions = []
@@ -30,7 +30,7 @@ public actor ServerSessionRuntimeStore {
 
     public func snapshot(
         hasActiveRequests: Bool = false
-    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+    ) -> [Melix_Controlplane_V1_ProviderRuntimeState] {
         resolveIdlePolicy(hasActiveRequests: hasActiveRequests)
         return runtimeSessions
     }
@@ -38,7 +38,7 @@ public actor ServerSessionRuntimeStore {
     @discardableResult
     public func noteGatewayAccessApplied(
         serverSessionID: String
-    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+    ) -> [Melix_Controlplane_V1_ProviderRuntimeState] {
         mutate(serverSessionID: serverSessionID) { session, now in
             session.lifecycleState = .ready
             session.powerState = .active
@@ -51,8 +51,8 @@ public actor ServerSessionRuntimeStore {
     @discardableResult
     public func noteRequestActivity(
         serverSessionID: String = defaultServerSessionID,
-        wakeReason: Melix_Controlplane_V1_ServerWakeReason = .requestActivity
-    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+        wakeReason: Melix_Controlplane_V1_ProviderWakeReason = .requestActivity
+    ) -> [Melix_Controlplane_V1_ProviderRuntimeState] {
         mutate(serverSessionID: serverSessionID) { session, now in
             guard session.lifecycleState != .stopped else {
                 session.idleTimerSeconds = 0
@@ -71,14 +71,14 @@ public actor ServerSessionRuntimeStore {
     @discardableResult
     public func startServerSession(
         serverSessionID: String
-    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+    ) -> [Melix_Controlplane_V1_ProviderRuntimeState] {
         activate(serverSessionID: serverSessionID, wakeReason: .operatorResume)
     }
 
     @discardableResult
     public func pauseServerSession(
         serverSessionID: String
-    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+    ) -> [Melix_Controlplane_V1_ProviderRuntimeState] {
         mutate(serverSessionID: serverSessionID) { session, now in
             session.lifecycleState = .paused
             session.powerState = .active
@@ -90,21 +90,21 @@ public actor ServerSessionRuntimeStore {
     @discardableResult
     public func resumeServerSession(
         serverSessionID: String
-    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+    ) -> [Melix_Controlplane_V1_ProviderRuntimeState] {
         activate(serverSessionID: serverSessionID, wakeReason: .operatorResume)
     }
 
     @discardableResult
     public func wakeServerSession(
         serverSessionID: String
-    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+    ) -> [Melix_Controlplane_V1_ProviderRuntimeState] {
         activate(serverSessionID: serverSessionID, wakeReason: .operatorResume)
     }
 
     @discardableResult
     public func stopServerSession(
         serverSessionID: String
-    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+    ) -> [Melix_Controlplane_V1_ProviderRuntimeState] {
         mutate(serverSessionID: serverSessionID) { session, now in
             session.lifecycleState = .stopped
             session.powerState = .stopped
@@ -119,7 +119,7 @@ public actor ServerSessionRuntimeStore {
         autoSleepEnabled: Bool,
         lightSleepAfterSeconds: UInt32,
         deepSleepAfterSeconds: UInt32
-    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+    ) -> [Melix_Controlplane_V1_ProviderRuntimeState] {
         mutate(serverSessionID: serverSessionID) { session, now in
             session.autoSleepEnabled = autoSleepEnabled
             session.lightSleepAfterSeconds = lightSleepAfterSeconds
@@ -134,7 +134,7 @@ public actor ServerSessionRuntimeStore {
         serverSessionID: String = defaultServerSessionID,
         requestedMode: Melix_Controlplane_V1_DiskStreamingMode,
         effectiveMode: Melix_Controlplane_V1_DiskStreamingMode
-    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+    ) -> [Melix_Controlplane_V1_ProviderRuntimeState] {
         mutate(serverSessionID: serverSessionID) { session, now in
             session.requestedDiskStreamingMode = requestedMode
             session.effectiveDiskStreamingMode = effectiveMode
@@ -145,9 +145,9 @@ public actor ServerSessionRuntimeStore {
     public static func defaultRuntimeSession(
         serverSessionID: String = defaultServerSessionID,
         updatedAtUnixMS: Int64
-    ) -> Melix_Controlplane_V1_ServerSessionRuntimeState {
-        var session = Melix_Controlplane_V1_ServerSessionRuntimeState()
-        session.serverSessionID = serverSessionID
+    ) -> Melix_Controlplane_V1_ProviderRuntimeState {
+        var session = Melix_Controlplane_V1_ProviderRuntimeState()
+        session.providerID = serverSessionID
         session.lifecycleState = .ready
         session.powerState = .active
         session.wakeReason = .initialBoot
@@ -164,8 +164,8 @@ public actor ServerSessionRuntimeStore {
     @discardableResult
     private func activate(
         serverSessionID: String,
-        wakeReason: Melix_Controlplane_V1_ServerWakeReason
-    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+        wakeReason: Melix_Controlplane_V1_ProviderWakeReason
+    ) -> [Melix_Controlplane_V1_ProviderRuntimeState] {
         mutate(serverSessionID: serverSessionID) { session, now in
             session.lifecycleState = .ready
             session.powerState = .active
@@ -178,14 +178,14 @@ public actor ServerSessionRuntimeStore {
     @discardableResult
     private func mutate(
         serverSessionID: String,
-        update: (inout Melix_Controlplane_V1_ServerSessionRuntimeState, Int64) -> Void
-    ) -> [Melix_Controlplane_V1_ServerSessionRuntimeState] {
+        update: (inout Melix_Controlplane_V1_ProviderRuntimeState, Int64) -> Void
+    ) -> [Melix_Controlplane_V1_ProviderRuntimeState] {
         let now = nowUnixMS()
         let index = ensureRuntimeSessionIndex(
             serverSessionID: resolvedServerSessionID(serverSessionID),
             updatedAtUnixMS: now
         )
-        let resolvedServerSessionID = runtimeSessions[index].serverSessionID
+        let resolvedServerSessionID = runtimeSessions[index].providerID
         lastActivityAtUnixMSByServerSessionID[resolvedServerSessionID] = now
         update(&runtimeSessions[index], now)
         return runtimeSessions
@@ -195,7 +195,7 @@ public actor ServerSessionRuntimeStore {
         serverSessionID: String,
         updatedAtUnixMS: Int64
     ) -> Int {
-        if let existingIndex = runtimeSessions.firstIndex(where: { $0.serverSessionID == serverSessionID }) {
+        if let existingIndex = runtimeSessions.firstIndex(where: { $0.providerID == serverSessionID }) {
             return existingIndex
         }
         let session = Self.defaultRuntimeSession(
@@ -216,7 +216,7 @@ public actor ServerSessionRuntimeStore {
         let now = nowUnixMS()
         if hasActiveRequests {
             for index in runtimeSessions.indices {
-                let serverSessionID = runtimeSessions[index].serverSessionID
+                let serverSessionID = runtimeSessions[index].providerID
                 activeRequestInhibitedSessions.insert(serverSessionID)
                 lastActivityAtUnixMSByServerSessionID[serverSessionID] = now
                 runtimeSessions[index].idleTimerSeconds = 0
@@ -232,7 +232,7 @@ public actor ServerSessionRuntimeStore {
         }
 
         for index in runtimeSessions.indices {
-            let serverSessionID = runtimeSessions[index].serverSessionID
+            let serverSessionID = runtimeSessions[index].providerID
             let lastActivityAtUnixMS = lastActivityAtUnixMSByServerSessionID[serverSessionID]
                 ?? runtimeSessions[index].updatedAtUnixMs
             let idleSeconds = UInt32(max(0, (now - lastActivityAtUnixMS) / 1000))
@@ -253,7 +253,7 @@ public actor ServerSessionRuntimeStore {
 
             let deepSleepAfterSeconds = runtimeSessions[index].deepSleepAfterSeconds
             let lightSleepAfterSeconds = runtimeSessions[index].lightSleepAfterSeconds
-            let targetPowerState: Melix_Controlplane_V1_ServerSessionPowerState?
+            let targetPowerState: Melix_Controlplane_V1_ProviderPowerState?
             if deepSleepAfterSeconds > 0, idleSeconds >= deepSleepAfterSeconds {
                 targetPowerState = .deepSleep
             } else if lightSleepAfterSeconds > 0, idleSeconds >= lightSleepAfterSeconds {
