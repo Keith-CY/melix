@@ -352,9 +352,11 @@ The session-context receipt uses `source_type = background_continuation`,
 selected snapshot ID as `source_id`. `owner_scope_checked` is `true` only for
 the in-memory session graph lookup that matched the request session and
 selected branch before setting the restore snapshot. Caller-supplied explicit
-`restore_snapshot_id` values are not marked as owner-scope checked by this
-slice. The receipt must not include raw prompt text, hidden reasoning text,
-prior model output, or private prompt bodies.
+`restore_snapshot_id` values must still emit the same redacted session-context
+receipt so the boundary is visible, but they must record
+`owner_scope_checked = false` until a future owner-aware snapshot lookup
+validates the ID. The receipt must not include raw prompt text, hidden
+reasoning text, prior model output, or private prompt bodies.
 
 The v1 Python worker prompt-context primitive is
 `worker.runtime.untrusted_context.untrusted_context_receipt`. It constructs the
@@ -427,9 +429,15 @@ matching the source type and `source_id` set to the redacted skill or memory
 identifier. Malformed source IDs, payload objects, or owner-scope metadata
 produce `included = false` refusal receipts with `reason =
 invalid_skill_context_field` or `invalid_memory_context_field` and no user
-payload. These helpers do not implement skill lookup, memory persistence,
-retrieval ranking, or chat/session wiring; they are only the prompt-context
-boundary for evidence admitted by those later surfaces.
+payload. Concrete entrypoints may pass entrypoint-local `segment_id`,
+`source_field`, `reason`, and `corrective_action` values so public receipt
+fields remain stable for agent-skill catalogs, skill stores, pinned memories,
+or retrieved-memory stores while receipt generation still routes through
+`PromptContextSourceEvidence`. Malformed entrypoint receipt metadata fails
+closed before prompt assembly with the same refusal reason. These helpers do
+not implement skill lookup, memory persistence, retrieval ranking, or
+chat/session wiring; they are only the prompt-context boundary for evidence
+admitted by those later surfaces.
 
 The Python worker retrieval admission primitives are
 `worker.runtime.retrieval_context.admit_retrieved_document_context` and

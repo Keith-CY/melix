@@ -2119,8 +2119,8 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
-    @Test("explicit restore snapshot ids do not claim session context owner checks")
-    func explicitRestoreSnapshotIDsDoNotClaimSessionContextOwnerChecks() async throws {
+    @Test("explicit restore snapshot ids attach receipts without claiming owner checks")
+    func explicitRestoreSnapshotIDsAttachReceiptsWithoutClaimingOwnerChecks() async throws {
         let workerClient = PhaseAwareWorkerClient()
         let sessionGraphStore = SessionGraphStore(nowUnixMs: { 9_200 })
         let coordinator = RequestCoordinator(
@@ -2139,23 +2139,115 @@ struct RequestCoordinatorTests {
             )
         )
         let consumer = Task {
-            do {
-                for try await _ in execution.stream {
-                }
-            } catch {
+            for try await _ in execution.stream {
             }
         }
         defer { consumer.cancel() }
 
         let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let ext = prefillRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.session_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        let receipt = try #require(receipts.first)
+
         #expect(prefillRequest.execution.cacheHints.restoreSnapshotID == "snap-caller-supplied")
-        #expect(prefillRequest.execution.ext["melix.session_context.receipt_schema"] == nil)
-        #expect(prefillRequest.execution.ext["melix.session_context.receipt_count"] == nil)
-        #expect(prefillRequest.execution.ext["melix.session_context.receipts_json"] == nil)
+        #expect(ext["melix.session_context.receipt_schema"] == "melix.untrusted_context_receipt.v1")
+        #expect(ext["melix.session_context.receipt_count"] == "1")
+        #expect(receipts.count == 1)
+        #expect(receipt["schema_version"] as? String == "melix.untrusted_context_receipt.v1")
+        #expect(receipt["segment_id"] as? String == "req-explicit-restore:session-context:restore-snapshot")
+        #expect(receipt["source_type"] as? String == "background_continuation")
+        #expect(receipt["source_field"] as? String == "execution.cache_hints.restore_snapshot_id")
+        #expect(receipt["source_id"] as? String == "snap-caller-supplied")
+        #expect(receipt["boundary_checked"] as? Bool == true)
+        #expect(receipt["included"] as? Bool == true)
+        #expect(receipt["owner_scope_checked"] as? Bool == false)
 
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.finishDecode(requestID: "req-explicit-restore")
-        _ = await consumer.result
+        _ = try await consumer.value
+    }
+
+    @Test("explicit restore receipts do not require a session graph store")
+    func explicitRestoreReceiptsDoNotRequireSessionGraphStore() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-explicit-restore-no-store",
+                restoreSnapshotID: "snap-no-session-store",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let ext = prefillRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.session_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        let receipt = try #require(receipts.first)
+
+        #expect(prefillRequest.execution.cacheHints.restoreSnapshotID == "snap-no-session-store")
+        #expect(ext["melix.session_context.receipt_count"] == "1")
+        #expect(receipt["source_id"] as? String == "snap-no-session-store")
+        #expect(receipt["owner_scope_checked"] as? Bool == false)
+
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.finishDecode(requestID: "req-explicit-restore-no-store")
+        _ = try await consumer.value
+    }
+
+    @Test("explicit restore receipts preserve existing receipt ext metadata")
+    func explicitRestoreReceiptsPreserveExistingReceiptExtMetadata() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-explicit-restore-existing-ext",
+                restoreSnapshotID: "snap-caller-supplied",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.session_context.receipt_schema": "existing.schema",
+                    "melix.session_context.receipt_count": "7",
+                    "melix.session_context.receipts_json": "[{\"source_id\":\"existing-snapshot\"}]",
+                    "melix.unrelated": "kept",
+                ]
+            )
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let ext = prefillRequest.execution.ext
+
+        #expect(prefillRequest.execution.cacheHints.restoreSnapshotID == "snap-caller-supplied")
+        #expect(ext["melix.session_context.receipt_schema"] == "existing.schema")
+        #expect(ext["melix.session_context.receipt_count"] == "7")
+        #expect(ext["melix.session_context.receipts_json"] == "[{\"source_id\":\"existing-snapshot\"}]")
+        #expect(ext["melix.unrelated"] == "kept")
+
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.finishDecode(requestID: "req-explicit-restore-existing-ext")
+        _ = try await consumer.value
     }
 
     @Test("empty session context receipt inputs do not attach ext metadata")
