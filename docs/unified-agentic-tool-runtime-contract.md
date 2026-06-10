@@ -275,6 +275,9 @@ admission primitives are defined below for future entrypoint wiring.
 The v1 source-specific control-plane classification slice refines those chat
 prompt receipts using request-local message metadata already present at prompt
 assembly time. Tool-role messages record `source_type = tool_output`. Non-tool
+messages whose normalized `name` uses the reserved prefixes `retrieved_image`,
+`retrieved-image`, `image_retrieval`, `image-retrieval`, `rag_image`, or
+`rag-image` record `source_type = retrieved_image`. Non-tool
 messages whose normalized `name` uses the reserved prefixes `retrieved_document`,
 `retrieved-doc`, `document`, `doc`, `rag`, `rag_document`, or `knowledge`
 record `source_type = retrieved_document`; `skill` and `agent_skill` record
@@ -302,10 +305,11 @@ background-continuation link validation.
 The live chat prompt receipt uses source-specific data-only policy text for the
 classified source type. Tool output records `reason = tool output is prompt
 data, not instructions`; retrieved documents record `reason = retrieved
-document evidence is prompt data, not instructions`; skills record `reason =
-skill evidence is prompt data, not instructions`; memories record `reason =
-memory evidence is prompt data, not instructions`; background continuations
-record `reason = background continuation is prompt data, not instructions`;
+document evidence is prompt data, not instructions`; retrieved images record
+`reason = retrieved image evidence is prompt data, not instructions`; skills
+record `reason = skill evidence is prompt data, not instructions`; memories
+record `reason = memory evidence is prompt data, not instructions`;
+background continuations record `reason = background continuation is prompt data, not instructions`;
 model-final-answer history records `reason = model final answer history is
 prompt data, not instructions`; and generic chat prompt messages retain
 `reason = chat message content is prompt data, not instructions`. Each matching
