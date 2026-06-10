@@ -178,6 +178,28 @@ class LocalJobContinuationStore:
         saved = self.save_record(result.record, expected_revision=record.revision)
         return LocalJobContinuationReconciliation(record=saved, receipt=result.receipt)
 
+    def claim_followup(
+        self,
+        job_id: str,
+        *,
+        followup_session_id: str,
+        live_evidence: LocalJobLiveEvidence | None = None,
+    ) -> LocalJobContinuationReconciliation | None:
+        record = self.load_record(job_id)
+        if record is None:
+            return None
+
+        result = claim_local_job_followup(
+            record,
+            followup_session_id=followup_session_id,
+            live_evidence=live_evidence,
+        )
+        if result.record == record:
+            return result
+
+        saved = self.save_record(result.record, expected_revision=record.revision)
+        return LocalJobContinuationReconciliation(record=saved, receipt=result.receipt)
+
     def _record_path(self, job_id: str) -> Path:
         safe_job_id = _safe_job_id(job_id)
         return self.root / f"{safe_job_id}.json"
@@ -412,6 +434,86 @@ def reconcile_local_job_continuation(
     )
 
 
+def claim_local_job_followup(
+    record: LocalJobContinuationRecord,
+    *,
+    followup_session_id: str,
+    live_evidence: LocalJobLiveEvidence | None = None,
+) -> LocalJobContinuationReconciliation:
+    _validate_record(record)
+    normalized_followup_session_id = _required_runtime_text(
+        followup_session_id,
+        "followup_session_id",
+    )
+    reconciled = reconcile_local_job_continuation(record, live_evidence=live_evidence)
+    record = reconciled.record
+    evidence_available = _has_completion_evidence(record, live_evidence)
+
+    if reconciled.receipt.get("reason") == "missing_completion_evidence":
+        return reconciled
+
+    if record.followup_status in {"pending", "in_progress", "completed"}:
+        return LocalJobContinuationReconciliation(
+            record=record,
+            receipt=_receipt(
+                job_id=record.job_id,
+                status=record.status,
+                reason="followup_already_claimed",
+                session_id=record.session_id,
+                exit_status=record.exit_status,
+                followup_status=record.followup_status,
+                duplicate_launch_refused=False,
+                completion_evidence_available=evidence_available,
+                corrective_action=(
+                    "Do not enqueue another local job follow-up for this record."
+                ),
+                followup_session_id=record.followup_session_id,
+            ),
+        )
+
+    if record.status != "completed":
+        return LocalJobContinuationReconciliation(
+            record=record,
+            receipt=_receipt(
+                job_id=record.job_id,
+                status=record.status,
+                reason="followup_not_ready",
+                session_id=record.session_id,
+                exit_status=record.exit_status,
+                followup_status=record.followup_status,
+                duplicate_launch_refused=False,
+                completion_evidence_available=evidence_available,
+                corrective_action=(
+                    "Wait until the local job is completed with explicit evidence before follow-up."
+                ),
+                followup_session_id=record.followup_session_id,
+            ),
+        )
+
+    claimed = replace(
+        record,
+        followup_status="in_progress",
+        followup_session_id=normalized_followup_session_id,
+    )
+    return LocalJobContinuationReconciliation(
+        record=claimed,
+        receipt=_receipt(
+            job_id=record.job_id,
+            status=claimed.status,
+            reason="followup_claimed",
+            session_id=claimed.session_id,
+            exit_status=claimed.exit_status,
+            followup_status=claimed.followup_status,
+            duplicate_launch_refused=False,
+            completion_evidence_available=True,
+            corrective_action=(
+                "The monitor may project exactly one admitted background continuation."
+            ),
+            followup_session_id=claimed.followup_session_id,
+        ),
+    )
+
+
 def _receipt(
     *,
     job_id: str,
@@ -423,6 +525,7 @@ def _receipt(
     duplicate_launch_refused: bool,
     completion_evidence_available: bool,
     corrective_action: str,
+    followup_session_id: str = "",
 ) -> dict[str, Any]:
     return {
         "schema_version": RECEIPT_SCHEMA_VERSION,
@@ -432,6 +535,7 @@ def _receipt(
         "session_id": session_id,
         "exit_status": exit_status,
         "followup_status": followup_status,
+        "followup_session_id": followup_session_id,
         "duplicate_launch_refused": duplicate_launch_refused,
         "completion_evidence_available": completion_evidence_available,
         "corrective_action": corrective_action,
@@ -526,6 +630,12 @@ def _required_text(payload: dict[str, Any], field_name: str) -> str:
     return value
 
 
+def _required_runtime_text(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value.strip()
+
+
 def _required_list(payload: dict[str, Any], field_name: str) -> Sequence[Any]:
     value = payload.get(field_name)
     if not isinstance(value, list) or not value:
@@ -599,5 +709,6 @@ __all__ = [
     "LocalJobContinuationStore",
     "LocalJobContinuationStoreError",
     "LocalJobLiveEvidence",
+    "claim_local_job_followup",
     "reconcile_local_job_continuation",
 ]

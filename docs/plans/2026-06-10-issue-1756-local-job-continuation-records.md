@@ -21,9 +21,13 @@ This slice covers:
 - a store-backed reconciliation entrypoint that loads the latest persisted
   record, applies live evidence, and writes revived or evidence-enriched state
   back with the record revision guard;
+- a store-backed follow-up claim primitive that marks an evidence-backed
+  completed job as `in_progress` exactly once before a later monitor projects
+  prompt follow-up data;
 - typed receipts for `live_session_reused`, `stale_done_revived`,
-  `completion_evidence_accepted`, `missing_completion_evidence`, and store
-  write refusal cases;
+  `completion_evidence_accepted`, `missing_completion_evidence`,
+  `followup_claimed`, `followup_already_claimed`, `followup_not_ready`, and
+  store write refusal cases;
 - focused Python tests for record round-trip, stale-state self-healing,
   duplicate-launch refusal through live-session reuse, completion evidence
   gating, and write guards;
@@ -31,7 +35,9 @@ This slice covers:
 
 This slice does not start shell commands, poll processes, tail logs, inject chat
 follow-ups, or resume a workflow session. Future runner and monitor slices will
-use this primitive before adding side effects.
+use this primitive before adding side effects. The follow-up claim primitive is
+the monitor-side state transition that future side-effecting monitors must
+perform before prompt projection.
 
 ## Best End-State Architecture
 
@@ -61,6 +67,9 @@ Success metrics:
   candidate exists;
 - store-backed reconciliation performs one bounded record read and, only when
   state changes, one guarded atomic record write;
+- follow-up claiming performs one bounded record read and, only when a
+  completed evidence-backed record is claimable or blocked by missing evidence,
+  one guarded atomic record write;
 - changed-line Python coverage for the touched runtime module and tests is at
   least 95 percent;
 - local and hosted PR-scoped performance reports are `Status: ok` with zero
@@ -82,9 +91,12 @@ Success metrics:
    `LocalJobContinuationStore`, and `reconcile_local_job_continuation`.
 3. Add store-backed reconciliation so future monitors can self-heal stale
    persisted state in place without bypassing revision guards.
-4. Record the contract in the unified agentic runtime document beside the
+4. Add store-backed follow-up claiming so a future monitor can reserve exactly
+   one prompt follow-up for an evidence-backed completed job while preserving
+   duplicate-claim and missing-evidence receipts.
+5. Record the contract in the unified agentic runtime document beside the
    existing background-continuation prompt-boundary primitive.
-5. Run focused tests, changed-line coverage, full local pre-commit, and the PR
+6. Run focused tests, changed-line coverage, full local pre-commit, and the PR
    performance gate before merge.
 
 ## Success Criteria
@@ -97,6 +109,9 @@ Success metrics:
 - A live matching session is reused instead of duplicated, with a typed receipt.
 - Store-backed reconciliation persists revived running state and live completion
   evidence with optimistic revision protection.
+- Store-backed follow-up claiming marks an evidence-backed completed record
+  `in_progress` exactly once, persists live completion evidence before claiming
+  when needed, and rejects duplicate or premature claims with typed receipts.
 - Concurrent record writes are rejected before silent overwrite, while stale
   lock files left by dead writer processes may be recovered without human
   cleanup after the stale file is guarded, renamed, and revalidated.
