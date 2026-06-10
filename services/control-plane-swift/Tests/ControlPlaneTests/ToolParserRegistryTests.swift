@@ -768,6 +768,80 @@ struct ToolParserRegistryTests {
         #expect(shaped.toolParser?.mcpSourceIDs == ["filesystem", "math"])
     }
 
+    @Test("translated MCP tool catalogs attach skill prompt context receipts")
+    func translatedMCPToolCatalogsAttachSkillPromptContextReceipts() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-mcp-skill-receipts" })
+        let catalog = MCPToolCatalog(
+            configPath: "/tmp/private-mcp-tools.json",
+            defaultParserMode: .json,
+            sources: [
+                .init(
+                    sourceID: "filesystem",
+                    enabled: true,
+                    namespaces: ["tools.fs.read", "tools.fs.write"]
+                ),
+                .init(
+                    sourceID: "math",
+                    enabled: true,
+                    namespaces: ["tools.math"]
+                ),
+            ]
+        )
+
+        let translated = try translator.translate(
+            makeNormalizedRequest(),
+            modelHandle: "worker-text",
+            mcpToolCatalog: catalog
+        )
+        let ext = translated.workerRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.mcp.prompt_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+
+        #expect(ext["melix.mcp.source_ids"] == "filesystem,math")
+        #expect(ext["melix.mcp.prompt_context.receipt_schema"] == "melix.untrusted_context_receipt.v1")
+        #expect(ext["melix.mcp.prompt_context.receipt_count"] == "2")
+        #expect(receipts.compactMap { $0["source_id"] as? String } == ["filesystem", "math"])
+        #expect(receipts.compactMap { $0["segment_id"] as? String } == [
+            "req-mcp-skill-receipts:mcp-source-0",
+            "req-mcp-skill-receipts:mcp-source-1",
+        ])
+        #expect(receipts.allSatisfy { $0["source_type"] as? String == "skill" })
+        #expect(receipts.allSatisfy { $0["source_field"] as? String == "mcp_tool_catalog" })
+        #expect(receipts.allSatisfy { $0["message_role"] as? String == "user" })
+        #expect(receipts.allSatisfy { $0["policy"] as? String == "data_only" })
+        #expect(receipts.allSatisfy { $0["included"] as? Bool == true })
+        #expect(receipts.allSatisfy { $0["owner_scope_checked"] as? Bool == false })
+        #expect(receipts.allSatisfy { $0["reason"] as? String == "skill evidence is prompt data, not instructions" })
+        #expect(receiptsJSON.contains("private-mcp-tools") == false)
+        #expect(receiptsJSON.contains("tools.fs.read") == false)
+        #expect(receiptsJSON.contains("tools.math") == false)
+    }
+
+    @Test("MCP prompt context receipts ignore blank source ids")
+    func mcpPromptContextReceiptsIgnoreBlankSourceIDs() throws {
+        #expect(
+            MCPPromptContextBoundaryReceipts(
+                requestID: "req-mcp-empty",
+                sourceIDs: ["  ", "\n"]
+            ).extFields.isEmpty
+        )
+
+        let ext = MCPPromptContextBoundaryReceipts(
+            requestID: "req-mcp-trimmed",
+            sourceIDs: ["  filesystem  ", ""]
+        ).extFields
+        let receiptsJSON = try #require(ext["melix.mcp.prompt_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+
+        #expect(ext["melix.mcp.prompt_context.receipt_count"] == "1")
+        #expect(receipts.compactMap { $0["source_id"] as? String } == ["filesystem"])
+        #expect(receipts.compactMap { $0["segment_id"] as? String } == ["req-mcp-trimmed:mcp-source-0"])
+    }
+
     @Test("mcp tool catalogs merge into model defaults without losing model parser mode")
     func mcpToolCatalogsMergeIntoModelDefaultsWithoutLosingModelParserMode() throws {
         var settings = Melix_Controlplane_V1_ModelSettings()
