@@ -2,18 +2,22 @@
 
 ## Status
 
-Accepted IA direction. Formal product specification now lives in
-[`../window-ui-product-spec.md`](../window-ui-product-spec.md).
+Superseded by the June 8, 2026 chat-first Window UI refresh. The formal product
+specification now lives in [`../window-ui-product-spec.md`](../window-ui-product-spec.md),
+and the active implementation plan is
+[`2026-06-08-window-ui-chat-first-refresh.md`](2026-06-08-window-ui-chat-first-refresh.md).
 
-This file is an implementation-planning record. If this plan appears to
-conflict with the product spec, the product spec wins.
+This file remains an implementation-planning record for the earlier 10-domain
+IA slice. If this plan appears to conflict with the product spec or the active
+chat-first refresh plan, the newer product spec and active plan win.
 
 ## Goal
 
-Refresh the Melix desktop window UI so it reads as a local-first AI runtime
-operator console while keeping Chat as the default first surface.
+This earlier plan refreshed the Melix desktop window UI so it read as a
+local-first AI runtime operator console while keeping Chat as the default first
+surface.
 
-The accepted direction is:
+The superseded direction was:
 
 ```text
 Chat
@@ -33,15 +37,17 @@ Settings
 Implementation slices must follow
 [`docs/window-ui-product-spec.md`](../window-ui-product-spec.md), including:
 
+- the five-domain titlebar IA;
+- Chat-first readiness and setup behavior;
+- provider/model/queue context outside the titlebar;
+- Providers under Servers;
+- Hugging Face discovery under Models;
+- Workflows local-provider-only constraints;
 - product object terminology;
 - health, execution, and review-state vocabularies;
 - route and selected-object behavior;
 - Inspector contract;
 - inbound and outbound credential boundaries;
-- Chat runtime-binding rules;
-- server creation split;
-- Jobs and artifact-lineage rules;
-- first-run local-server simplification;
 - visual-system constraints.
 
 ## Walkthrough Evidence
