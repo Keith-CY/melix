@@ -341,6 +341,7 @@ def test_workflow_continuation_result_accepts_entrypoint_receipt_metadata() -> N
     (
         ({"workflow_run_id": 123}, "workflow_run_id", "unknown-workflow", False),
         ({"workflow_node_id": object()}, "workflow_node_id", "workflow-invalid", False),
+        ({"workflow_node_id": " "}, "workflow_node_id", "workflow-invalid", False),
         ({"workflow_result": "done"}, "workflow_result", "workflow-invalid", False),
         (
             {"workflow_result": "done", "owner_scope_checked": True},
