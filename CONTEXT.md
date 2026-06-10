@@ -176,6 +176,28 @@ _Avoid_: External URL input, floating media reference
 A real-model acceptance target defined at the model-family level and satisfied by one or more concrete model artifacts. It records both the family identity and the concrete model evidence so similarly configured families are not accidentally treated as interchangeable.
 _Avoid_: Single model ID gate, display-name matching
 
+## Compatibility And Conformance Language
+
+**OpenAI Compatibility Conformance**:
+The testable contract that Melix's OpenAI-compatible surfaces preserve request shape, tool and function-calling semantics, streaming chunk ordering and terminal events, per-request sampling-field passthrough, and typed error payloads. It is the named contract that replaces ad hoc client smoke tests, not any single test file.
+_Avoid_: Smoke test, client sanity check, generic API test
+
+**Conformance Matrix**:
+The in-process proof that posts table-driven OpenAI payloads through the control-plane handler against a recording worker fixture and records each row's field, route, expected behavior, and observed status. It proves request translation and response shape deterministically without a live endpoint or real backend.
+_Avoid_: Runnable harness, live conformance run, end-to-end client
+
+**Conformance Harness**:
+The runnable client that exercises OpenAI Compatibility Conformance against a live local endpoint or a configured remote Server Profile and emits a machine-readable operator evidence artifact. It supports a deterministic mock-backend mode for CI and a real-backend smoke mode for operator evidence. It is distinct from the in-process Conformance Matrix, which never opens a socket.
+_Avoid_: In-process matrix, unit-test report, smoke script
+
+**Proxy Parity**:
+The equivalence of request translation and response shape between the local backend and a configured remote Server Profile for the same OpenAI-compatible request. It is a request/response contract, separate from remote-provider endpoint health and capability probes, which only prove reachability and advertised features.
+_Avoid_: Health probe, capability receipt, reachability check
+
+**Repeated-Run Benchmark Group**:
+The aggregate of repeated benchmark observations that share one benchmark configuration identity, excluding repeat index, reporting mean, standard deviation, and a 95 percent confidence interval per metric. A single-run group is valid but informational because variance cannot be estimated from one sample.
+_Avoid_: Per-run row, single point estimate, averaged benchmark
+
 ## Desktop Operator UI Language
 
 **Server Profile**:
