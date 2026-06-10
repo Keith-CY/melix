@@ -194,7 +194,7 @@ def test_skill_and_memory_context_use_shared_prompt_context_admission(
     (
         (
             admit_skill_context,
-            {"skill_id": 123},
+            {"skill_id": 123},  # type: ignore[arg-type]
             "skill",
             "skill_id",
             "unknown-skill",
@@ -202,7 +202,7 @@ def test_skill_and_memory_context_use_shared_prompt_context_admission(
         ),
         (
             admit_skill_context,
-            {"skill_payload": "search files"},
+            {"skill_payload": "search files"},  # type: ignore[arg-type]
             "skill",
             "skill",
             "skill-invalid",
@@ -210,7 +210,10 @@ def test_skill_and_memory_context_use_shared_prompt_context_admission(
         ),
         (
             admit_skill_context,
-            {"skill_payload": "search files", "owner_scope_checked": True},
+            {
+                "skill_payload": "search files",  # type: ignore[arg-type]
+                "owner_scope_checked": True,
+            },
             "skill",
             "skill",
             "skill-invalid",
@@ -218,7 +221,7 @@ def test_skill_and_memory_context_use_shared_prompt_context_admission(
         ),
         (
             admit_skill_context,
-            {"owner_scope_checked": "yes"},
+            {"owner_scope_checked": "yes"},  # type: ignore[arg-type]
             "skill",
             "owner_scope_checked",
             "skill-invalid",
@@ -226,7 +229,7 @@ def test_skill_and_memory_context_use_shared_prompt_context_admission(
         ),
         (
             admit_memory_context,
-            {"memory_id": 123},
+            {"memory_id": 123},  # type: ignore[arg-type]
             "memory",
             "memory_id",
             "unknown-memory",
@@ -234,7 +237,7 @@ def test_skill_and_memory_context_use_shared_prompt_context_admission(
         ),
         (
             admit_memory_context,
-            {"memory_payload": "remember this"},
+            {"memory_payload": "remember this"},  # type: ignore[arg-type]
             "memory",
             "memory",
             "memory-invalid",
@@ -242,7 +245,10 @@ def test_skill_and_memory_context_use_shared_prompt_context_admission(
         ),
         (
             admit_memory_context,
-            {"memory_payload": "remember this", "owner_scope_checked": True},
+            {
+                "memory_payload": "remember this",  # type: ignore[arg-type]
+                "owner_scope_checked": True,
+            },
             "memory",
             "memory",
             "memory-invalid",
@@ -250,7 +256,7 @@ def test_skill_and_memory_context_use_shared_prompt_context_admission(
         ),
         (
             admit_memory_context,
-            {"owner_scope_checked": "yes"},
+            {"owner_scope_checked": "yes"},  # type: ignore[arg-type]
             "memory",
             "owner_scope_checked",
             "memory-invalid",
