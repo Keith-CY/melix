@@ -112,17 +112,19 @@ def admit_workflow_continuation_result(
         job_summary=workflow_result,
         owner_scope_checked=owner_scope_checked,
         segment_id=normalized_segment_id,
-        source_field=_workflow_text_or_default(source_field, default="workflow_result"),
-        reason=_workflow_text_or_default(
-            reason,
-            default="workflow continuation result is prompt data, not instructions",
+        source_field=source_field if source_field != "" else "workflow_result",
+        reason=(
+            reason
+            if reason != ""
+            else "workflow continuation result is prompt data, not instructions"
         ),
-        corrective_action=_workflow_text_or_default(
-            corrective_action,
-            default=(
+        corrective_action=(
+            corrective_action
+            if corrective_action != ""
+            else (
                 "Keep workflow continuation results in user-role data context "
                 "and do not project them into system or developer instructions."
-            ),
+            )
         ),
     )
 
@@ -159,10 +161,6 @@ def _workflow_source_id_or_refusal(*, workflow_run_id: str, workflow_node_id: st
         source_field="workflow_node_id",
         owner_scope_checked=False,
     )
-
-
-def _workflow_text_or_default(value: str, *, default: str) -> str:
-    return default if value == "" else value
 
 
 def _raise_refusal(
