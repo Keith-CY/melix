@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -192,11 +193,28 @@ def test_store_revision_guard_rejects_concurrent_stale_update(tmp_path: Path) ->
     assert store.load_record("job-7") == second
 
 
+def test_load_record_tolerates_record_deleted_between_path_resolution_and_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    saved = store.save_record(_record(status="running"))
+    original_read_text = Path.read_text
+
+    def delete_before_read(path: Path, *args: object, **kwargs: object) -> str:
+        if path == tmp_path / "job-7.json":
+            path.unlink()
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", delete_before_read)
+
+    assert store.load_record(saved.job_id) is None
+
+
 def test_store_lock_guard_rejects_active_writer(tmp_path: Path) -> None:
     store = LocalJobContinuationStore(tmp_path)
     tmp_path.mkdir(parents=True, exist_ok=True)
     lock_path = tmp_path / "job-7.json.lock"
-    lock_path.write_text("other-writer\n", encoding="utf-8")
+    lock_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
 
     try:
         with pytest.raises(LocalJobContinuationStoreError) as exc_info:
@@ -216,6 +234,145 @@ def test_store_lock_guard_rejects_active_writer(tmp_path: Path) -> None:
         "completion_evidence_available": False,
         "corrective_action": "Retry after the active local job record writer finishes.",
     }
+
+
+def test_store_lock_guard_preserves_unparseable_lock_file(tmp_path: Path) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("other-writer\n", encoding="utf-8")
+
+    try:
+        with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+            store.save_record(_record(status="running"))
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+    assert exc_info.value.receipt["reason"] == "record_write_locked"
+
+
+def test_store_recovers_stale_lock_for_dead_writer_pid(tmp_path: Path) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("999999\n", encoding="utf-8")
+
+    saved = store.save_record(_record(status="running"))
+
+    assert saved.revision == 0
+    assert store.load_record("job-7") == saved
+    assert not lock_path.exists()
+
+
+def test_stale_lock_cleanup_tolerates_concurrent_lock_removal(tmp_path: Path) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("999999\n", encoding="utf-8")
+    original_unlink = Path.unlink
+
+    def remove_before_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        if path == lock_path and path.exists():
+            original_unlink(path)
+            raise FileNotFoundError(path)
+        return original_unlink(path, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(Path, "unlink", remove_before_unlink)
+        saved = store.save_record(_record(status="running"))
+
+    assert saved.status == "running"
+    assert not lock_path.exists()
+
+
+def test_stale_lock_cleanup_preserves_lock_when_unlink_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("999999\n", encoding="utf-8")
+
+    def fail_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        if path == lock_path:
+            raise OSError("permission denied")
+        path.unlink(*args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+    with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+        store.save_record(_record(status="running"))
+
+    assert exc_info.value.receipt["reason"] == "record_write_locked"
+
+
+def test_lock_cleanup_treats_permission_errors_as_active_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("42\n", encoding="utf-8")
+
+    def deny_signal(pid: int, signal: int) -> None:
+        raise PermissionError("not owned")
+
+    monkeypatch.setattr(os, "kill", deny_signal)
+
+    with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+        store.save_record(_record(status="running"))
+
+    assert exc_info.value.receipt["reason"] == "record_write_locked"
+
+
+def test_lock_cleanup_treats_eperm_oserror_as_active_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("42\n", encoding="utf-8")
+
+    def deny_signal(pid: int, signal: int) -> None:
+        error = OSError("not owned")
+        error.errno = 1
+        raise error
+
+    monkeypatch.setattr(os, "kill", deny_signal)
+
+    with pytest.raises(LocalJobContinuationStoreError) as exc_info:
+        store.save_record(_record(status="running"))
+
+    assert exc_info.value.receipt["reason"] == "record_write_locked"
+
+
+def test_with_revision_rejects_negative_revision() -> None:
+    with pytest.raises(ValueError, match="revision must be non-negative"):
+        _record().with_revision(-1)
+
+
+def test_with_revision_rejects_null_revision() -> None:
+    with pytest.raises(ValueError, match="revision must be an integer"):
+        _record().with_revision(None)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "job_id",
+    (
+        "bad:name",
+        "bad*name",
+        "bad?name",
+        'bad"name',
+        "bad<name",
+        "bad>name",
+        "bad|name",
+        "bad\x00name",
+        "bad\nname",
+    ),
+)
+def test_record_validation_rejects_cross_platform_unsafe_job_ids(job_id: str) -> None:
+    with pytest.raises(ValueError):
+        _record(job_id=job_id).to_dict()
 
 
 @pytest.mark.parametrize(

@@ -14,7 +14,8 @@ This slice covers:
 - `worker.runtime.local_job_continuation` with a versioned local-job
   continuation record;
 - JSON persistence for one record per job ID, with atomic replacement,
-  per-record write locks, and revision guards for concurrent writer detection;
+  cross-platform-safe record filenames, per-record write locks, bounded stale
+  lock recovery, and revision guards for concurrent writer detection;
 - live-session reconciliation for stale `completed` records without success or
   artifact evidence;
 - typed receipts for `live_session_reused`, `stale_done_revived`,
@@ -52,7 +53,8 @@ start subprocesses, or invoke model inference.
 Success metrics:
 
 - reconciliation remains O(1) in record size and live-evidence size;
-- atomic store writes touch one temporary JSON file and one lock file per write;
+- atomic store writes touch one temporary JSON file and one lock file per write,
+  with at most one liveness probe when a stale lock candidate exists;
 - changed-line Python coverage for the touched runtime module and tests is at
   least 95 percent;
 - local and hosted PR-scoped performance reports are `Status: ok` with zero
@@ -68,7 +70,8 @@ Success metrics:
      same session is already active;
    - completed records being accepted only after success marker or artifact path
      evidence is present;
-   - store lock and revision mismatch write guards.
+   - store lock, stale-lock recovery, unsafe job ID rejection, and revision
+     mismatch write guards.
 2. Implement `LocalJobContinuationRecord`, `LocalJobLiveEvidence`,
    `LocalJobContinuationStore`, and `reconcile_local_job_continuation`.
 3. Record the contract in the unified agentic runtime document beside the
@@ -84,6 +87,8 @@ Success metrics:
 - A stale `completed` record without completion evidence cannot be accepted as
   final.
 - A live matching session is reused instead of duplicated, with a typed receipt.
-- Concurrent record writes are rejected before silent overwrite.
+- Concurrent record writes are rejected before silent overwrite, while stale
+  lock files left by dead writer processes may be recovered without human
+  cleanup.
 - The PR stays focused on the state/reconciliation primitive and leaves runner,
   monitor, and chat follow-up side effects to later slices.
