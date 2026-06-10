@@ -322,6 +322,23 @@ skill entrypoints, memory entrypoints, and background-job continuations must
 reuse this receipt shape when they add their prompt-context boundary evidence
 under #1761.
 
+The v1 control-plane session-context slice records the same receipt shape when
+`RequestCoordinator` resolves an implicit follow-up restore snapshot from
+`SessionGraphStore`. These receipts are stored in `ExecutionMetadata.ext` as:
+
+- `melix.session_context.receipt_schema`
+- `melix.session_context.receipt_count`
+- `melix.session_context.receipts_json`
+
+The session-context receipt uses `source_type = background_continuation`,
+`source_field = execution.cache_hints.restore_snapshot_id`, and records the
+selected snapshot ID as `source_id`. `owner_scope_checked` is `true` only for
+the in-memory session graph lookup that matched the request session and
+selected branch before setting the restore snapshot. Caller-supplied explicit
+`restore_snapshot_id` values are not marked as owner-scope checked by this
+slice. The receipt must not include raw prompt text, hidden reasoning text,
+prior model output, or private prompt bodies.
+
 The v1 Python worker prompt-context primitive is
 `worker.runtime.untrusted_context.untrusted_context_receipt`. It constructs the
 stable `melix.untrusted_context_receipt.v1` dictionary for both admitted and
