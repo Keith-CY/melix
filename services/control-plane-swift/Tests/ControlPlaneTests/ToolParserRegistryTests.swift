@@ -485,12 +485,13 @@ struct ToolParserRegistryTests {
         )
 
         let receiptsBySourceType = Dictionary(
-            uniqueKeysWithValues: receipts.compactMap { receipt -> (String, [String: Any])? in
+            receipts.compactMap { receipt -> (String, [String: Any])? in
                 guard let sourceType = receipt["source_type"] as? String else {
                     return nil
                 }
                 return (sourceType, receipt)
-            }
+            },
+            uniquingKeysWith: { first, _ in first }
         )
 
         #expect(ext["melix.prompt_context.receipt_count"] == "7")

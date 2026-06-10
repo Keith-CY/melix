@@ -9,12 +9,12 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
     init(requestID: String, messages: [NormalizedTextMessage]) {
         var receipts: [[String: PromptContextReceiptValue]] = []
         for (messageIndex, message) in messages.enumerated() where Self.isUntrustedMessageRole(message.role) {
+            let sourceType = Self.sourceType(for: message)
+            let policy = Self.sourcePolicy(for: sourceType)
             for (partIndex, part) in message.parts.enumerated() {
                 guard let sourceField = Self.sourceField(for: part, messageIndex: messageIndex, partIndex: partIndex) else {
                     continue
                 }
-                let sourceType = Self.sourceType(for: message)
-                let policy = Self.sourcePolicy(for: sourceType)
                 var receipt: [String: PromptContextReceiptValue] = [
                     "schema_version": .string(Self.schemaVersion),
                     "segment_id": .string("\(requestID):message-\(messageIndex):part-\(partIndex)"),
