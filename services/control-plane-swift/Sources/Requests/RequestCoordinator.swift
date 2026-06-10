@@ -1563,12 +1563,14 @@ public actor RequestCoordinator {
         var workerRequest = translatedRequest.workerRequest
         let restoreSnapshotID = workerRequest.execution.cacheHints.restoreSnapshotID
         if !restoreSnapshotID.isEmpty {
+            let receiptExtFields = SessionContextBoundaryReceipts(
+                requestID: workerRequest.execution.id.requestID,
+                restoreSnapshotID: restoreSnapshotID,
+                ownerScopeChecked: false
+            ).extFields
+            // Preserve receipt metadata already attached by an upstream boundary step.
             workerRequest.execution.ext.merge(
-                SessionContextBoundaryReceipts(
-                    requestID: workerRequest.execution.id.requestID,
-                    restoreSnapshotID: restoreSnapshotID,
-                    ownerScopeChecked: false
-                ).extFields,
+                receiptExtFields,
                 uniquingKeysWith: { existingValue, _ in existingValue }
             )
         }

@@ -2143,6 +2143,7 @@ struct RequestCoordinatorTests {
                 for try await _ in execution.stream {
                 }
             } catch {
+                Issue.record(error)
             }
         }
         defer { consumer.cancel() }
@@ -2193,6 +2194,7 @@ struct RequestCoordinatorTests {
                 for try await _ in execution.stream {
                 }
             } catch {
+                Issue.record(error)
             }
         }
         defer { consumer.cancel() }
@@ -2212,6 +2214,51 @@ struct RequestCoordinatorTests {
 
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.finishDecode(requestID: "req-explicit-restore-no-store")
+        _ = await consumer.result
+    }
+
+    @Test("explicit restore receipts preserve existing receipt ext metadata")
+    func explicitRestoreReceiptsPreserveExistingReceiptExtMetadata() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-explicit-restore-existing-ext",
+                restoreSnapshotID: "snap-caller-supplied",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.session_context.receipt_schema": "existing.schema",
+                    "melix.session_context.receipt_count": "7",
+                    "melix.session_context.receipts_json": "[{\"source_id\":\"existing-snapshot\"}]",
+                    "melix.unrelated": "kept",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+                Issue.record(error)
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let ext = prefillRequest.execution.ext
+
+        #expect(prefillRequest.execution.cacheHints.restoreSnapshotID == "snap-caller-supplied")
+        #expect(ext["melix.session_context.receipt_schema"] == "existing.schema")
+        #expect(ext["melix.session_context.receipt_count"] == "7")
+        #expect(ext["melix.session_context.receipts_json"] == "[{\"source_id\":\"existing-snapshot\"}]")
+        #expect(ext["melix.unrelated"] == "kept")
+
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.finishDecode(requestID: "req-explicit-restore-existing-ext")
         _ = await consumer.result
     }
 
