@@ -439,7 +439,11 @@ job ID, command vector, working directory, log path, exit status, timeout,
 originating session ID, follow-up status, follow-up session ID,
 `followed_up_at`, and explicit completion evidence paths. Store writes use
 atomic JSON replacement plus per-record write locks and revision checks so
-concurrent writers fail closed instead of silently overwriting each other.
+concurrent writers fail closed instead of silently overwriting each other. Job
+IDs must be cross-platform-safe record filenames. If a lock file belongs to a
+dead writer PID, the store may remove it before retrying the write; malformed
+lock files, permission-protected active processes, and failed lock cleanup all
+preserve the lock and emit a write-refusal receipt instead.
 
 Persisted local-job state is advisory. A record marked `completed` is accepted
 as final only when a success marker path or artifact path is present on the
