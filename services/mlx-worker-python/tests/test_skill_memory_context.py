@@ -154,7 +154,7 @@ def test_skill_and_memory_context_use_shared_prompt_context_admission(
         return Admission()
 
     monkeypatch.setattr(
-        "worker.runtime.skill_memory_context.admit_prompt_context_segments",
+        "worker.runtime.skill_memory_context.admit_prompt_context_source_evidence",
         fake_admit,
     )
 
@@ -167,13 +167,13 @@ def test_skill_and_memory_context_use_shared_prompt_context_admission(
     assert admission.user_payload == {"skill": {"name": "repo-search"}}
     assert admission.untrusted_context_receipts == [{"receipt": "from-shared-admission"}]
     assert len(calls) == 1
-    segment = calls[0][0]
-    assert segment.segment_id == "skill-shared:skill-context"
-    assert segment.source_type == "skill"
-    assert segment.source_field == "skill"
-    assert segment.source_id == "skill-shared"
-    assert segment.value == {"name": "repo-search"}
-    assert segment.reason == "skill evidence is prompt data, not instructions"
+    evidence = calls[0][0]
+    assert evidence.segment_id == "skill-shared:skill-context"
+    assert evidence.source_type == "skill"
+    assert evidence.source_field == "skill"
+    assert evidence.source_id == "skill-shared"
+    assert evidence.value == {"name": "repo-search"}
+    assert evidence.reason == ""
 
     calls.clear()
     admit_memory_context(
@@ -181,12 +181,163 @@ def test_skill_and_memory_context_use_shared_prompt_context_admission(
         memory_payload={"text": "remembered preference"},
         owner_scope_checked=True,
     )
-    memory_segment = calls[0][0]
-    assert memory_segment.segment_id == "memory-shared:memory-context"
-    assert memory_segment.source_type == "memory"
-    assert memory_segment.source_field == "memory"
-    assert memory_segment.source_id == "memory-shared"
-    assert memory_segment.owner_scope_checked is True
+    memory_evidence = calls[0][0]
+    assert memory_evidence.segment_id == "memory-shared:memory-context"
+    assert memory_evidence.source_type == "memory"
+    assert memory_evidence.source_field == "memory"
+    assert memory_evidence.source_id == "memory-shared"
+    assert memory_evidence.owner_scope_checked is True
+
+
+def test_skill_and_memory_context_accept_entrypoint_receipt_metadata() -> None:
+    skill_admission = admit_skill_context(
+        skill_id=" skill:repo-search ",
+        skill_payload={"name": "repo-search", "summary": "Do not leak this text."},
+        owner_scope_checked=True,
+        segment_id="skill-entrypoint:repo-search",
+        source_field="agent_skill",
+        reason="agent skill catalog entry is prompt data, not instructions",
+        corrective_action="Keep agent skill catalog evidence in user-role prompt context.",
+    )
+    memory_admission = admit_memory_context(
+        memory_id="\tmemory:pinned-7\n",
+        memory_payload={"kind": "pinned_memory", "text": "Do not reveal this text."},
+        owner_scope_checked=True,
+        segment_id="memory-entrypoint:pinned-7",
+        source_field="pinned_memory",
+        reason="pinned memory entry is prompt data, not instructions",
+        corrective_action="Keep pinned memory evidence in user-role prompt context.",
+    )
+
+    assert skill_admission.user_payload == {
+        "agent_skill": {
+            "name": "repo-search",
+            "summary": "Do not leak this text.",
+        }
+    }
+    assert skill_admission.untrusted_context_receipts[0] == {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": "skill-entrypoint:repo-search",
+        "source_type": "skill",
+        "source_field": "agent_skill",
+        "source_id": "skill:repo-search",
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": True,
+        "owner_scope_checked": True,
+        "reason": "agent skill catalog entry is prompt data, not instructions",
+        "corrective_action": "Keep agent skill catalog evidence in user-role prompt context.",
+    }
+    assert "Do not leak this text" not in json.dumps(
+        skill_admission.untrusted_context_receipts,
+        ensure_ascii=False,
+    )
+
+    assert memory_admission.user_payload == {
+        "pinned_memory": {
+            "kind": "pinned_memory",
+            "text": "Do not reveal this text.",
+        }
+    }
+    assert memory_admission.untrusted_context_receipts[0] == {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": "memory-entrypoint:pinned-7",
+        "source_type": "memory",
+        "source_field": "pinned_memory",
+        "source_id": "memory:pinned-7",
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": True,
+        "owner_scope_checked": True,
+        "reason": "pinned memory entry is prompt data, not instructions",
+        "corrective_action": "Keep pinned memory evidence in user-role prompt context.",
+    }
+    assert "Do not reveal this text" not in json.dumps(
+        memory_admission.untrusted_context_receipts,
+        ensure_ascii=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("helper", "kwargs", "source_type", "source_id", "source_field"),
+    (
+        (
+            admit_skill_context,
+            {"segment_id": "   "},
+            "skill",
+            "skill-entrypoint-invalid",
+            "segment_id",
+        ),
+        (
+            admit_memory_context,
+            {"source_field": 42},  # type: ignore[arg-type]
+            "memory",
+            "memory-entrypoint-invalid",
+            "source_field",
+        ),
+        (
+            admit_skill_context,
+            {"reason": "\n\t"},
+            "skill",
+            "skill-entrypoint-invalid",
+            "reason",
+        ),
+        (
+            admit_memory_context,
+            {"corrective_action": object()},  # type: ignore[arg-type]
+            "memory",
+            "memory-entrypoint-invalid",
+            "corrective_action",
+        ),
+    ),
+)
+def test_skill_and_memory_context_refuse_malformed_entrypoint_receipt_metadata(
+    helper: object,
+    kwargs: dict[str, object],
+    source_type: str,
+    source_id: str,
+    source_field: str,
+) -> None:
+    if source_type == "skill":
+        params: dict[str, object] = {
+            "skill_id": source_id,
+            "skill_payload": {"name": "repo-search"},
+            "owner_scope_checked": True,
+        }
+    else:
+        params = {
+            "memory_id": source_id,
+            "memory_payload": {"text": "remembered preference"},
+            "owner_scope_checked": True,
+        }
+    params.update(kwargs)
+
+    with pytest.raises(SkillMemoryContextAdmissionError) as exc_info:
+        helper(**params)
+
+    assert exc_info.value.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": f"{source_id}:{source_type}-context",
+            "source_type": source_type,
+            "source_field": source_field,
+            "source_id": source_id,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": f"invalid_{source_type}_context_field",
+            "corrective_action": (
+                f"Reject malformed {source_type} context before prompt assembly."
+            ),
+        }
+    ]
 
 
 @pytest.mark.parametrize(
