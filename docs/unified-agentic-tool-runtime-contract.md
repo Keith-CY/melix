@@ -397,6 +397,19 @@ not implement retrieval storage, ranking, indexing, ingestion, or chat/session
 wiring; they are only the prompt-context boundary for evidence admitted by
 those later surfaces.
 
+The v1 control-plane rerank document-boundary slice applies the same receipt
+schema to the OpenAI-compatible `/v1/rerank` HTTP response. The handler emits
+one redacted `source_type = retrieved_document` receipt per candidate document
+under `untrusted_context_receipts`, plus
+`untrusted_context_receipt_schema = melix.untrusted_context_receipt.v1`. These
+receipts identify request-local document indexes and source IDs only; they must
+not include candidate document text, query text, prompt bodies, media URIs, or
+private source payloads. Because `/v1/rerank` receives caller-supplied
+documents directly and does not perform durable retrieval-store lookup in this
+slice, those receipts set `owner_scope_checked = false`. Future RAG or
+session-backed retrieval entrypoints must perform owner-scope validation before
+setting that field to `true`.
+
 The agentic judge prompt snapshot must also surface receipt evidence that is
 already attached to executed `agentic_tool_observations`. Snapshot-level
 `untrusted_context_receipts` are ordered as the admitted judge user-payload

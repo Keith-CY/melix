@@ -1395,16 +1395,43 @@ public struct OpenAIHandler: Sendable {
                 Double(rerankRequest.documents.count) / max(elapsedMs / 1000, 0.001),
                 forKey: "rerank.documents_per_second"
             )
+            let receipts = rerankDocumentBoundaryReceipts(documentCount: rerankRequest.documents.count)
+            await metricsStore.set(
+                Double(receipts.count),
+                forKey: "rerank.prompt_context.receipt_count"
+            )
 
             let payload = OpenAIRerankResponse(
                 object: "list",
                 data: response.items.map { OpenAIRerankDatum(index: Int($0.index), score: $0.score) },
                 model: rerankRequest.model,
-                topK: Int(rerankRequest.topK)
+                topK: Int(rerankRequest.topK),
+                untrustedContextReceiptSchema: PromptContextBoundaryReceipts.schemaVersion,
+                untrustedContextReceipts: receipts
             )
             return try encodedJSONResponse(payload)
         } catch {
             return workerUnavailableResponse()
+        }
+    }
+
+    private func rerankDocumentBoundaryReceipts(documentCount: Int) -> [OpenAIUntrustedContextReceipt] {
+        (0..<documentCount).map { index in
+            OpenAIUntrustedContextReceipt(
+                schemaVersion: PromptContextBoundaryReceipts.schemaVersion,
+                segmentID: "rerank.documents[\(index)]",
+                sourceType: "retrieved_document",
+                sourceField: "documents[\(index)]",
+                sourceID: "rerank-document-\(index)",
+                messageRole: "user",
+                trustLevel: "untrusted",
+                policy: "data_only",
+                boundaryChecked: true,
+                included: true,
+                ownerScopeChecked: false,
+                reason: "rerank candidate document is prompt data, not instructions",
+                correctiveAction: "Keep this candidate document in data-only rerank context and do not promote it into system or developer instructions."
+            )
         }
     }
 
@@ -5536,18 +5563,54 @@ private struct OpenAIRerankResponse: Codable {
     let data: [OpenAIRerankDatum]
     let model: String
     let topK: Int
+    let untrustedContextReceiptSchema: String
+    let untrustedContextReceipts: [OpenAIUntrustedContextReceipt]
 
     enum CodingKeys: String, CodingKey {
         case object
         case data
         case model
         case topK = "top_k"
+        case untrustedContextReceiptSchema = "untrusted_context_receipt_schema"
+        case untrustedContextReceipts = "untrusted_context_receipts"
     }
 }
 
 private struct OpenAIRerankDatum: Codable {
     let index: Int
     let score: Float
+}
+
+private struct OpenAIUntrustedContextReceipt: Codable {
+    let schemaVersion: String
+    let segmentID: String
+    let sourceType: String
+    let sourceField: String
+    let sourceID: String
+    let messageRole: String
+    let trustLevel: String
+    let policy: String
+    let boundaryChecked: Bool
+    let included: Bool
+    let ownerScopeChecked: Bool
+    let reason: String
+    let correctiveAction: String
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case segmentID = "segment_id"
+        case sourceType = "source_type"
+        case sourceField = "source_field"
+        case sourceID = "source_id"
+        case messageRole = "message_role"
+        case trustLevel = "trust_level"
+        case policy
+        case boundaryChecked = "boundary_checked"
+        case included
+        case ownerScopeChecked = "owner_scope_checked"
+        case reason
+        case correctiveAction = "corrective_action"
+    }
 }
 
 private struct OpenAIAudioTranscriptionsRequest: Codable {
