@@ -64,6 +64,7 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
 
         if let name = message.name {
             let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            // Keep this before retrieved_document because rag_image and rag-image also match the broader rag prefix.
             if hasAnyPrefix(
                 normalizedName,
                 ["retrieved_image", "retrieved-image", "image_retrieval", "image-retrieval", "rag_image", "rag-image"]
