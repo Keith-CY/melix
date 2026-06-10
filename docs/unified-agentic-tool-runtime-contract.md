@@ -268,8 +268,9 @@ ext values into `Completed.parser_metrics` as:
 - `prompt_context_receipts_json`
 
 The worker treats the receipt JSON as opaque evidence and does not parse or
-mutate it. Source-specific RAG, skill, memory, and background-continuation
-admission points still need their own admission/refusal receipts.
+mutate it. Source-specific RAG admission points still need their own
+admission/refusal receipts. Skill, memory, and background-continuation
+admission primitives are defined below for future entrypoint wiring.
 
 The v1 source-specific control-plane classification slice refines those chat
 prompt receipts using request-local message metadata already present at prompt
@@ -365,17 +366,20 @@ implement durable job storage, process monitoring, or session resume; it is only
 the prompt-context boundary for follow-up data admitted by those later
 surfaces.
 
-The Python worker skill and memory evidence admission primitive is
-`worker.runtime.source_evidence_context`. `admit_skill_evidence` and
-`admit_memory_evidence` validate the source identifier, payload container, and
-owner-scope flag before projecting skill or memory evidence into user-role
-prompt context through `PromptContextSourceEvidence`. Malformed source
-identifiers, non-object payloads, and invalid `owner_scope_checked` values
-produce `included = false` refusal receipts with source-specific
-`invalid_skill_evidence_field` or `invalid_memory_evidence_field` reasons. The
-helper does not implement a durable skill store, memory store, live RAG store,
-or owner lookup. Those later entrypoints must pass already redacted and
-owner-evaluated evidence through this helper before prompt assembly.
+The Python worker skill and memory admission primitives are
+`worker.runtime.skill_memory_context.admit_skill_context` and
+`worker.runtime.skill_memory_context.admit_memory_context`. Future skill,
+agent-skill, retrieved-memory, and pinned-memory entrypoints must pass
+already-redacted evidence dictionaries through these helpers before projecting
+that evidence into user-role prompt context. Each helper records one
+`source_type = skill` or `source_type = memory` receipt with `source_field`
+matching the source type and `source_id` set to the redacted skill or memory
+identifier. Malformed source IDs, payload objects, or owner-scope metadata
+produce `included = false` refusal receipts with `reason =
+invalid_skill_context_field` or `invalid_memory_context_field` and no user
+payload. These helpers do not implement skill lookup, memory persistence,
+retrieval ranking, or chat/session wiring; they are only the prompt-context
+boundary for evidence admitted by those later surfaces.
 
 The agentic judge prompt snapshot must also surface receipt evidence that is
 already attached to executed `agentic_tool_observations`. Snapshot-level
