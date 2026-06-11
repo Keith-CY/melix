@@ -565,6 +565,22 @@ marker paths, artifact paths, raw log output, prompt text, or hidden reasoning
 content. Duplicate, blocked, or not-ready claims must not emit a new admitted
 prompt-context segment because no follow-up projection has been reserved.
 
+Future local-job monitor, UI, and session follow-up callers that need a concrete
+session message projection must use
+`worker.runtime.local_job_continuation.project_local_job_session_followup`
+instead of manually stitching claim receipts into prompts. The helper delegates
+to `LocalJobContinuationStore.claim_followup_prompt_context`, then returns the
+store claim, copied claim receipt, copied prompt user payload, copied
+untrusted-context receipts, and a `followup_message` shaped as user-role data
+when a prompt payload was admitted: `{"role": "user", "content":
+<prompt_user_payload>, "untrusted_context_receipts": <receipts>}`. When the
+store reports a missing, duplicate, blocked, or not-ready record, the helper
+must not create a follow-up message payload and `followup_message` must be
+`None`. Malformed completion summaries or owner-scope metadata keep the existing
+fail-closed admission behavior and must not persist an `in_progress` claim. The
+projection remains side-effect-free: it does not launch local jobs, tail logs,
+read artifact contents, infer owner scope, or enqueue a UI/session request.
+
 The Python worker skill and memory admission primitives are
 `worker.runtime.skill_memory_context.admit_skill_context` and
 `worker.runtime.skill_memory_context.admit_memory_context`. Future skill,
