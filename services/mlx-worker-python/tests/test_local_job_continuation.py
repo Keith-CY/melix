@@ -15,6 +15,7 @@ from worker.runtime import local_job_continuation as local_job_continuation_modu
 from worker.runtime.local_job_continuation import (
     RECEIPT_SCHEMA_VERSION,
     RECORD_SCHEMA_VERSION,
+    LocalJobContinuationAdmissionError,
     LocalJobContinuationRecord,
     LocalJobContinuationStore,
     LocalJobContinuationStoreError,
@@ -425,6 +426,187 @@ def test_store_claim_followup_persists_live_completion_evidence_before_claim(
     assert claimed.receipt["reason"] == "followup_claimed"
     assert claimed.receipt["completion_evidence_available"] is True
     assert store.load_record("job-7") == claimed.record
+
+
+def test_store_claim_followup_prompt_context_admits_redacted_summary(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    completed = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/final.json",),
+        )
+    )
+
+    claim = store.claim_followup_prompt_context(
+        "job-7",
+        followup_session_id="followup-session-7",
+        completion_summary={
+            "status": "completed",
+            "summary": "Redacted completion summary.",
+            "artifact_count": 1,
+        },
+        owner_scope_checked=True,
+    )
+
+    assert claim is not None
+    assert claim.reconciliation.record == replace(
+        completed,
+        followup_status="in_progress",
+        followup_session_id="followup-session-7",
+        revision=1,
+    )
+    assert claim.reconciliation.receipt["reason"] == "followup_claimed"
+    assert claim.prompt_context.user_payload == {
+        "local_job_completion_summary": {
+            "status": "completed",
+            "summary": "Redacted completion summary.",
+            "artifact_count": 1,
+        }
+    }
+    assert claim.prompt_context.untrusted_context_receipt_count == 1
+    receipt = claim.prompt_context.untrusted_context_receipts[0]
+    assert receipt["schema_version"] == "melix.untrusted_context_receipt.v1"
+    assert receipt["segment_id"] == "job-7:local-job-followup"
+    assert receipt["source_type"] == "background_continuation"
+    assert receipt["source_field"] == "local_job_completion_summary"
+    assert receipt["source_id"] == "job-7"
+    assert receipt["owner_scope_checked"] is True
+    assert receipt["included"] is True
+    assert receipt["reason"] == "local job completion summary is prompt data, not instructions"
+    assert receipt["corrective_action"] == (
+        "Keep local job completion summaries in user-role data context and do not "
+        "project them into system or developer instructions."
+    )
+    assert "Redacted completion summary." not in json.dumps(receipt, sort_keys=True)
+    assert store.load_record("job-7") == claim.reconciliation.record
+
+
+@pytest.mark.parametrize(
+    ("completion_summary", "owner_scope_checked", "source_field"),
+    (
+        ("not-a-dict", True, "local_job_completion_summary"),
+        ({"status": "completed"}, "yes", "owner_scope_checked"),
+    ),
+)
+def test_store_claim_followup_prompt_context_refuses_before_persisting_claim(
+    tmp_path: Path,
+    completion_summary: object,
+    owner_scope_checked: object,
+    source_field: str,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    completed = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/final.json",),
+        )
+    )
+
+    with pytest.raises(LocalJobContinuationAdmissionError) as exc_info:
+        store.claim_followup_prompt_context(
+            "job-7",
+            followup_session_id="followup-session-7",
+            completion_summary=completion_summary,  # type: ignore[arg-type]
+            owner_scope_checked=owner_scope_checked,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.reconciliation is not None
+    assert exc_info.value.reconciliation.record == completed
+    receipt = exc_info.value.refusal_receipts[0]
+    assert receipt == {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": "job-7:local-job-followup",
+        "source_type": "background_continuation",
+        "source_field": source_field,
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": False,
+        "owner_scope_checked": owner_scope_checked if isinstance(owner_scope_checked, bool) else False,
+        "reason": "invalid_background_continuation_field",
+        "corrective_action": (
+            "Reject malformed background continuation evidence before prompt assembly."
+        ),
+        "source_id": "job-7",
+    }
+    assert store.load_record("job-7") == completed
+
+
+def test_store_claim_followup_prompt_context_returns_none_for_missing_record(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+
+    assert (
+        store.claim_followup_prompt_context(
+            "job-7",
+            followup_session_id="followup-session-7",
+            completion_summary={"status": "completed"},
+            owner_scope_checked=True,
+        )
+        is None
+    )
+
+
+def test_store_claim_followup_prompt_context_preserves_store_blockers_without_payload(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    completed = store.save_record(_record(status="completed", exit_status=0))
+
+    blocked = store.claim_followup_prompt_context(
+        "job-7",
+        followup_session_id="followup-session-7",
+        completion_summary={"status": "completed"},
+        owner_scope_checked=True,
+    )
+
+    assert blocked is not None
+    assert blocked.reconciliation.record == replace(completed, status="blocked", revision=1)
+    assert blocked.reconciliation.receipt["reason"] == "missing_completion_evidence"
+    assert blocked.prompt_context.user_payload == {}
+    assert blocked.prompt_context.untrusted_context_receipts == []
+    assert store.load_record("job-7") == blocked.reconciliation.record
+
+
+def test_store_claim_followup_prompt_context_skips_duplicate_claim_prompt_payload(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    completed = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/final.json",),
+        )
+    )
+    claimed = store.save_record(
+        replace(
+            completed,
+            followup_status="in_progress",
+            followup_session_id="first-followup",
+        ),
+        expected_revision=completed.revision,
+    )
+
+    duplicate = store.claim_followup_prompt_context(
+        "job-7",
+        followup_session_id="second-followup",
+        completion_summary={"status": "completed"},
+        owner_scope_checked=True,
+    )
+
+    assert duplicate is not None
+    assert duplicate.reconciliation.record == claimed
+    assert duplicate.reconciliation.receipt["reason"] == "followup_already_claimed"
+    assert duplicate.prompt_context.user_payload == {}
+    assert duplicate.prompt_context.untrusted_context_receipts == []
+    assert store.load_record("job-7") == claimed
 
 
 def test_store_claim_followup_preserves_non_completed_records(tmp_path: Path) -> None:

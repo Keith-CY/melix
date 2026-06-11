@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 from uuid import uuid4
 
-from worker.runtime.background_continuation import admit_background_continuation
+from worker.runtime.background_continuation import (
+    BackgroundContinuationAdmissionError,
+    admit_background_continuation,
+)
+from worker.runtime.prompt_context import PromptContextAdmission
 from worker.runtime.untrusted_context import UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION
 
 
@@ -26,6 +30,19 @@ class LocalJobContinuationStoreError(RuntimeError):
     def __init__(self, message: str, *, receipt: dict[str, Any]) -> None:
         super().__init__(message)
         self.receipt = receipt
+
+
+class LocalJobContinuationAdmissionError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        reconciliation: LocalJobContinuationReconciliation | None,
+        refusal_receipts: list[dict[str, object]],
+    ) -> None:
+        super().__init__(message)
+        self.reconciliation = reconciliation
+        self.refusal_receipts = refusal_receipts
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +128,12 @@ class LocalJobLiveEvidence:
 class LocalJobContinuationReconciliation:
     record: LocalJobContinuationRecord
     receipt: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class LocalJobContinuationFollowupClaim:
+    reconciliation: LocalJobContinuationReconciliation
+    prompt_context: PromptContextAdmission
 
 
 class LocalJobContinuationStore:
@@ -202,6 +225,88 @@ class LocalJobContinuationStore:
 
         saved = self.save_record(result.record, expected_revision=record.revision)
         return LocalJobContinuationReconciliation(record=saved, receipt=result.receipt)
+
+    def claim_followup_prompt_context(
+        self,
+        job_id: str,
+        *,
+        followup_session_id: str,
+        completion_summary: dict[str, Any],
+        owner_scope_checked: bool,
+        live_evidence: LocalJobLiveEvidence | None = None,
+    ) -> LocalJobContinuationFollowupClaim | None:
+        record = self.load_record(job_id)
+        if record is None:
+            return None
+
+        result = claim_local_job_followup(
+            record,
+            followup_session_id=followup_session_id,
+            live_evidence=live_evidence,
+        )
+        if result.record == record:
+            return LocalJobContinuationFollowupClaim(
+                reconciliation=result,
+                prompt_context=PromptContextAdmission(
+                    user_payload={},
+                    untrusted_context_receipts=[],
+                ),
+            )
+        if result.receipt.get("reason") != "followup_claimed":
+            saved = self.save_record(result.record, expected_revision=record.revision)
+            return LocalJobContinuationFollowupClaim(
+                reconciliation=replace(result, record=saved),
+                prompt_context=PromptContextAdmission(
+                    user_payload={},
+                    untrusted_context_receipts=[],
+                ),
+            )
+
+        try:
+            prompt_context = admit_background_continuation(
+                job_id=result.record.job_id,
+                job_summary=completion_summary,
+                owner_scope_checked=owner_scope_checked,
+                segment_id=f"{result.record.job_id}:local-job-followup",
+                source_field="local_job_completion_summary",
+                reason="local job completion summary is prompt data, not instructions",
+                corrective_action=(
+                    "Keep local job completion summaries in user-role data context and do not "
+                    "project them into system or developer instructions."
+                ),
+            )
+        except BackgroundContinuationAdmissionError as exc:
+            raise LocalJobContinuationAdmissionError(
+                "Invalid local job follow-up prompt context.",
+                reconciliation=LocalJobContinuationReconciliation(
+                    record=record,
+                    receipt=_receipt(
+                        job_id=record.job_id,
+                        status=record.status,
+                        reason="followup_prompt_context_refused",
+                        session_id=record.session_id,
+                        exit_status=record.exit_status,
+                        followup_status=record.followup_status,
+                        duplicate_launch_refused=False,
+                        completion_evidence_available=_has_completion_evidence(
+                            record,
+                            live_evidence,
+                        ),
+                        corrective_action=(
+                            "Fix the local job follow-up prompt context before claiming "
+                            "the follow-up."
+                        ),
+                        followup_session_id=record.followup_session_id,
+                    ),
+                ),
+                refusal_receipts=exc.refusal_receipts,
+            ) from exc
+
+        saved = self.save_record(result.record, expected_revision=record.revision)
+        return LocalJobContinuationFollowupClaim(
+            reconciliation=replace(result, record=saved),
+            prompt_context=prompt_context,
+        )
 
     def _record_path(self, job_id: str) -> Path:
         safe_job_id = _safe_job_id(job_id)
@@ -734,6 +839,8 @@ __all__ = [
     "JOB_STATUSES",
     "RECEIPT_SCHEMA_VERSION",
     "RECORD_SCHEMA_VERSION",
+    "LocalJobContinuationAdmissionError",
+    "LocalJobContinuationFollowupClaim",
     "LocalJobContinuationRecord",
     "LocalJobContinuationReconciliation",
     "LocalJobContinuationStore",
