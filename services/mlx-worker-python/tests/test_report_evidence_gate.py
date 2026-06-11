@@ -272,6 +272,16 @@ def test_report_evidence_gate_run_kind_non_string_values_still_match_by_string()
     )
 
 
+def test_report_evidence_gate_run_kind_missing_key_does_not_match() -> None:
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule={"run_kinds": ("evaluation",)},
+        runs=[{}],
+        targets=[],
+        metrics=[],
+        probe_phases=set(),
+    )
+
+
 def test_report_evidence_gate_matrix_roles_keep_non_string_run_kind_match() -> None:
     roles = report_evidence_gate_module._report_matrix_roles(
         {"runs": [{"run_kind": 42}]},

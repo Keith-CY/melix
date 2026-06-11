@@ -345,13 +345,20 @@ def _rule_matches_report(
     if run_kinds:
         run_kind_set = _string_frozenset(run_kinds)
         run_kind_key = "run_kind"
+        to_string = str
         for run in runs:
-            run_kind = run.get(run_kind_key, "")
+            try:
+                run_kind = run[run_kind_key]
+            except KeyError:
+                run_kind = ""
             if run_kind in run_kind_set:
                 return True
         for run in runs:
-            run_kind = run.get(run_kind_key, "")
-            if type(run_kind) is not str and str(run_kind) in run_kind_set:
+            try:
+                run_kind = run[run_kind_key]
+            except KeyError:
+                continue
+            if type(run_kind) is not str and to_string(run_kind) in run_kind_set:
                 return True
     metric_prefixes = rule.get("metric_prefixes", ())
     if metric_prefixes:
