@@ -652,6 +652,92 @@ def test_bundle_slimming_helpers_cover_runtime_edge_cases(
     assert unavailable_result["attempted"] == 0
 
 
+def test_prune_python_package_baggage_uses_scandir_without_os_walk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    site_packages = tmp_path / "site-packages"
+    package = site_packages / "package"
+    nested = package / "nested"
+    docs = nested / "docs"
+    retained = nested / "runtime.py"
+    docs.mkdir(parents=True)
+    retained.write_text("VALUE = 1\n", encoding="utf-8")
+    (docs / "fixture.txt").write_text("not shipped\n", encoding="utf-8")
+
+    def fail_os_walk(*args: object, **kwargs: object):  # pragma: no cover - regression guard
+        raise AssertionError("_prune_python_package_baggage() should stream os.scandir entries")
+
+    monkeypatch.setattr(macos_app_bundle_module.os, "walk", fail_os_walk)
+
+    result = _prune_python_package_baggage(site_packages)
+
+    assert result["directories_pruned"] == 1
+    assert result["bytes_saved"] > 0
+    assert docs.exists() is False
+    assert retained.is_file()
+
+
+def test_prune_python_package_baggage_tolerates_scan_and_delete_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    site_packages = tmp_path / "site-packages"
+    package = site_packages / "package"
+    docs = package / "docs"
+    unreadable = package / "unreadable"
+    docs.mkdir(parents=True)
+    unreadable.mkdir()
+    (docs / "fixture.txt").write_text("not shipped\n", encoding="utf-8")
+
+    original_scandir = macos_app_bundle_module.os.scandir
+    original_rmtree = macos_app_bundle_module.shutil.rmtree
+
+    class BrokenEntry:
+        name = "broken"
+        path = str(package / "broken")
+
+        def is_dir(self, *, follow_symlinks: bool) -> bool:
+            assert follow_symlinks is False
+            raise OSError("synthetic entry metadata failure")
+
+    class FakeScandir:
+        def __init__(self, entries: list[object]) -> None:
+            self._entries = entries
+
+        def __enter__(self) -> "FakeScandir":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(self._entries)
+
+    def fake_scandir(path: Path | str):
+        path = Path(path)
+        if path == package:
+            real_entries = list(original_scandir(path))
+            return FakeScandir([BrokenEntry(), *real_entries])
+        if path == unreadable:
+            raise OSError("synthetic scandir failure")
+        return original_scandir(path)
+
+    def flaky_rmtree(path: Path) -> None:
+        if path == docs:
+            raise OSError("synthetic delete failure")
+        original_rmtree(path)
+
+    monkeypatch.setattr(macos_app_bundle_module.os, "scandir", fake_scandir)
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "rmtree", flaky_rmtree)
+
+    assert _prune_python_package_baggage(site_packages) == {
+        "directories_pruned": 0,
+        "bytes_saved": 0,
+    }
+    assert docs.is_dir()
+
+
 def test_iter_python_native_binary_candidates_tolerates_scandir_metadata_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

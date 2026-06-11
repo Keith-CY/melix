@@ -367,24 +367,35 @@ def _prune_python_package_baggage(site_packages: Path) -> dict[str, int]:
         "directories_pruned": 0,
         "bytes_saved": 0,
     }
-    for root, dirnames, _filenames in os.walk(site_packages, followlinks=False):
-        root_path = Path(root)
-        for dirname in list(dirnames):
-            if dirname not in _PRUNABLE_PYTHON_PACKAGE_DIR_NAMES:
-                continue
-            target = root_path / dirname
-            try:
-                bytes_saved = _path_size_bytes(target)
-                if target.is_symlink():
-                    target.unlink()
-                else:
-                    shutil.rmtree(target)
-            except OSError:
-                dirnames.remove(dirname)
-                continue
-            result["bytes_saved"] += bytes_saved
-            result["directories_pruned"] += 1
-            dirnames.remove(dirname)
+    stack = [site_packages]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        is_directory = entry.is_dir(follow_symlinks=False)
+                    except OSError:
+                        continue
+
+                    if entry.name in _PRUNABLE_PYTHON_PACKAGE_DIR_NAMES:
+                        target = Path(entry.path)
+                        try:
+                            bytes_saved = _path_size_bytes(target)
+                            if entry.is_symlink():
+                                target.unlink()
+                            else:
+                                shutil.rmtree(target)
+                        except OSError:
+                            continue
+                        result["bytes_saved"] += bytes_saved
+                        result["directories_pruned"] += 1
+                        continue
+
+                    if is_directory:
+                        stack.append(Path(entry.path))
+        except OSError:
+            continue
     return result
 
 
