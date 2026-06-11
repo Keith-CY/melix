@@ -272,6 +272,15 @@ def test_report_evidence_gate_run_kind_non_string_values_still_match_by_string()
     )
 
 
+def test_report_evidence_gate_matrix_roles_keep_non_string_run_kind_match() -> None:
+    roles = report_evidence_gate_module._report_matrix_roles(
+        {"runs": [{"run_kind": 42}]},
+        {"numeric_run": {"run_kinds": ("42",)}},
+    )
+
+    assert roles == ["numeric_run"]
+
+
 def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple() -> None:
     report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_clear()
     rule = {"metric_prefixes": ("adapter.", "runtime.")}

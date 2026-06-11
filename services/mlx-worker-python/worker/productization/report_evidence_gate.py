@@ -321,7 +321,16 @@ def _run_kind_only_rule(rule: dict[str, object]) -> bool:
 
 def _report_run_kind_values(runs: list[dict[str, object]]) -> frozenset[str]:
     run_kind_key = "run_kind"
-    return frozenset(str(run.get(run_kind_key, "")) for run in runs)
+    values: set[str] = set()
+    values_add = values.add
+    to_string = str
+    for run in runs:
+        run_kind = run.get(run_kind_key, "")
+        if type(run_kind) is str:
+            values_add(run_kind)
+        else:
+            values_add(to_string(run_kind))
+    return frozenset(values)
 
 
 def _rule_matches_report(
