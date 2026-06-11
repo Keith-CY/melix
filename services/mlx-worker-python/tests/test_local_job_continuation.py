@@ -834,6 +834,307 @@ def test_store_scan_followup_candidates_preserves_store_error_receipts(
     )
 
 
+def test_store_claim_scanned_followups_claims_ready_prompt_contexts_once(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    ready = store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+    live_done = store.save_record(
+        _record(job_id="live-done", status="completed", exit_status=0)
+    )
+    claimed = store.save_record(
+        _record(
+            job_id="claimed",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/claimed.json",),
+            followup_status="in_progress",
+            followup_session_id="existing-followup",
+        )
+    )
+    blocked = store.save_record(_record(job_id="blocked", status="completed", exit_status=0))
+
+    batch = store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id={
+            "ready": "followup-ready",
+            "live-done": "followup-live",
+        },
+        completion_summaries_by_job_id={
+            "ready": {"status": "completed", "summary": "Ready summary."},
+            "live-done": {"status": "completed", "summary": "Live summary."},
+        },
+        owner_scope_checked_by_job_id={
+            "ready": True,
+            "live-done": False,
+        },
+        live_evidence_by_job_id={
+            "live-done": LocalJobLiveEvidence(
+                session_id="session-7",
+                active=False,
+                progress_excerpt="done",
+                artifact_paths=("/workspace/out/live-done.json",),
+            ),
+        },
+    )
+
+    assert [claim.reconciliation.record.job_id for claim in batch.claims] == [
+        "live-done",
+        "ready",
+    ]
+    assert [claim.reconciliation.receipt["reason"] for claim in batch.claims] == [
+        "followup_claimed",
+        "followup_claimed",
+    ]
+    assert [claim.prompt_context.user_payload for claim in batch.claims] == [
+        {"local_job_completion_summary": {"status": "completed", "summary": "Live summary."}},
+        {"local_job_completion_summary": {"status": "completed", "summary": "Ready summary."}},
+    ]
+    receipts_by_job = {receipt["job_id"]: receipt for receipt in batch.receipts}
+    assert receipts_by_job["claimed"]["reason"] == "followup_already_claimed"
+    assert receipts_by_job["blocked"]["reason"] == "missing_completion_evidence"
+    assert receipts_by_job["live-done"]["reason"] == "followup_claimed"
+    assert receipts_by_job["live-done"]["followup_session_id"] == "followup-live"
+    assert receipts_by_job["ready"]["reason"] == "followup_claimed"
+    assert receipts_by_job["ready"]["followup_session_id"] == "followup-ready"
+    assert batch.refusal_receipts == ()
+    assert store.load_record("ready") == replace(
+        ready,
+        followup_status="in_progress",
+        followup_session_id="followup-ready",
+        revision=1,
+    )
+    assert store.load_record("live-done") == replace(
+        live_done,
+        artifact_paths=("/workspace/out/live-done.json",),
+        followup_status="in_progress",
+        followup_session_id="followup-live",
+        revision=2,
+    )
+    assert store.load_record("claimed") == claimed
+    assert store.load_record("blocked") == replace(blocked, status="blocked", revision=1)
+
+
+def test_store_claim_scanned_followups_reports_missing_claim_inputs(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    ready = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+
+    batch = store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id={},
+        completion_summaries_by_job_id={},
+        owner_scope_checked_by_job_id={},
+    )
+
+    assert batch.claims == ()
+    assert batch.refusal_receipts == ()
+    assert [receipt["reason"] for receipt in batch.receipts] == [
+        "followup_candidate_ready",
+        "followup_claim_input_missing",
+    ]
+    assert batch.receipts[1]["job_id"] == "job-7"
+    assert batch.receipts[1]["followup_status"] == "not_started"
+    assert store.load_record("job-7") == ready
+
+
+def test_store_claim_scanned_followups_preserves_admission_refusal_without_claim(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    ready = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+
+    batch = store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id={"job-7": "followup-session-7"},
+        completion_summaries_by_job_id={"job-7": "not-a-dict"},
+        owner_scope_checked_by_job_id={"job-7": True},
+    )
+
+    assert batch.claims == ()
+    assert [receipt["reason"] for receipt in batch.receipts] == [
+        "followup_candidate_ready",
+        "followup_prompt_context_refused",
+    ]
+    assert len(batch.refusal_receipts) == 1
+    assert batch.refusal_receipts[0]["source_field"] == "local_job_completion_summary"
+    assert batch.refusal_receipts[0]["included"] is False
+    assert store.load_record("job-7") == ready
+
+
+def test_store_claim_scanned_followups_reports_invalid_claim_inputs(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    ready = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+
+    batch = store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id={"job-7": " "},
+        completion_summaries_by_job_id={"job-7": {"status": "completed"}},
+        owner_scope_checked_by_job_id={"job-7": True},
+    )
+
+    assert batch.claims == ()
+    assert batch.refusal_receipts == ()
+    assert [receipt["reason"] for receipt in batch.receipts] == [
+        "followup_candidate_ready",
+        "followup_claim_input_invalid",
+    ]
+    assert batch.receipts[1]["input_error"] == "followup_session_id must be a non-empty string"
+    assert store.load_record("job-7") == ready
+
+
+def test_store_claim_scanned_followups_reports_record_deleted_before_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    ready = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+    original_claim = store.claim_followup_prompt_context
+
+    def delete_before_claim(
+        job_id: str,
+        *,
+        followup_session_id: str,
+        completion_summary: dict[str, Any],
+        owner_scope_checked: bool,
+        live_evidence: LocalJobLiveEvidence | None = None,
+    ) -> object:
+        (tmp_path / f"{job_id}.json").unlink()
+        return original_claim(
+            job_id,
+            followup_session_id=followup_session_id,
+            completion_summary=completion_summary,
+            owner_scope_checked=owner_scope_checked,
+            live_evidence=live_evidence,
+        )
+
+    monkeypatch.setattr(store, "claim_followup_prompt_context", delete_before_claim)
+
+    batch = store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id={"job-7": "followup-session-7"},
+        completion_summaries_by_job_id={"job-7": {"status": "completed"}},
+        owner_scope_checked_by_job_id={"job-7": True},
+    )
+
+    assert batch.claims == ()
+    assert batch.refusal_receipts == ()
+    assert [receipt["reason"] for receipt in batch.receipts] == [
+        "followup_candidate_ready",
+        "followup_record_missing",
+    ]
+    assert batch.receipts[1]["job_id"] == ready.job_id
+    assert store.load_record("job-7") is None
+
+
+def test_store_claim_scanned_followups_isolates_claim_revision_races(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    raced = store.save_record(
+        _record(
+            job_id="raced",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/raced.json",),
+        )
+    )
+    ready = store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+    original_save_record = store.save_record
+    injected_race = False
+
+    def race_before_claim_write(
+        record: LocalJobContinuationRecord,
+        *,
+        expected_revision: int | None = None,
+    ) -> LocalJobContinuationRecord:
+        nonlocal injected_race
+        if record.job_id == "raced" and not injected_race and expected_revision == raced.revision:
+            injected_race = True
+            original_save_record(
+                replace(
+                    raced,
+                    followup_status="in_progress",
+                    followup_session_id="other-followup",
+                ),
+                expected_revision=raced.revision,
+            )
+        return original_save_record(record, expected_revision=expected_revision)
+
+    monkeypatch.setattr(store, "save_record", race_before_claim_write)
+
+    batch = store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id={
+            "raced": "followup-raced",
+            "ready": "followup-ready",
+        },
+        completion_summaries_by_job_id={
+            "raced": {"status": "completed", "summary": "Raced summary."},
+            "ready": {"status": "completed", "summary": "Ready summary."},
+        },
+        owner_scope_checked_by_job_id={
+            "raced": True,
+            "ready": True,
+        },
+    )
+
+    assert [claim.reconciliation.record.job_id for claim in batch.claims] == ["ready"]
+    receipts_by_reason = [receipt["reason"] for receipt in batch.receipts]
+    assert receipts_by_reason == [
+        "followup_candidate_ready",
+        "followup_candidate_ready",
+        "record_revision_mismatch",
+        "followup_claimed",
+    ]
+    assert store.load_record("raced") == replace(
+        raced,
+        followup_status="in_progress",
+        followup_session_id="other-followup",
+        revision=1,
+    )
+    assert store.load_record("ready") == replace(
+        ready,
+        followup_status="in_progress",
+        followup_session_id="followup-ready",
+        revision=1,
+    )
+
+
 def test_store_claim_followup_uses_revision_guard_for_concurrent_claim(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
