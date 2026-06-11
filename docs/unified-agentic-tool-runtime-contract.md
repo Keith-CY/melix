@@ -543,12 +543,15 @@ emit `reason = followup_claim_input_missing`; malformed claim inputs emit
 `reason = followup_claim_input_invalid`; prompt-admission refusals emit
 `reason = followup_prompt_context_refused` plus background-continuation refusal
 receipts, including a fallback refusal receipt if prompt admission fails before
-reconciliation evidence is available; store revision races keep the store-level receipt such as
-`record_revision_mismatch`. These per-candidate failures must not abort claims
-for other ready records, and admission-refused candidates must not persist an
-`in_progress` follow-up claim. The batch bridge still must not start jobs, tail
-logs, write to session stores, inject prompt context into an agent loop, or
-resume workflows.
+reconciliation evidence is available; malformed non-mapping wrapper inputs for
+the follow-up session IDs, completion summaries, or owner-scope decisions also
+emit per-candidate `followup_claim_input_invalid` receipts instead of raising
+unstructured exceptions; store revision races keep the store-level receipt such
+as `record_revision_mismatch`. These per-candidate failures must not abort
+claims for other ready records, and admission-refused or wrapper-refused
+candidates must not persist an `in_progress` follow-up claim. The batch bridge
+still must not start jobs, tail logs, write to session stores, inject prompt
+context into an agent loop, or resume workflows.
 
 When a local-job follow-up claim succeeds, the
 `melix.local_job_continuation_receipt.v1` receipt must also expose the redacted
