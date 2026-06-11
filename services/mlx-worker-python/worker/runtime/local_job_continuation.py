@@ -349,6 +349,8 @@ class LocalJobContinuationStore:
             if reconciliation is None:
                 continue
             receipt = _followup_candidate_scan_receipt(reconciliation.record)
+            # Scan-level follow-up state wins for ready or already-claimed records.
+            # Otherwise surface reconciliation changes before the generic scan result.
             if receipt["reason"] == "followup_candidate_ready":
                 receipts.append(receipt)
                 candidates.append(
@@ -749,6 +751,8 @@ def _followup_candidate_scan_receipt(
                 "A monitor may claim this local job follow-up after prompt-context admission."
             ),
         )
+    # A non-ready record only means the monitor may not claim it yet; callers
+    # that need running-vs-blocked detail should inspect the status field.
     return _receipt(
         job_id=record.job_id,
         status=record.status,
