@@ -254,10 +254,7 @@ class LocalJobContinuationStore:
         if result.receipt.get("reason") != "followup_claimed":
             saved = self.save_record(result.record, expected_revision=record.revision)
             return LocalJobContinuationFollowupClaim(
-                reconciliation=LocalJobContinuationReconciliation(
-                    record=saved,
-                    receipt=result.receipt,
-                ),
+                reconciliation=replace(result, record=saved),
                 prompt_context=PromptContextAdmission(
                     user_payload={},
                     untrusted_context_receipts=[],
@@ -306,10 +303,7 @@ class LocalJobContinuationStore:
 
         saved = self.save_record(result.record, expected_revision=record.revision)
         return LocalJobContinuationFollowupClaim(
-            reconciliation=LocalJobContinuationReconciliation(
-                record=saved,
-                receipt=result.receipt,
-            ),
+            reconciliation=replace(result, record=saved),
             prompt_context=prompt_context,
         )
 
