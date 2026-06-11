@@ -1,7 +1,9 @@
 import SwiftUI
 
 enum DesktopShellChromeMetrics {
-    static let workspaceTitleBarContentTopInset: CGFloat = 72
+    static let workspaceTitleBarContentTopInset: CGFloat = 0
+    // Approximate macOS traffic-light button and leading margin reservation for screenshot chrome.
+    static let windowTrafficLightAreaWidth: CGFloat = 92
     static let titleBarTabHeightBudget: CGFloat = 30
     static let titleBarTabHorizontalPadding: CGFloat = 9
     static let titleBarTabVerticalPadding: CGFloat = 4
@@ -141,14 +143,6 @@ struct DesktopWorkspaceTitleBarActionsView: View {
     var body: some View {
         HStack(spacing: 4) {
             DesktopPaneToggleButton(
-                role: .sidebar,
-                isVisible: viewModel.isDesktopPaneVisible(.sidebar)
-            ) {
-                withAnimation(DesktopWorkspacePaneAnimation.animation) {
-                    viewModel.toggleDesktopPane(.sidebar)
-                }
-            }
-            DesktopPaneToggleButton(
                 role: .inspector,
                 isVisible: viewModel.isDesktopPaneVisible(.inspector)
             ) {
@@ -260,13 +254,14 @@ struct DesktopShellTabStripView: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(shortcutKey(for: surface), modifiers: .command)
+                .accessibilityLabel(LocalizedStringKey(surface.rawValue))
                 .focusable(false)
                 .fixedSize(horizontal: true, vertical: false)
             }
         }
         .padding(DesktopShellChromeMetrics.titleBarTabContainerInset)
         .frame(height: DesktopShellChromeMetrics.titleBarTabHeightBudget)
-        .background(Color(nsColor: .windowBackgroundColor), in: Capsule())
+        .background(MelixDesignTokens.Palette.backgroundSurface.color, in: Capsule())
         .overlay(
             Capsule()
                 .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
@@ -278,12 +273,14 @@ struct DesktopShellTabStripView: View {
         case .chat:
             return "1"
         case .commandCenter:
-            return "2"
+            return "0"
         case .server:
-            return "3"
+            return "2"
         case .models:
-            return "4"
+            return "3"
         case .workflows:
+            return "4"
+        case .settings:
             return "5"
         case .jobs:
             return "6"
@@ -293,10 +290,8 @@ struct DesktopShellTabStripView: View {
             return "8"
         case .image:
             return "9"
-        case .settings:
-            return "0"
         case .tools:
-            return "0"
+            return "t"
         }
     }
 }

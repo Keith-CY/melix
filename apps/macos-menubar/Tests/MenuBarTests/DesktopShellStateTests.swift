@@ -9,28 +9,22 @@ struct DesktopShellStateTests {
     func desktopRouteMetadataEncodesAcceptedProductIA() throws {
         #expect(DesktopSurface.visibleNavigationCases == [
             .chat,
-            .commandCenter,
             .server,
             .models,
             .workflows,
-            .jobs,
-            .diagnostics,
-            .api,
-            .image,
             .settings,
         ])
         #expect(DesktopSurface.visibleNavigationCases.map(\.rawValue) == [
             "Chat",
-            "Command Center",
             "Servers",
             "Models",
             "Workflows",
-            "Jobs",
-            "Diagnostics",
-            "API",
-            "Image",
             "Settings",
         ])
+        #expect(DesktopSurface.visibleNavigationCases.contains(.jobs) == false)
+        #expect(DesktopSurface.visibleNavigationCases.contains(.diagnostics) == false)
+        #expect(DesktopSurface.visibleNavigationCases.contains(.api) == false)
+        #expect(DesktopSurface.visibleNavigationCases.contains(.image) == false)
 
         let metadata = DesktopRouteMetadata.acceptedWindowIA
         #expect(metadata.domains.map(\.domain.routeDomainID) == [

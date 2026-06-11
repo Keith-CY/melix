@@ -121,7 +121,7 @@ struct DesktopWorkspaceShellView: View {
                 }
             )
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(MelixDesignTokens.Palette.backgroundBase.color.ignoresSafeArea())
     }
 
     private func paneVisibilityBinding(

@@ -69,18 +69,33 @@ public struct AppScreenshotCaptureConfig: Equatable, Sendable {
 }
 
 public enum AppScreenshotCaptureCase: Equatable, Sendable {
+    public enum ChatState: String, Equatable, Sendable {
+        case ready = "ready"
+        case noProvider = "no-provider"
+        case noModel = "no-model"
+    }
+
+    case chat(ChatState)
     case workspace(DesktopSurface)
     case toolSection(DesktopToolSection)
     case commandCenter
 
     public static var defaultCases: [AppScreenshotCaptureCase] {
-        DesktopSurface.visibleNavigationCases.map(AppScreenshotCaptureCase.workspace)
-            + DesktopToolSection.allCases.map(AppScreenshotCaptureCase.toolSection)
-            + [.commandCenter]
+        [
+            .chat(.ready),
+            .chat(.noProvider),
+            .chat(.noModel),
+            .workspace(.server),
+            .workspace(.models),
+            .workspace(.workflows),
+            .workspace(.settings),
+        ]
     }
 
     public var id: String {
         switch self {
+        case .chat(let state):
+            return "workspace-chat-\(state.rawValue)"
         case .workspace(let surface):
             return "workspace-\(Self.slug(surface.rawValue))"
         case .toolSection(let section):
@@ -92,6 +107,8 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
 
     var kind: String {
         switch self {
+        case .chat:
+            return "chat_state"
         case .workspace:
             return "workspace"
         case .toolSection:
@@ -103,6 +120,8 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
 
     var surface: DesktopSurface? {
         switch self {
+        case .chat:
+            return .chat
         case .workspace(let surface):
             return surface
         case .toolSection(let section):
@@ -116,7 +135,16 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
         switch self {
         case .toolSection(let section):
             return section
-        case .workspace, .commandCenter:
+        case .chat, .workspace, .commandCenter:
+            return nil
+        }
+    }
+
+    var chatState: ChatState? {
+        switch self {
+        case .chat(let state):
+            return state
+        case .workspace, .toolSection, .commandCenter:
             return nil
         }
     }
@@ -161,20 +189,22 @@ public struct AppScreenshotCaptureManifest: Codable, Equatable, Sendable {
 @MainActor
 public final class AppScreenshotCaptureRunner {
     private let config: AppScreenshotCaptureConfig
-    private let viewModel: RuntimeViewModel
+    private let makeViewModel: @MainActor () -> RuntimeViewModel
     private let renderer: MelixSwiftUIScreenshotRenderer
     private let fileManager: FileManager
     private let cases: [AppScreenshotCaptureCase]
 
     public init(
         config: AppScreenshotCaptureConfig,
-        viewModel: RuntimeViewModel? = nil,
+        makeViewModel: (@MainActor () -> RuntimeViewModel)? = nil,
         renderer: MelixSwiftUIScreenshotRenderer = MelixSwiftUIScreenshotRenderer(),
         fileManager: FileManager = .default,
         cases: [AppScreenshotCaptureCase] = AppScreenshotCaptureCase.defaultCases
     ) {
         self.config = config
-        self.viewModel = viewModel ?? RuntimeViewModel(client: AppScreenshotCaptureControlPlaneClient())
+        self.makeViewModel = makeViewModel ?? {
+            RuntimeViewModel(client: AppScreenshotCaptureControlPlaneClient())
+        }
         self.renderer = renderer
         self.fileManager = fileManager
         self.cases = cases
@@ -191,11 +221,12 @@ public final class AppScreenshotCaptureRunner {
         let size = CGSize(width: config.width, height: config.height)
 
         try fileManager.createDirectory(at: screenshotRoot, withIntermediateDirectories: true)
-        await viewModel.start()
 
         var entries: [AppScreenshotCaptureEntry] = []
         for captureCase in cases {
-            apply(captureCase)
+            let viewModel = makeViewModel()
+            await viewModel.start()
+            apply(captureCase, to: viewModel)
             let screenshotURL = screenshotRoot.appendingPathComponent("\(captureCase.id).png")
             let startedAt = Date()
             do {
@@ -206,9 +237,9 @@ public final class AppScreenshotCaptureRunner {
                         to: screenshotURL,
                         size: size
                     )
-                case .workspace, .toolSection:
+                case .chat, .workspace, .toolSection:
                     try renderer.render(
-                        DesktopFoundationRootView(viewModel: viewModel),
+                        AppScreenshotCaptureWindowShellView(viewModel: viewModel),
                         to: screenshotURL,
                         size: size
                     )
@@ -246,8 +277,10 @@ public final class AppScreenshotCaptureRunner {
         return manifest
     }
 
-    private func apply(_ captureCase: AppScreenshotCaptureCase) {
+    private func apply(_ captureCase: AppScreenshotCaptureCase, to viewModel: RuntimeViewModel) {
         switch captureCase {
+        case .chat(let state):
+            applyChatState(state, to: viewModel)
         case .workspace(let surface):
             viewModel.selectSurface(surface)
         case .toolSection(let section):
@@ -255,6 +288,38 @@ public final class AppScreenshotCaptureRunner {
         case .commandCenter:
             break
         }
+    }
+
+    private func applyChatState(_ state: AppScreenshotCaptureCase.ChatState, to viewModel: RuntimeViewModel) {
+        viewModel.applyAppScreenshotChatState(state)
+    }
+}
+
+private struct AppScreenshotCaptureWindowShellView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Spacer(minLength: DesktopShellChromeMetrics.windowTrafficLightAreaWidth)
+                DesktopWorkspaceTitleBarTabsView(viewModel: viewModel)
+                Spacer(minLength: 12)
+                DesktopWorkspaceTitleBarActionsView(viewModel: viewModel)
+            }
+            .frame(height: 44)
+            .padding(.horizontal, 14)
+            .background(MelixDesignTokens.Palette.backgroundSurface.color)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline))
+                    .frame(height: 1)
+            }
+
+            DesktopWorkspaceShellView(viewModel: viewModel)
+        }
+        .frame(minWidth: 980, minHeight: 680)
+        .background(MelixDesignTokens.Palette.backgroundBase.color)
+        .tint(MelixDesignTokens.accent)
     }
 }
 

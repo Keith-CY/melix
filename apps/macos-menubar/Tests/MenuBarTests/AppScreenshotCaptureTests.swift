@@ -6,31 +6,60 @@ import Testing
 
 @Suite("App Screenshot Capture", .serialized)
 struct AppScreenshotCaptureTests {
-    @Test("default cases cover all workspace surfaces, tool sections, and command center")
+    @Test("default cases cover shell titlebar acceptance surfaces")
     func defaultCasesCoverAllAppSurfaces() {
         let cases = AppScreenshotCaptureCase.defaultCases
+        let chatStates = cases.compactMap { captureCase -> AppScreenshotCaptureCase.ChatState? in
+            guard case .chat(let state) = captureCase else {
+                return nil
+            }
+            return state
+        }
         let workspaceSurfaces = cases.compactMap { captureCase -> String? in
             guard case .workspace(let surface) = captureCase else {
                 return nil
             }
             return surface.rawValue
         }
-        let toolSections = cases.compactMap { captureCase -> String? in
-            guard case .toolSection(let section) = captureCase else {
-                return nil
-            }
-            return section.rawValue
-        }
-        let commandCenterCount = cases.filter {
-            if case .commandCenter = $0 {
-                return true
-            }
-            return false
-        }.count
 
-        #expect(workspaceSurfaces.sorted() == DesktopSurface.visibleNavigationCases.map(\.rawValue).sorted())
-        #expect(toolSections.sorted() == DesktopToolSection.allCases.map(\.rawValue).sorted())
-        #expect(commandCenterCount == 1)
+        #expect(chatStates == [.ready, .noProvider, .noModel])
+        #expect(AppScreenshotCaptureCase.chat(.ready).chatState == .ready)
+        #expect(AppScreenshotCaptureCase.workspace(.chat).chatState == nil)
+        #expect(workspaceSurfaces == ["Servers", "Models", "Workflows", "Settings"])
+        #expect(cases.map(\.id) == [
+            "workspace-chat-ready",
+            "workspace-chat-no-provider",
+            "workspace-chat-no-model",
+            "workspace-servers",
+            "workspace-models",
+            "workspace-workflows",
+            "workspace-settings",
+        ])
+    }
+
+    @Test("chat state fixtures model ready, no provider, and no model states")
+    @MainActor
+    func chatStateFixturesModelChatSetupStates() async throws {
+        let readyViewModel = RuntimeViewModel(client: AppScreenshotCaptureControlPlaneClient())
+        await readyViewModel.start()
+        readyViewModel.applyAppScreenshotChatState(.ready)
+        #expect(readyViewModel.selectedSurface == .chat)
+        #expect(readyViewModel.selectedChatServerSession != nil)
+
+        let noModelViewModel = RuntimeViewModel(client: AppScreenshotCaptureControlPlaneClient())
+        await noModelViewModel.start()
+        noModelViewModel.applyAppScreenshotChatState(.noModel)
+        #expect(noModelViewModel.selectedSurface == .chat)
+        let noModelProvider = try #require(noModelViewModel.selectedChatServerSession)
+        #expect(noModelProvider.modelID.isEmpty)
+        #expect(noModelProvider.lifecycle == .running)
+        #expect(noModelProvider.powerState == .active)
+
+        let noProviderViewModel = RuntimeViewModel(client: AppScreenshotCaptureControlPlaneClient())
+        await noProviderViewModel.start()
+        noProviderViewModel.applyAppScreenshotChatState(.noProvider)
+        #expect(noProviderViewModel.providers.isEmpty)
+        #expect(noProviderViewModel.selectedChatSession?.statusText == "Choose Provider")
     }
 
     @Test("config environment normalizes overrides and falls back to deterministic defaults")

@@ -4251,6 +4251,49 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    func applyAppScreenshotChatState(_ state: AppScreenshotCaptureCase.ChatState) {
+        selectedSurface = .chat
+        switch state {
+        case .ready:
+            ensureChatSessionsBoundToServerSessions()
+            if let selectedServerSession {
+                bindSelectedChatSessionToServer(providerID: selectedServerSession.id)
+            }
+            if selectedChatServerSession == nil,
+               let readyProvider = providers.first(where: { $0.isInteractiveReady }) ?? providers.first {
+                bindSelectedChatSessionToServer(providerID: readyProvider.id)
+            }
+        case .noProvider:
+            selectedProviderID = ""
+            providers = []
+            chatSessions = [
+                DesktopChatSessionState(
+                    id: "chat-screenshot-no-provider",
+                    title: "Chat",
+                    providerID: "",
+                    statusText: "Choose Provider"
+                ),
+            ]
+            loadChatSession(chatSessions[0])
+        case .noModel:
+            ensureChatSessionsBoundToServerSessions()
+            guard let provider = selectedServerSession ?? providers.first else {
+                assertionFailure(
+                    "applyAppScreenshotChatState(.noModel) called with no providers; falling back to no-provider screenshot state."
+                )
+                return applyAppScreenshotChatState(.noProvider)
+            }
+            selectedProviderID = provider.id
+            replaceServerSession(id: provider.id) { session in
+                session.modelID = ""
+                session.lifecycle = .running
+                session.powerState = .active
+            }
+            bindSelectedChatSessionToServer(providerID: provider.id)
+        }
+        notifyStateChanged()
+    }
+
     private func selectToolSectionWithoutNotifying(_ section: DesktopToolSection) {
         selectedSurface = section.domain.surface
         selectedToolSection = section
