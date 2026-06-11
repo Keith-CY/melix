@@ -284,8 +284,46 @@ def test_scope_report_selects_native_mtp_loader_probe() -> None:
         registry_path=REGISTRY_PATH,
         changed_files=["services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py"],
     )
-
     assert _selected_probe_ids(scope) == ["native-mtp-loader-safetensor-scandir"]
+
+
+def test_scope_report_selects_local_job_followup_scan_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/local_job_continuation.py"],
+    )
+    assert _selected_probe_ids(scope) == ["local-job-followup-scan-scandir"]
+
+
+def test_local_job_followup_scan_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_LOCAL_JOB_SCAN_RECORDS", "5")
+    monkeypatch.setenv("MELIX_LOCAL_JOB_SCAN_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/local_job_followup_scan_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["candidate_count_mean"] == 5.0
+    assert metrics["receipt_count_mean"] == 5.0
+    assert metrics["scandir_calls_mean"] == 1.0
+    assert metrics["path_glob_calls_mean"] == 0.0
+
+
+
+def test_local_job_followup_scan_probe_command_has_base_fallback() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "local-job-followup-scan-scandir"
+    )
+
+    assert "if [ -f scripts/local_job_followup_scan_probe.py ]" in probe.probe_command
+    assert "PYPROBE" in probe.probe_command
+
 
 
 def test_lora_aux_modules_scandir_probe_script_emits_metrics(
@@ -3268,6 +3306,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "job-registry-restore-sort-elision",
         "lora-aux-modules-scandir",
         "lora-experiment-run-dir-name-scan",
+        "local-job-followup-scan-scandir",
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
         "native-mtp-loader-safetensor-scandir",
