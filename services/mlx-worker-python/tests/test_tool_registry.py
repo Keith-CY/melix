@@ -615,6 +615,25 @@ def test_agentic_tool_selection_uses_builtin_name_set_for_membership() -> None:
     ]
 
 
+def test_agentic_tool_selection_keyword_matchable_names_omit_always_available_tool() -> None:
+    assert tool_registry_module._KEYWORD_MATCHABLE_TOOL_NAMES == tuple(
+        tool_name
+        for tool_name in BUILTIN_AGENTIC_TOOL_NAMES
+        if tool_name not in tool_registry_module.ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Run deterministic local compute for this answer.",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+
+
 def test_agentic_tool_selection_uses_keyword_fallback_when_vector_unavailable() -> None:
     result = select_agentic_tools_for_turn(
         ToolSelectionInput(
