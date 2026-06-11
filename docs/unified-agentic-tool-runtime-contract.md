@@ -498,9 +498,18 @@ completed records without success or artifact evidence keep the existing
 guard so two monitor loops cannot silently enqueue two follow-ups.
 
 The primitive does not start processes, tail logs, inject prompt follow-ups, or
-resume workflows; those later surfaces must first call reconciliation and
-follow-up claiming, and then pass any already-redacted completion summary
-through `admit_background_continuation` before prompt projection.
+resume workflows. Store-backed local-job monitor or session follow-up callers
+that are ready to project a completed job summary into prompt context must call
+`LocalJobContinuationStore.claim_followup_prompt_context`. That entrypoint first
+computes the same reconciliation and single-claim decision as
+`claim_followup`, then admits the already-redacted completion summary through
+`admit_background_continuation` with `source_field =
+local_job_completion_summary` and `segment_id = <job_id>:local-job-followup`.
+Only after prompt-context admission succeeds may it persist the follow-up claim.
+Malformed completion summaries or owner-scope metadata must fail closed with a
+`background_continuation` refusal receipt, no prompt payload, and no stored
+`in_progress` follow-up claim. Store-level blockers such as missing completion
+evidence or an already claimed follow-up must not emit prompt-context payloads.
 
 The Python worker skill and memory admission primitives are
 `worker.runtime.skill_memory_context.admit_skill_context` and
