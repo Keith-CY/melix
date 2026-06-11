@@ -653,6 +653,35 @@ def test_agentic_tool_selection_uses_keyword_fallback_when_vector_unavailable() 
     ]
 
 
+def test_agentic_tool_selection_skips_empty_context_keyword_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scanned_texts: list[str] = []
+    real_keyword_tool_matches = tool_registry_module._keyword_tool_matches
+
+    def record_keyword_tool_matches(text: str) -> tuple[str, ...]:
+        scanned_texts.append(text)
+        return real_keyword_tool_matches(text)
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "_keyword_tool_matches",
+        record_keyword_tool_matches,
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Open fixture://docs/provider-contract and summarize the page.",
+            vector_available=False,
+            recent_user_turns=(),
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "visit")
+    assert scanned_texts == ["Open fixture://docs/provider-contract and summarize the page."]
+
+
 @pytest.mark.parametrize(
     ("current_user_turn", "expected_tool"),
     [
