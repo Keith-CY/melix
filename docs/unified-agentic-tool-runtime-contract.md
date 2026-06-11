@@ -511,6 +511,24 @@ Malformed completion summaries or owner-scope metadata must fail closed with a
 `in_progress` follow-up claim. Store-level blockers such as missing completion
 evidence or an already claimed follow-up must not emit prompt-context payloads.
 
+When a local-job follow-up claim succeeds, the
+`melix.local_job_continuation_receipt.v1` receipt must also expose the redacted
+background-continuation prompt-boundary evidence for that claim:
+
+- `prompt_context_receipt_schema =
+  melix.untrusted_context_receipt.v1`
+- `prompt_context_receipt_count`
+- `prompt_context_receipts`
+
+The local-job claim uses `source_type = background_continuation`,
+`source_field = local_job_followup`, and `source_id` set to the redacted job ID.
+`owner_scope_checked` remains `false` until a future owner-aware local-job
+monitor validates the job/session linkage. The prompt-context receipt must not
+copy command vectors, working directories, log paths, session IDs, success
+marker paths, artifact paths, raw log output, prompt text, or hidden reasoning
+content. Duplicate, blocked, or not-ready claims must not emit a new admitted
+prompt-context segment because no follow-up projection has been reserved.
+
 The Python worker skill and memory admission primitives are
 `worker.runtime.skill_memory_context.admit_skill_context` and
 `worker.runtime.skill_memory_context.admit_memory_context`. Future skill,

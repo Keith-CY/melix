@@ -4,9 +4,14 @@ import json
 import os
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from worker.runtime.background_continuation import (
+    admit_background_continuation as original_admit_background_continuation,
+)
+from worker.runtime import local_job_continuation as local_job_continuation_module
 from worker.runtime.local_job_continuation import (
     RECEIPT_SCHEMA_VERSION,
     RECORD_SCHEMA_VERSION,
@@ -17,6 +22,7 @@ from worker.runtime.local_job_continuation import (
     LocalJobLiveEvidence,
     reconcile_local_job_continuation,
 )
+from worker.runtime.prompt_context import PromptContextAdmission
 
 
 def _record(**overrides: object) -> LocalJobContinuationRecord:
@@ -281,6 +287,100 @@ def test_store_claim_followup_marks_completed_job_in_progress_once(tmp_path: Pat
     assert duplicate.receipt["reason"] == "followup_already_claimed"
     assert duplicate.receipt["followup_session_id"] == "followup-session-7"
     assert store.load_record("job-7") == claimed.record
+
+
+def test_store_claim_followup_emits_redacted_background_prompt_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_admissions: list[PromptContextAdmission] = []
+
+    def capture_admit_background_continuation(**kwargs: Any) -> PromptContextAdmission:
+        admission = original_admit_background_continuation(**kwargs)
+        captured_admissions.append(admission)
+        return admission
+
+    monkeypatch.setattr(
+        local_job_continuation_module,
+        "admit_background_continuation",
+        capture_admit_background_continuation,
+    )
+
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            command=("melix", "bench", "--private-flag"),
+            cwd="/workspace/private-project",
+            log_path="/workspace/private-project/.runtime/jobs/job-7.log",
+            session_id="session-secret-7",
+            success_marker_path="/workspace/private-project/.runtime/jobs/job-7.success",
+            artifact_paths=("/workspace/private-project/out/final.json",),
+        )
+    )
+
+    claimed = store.claim_followup("job-7", followup_session_id="followup-session-7")
+
+    assert claimed is not None
+    assert claimed.receipt["reason"] == "followup_claimed"
+    assert claimed.receipt["prompt_context_receipt_schema"] == (
+        "melix.untrusted_context_receipt.v1"
+    )
+    assert claimed.receipt["prompt_context_receipt_count"] == 1
+    assert claimed.receipt["prompt_context_receipts"] == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "job-7:local-job-followup",
+            "source_type": "background_continuation",
+            "source_field": "local_job_followup",
+            "source_id": "job-7",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": True,
+            "owner_scope_checked": False,
+            "reason": "local job follow-up is prompt data, not instructions",
+            "corrective_action": (
+                "Keep local job follow-up evidence in user-role prompt context."
+            ),
+        }
+    ]
+    assert len(captured_admissions) == 1
+    assert captured_admissions[0].user_payload["local_job_followup"][
+        "followup_status"
+    ] == "in_progress"
+    prompt_receipt_json = json.dumps(
+        claimed.receipt["prompt_context_receipts"],
+        ensure_ascii=False,
+    )
+    assert "--private-flag" not in prompt_receipt_json
+    assert "/workspace/private-project" not in prompt_receipt_json
+    assert "session-secret-7" not in prompt_receipt_json
+    assert "final.json" not in prompt_receipt_json
+
+
+def test_store_claim_followup_does_not_emit_prompt_receipt_for_duplicate_claim(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            success_marker_path="/workspace/.runtime/jobs/job-7.success",
+        )
+    )
+    claimed = store.claim_followup("job-7", followup_session_id="followup-session-7")
+
+    duplicate = store.claim_followup("job-7", followup_session_id="other-followup")
+
+    assert claimed is not None
+    assert duplicate is not None
+    assert claimed.receipt["prompt_context_receipt_count"] == 1
+    assert "prompt_context_receipts" not in duplicate.receipt
+    assert "prompt_context_receipt_count" not in duplicate.receipt
 
 
 def test_store_claim_followup_blocks_completed_record_without_evidence(tmp_path: Path) -> None:
