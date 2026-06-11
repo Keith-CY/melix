@@ -38,7 +38,7 @@ class LocalJobContinuationAdmissionError(RuntimeError):
         message: str,
         *,
         reconciliation: LocalJobContinuationReconciliation | None,
-        refusal_receipts: list[dict[str, object]],
+        refusal_receipts: list[dict[str, Any]],
     ) -> None:
         super().__init__(message)
         self.reconciliation = reconciliation
@@ -140,7 +140,7 @@ class LocalJobContinuationFollowupClaim:
 class LocalJobContinuationFollowupClaimBatch:
     claims: tuple[LocalJobContinuationFollowupClaim, ...]
     receipts: tuple[dict[str, Any], ...]
-    refusal_receipts: tuple[dict[str, object], ...]
+    refusal_receipts: tuple[dict[str, Any], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -404,7 +404,7 @@ class LocalJobContinuationStore:
         )
         claims: list[LocalJobContinuationFollowupClaim] = []
         receipts = list(scan.receipts)
-        refusal_receipts: list[dict[str, object]] = []
+        refusal_receipts: list[dict[str, Any]] = []
 
         for candidate in scan.candidates:
             job_id = candidate.record.job_id
@@ -427,6 +427,7 @@ class LocalJobContinuationStore:
                 continue
 
             try:
+                # Keep this try block scoped to the claim call so ValueError maps only claim-input validation.
                 claim = self.claim_followup_prompt_context(
                     job_id,
                     followup_session_id=followup_session_ids_by_job_id[job_id],
@@ -989,6 +990,7 @@ def _followup_record_missing_receipt(
 ) -> dict[str, Any]:
     return _receipt(
         job_id=record.job_id,
+        # The record disappeared before claim, so the scan snapshot is no longer actionable.
         status="blocked",
         reason="followup_record_missing",
         session_id=record.session_id,
