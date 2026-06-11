@@ -14,7 +14,7 @@ REPO_ROOT = Path(os.environ.get("MELIX_DATASET_PREVIEW_PROBE_REPO_ROOT") or Path
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
-from worker.dataset_registry.catalog import read_hf_dataset_snapshot_rows
+import worker.dataset_registry.catalog as catalog
 
 
 def _int_env(name: str, default: int) -> int:
@@ -31,18 +31,42 @@ def _build_snapshot(root: Path, *, row_count: int, sidecar_count: int) -> Path:
         (snapshot_root / f"000-sidecar-{index:05d}.txt").write_text("ignored\n", encoding="utf-8")
     snapshot_dir = snapshot_root / "data"
     snapshot_dir.mkdir()
-    rows = [{"prompt": f"prompt-{index}", "answer": f"answer-{index}"} for index in range(row_count)]
-    (snapshot_dir / "train.json").write_text(json.dumps({"rows": rows}), encoding="utf-8")
+    for index in range(row_count):
+        (snapshot_dir / f"part-{index:05d}.jsonl").write_text(
+            json.dumps({"prompt": f"prompt-{index}", "answer": f"answer-{index}"}) + "\n",
+            encoding="utf-8",
+        )
     (snapshot_root / "README.md").write_text("# Synthetic dataset\n", encoding="utf-8")
     return snapshot_root
+
+
+def _read_rows_with_yield_count(snapshot_dir: Path, *, limit: int) -> tuple[list[dict[str, object]], int]:
+    original_iter = catalog._iter_supported_dataset_files
+    yielded_paths: set[Path] = set()
+
+    def tracked_iter(path: Path):
+        for candidate in original_iter(path):
+            yielded_paths.add(candidate)
+            yield candidate
+
+    catalog._iter_supported_dataset_files = tracked_iter
+    try:
+        rows = catalog.read_hf_dataset_snapshot_rows(snapshot_dir, limit=limit)
+    finally:
+        catalog._iter_supported_dataset_files = original_iter
+    return rows, len(yielded_paths)
 
 
 def main() -> int:
     row_count = _int_env("MELIX_DATASET_PREVIEW_PROBE_FILES", 50_000)
     sidecar_count = _int_env("MELIX_DATASET_PREVIEW_PROBE_SIDECARS", 1_000)
     sample_count = _int_env("MELIX_DATASET_PREVIEW_PROBE_SAMPLES", 7)
+    multi_limit = min(_int_env("MELIX_DATASET_PREVIEW_PROBE_MULTI_LIMIT", 5), row_count)
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
+    multi_limit_elapsed_samples: list[float] = []
+    multi_limit_peak_samples: list[float] = []
+    multi_limit_yielded_samples: list[float] = []
     with tempfile.TemporaryDirectory(prefix="melix-dataset-preview-probe-") as temp_dir:
         snapshot_dir = _build_snapshot(
             Path(temp_dir), row_count=row_count, sidecar_count=sidecar_count
@@ -53,7 +77,7 @@ def main() -> int:
         for _ in range(sample_count):
             tracemalloc.start()
             started = time.perf_counter()
-            rows = read_hf_dataset_snapshot_rows(snapshot_dir, limit=1)
+            rows = catalog.read_hf_dataset_snapshot_rows(snapshot_dir, limit=1)
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             _, peak_bytes = tracemalloc.get_traced_memory()
             tracemalloc.stop()
@@ -64,7 +88,7 @@ def main() -> int:
 
             tracemalloc.start()
             started = time.perf_counter()
-            zero_limit_rows = read_hf_dataset_snapshot_rows(snapshot_dir, limit=0)
+            zero_limit_rows = catalog.read_hf_dataset_snapshot_rows(snapshot_dir, limit=0)
             zero_limit_elapsed_ms = (time.perf_counter() - started) * 1000.0
             _, zero_limit_peak_bytes = tracemalloc.get_traced_memory()
             tracemalloc.stop()
@@ -72,6 +96,20 @@ def main() -> int:
                 raise RuntimeError(f"unexpected zero-limit rows: {zero_limit_rows!r}")
             zero_limit_elapsed_samples.append(zero_limit_elapsed_ms)
             zero_limit_peak_samples.append(float(zero_limit_peak_bytes))
+
+            tracemalloc.start()
+            started = time.perf_counter()
+            multi_limit_rows, multi_limit_yielded = _read_rows_with_yield_count(
+                snapshot_dir, limit=multi_limit
+            )
+            multi_limit_elapsed_ms = (time.perf_counter() - started) * 1000.0
+            _, multi_limit_peak_bytes = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            if len(multi_limit_rows) != multi_limit:  # pragma: no cover
+                raise RuntimeError(f"unexpected multi-limit rows: {multi_limit_rows!r}")
+            multi_limit_elapsed_samples.append(multi_limit_elapsed_ms)
+            multi_limit_peak_samples.append(float(multi_limit_peak_bytes))
+            multi_limit_yielded_samples.append(float(multi_limit_yielded))
     print(
         json.dumps(
             {
@@ -80,6 +118,12 @@ def main() -> int:
                 "peak_bytes_mean": round(statistics.fmean(peak_samples), 3),
                 "zero_limit_elapsed_ms_mean": round(statistics.fmean(zero_limit_elapsed_samples), 6),
                 "zero_limit_peak_bytes_mean": round(statistics.fmean(zero_limit_peak_samples), 3),
+                "multi_limit_elapsed_ms_mean": round(statistics.fmean(multi_limit_elapsed_samples), 6),
+                "multi_limit_peak_bytes_mean": round(statistics.fmean(multi_limit_peak_samples), 3),
+                "multi_limit_dataset_files_yielded_mean": round(
+                    statistics.fmean(multi_limit_yielded_samples), 3
+                ),
+                "multi_limit": float(multi_limit),
                 "file_count": float(row_count),
                 "sidecar_count": float(sidecar_count),
                 "rows_returned": 1.0,

@@ -760,6 +760,35 @@ def test_dataset_catalog_row_reader_stops_file_scan_after_unsplit_limit(
     assert read_paths == [first_file]
 
 
+def test_dataset_catalog_row_reader_stops_iterator_after_unsplit_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    first_file = data_dir / "part-00000.jsonl"
+    second_file = data_dir / "part-00001.jsonl"
+    third_file = data_dir / "part-00002.jsonl"
+    first_file.write_text('{"prompt":"first"}\n', encoding="utf-8")
+    second_file.write_text('{"prompt":"second"}\n', encoding="utf-8")
+    third_file.write_text('{"prompt":"third"}\n', encoding="utf-8")
+    yielded_paths: list[Path] = []
+
+    def tracking_iter(path: Path):
+        assert path == snapshot_dir
+        for candidate in (first_file, second_file, third_file):
+            yielded_paths.append(candidate)
+            yield candidate
+
+    monkeypatch.setattr(catalog, "_iter_supported_dataset_files", tracking_iter)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir, limit=2)
+
+    assert rows == [{"prompt": "first"}, {"prompt": "second"}]
+    assert yielded_paths == [first_file, second_file]
+
+
 def test_dataset_catalog_limit_one_preview_avoids_full_supported_file_iterator(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

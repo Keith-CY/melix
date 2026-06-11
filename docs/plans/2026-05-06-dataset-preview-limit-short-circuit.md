@@ -33,6 +33,12 @@ Register `dataset-registry-preview-limit-short-circuit` in the PR-scoped perform
 
 Success means the branch preserves row output while materially lowering elapsed time and peak traced allocation for a many-file `limit=1` preview.
 
+## Follow-up: multi-row no-split limit return
+
+A later Python-only slice keeps the same registered `dataset-registry-preview-limit-short-circuit` probe and tightens `read_hf_dataset_snapshot_rows(..., limit=N)` for no-split previews where `N > 1`. Once row materialization reaches the requested limit, the reader now returns immediately instead of advancing the supported-file iterator one additional path before observing `remaining == 0`. Explicit split behavior remains unchanged except for the same safe early return after enough rows have been collected.
+
+The registered probe now also reports `multi_limit_elapsed_ms_mean` and `multi_limit_dataset_files_yielded_mean` so CI can validate the multi-row limit path in addition to the existing `limit=1` and zero-limit paths.
+
 ## Verification commands
 
 - Focused pytest for dataset registry and PR-scoped probe tests.
