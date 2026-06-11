@@ -493,13 +493,16 @@ def _json_typed_score(*, expected: Any, actual: Any, ignored_paths: Collection[s
         total = 0.0
         count = 0
         actual_dict = actual if isinstance(actual, dict) else None
+        actual_get = actual_dict.get if actual_dict is not None else None
+        ignored_contains = ignored_paths.__contains__
+        score_child = _json_typed_score
         for key, expected_value in expected.items():
-            child_path = _joined_path(path, key)
-            if child_path in ignored_paths:
+            child_path = f"{path}.{key}" if path else key
+            if ignored_contains(child_path):
                 continue
-            total += _json_typed_score(
+            total += score_child(
                 expected=expected_value,
-                actual=actual_dict.get(key) if actual_dict is not None else None,
+                actual=actual_get(key) if actual_get is not None else None,
                 ignored_paths=ignored_paths,
                 path=child_path,
             )
@@ -510,11 +513,12 @@ def _json_typed_score(*, expected: Any, actual: Any, ignored_paths: Collection[s
     if isinstance(expected, list):
         if not isinstance(actual, list) or len(expected) != len(actual):
             return 0.0
-        if not expected:
+        if not expected or expected == actual:
             return 1.0
         total = 0.0
+        score_child = _json_typed_score
         for index, item in enumerate(expected):
-            total += _json_typed_score(
+            total += score_child(
                 expected=item,
                 actual=actual[index],
                 ignored_paths=ignored_paths,
