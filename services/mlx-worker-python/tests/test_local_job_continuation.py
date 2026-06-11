@@ -35,6 +35,7 @@ def test_local_job_continuation_exports_are_sorted() -> None:
         "LocalJobContinuationAdmissionError",
         "LocalJobContinuationFollowupCandidate",
         "LocalJobContinuationFollowupClaim",
+        "LocalJobContinuationFollowupClaimBatch",
         "LocalJobContinuationFollowupScan",
         "LocalJobContinuationRecord",
         "LocalJobContinuationReconciliation",
