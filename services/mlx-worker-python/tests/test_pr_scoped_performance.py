@@ -314,6 +314,18 @@ def test_local_job_followup_scan_probe_script_emits_metrics(
 
 
 
+def test_local_job_followup_scan_probe_command_has_base_fallback() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "local-job-followup-scan-scandir"
+    )
+
+    assert "if [ -f scripts/local_job_followup_scan_probe.py ]" in probe.probe_command
+    assert "PYPROBE" in probe.probe_command
+
+
+
 def test_lora_aux_modules_scandir_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
