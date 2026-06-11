@@ -295,6 +295,34 @@ def test_scope_report_selects_local_job_followup_scan_probe() -> None:
     assert _selected_probe_ids(scope) == ["local-job-followup-scan-scandir"]
 
 
+def test_scope_report_selects_retrieval_context_projection_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/retrieval_context.py"],
+    )
+    assert _selected_probe_ids(scope) == ["retrieval-context-projection-fastpath"]
+
+
+def test_retrieval_context_projection_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_RETRIEVAL_CONTEXT_PROJECTION_ENTRIES", "5")
+    monkeypatch.setenv("MELIX_RETRIEVAL_CONTEXT_PROJECTION_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_RETRIEVAL_CONTEXT_PROJECTION_ITERATIONS", "2")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/retrieval_context_projection_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["baseline_elapsed_ms_mean"] >= 0.0
+    assert metrics["optimized_elapsed_ms_mean"] >= 0.0
+    assert metrics["entry_count"] == 5.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iteration_count"] == 2.0
+    assert metrics["speedup"] >= 0.0
+
+
 def test_local_job_followup_scan_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -3285,6 +3313,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-image-output-byte-accounting",
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
+        "retrieval-context-projection-fastpath",
         "same-cohort-batching-probe-evidence",
         "runtime-utils-kwarg-signature-cache",
         "runtime-utils-package-version-cache",

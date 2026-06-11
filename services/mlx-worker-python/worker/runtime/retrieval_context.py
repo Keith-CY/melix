@@ -101,12 +101,14 @@ def project_retrieval_contexts(
             refusal_receipts.extend(dict(receipt) for receipt in exc.refusal_receipts)
             continue
 
-        duplicate_fields = [
-            source_field
-            for source_field in admission.user_payload
-            if source_field in user_payload
-        ]
-        if duplicate_fields:
+        admission_payload = admission.user_payload
+        duplicate_fields: list[str] | None = None
+        for source_field in admission_payload:
+            if source_field in user_payload:
+                if duplicate_fields is None:
+                    duplicate_fields = []
+                duplicate_fields.append(source_field)
+        if duplicate_fields is not None:
             refusal_receipts.extend(
                 _duplicate_projection_receipt(
                     receipt,
@@ -116,7 +118,7 @@ def project_retrieval_contexts(
             )
             continue
 
-        user_payload.update(dict(admission.user_payload))
+        user_payload.update(admission_payload)
         receipts.extend(dict(receipt) for receipt in admission.untrusted_context_receipts)
 
     return RetrievalContextProjection(
