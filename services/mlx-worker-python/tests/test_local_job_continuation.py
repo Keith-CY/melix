@@ -837,6 +837,143 @@ def test_store_scan_followup_candidates_reconciles_and_filters_ready_records(
         revision=1,
     )
 
+    none_store = LocalJobContinuationStore(tmp_path / "claim-none")
+    none_ready = none_store.save_record(
+        _record(
+            job_id="none-ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/none-ready.json",),
+        )
+    )
+
+    none_batch = none_store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id=None,
+        completion_summaries_by_job_id=None,
+        owner_scope_checked_by_job_id=None,
+    )
+
+    assert none_batch.claims == ()
+    assert none_batch.refusal_receipts == ()
+    assert [receipt["reason"] for receipt in none_batch.receipts] == [
+        "followup_candidate_ready",
+        "followup_claim_input_missing",
+    ]
+    assert store.load_record("ready") == ready
+    assert none_store.load_record("none-ready") == none_ready
+
+    wrapper_store = LocalJobContinuationStore(tmp_path / "claim-wrapper")
+    wrapper_ready = wrapper_store.save_record(
+        _record(
+            job_id="wrapper-ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/wrapper-ready.json",),
+        )
+    )
+
+    wrapper_batch = wrapper_store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id=["not", "a", "mapping"],
+        completion_summaries_by_job_id={
+            "wrapper-ready": {"status": "completed"},
+        },
+        owner_scope_checked_by_job_id={"wrapper-ready": True},
+    )
+
+    assert wrapper_batch.claims == ()
+    assert wrapper_batch.refusal_receipts == ()
+    assert [receipt["reason"] for receipt in wrapper_batch.receipts] == [
+        "followup_candidate_ready",
+        "followup_claim_input_invalid",
+    ]
+    assert wrapper_batch.receipts[1]["input_error"] == (
+        "followup_session_ids_by_job_id must be a mapping when provided"
+    )
+    assert wrapper_store.load_record("wrapper-ready") == wrapper_ready
+
+    claim_store = LocalJobContinuationStore(tmp_path / "claim-siblings")
+    refused = claim_store.save_record(
+        _record(
+            job_id="refused",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/refused.json",),
+        )
+    )
+    lookup_refused = claim_store.save_record(
+        _record(
+            job_id="lookup-refused",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/lookup-refused.json",),
+        )
+    )
+    valid = claim_store.save_record(
+        _record(
+            job_id="valid",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/valid.json",),
+        )
+    )
+
+    class FollowupSessionIdsByJobId(dict[str, str]):
+        def __contains__(self, key: object) -> bool:
+            if key == "refused":
+                raise TypeError("followup session lookup refused")
+            return super().__contains__(key)
+
+    class CompletionSummariesByJobId(dict[str, dict[str, str]]):
+        def __getitem__(self, key: str) -> dict[str, str]:
+            if key == "lookup-refused":
+                raise TypeError("completion summary lookup refused")
+            return super().__getitem__(key)
+
+    claim_batch = claim_store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id=FollowupSessionIdsByJobId(
+            {
+                "lookup-refused": "followup-lookup-refused",
+                "valid": "followup-valid",
+            }
+        ),
+        completion_summaries_by_job_id=CompletionSummariesByJobId(
+            {
+                "lookup-refused": {"status": "completed"},
+                "valid": {"status": "completed"},
+            }
+        ),
+        owner_scope_checked_by_job_id={
+            "lookup-refused": True,
+            "refused": True,
+            "valid": True,
+        },
+    )
+
+    assert [claim.reconciliation.record.job_id for claim in claim_batch.claims] == ["valid"]
+    sibling_receipts_by_job = {
+        receipt["job_id"]: receipt for receipt in claim_batch.receipts
+    }
+    assert sibling_receipts_by_job["refused"]["reason"] == "followup_claim_input_invalid"
+    assert sibling_receipts_by_job["refused"]["input_error"] == (
+        "followup session lookup refused"
+    )
+    assert sibling_receipts_by_job["lookup-refused"]["reason"] == (
+        "followup_claim_input_invalid"
+    )
+    assert sibling_receipts_by_job["lookup-refused"]["input_error"] == (
+        "completion summary lookup refused"
+    )
+    assert sibling_receipts_by_job["valid"]["reason"] == "followup_claimed"
+    assert claim_batch.refusal_receipts == ()
+    assert claim_store.load_record("refused") == refused
+    assert claim_store.load_record("lookup-refused") == lookup_refused
+    assert claim_store.load_record("valid") == replace(
+        valid,
+        followup_status="in_progress",
+        followup_session_id="followup-valid",
+        revision=1,
+    )
+
 
 def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
     tmp_path: Path,
