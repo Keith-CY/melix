@@ -622,6 +622,132 @@ def test_store_claim_followup_preserves_non_completed_records(tmp_path: Path) ->
     assert store.load_record("job-7") == running
 
 
+def test_store_scan_followup_candidates_reconciles_and_filters_ready_records(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    claimed = store.save_record(
+        _record(
+            job_id="claimed",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/claimed.json",),
+            followup_status="in_progress",
+            followup_session_id="followup-claimed",
+        )
+    )
+    live_done = store.save_record(
+        _record(job_id="live-done", status="completed", exit_status=0)
+    )
+    missing = store.save_record(
+        _record(job_id="missing", status="completed", exit_status=0)
+    )
+    ready = store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+    running = store.save_record(_record(job_id="running", status="running"))
+    stale = store.save_record(_record(job_id="stale", status="completed", exit_status=0))
+    (tmp_path / "ready.json.lock").write_text(f"{os.getpid()}\n", encoding="utf-8")
+    (tmp_path / "ready.json.tmp").write_text("{}", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("not a record", encoding="utf-8")
+
+    scan = store.scan_followup_candidates(
+        live_evidence_by_job_id={
+            "live-done": LocalJobLiveEvidence(
+                session_id="session-7",
+                active=False,
+                progress_excerpt="done",
+                artifact_paths=("/workspace/out/live-done.json",),
+            ),
+            "stale": LocalJobLiveEvidence(
+                session_id="session-7",
+                active=True,
+                progress_excerpt="shard 3/12 still running",
+            ),
+        }
+    )
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == [
+        "live-done",
+        "ready",
+    ]
+    assert [candidate.receipt["reason"] for candidate in scan.candidates] == [
+        "followup_candidate_ready",
+        "followup_candidate_ready",
+    ]
+    receipts_by_job = {receipt["job_id"]: receipt for receipt in scan.receipts}
+    assert set(receipts_by_job) == {
+        "claimed",
+        "live-done",
+        "missing",
+        "ready",
+        "running",
+        "stale",
+    }
+    assert receipts_by_job["claimed"]["reason"] == "followup_already_claimed"
+    assert receipts_by_job["claimed"]["followup_session_id"] == "followup-claimed"
+    assert receipts_by_job["live-done"]["reason"] == "followup_candidate_ready"
+    assert receipts_by_job["missing"]["reason"] == "missing_completion_evidence"
+    assert receipts_by_job["ready"]["reason"] == "followup_candidate_ready"
+    assert receipts_by_job["running"]["reason"] == "followup_not_ready"
+    assert receipts_by_job["stale"]["reason"] == "stale_done_revived"
+    assert store.load_record("claimed") == claimed
+    assert store.load_record("live-done") == replace(
+        live_done,
+        artifact_paths=("/workspace/out/live-done.json",),
+        revision=1,
+    )
+    assert store.load_record("missing") == replace(missing, status="blocked", revision=1)
+    assert store.load_record("ready") == ready
+    assert store.load_record("running") == running
+    assert store.load_record("stale") == replace(
+        stale,
+        status="running",
+        exit_status=None,
+        revision=1,
+    )
+
+
+def test_store_scan_followup_candidates_returns_empty_for_missing_root(
+    tmp_path: Path,
+) -> None:
+    scan = LocalJobContinuationStore(tmp_path / "missing").scan_followup_candidates()
+
+    assert scan.candidates == ()
+    assert scan.receipts == ()
+
+
+def test_store_scan_followup_candidates_tolerates_record_deleted_during_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+    original_load_record = store.load_record
+
+    def delete_before_load(job_id: str) -> LocalJobContinuationRecord | None:
+        if job_id == "job-7":
+            (tmp_path / "job-7.json").unlink()
+        return original_load_record(job_id)
+
+    monkeypatch.setattr(store, "load_record", delete_before_load)
+
+    scan = store.scan_followup_candidates()
+
+    assert scan.candidates == ()
+    assert scan.receipts == ()
+
+
 def test_store_claim_followup_uses_revision_guard_for_concurrent_claim(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

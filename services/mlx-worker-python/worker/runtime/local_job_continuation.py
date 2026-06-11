@@ -136,6 +136,18 @@ class LocalJobContinuationFollowupClaim:
     prompt_context: PromptContextAdmission
 
 
+@dataclass(frozen=True, slots=True)
+class LocalJobContinuationFollowupCandidate:
+    record: LocalJobContinuationRecord
+    receipt: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class LocalJobContinuationFollowupScan:
+    candidates: tuple[LocalJobContinuationFollowupCandidate, ...]
+    receipts: tuple[dict[str, Any], ...]
+
+
 class LocalJobContinuationStore:
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
@@ -306,6 +318,46 @@ class LocalJobContinuationStore:
         return LocalJobContinuationFollowupClaim(
             reconciliation=replace(result, record=saved),
             prompt_context=prompt_context,
+        )
+
+    def scan_followup_candidates(
+        self,
+        *,
+        live_evidence_by_job_id: dict[str, LocalJobLiveEvidence] | None = None,
+    ) -> LocalJobContinuationFollowupScan:
+        candidates: list[LocalJobContinuationFollowupCandidate] = []
+        receipts: list[dict[str, Any]] = []
+        if not self.root.exists():
+            return LocalJobContinuationFollowupScan(candidates=(), receipts=())
+
+        live_evidence_by_job_id = live_evidence_by_job_id or {}
+        for path in sorted(self.root.glob("*.json")):
+            job_id = path.stem
+            reconciliation = self.reconcile_record(
+                job_id,
+                live_evidence=live_evidence_by_job_id.get(job_id),
+            )
+            if reconciliation is None:
+                continue
+            receipt = _followup_candidate_scan_receipt(reconciliation.record)
+            if receipt["reason"] == "followup_candidate_ready":
+                receipts.append(receipt)
+                candidates.append(
+                    LocalJobContinuationFollowupCandidate(
+                        record=reconciliation.record,
+                        receipt=receipt,
+                    )
+                )
+            elif receipt["reason"] == "followup_already_claimed":
+                receipts.append(receipt)
+            elif reconciliation.receipt.get("reason") != "record_state_preserved":
+                receipts.append(reconciliation.receipt)
+            else:
+                receipts.append(receipt)
+
+        return LocalJobContinuationFollowupScan(
+            candidates=tuple(candidates),
+            receipts=tuple(receipts),
         )
 
     def _record_path(self, job_id: str) -> Path:
@@ -657,6 +709,53 @@ def _receipt(
     return receipt
 
 
+def _followup_candidate_scan_receipt(
+    record: LocalJobContinuationRecord,
+) -> dict[str, Any]:
+    evidence_available = _has_completion_evidence(record)
+    if record.followup_status in {"pending", "in_progress", "completed"}:
+        return _receipt(
+            job_id=record.job_id,
+            status=record.status,
+            reason="followup_already_claimed",
+            session_id=record.session_id,
+            exit_status=record.exit_status,
+            followup_status=record.followup_status,
+            duplicate_launch_refused=False,
+            completion_evidence_available=evidence_available,
+            corrective_action="Do not enqueue another local job follow-up for this record.",
+            followup_session_id=record.followup_session_id,
+        )
+    if record.status == "completed" and evidence_available:
+        return _receipt(
+            job_id=record.job_id,
+            status=record.status,
+            reason="followup_candidate_ready",
+            session_id=record.session_id,
+            exit_status=record.exit_status,
+            followup_status=record.followup_status,
+            duplicate_launch_refused=False,
+            completion_evidence_available=True,
+            corrective_action=(
+                "A monitor may claim this local job follow-up after prompt-context admission."
+            ),
+        )
+    return _receipt(
+        job_id=record.job_id,
+        status=record.status,
+        reason="followup_not_ready",
+        session_id=record.session_id,
+        exit_status=record.exit_status,
+        followup_status=record.followup_status,
+        duplicate_launch_refused=False,
+        completion_evidence_available=evidence_available,
+        corrective_action=(
+            "Wait until the local job is completed with explicit evidence before follow-up."
+        ),
+        followup_session_id=record.followup_session_id,
+    )
+
+
 def _local_job_followup_prompt_context_receipts(
     record: LocalJobContinuationRecord,
 ) -> list[dict[str, object]]:
@@ -840,7 +939,9 @@ __all__ = [
     "RECEIPT_SCHEMA_VERSION",
     "RECORD_SCHEMA_VERSION",
     "LocalJobContinuationAdmissionError",
+    "LocalJobContinuationFollowupCandidate",
     "LocalJobContinuationFollowupClaim",
+    "LocalJobContinuationFollowupScan",
     "LocalJobContinuationRecord",
     "LocalJobContinuationReconciliation",
     "LocalJobContinuationStore",
