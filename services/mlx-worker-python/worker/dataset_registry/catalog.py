@@ -449,7 +449,7 @@ def read_hf_dataset_snapshot_rows(
         if remaining == 0:
             return rows
         rows.extend(_read_rows_from_file(path, limit=remaining))
-        if limit is not None and normalized_split and len(rows) >= limit:
+        if limit is not None and len(rows) >= limit:
             return rows
     return rows
 

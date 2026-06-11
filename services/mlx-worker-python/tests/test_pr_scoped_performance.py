@@ -2820,7 +2820,7 @@ def test_dataset_registry_limit_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["synthetic_file_count"] == 6.0
     assert metrics["limit"] == 2.0
-    assert metrics["dataset_files_yielded_mean"] == 4.0
+    assert metrics["dataset_files_yielded_mean"] == 3.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 
@@ -3071,6 +3071,9 @@ def test_dataset_registry_preview_limit_probe_script_emits_metrics(
     assert metrics["zero_limit_rows_returned"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["zero_limit_elapsed_ms_mean"] >= 0
+    assert metrics["multi_limit"] == 4.0
+    assert metrics["multi_limit_dataset_files_yielded_mean"] == 5.0
+    assert metrics["multi_limit_elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["zero_limit_peak_bytes_mean"] >= 0
 
