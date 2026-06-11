@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, cast
 
 from packages.protocol.python.worker.v1 import common_pb2
@@ -519,6 +520,7 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
     return ToolSelectionResult(registry=selected_registry, receipt=receipt)
 
 
+@lru_cache(maxsize=128)
 def _keyword_tool_matches(text: str) -> tuple[str, ...]:
     if not text:
         return ()

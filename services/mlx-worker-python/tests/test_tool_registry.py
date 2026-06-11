@@ -757,6 +757,20 @@ def test_agentic_tool_selection_keyword_matcher_covers_literal_and_boundary_bran
     )
 
 
+def test_agentic_tool_selection_keyword_matches_reuse_bounded_cache() -> None:
+    matcher = tool_registry_module._keyword_tool_matches
+    matcher.cache_clear()
+
+    assert matcher("Search, then crop-region.") == ("image_crop", "text_search")
+    first_info = matcher.cache_info()
+    assert matcher("Search, then crop-region.") == ("image_crop", "text_search")
+    second_info = matcher.cache_info()
+
+    assert first_info.maxsize == 128
+    assert first_info.misses == 1
+    assert second_info.hits == first_info.hits + 1
+
+
 def test_agentic_tool_selection_keyword_rule_compiler_filters_empty_hints() -> None:
     rules = tool_registry_module._compile_keyword_hint_rules(
         {
