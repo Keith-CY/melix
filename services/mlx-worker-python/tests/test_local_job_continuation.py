@@ -838,10 +838,78 @@ def test_store_scan_followup_candidates_reconciles_and_filters_ready_records(
     )
 
 
+def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            job_id="b-ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/b-ready.json",),
+        )
+    )
+    store.save_record(
+        _record(
+            job_id="a-ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/a-ready.json",),
+        )
+    )
+    (tmp_path / "z-ignored.json.tmp").write_text("{}", encoding="utf-8")
+    (tmp_path / "nested.json").mkdir()
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"scan_followup_candidates() should use os.scandir, not Path.glob({pattern!r})"
+        )
+
+    original_scandir = local_job_continuation_module.os.scandir
+    scandir_calls: list[str] = []
+
+    def counting_scandir(path: str | os.PathLike[str]):
+        scandir_calls.append(os.fspath(path))
+        return original_scandir(path)
+
+    monkeypatch.setattr(local_job_continuation_module.Path, "glob", fail_glob)
+    monkeypatch.setattr(local_job_continuation_module.os, "scandir", counting_scandir)
+
+    scan = store.scan_followup_candidates()
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == [
+        "a-ready",
+        "b-ready",
+    ]
+    assert scandir_calls == [os.fspath(tmp_path)]
+
+
 def test_store_scan_followup_candidates_returns_empty_for_missing_root(
     tmp_path: Path,
 ) -> None:
     scan = LocalJobContinuationStore(tmp_path / "missing").scan_followup_candidates()
+
+    assert scan.candidates == ()
+    assert scan.receipts == ()
+
+
+def test_store_scan_followup_candidates_tolerates_root_deleted_during_scandir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "records"
+    root.mkdir()
+    store = LocalJobContinuationStore(root)
+
+    def delete_then_raise(path: str | os.PathLike[str]):
+        root.rmdir()
+        raise FileNotFoundError(os.fspath(path))
+
+    monkeypatch.setattr(local_job_continuation_module.os, "scandir", delete_then_raise)
+
+    scan = store.scan_followup_candidates()
 
     assert scan.candidates == ()
     assert scan.receipts == ()
