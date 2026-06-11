@@ -605,6 +605,23 @@ not implement skill lookup, memory persistence, retrieval ranking, or
 chat/session wiring; they are only the prompt-context boundary for evidence
 admitted by those later surfaces.
 
+Future skill and memory entrypoints that project multiple already-redacted
+items should use
+`worker.runtime.skill_memory_context.project_skill_memory_contexts`. The helper
+accepts ordered `SkillMemoryContextEntry` descriptors, delegates each item to
+the single-entry admission helpers above, returns one combined user-role prompt
+payload, and returns copied admitted receipts plus copied refusal receipts.
+Malformed skill or memory entries are isolated into `refusal_receipts` and must
+not drop valid sibling entries. Duplicate prompt payload fields fail closed for
+the later duplicate item with `reason = duplicate_skill_context_field` or
+`duplicate_memory_context_field`, preserving the first admitted entry and
+preventing silent prompt-payload overwrites. Concrete stores should pass stable
+unique `source_field` values such as `agent_skill_0` or `pinned_memory_0` when
+projecting more than one item of the same type. The batch projection remains
+side-effect-free: it does not read skill files, load memory stores, rank
+retrieval results, infer owner scope, mutate sessions, or copy raw source text
+into receipt JSON.
+
 The Python worker retrieval admission primitives are
 `worker.runtime.retrieval_context.admit_retrieved_document_context` and
 `worker.runtime.retrieval_context.admit_retrieved_image_context`. Deterministic
