@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 from uuid import uuid4
 
+from worker.runtime.background_continuation import admit_background_continuation
+from worker.runtime.untrusted_context import UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION
+
 
 RECORD_SCHEMA_VERSION = "melix.local_job_continuation_record.v1"
 RECEIPT_SCHEMA_VERSION = "melix.local_job_continuation_receipt.v1"
@@ -510,6 +513,7 @@ def claim_local_job_followup(
                 "The monitor may project exactly one admitted background continuation."
             ),
             followup_session_id=claimed.followup_session_id,
+            prompt_context_receipts=_local_job_followup_prompt_context_receipts(claimed),
         ),
     )
 
@@ -526,8 +530,9 @@ def _receipt(
     completion_evidence_available: bool,
     corrective_action: str,
     followup_session_id: str = "",
+    prompt_context_receipts: Sequence[dict[str, object]] = (),
 ) -> dict[str, Any]:
-    return {
+    receipt = {
         "schema_version": RECEIPT_SCHEMA_VERSION,
         "job_id": job_id,
         "status": status,
@@ -540,6 +545,31 @@ def _receipt(
         "completion_evidence_available": completion_evidence_available,
         "corrective_action": corrective_action,
     }
+    if prompt_context_receipts:
+        receipt["prompt_context_receipt_schema"] = UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION
+        receipt["prompt_context_receipt_count"] = len(prompt_context_receipts)
+        receipt["prompt_context_receipts"] = [dict(item) for item in prompt_context_receipts]
+    return receipt
+
+
+def _local_job_followup_prompt_context_receipts(
+    record: LocalJobContinuationRecord,
+) -> list[dict[str, object]]:
+    admission = admit_background_continuation(
+        job_id=record.job_id,
+        job_summary={
+            "job_id": record.job_id,
+            "status": record.status,
+            "exit_status": record.exit_status,
+            "followup_status": record.followup_status,
+        },
+        owner_scope_checked=False,
+        segment_id=f"{record.job_id}:local-job-followup",
+        source_field="local_job_followup",
+        reason="local job follow-up is prompt data, not instructions",
+        corrective_action="Keep local job follow-up evidence in user-role prompt context.",
+    )
+    return admission.untrusted_context_receipts
 
 
 def _has_completion_evidence(
