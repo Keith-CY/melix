@@ -332,11 +332,20 @@ class LocalJobContinuationStore:
 
         live_evidence_by_job_id = live_evidence_by_job_id or {}
         for path in sorted(self.root.glob("*.json")):
+            if not path.is_file():
+                continue
             job_id = path.stem
-            reconciliation = self.reconcile_record(
-                job_id,
-                live_evidence=live_evidence_by_job_id.get(job_id),
-            )
+            try:
+                reconciliation = self.reconcile_record(
+                    job_id,
+                    live_evidence=live_evidence_by_job_id.get(job_id),
+                )
+            except LocalJobContinuationStoreError as exc:
+                receipts.append(exc.receipt)
+                continue
+            except (json.JSONDecodeError, OSError, ValueError):
+                receipts.append(_unreadable_record_scan_receipt(job_id=job_id))
+                continue
             if reconciliation is None:
                 continue
             receipt = _followup_candidate_scan_receipt(reconciliation.record)
@@ -753,6 +762,23 @@ def _followup_candidate_scan_receipt(
             "Wait until the local job is completed with explicit evidence before follow-up."
         ),
         followup_session_id=record.followup_session_id,
+    )
+
+
+def _unreadable_record_scan_receipt(*, job_id: str) -> dict[str, Any]:
+    return _receipt(
+        job_id=job_id,
+        status="blocked",
+        reason="record_unreadable",
+        session_id="",
+        exit_status=None,
+        followup_status="blocked",
+        duplicate_launch_refused=False,
+        completion_evidence_available=False,
+        corrective_action=(
+            "Repair or remove the unreadable local job continuation record before "
+            "it can be considered for follow-up."
+        ),
     )
 
 

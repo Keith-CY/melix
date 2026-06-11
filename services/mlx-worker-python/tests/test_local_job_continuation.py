@@ -748,6 +748,92 @@ def test_store_scan_followup_candidates_tolerates_record_deleted_during_scan(
     assert scan.receipts == ()
 
 
+def test_store_scan_followup_candidates_skips_unreadable_records(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    ready = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+    (tmp_path / "corrupt.json").write_text("{", encoding="utf-8")
+    (tmp_path / "metadata.json").write_text(
+        json.dumps({"schema_version": "metadata.v1"}) + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "nested.json").mkdir()
+
+    scan = store.scan_followup_candidates()
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == ["job-7"]
+    receipts_by_job = {receipt["job_id"]: receipt for receipt in scan.receipts}
+    assert receipts_by_job["job-7"]["reason"] == "followup_candidate_ready"
+    assert receipts_by_job["corrupt"]["reason"] == "record_unreadable"
+    assert receipts_by_job["metadata"]["reason"] == "record_unreadable"
+    assert "nested" not in receipts_by_job
+    assert store.load_record("job-7") == ready
+
+
+def test_store_scan_followup_candidates_preserves_store_error_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    ready = store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+    stale_done = store.save_record(
+        _record(job_id="stale", status="completed", exit_status=0)
+    )
+    original_save_record = store.save_record
+    injected_race = False
+
+    def race_before_reconcile_write(
+        record: LocalJobContinuationRecord,
+        *,
+        expected_revision: int | None = None,
+    ) -> LocalJobContinuationRecord:
+        nonlocal injected_race
+        if record.job_id == "stale" and not injected_race and expected_revision == stale_done.revision:
+            injected_race = True
+            original_save_record(
+                replace(stale_done, status="running", exit_status=None),
+                expected_revision=stale_done.revision,
+            )
+        return original_save_record(record, expected_revision=expected_revision)
+
+    monkeypatch.setattr(store, "save_record", race_before_reconcile_write)
+
+    scan = store.scan_followup_candidates(
+        live_evidence_by_job_id={
+            "stale": LocalJobLiveEvidence(
+                session_id="session-7",
+                active=True,
+                progress_excerpt="shard 3/12 still running",
+            ),
+        }
+    )
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == ["ready"]
+    receipts_by_job = {receipt["job_id"]: receipt for receipt in scan.receipts}
+    assert receipts_by_job["ready"]["reason"] == "followup_candidate_ready"
+    assert receipts_by_job["stale"]["reason"] == "record_revision_mismatch"
+    assert store.load_record("ready") == ready
+    assert store.load_record("stale") == replace(
+        stale_done,
+        status="running",
+        exit_status=None,
+        revision=1,
+    )
+
+
 def test_store_claim_followup_uses_revision_guard_for_concurrent_claim(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

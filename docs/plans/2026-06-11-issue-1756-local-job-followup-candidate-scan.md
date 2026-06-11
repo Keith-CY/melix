@@ -17,6 +17,9 @@ This slice covers:
 - per-record reconciliation before candidate classification, so stale
   `completed` records can self-heal to `running` and missing completion evidence
   can block before a monitor attempts a follow-up claim;
+- per-record scan isolation for unreadable record files and store-level
+  reconciliation conflicts, so one bad durable record does not stop discovery of
+  other ready follow-ups;
 - candidate receipts for evidence-backed completed records whose follow-up has
   not yet been claimed;
 - skip/block receipts for already-claimed follow-ups and non-ready records;
@@ -50,6 +53,8 @@ Success metrics:
 - scan cost is O(record count) and O(1) per record beyond JSON load/optional
   reconciliation write;
 - lock, temporary, and unrelated files are ignored by suffix;
+- unreadable record files and store-level reconciliation conflicts are surfaced
+  as per-record receipts and do not abort the scan;
 - changed-line Python coverage for touched runtime and tests is at least
   95 percent;
 - local and hosted PR-scoped performance reports are `Status: ok` with zero

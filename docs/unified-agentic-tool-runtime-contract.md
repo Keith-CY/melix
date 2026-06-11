@@ -524,7 +524,10 @@ records, missing completion evidence, and live completion evidence keep the
 same reconciliation receipts defined above. Ready records emit
 `reason = followup_candidate_ready`, indicating that a monitor may next call
 `claim_followup_prompt_context` to perform the single guarded claim and
-prompt-context admission.
+prompt-context admission. Unreadable record files must not abort the whole
+scan; they emit `reason = record_unreadable`, and revision-guarded store
+conflicts keep their store-level receipt so the monitor can continue scanning
+other records.
 
 When a local-job follow-up claim succeeds, the
 `melix.local_job_continuation_receipt.v1` receipt must also expose the redacted
