@@ -455,8 +455,11 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
     max_selected_tools = max(1, selection_input.max_selected_tools)
     selected_sources: dict[str, str] = {}
     selected_names: list[str] = []
+    has_vector_selection = False
+    has_keyword_selection = False
 
     def add_tool(tool_name: str, source: str) -> None:
+        nonlocal has_keyword_selection, has_vector_selection
         if len(selected_names) >= max_selected_tools:
             return
         normalized_name = tool_name.strip()
@@ -466,6 +469,10 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
             return
         selected_sources[normalized_name] = source
         selected_names.append(normalized_name)
+        if source == "vector":
+            has_vector_selection = True
+        elif source == "keyword" or source == "keyword_context":
+            has_keyword_selection = True
 
     for tool_name in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES:
         add_tool(tool_name, "always")
@@ -475,19 +482,21 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
     if selection_input.vector_available and selection_input.vector_selected_tool_ids:
         for tool_name in selection_input.vector_selected_tool_ids:
             add_tool(tool_name, "vector")
-        if any(source == "vector" for source in selected_sources.values()):
+        if has_vector_selection:
             selection_mode = "vector"
             fallback_reason = ""
 
     if selection_mode != "vector":
         current_matches = _keyword_tool_matches(selection_input.current_user_turn)
-        context_text = " ".join(selection_input.recent_user_turns)
-        context_matches = _keyword_tool_matches(context_text)
+        if selection_input.recent_user_turns:
+            context_matches = _keyword_tool_matches(" ".join(selection_input.recent_user_turns))
+        else:
+            context_matches = ()
         for tool_name in current_matches:
             add_tool(tool_name, "keyword")
         for tool_name in context_matches:
             add_tool(tool_name, "keyword_context")
-        if any(source in {"keyword", "keyword_context"} for source in selected_sources.values()):
+        if has_keyword_selection:
             selection_mode = "keyword"
             fallback_reason = "vector_unavailable" if not selection_input.vector_available else "vector_no_match"
 
@@ -518,18 +527,21 @@ def _keyword_tool_matches(text: str) -> tuple[str, ...]:
         return ()
     boundary_text = ""
     matches: list[str] = []
+    append_match = matches.append
+    keyword_hint_rules = _BUILTIN_TOOL_KEYWORD_HINT_RULES
+    keyword_boundary_text = _keyword_boundary_text
     for tool_name in _KEYWORD_MATCHABLE_TOOL_NAMES:
-        rules = _BUILTIN_TOOL_KEYWORD_HINT_RULES.get(tool_name, ())
+        rules = keyword_hint_rules.get(tool_name, ())
         for hint, literal in rules:
             if literal:
                 if hint in normalized_text:
-                    matches.append(tool_name)
+                    append_match(tool_name)
                     break
                 continue
             if not boundary_text:
-                boundary_text = _keyword_boundary_text(normalized_text)
+                boundary_text = keyword_boundary_text(normalized_text)
             if hint in boundary_text:
-                matches.append(tool_name)
+                append_match(tool_name)
                 break
     return tuple(matches)
 
