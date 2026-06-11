@@ -405,17 +405,31 @@ class LocalJobContinuationStore:
         live_evidence_by_job_id: dict[str, LocalJobLiveEvidence] | None = None,
     ) -> LocalJobContinuationFollowupClaimBatch:
         live_evidence_by_job_id = live_evidence_by_job_id or {}
-        followup_session_ids_by_job_id = _claim_input_mapping_or_invalid(
+        (
+            followup_session_ids_by_job_id,
+            followup_session_ids_input_error,
+        ) = _claim_input_mapping_or_error(
             followup_session_ids_by_job_id,
             "followup_session_ids_by_job_id",
         )
-        completion_summaries_by_job_id = _claim_input_mapping_or_invalid(
+        (
+            completion_summaries_by_job_id,
+            completion_summaries_input_error,
+        ) = _claim_input_mapping_or_error(
             completion_summaries_by_job_id,
             "completion_summaries_by_job_id",
         )
-        owner_scope_checked_by_job_id = _claim_input_mapping_or_invalid(
+        (
+            owner_scope_checked_by_job_id,
+            owner_scope_checked_input_error,
+        ) = _claim_input_mapping_or_error(
             owner_scope_checked_by_job_id,
             "owner_scope_checked_by_job_id",
+        )
+        wrapper_input_error = (
+            followup_session_ids_input_error
+            or completion_summaries_input_error
+            or owner_scope_checked_input_error
         )
         scan = self.scan_followup_candidates(
             live_evidence_by_job_id=live_evidence_by_job_id,
@@ -426,6 +440,14 @@ class LocalJobContinuationStore:
 
         for candidate in scan.candidates:
             job_id = candidate.record.job_id
+            if wrapper_input_error is not None:
+                receipts.append(
+                    _followup_claim_input_invalid_receipt(
+                        candidate.record,
+                        error=wrapper_input_error,
+                    )
+                )
+                continue
             try:
                 missing_fields = [
                     field_name
@@ -855,29 +877,18 @@ def project_local_job_session_followup(
     )
 
 
-class _InvalidClaimInputMapping:
-    def __init__(self, message: str) -> None:
-        self.message = message
-
-    def __contains__(self, key: object) -> bool:
-        raise TypeError(self.message)
-
-    def __getitem__(self, key: str) -> Any:
-        raise TypeError(self.message)
-
-
-def _claim_input_mapping_or_invalid(
+def _claim_input_mapping_or_error(
     value: Mapping[str, Any] | None,
     field_name: str,
-) -> Mapping[str, Any] | _InvalidClaimInputMapping:
+) -> tuple[Mapping[str, Any], str | None]:
     if value is None:
-        return {}
+        return {}, None
     if isinstance(value, Mapping):
-        return value
-    return _InvalidClaimInputMapping(f"{field_name} must be a mapping when provided")
+        return value, None
+    return {}, f"{field_name} must be a mapping when provided"
 
 
-def _claim_input_value(values: Mapping[str, Any] | _InvalidClaimInputMapping, job_id: str) -> Any:
+def _claim_input_value(values: Mapping[str, Any], job_id: str) -> Any:
     try:
         return values[job_id]
     except (LookupError, TypeError, ValueError) as exc:
