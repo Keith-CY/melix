@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal, NoReturn
 
 from worker.runtime.prompt_context import (
@@ -17,6 +18,29 @@ class SkillMemoryContextAdmissionError(ValueError):
     def __init__(self, message: str, *, refusal_receipts: list[dict[str, object]]) -> None:
         super().__init__(message)
         self.refusal_receipts = refusal_receipts
+
+
+@dataclass(frozen=True, slots=True)
+class SkillMemoryContextEntry:
+    context_kind: ContextKind
+    source_id: str
+    payload: dict[str, Any]
+    owner_scope_checked: bool
+    segment_id: str = ""
+    source_field: str = ""
+    reason: str = ""
+    corrective_action: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class SkillMemoryContextProjection:
+    user_payload: dict[str, Any]
+    untrusted_context_receipts: list[dict[str, object]]
+    refusal_receipts: list[dict[str, object]]
+
+    @property
+    def untrusted_context_receipt_count(self) -> int:
+        return len(self.untrusted_context_receipts)
 
 
 def admit_skill_context(
@@ -61,6 +85,115 @@ def admit_memory_context(
         reason=reason,
         corrective_action=corrective_action,
     )
+
+
+def project_skill_memory_contexts(
+    entries: list[SkillMemoryContextEntry] | tuple[SkillMemoryContextEntry, ...],
+) -> SkillMemoryContextProjection:
+    user_payload: dict[str, Any] = {}
+    receipts: list[dict[str, object]] = []
+    refusal_receipts: list[dict[str, object]] = []
+
+    for entry in entries:
+        try:
+            admission = _admit_entry(entry)
+        except SkillMemoryContextAdmissionError as exc:
+            refusal_receipts.extend(dict(receipt) for receipt in exc.refusal_receipts)
+            continue
+
+        duplicate_fields = [
+            source_field
+            for source_field in admission.user_payload
+            if source_field in user_payload
+        ]
+        if duplicate_fields:
+            refusal_receipts.extend(
+                _duplicate_projection_receipt(
+                    receipt,
+                    duplicate_fields=duplicate_fields,
+                )
+                for receipt in admission.untrusted_context_receipts
+            )
+            continue
+
+        user_payload.update(dict(admission.user_payload))
+        receipts.extend(dict(receipt) for receipt in admission.untrusted_context_receipts)
+
+    return SkillMemoryContextProjection(
+        user_payload=user_payload,
+        untrusted_context_receipts=receipts,
+        refusal_receipts=refusal_receipts,
+    )
+
+
+def _admit_entry(entry: SkillMemoryContextEntry) -> PromptContextAdmission:
+    if entry.context_kind == "skill":
+        return admit_skill_context(
+            skill_id=entry.source_id,
+            skill_payload=entry.payload,
+            owner_scope_checked=entry.owner_scope_checked,
+            segment_id=entry.segment_id,
+            source_field=entry.source_field,
+            reason=entry.reason,
+            corrective_action=entry.corrective_action,
+        )
+    if entry.context_kind == "memory":
+        return admit_memory_context(
+            memory_id=entry.source_id,
+            memory_payload=entry.payload,
+            owner_scope_checked=entry.owner_scope_checked,
+            segment_id=entry.segment_id,
+            source_field=entry.source_field,
+            reason=entry.reason,
+            corrective_action=entry.corrective_action,
+        )
+    _raise_refusal(
+        context_kind="skill",
+        segment_id=f"{_fallback_entry_source_id(entry)}:skill-context",
+        source_id=_fallback_entry_source_id(entry),
+        source_field="context_kind",
+        owner_scope_checked=False,
+    )
+
+
+def _duplicate_projection_receipt(
+    receipt: dict[str, object],
+    *,
+    duplicate_fields: list[str],
+) -> dict[str, object]:
+    source_type = receipt.get("source_type")
+    if source_type not in ("skill", "memory"):
+        source_type = "skill"
+    source_field = receipt.get("source_field")
+    if not isinstance(source_field, str) or source_field not in duplicate_fields:
+        source_field = duplicate_fields[0]
+    segment_id = receipt.get("segment_id")
+    if not isinstance(segment_id, str) or not segment_id.strip():
+        source_id = receipt.get("source_id")
+        fallback = source_id if isinstance(source_id, str) and source_id else "unknown-skill"
+        segment_id = f"{fallback}:{source_type}-context"
+    source_id = receipt.get("source_id")
+    owner_scope_checked = receipt.get("owner_scope_checked")
+    return refused_source_prompt_context_receipt(
+        segment_id=segment_id,
+        source_type=source_type,
+        source_field=source_field,
+        source_id=source_id if isinstance(source_id, str) else "",
+        owner_scope_checked=(
+            owner_scope_checked if isinstance(owner_scope_checked, bool) else False
+        ),
+        reason=f"duplicate_{source_type}_context_field",
+        corrective_action=(
+            "Provide a unique source_field before projecting multiple skill "
+            "or memory entries into one prompt payload."
+        ),
+    )
+
+
+def _fallback_entry_source_id(entry: SkillMemoryContextEntry) -> str:
+    if isinstance(entry.source_id, str) and entry.source_id.strip():
+        return entry.source_id.strip()
+    return "unknown-skill"
 
 
 def _admit_context(
@@ -218,7 +351,10 @@ def _entrypoint_optional_text(
 
 
 __all__ = [
+    "SkillMemoryContextEntry",
     "SkillMemoryContextAdmissionError",
+    "SkillMemoryContextProjection",
     "admit_memory_context",
     "admit_skill_context",
+    "project_skill_memory_contexts",
 ]
