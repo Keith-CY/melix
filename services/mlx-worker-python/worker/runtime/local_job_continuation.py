@@ -148,6 +148,15 @@ class LocalJobContinuationFollowupScan:
     receipts: tuple[dict[str, Any], ...]
 
 
+@dataclass(frozen=True, slots=True)
+class LocalJobSessionFollowupProjection:
+    claim: LocalJobContinuationFollowupClaim
+    claim_receipt: dict[str, Any]
+    prompt_user_payload: dict[str, Any]
+    untrusted_context_receipts: list[dict[str, object]]
+    followup_message: dict[str, Any] | None
+
+
 class LocalJobContinuationStore:
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
@@ -686,6 +695,43 @@ def claim_local_job_followup(
     )
 
 
+def project_local_job_session_followup(
+    store: LocalJobContinuationStore,
+    *,
+    job_id: str,
+    followup_session_id: str,
+    completion_summary: dict[str, Any],
+    owner_scope_checked: bool,
+    live_evidence: LocalJobLiveEvidence | None = None,
+) -> LocalJobSessionFollowupProjection | None:
+    claim = store.claim_followup_prompt_context(
+        job_id,
+        followup_session_id=followup_session_id,
+        completion_summary=completion_summary,
+        owner_scope_checked=owner_scope_checked,
+        live_evidence=live_evidence,
+    )
+    if claim is None:
+        return None
+
+    prompt_user_payload = dict(claim.prompt_context.user_payload)
+    receipts = [dict(receipt) for receipt in claim.prompt_context.untrusted_context_receipts]
+    followup_message: dict[str, Any] | None = None
+    if prompt_user_payload:
+        followup_message = {
+            "role": "user",
+            "content": prompt_user_payload,
+            "untrusted_context_receipts": receipts,
+        }
+    return LocalJobSessionFollowupProjection(
+        claim=claim,
+        claim_receipt=dict(claim.reconciliation.receipt),
+        prompt_user_payload=prompt_user_payload,
+        untrusted_context_receipts=receipts,
+        followup_message=followup_message,
+    )
+
+
 def _receipt(
     *,
     job_id: str,
@@ -977,6 +1023,8 @@ __all__ = [
     "LocalJobContinuationStore",
     "LocalJobContinuationStoreError",
     "LocalJobLiveEvidence",
+    "LocalJobSessionFollowupProjection",
     "claim_local_job_followup",
+    "project_local_job_session_followup",
     "reconcile_local_job_continuation",
 ]
