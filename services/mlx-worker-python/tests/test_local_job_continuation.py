@@ -26,6 +26,26 @@ from worker.runtime.local_job_continuation import (
 from worker.runtime.prompt_context import PromptContextAdmission
 
 
+def test_local_job_continuation_exports_are_sorted() -> None:
+    assert local_job_continuation_module.__all__ == [
+        "FOLLOWUP_STATUSES",
+        "JOB_STATUSES",
+        "RECEIPT_SCHEMA_VERSION",
+        "RECORD_SCHEMA_VERSION",
+        "LocalJobContinuationAdmissionError",
+        "LocalJobContinuationFollowupClaim",
+        "LocalJobContinuationRecord",
+        "LocalJobContinuationReconciliation",
+        "LocalJobContinuationStore",
+        "LocalJobContinuationStoreError",
+        "LocalJobLiveEvidence",
+        "LocalJobSessionFollowupProjection",
+        "claim_local_job_followup",
+        "project_local_job_session_followup",
+        "reconcile_local_job_continuation",
+    ]
+
+
 def _record(**overrides: object) -> LocalJobContinuationRecord:
     values: dict[str, object] = {
         "job_id": "job-7",
