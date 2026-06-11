@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal, NoReturn
 
 from worker.runtime.prompt_context import (
@@ -17,6 +18,29 @@ class RetrievalContextAdmissionError(ValueError):
     def __init__(self, message: str, *, refusal_receipts: list[dict[str, object]]) -> None:
         super().__init__(message)
         self.refusal_receipts = refusal_receipts
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalContextEntry:
+    context_kind: RetrievalContextKind
+    source_id: str
+    payload: dict[str, Any]
+    owner_scope_checked: bool
+    segment_id: str = ""
+    source_field: str = ""
+    reason: str = ""
+    corrective_action: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalContextProjection:
+    user_payload: dict[str, Any]
+    untrusted_context_receipts: list[dict[str, object]]
+    refusal_receipts: list[dict[str, object]]
+
+    @property
+    def untrusted_context_receipt_count(self) -> int:
+        return len(self.untrusted_context_receipts)
 
 
 def admit_retrieved_document_context(
@@ -61,6 +85,128 @@ def admit_retrieved_image_context(
         reason=reason,
         corrective_action=corrective_action,
     )
+
+
+def project_retrieval_contexts(
+    entries: list[RetrievalContextEntry] | tuple[RetrievalContextEntry, ...],
+) -> RetrievalContextProjection:
+    user_payload: dict[str, Any] = {}
+    receipts: list[dict[str, object]] = []
+    refusal_receipts: list[dict[str, object]] = []
+
+    for entry in entries:
+        try:
+            admission = _admit_entry(entry)
+        except RetrievalContextAdmissionError as exc:
+            refusal_receipts.extend(dict(receipt) for receipt in exc.refusal_receipts)
+            continue
+
+        duplicate_fields = [
+            source_field
+            for source_field in admission.user_payload
+            if source_field in user_payload
+        ]
+        if duplicate_fields:
+            refusal_receipts.extend(
+                _duplicate_projection_receipt(
+                    receipt,
+                    duplicate_fields=duplicate_fields,
+                )
+                for receipt in admission.untrusted_context_receipts
+            )
+            continue
+
+        user_payload.update(dict(admission.user_payload))
+        receipts.extend(dict(receipt) for receipt in admission.untrusted_context_receipts)
+
+    return RetrievalContextProjection(
+        user_payload=user_payload,
+        untrusted_context_receipts=receipts,
+        refusal_receipts=refusal_receipts,
+    )
+
+
+def _admit_entry(entry: RetrievalContextEntry) -> PromptContextAdmission:
+    if not isinstance(entry, RetrievalContextEntry):
+        _raise_refusal(
+            context_kind="retrieved_document",
+            segment_id="unknown-retrieved-document:retrieved-document-context",
+            source_id="unknown-retrieved-document",
+            source_field="entry",
+            owner_scope_checked=False,
+        )
+    if entry.context_kind == "retrieved_document":
+        return admit_retrieved_document_context(
+            document_id=entry.source_id,
+            document_payload=entry.payload,
+            owner_scope_checked=entry.owner_scope_checked,
+            segment_id=entry.segment_id,
+            source_field=entry.source_field,
+            reason=entry.reason,
+            corrective_action=entry.corrective_action,
+        )
+    if entry.context_kind == "retrieved_image":
+        return admit_retrieved_image_context(
+            image_id=entry.source_id,
+            image_payload=entry.payload,
+            owner_scope_checked=entry.owner_scope_checked,
+            segment_id=entry.segment_id,
+            source_field=entry.source_field,
+            reason=entry.reason,
+            corrective_action=entry.corrective_action,
+        )
+    fallback = _fallback_entry_source_id(entry)
+    _raise_refusal(
+        context_kind="retrieved_document",
+        segment_id=f"{fallback}:retrieved-document-context",
+        source_id=fallback,
+        source_field="context_kind",
+        owner_scope_checked=False,
+    )
+
+
+def _duplicate_projection_receipt(
+    receipt: dict[str, object],
+    *,
+    duplicate_fields: list[str],
+) -> dict[str, object]:
+    source_type = receipt.get("source_type")
+    if source_type not in ("retrieved_document", "retrieved_image"):
+        source_type = "retrieved_document"
+    source_field = receipt.get("source_field")
+    if not isinstance(source_field, str) or source_field not in duplicate_fields:
+        source_field = duplicate_fields[0]
+    segment_id = receipt.get("segment_id")
+    if not isinstance(segment_id, str) or not segment_id.strip():
+        source_id = receipt.get("source_id")
+        fallback = (
+            source_id
+            if isinstance(source_id, str) and source_id
+            else _fallback_source_id(source_type)
+        )
+        segment_id = f"{fallback}:{_segment_suffix(source_type)}"
+    source_id = receipt.get("source_id")
+    owner_scope_checked = receipt.get("owner_scope_checked")
+    return refused_source_prompt_context_receipt(
+        segment_id=segment_id,
+        source_type=source_type,
+        source_field=source_field,
+        source_id=source_id if isinstance(source_id, str) else "",
+        owner_scope_checked=(
+            owner_scope_checked if isinstance(owner_scope_checked, bool) else False
+        ),
+        reason=f"duplicate_{source_type}_context_field",
+        corrective_action=(
+            "Provide a unique source_field before projecting multiple "
+            "retrieved entries into one prompt payload."
+        ),
+    )
+
+
+def _fallback_entry_source_id(entry: RetrievalContextEntry) -> str:
+    if isinstance(entry.source_id, str) and entry.source_id.strip():
+        return entry.source_id.strip()
+    return "unknown-retrieved-document"
 
 
 def _admit_context(
@@ -238,6 +384,9 @@ def _entrypoint_optional_text(
 
 __all__ = [
     "RetrievalContextAdmissionError",
+    "RetrievalContextEntry",
+    "RetrievalContextProjection",
     "admit_retrieved_document_context",
     "admit_retrieved_image_context",
+    "project_retrieval_contexts",
 ]

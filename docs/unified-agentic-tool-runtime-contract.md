@@ -643,6 +643,24 @@ not implement retrieval storage, ranking, indexing, ingestion, or chat/session
 wiring; they are only the prompt-context boundary for evidence admitted by
 those surfaces.
 
+Future retrieval entrypoints that project multiple already-redacted source
+items should use `worker.runtime.retrieval_context.project_retrieval_contexts`.
+The helper accepts ordered `RetrievalContextEntry` descriptors for retrieved
+documents and retrieved images, delegates every item to the single-entry
+admission helpers above, returns one combined user-role prompt payload, and
+returns copied admitted receipts plus copied refusal receipts. Malformed
+retrieved entries are isolated into `refusal_receipts` and must not drop valid
+sibling entries. Duplicate prompt payload fields fail closed for the later
+duplicate item with `reason = duplicate_retrieved_document_context_field` or
+`duplicate_retrieved_image_context_field`, preserving the first admitted entry
+and preventing silent prompt-payload overwrites. Concrete result-list and local
+source entrypoints should pass stable unique `source_field` values such as
+`retrieved_document_0` or `retrieved_image_0` when projecting more than one
+retrieved item of the same type. The batch projection remains side-effect-free:
+it does not read files, query retrieval stores, rank results, index documents,
+infer owner scope, mutate sessions, or copy raw source text, captions, media
+URIs, local paths, or page content into receipt JSON.
+
 The v1 control-plane rerank document-boundary slice applies the same receipt
 schema to the OpenAI-compatible `/v1/rerank` HTTP response. The handler emits
 one redacted `source_type = retrieved_document` receipt per candidate document
