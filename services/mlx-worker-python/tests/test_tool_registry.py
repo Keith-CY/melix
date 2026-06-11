@@ -758,6 +758,20 @@ def test_agentic_tool_selection_records_fallback_when_no_keyword_matches() -> No
     ]
 
 
+def test_agentic_tool_selection_records_fallback_for_whitespace_only_turn() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn=" \t\n ",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+    assert result.receipt["fallback_reason"] == "no_keyword_match"
+
+
 def test_tool_registry_exports_worker_tool_config_metadata() -> None:
     config = built_in_tool_config(["image_crop", "local_compute"])
 

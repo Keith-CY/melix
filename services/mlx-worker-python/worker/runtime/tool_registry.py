@@ -506,6 +506,8 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
 
 
 def _keyword_tool_matches(text: str) -> tuple[str, ...]:
+    if not text:
+        return ()
     normalized_text = text.casefold()
     if not normalized_text.strip():
         return ()
