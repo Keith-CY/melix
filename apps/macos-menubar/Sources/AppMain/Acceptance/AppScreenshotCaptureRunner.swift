@@ -196,14 +196,14 @@ public final class AppScreenshotCaptureRunner {
 
     public init(
         config: AppScreenshotCaptureConfig,
-        viewModel: RuntimeViewModel? = nil,
+        makeViewModel: (@MainActor () -> RuntimeViewModel)? = nil,
         renderer: MelixSwiftUIScreenshotRenderer = MelixSwiftUIScreenshotRenderer(),
         fileManager: FileManager = .default,
         cases: [AppScreenshotCaptureCase] = AppScreenshotCaptureCase.defaultCases
     ) {
         self.config = config
-        self.makeViewModel = {
-            viewModel ?? RuntimeViewModel(client: AppScreenshotCaptureControlPlaneClient())
+        self.makeViewModel = makeViewModel ?? {
+            RuntimeViewModel(client: AppScreenshotCaptureControlPlaneClient())
         }
         self.renderer = renderer
         self.fileManager = fileManager

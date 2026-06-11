@@ -252,7 +252,7 @@ struct DesktopShellTabStripView: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(shortcutKey(for: surface), modifiers: .command)
-                .accessibilityLabel(surface.rawValue)
+                .accessibilityLabel(LocalizedStringKey(surface.rawValue))
                 .focusable(false)
                 .fixedSize(horizontal: true, vertical: false)
             }

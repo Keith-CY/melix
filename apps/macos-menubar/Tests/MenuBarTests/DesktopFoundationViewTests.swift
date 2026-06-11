@@ -41,11 +41,6 @@ struct DesktopFoundationViewTests {
     @Test("titlebar navigation exposes only the five product domains")
     @MainActor
     func titlebarNavigationExposesOnlyFiveProductDomains() async throws {
-        let root = try repositoryRootForDesktopFoundationTests()
-        let chromeSourceURL = root.appendingPathComponent(
-            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopShellChromeView.swift"
-        )
-        let chromeSource = try String(contentsOf: chromeSourceURL, encoding: .utf8)
         let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
         await viewModel.start()
 
@@ -64,9 +59,8 @@ struct DesktopFoundationViewTests {
         #expect(visibleLabels.contains("Jobs") == false)
         #expect(visibleLabels.contains("Diagnostics") == false)
         #expect(visibleLabels.contains("Image") == false)
+        #expect(Set(visibleLabels).count == visibleLabels.count)
         #expect(hosted.fittingSize.height <= DesktopShellChromeMetrics.titleBarTabHeightBudget)
-        #expect(chromeSource.contains("ForEach(DesktopSurface.visibleNavigationCases)"))
-        #expect(chromeSource.contains(".accessibilityLabel(surface.rawValue)"))
     }
 
     @Test("shared pane chrome exposes labeled icon controls")

@@ -3189,7 +3189,10 @@ final class WorkerScaffoldTests: XCTestCase {
             modelCatalog: WorkerModelCatalog(environment: [
                 "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
             ]),
-            runtime: TextRuntime(backend: FakeRuntimeBackend())
+            runtime: TextRuntime(
+                backend: FakeRuntimeBackend(),
+                residentMemoryReader: { 0 }
+            )
         )
 
         var loadRequest = Melix_Worker_V1_ModelSpec()
