@@ -59,6 +59,11 @@ BUILTIN_AGENTIC_TOOL_NAMES = (
 )
 _BUILTIN_AGENTIC_TOOL_NAME_SET = frozenset(BUILTIN_AGENTIC_TOOL_NAMES)
 ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES = ("local_compute",)
+_KEYWORD_MATCHABLE_TOOL_NAMES = tuple(
+    tool_name
+    for tool_name in BUILTIN_AGENTIC_TOOL_NAMES
+    if tool_name not in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES
+)
 
 
 class ToolRegistryError(ValueError):
@@ -506,14 +511,14 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
 
 
 def _keyword_tool_matches(text: str) -> tuple[str, ...]:
+    if not text:
+        return ()
     normalized_text = text.casefold()
     if not normalized_text.strip():
         return ()
     boundary_text = ""
     matches: list[str] = []
-    for tool_name in BUILTIN_AGENTIC_TOOL_NAMES:
-        if tool_name in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES:
-            continue
+    for tool_name in _KEYWORD_MATCHABLE_TOOL_NAMES:
         rules = _BUILTIN_TOOL_KEYWORD_HINT_RULES.get(tool_name, ())
         for hint, literal in rules:
             if literal:
