@@ -589,6 +589,60 @@ def test_project_skill_memory_contexts_isolates_refusals_without_dropping_valid_
     ]
 
 
+def test_project_skill_memory_contexts_refuses_malformed_entry_objects_without_dropping_valid_entries() -> None:
+    projection = project_skill_memory_contexts(
+        [
+            None,  # type: ignore[list-item]
+            {"context_kind": "memory"},  # type: ignore[list-item]
+            SkillMemoryContextEntry(
+                context_kind="memory",
+                source_id="memory:valid",
+                payload={"text": "Valid remembered preference"},
+                owner_scope_checked=True,
+                source_field="pinned_memory_0",
+            ),
+        ]
+    )
+
+    assert projection.user_payload == {
+        "pinned_memory_0": {"text": "Valid remembered preference"}
+    }
+    assert len(projection.untrusted_context_receipts) == 1
+    assert projection.untrusted_context_receipts[0]["source_id"] == "memory:valid"
+    assert projection.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "unknown-skill:skill-context",
+            "source_type": "skill",
+            "source_field": "entry",
+            "source_id": "unknown-skill",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "invalid_skill_context_field",
+            "corrective_action": "Reject malformed skill context before prompt assembly.",
+        },
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "unknown-skill:skill-context",
+            "source_type": "skill",
+            "source_field": "entry",
+            "source_id": "unknown-skill",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "invalid_skill_context_field",
+            "corrective_action": "Reject malformed skill context before prompt assembly.",
+        },
+    ]
+
+
 def test_project_skill_memory_contexts_refuses_duplicate_payload_fields_before_overwrite() -> None:
     projection = project_skill_memory_contexts(
         [
