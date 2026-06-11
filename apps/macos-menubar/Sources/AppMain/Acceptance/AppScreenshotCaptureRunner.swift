@@ -301,7 +301,7 @@ private struct AppScreenshotCaptureWindowShellView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Spacer(minLength: 92)
+                Spacer(minLength: DesktopShellChromeMetrics.windowTrafficLightAreaWidth)
                 DesktopWorkspaceTitleBarTabsView(viewModel: viewModel)
                 Spacer(minLength: 12)
                 DesktopWorkspaceTitleBarActionsView(viewModel: viewModel)
