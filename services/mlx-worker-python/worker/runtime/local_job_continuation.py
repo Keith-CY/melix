@@ -381,12 +381,15 @@ class LocalJobContinuationStore:
     def claim_scanned_followup_prompt_contexts(
         self,
         *,
-        followup_session_ids_by_job_id: dict[str, str],
-        completion_summaries_by_job_id: dict[str, dict[str, Any]],
-        owner_scope_checked_by_job_id: dict[str, bool],
+        followup_session_ids_by_job_id: dict[str, str] | None,
+        completion_summaries_by_job_id: dict[str, dict[str, Any]] | None,
+        owner_scope_checked_by_job_id: dict[str, bool] | None,
         live_evidence_by_job_id: dict[str, LocalJobLiveEvidence] | None = None,
     ) -> LocalJobContinuationFollowupClaimBatch:
         live_evidence_by_job_id = live_evidence_by_job_id or {}
+        followup_session_ids_by_job_id = followup_session_ids_by_job_id or {}
+        completion_summaries_by_job_id = completion_summaries_by_job_id or {}
+        owner_scope_checked_by_job_id = owner_scope_checked_by_job_id or {}
         scan = self.scan_followup_candidates(
             live_evidence_by_job_id=live_evidence_by_job_id,
         )
@@ -425,6 +428,8 @@ class LocalJobContinuationStore:
             except LocalJobContinuationAdmissionError as exc:
                 if exc.reconciliation is not None:
                     receipts.append(exc.reconciliation.receipt)
+                else:
+                    receipts.append(_followup_prompt_context_refused_receipt(candidate.record))
                 refusal_receipts.extend(exc.refusal_receipts)
                 continue
             except LocalJobContinuationStoreError as exc:
@@ -912,6 +917,25 @@ def _followup_claim_input_invalid_receipt(
     )
     receipt["input_error"] = error
     return receipt
+
+
+def _followup_prompt_context_refused_receipt(
+    record: LocalJobContinuationRecord,
+) -> dict[str, Any]:
+    return _receipt(
+        job_id=record.job_id,
+        status=record.status,
+        reason="followup_prompt_context_refused",
+        session_id=record.session_id,
+        exit_status=record.exit_status,
+        followup_status=record.followup_status,
+        duplicate_launch_refused=False,
+        completion_evidence_available=_has_completion_evidence(record),
+        corrective_action=(
+            "Keep this local job follow-up unclaimed until prompt-context admission succeeds."
+        ),
+        followup_session_id=record.followup_session_id,
+    )
 
 
 def _followup_record_missing_receipt(

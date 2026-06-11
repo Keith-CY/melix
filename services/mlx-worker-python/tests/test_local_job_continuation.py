@@ -950,6 +950,38 @@ def test_store_claim_scanned_followups_reports_missing_claim_inputs(
     assert store.load_record("job-7") == ready
 
 
+def test_store_claim_scanned_followups_normalizes_none_claim_inputs(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    ready = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+
+    batch = store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id=None,
+        completion_summaries_by_job_id=None,
+        owner_scope_checked_by_job_id=None,
+    )
+
+    assert batch.claims == ()
+    assert batch.refusal_receipts == ()
+    assert [receipt["reason"] for receipt in batch.receipts] == [
+        "followup_candidate_ready",
+        "followup_claim_input_missing",
+    ]
+    assert batch.receipts[1]["missing_fields"] == [
+        "followup_session_id",
+        "completion_summary",
+        "owner_scope_checked",
+    ]
+    assert store.load_record("job-7") == ready
+
+
 def test_store_claim_scanned_followups_preserves_admission_refusal_without_claim(
     tmp_path: Path,
 ) -> None:
@@ -976,6 +1008,51 @@ def test_store_claim_scanned_followups_preserves_admission_refusal_without_claim
     assert len(batch.refusal_receipts) == 1
     assert batch.refusal_receipts[0]["source_field"] == "local_job_completion_summary"
     assert batch.refusal_receipts[0]["included"] is False
+    assert store.load_record("job-7") == ready
+
+
+def test_store_claim_scanned_followups_records_admission_refusal_without_reconciliation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    ready = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+    refusal_receipt = {"included": False, "source_field": "local_job_completion_summary"}
+
+    def refuse_without_reconciliation(
+        job_id: str,
+        *,
+        followup_session_id: str,
+        completion_summary: dict[str, Any],
+        owner_scope_checked: bool,
+        live_evidence: LocalJobLiveEvidence | None = None,
+    ) -> object:
+        raise LocalJobContinuationAdmissionError(
+            "prompt context refused",
+            reconciliation=None,
+            refusal_receipts=[refusal_receipt],
+        )
+
+    monkeypatch.setattr(store, "claim_followup_prompt_context", refuse_without_reconciliation)
+
+    batch = store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id={"job-7": "followup-session-7"},
+        completion_summaries_by_job_id={"job-7": {"status": "completed"}},
+        owner_scope_checked_by_job_id={"job-7": True},
+    )
+
+    assert batch.claims == ()
+    assert [receipt["reason"] for receipt in batch.receipts] == [
+        "followup_candidate_ready",
+        "followup_prompt_context_refused",
+    ]
+    assert batch.receipts[1]["job_id"] == "job-7"
+    assert batch.refusal_receipts == (refusal_receipt,)
     assert store.load_record("job-7") == ready
 
 

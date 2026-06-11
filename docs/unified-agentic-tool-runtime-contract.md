@@ -539,7 +539,8 @@ an owner-scope decision for each job ID they want claimed. Missing claim inputs
 emit `reason = followup_claim_input_missing`; malformed claim inputs emit
 `reason = followup_claim_input_invalid`; prompt-admission refusals emit
 `reason = followup_prompt_context_refused` plus background-continuation refusal
-receipts; store revision races keep the store-level receipt such as
+receipts, including a fallback refusal receipt if prompt admission fails before
+reconciliation evidence is available; store revision races keep the store-level receipt such as
 `record_revision_mismatch`. These per-candidate failures must not abort claims
 for other ready records, and admission-refused candidates must not persist an
 `in_progress` follow-up claim. The batch bridge still must not start jobs, tail
