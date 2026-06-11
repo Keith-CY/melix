@@ -431,6 +431,22 @@ closed before prompt admission with the same `invalid_background_continuation_fi
 refusal receipt and must not include raw logs, command text, session contents,
 or workflow payloads.
 
+The workflow-facing Python worker helper is
+`worker.runtime.background_continuation.admit_workflow_continuation_result`.
+It is a prompt-boundary primitive for already-redacted workflow continuation
+results, not a workflow runner or scheduler. The helper maps the redacted
+workflow run ID, and optional workflow node ID, into `source_id =
+<workflow_run_id>[:<workflow_node_id>]` and keeps
+`source_type = background_continuation`. By default it emits
+`segment_id = <source_id>:workflow-continuation`,
+`source_field = workflow_result`, and workflow-specific data-only reason and
+corrective-action text. Concrete workflow entrypoints may still override
+`segment_id`, `source_field`, `reason`, and `corrective_action` through the same
+entrypoint-local metadata surface. Malformed workflow run IDs, workflow node
+IDs, result payloads, and owner-scope metadata must fail closed with
+`included = false`, `reason = invalid_background_continuation_field`, and no
+user payload.
+
 The Python worker local-job continuation primitive is
 `worker.runtime.local_job_continuation`. It defines a versioned
 `melix.local_job_continuation_record.v1` record for durable background local
