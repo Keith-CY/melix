@@ -20,6 +20,7 @@ from worker.runtime.local_job_continuation import (
     LocalJobContinuationStore,
     LocalJobContinuationStoreError,
     LocalJobLiveEvidence,
+    project_local_job_session_followup,
     reconcile_local_job_continuation,
 )
 from worker.runtime.prompt_context import PromptContextAdmission
@@ -607,6 +608,107 @@ def test_store_claim_followup_prompt_context_skips_duplicate_claim_prompt_payloa
     assert duplicate.prompt_context.user_payload == {}
     assert duplicate.prompt_context.untrusted_context_receipts == []
     assert store.load_record("job-7") == claimed
+
+
+def test_project_local_job_session_followup_returns_user_message_projection(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    completed = store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            command=("melix", "bench", "--private-flag"),
+            cwd="/workspace/private-project",
+            log_path="/workspace/private-project/.runtime/jobs/job-7.log",
+            session_id="session-secret-7",
+            success_marker_path="/workspace/private-project/.runtime/jobs/job-7.success",
+            artifact_paths=("/workspace/private-project/out/final.json",),
+        )
+    )
+
+    projection = project_local_job_session_followup(
+        store,
+        job_id="job-7",
+        followup_session_id="followup-session-7",
+        completion_summary={
+            "status": "completed",
+            "summary": "Redacted completion summary.",
+            "artifact_count": 1,
+        },
+        owner_scope_checked=True,
+    )
+
+    assert projection is not None
+    assert projection.claim.reconciliation.record == replace(
+        completed,
+        followup_status="in_progress",
+        followup_session_id="followup-session-7",
+        revision=1,
+    )
+    assert projection.claim_receipt["reason"] == "followup_claimed"
+    assert projection.prompt_user_payload == {
+        "local_job_completion_summary": {
+            "status": "completed",
+            "summary": "Redacted completion summary.",
+            "artifact_count": 1,
+        }
+    }
+    assert projection.untrusted_context_receipts == (
+        projection.claim.prompt_context.untrusted_context_receipts
+    )
+    assert projection.followup_message == {
+        "role": "user",
+        "content": projection.prompt_user_payload,
+        "untrusted_context_receipts": projection.untrusted_context_receipts,
+    }
+    receipt_json = json.dumps(projection.untrusted_context_receipts, sort_keys=True)
+    assert "--private-flag" not in receipt_json
+    assert "/workspace/private-project" not in receipt_json
+    assert "session-secret-7" not in receipt_json
+    assert "final.json" not in receipt_json
+    assert "Redacted completion summary." not in receipt_json
+    assert store.load_record("job-7") == projection.claim.reconciliation.record
+
+
+def test_project_local_job_session_followup_preserves_store_blocker_without_message(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    completed = store.save_record(_record(status="completed", exit_status=0))
+
+    projection = project_local_job_session_followup(
+        store,
+        job_id="job-7",
+        followup_session_id="followup-session-7",
+        completion_summary={"status": "completed"},
+        owner_scope_checked=True,
+    )
+
+    assert projection is not None
+    assert projection.claim.reconciliation.record == replace(completed, status="blocked", revision=1)
+    assert projection.claim_receipt["reason"] == "missing_completion_evidence"
+    assert projection.prompt_user_payload == {}
+    assert projection.untrusted_context_receipts == []
+    assert projection.followup_message == {}
+    assert store.load_record("job-7") == projection.claim.reconciliation.record
+
+
+def test_project_local_job_session_followup_returns_none_for_missing_record(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+
+    assert (
+        project_local_job_session_followup(
+            store,
+            job_id="job-7",
+            followup_session_id="followup-session-7",
+            completion_summary={"status": "completed"},
+            owner_scope_checked=True,
+        )
+        is None
+    )
 
 
 def test_store_claim_followup_preserves_non_completed_records(tmp_path: Path) -> None:
