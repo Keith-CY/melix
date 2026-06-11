@@ -47,7 +47,7 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
     }
 
     public static var visibleNavigationCases: [DesktopSurface] {
-        [.chat, .commandCenter, .server, .models, .workflows, .jobs, .diagnostics, .api, .image, .settings]
+        [.chat, .server, .models, .workflows, .settings]
     }
 
     public var routeDomainID: String {

@@ -466,9 +466,10 @@ struct AppMainBootstrapTests {
         #expect(outputJSON["app_path"] as? String == "/tmp/Melix.app")
         #expect(outputJSON["width"] as? Int == 360)
         #expect(outputJSON["height"] as? Int == 240)
-        #expect(screenshots.count == DesktopSurface.visibleNavigationCases.count + DesktopToolSection.allCases.count + 1)
+        #expect(screenshots.count == AppScreenshotCaptureCase.defaultCases.count)
         #expect(fileManager.fileExists(atPath: tempRoot.appendingPathComponent("screenshot_manifest.json").path))
-        #expect(fileManager.fileExists(atPath: tempRoot.appendingPathComponent("screenshots/command-center.png").path))
+        #expect(fileManager.fileExists(atPath: tempRoot.appendingPathComponent("screenshots/workspace-chat-ready.png").path))
+        #expect(fileManager.fileExists(atPath: tempRoot.appendingPathComponent("screenshots/workspace-settings.png").path))
     }
 
     @Test("app screenshot capture entry supports default output flushing and scheduling")

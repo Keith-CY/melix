@@ -38,6 +38,37 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedSurface == .chat)
     }
 
+    @Test("titlebar navigation exposes only the five product domains")
+    @MainActor
+    func titlebarNavigationExposesOnlyFiveProductDomains() async throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let chromeSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopShellChromeView.swift"
+        )
+        let chromeSource = try String(contentsOf: chromeSourceURL, encoding: .utf8)
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await viewModel.start()
+
+        let hosted = hostView(DesktopWorkspaceTitleBarTabsView(viewModel: viewModel))
+        let visibleLabels = DesktopSurface.visibleNavigationCases.map(\.rawValue)
+
+        #expect(visibleLabels == [
+            "Chat",
+            "Servers",
+            "Models",
+            "Workflows",
+            "Settings",
+        ])
+        #expect(visibleLabels.contains("Command Center") == false)
+        #expect(visibleLabels.contains("API") == false)
+        #expect(visibleLabels.contains("Jobs") == false)
+        #expect(visibleLabels.contains("Diagnostics") == false)
+        #expect(visibleLabels.contains("Image") == false)
+        #expect(hosted.fittingSize.height <= DesktopShellChromeMetrics.titleBarTabHeightBudget)
+        #expect(chromeSource.contains("ForEach(DesktopSurface.visibleNavigationCases)"))
+        #expect(chromeSource.contains(".accessibilityLabel(surface.rawValue)"))
+    }
+
     @Test("shared pane chrome exposes labeled icon controls")
     @MainActor
     func sharedPaneChromeExposesLabeledIconControls() {
@@ -266,9 +297,9 @@ struct DesktopFoundationViewTests {
         #expect(commandCenter.wasOpened)
     }
 
-    @Test("titlebar exposes pane toggles and command center entry")
+    @Test("titlebar exposes inspector toggle and command center entry")
     @MainActor
-    func titlebarExposesPaneTogglesAndCommandCenterEntry() async throws {
+    func titlebarExposesInspectorToggleAndCommandCenterEntry() async throws {
         let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
         let commandCenter = CommandCenterOpenRecorder()
         viewModel.openCommandCenterAction = { commandCenter.open() }
@@ -280,6 +311,7 @@ struct DesktopFoundationViewTests {
 
         let hosted = hostView(DesktopWorkspaceTitleBarActionsView(viewModel: viewModel))
         #expect(hosted.subviews.isEmpty == false)
+        #expect(renderedTextValues(in: hosted).contains("Hide Sidebar") == false)
 
         viewModel.toggleDesktopPane(.inspector)
         #expect(viewModel.isDesktopPaneVisible(.inspector, for: .chat) == false)
@@ -1731,8 +1763,8 @@ struct DesktopFoundationViewTests {
         #expect(registrySource.contains("Run Suitability"))
     }
 
-    @Test("desktop workspace reserves titlebar chrome space")
-    func desktopWorkspaceReservesTitlebarChromeSpace() throws {
+    @Test("desktop workspace removes the artificial titlebar content gap")
+    func desktopWorkspaceRemovesArtificialTitlebarContentGap() throws {
         let root = try repositoryRootForDesktopFoundationTests()
         let chromeSourceURL = root.appendingPathComponent(
             "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopShellChromeView.swift"
@@ -1745,10 +1777,7 @@ struct DesktopFoundationViewTests {
 
         #expect(chromeSource.contains("workspaceTitleBarContentTopInset"))
         #expect(shellSource.contains(".padding(.top, DesktopShellChromeMetrics.workspaceTitleBarContentTopInset)"))
-        #expect(
-            DesktopShellChromeMetrics.workspaceTitleBarContentTopInset
-            >= DesktopShellChromeMetrics.titleBarTabHeightBudget + 24
-        )
+        #expect(DesktopShellChromeMetrics.workspaceTitleBarContentTopInset == 0)
     }
 
     @Test("server sidebar rows opt out of appkit focus rings")
