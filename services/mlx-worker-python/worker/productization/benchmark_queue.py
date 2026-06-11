@@ -85,6 +85,9 @@ class BenchmarkQueueStore:
             return []
 
         records = []
+        load_record = self._load_record
+        metadata_key_from_stat = self._metadata_key_from_stat
+        is_regular_file = stat.S_ISREG
         try:
             with os.scandir(queue_root) as entries:
                 for entry in entries:
@@ -94,12 +97,12 @@ class BenchmarkQueueStore:
                         stat_result = entry.stat()
                     except OSError:
                         continue
-                    if not stat.S_ISREG(stat_result.st_mode):
+                    if not is_regular_file(stat_result.st_mode):
                         continue
                     records.append(
-                        self._load_record(
+                        load_record(
                             entry.path,
-                            metadata_key=self._metadata_key_from_stat(stat_result),
+                            metadata_key=metadata_key_from_stat(stat_result),
                         )
                     )
         except OSError:
