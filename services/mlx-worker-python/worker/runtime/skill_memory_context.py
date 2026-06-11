@@ -127,6 +127,14 @@ def project_skill_memory_contexts(
 
 
 def _admit_entry(entry: SkillMemoryContextEntry) -> PromptContextAdmission:
+    if not isinstance(entry, SkillMemoryContextEntry):
+        _raise_refusal(
+            context_kind="skill",
+            segment_id="unknown-skill:skill-context",
+            source_id="unknown-skill",
+            source_field="entry",
+            owner_scope_checked=False,
+        )
     if entry.context_kind == "skill":
         return admit_skill_context(
             skill_id=entry.source_id,
