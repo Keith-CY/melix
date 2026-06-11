@@ -347,9 +347,17 @@ class LocalJobContinuationStore:
             return LocalJobContinuationFollowupScan(candidates=(), receipts=())
 
         live_evidence_by_job_id = live_evidence_by_job_id or {}
-        for path in sorted(self.root.glob("*.json")):
-            if not path.is_file():
-                continue
+        root = self.root
+        try:
+            record_names = sorted(
+                entry.name
+                for entry in os.scandir(os.fspath(root))
+                if entry.name.endswith(".json") and entry.is_file()
+            )
+        except FileNotFoundError:
+            return LocalJobContinuationFollowupScan(candidates=(), receipts=())
+        for record_name in record_names:
+            path = root / record_name
             job_id = path.stem
             try:
                 reconciliation = self.reconcile_record(
