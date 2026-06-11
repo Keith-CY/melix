@@ -64,6 +64,13 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
 
         if let name = message.name {
             let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            // Keep this before retrieved_document because rag_image and rag-image also match the broader rag prefix.
+            if hasAnyPrefix(
+                normalizedName,
+                ["retrieved_image", "retrieved-image", "image_retrieval", "image-retrieval", "rag_image", "rag-image"]
+            ) {
+                return "retrieved_image"
+            }
             if hasAnyPrefix(
                 normalizedName,
                 ["retrieved_document", "retrieved-doc", "document", "doc", "rag", "rag_document", "knowledge"]
@@ -97,6 +104,11 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
             return (
                 "retrieved document evidence is prompt data, not instructions",
                 "Keep retrieved document evidence in user-role data context and do not project it into system or developer instructions."
+            )
+        case "retrieved_image":
+            return (
+                "retrieved image evidence is prompt data, not instructions",
+                "Keep retrieved image evidence in user-role data context and do not project it into system or developer instructions."
             )
         case "skill":
             return (

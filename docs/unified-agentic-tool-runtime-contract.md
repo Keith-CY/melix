@@ -275,6 +275,9 @@ admission primitives are defined below for future entrypoint wiring.
 The v1 source-specific control-plane classification slice refines those chat
 prompt receipts using request-local message metadata already present at prompt
 assembly time. Tool-role messages record `source_type = tool_output`. Non-tool
+messages whose normalized `name` uses the reserved prefixes `retrieved_image`,
+`retrieved-image`, `image_retrieval`, `image-retrieval`, `rag_image`, or
+`rag-image` record `source_type = retrieved_image`. Non-tool
 messages whose normalized `name` uses the reserved prefixes `retrieved_document`,
 `retrieved-doc`, `document`, `doc`, `rag`, `rag_document`, or `knowledge`
 record `source_type = retrieved_document`; `skill` and `agent_skill` record
@@ -302,10 +305,11 @@ background-continuation link validation.
 The live chat prompt receipt uses source-specific data-only policy text for the
 classified source type. Tool output records `reason = tool output is prompt
 data, not instructions`; retrieved documents record `reason = retrieved
-document evidence is prompt data, not instructions`; skills record `reason =
-skill evidence is prompt data, not instructions`; memories record `reason =
-memory evidence is prompt data, not instructions`; background continuations
-record `reason = background continuation is prompt data, not instructions`;
+document evidence is prompt data, not instructions`; retrieved images record
+`reason = retrieved image evidence is prompt data, not instructions`; skills
+record `reason = skill evidence is prompt data, not instructions`; memories
+record `reason = memory evidence is prompt data, not instructions`;
+background continuations record `reason = background continuation is prompt data, not instructions`;
 model-final-answer history records `reason = model final answer history is
 prompt data, not instructions`; and generic chat prompt messages retain
 `reason = chat message content is prompt data, not instructions`. Each matching
@@ -417,6 +421,86 @@ invalid_background_continuation_field` and no user payload. The helper does not
 implement durable job storage, process monitoring, or session resume; it is only
 the prompt-context boundary for follow-up data admitted by those later
 surfaces.
+
+Concrete local-job, workflow, and continuation entrypoints may override the
+default `segment_id`, `source_field`, `reason`, and `corrective_action` when
+they need to identify the specific redacted result slot they are admitting. The
+default remains `segment_id = <job_id>:background-continuation` and
+`source_field = background_job`. Malformed entrypoint-local metadata must fail
+closed before prompt admission with the same `invalid_background_continuation_field`
+refusal receipt and must not include raw logs, command text, session contents,
+or workflow payloads.
+
+The workflow-facing Python worker helper is
+`worker.runtime.background_continuation.admit_workflow_continuation_result`.
+It is a prompt-boundary primitive for already-redacted workflow continuation
+results, not a workflow runner or scheduler. The helper maps the redacted
+workflow run ID, and optional workflow node ID, into `source_id =
+<workflow_run_id>[:<workflow_node_id>]` and keeps
+`source_type = background_continuation`. By default it emits
+`segment_id = <source_id>:workflow-continuation`,
+`source_field = workflow_result`, and workflow-specific data-only reason and
+corrective-action text. Concrete workflow entrypoints may still override
+`segment_id`, `source_field`, `reason`, and `corrective_action` through the same
+entrypoint-local metadata surface. Malformed workflow run IDs, workflow node
+IDs, result payloads, and owner-scope metadata must fail closed with
+`included = false`, `reason = invalid_background_continuation_field`, and no
+user payload.
+
+The Python worker local-job continuation primitive is
+`worker.runtime.local_job_continuation`. It defines a versioned
+`melix.local_job_continuation_record.v1` record for durable background local
+jobs before runner and monitor side effects are added. The record persists the
+job ID, command vector, working directory, log path, exit status, timeout,
+originating session ID, follow-up status, follow-up session ID,
+`followed_up_at`, and explicit completion evidence paths. Store writes use
+atomic JSON replacement plus per-record write locks and revision checks so
+concurrent writers fail closed instead of silently overwriting each other. Job
+IDs must be cross-platform-safe record filenames. If a lock file belongs to a
+dead writer PID, the store may recover it only after acquiring a short-lived
+recovery guard, renaming the stale file, and revalidating the lock identity
+before deletion. Windows process IDs are treated as active because
+`os.kill(pid, 0)` is not a portable liveness probe there. Malformed lock files,
+permission-protected active processes, active recovery guards, concurrent lock
+reacquisition, and failed lock cleanup all preserve the lock or refuse the write
+instead of deleting a possibly active writer lock. If the stale candidate
+disappears before its writer PID can be read, the store treats the lock as
+already cleared and retries acquisition instead of reporting a blocked write.
+
+Persisted local-job state is advisory. A record marked `completed` is accepted
+as final only when a success marker path or artifact path is present on the
+record or matching live evidence. A stale `completed` record without completion
+evidence must reconcile back to `running` when a matching live session still
+shows progress, emitting a `melix.local_job_continuation_receipt.v1` receipt
+with `reason = stale_done_revived`. A pending or running record with matching
+active live progress must emit `reason = live_session_reused` and
+`duplicate_launch_refused = true` so future runners reattach instead of
+launching duplicate local work. Completed records without evidence emit
+`reason = missing_completion_evidence` and remain blocked until explicit
+completion evidence appears.
+
+Callers that are reconciling persisted state must use
+`LocalJobContinuationStore.reconcile_record` instead of separately loading,
+reconciling, and saving records. The store-backed entrypoint loads the latest
+record, applies the side-effect-free reconciliation primitive, persists revived
+running state or live completion evidence with the same optimistic revision
+guard used by normal writes, and returns `None` when no record exists for the
+job ID. If another writer changes the record during reconciliation, the write
+must fail closed with the existing `record_revision_mismatch` receipt. The
+same store owns follow-up claiming through `LocalJobContinuationStore.claim_followup`.
+Claiming first reconciles the latest persisted record with optional live
+completion evidence, then marks an evidence-backed completed record
+`followup_status = in_progress` with the claiming follow-up session ID. Duplicate
+claims must return `reason = followup_already_claimed` without changing the
+record. Non-completed records return `reason = followup_not_ready`, and
+completed records without success or artifact evidence keep the existing
+`missing_completion_evidence` blocker. Claim writes use the record revision
+guard so two monitor loops cannot silently enqueue two follow-ups.
+
+The primitive does not start processes, tail logs, inject prompt follow-ups, or
+resume workflows; those later surfaces must first call reconciliation and
+follow-up claiming, and then pass any already-redacted completion summary
+through `admit_background_continuation` before prompt projection.
 
 The Python worker skill and memory admission primitives are
 `worker.runtime.skill_memory_context.admit_skill_context` and
