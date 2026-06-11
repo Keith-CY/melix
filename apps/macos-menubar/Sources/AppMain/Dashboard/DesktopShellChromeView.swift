@@ -2,6 +2,7 @@ import SwiftUI
 
 enum DesktopShellChromeMetrics {
     static let workspaceTitleBarContentTopInset: CGFloat = 0
+    // Approximate macOS traffic-light button and leading margin reservation for screenshot chrome.
     static let windowTrafficLightAreaWidth: CGFloat = 92
     static let titleBarTabHeightBudget: CGFloat = 30
     static let titleBarTabHorizontalPadding: CGFloat = 9
