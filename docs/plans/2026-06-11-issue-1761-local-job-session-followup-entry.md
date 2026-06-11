@@ -69,8 +69,8 @@ Verification must include:
    - the projection does not leak command vectors, local paths, session IDs, or
      raw completion summary text into receipt JSON.
 2. Add failing tests for store blockers and missing records. Missing records
-   return `None`; store blockers return an empty projection with the blocker
-   receipt and no user payload.
+   return `None`; store blockers return a projection with the blocker receipt,
+   no user payload, and no follow-up message.
 3. Implement a `LocalJobSessionFollowupProjection` dataclass and
    `project_local_job_session_followup(...)` helper in
    `worker.runtime.local_job_continuation`.

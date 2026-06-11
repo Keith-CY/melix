@@ -690,7 +690,7 @@ def test_project_local_job_session_followup_preserves_store_blocker_without_mess
     assert projection.claim_receipt["reason"] == "missing_completion_evidence"
     assert projection.prompt_user_payload == {}
     assert projection.untrusted_context_receipts == []
-    assert projection.followup_message == {}
+    assert projection.followup_message is None
     assert store.load_record("job-7") == projection.claim.reconciliation.record
 
 

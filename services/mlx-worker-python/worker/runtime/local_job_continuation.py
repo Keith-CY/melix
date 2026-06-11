@@ -142,7 +142,7 @@ class LocalJobSessionFollowupProjection:
     claim_receipt: dict[str, Any]
     prompt_user_payload: dict[str, Any]
     untrusted_context_receipts: list[dict[str, object]]
-    followup_message: dict[str, Any]
+    followup_message: dict[str, Any] | None
 
 
 class LocalJobContinuationStore:
@@ -653,7 +653,7 @@ def project_local_job_session_followup(
 
     prompt_user_payload = dict(claim.prompt_context.user_payload)
     receipts = [dict(receipt) for receipt in claim.prompt_context.untrusted_context_receipts]
-    followup_message: dict[str, Any] = {}
+    followup_message: dict[str, Any] | None = None
     if prompt_user_payload:
         followup_message = {
             "role": "user",
