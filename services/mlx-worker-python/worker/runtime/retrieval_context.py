@@ -127,6 +127,14 @@ def project_retrieval_contexts(
 
 
 def _admit_entry(entry: RetrievalContextEntry) -> PromptContextAdmission:
+    if not isinstance(entry, RetrievalContextEntry):
+        _raise_refusal(
+            context_kind="retrieved_document",
+            segment_id="unknown-retrieved-document:retrieved-document-context",
+            source_id="unknown-retrieved-document",
+            source_field="entry",
+            owner_scope_checked=False,
+        )
     if entry.context_kind == "retrieved_document":
         return admit_retrieved_document_context(
             document_id=entry.source_id,
