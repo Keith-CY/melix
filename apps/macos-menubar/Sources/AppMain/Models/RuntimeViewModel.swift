@@ -4278,6 +4278,9 @@ public final class RuntimeViewModel {
         case .noModel:
             ensureChatSessionsBoundToServerSessions()
             guard let provider = selectedServerSession ?? providers.first else {
+                assertionFailure(
+                    "applyAppScreenshotChatState(.noModel) called with no providers; falling back to no-provider screenshot state."
+                )
                 return applyAppScreenshotChatState(.noProvider)
             }
             selectedProviderID = provider.id

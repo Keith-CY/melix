@@ -1357,6 +1357,7 @@ struct RuntimeViewModelTests {
         await viewModel.start()
 
         #expect(viewModel.selectedSurface == .api)
+        #expect(DesktopSurface.visibleNavigationCases.contains(viewModel.selectedSurface) == false)
         #expect(viewModel.selectedServerSession?.id == restoredServerSession.id)
     }
 

@@ -60,10 +60,6 @@ struct AppScreenshotCaptureTests {
         noProviderViewModel.applyAppScreenshotChatState(.noProvider)
         #expect(noProviderViewModel.providers.isEmpty)
         #expect(noProviderViewModel.selectedChatSession?.statusText == "Choose Provider")
-
-        noProviderViewModel.applyAppScreenshotChatState(.noModel)
-        #expect(noProviderViewModel.providers.isEmpty)
-        #expect(noProviderViewModel.selectedChatSession?.statusText == "Choose Provider")
     }
 
     @Test("config environment normalizes overrides and falls back to deterministic defaults")

@@ -21,6 +21,10 @@ struct DesktopShellStateTests {
             "Workflows",
             "Settings",
         ])
+        #expect(DesktopSurface.visibleNavigationCases.contains(.jobs) == false)
+        #expect(DesktopSurface.visibleNavigationCases.contains(.diagnostics) == false)
+        #expect(DesktopSurface.visibleNavigationCases.contains(.api) == false)
+        #expect(DesktopSurface.visibleNavigationCases.contains(.image) == false)
 
         let metadata = DesktopRouteMetadata.acceptedWindowIA
         #expect(metadata.domains.map(\.domain.routeDomainID) == [
