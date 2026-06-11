@@ -1157,6 +1157,34 @@ def test_size_hint_bytes_skips_direct_hint_parser_when_card_model_size_missing(
     assert calls == [("Model size: 7 MB", False)]
 
 
+def test_size_hint_bytes_reuses_marker_checks_before_hint_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker_calls: list[str] = []
+    original_marker = hub_catalog_module._may_contain_model_marker
+
+    def tracked_marker(text: str) -> bool:
+        marker_calls.append(text)
+        return original_marker(text)
+
+    monkeypatch.setattr(hub_catalog_module, "_may_contain_model_marker", tracked_marker)
+
+    assert (
+        hub_catalog_module._size_hint_bytes(
+            {
+                "description": "Model size appears in docs without value",
+                "readme": "Model size: 5 MB",
+                "cardData": {"description": "operator note"},
+            }
+        )
+        == 5 * MB
+    )
+    assert marker_calls == [
+        "Model size appears in docs without value",
+        "Model size: 5 MB",
+    ]
+
+
 def test_size_hint_bytes_preserves_combined_marker_parsing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
