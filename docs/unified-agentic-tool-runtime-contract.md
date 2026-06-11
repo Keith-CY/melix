@@ -529,6 +529,24 @@ scan; they emit `reason = record_unreadable`, and revision-guarded store
 conflicts keep their store-level receipt so the monitor can continue scanning
 other records.
 
+When a monitor already has redacted completion summaries for candidate records,
+it may compose discovery and guarded claiming through
+`LocalJobContinuationStore.claim_scanned_followup_prompt_contexts`. That
+entrypoint first calls `scan_followup_candidates`, then attempts
+`claim_followup_prompt_context` only for records returned as ready candidates.
+Callers must provide a follow-up session ID, a redacted completion summary, and
+an owner-scope decision for each job ID they want claimed. Missing claim inputs
+emit `reason = followup_claim_input_missing`; malformed claim inputs emit
+`reason = followup_claim_input_invalid`; prompt-admission refusals emit
+`reason = followup_prompt_context_refused` plus background-continuation refusal
+receipts, including a fallback refusal receipt if prompt admission fails before
+reconciliation evidence is available; store revision races keep the store-level receipt such as
+`record_revision_mismatch`. These per-candidate failures must not abort claims
+for other ready records, and admission-refused candidates must not persist an
+`in_progress` follow-up claim. The batch bridge still must not start jobs, tail
+logs, write to session stores, inject prompt context into an agent loop, or
+resume workflows.
+
 When a local-job follow-up claim succeeds, the
 `melix.local_job_continuation_receipt.v1` receipt must also expose the redacted
 background-continuation prompt-boundary evidence for that claim:

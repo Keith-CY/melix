@@ -1,14 +1,91 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import threading
 import time
 
 import grpc
+import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, inference_pb2_grpc, runtime_pb2, runtime_pb2_grpc
 from tests.integration.helpers import LiveMelixStack, abort_worker_request
 from worker.model_registry.catalog import WorkerModelCatalog
+
+
+def _abort_worker_request_with_retry(
+    socket_path: Path,
+    request_id: str,
+    *,
+    timeout_seconds: float = 2.0,
+) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if abort_worker_request(socket_path, request_id):
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_abort_worker_request_with_retry_waits_until_request_is_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[tuple[Path, str]] = []
+    sleeps: list[float] = []
+    responses = iter([False, True])
+    ticks = iter([0.0, 0.0, 0.01])
+
+    def fake_abort(socket_path: Path, request_id: str) -> bool:
+        attempts.append((socket_path, request_id))
+        return next(responses)
+
+    monkeypatch.setattr(sys.modules[__name__], "abort_worker_request", fake_abort)
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    assert (
+        _abort_worker_request_with_retry(
+            Path("/tmp/melix.sock"),
+            "pending-request",
+            timeout_seconds=0.02,
+        )
+        is True
+    )
+    assert attempts == [
+        (Path("/tmp/melix.sock"), "pending-request"),
+        (Path("/tmp/melix.sock"), "pending-request"),
+    ]
+    assert sleeps == [0.02]
+
+
+def test_abort_worker_request_with_retry_returns_false_after_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[tuple[Path, str]] = []
+    sleeps: list[float] = []
+    ticks = iter([0.0, 0.0, 0.01, 0.03])
+
+    def fake_abort(socket_path: Path, request_id: str) -> bool:
+        attempts.append((socket_path, request_id))
+        return False
+
+    monkeypatch.setattr(sys.modules[__name__], "abort_worker_request", fake_abort)
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    assert (
+        _abort_worker_request_with_retry(
+            Path("/tmp/melix.sock"),
+            "missing-request",
+            timeout_seconds=0.02,
+        )
+        is False
+    )
+    assert attempts == [
+        (Path("/tmp/melix.sock"), "missing-request"),
+        (Path("/tmp/melix.sock"), "missing-request"),
+    ]
+    assert sleeps == [0.02, 0.02]
 
 
 def _load_dev_vlm_model(runtime_stub: runtime_pb2_grpc.RuntimeServiceStub) -> str:
@@ -419,7 +496,7 @@ def test_python_vlm_worker_cleans_temp_media_on_cancelled_generate() -> None:
         consumer = threading.Thread(target=consume_stream, daemon=True)
         consumer.start()
         time.sleep(0.05)
-        assert abort_worker_request(stack.python_socket_path, request_id) is True
+        assert _abort_worker_request_with_retry(stack.python_socket_path, request_id) is True
         consumer.join(timeout=5)
 
         assert not errors

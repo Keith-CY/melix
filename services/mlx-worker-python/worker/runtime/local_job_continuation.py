@@ -38,7 +38,7 @@ class LocalJobContinuationAdmissionError(RuntimeError):
         message: str,
         *,
         reconciliation: LocalJobContinuationReconciliation | None,
-        refusal_receipts: list[dict[str, object]],
+        refusal_receipts: list[dict[str, Any]],
     ) -> None:
         super().__init__(message)
         self.reconciliation = reconciliation
@@ -134,6 +134,13 @@ class LocalJobContinuationReconciliation:
 class LocalJobContinuationFollowupClaim:
     reconciliation: LocalJobContinuationReconciliation
     prompt_context: PromptContextAdmission
+
+
+@dataclass(frozen=True, slots=True)
+class LocalJobContinuationFollowupClaimBatch:
+    claims: tuple[LocalJobContinuationFollowupClaim, ...]
+    receipts: tuple[dict[str, Any], ...]
+    refusal_receipts: tuple[dict[str, Any], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,6 +385,86 @@ class LocalJobContinuationStore:
         return LocalJobContinuationFollowupScan(
             candidates=tuple(candidates),
             receipts=tuple(receipts),
+        )
+
+    def claim_scanned_followup_prompt_contexts(
+        self,
+        *,
+        followup_session_ids_by_job_id: dict[str, str] | None,
+        completion_summaries_by_job_id: dict[str, dict[str, Any]] | None,
+        owner_scope_checked_by_job_id: dict[str, bool] | None,
+        live_evidence_by_job_id: dict[str, LocalJobLiveEvidence] | None = None,
+    ) -> LocalJobContinuationFollowupClaimBatch:
+        live_evidence_by_job_id = live_evidence_by_job_id or {}
+        followup_session_ids_by_job_id = followup_session_ids_by_job_id or {}
+        completion_summaries_by_job_id = completion_summaries_by_job_id or {}
+        owner_scope_checked_by_job_id = owner_scope_checked_by_job_id or {}
+        scan = self.scan_followup_candidates(
+            live_evidence_by_job_id=live_evidence_by_job_id,
+        )
+        claims: list[LocalJobContinuationFollowupClaim] = []
+        receipts = list(scan.receipts)
+        refusal_receipts: list[dict[str, Any]] = []
+
+        for candidate in scan.candidates:
+            job_id = candidate.record.job_id
+            missing_fields = [
+                field_name
+                for field_name, values in (
+                    ("followup_session_id", followup_session_ids_by_job_id),
+                    ("completion_summary", completion_summaries_by_job_id),
+                    ("owner_scope_checked", owner_scope_checked_by_job_id),
+                )
+                if job_id not in values
+            ]
+            if missing_fields:
+                receipts.append(
+                    _followup_claim_input_missing_receipt(
+                        candidate.record,
+                        missing_fields=missing_fields,
+                    )
+                )
+                continue
+
+            try:
+                # Keep this try block scoped to the claim call so ValueError maps only claim-input validation.
+                claim = self.claim_followup_prompt_context(
+                    job_id,
+                    followup_session_id=followup_session_ids_by_job_id[job_id],
+                    completion_summary=completion_summaries_by_job_id[job_id],
+                    owner_scope_checked=owner_scope_checked_by_job_id[job_id],
+                    live_evidence=live_evidence_by_job_id.get(job_id),
+                )
+            except LocalJobContinuationAdmissionError as exc:
+                if exc.reconciliation is not None:
+                    receipts.append(exc.reconciliation.receipt)
+                else:
+                    receipts.append(_followup_prompt_context_refused_receipt(candidate.record))
+                refusal_receipts.extend(exc.refusal_receipts)
+                continue
+            except LocalJobContinuationStoreError as exc:
+                receipts.append(exc.receipt)
+                continue
+            except ValueError as exc:
+                receipts.append(
+                    _followup_claim_input_invalid_receipt(
+                        candidate.record,
+                        error=str(exc),
+                    )
+                )
+                continue
+
+            if claim is None:
+                receipts.append(_followup_record_missing_receipt(candidate.record))
+                continue
+            receipts.append(claim.reconciliation.receipt)
+            if claim.reconciliation.receipt.get("reason") == "followup_claimed":
+                claims.append(claim)
+
+        return LocalJobContinuationFollowupClaimBatch(
+            claims=tuple(claims),
+            receipts=tuple(receipts),
+            refusal_receipts=tuple(refusal_receipts),
         )
 
     def _record_path(self, job_id: str) -> Path:
@@ -832,6 +919,92 @@ def _unreadable_record_scan_receipt(*, job_id: str) -> dict[str, Any]:
     )
 
 
+def _followup_claim_input_missing_receipt(
+    record: LocalJobContinuationRecord,
+    *,
+    missing_fields: Sequence[str],
+) -> dict[str, Any]:
+    receipt = _receipt(
+        job_id=record.job_id,
+        status=record.status,
+        reason="followup_claim_input_missing",
+        session_id=record.session_id,
+        exit_status=record.exit_status,
+        followup_status=record.followup_status,
+        duplicate_launch_refused=False,
+        completion_evidence_available=_has_completion_evidence(record),
+        corrective_action=(
+            "Provide a follow-up session ID, redacted completion summary, and "
+            "owner-scope decision before claiming this local job follow-up."
+        ),
+        followup_session_id=record.followup_session_id,
+    )
+    receipt["missing_fields"] = list(missing_fields)
+    return receipt
+
+
+def _followup_claim_input_invalid_receipt(
+    record: LocalJobContinuationRecord,
+    *,
+    error: str,
+) -> dict[str, Any]:
+    receipt = _receipt(
+        job_id=record.job_id,
+        status=record.status,
+        reason="followup_claim_input_invalid",
+        session_id=record.session_id,
+        exit_status=record.exit_status,
+        followup_status=record.followup_status,
+        duplicate_launch_refused=False,
+        completion_evidence_available=_has_completion_evidence(record),
+        corrective_action=(
+            "Fix the local job follow-up claim inputs before claiming this record."
+        ),
+        followup_session_id=record.followup_session_id,
+    )
+    receipt["input_error"] = error
+    return receipt
+
+
+def _followup_prompt_context_refused_receipt(
+    record: LocalJobContinuationRecord,
+) -> dict[str, Any]:
+    return _receipt(
+        job_id=record.job_id,
+        status=record.status,
+        reason="followup_prompt_context_refused",
+        session_id=record.session_id,
+        exit_status=record.exit_status,
+        followup_status=record.followup_status,
+        duplicate_launch_refused=False,
+        completion_evidence_available=_has_completion_evidence(record),
+        corrective_action=(
+            "Keep this local job follow-up unclaimed until prompt-context admission succeeds."
+        ),
+        followup_session_id=record.followup_session_id,
+    )
+
+
+def _followup_record_missing_receipt(
+    record: LocalJobContinuationRecord,
+) -> dict[str, Any]:
+    return _receipt(
+        job_id=record.job_id,
+        # The record disappeared before claim, so the scan snapshot is no longer actionable.
+        status="blocked",
+        reason="followup_record_missing",
+        session_id=record.session_id,
+        exit_status=record.exit_status,
+        followup_status=record.followup_status,
+        duplicate_launch_refused=False,
+        completion_evidence_available=_has_completion_evidence(record),
+        corrective_action=(
+            "Rescan local job continuation records before attempting another follow-up claim."
+        ),
+        followup_session_id=record.followup_session_id,
+    )
+
+
 def _local_job_followup_prompt_context_receipts(
     record: LocalJobContinuationRecord,
 ) -> list[dict[str, object]]:
@@ -1017,6 +1190,7 @@ __all__ = [
     "LocalJobContinuationAdmissionError",
     "LocalJobContinuationFollowupCandidate",
     "LocalJobContinuationFollowupClaim",
+    "LocalJobContinuationFollowupClaimBatch",
     "LocalJobContinuationFollowupScan",
     "LocalJobContinuationRecord",
     "LocalJobContinuationReconciliation",
