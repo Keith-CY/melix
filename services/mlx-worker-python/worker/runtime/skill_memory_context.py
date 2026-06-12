@@ -258,7 +258,7 @@ def project_skill_memory_lookup_result(lookup_result: Any) -> SkillMemoryLookupR
 
 
 def _copy_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: deepcopy(value) for key, value in payload.items()}
+    return deepcopy(dict(payload))
 
 
 def _copy_receipts(receipts: list[dict[str, object]]) -> list[dict[str, object]]:
