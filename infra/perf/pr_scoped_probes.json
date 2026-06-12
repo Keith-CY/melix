@@ -1648,6 +1648,24 @@
         "warn_pct": 5.0
       },
       {
+        "key": "single_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "single_delta_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_abs": 0.02
+      },
+      {
+        "key": "single_speedup",
+        "unit": "ratio",
+        "direction": "higher_is_better",
+        "warn_pct": 5.0
+      },
+      {
         "key": "peak_bytes_mean",
         "unit": "bytes",
         "direction": "informational"
