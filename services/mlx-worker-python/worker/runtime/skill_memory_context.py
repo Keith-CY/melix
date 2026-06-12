@@ -88,8 +88,24 @@ def admit_memory_context(
 
 
 def project_skill_memory_contexts(
-    entries: list[SkillMemoryContextEntry] | tuple[SkillMemoryContextEntry, ...],
+    entries: Any,
 ) -> SkillMemoryContextProjection:
+    entries_type = type(entries)
+    if entries_type is not list and entries_type is not tuple:
+        return SkillMemoryContextProjection(
+            user_payload={},
+            untrusted_context_receipts=[],
+            refusal_receipts=[
+                refused_source_prompt_context_receipt(
+                    segment_id="unknown-skill:skill-context",
+                    source_type="skill",
+                    source_field="entries",
+                    source_id="unknown-skill",
+                    reason="invalid_skill_context_field",
+                    corrective_action="Reject malformed skill context before prompt assembly.",
+                )
+            ],
+        )
     user_payload: dict[str, Any] = {}
     receipts: list[dict[str, object]] = []
     refusal_receipts: list[dict[str, object]] = []

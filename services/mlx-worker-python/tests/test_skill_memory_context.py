@@ -643,6 +643,33 @@ def test_project_skill_memory_contexts_refuses_malformed_entry_objects_without_d
     ]
 
 
+@pytest.mark.parametrize("entries", ({"context_kind": "skill"}, "not entries"))
+def test_project_skill_memory_contexts_refuses_malformed_entry_container(
+    entries: object,
+) -> None:
+    projection = project_skill_memory_contexts(entries)  # type: ignore[arg-type]
+
+    assert projection.user_payload == {}
+    assert projection.untrusted_context_receipts == []
+    assert projection.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "unknown-skill:skill-context",
+            "source_type": "skill",
+            "source_field": "entries",
+            "source_id": "unknown-skill",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "invalid_skill_context_field",
+            "corrective_action": "Reject malformed skill context before prompt assembly.",
+        }
+    ]
+
+
 def test_project_skill_memory_contexts_refuses_duplicate_payload_fields_before_overwrite() -> None:
     projection = project_skill_memory_contexts(
         [
