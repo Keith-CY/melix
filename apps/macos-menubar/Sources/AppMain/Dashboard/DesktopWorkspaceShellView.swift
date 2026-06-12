@@ -5426,11 +5426,13 @@ struct DesktopAudioSetupNoticeRow: View {
 
             Spacer(minLength: 8)
 
-            Button(action.actionTitle, action: performAction)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .fixedSize(horizontal: true, vertical: false)
-                .accessibilityLabel(action.actionTitle)
+            if action.actionTitle.isEmpty == false {
+                Button(action.actionTitle, action: performAction)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .accessibilityLabel(action.actionTitle)
+            }
         }
         .frame(height: DesktopDownloadsLayoutMetrics.compactAudioNoticeHeightBudget)
     }

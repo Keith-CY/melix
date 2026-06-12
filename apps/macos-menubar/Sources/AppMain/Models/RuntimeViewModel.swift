@@ -840,7 +840,7 @@ public struct RuntimeAudioSetupActionState: Identifiable, Equatable, Sendable {
         self.kind = kind
     }
 
-    private static func normalizedModelIDs(_ modelIDs: [String]) -> [String] {
+    static func normalizedModelIDs(_ modelIDs: [String]) -> [String] {
         var seen = Set<String>()
         return modelIDs.compactMap { rawID in
             let modelID = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -6815,9 +6815,10 @@ public final class RuntimeViewModel {
             let entries = queueByModelID[modelID] ?? []
             let activeEntry = entries.first(where: \.isActive)
             let resumeEntry = entries.first(where: \.resumeReady)
+            let trimmedAlias = normalizedAudioSetupValue(model.settings.alias)
             return AudioSetupCatalogModel(
                 modelID: modelID,
-                alias: normalizedAudioSetupValue(model.settings.alias).isEmpty ? modelID : model.settings.alias,
+                alias: trimmedAlias.isEmpty ? modelID : trimmedAlias,
                 capabilityKey: capabilityKey,
                 capabilityTitle: audioSetupCapabilityTitle(capabilityKey),
                 setupRole: setupRole,
@@ -9285,25 +9286,11 @@ public final class RuntimeViewModel {
     }
 
     public func downloadAudioModels(modelIDs: [String]) async {
-        let requestedModelIDs = RuntimeAudioSetupActionState(
-            modelID: modelIDs.first ?? "",
-            alias: "",
-            detail: "",
-            actionTitle: "",
-            kind: .downloadModel,
-            modelIDs: modelIDs
-        ).modelIDs
+        let requestedModelIDs = RuntimeAudioSetupActionState.normalizedModelIDs(modelIDs)
         guard requestedModelIDs.isEmpty == false else {
             return
         }
-        confirmedAudioSetupModelIDs = OperatorSessionState(
-            selectedSurface: selectedSurface,
-            selectedToolSection: selectedToolSection,
-            selectedServerSessionID: selectedServerSessionID,
-            selectedRuntimeJobID: selectedRuntimeJobID,
-            serverSessions: serverSessions,
-            confirmedAudioSetupModelIDs: requestedModelIDs
-        ).confirmedAudioSetupModelIDs
+        confirmedAudioSetupModelIDs = requestedModelIDs
         persistOperatorSessionState()
 
         let skippedModelIDs = Set(audioSetupCatalogModels.filter {
