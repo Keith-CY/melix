@@ -295,7 +295,7 @@ def _report_matrix_roles(
         if _run_kind_only_rule(rule):
             if run_kind_values is None:
                 run_kind_values = _report_run_kind_values(runs)
-            if _string_frozenset(rule.get("run_kinds", ())) & run_kind_values:
+            if not _string_frozenset(rule.get("run_kinds", ())).isdisjoint(run_kind_values):
                 roles.append(role)
             continue
         if rule.get("probe_phases") and probe_phases is None:
