@@ -6871,6 +6871,67 @@ struct DesktopFoundationViewTests {
         #expect(requests[2].operation == "registry_snapshot")
     }
 
+    @Test("downloads section renders one aggregated audio setup row for shared runtime blockers")
+    @MainActor
+    func downloadsSectionRendersOneAggregatedAudioSetupRowForSharedRuntimeBlockers() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(
+                models: [ModelCatalog.devTextModel()]
+                    + makeDesktopAudioSetupCatalogModels(runtimePackState: "missing", modelState: "catalog_default")
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.downloads)
+
+        let shellSource = try desktopWorkspaceShellSource()
+        let downloadsSource = try #require(shellSource.slice(
+            from: "struct DesktopDownloadsToolSectionView",
+            to: "struct DesktopTrainingToolSectionView"
+        ))
+        let setup = try #require(viewModel.audioSetupState)
+
+        #expect(downloadsSource.contains("if let audioSetupState = viewModel.audioSetupState"))
+        #expect(downloadsSource.contains("ForEach(viewModel.audioSetupActions)") == false)
+        #expect(setup.title == "Audio Setup Required")
+        #expect(setup.primaryAction?.actionTitle == "Install Audio Support")
+        #expect(setup.selectedModelIDs == ["melix-whisper-mlx", "melix-kokoro-mlx"])
+    }
+
+    @Test("downloads section renders recommended audio model chooser after runtime install")
+    @MainActor
+    func downloadsSectionRendersRecommendedAudioModelChooserAfterRuntimeInstall() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(
+                models: [ModelCatalog.devTextModel()]
+                    + makeDesktopAudioSetupCatalogModels(runtimePackState: "installed", modelState: "catalog_default")
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.downloads)
+
+        let setup = try #require(viewModel.audioSetupState)
+        let groups = setup.capabilityGroups
+        let modelAliases = groups.flatMap(\.models).map(\.alias)
+
+        #expect(setup.title == "Audio Models Required")
+        #expect(setup.primaryAction?.actionTitle == "Start Downloads")
+        #expect(groups.map(\.title) == ["Speech to Text", "Text to Speech"])
+        #expect(modelAliases == [
+            "Melix Whisper MLX",
+            "Melix Parakeet MLX",
+            "Melix Kokoro MLX",
+            "Melix Qwen3 TTS MLX",
+        ])
+    }
+
     @Test("downloads section renders audio setup notice as a compact single row")
     @MainActor
     func downloadsSectionRendersCompactAudioSetupNotice() async throws {
@@ -9555,6 +9616,14 @@ private func repositoryRootForDesktopFoundationTests(
     throw DesktopFoundationTestError.repositoryRootNotFound
 }
 
+private func desktopWorkspaceShellSource() throws -> String {
+    let root = try repositoryRootForDesktopFoundationTests()
+    let sourceURL = root.appendingPathComponent(
+        "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift"
+    )
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
 private extension String {
     func slice(from startMarker: String, to endMarker: String) -> String? {
         guard let startRange = range(of: startMarker),
@@ -11286,6 +11355,29 @@ private func makeMenuBarModelSummary(
     model.residency.policy = memoryPolicy
     model.residency.transitionReason = transitionReason
     return model
+}
+
+private func makeDesktopAudioSetupCatalogModels(
+    runtimePackState: String,
+    modelState: String,
+    managedLocalModelIDs: Set<String> = []
+) -> [Melix_Controlplane_V1_ModelSummary] {
+    [
+        ModelCatalog.mlxWhisperModel(),
+        ModelCatalog.mlxParakeetModel(),
+        ModelCatalog.mlxKokoroModel(),
+        ModelCatalog.mlxQwen3TTSModel(),
+    ].map { model in
+        var model = model
+        model.settings.ext["melix.audio.runtime_pack_state"] = runtimePackState
+        model.settings.ext["melix.audio.runtime_pack_id"] = "melix-audio-runtime-pack"
+        let resolvedModelState = managedLocalModelIDs.contains(model.modelID) ? "managed_local" : modelState
+        model.settings.ext["melix.audio.model_state"] = resolvedModelState
+        if resolvedModelState == "managed_local" {
+            model.settings.ext["melix.model_path"] = "/Users/test/.melix/models/audio/\(model.modelID)"
+        }
+        return model
+    }
 }
 
 private func makeRegistrySnapshotManifest(

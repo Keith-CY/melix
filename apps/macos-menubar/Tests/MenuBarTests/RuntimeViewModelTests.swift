@@ -2914,6 +2914,285 @@ struct RuntimeViewModelTests {
         #expect(prompt.modelID == "melix-whisper-mlx")
     }
 
+    @Test("audio setup state collapses shared runtime remediation across catalog audio models")
+    @MainActor
+    func audioSetupStateCollapsesSharedRuntimeRemediationAcrossCatalogAudioModels() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [ModelCatalog.devTextModel()]
+                    + makeAudioSetupCatalogModels(runtimePackState: "missing", modelState: "catalog_default")
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let setup = try #require(viewModel.audioSetupState)
+        let action = try #require(setup.primaryAction)
+        #expect(setup.phase == .runtimeRequired)
+        #expect(setup.title == "Audio Setup Required")
+        #expect(setup.summary == "Install the shared audio runtime before downloading audio models.")
+        #expect(setup.recommendedModelIDs == ["melix-whisper-mlx", "melix-kokoro-mlx"])
+        #expect(setup.selectedModelIDs == ["melix-whisper-mlx", "melix-kokoro-mlx"])
+        #expect(setup.capabilityGroups.map(\.key) == ["stt", "tts"])
+        #expect(action.kind == .installRuntime)
+        #expect(action.actionTitle == "Install Audio Support")
+        #expect(action.modelID == "melix-whisper-mlx")
+        #expect(action.modelIDs == ["melix-whisper-mlx"])
+        #expect(viewModel.audioSetupActions.count == 1)
+    }
+
+    @Test("audio setup state downloads only the confirmed recommended model scope after runtime install")
+    @MainActor
+    func audioSetupStateDownloadsConfirmedRecommendedScopeAfterRuntimeInstall() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [ModelCatalog.devTextModel()]
+                    + makeAudioSetupCatalogModels(runtimePackState: "installed", modelState: "catalog_default")
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "download",
+                outputPath: "/Users/test/.melix/models/default-managed/audio",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "download"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let setup = try #require(viewModel.audioSetupState)
+        let action = try #require(setup.primaryAction)
+        #expect(setup.phase == .modelsRequired)
+        #expect(setup.title == "Audio Models Required")
+        #expect(setup.summary == "0 of 2 recommended audio models ready.")
+        #expect(action.kind == .downloadModel)
+        #expect(action.actionTitle == "Start Downloads")
+        #expect(action.modelIDs == ["melix-whisper-mlx", "melix-kokoro-mlx"])
+        #expect(setup.capabilityGroups.flatMap(\.models).filter(\.isSelected).map(\.modelID) == [
+            "melix-whisper-mlx",
+            "melix-kokoro-mlx",
+        ])
+        #expect(setup.capabilityGroups.flatMap(\.models).filter { $0.isRecommended == false }.map(\.modelID) == [
+            "melix-parakeet-mlx",
+            "melix-qwen3-tts-mlx",
+        ])
+
+        await viewModel.performAudioSetupAction(action)
+
+        let downloadRequests = await client.recordedModelOperationRequests.filter { $0.operation == "download" }
+        #expect(downloadRequests.map(\.modelID) == ["melix-whisper-mlx", "melix-kokoro-mlx"])
+    }
+
+    @Test("audio setup action state normalizes ids and prompt round trips multi-model scope")
+    @MainActor
+    func audioSetupActionStateNormalizesIDsAndPromptRoundTrips() {
+        let action = RuntimeAudioSetupActionState(
+            modelID: " melix-fallback ",
+            alias: "Audio Models",
+            detail: "Download selected audio models.",
+            actionTitle: "Start Downloads",
+            kind: .downloadModel,
+            modelIDs: [" melix-a ", "", "melix-a", "melix-b"]
+        )
+        let prompt = RuntimeAudioSetupPromptState(action: action)
+        let readyChoice = RuntimeAudioSetupModelChoiceState(
+            modelID: "melix-ready",
+            alias: "Ready",
+            capabilityKey: "stt",
+            capabilityTitle: "Speech to Text",
+            setupRole: "recommended",
+            setupPriority: 0,
+            isRecommended: true,
+            isSelected: true,
+            isReady: true,
+            isActive: false,
+            isResumeReady: false,
+            progressText: ""
+        )
+        let activeChoice = RuntimeAudioSetupModelChoiceState(
+            modelID: "melix-active",
+            alias: "Active",
+            capabilityKey: "tts",
+            capabilityTitle: "Text to Speech",
+            setupRole: "recommended",
+            setupPriority: 0,
+            isRecommended: true,
+            isSelected: true,
+            isReady: false,
+            isActive: true,
+            isResumeReady: false,
+            progressText: ""
+        )
+        let resumeChoice = RuntimeAudioSetupModelChoiceState(
+            modelID: "melix-resume",
+            alias: "Resume",
+            capabilityKey: "audio",
+            capabilityTitle: "Audio",
+            setupRole: "optional",
+            setupPriority: 20,
+            isRecommended: false,
+            isSelected: false,
+            isReady: false,
+            isActive: false,
+            isResumeReady: true,
+            progressText: "32%"
+        )
+        let setup = RuntimeAudioSetupState(
+            phase: .modelsRequired,
+            title: "Audio Models Required",
+            summary: "0 of 2 recommended audio models ready.",
+            detail: "Recommended setup keeps one STT model and one TTS model ready.",
+            primaryAction: action,
+            capabilityGroups: [],
+            recommendedModelIDs: action.modelIDs,
+            selectedModelIDs: action.modelIDs,
+            readySelectedModelIDs: []
+        )
+
+        #expect(action.modelID == "melix-a")
+        #expect(action.modelIDs == ["melix-a", "melix-b"])
+        #expect(action.id == "melix-a,melix-b:download_model")
+        #expect(prompt.action.modelIDs == ["melix-a", "melix-b"])
+        #expect(prompt.action.id == action.id)
+        #expect(readyChoice.statusText == "Ready")
+        #expect(activeChoice.statusText == "Downloading")
+        #expect(resumeChoice.statusText == "Resume available")
+        #expect(setup.id == "models_required")
+    }
+
+    @Test("audio setup state falls back to backend metadata and surfaces active download progress")
+    @MainActor
+    func audioSetupStateUsesFallbackMetadataAndActiveDownloadProgress() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-audio-setup-fallback-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let activeEntry = makeAudioDownloadQueueEntryState(
+            sourceModel: "melix-fallback-stt-a",
+            status: "running",
+            pct: 0.5
+        )
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .models,
+                selectedToolSection: .downloads,
+                selectedServerSessionID: "",
+                serverSessions: [],
+                downloadQueue: [activeEntry]
+            )
+        )
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    ModelCatalog.devTextModel(),
+                    makeFallbackAudioSetupModel(
+                        modelID: "melix-fallback-stt-a",
+                        alias: "Fallback STT A",
+                        kind: "transcription",
+                        backendID: "mlx_audio.custom"
+                    ),
+                    makeFallbackAudioSetupModel(
+                        modelID: "melix-fallback-stt-b",
+                        alias: "Fallback STT B",
+                        kind: "transcription",
+                        backendID: "mlx_audio.custom"
+                    ),
+                    makeFallbackAudioSetupModel(
+                        modelID: "melix-fallback-tts",
+                        alias: "Fallback TTS",
+                        kind: "speech",
+                        backendID: "mlx_audio.custom"
+                    ),
+                    makeFallbackAudioSetupModel(
+                        modelID: "melix-fallback-audio",
+                        alias: "Fallback Audio",
+                        kind: "audio",
+                        backendID: "mlx_audio.custom"
+                    ),
+                    makeFallbackAudioSetupModel(
+                        modelID: " ",
+                        alias: "Invalid Audio",
+                        kind: "audio",
+                        backendID: "mlx_audio.custom"
+                    ),
+                ]
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client, operatorSessionStore: operatorSessionStore)
+        await viewModel.start()
+
+        let setup = try #require(viewModel.audioSetupState)
+        let flatModels = setup.capabilityGroups.flatMap(\.models)
+        let activeChoice = try #require(flatModels.first { $0.modelID == "melix-fallback-stt-a" })
+
+        #expect(setup.phase == .modelsDownloading)
+        #expect(setup.capabilityGroups.map(\.key) == ["stt", "tts", "audio"])
+        #expect(setup.capabilityGroups.map(\.title) == ["Speech to Text", "Text to Speech", "Audio"])
+        #expect(setup.recommendedModelIDs == [
+            "melix-fallback-stt-a",
+            "melix-fallback-tts",
+            "melix-fallback-audio",
+        ])
+        #expect(setup.primaryAction?.modelIDs == [
+            "melix-fallback-tts",
+            "melix-fallback-audio",
+        ])
+        #expect(activeChoice.statusText.contains("50"))
+        #expect(flatModels.contains { $0.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } == false)
+    }
+
+    @Test("audio setup downloads no-op for empty scope and skip ready selected models")
+    @MainActor
+    func audioSetupDownloadNoopsForEmptyAndSkipsReadyModels() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [ModelCatalog.devTextModel()]
+                    + makeAudioSetupCatalogModels(
+                        runtimePackState: "installed",
+                        modelState: "catalog_default",
+                        managedLocalModelIDs: ["melix-whisper-mlx", "melix-kokoro-mlx"]
+                    )
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(roots: [], downloads: [])
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        await viewModel.downloadAudioModels(modelIDs: [])
+        #expect(await client.recordedModelOperationRequests.isEmpty)
+
+        await viewModel.downloadAudioModels(modelIDs: ["melix-whisper-mlx", "melix-kokoro-mlx"])
+
+        let requests = await client.recordedModelOperationRequests
+        #expect(requests.map(\.operation) == ["registry_snapshot"])
+        #expect(requests.contains { $0.operation == "download" } == false)
+        #expect(viewModel.audioSetupState == nil)
+    }
+
     @Test("runtime endpoint projection drives primary model and integration exports")
     @MainActor
     func runtimeEndpointProjectionDrivesPrimaryModelAndIntegrationExports() async throws {
@@ -14120,6 +14399,74 @@ private func makeRuntimeDownloadQueueEntryState(
         stallReason: stallReason,
         resumeReady: resumeReady
     )
+}
+
+private func makeAudioDownloadQueueEntryState(
+    sourceModel: String,
+    status: String,
+    pct: Double = 0.5,
+    outputDir: String = "/tmp/melix-audio-models"
+) -> RuntimeDownloadQueueEntryState {
+    let resolvedOutputDir = "\(outputDir)/\(sourceModel)"
+    return RuntimeDownloadQueueEntryState(
+        jobID: "model-ops-\(sourceModel)",
+        sourceModel: sourceModel,
+        status: status,
+        stage: "download",
+        pct: pct,
+        outputDir: resolvedOutputDir,
+        outputPath: "\(resolvedOutputDir)/download.artifact",
+        partialPath: "\(resolvedOutputDir)/download.artifact.partial",
+        statePath: "\(resolvedOutputDir)/download.state.json",
+        selectedMirror: "",
+        downloadedBytes: 1024,
+        totalBytes: 2048,
+        resumeUsed: false,
+        resumeFromBytes: 0,
+        retryCount: 0,
+        stallDetectionCount: 0,
+        stallReason: "",
+        resumeReady: false
+    )
+}
+
+private func makeAudioSetupCatalogModels(
+    runtimePackState: String,
+    modelState: String,
+    managedLocalModelIDs: Set<String> = []
+) -> [Melix_Controlplane_V1_ModelSummary] {
+    [
+        ModelCatalog.mlxWhisperModel(),
+        ModelCatalog.mlxParakeetModel(),
+        ModelCatalog.mlxKokoroModel(),
+        ModelCatalog.mlxQwen3TTSModel(),
+    ].map { model in
+        var model = model
+        model.settings.ext["melix.audio.runtime_pack_state"] = runtimePackState
+        model.settings.ext["melix.audio.runtime_pack_id"] = "melix-audio-runtime-pack"
+        let resolvedModelState = managedLocalModelIDs.contains(model.modelID) ? "managed_local" : modelState
+        model.settings.ext["melix.audio.model_state"] = resolvedModelState
+        if resolvedModelState == "managed_local" {
+            model.settings.ext["melix.model_path"] = "/Users/test/.melix/models/audio/\(model.modelID)"
+        }
+        return model
+    }
+}
+
+private func makeFallbackAudioSetupModel(
+    modelID: String,
+    alias: String,
+    kind: String,
+    backendID: String
+) -> Melix_Controlplane_V1_ModelSummary {
+    var model = makeModelSummary(modelID: modelID, state: .modelDiscovered)
+    model.kind = kind
+    model.settings.alias = alias
+    model.settings.ext["melix.audio.backend_id"] = backendID
+    model.settings.ext["melix.audio.runtime_pack_state"] = "installed"
+    model.settings.ext["melix.audio.runtime_pack_id"] = "melix-audio-runtime-pack"
+    model.settings.ext["melix.audio.model_state"] = "catalog_default"
+    return model
 }
 
 private func makeRegistrySnapshotManifest(

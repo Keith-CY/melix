@@ -812,18 +812,49 @@ public enum RuntimeAudioSetupActionKind: String, Equatable, Sendable {
 
 public struct RuntimeAudioSetupActionState: Identifiable, Equatable, Sendable {
     public let modelID: String
+    public let modelIDs: [String]
     public let alias: String
     public let detail: String
     public let actionTitle: String
     public let kind: RuntimeAudioSetupActionKind
 
     public var id: String {
-        "\(modelID):\(kind.rawValue)"
+        "\(modelIDs.joined(separator: ",")):\(kind.rawValue)"
+    }
+
+    public init(
+        modelID: String,
+        alias: String,
+        detail: String,
+        actionTitle: String,
+        kind: RuntimeAudioSetupActionKind,
+        modelIDs: [String]? = nil
+    ) {
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedModelIDs = Self.normalizedModelIDs(modelIDs ?? [normalizedModelID])
+        self.modelID = normalizedModelIDs.first ?? normalizedModelID
+        self.modelIDs = normalizedModelIDs
+        self.alias = alias
+        self.detail = detail
+        self.actionTitle = actionTitle
+        self.kind = kind
+    }
+
+    private static func normalizedModelIDs(_ modelIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        return modelIDs.compactMap { rawID in
+            let modelID = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard modelID.isEmpty == false, seen.insert(modelID).inserted else {
+                return nil
+            }
+            return modelID
+        }
     }
 }
 
 public struct RuntimeAudioSetupPromptState: Identifiable, Equatable, Sendable {
     public let modelID: String
+    public let modelIDs: [String]
     public let alias: String
     public let detail: String
     public let primaryActionTitle: String
@@ -843,16 +874,83 @@ public struct RuntimeAudioSetupPromptState: Identifiable, Equatable, Sendable {
             alias: alias,
             detail: detail,
             actionTitle: primaryActionTitle,
-            kind: kind
+            kind: kind,
+            modelIDs: modelIDs
         )
     }
 
     public init(action: RuntimeAudioSetupActionState) {
         self.modelID = action.modelID
+        self.modelIDs = action.modelIDs
         self.alias = action.alias
         self.detail = action.detail
         self.primaryActionTitle = action.actionTitle
         self.kind = action.kind
+    }
+}
+
+public enum RuntimeAudioSetupPhase: String, Equatable, Sendable {
+    case runtimeRequired = "runtime_required"
+    case modelsRequired = "models_required"
+    case modelsDownloading = "models_downloading"
+    case partiallyReady = "partially_ready"
+}
+
+public struct RuntimeAudioSetupModelChoiceState: Identifiable, Equatable, Sendable {
+    public let modelID: String
+    public let alias: String
+    public let capabilityKey: String
+    public let capabilityTitle: String
+    public let setupRole: String
+    public let setupPriority: Int
+    public let isRecommended: Bool
+    public let isSelected: Bool
+    public let isReady: Bool
+    public let isActive: Bool
+    public let isResumeReady: Bool
+    public let progressText: String
+
+    public var id: String {
+        modelID
+    }
+
+    public var statusText: String {
+        if isReady {
+            return "Ready"
+        }
+        if isActive {
+            return progressText.isEmpty ? "Downloading" : progressText
+        }
+        if isResumeReady {
+            return "Resume available"
+        }
+        return "Required"
+    }
+}
+
+public struct RuntimeAudioSetupCapabilityGroupState: Identifiable, Equatable, Sendable {
+    public let key: String
+    public let title: String
+    public let models: [RuntimeAudioSetupModelChoiceState]
+
+    public var id: String {
+        key
+    }
+}
+
+public struct RuntimeAudioSetupState: Identifiable, Equatable, Sendable {
+    public let phase: RuntimeAudioSetupPhase
+    public let title: String
+    public let summary: String
+    public let detail: String
+    public let primaryAction: RuntimeAudioSetupActionState?
+    public let capabilityGroups: [RuntimeAudioSetupCapabilityGroupState]
+    public let recommendedModelIDs: [String]
+    public let selectedModelIDs: [String]
+    public let readySelectedModelIDs: [String]
+
+    public var id: String {
+        phase.rawValue
     }
 }
 
@@ -6599,41 +6697,249 @@ public final class RuntimeViewModel {
     }
 
     public var audioSetupActions: [RuntimeAudioSetupActionState] {
-        latestSnapshot.models.compactMap { model in
-            let backendID = model.settings.ext["melix.audio.backend_id"]?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        audioSetupState?.primaryAction.map { [$0] } ?? []
+    }
+
+    public var audioSetupState: RuntimeAudioSetupState? {
+        let models = audioSetupCatalogModels
+        guard models.isEmpty == false else {
+            return nil
+        }
+
+        let recommendedModelIDs = recommendedAudioSetupModelIDs(from: models)
+        let selectedModelIDs = resolvedAudioSetupSelectedModelIDs(
+            recommendedModelIDs: recommendedModelIDs,
+            availableModelIDs: models.map(\.modelID)
+        )
+        let selectedModelIDSet = Set(selectedModelIDs)
+        let readySelectedModelIDs = selectedModelIDs.filter { modelID in
+            models.first(where: { $0.modelID == modelID })?.isReady == true
+        }
+        let runtimeRequiredModel = models.first { $0.runtimePackInstalled == false }
+        let capabilityGroups = audioSetupCapabilityGroups(from: models, selectedModelIDSet: selectedModelIDSet)
+
+        if let runtimeRequiredModel {
+            let runtimePackID = runtimeRequiredModel.runtimePackID.isEmpty
+                ? "melix-audio-runtime-pack"
+                : runtimeRequiredModel.runtimePackID
+            let action = RuntimeAudioSetupActionState(
+                modelID: runtimeRequiredModel.modelID,
+                alias: "Audio Support",
+                detail: "Install \(runtimePackID) to enable STT and TTS audio requests.",
+                actionTitle: "Install Audio Support",
+                kind: .installRuntime
+            )
+            return RuntimeAudioSetupState(
+                phase: .runtimeRequired,
+                title: "Audio Setup Required",
+                summary: "Install the shared audio runtime before downloading audio models.",
+                detail: "Shared runtime pack: \(runtimePackID).",
+                primaryAction: action,
+                capabilityGroups: capabilityGroups,
+                recommendedModelIDs: recommendedModelIDs,
+                selectedModelIDs: selectedModelIDs,
+                readySelectedModelIDs: readySelectedModelIDs
+            )
+        }
+
+        let selectedModels = models.filter { selectedModelIDSet.contains($0.modelID) }
+        let pendingSelectedModelIDs = selectedModels
+            .filter { $0.isReady == false && $0.isActive == false }
+            .map(\.modelID)
+        let activeSelectedModelIDs = selectedModels
+            .filter(\.isActive)
+            .map(\.modelID)
+        guard selectedModels.contains(where: { $0.isReady == false }) else {
+            return nil
+        }
+
+        let phase: RuntimeAudioSetupPhase
+        if activeSelectedModelIDs.isEmpty == false {
+            phase = readySelectedModelIDs.isEmpty ? .modelsDownloading : .partiallyReady
+        } else {
+            phase = readySelectedModelIDs.isEmpty ? .modelsRequired : .partiallyReady
+        }
+        let action = RuntimeAudioSetupActionState(
+            modelID: selectedModelIDs.first ?? "",
+            alias: "Audio Models",
+            detail: "Download the recommended STT and TTS models into Melix managed storage.",
+            actionTitle: selectedModelIDs.count > 1 ? "Start Downloads" : "Download Audio Model",
+            kind: .downloadModel,
+            modelIDs: pendingSelectedModelIDs.isEmpty ? selectedModelIDs : pendingSelectedModelIDs
+        )
+        return RuntimeAudioSetupState(
+            phase: phase,
+            title: "Audio Models Required",
+            summary: "\(readySelectedModelIDs.count) of \(selectedModelIDs.count) recommended audio models ready.",
+            detail: "Recommended setup keeps one STT model and one TTS model ready; optional alternatives remain available.",
+            primaryAction: action.modelIDs.isEmpty ? nil : action,
+            capabilityGroups: capabilityGroups,
+            recommendedModelIDs: recommendedModelIDs,
+            selectedModelIDs: selectedModelIDs,
+            readySelectedModelIDs: readySelectedModelIDs
+        )
+    }
+
+    private struct AudioSetupCatalogModel {
+        let modelID: String
+        let alias: String
+        let capabilityKey: String
+        let capabilityTitle: String
+        let setupRole: String
+        let setupPriority: Int
+        let runtimePackID: String
+        let runtimePackInstalled: Bool
+        let isRecommended: Bool
+        let isReady: Bool
+        let isActive: Bool
+        let isResumeReady: Bool
+        let progressText: String
+    }
+
+    private var audioSetupCatalogModels: [AudioSetupCatalogModel] {
+        let queueByModelID = Dictionary(grouping: downloadQueue, by: \.sourceModel)
+        return latestSnapshot.models.compactMap { model in
+            let backendID = normalizedAudioSetupValue(model.settings.ext["melix.audio.backend_id"])
             guard backendID.hasPrefix("mlx_audio.") else {
                 return nil
             }
-
-            let alias = model.settings.alias.isEmpty ? model.modelID : model.settings.alias
-            let runtimePackState = model.settings.ext["melix.audio.runtime_pack_state"]?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if runtimePackState != "installed" {
-                let runtimePackID = model.settings.ext["melix.audio.runtime_pack_id"]?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? "melix-audio-runtime-pack"
-                return RuntimeAudioSetupActionState(
-                    modelID: model.modelID,
-                    alias: alias,
-                    detail: "Install \(runtimePackID) to enable audio requests for \(alias).",
-                    actionTitle: "Install Audio Support",
-                    kind: .installRuntime
-                )
-            }
-
-            let modelState = model.settings.ext["melix.audio.model_state"]?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard modelState != "managed_local" else {
+            let modelID = model.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard modelID.isEmpty == false else {
                 return nil
             }
-            return RuntimeAudioSetupActionState(
-                modelID: model.modelID,
-                alias: alias,
-                detail: "Download \(alias) into Melix managed storage before serving audio requests.",
-                actionTitle: "Download Audio Model",
-                kind: .downloadModel
+            let capabilityKey = resolvedAudioSetupCapabilityKey(for: model, backendID: backendID)
+            let setupRole = normalizedAudioSetupValue(model.settings.ext["melix.audio.setup_role"])
+            let setupPriority = Int(normalizedAudioSetupValue(model.settings.ext["melix.audio.setup_priority"])) ?? 100
+            let runtimePackState = normalizedAudioSetupValue(model.settings.ext["melix.audio.runtime_pack_state"])
+            let modelState = normalizedAudioSetupValue(model.settings.ext["melix.audio.model_state"])
+            let entries = queueByModelID[modelID] ?? []
+            let activeEntry = entries.first(where: \.isActive)
+            let resumeEntry = entries.first(where: \.resumeReady)
+            return AudioSetupCatalogModel(
+                modelID: modelID,
+                alias: normalizedAudioSetupValue(model.settings.alias).isEmpty ? modelID : model.settings.alias,
+                capabilityKey: capabilityKey,
+                capabilityTitle: audioSetupCapabilityTitle(capabilityKey),
+                setupRole: setupRole,
+                setupPriority: setupPriority,
+                runtimePackID: normalizedAudioSetupValue(model.settings.ext["melix.audio.runtime_pack_id"]),
+                runtimePackInstalled: runtimePackState == "installed",
+                isRecommended: setupRole == "recommended",
+                isReady: modelState == "managed_local",
+                isActive: activeEntry != nil,
+                isResumeReady: resumeEntry != nil,
+                progressText: activeEntry?.progressText ?? resumeEntry?.progressText ?? ""
             )
         }
+        .sorted { lhs, rhs in
+            if lhs.capabilityKey == rhs.capabilityKey {
+                if lhs.setupPriority == rhs.setupPriority {
+                    return lhs.modelID < rhs.modelID
+                }
+                return lhs.setupPriority < rhs.setupPriority
+            }
+            return audioSetupCapabilityOrder(lhs.capabilityKey) < audioSetupCapabilityOrder(rhs.capabilityKey)
+        }
+    }
+
+    private func audioSetupCapabilityGroups(
+        from models: [AudioSetupCatalogModel],
+        selectedModelIDSet: Set<String>
+    ) -> [RuntimeAudioSetupCapabilityGroupState] {
+        let groupedModels = Dictionary(grouping: models, by: \.capabilityKey)
+        return groupedModels.keys.sorted {
+            let lhsOrder = audioSetupCapabilityOrder($0)
+            let rhsOrder = audioSetupCapabilityOrder($1)
+            return lhsOrder == rhsOrder ? $0 < $1 : lhsOrder < rhsOrder
+        }.map { key in
+            let models = (groupedModels[key] ?? []).map { model in
+                RuntimeAudioSetupModelChoiceState(
+                    modelID: model.modelID,
+                    alias: model.alias,
+                    capabilityKey: model.capabilityKey,
+                    capabilityTitle: model.capabilityTitle,
+                    setupRole: model.setupRole,
+                    setupPriority: model.setupPriority,
+                    isRecommended: model.isRecommended,
+                    isSelected: selectedModelIDSet.contains(model.modelID),
+                    isReady: model.isReady,
+                    isActive: model.isActive,
+                    isResumeReady: model.isResumeReady,
+                    progressText: model.progressText
+                )
+            }
+            return RuntimeAudioSetupCapabilityGroupState(
+                key: key,
+                title: audioSetupCapabilityTitle(key),
+                models: models
+            )
+        }
+    }
+
+    private func resolvedAudioSetupSelectedModelIDs(
+        recommendedModelIDs: [String],
+        availableModelIDs: [String]
+    ) -> [String] {
+        let availableModelIDSet = Set(availableModelIDs)
+        let confirmedIDSet = Set(confirmedAudioSetupModelIDs.filter { availableModelIDSet.contains($0) })
+        let confirmedIDs = availableModelIDs.filter { confirmedIDSet.contains($0) }
+        return confirmedIDs.isEmpty ? recommendedModelIDs : confirmedIDs
+    }
+
+    private func recommendedAudioSetupModelIDs(from models: [AudioSetupCatalogModel]) -> [String] {
+        let groupedModels = Dictionary(grouping: models, by: \.capabilityKey)
+        return groupedModels.keys.sorted {
+            let lhsOrder = audioSetupCapabilityOrder($0)
+            let rhsOrder = audioSetupCapabilityOrder($1)
+            return lhsOrder == rhsOrder ? $0 < $1 : lhsOrder < rhsOrder
+        }.flatMap { key in
+            let capabilityModels = groupedModels[key] ?? []
+            let recommendedModels = capabilityModels.filter(\.isRecommended)
+            return (recommendedModels.isEmpty ? Array(capabilityModels.prefix(1)) : recommendedModels).map(\.modelID)
+        }
+    }
+
+    private func resolvedAudioSetupCapabilityKey(
+        for model: Melix_Controlplane_V1_ModelSummary,
+        backendID: String
+    ) -> String {
+        let metadataCapability = normalizedAudioSetupValue(model.settings.ext["melix.audio.capability"])
+        if metadataCapability.isEmpty == false {
+            return metadataCapability
+        }
+        if backendID.contains(".stt") || model.kind == "transcription" {
+            return "stt"
+        }
+        if backendID.contains(".tts") || model.kind == "speech" {
+            return "tts"
+        }
+        return "audio"
+    }
+
+    private func audioSetupCapabilityTitle(_ key: String) -> String {
+        switch key {
+        case "stt":
+            return "Speech to Text"
+        case "tts":
+            return "Text to Speech"
+        default:
+            return "Audio"
+        }
+    }
+
+    private func audioSetupCapabilityOrder(_ key: String) -> Int {
+        switch key {
+        case "stt":
+            return 0
+        case "tts":
+            return 1
+        default:
+            return 10
+        }
+    }
+
+    private func normalizedAudioSetupValue(_ value: String?) -> String {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
     public var latestAdapterPackage: RuntimeAdapterPackageState? {
@@ -8975,14 +9281,47 @@ public final class RuntimeViewModel {
     }
 
     public func downloadAudioModel(modelID: String) async {
-        guard !modelID.isEmpty else {
+        await downloadAudioModels(modelIDs: [modelID])
+    }
+
+    public func downloadAudioModels(modelIDs: [String]) async {
+        let requestedModelIDs = RuntimeAudioSetupActionState(
+            modelID: modelIDs.first ?? "",
+            alias: "",
+            detail: "",
+            actionTitle: "",
+            kind: .downloadModel,
+            modelIDs: modelIDs
+        ).modelIDs
+        guard requestedModelIDs.isEmpty == false else {
             return
         }
-        await runModelOperation(
-            modelID: modelID,
-            operation: "download",
-            outputDir: Self.defaultDownloadOutputDirectory(namespace: "melix-audio-models", modelID: modelID)
-        )
+        confirmedAudioSetupModelIDs = OperatorSessionState(
+            selectedSurface: selectedSurface,
+            selectedToolSection: selectedToolSection,
+            selectedServerSessionID: selectedServerSessionID,
+            selectedRuntimeJobID: selectedRuntimeJobID,
+            serverSessions: serverSessions,
+            confirmedAudioSetupModelIDs: requestedModelIDs
+        ).confirmedAudioSetupModelIDs
+        persistOperatorSessionState()
+
+        let skippedModelIDs = Set(audioSetupCatalogModels.filter {
+            ($0.isReady || $0.isActive) && requestedModelIDs.contains($0.modelID)
+        }.map(\.modelID))
+        let pendingModelIDs = requestedModelIDs.filter { skippedModelIDs.contains($0) == false }
+        guard pendingModelIDs.isEmpty == false else {
+            await refreshDownloadQueueState(notify: false, surfaceErrors: false)
+            await refreshDesktopFoundation()
+            return
+        }
+        for modelID in pendingModelIDs {
+            await runModelOperation(
+                modelID: modelID,
+                operation: "download",
+                outputDir: Self.defaultDownloadOutputDirectory(namespace: "melix-audio-models", modelID: modelID)
+            )
+        }
         await refreshDownloadQueueState(notify: false, surfaceErrors: false)
         await refreshDesktopFoundation()
     }
@@ -8992,7 +9331,7 @@ public final class RuntimeViewModel {
         case .installRuntime:
             await installAudioRuntime(modelID: action.modelID)
         case .downloadModel:
-            await downloadAudioModel(modelID: action.modelID)
+            await downloadAudioModels(modelIDs: action.modelIDs)
         }
     }
 

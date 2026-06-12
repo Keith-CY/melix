@@ -2484,15 +2484,16 @@ struct DesktopDownloadsToolSectionView: View {
                 }
             }
 
-            if viewModel.audioSetupActions.isEmpty == false {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(viewModel.audioSetupActions) { action in
-                        DesktopAudioSetupNoticeRow(
-                            action: action,
-                            performAction: { viewModel.presentAudioSetupPrompt(action) }
-                        )
+            if let audioSetupState = viewModel.audioSetupState {
+                DesktopAudioSetupNoticeRow(
+                    setup: audioSetupState,
+                    performAction: {
+                        guard let action = audioSetupState.primaryAction else {
+                            return
+                        }
+                        viewModel.presentAudioSetupPrompt(action)
                     }
-                }
+                )
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -5356,21 +5357,72 @@ enum DesktopDownloadsLayoutMetrics {
 }
 
 struct DesktopAudioSetupNoticeRow: View {
+    let setup: RuntimeAudioSetupState?
     let action: RuntimeAudioSetupActionState
     let performAction: () -> Void
 
+    init(
+        setup: RuntimeAudioSetupState,
+        performAction: @escaping () -> Void
+    ) {
+        self.setup = setup
+        self.action = setup.primaryAction ?? RuntimeAudioSetupActionState(
+            modelID: "",
+            alias: "Audio Models",
+            detail: setup.detail,
+            actionTitle: "",
+            kind: .downloadModel,
+            modelIDs: []
+        )
+        self.performAction = performAction
+    }
+
+    init(
+        action: RuntimeAudioSetupActionState,
+        performAction: @escaping () -> Void
+    ) {
+        self.setup = nil
+        self.action = action
+        self.performAction = performAction
+    }
+
     var body: some View {
+        if let setup {
+            VStack(alignment: .leading, spacing: 10) {
+                compactRow(title: setup.title, detail: setup.summary)
+                if setup.phase != .runtimeRequired {
+                    audioSetupCapabilityDetails(setup)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(audioSetupAccessibilitySummary(setup))
+        } else {
+            compactRow(title: "Audio Setup Required", detail: action.detail)
+                .padding(.horizontal, 10)
+                .frame(height: DesktopDownloadsLayoutMetrics.compactAudioNoticeHeightBudget)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Audio Setup Required \(action.detail) \(action.actionTitle)")
+        }
+    }
+
+    private func compactRow(title: String, detail: String) -> some View {
         HStack(spacing: 10) {
-            Label("Audio Setup Required", systemImage: "waveform.badge.exclamationmark")
+            Label(title, systemImage: "waveform.badge.exclamationmark")
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(title)
 
-            Text(action.detail)
+            Text(detail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .accessibilityLabel(detail)
 
             Spacer(minLength: 8)
 
@@ -5378,10 +5430,62 @@ struct DesktopAudioSetupNoticeRow: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(action.actionTitle)
         }
-        .padding(.horizontal, 10)
         .frame(height: DesktopDownloadsLayoutMetrics.compactAudioNoticeHeightBudget)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func audioSetupCapabilityDetails(_ setup: RuntimeAudioSetupState) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(setup.detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            ForEach(setup.capabilityGroups) { group in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(group.title)
+                        .font(.caption.weight(.semibold))
+                        .accessibilityLabel(group.title)
+                    ForEach(group.models) { model in
+                        HStack(spacing: 8) {
+                            Image(systemName: model.isSelected ? "checkmark.circle.fill" : "circle")
+                                .font(.caption)
+                                .foregroundStyle(model.isSelected ? MelixDesignTokens.accent : .secondary)
+                                .frame(width: 16)
+                            Text(model.alias)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .accessibilityLabel(model.alias)
+                            Text(model.isRecommended ? "Recommended" : "Optional")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .accessibilityLabel(model.isRecommended ? "Recommended" : "Optional")
+                            Spacer(minLength: 8)
+                            Text(model.statusText)
+                                .font(.caption2)
+                                .foregroundStyle(model.isReady ? .green : .secondary)
+                                .lineLimit(1)
+                                .accessibilityLabel(model.statusText)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func audioSetupAccessibilitySummary(_ setup: RuntimeAudioSetupState) -> String {
+        var parts = [
+            setup.title,
+            setup.summary,
+            setup.primaryAction?.actionTitle ?? "",
+            setup.detail,
+        ]
+        for group in setup.capabilityGroups {
+            parts.append(group.title)
+            parts.append(contentsOf: group.models.map(\.alias))
+        }
+        return parts.filter { $0.isEmpty == false }.joined(separator: " ")
     }
 }
 
