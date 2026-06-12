@@ -878,7 +878,7 @@ def project_local_job_session_followup(
 
 
 def _claim_input_mapping_or_error(
-    value: Mapping[str, Any] | None,
+    value: Any,
     field_name: str,
 ) -> tuple[Mapping[str, Any], str | None]:
     if value is None:
