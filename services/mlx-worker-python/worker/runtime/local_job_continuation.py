@@ -413,21 +413,21 @@ class LocalJobContinuationStore:
     ) -> LocalJobContinuationFollowupClaimBatch:
         live_evidence_by_job_id = live_evidence_by_job_id or {}
         (
-            followup_session_ids_by_job_id,
+            followup_session_ids,
             followup_session_ids_input_error,
         ) = _claim_input_mapping_or_error(
             followup_session_ids_by_job_id,
             "followup_session_ids_by_job_id",
         )
         (
-            completion_summaries_by_job_id,
+            completion_summaries,
             completion_summaries_input_error,
         ) = _claim_input_mapping_or_error(
             completion_summaries_by_job_id,
             "completion_summaries_by_job_id",
         )
         (
-            owner_scope_checked_by_job_id,
+            owner_scope_checked,
             owner_scope_checked_input_error,
         ) = _claim_input_mapping_or_error(
             owner_scope_checked_by_job_id,
@@ -456,15 +456,13 @@ class LocalJobContinuationStore:
                 )
                 continue
             try:
-                missing_fields = [
-                    field_name
-                    for field_name, values in (
-                        ("followup_session_id", followup_session_ids_by_job_id),
-                        ("completion_summary", completion_summaries_by_job_id),
-                        ("owner_scope_checked", owner_scope_checked_by_job_id),
-                    )
-                    if job_id not in values
-                ]
+                missing_fields: list[str] = []
+                if job_id not in followup_session_ids:
+                    missing_fields.append("followup_session_id")
+                if job_id not in completion_summaries:
+                    missing_fields.append("completion_summary")
+                if job_id not in owner_scope_checked:
+                    missing_fields.append("owner_scope_checked")
             except (LookupError, TypeError, ValueError) as exc:
                 receipts.append(
                     _followup_claim_input_invalid_receipt(
@@ -487,15 +485,15 @@ class LocalJobContinuationStore:
                 claim = self.claim_followup_prompt_context(
                     job_id,
                     followup_session_id=_claim_input_value(
-                        followup_session_ids_by_job_id,
+                        followup_session_ids,
                         job_id,
                     ),
                     completion_summary=_claim_input_value(
-                        completion_summaries_by_job_id,
+                        completion_summaries,
                         job_id,
                     ),
                     owner_scope_checked=_claim_input_value(
-                        owner_scope_checked_by_job_id,
+                        owner_scope_checked,
                         job_id,
                     ),
                     live_evidence=live_evidence_by_job_id.get(job_id),
