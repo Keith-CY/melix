@@ -513,8 +513,9 @@ evidence or an already claimed follow-up must not emit prompt-context payloads.
 
 Future local-job monitor loops should discover follow-up work through
 `LocalJobContinuationStore.scan_followup_candidates`. The scanner performs a
-one-level `os.scandir` pass over persisted `*.json` local-job record files,
-keeps deterministic filename ordering for follow-up candidates and receipts,
+one-level `os.scandir` pass over persisted `*.json` local-job record files
+without a separate pre-scan root-existence stat, keeps deterministic filename
+ordering for follow-up candidates and receipts,
 reconciles each loaded record with optional caller-provided live evidence,
 persists any reconciliation state changes through the same revision-guarded
 store path, and returns only evidence-backed `completed` records whose
@@ -530,7 +531,8 @@ abort the whole scan; they emit `reason = record_unreadable`, and
 revision-guarded store conflicts keep their store-level receipt so the monitor
 can continue scanning other records. The registered PR-scoped performance probe
 for this path is `local-job-followup-scan-scandir`, which verifies the scandir
-scan and reports elapsed time plus `Path.glob`/`os.scandir` call counts.
+scan and reports elapsed time plus `Path.exists`/`Path.glob`/`os.scandir` call
+counts.
 
 When a monitor already has redacted completion summaries for candidate records,
 it may compose discovery and guarded claiming through

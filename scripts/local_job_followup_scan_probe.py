@@ -49,15 +49,18 @@ def run_probe(*, record_count: int = 500, samples: int = 5) -> dict[str, float]:
     receipt_samples: list[float] = []
     scandir_samples: list[float] = []
     glob_samples: list[float] = []
+    exists_samples: list[float] = []
 
     with tempfile.TemporaryDirectory(prefix="melix-local-job-scan-") as tmp:
         store = _prepare_store(Path(tmp), record_count=record_count)
         original_scandir = target.os.scandir
         original_glob = target.Path.glob
+        original_exists = target.Path.exists
         try:
             for _ in range(samples):
                 scandir_calls = 0
                 glob_calls = 0
+                exists_calls = 0
 
                 def counted_scandir(path: str | os.PathLike[str]):
                     nonlocal scandir_calls
@@ -69,8 +72,14 @@ def run_probe(*, record_count: int = 500, samples: int = 5) -> dict[str, float]:
                     glob_calls += 1
                     return original_glob(self, pattern)
 
+                def counted_exists(self: Path):  # pragma: no cover - regression counter
+                    nonlocal exists_calls
+                    exists_calls += 1
+                    return original_exists(self)
+
                 target.os.scandir = counted_scandir
                 target.Path.glob = counted_glob
+                target.Path.exists = counted_exists
                 started = time.perf_counter()
                 scan = store.scan_followup_candidates()
                 elapsed_samples.append((time.perf_counter() - started) * 1000.0)
@@ -78,9 +87,11 @@ def run_probe(*, record_count: int = 500, samples: int = 5) -> dict[str, float]:
                 receipt_samples.append(float(len(scan.receipts)))
                 scandir_samples.append(float(scandir_calls))
                 glob_samples.append(float(glob_calls))
+                exists_samples.append(float(exists_calls))
         finally:
             target.os.scandir = original_scandir
             target.Path.glob = original_glob
+            target.Path.exists = original_exists
 
     return {
         "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
@@ -89,6 +100,7 @@ def run_probe(*, record_count: int = 500, samples: int = 5) -> dict[str, float]:
         "receipt_count_mean": statistics.fmean(receipt_samples),
         "scandir_calls_mean": statistics.fmean(scandir_samples),
         "path_glob_calls_mean": statistics.fmean(glob_samples),
+        "path_exists_calls_mean": statistics.fmean(exists_samples),
         "record_count": float(record_count),
         "sample_count": float(samples),
     }

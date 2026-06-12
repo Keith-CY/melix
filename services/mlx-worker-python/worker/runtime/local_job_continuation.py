@@ -354,9 +354,6 @@ class LocalJobContinuationStore:
     ) -> LocalJobContinuationFollowupScan:
         candidates: list[LocalJobContinuationFollowupCandidate] = []
         receipts: list[dict[str, Any]] = []
-        if not self.root.exists():
-            return LocalJobContinuationFollowupScan(candidates=(), receipts=())
-
         live_evidence_by_job_id = live_evidence_by_job_id or {}
         root = self.root
         try:
