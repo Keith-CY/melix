@@ -776,10 +776,8 @@ def _rollout_manifest_fields_from_training_result(
 def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
     scores: list[float] = []
     scores_append = scores.append
-    scores_extend = scores.extend
     to_float = float
     is_instance = isinstance
-    dict_type = dict
     list_type = list
     score_total = 0.0
     candidate_group_margins: list[float] = []
@@ -792,34 +790,32 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
             scores_append(reward_score)
             score_total += reward_score
         candidates = sample.get("candidates")
-        candidate_scores: list[float] = []
+        candidate_score_count = 0
+        candidate_score_total = 0.0
+        candidate_score_square_total = 0.0
+        candidate_score_min = 0.0
+        candidate_score_max = 0.0
         if is_instance(candidates, list_type):
-            try:
-                candidate_scores = [to_float(candidate["score"]) for candidate in candidates]
-            except (KeyError, TypeError):
-                candidate_scores = [
-                    to_float(candidate["score"])
-                    for candidate in candidates
-                    if is_instance(candidate, dict_type) and "score" in candidate
-                ]
-        candidate_score_count = len(candidate_scores)
-        if candidate_score_count:
-            scores_extend(candidate_scores)
-            candidate_score_total = 0.0
-            candidate_score_square_total = 0.0
-            candidate_score_min = candidate_scores[0]
-            candidate_score_max = candidate_score_min
-            for candidate_score in candidate_scores:
+            for candidate in candidates:
+                try:
+                    candidate_score = to_float(candidate["score"])
+                except (KeyError, TypeError):
+                    continue
+                scores_append(candidate_score)
                 candidate_score_total += candidate_score
                 candidate_score_square_total += candidate_score * candidate_score
-                if candidate_score < candidate_score_min:
+                if candidate_score_count == 0:
                     candidate_score_min = candidate_score
-                if candidate_score > candidate_score_max:
                     candidate_score_max = candidate_score
+                else:
+                    if candidate_score < candidate_score_min:
+                        candidate_score_min = candidate_score
+                    if candidate_score > candidate_score_max:
+                        candidate_score_max = candidate_score
+                candidate_score_count += 1
+        if candidate_score_count:
             score_total += candidate_score_total
         if candidate_score_count >= 2:
-            assert candidate_score_min is not None
-            assert candidate_score_max is not None
             group_mean = candidate_score_total / candidate_score_count
             candidate_group_margin = candidate_score_max - candidate_score_min
             candidate_group_variance = (
