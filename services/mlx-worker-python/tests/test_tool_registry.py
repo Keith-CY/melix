@@ -682,6 +682,43 @@ def test_agentic_tool_selection_skips_empty_context_keyword_scan(
     assert scanned_texts == ["Open fixture://docs/provider-contract and summarize the page."]
 
 
+def test_agentic_tool_selection_reuses_single_recent_context_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scanned_text_ids: list[int] = []
+    recent_context = "Search the local text evidence."
+    real_keyword_tool_matches = tool_registry_module._keyword_tool_matches
+
+    def record_keyword_tool_matches(text: str) -> tuple[str, ...]:
+        scanned_text_ids.append(id(text))
+        return real_keyword_tool_matches(text)
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "_keyword_tool_matches",
+        record_keyword_tool_matches,
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Use two results this time.",
+            vector_available=False,
+            recent_user_turns=(recent_context,),
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert len(scanned_text_ids) == 2
+    assert scanned_text_ids[1] == id(recent_context)
+
+
+def test_agentic_tool_selection_joins_multiple_recent_context_turns() -> None:
+    assert tool_registry_module._recent_user_turns_keyword_context(
+        ("Search the local text evidence.", "Visit fixture://docs/provider-contract.")
+    ) == "Search the local text evidence. Visit fixture://docs/provider-contract."
+
+
 @pytest.mark.parametrize(
     ("current_user_turn", "expected_tool"),
     [

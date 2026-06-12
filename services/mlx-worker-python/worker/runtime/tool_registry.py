@@ -490,7 +490,9 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
     if selection_mode != "vector":
         current_matches = _keyword_tool_matches(selection_input.current_user_turn)
         if selection_input.recent_user_turns:
-            context_matches = _keyword_tool_matches(" ".join(selection_input.recent_user_turns))
+            context_matches = _keyword_tool_matches(
+                _recent_user_turns_keyword_context(selection_input.recent_user_turns)
+            )
         else:
             context_matches = ()
         for tool_name in current_matches:
@@ -518,6 +520,12 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
         "selected_schema_bytes": selected_registry.metrics().schema_bytes,
     }
     return ToolSelectionResult(registry=selected_registry, receipt=receipt)
+
+
+def _recent_user_turns_keyword_context(recent_user_turns: tuple[str, ...]) -> str:
+    if len(recent_user_turns) == 1:
+        return recent_user_turns[0]
+    return " ".join(recent_user_turns)
 
 
 @lru_cache(maxsize=128)
