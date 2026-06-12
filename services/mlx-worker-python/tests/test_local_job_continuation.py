@@ -1025,7 +1025,15 @@ def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
 
 def test_store_scan_followup_candidates_returns_empty_for_missing_root(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    def fail_exists(self: Path) -> bool:  # pragma: no cover - regression guard
+        raise AssertionError(
+            "scan_followup_candidates() should let os.scandir handle missing roots"
+        )
+
+    monkeypatch.setattr(local_job_continuation_module.Path, "exists", fail_exists)
+
     scan = LocalJobContinuationStore(tmp_path / "missing").scan_followup_candidates()
 
     assert scan.candidates == ()

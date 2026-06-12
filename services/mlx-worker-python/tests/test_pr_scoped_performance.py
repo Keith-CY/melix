@@ -339,6 +339,7 @@ def test_local_job_followup_scan_probe_script_emits_metrics(
     assert metrics["receipt_count_mean"] == 5.0
     assert metrics["scandir_calls_mean"] == 1.0
     assert metrics["path_glob_calls_mean"] == 0.0
+    assert metrics["path_exists_calls_mean"] == 0.0
 
 
 
