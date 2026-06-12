@@ -26,6 +26,8 @@ The affected path is covered by the registered PR-scoped probe `retrieval-contex
 
 Bind loop-stable helpers (`_admit_entry`, `_duplicate_projection_receipt`, list `extend`, payload `update`, and `dict`) once before the projection loop. This avoids repeated global and attribute lookups while keeping the same object-copy boundaries for receipts and the same duplicate-field refusal policy.
 
+This follow-up slice keeps the same registered probe and adds a single-field payload fast path for the common `PromptContextAdmission` shape. Single-field admissions can check duplicate membership once and assign directly into the projected payload, while multi-field admissions continue to use the existing full duplicate-field scan and `dict.update()` path.
+
 ## Verification Plan
 
 Run the registered focused test command, changed-scope coverage command, and registered probe command locally on Linux before opening the PR. The PR-scoped performance workflow remains the authoritative CI validation source after push.

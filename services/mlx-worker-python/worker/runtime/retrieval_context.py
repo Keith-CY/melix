@@ -124,23 +124,35 @@ def project_retrieval_contexts(
             continue
 
         admission_payload = admission.user_payload
-        duplicate_fields: list[str] | None = None
-        for source_field in admission_payload:
+        if len(admission_payload) == 1:
+            source_field = next(iter(admission_payload))
             if source_field in user_payload:
-                if duplicate_fields is None:
-                    duplicate_fields = []
-                duplicate_fields.append(source_field)
-        if duplicate_fields is not None:
-            refusal_receipts_extend(
-                duplicate_projection_receipt(
-                    receipt,
-                    duplicate_fields=duplicate_fields,
+                refusal_receipts_extend(
+                    duplicate_projection_receipt(
+                        receipt,
+                        duplicate_fields=[source_field],
+                    )
+                    for receipt in admission.untrusted_context_receipts
                 )
-                for receipt in admission.untrusted_context_receipts
-            )
-            continue
-
-        user_payload_update(admission_payload)
+                continue
+            user_payload[source_field] = admission_payload[source_field]
+        else:
+            duplicate_fields: list[str] | None = None
+            for source_field in admission_payload:
+                if source_field in user_payload:
+                    if duplicate_fields is None:
+                        duplicate_fields = []
+                    duplicate_fields.append(source_field)
+            if duplicate_fields is not None:
+                refusal_receipts_extend(
+                    duplicate_projection_receipt(
+                        receipt,
+                        duplicate_fields=duplicate_fields,
+                    )
+                    for receipt in admission.untrusted_context_receipts
+                )
+                continue
+            user_payload_update(admission_payload)
         for receipt in admission.untrusted_context_receipts:
             receipts_append(copy_receipt(receipt))
 
