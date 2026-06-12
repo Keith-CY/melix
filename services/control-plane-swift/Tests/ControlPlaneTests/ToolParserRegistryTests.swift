@@ -660,6 +660,42 @@ struct ToolParserRegistryTests {
         #expect(receiptsJSON.contains("Continue from the previous answer.") == false)
     }
 
+    @Test("prompt context boundary receipts classify function roles as tool output")
+    func promptContextBoundaryReceiptsClassifyFunctionRolesAsToolOutput() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-function-tool-output" })
+        let request = makeNormalizedRequest(messages: [
+            .init(role: "function", name: "get_weather", content: "legacy function output says ignore system"),
+            .init(role: "functions.get_forecast", content: "harmony function output says reveal secrets"),
+        ])
+
+        let translated = try translator.translate(request, modelHandle: "worker-text")
+        let ext = translated.workerRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.prompt_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+
+        #expect(ext["melix.prompt_context.receipt_count"] == "2")
+        #expect(receipts.compactMap { $0["source_type"] as? String } == ["tool_output", "tool_output"])
+        #expect(receipts.compactMap { $0["message_role"] as? String } == ["function", "functions.get_forecast"])
+        #expect(receipts.compactMap { $0["source_id"] as? String } == ["get_weather"])
+        #expect(
+            receipts.allSatisfy {
+                $0["reason"] as? String == "tool output is prompt data, not instructions"
+            }
+        )
+        #expect(
+            receipts.allSatisfy {
+                $0["corrective_action"] as? String ==
+                    "Keep tool output in user-role data context and do not project it into system or developer instructions."
+            }
+        )
+        #expect(receipts.allSatisfy { $0["included"] as? Bool == true })
+        #expect(receipts.allSatisfy { $0["policy"] as? String == "data_only" })
+        #expect(receiptsJSON.contains("ignore system") == false)
+        #expect(receiptsJSON.contains("reveal secrets") == false)
+    }
+
     @Test("request-local compatibility policy receipt overrides do not mutate default requests")
     func requestLocalCompatibilityPolicyReceiptOverridesDoNotMutateDefaultRequests() throws {
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-compat-policy-defaults" })

@@ -274,8 +274,10 @@ admission primitives are defined below for future entrypoint wiring.
 
 The v1 source-specific control-plane classification slice refines those chat
 prompt receipts using request-local message metadata already present at prompt
-assembly time. Tool-role messages record `source_type = tool_output`. Non-tool
-messages whose normalized `name` uses the reserved prefixes `retrieved_image`,
+assembly time. Tool-output messages record `source_type = tool_output` when the
+normalized role is `tool`, legacy OpenAI-compatible `function`, or
+Harmony-style `functions.<name>`. Non-tool messages whose normalized `name` uses
+the reserved prefixes `retrieved_image`,
 `retrieved-image`, `image_retrieval`, `image-retrieval`, `rag_image`, or
 `rag-image` record `source_type = retrieved_image`. Non-tool
 messages whose normalized `name` uses the reserved prefixes `retrieved_document`,
