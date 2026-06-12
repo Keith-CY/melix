@@ -663,6 +663,22 @@ ranking, owner inference, session mutation, or prompt-body copying; callers
 must pass already-redacted payload dictionaries and explicit owner-scope
 evidence.
 
+Concrete skill-store and memory-store callers that already performed lookup and
+need a session-message-shaped projection should use
+`worker.runtime.skill_memory_context.project_skill_memory_lookup_result`. The
+helper accepts a lookup-result mapping with `records` set to the ordered
+already-redacted record list, delegates those records to
+`project_skill_memory_store_records`, then returns copied prompt user payload,
+copied admitted receipts, copied refusal receipts, and `lookup_message` shaped
+as user-role data when at least one record was admitted: `{"role": "user",
+"content": <prompt_user_payload>, "untrusted_context_receipts": <receipts>}`.
+Malformed top-level lookup-result wrappers fail closed with `source_field =
+lookup_result`, no prompt payload, no admitted receipts, and no lookup message.
+Record-level refusals remain visible while valid sibling records can still
+produce a lookup message. The projection does not load skill files, read or
+write memory stores, rank retrieval results, infer owner scope, mutate
+sessions, enqueue chat messages, or copy raw source text into receipt JSON.
+
 The Python worker retrieval admission primitives are
 `worker.runtime.retrieval_context.admit_retrieved_document_context` and
 `worker.runtime.retrieval_context.admit_retrieved_image_context`. Deterministic
