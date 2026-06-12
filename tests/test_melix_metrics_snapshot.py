@@ -113,6 +113,41 @@ def test_runtime_dir_discovers_latest_metrics_files(tmp_path: Path) -> None:
     assert snapshot["values"]["new"] == 2
 
 
+def test_runtime_pattern_matcher_preserves_source_patterns_without_fnmatch(
+    monkeypatch,
+) -> None:
+    def fail_fnmatch(name: str, pattern: str) -> bool:
+        raise AssertionError(  # pragma: no cover - failure-only guard.
+            f"unexpected fallback for {name!r} {pattern!r}"
+        )
+
+    monkeypatch.setattr(snapshot_cli.fnmatch, "fnmatchcase", fail_fnmatch)
+
+    assert snapshot_cli._matches_runtime_pattern(
+        "control-plane-metrics-latest.json",
+        "control-plane-metrics*.json",
+    )
+    assert snapshot_cli._matches_runtime_pattern(
+        "control-plane-metrics.json",
+        "control-plane-metrics.json",
+    )
+    assert snapshot_cli._matches_runtime_pattern(
+        "control-plane-metrics-2026-latest.json",
+        "control-plane*latest.json",
+    )
+    assert not snapshot_cli._matches_runtime_pattern(
+        "control-plane-metrics-latest.tmp",
+        "control-plane-metrics*.json",
+    )
+    assert not snapshot_cli._matches_runtime_pattern(
+        "old-control-plane-metrics-latest.json",
+        "control-plane-metrics*.json",
+    )
+
+    monkeypatch.setattr(snapshot_cli.fnmatch, "fnmatchcase", lambda name, pattern: True)
+    assert snapshot_cli._matches_runtime_pattern("control-plane.json", "control*plane*.json")
+
+
 def test_runtime_dir_discovery_uses_single_scandir_without_path_glob(
     tmp_path: Path,
     monkeypatch,
