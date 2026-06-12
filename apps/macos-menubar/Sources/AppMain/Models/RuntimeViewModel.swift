@@ -2548,6 +2548,7 @@ public final class RuntimeViewModel {
     public private(set) var chatCapabilities: [DesktopChatCapabilityRow] = []
     public private(set) var agentIntegrationExports: [AgentIntegrationExport] = []
     public private(set) var pendingAudioSetupPrompt: RuntimeAudioSetupPromptState?
+    public private(set) var confirmedAudioSetupModelIDs: [String] = []
     public private(set) var chatStatusText = "Idle"
     public private(set) var lastChatUsageText = ""
     public private(set) var isChatStreaming = false
@@ -11562,6 +11563,7 @@ public final class RuntimeViewModel {
                 serverSessions = restoredState.serverSessions
             }
             downloadQueue = restoredState.downloadQueue
+            confirmedAudioSetupModelIDs = restoredState.confirmedAudioSetupModelIDs
             lastPersistedOperatorSessionState = restoredState
         } catch {
             recordLocalError("Operator session restore failed: \(error)")
@@ -11578,7 +11580,8 @@ public final class RuntimeViewModel {
             dismissedBannerIDs: dismissedBannerIDs.sorted(),
             downloadQueue: downloadQueue,
             registryRoots: registryConfiguredRootPaths,
-            paneVisibility: desktopPaneVisibility
+            paneVisibility: desktopPaneVisibility,
+            confirmedAudioSetupModelIDs: confirmedAudioSetupModelIDs
         )
     }
 

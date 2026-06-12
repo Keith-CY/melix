@@ -360,6 +360,7 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
     public var downloadQueue: [MelixOperatorDownloadQueueEntryState]
     public var registryRoots: [String]
     public var paneVisibility: [MelixOperatorPaneVisibilityState]
+    public var confirmedAudioSetupModelIDs: [String]
 
     public init(
         schemaVersion: Int = 6,
@@ -371,7 +372,8 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
         dismissedBannerIDs: [String] = [],
         downloadQueue: [MelixOperatorDownloadQueueEntryState] = [],
         registryRoots: [String] = [],
-        paneVisibility: [MelixOperatorPaneVisibilityState] = MelixOperatorPaneVisibilityState.defaultStates
+        paneVisibility: [MelixOperatorPaneVisibilityState] = MelixOperatorPaneVisibilityState.defaultStates,
+        confirmedAudioSetupModelIDs: [String] = []
     ) {
         self.schemaVersion = max(schemaVersion, 6)
         self.selectedSurfaceID = selectedSurfaceID
@@ -383,6 +385,7 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
         self.downloadQueue = downloadQueue
         self.registryRoots = registryRoots
         self.paneVisibility = MelixOperatorPaneVisibilityState.mergedWithDefaults(paneVisibility)
+        self.confirmedAudioSetupModelIDs = Self.normalizedAudioSetupModelIDs(confirmedAudioSetupModelIDs)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -396,6 +399,7 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
         case downloadQueue = "download_queue"
         case registryRoots = "registry_roots"
         case paneVisibility = "pane_visibility"
+        case confirmedAudioSetupModelIDs = "confirmed_audio_setup_model_ids"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -411,7 +415,11 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
             downloadQueue: try container.decodeIfPresent([MelixOperatorDownloadQueueEntryState].self, forKey: .downloadQueue) ?? [],
             registryRoots: try container.decodeIfPresent([String].self, forKey: .registryRoots) ?? [],
             paneVisibility: try container.decodeIfPresent([MelixOperatorPaneVisibilityState].self, forKey: .paneVisibility)
-                ?? MelixOperatorPaneVisibilityState.defaultStates
+                ?? MelixOperatorPaneVisibilityState.defaultStates,
+            confirmedAudioSetupModelIDs: try container.decodeIfPresent(
+                [String].self,
+                forKey: .confirmedAudioSetupModelIDs
+            ) ?? []
         )
     }
 
@@ -427,6 +435,17 @@ public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
         try container.encode(downloadQueue, forKey: .downloadQueue)
         try container.encode(registryRoots, forKey: .registryRoots)
         try container.encode(paneVisibility, forKey: .paneVisibility)
+        try container.encode(confirmedAudioSetupModelIDs, forKey: .confirmedAudioSetupModelIDs)
+    }
+
+    fileprivate static func normalizedAudioSetupModelIDs(_ modelIDs: [String]) -> [String] {
+        Array(
+            Set(
+                modelIDs.map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                }.filter { $0.isEmpty == false }
+            )
+        ).sorted()
     }
 }
 
@@ -548,7 +567,8 @@ public struct MelixOperatorSessionStore: MelixOperatorSessionStoring {
             dismissedBannerIDs: ui.dismissedBannerIDs,
             downloadQueue: downloadQueue,
             registryRoots: modelRoots,
-            paneVisibility: ui.paneVisibility
+            paneVisibility: ui.paneVisibility,
+            confirmedAudioSetupModelIDs: ui.confirmedAudioSetupModelIDs
         )
     }
 
@@ -627,6 +647,7 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
     var selectedRuntimeJobID: String
     var dismissedBannerIDs: [String]
     var paneVisibility: [MelixOperatorPaneVisibilityState]
+    var confirmedAudioSetupModelIDs: [String]
 
     init(
         schemaVersion: Int = 7,
@@ -635,7 +656,8 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
         selectedServerSessionID: String = "",
         selectedRuntimeJobID: String = "",
         dismissedBannerIDs: [String] = [],
-        paneVisibility: [MelixOperatorPaneVisibilityState] = MelixOperatorPaneVisibilityState.defaultStates
+        paneVisibility: [MelixOperatorPaneVisibilityState] = MelixOperatorPaneVisibilityState.defaultStates,
+        confirmedAudioSetupModelIDs: [String] = []
     ) {
         self.schemaVersion = max(schemaVersion, 7)
         self.selectedSurfaceID = selectedSurfaceID
@@ -644,6 +666,9 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
         self.selectedRuntimeJobID = selectedRuntimeJobID
         self.dismissedBannerIDs = dismissedBannerIDs
         self.paneVisibility = MelixOperatorPaneVisibilityState.mergedWithDefaults(paneVisibility)
+        self.confirmedAudioSetupModelIDs = MelixOperatorSessionState.normalizedAudioSetupModelIDs(
+            confirmedAudioSetupModelIDs
+        )
     }
 
     init(state: MelixOperatorSessionState) {
@@ -654,7 +679,8 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
             selectedServerSessionID: state.selectedServerSessionID,
             selectedRuntimeJobID: state.selectedRuntimeJobID,
             dismissedBannerIDs: state.dismissedBannerIDs,
-            paneVisibility: state.paneVisibility
+            paneVisibility: state.paneVisibility,
+            confirmedAudioSetupModelIDs: state.confirmedAudioSetupModelIDs
         )
     }
 
@@ -670,7 +696,11 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
             paneVisibility: try container.decodeIfPresent(
                 [MelixOperatorPaneVisibilityState].self,
                 forKey: .paneVisibility
-            ) ?? MelixOperatorPaneVisibilityState.defaultStates
+            ) ?? MelixOperatorPaneVisibilityState.defaultStates,
+            confirmedAudioSetupModelIDs: try container.decodeIfPresent(
+                [String].self,
+                forKey: .confirmedAudioSetupModelIDs
+            ) ?? []
         )
     }
 
@@ -682,6 +712,7 @@ private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
         case selectedRuntimeJobID = "selected_runtime_job_id"
         case dismissedBannerIDs = "dismissed_banner_ids"
         case paneVisibility = "pane_visibility"
+        case confirmedAudioSetupModelIDs = "confirmed_audio_setup_model_ids"
     }
 }
 

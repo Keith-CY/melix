@@ -12,6 +12,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
     public var downloadQueue: [RuntimeDownloadQueueEntryState]
     public var registryRoots: [String]
     public var paneVisibility: [DesktopPaneVisibilityState]
+    public var confirmedAudioSetupModelIDs: [String]
 
     public init(
         schemaVersion: Int = 6,
@@ -23,7 +24,8 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         dismissedBannerIDs: [String] = [],
         downloadQueue: [RuntimeDownloadQueueEntryState] = [],
         registryRoots: [String] = [],
-        paneVisibility: [DesktopPaneVisibilityState] = DesktopPaneVisibilityState.defaultStates
+        paneVisibility: [DesktopPaneVisibilityState] = DesktopPaneVisibilityState.defaultStates,
+        confirmedAudioSetupModelIDs: [String] = []
     ) {
         self.schemaVersion = max(schemaVersion, 6)
         self.selectedSurface = selectedSurface
@@ -35,6 +37,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         self.downloadQueue = downloadQueue
         self.registryRoots = registryRoots
         self.paneVisibility = DesktopPaneVisibilityState.mergedWithDefaults(paneVisibility)
+        self.confirmedAudioSetupModelIDs = Self.normalizedAudioSetupModelIDs(confirmedAudioSetupModelIDs)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -48,6 +51,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         case downloadQueue = "download_queue"
         case registryRoots = "registry_roots"
         case paneVisibility = "pane_visibility"
+        case confirmedAudioSetupModelIDs = "confirmed_audio_setup_model_ids"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -66,7 +70,11 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
             downloadQueue: try container.decodeIfPresent([RuntimeDownloadQueueEntryState].self, forKey: .downloadQueue) ?? [],
             registryRoots: try container.decodeIfPresent([String].self, forKey: .registryRoots) ?? [],
             paneVisibility: try container.decodeIfPresent([DesktopPaneVisibilityState].self, forKey: .paneVisibility)
-                ?? DesktopPaneVisibilityState.defaultStates
+                ?? DesktopPaneVisibilityState.defaultStates,
+            confirmedAudioSetupModelIDs: try container.decodeIfPresent(
+                [String].self,
+                forKey: .confirmedAudioSetupModelIDs
+            ) ?? []
         )
     }
 
@@ -82,11 +90,22 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         try container.encode(downloadQueue, forKey: .downloadQueue)
         try container.encode(registryRoots, forKey: .registryRoots)
         try container.encode(paneVisibility, forKey: .paneVisibility)
+        try container.encode(confirmedAudioSetupModelIDs, forKey: .confirmedAudioSetupModelIDs)
     }
 
     public mutating func ensurePaneVisibilityDefaults() {
         schemaVersion = max(schemaVersion, 6)
         paneVisibility = DesktopPaneVisibilityState.mergedWithDefaults(paneVisibility)
+    }
+
+    private static func normalizedAudioSetupModelIDs(_ modelIDs: [String]) -> [String] {
+        Array(
+            Set(
+                modelIDs.map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                }.filter { $0.isEmpty == false }
+            )
+        ).sorted()
     }
 }
 
@@ -139,7 +158,8 @@ private extension OperatorSessionState {
             dismissedBannerIDs: sharedState.dismissedBannerIDs,
             downloadQueue: sharedState.downloadQueue.map(RuntimeDownloadQueueEntryState.init(sharedState:)),
             registryRoots: sharedState.registryRoots,
-            paneVisibility: sharedState.paneVisibility.map(DesktopPaneVisibilityState.init(sharedState:))
+            paneVisibility: sharedState.paneVisibility.map(DesktopPaneVisibilityState.init(sharedState:)),
+            confirmedAudioSetupModelIDs: sharedState.confirmedAudioSetupModelIDs
         )
     }
 
@@ -154,7 +174,8 @@ private extension OperatorSessionState {
             dismissedBannerIDs: dismissedBannerIDs,
             downloadQueue: downloadQueue.map(\.sharedState),
             registryRoots: registryRoots,
-            paneVisibility: paneVisibility.map(\.sharedState)
+            paneVisibility: paneVisibility.map(\.sharedState),
+            confirmedAudioSetupModelIDs: confirmedAudioSetupModelIDs
         )
     }
 }
