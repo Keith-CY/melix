@@ -587,6 +587,20 @@ fail-closed admission behavior and must not persist an `in_progress` claim. The
 projection remains side-effect-free: it does not launch local jobs, tail logs,
 read artifact contents, infer owner scope, or enqueue a UI/session request.
 
+Monitor loops that process all currently ready records must use
+`worker.runtime.local_job_continuation.project_local_job_session_followups`.
+That batch helper delegates to
+`LocalJobContinuationStore.claim_scanned_followup_prompt_contexts`, preserves
+the resulting batch receipts and refusal receipts, and returns one copied
+`LocalJobSessionFollowupProjection` plus one user-role follow-up message for
+each successfully admitted claim. Failed, blocked, duplicate, missing,
+not-ready, or admission-refused candidates remain visible only through typed
+receipts and must not create follow-up messages. The batch projection has the
+same side-effect boundary as the single-record helper: it claims only through
+the store's existing revision-guarded path and does not launch jobs, tail logs,
+read artifacts, mutate session stores, enqueue UI work, infer owner scope, or
+resume workflows.
+
 The Python worker skill and memory admission primitives are
 `worker.runtime.skill_memory_context.admit_skill_context` and
 `worker.runtime.skill_memory_context.admit_memory_context`. Future skill,

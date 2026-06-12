@@ -974,6 +974,205 @@ def test_store_scan_followup_candidates_reconciles_and_filters_ready_records(
         revision=1,
     )
 
+    projection_store = LocalJobContinuationStore(tmp_path / "projection-batch")
+    projection_ready = projection_store.save_record(
+        _record(
+            job_id="projection-ready",
+            status="completed",
+            exit_status=0,
+            command=("melix", "bench", "--private-ready"),
+            cwd="/workspace/private-ready",
+            log_path="/workspace/private-ready/.runtime/jobs/ready.log",
+            session_id="session-private-ready",
+            artifact_paths=("/workspace/private-ready/out/ready.json",),
+        )
+    )
+    projection_live = projection_store.save_record(
+        _record(
+            job_id="projection-live",
+            status="completed",
+            exit_status=0,
+            command=("melix", "eval", "--private-live"),
+            cwd="/workspace/private-live",
+            log_path="/workspace/private-live/.runtime/jobs/live.log",
+            session_id="session-private-live",
+        )
+    )
+    projection_blocked = projection_store.save_record(
+        _record(
+            job_id="projection-blocked",
+            status="completed",
+            exit_status=0,
+        )
+    )
+
+    projection_batch = local_job_continuation_module.project_local_job_session_followups(
+        projection_store,
+        followup_session_ids_by_job_id={
+            "projection-live": "followup-live",
+            "projection-ready": "followup-ready",
+        },
+        completion_summaries_by_job_id={
+            "projection-live": {
+                "status": "completed",
+                "summary": "Redacted live completion summary.",
+            },
+            "projection-ready": {
+                "status": "completed",
+                "summary": "Redacted ready completion summary.",
+            },
+        },
+        owner_scope_checked_by_job_id={
+            "projection-live": False,
+            "projection-ready": True,
+        },
+        live_evidence_by_job_id={
+            "projection-live": LocalJobLiveEvidence(
+                session_id="session-private-live",
+                active=False,
+                progress_excerpt="done",
+                artifact_paths=("/workspace/private-live/out/live.json",),
+            ),
+        },
+    )
+
+    assert [
+        projection.claim.reconciliation.record.job_id
+        for projection in projection_batch.projections
+    ] == ["projection-live", "projection-ready"]
+    assert [
+        projection.claim_receipt["reason"] for projection in projection_batch.projections
+    ] == ["followup_claimed", "followup_claimed"]
+    assert projection_batch.followup_messages == (
+        projection_batch.projections[0].followup_message,
+        projection_batch.projections[1].followup_message,
+    )
+    assert projection_batch.followup_messages[0] is not (
+        projection_batch.projections[0].followup_message
+    )
+    assert projection_batch.followup_messages[0]["role"] == "user"
+    projection_summary = projection_batch.projections[0].prompt_user_payload[
+        "local_job_completion_summary"
+    ]
+    claim_summary = projection_batch.projections[0].claim.prompt_context.user_payload[
+        "local_job_completion_summary"
+    ]
+    assert projection_summary is not claim_summary
+    assert projection_batch.followup_messages[0]["content"] is not (
+        projection_batch.projections[0].claim.prompt_context.user_payload
+    )
+    projection_summary["summary"] = "Downstream mutation."
+    assert claim_summary["summary"] == "Redacted live completion summary."
+    projection_receipts_by_job = {
+        receipt["job_id"]: receipt for receipt in projection_batch.claim_batch.receipts
+    }
+    assert projection_receipts_by_job["projection-blocked"]["reason"] == (
+        "missing_completion_evidence"
+    )
+    assert projection_receipts_by_job["projection-live"]["reason"] == "followup_claimed"
+    assert projection_receipts_by_job["projection-ready"]["reason"] == "followup_claimed"
+    assert projection_batch.receipts == projection_batch.claim_batch.receipts
+    assert projection_batch.receipts is not projection_batch.claim_batch.receipts
+    claimed_receipt_index = next(
+        index
+        for index, receipt in enumerate(projection_batch.claim_batch.receipts)
+        if receipt["reason"] == "followup_claimed"
+    )
+    assert projection_batch.receipts[claimed_receipt_index] is not (
+        projection_batch.claim_batch.receipts[claimed_receipt_index]
+    )
+    projection_batch.receipts[claimed_receipt_index]["reason"] = "downstream_mutation"
+    assert (
+        projection_batch.claim_batch.receipts[claimed_receipt_index]["reason"]
+        == "followup_claimed"
+    )
+    assert projection_batch.refusal_receipts == ()
+    assert projection_store.load_record("projection-live") == replace(
+        projection_live,
+        artifact_paths=("/workspace/private-live/out/live.json",),
+        followup_status="in_progress",
+        followup_session_id="followup-live",
+        revision=2,
+    )
+    assert projection_store.load_record("projection-ready") == replace(
+        projection_ready,
+        followup_status="in_progress",
+        followup_session_id="followup-ready",
+        revision=1,
+    )
+    assert projection_store.load_record("projection-blocked") == replace(
+        projection_blocked,
+        status="blocked",
+        revision=1,
+    )
+    receipt_json = json.dumps(
+        [
+            projection.untrusted_context_receipts
+            for projection in projection_batch.projections
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    assert "--private-ready" not in receipt_json
+    assert "--private-live" not in receipt_json
+    assert "/workspace/private-ready" not in receipt_json
+    assert "/workspace/private-live" not in receipt_json
+    assert "session-private-ready" not in receipt_json
+    assert "session-private-live" not in receipt_json
+    assert "ready.json" not in receipt_json
+    assert "live.json" not in receipt_json
+    assert "Redacted ready completion summary." not in receipt_json
+    assert "Redacted live completion summary." not in receipt_json
+
+    refusal_projection_store = LocalJobContinuationStore(
+        tmp_path / "projection-refusal"
+    )
+    refusal_ready = refusal_projection_store.save_record(
+        _record(
+            job_id="projection-refusal",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/projection-refusal.json",),
+        )
+    )
+    refusal_projection_batch = (
+        local_job_continuation_module.project_local_job_session_followups(
+            refusal_projection_store,
+            followup_session_ids_by_job_id={
+                "projection-refusal": "followup-refusal"
+            },
+            completion_summaries_by_job_id={"projection-refusal": "not-a-dict"},
+            owner_scope_checked_by_job_id={"projection-refusal": True},
+        )
+    )
+
+    assert refusal_projection_batch.projections == ()
+    assert refusal_projection_batch.followup_messages == ()
+    assert [receipt["reason"] for receipt in refusal_projection_batch.receipts] == [
+        "followup_candidate_ready",
+        "followup_prompt_context_refused",
+    ]
+    assert len(refusal_projection_batch.refusal_receipts) == 1
+    assert refusal_projection_batch.refusal_receipts[0]["source_field"] == (
+        "local_job_completion_summary"
+    )
+    assert refusal_projection_batch.refusal_receipts[0]["included"] is False
+    assert refusal_projection_batch.claim_batch.claims == ()
+    assert refusal_projection_batch.claim_batch.refusal_receipts == (
+        refusal_projection_batch.refusal_receipts
+    )
+    assert refusal_projection_batch.refusal_receipts is not (
+        refusal_projection_batch.claim_batch.refusal_receipts
+    )
+    assert refusal_projection_batch.refusal_receipts[0] is not (
+        refusal_projection_batch.claim_batch.refusal_receipts[0]
+    )
+    refusal_projection_batch.refusal_receipts[0]["included"] = True
+    assert (
+        refusal_projection_batch.claim_batch.refusal_receipts[0]["included"] is False
+    )
+    assert refusal_projection_store.load_record("projection-refusal") == refusal_ready
+
 
 def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
     tmp_path: Path,
