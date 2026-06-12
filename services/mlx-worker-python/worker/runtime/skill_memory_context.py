@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, NoReturn
+from typing import Any, Literal, Mapping, NoReturn
 
 from worker.runtime.prompt_context import (
     PromptContextAdmission,
@@ -142,6 +142,72 @@ def project_skill_memory_contexts(
     )
 
 
+def project_skill_memory_store_records(records: Any) -> SkillMemoryContextProjection:
+    records_type = type(records)
+    if records_type is not list and records_type is not tuple:
+        return SkillMemoryContextProjection(
+            user_payload={},
+            untrusted_context_receipts=[],
+            refusal_receipts=[
+                _store_record_refusal(
+                    source_field="records",
+                    source_id="unknown-skill",
+                    context_kind="skill",
+                )
+            ],
+        )
+
+    entries: list[SkillMemoryContextEntry] = []
+    refusal_receipts: list[dict[str, object]] = []
+
+    for record in records:
+        if not isinstance(record, Mapping):
+            refusal_receipts.append(
+                _store_record_refusal(
+                    source_field="record",
+                    source_id="unknown-skill",
+                    context_kind="skill",
+                )
+            )
+            continue
+
+        context_kind = record.get("context_kind")
+        if context_kind not in ("skill", "memory"):
+            source_id = _store_record_source_id(record)
+            refusal_context_kind = _store_record_refusal_context_kind(source_id)
+            refusal_receipts.append(
+                _store_record_refusal(
+                    source_field="context_kind",
+                    source_id=source_id,
+                    context_kind=refusal_context_kind,
+                )
+            )
+            continue
+
+        entries.append(
+            SkillMemoryContextEntry(
+                context_kind=context_kind,
+                source_id=record.get("source_id"),
+                payload=record.get("payload"),
+                owner_scope_checked=record.get("owner_scope_checked"),
+                segment_id=record.get("segment_id", ""),
+                source_field=record.get("source_field", ""),
+                reason=record.get("reason", ""),
+                corrective_action=record.get("corrective_action", ""),
+            )
+        )
+
+    projection = project_skill_memory_contexts(entries)
+    return SkillMemoryContextProjection(
+        user_payload=projection.user_payload,
+        untrusted_context_receipts=projection.untrusted_context_receipts,
+        refusal_receipts=[
+            *(dict(receipt) for receipt in refusal_receipts),
+            *(dict(receipt) for receipt in projection.refusal_receipts),
+        ],
+    )
+
+
 def _admit_entry(entry: SkillMemoryContextEntry) -> PromptContextAdmission:
     if not isinstance(entry, SkillMemoryContextEntry):
         _raise_refusal(
@@ -218,6 +284,35 @@ def _fallback_entry_source_id(entry: SkillMemoryContextEntry) -> str:
     if isinstance(entry.source_id, str) and entry.source_id.strip():
         return entry.source_id.strip()
     return "unknown-skill"
+
+
+def _store_record_source_id(record: Mapping[str, Any]) -> str:
+    source_id = record.get("source_id")
+    if isinstance(source_id, str) and source_id.strip():
+        return source_id.strip()
+    return "unknown-skill"
+
+
+def _store_record_refusal_context_kind(source_id: str) -> ContextKind:
+    if source_id.startswith("memory:"):
+        return "memory"
+    return "skill"
+
+
+def _store_record_refusal(
+    *,
+    source_field: str,
+    source_id: str,
+    context_kind: ContextKind,
+) -> dict[str, object]:
+    return refused_source_prompt_context_receipt(
+        segment_id=f"{source_id}:{context_kind}-context",
+        source_type=context_kind,
+        source_field=source_field,
+        source_id=source_id,
+        reason=f"invalid_{context_kind}_context_field",
+        corrective_action=f"Reject malformed {context_kind} context before prompt assembly.",
+    )
 
 
 def _admit_context(
@@ -381,4 +476,5 @@ __all__ = [
     "admit_memory_context",
     "admit_skill_context",
     "project_skill_memory_contexts",
+    "project_skill_memory_store_records",
 ]

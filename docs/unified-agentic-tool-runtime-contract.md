@@ -629,6 +629,22 @@ same type. The batch projection remains side-effect-free: it does not read
 skill files, load memory stores, rank retrieval results, infer owner scope,
 mutate sessions, or copy raw source text into receipt JSON.
 
+Future concrete skill-store and memory-store entrypoints that already have
+redacted store records should use
+`worker.runtime.skill_memory_context.project_skill_memory_store_records`. The
+helper accepts an ordered list or tuple of record mappings, validates each
+record's `context_kind`, `source_id`, `payload`, `owner_scope_checked`, and
+optional receipt metadata, then converts valid records into
+`SkillMemoryContextEntry` descriptors for
+`project_skill_memory_contexts`. Malformed record containers fail closed with
+`source_field = records`; non-mapping records fail closed with `source_field =
+record`; unsupported `context_kind` values fail closed with `source_field =
+context_kind`. Valid sibling records remain admitted when another record is
+refused. The bridge does not perform store lookup, filesystem reads, retrieval
+ranking, owner inference, session mutation, or prompt-body copying; callers
+must pass already-redacted payload dictionaries and explicit owner-scope
+evidence.
+
 The Python worker retrieval admission primitives are
 `worker.runtime.retrieval_context.admit_retrieved_document_context` and
 `worker.runtime.retrieval_context.admit_retrieved_image_context`. Deterministic
