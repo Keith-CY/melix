@@ -40,6 +40,8 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     missing_selection_error_samples: list[float] = []
     selector_planning_elapsed_samples: list[float] = []
     selector_selected_schema_bytes_samples: list[float] = []
+    always_only_planning_elapsed_samples: list[float] = []
+    always_only_selected_schema_bytes_samples: list[float] = []
     checksum = 0
 
     for _ in range(sample_count):
@@ -128,6 +130,27 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         )
         checksum += selector_schema_bytes
 
+        always_only_schema_bytes = 0
+        always_only_started = time.perf_counter()
+        for _index in range(selector_iterations):
+            selection_result = select_agentic_tools_for_turn(
+                ToolSelectionInput(
+                    current_user_turn="Search local evidence, crop the image, and visit fixture://docs/provider-contract.",
+                    recent_user_turns=("Search the local text evidence.",),
+                    vector_selected_tool_ids=("text_search", "visit", "image_crop"),
+                    vector_available=True,
+                    max_selected_tools=1,
+                )
+            )
+            always_only_schema_bytes += int(selection_result.receipt["selected_schema_bytes"])
+        always_only_planning_elapsed_samples.append(
+            (time.perf_counter() - always_only_started) * 1000.0
+        )
+        always_only_selected_schema_bytes_samples.append(
+            float(always_only_schema_bytes / selector_iterations)
+        )
+        checksum += always_only_schema_bytes
+
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
         "select_calls_mean": float(iterations),
@@ -146,6 +169,12 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         "selector_planning_elapsed_ms_mean": statistics.fmean(selector_planning_elapsed_samples),
         "selector_selected_schema_bytes_mean": statistics.fmean(
             selector_selected_schema_bytes_samples
+        ),
+        "always_only_planning_elapsed_ms_mean": statistics.fmean(
+            always_only_planning_elapsed_samples
+        ),
+        "always_only_selected_schema_bytes_mean": statistics.fmean(
+            always_only_selected_schema_bytes_samples
         ),
         "checksum": float(checksum),
         "iterations": float(iterations),
