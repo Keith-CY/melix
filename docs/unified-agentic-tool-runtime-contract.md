@@ -686,6 +686,21 @@ it does not read files, query retrieval stores, rank results, index documents,
 infer owner scope, mutate sessions, or copy raw source text, captions, media
 URIs, local paths, or page content into receipt JSON.
 
+Future concrete retrieval-store entrypoints that already have redacted source
+records should use
+`worker.runtime.retrieval_context.project_retrieval_store_records`. The helper
+accepts an ordered list or tuple of record mappings, validates each record's
+`context_kind`, `source_id`, `payload`, `owner_scope_checked`, and optional
+receipt metadata, then converts valid records into `RetrievalContextEntry`
+descriptors for `project_retrieval_contexts`. Malformed record containers fail
+closed with `source_field = records`; non-mapping records fail closed with
+`source_field = record`; unsupported `context_kind` values fail closed with
+`source_field = context_kind`. Valid sibling records remain admitted when
+another record is refused. The bridge does not perform RAG store lookup,
+filesystem reads, media fetches, retrieval ranking, owner inference, session
+mutation, or prompt-body copying; callers must pass already-redacted payload
+dictionaries and explicit owner-scope evidence.
+
 The v1 control-plane rerank document-boundary slice applies the same receipt
 schema to the OpenAI-compatible `/v1/rerank` HTTP response. The handler emits
 one redacted `source_type = retrieved_document` receipt per candidate document
