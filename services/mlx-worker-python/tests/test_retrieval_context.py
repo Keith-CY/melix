@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from worker.runtime import retrieval_context as retrieval_context_module
 from worker.runtime.retrieval_context import (
     RetrievalContextAdmissionError,
     RetrievalContextEntry,
@@ -911,6 +912,94 @@ def test_project_retrieval_contexts_refuses_duplicate_payload_fields_before_over
                 "Reject malformed retrieved document evidence before prompt assembly."
             ),
         },
+    ]
+
+
+def test_project_retrieval_contexts_preserves_multi_field_admission_duplicate_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Admission:
+        def __init__(
+            self,
+            user_payload: dict[str, object],
+            receipts: list[dict[str, object]],
+        ) -> None:
+            self.user_payload = user_payload
+            self.untrusted_context_receipts = receipts
+
+    receipts_by_source = {
+        "doc:first": [
+            {
+                "source_type": "retrieved_document",
+                "source_field": "title",
+                "source_id": "doc:first",
+                "segment_id": "doc:first:title",
+                "owner_scope_checked": True,
+            }
+        ],
+        "doc:second": [
+            {
+                "source_type": "retrieved_document",
+                "source_field": "body",
+                "source_id": "doc:second",
+                "segment_id": "doc:second:body",
+                "owner_scope_checked": True,
+            }
+        ],
+    }
+
+    def fake_admit_entry(entry: RetrievalContextEntry) -> Admission:
+        if entry.source_id == "doc:first":
+            return Admission(
+                {"title": "first", "body": "accepted"},
+                receipts_by_source[entry.source_id],
+            )
+        return Admission(
+            {"body": "duplicate", "summary": "second"},
+            receipts_by_source[entry.source_id],
+        )
+
+    monkeypatch.setattr(retrieval_context_module, "_admit_entry", fake_admit_entry)
+
+    projection = project_retrieval_contexts(
+        [
+            RetrievalContextEntry(
+                context_kind="retrieved_document",
+                source_id="doc:first",
+                payload={"title": "first"},
+                owner_scope_checked=True,
+            ),
+            RetrievalContextEntry(
+                context_kind="retrieved_document",
+                source_id="doc:second",
+                payload={"title": "second"},
+                owner_scope_checked=True,
+            ),
+        ]
+    )
+
+    assert projection.user_payload == {"title": "first", "body": "accepted"}
+    assert projection.untrusted_context_receipts == receipts_by_source["doc:first"]
+    assert projection.untrusted_context_receipts[0] is not receipts_by_source["doc:first"][0]
+    assert projection.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "doc:second:body",
+            "source_type": "retrieved_document",
+            "source_field": "body",
+            "source_id": "doc:second",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": True,
+            "reason": "duplicate_retrieved_document_context_field",
+            "corrective_action": (
+                "Provide a unique source_field before projecting multiple "
+                "retrieved entries into one prompt payload."
+            ),
+        }
     ]
 
 
