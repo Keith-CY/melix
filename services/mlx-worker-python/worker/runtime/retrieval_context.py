@@ -114,7 +114,7 @@ def project_retrieval_contexts(
     receipts_extend = receipts.extend
     receipts_append = receipts.append
     user_payload_update = user_payload.update
-    copy_receipt = dict
+    copy_receipt = dict.copy
 
     for entry in entries:
         try:
