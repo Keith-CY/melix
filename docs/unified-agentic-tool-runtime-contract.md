@@ -738,6 +738,24 @@ filesystem reads, media fetches, retrieval ranking, owner inference, session
 mutation, or prompt-body copying; callers must pass already-redacted payload
 dictionaries and explicit owner-scope evidence.
 
+Concrete retrieval callers that already performed lookup and have a wrapper
+result should use
+`worker.runtime.retrieval_context.project_retrieval_lookup_result`. The helper
+accepts a mapping shaped as `{"records": <retrieval store records>}`, delegates
+record validation to `project_retrieval_store_records`, then returns copied
+prompt user payload, copied admitted receipts, copied refusal receipts, and an
+optional user-role lookup message shaped as
+`{"role": "user", "content": <prompt_user_payload>,
+"untrusted_context_receipts": <receipts>}`. Malformed top-level lookup wrappers
+fail closed with `source_type = retrieval_lookup`,
+`source_field = lookup_result`, no prompt payload, no admitted receipts, and no
+lookup message. Missing or malformed `records` keeps the existing
+retrieved-document store-record refusal semantics. The bridge remains
+side-effect-free: it does not perform RAG store lookup, rank retrieval results,
+read files, fetch media, infer owner scope, mutate sessions, or copy raw
+retrieved text, captions, media URIs, local paths, or prompt bodies into
+receipt JSON.
+
 The v1 control-plane rerank document-boundary slice applies the same receipt
 schema to the OpenAI-compatible `/v1/rerank` HTTP response. The handler emits
 one redacted `source_type = retrieved_document` receipt per candidate document
