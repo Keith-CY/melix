@@ -65,6 +65,17 @@ def normalize_path(value: str | os.PathLike[str] | None) -> Path | None:
     return Path(text).expanduser()
 
 
+def _matches_runtime_pattern(name: str, pattern: str) -> bool:
+    wildcard_index = pattern.find("*")
+    if wildcard_index == -1:
+        return name == pattern
+    if pattern.find("*", wildcard_index + 1) != -1:
+        return fnmatch.fnmatchcase(name, pattern)
+    return name.startswith(pattern[:wildcard_index]) and name.endswith(
+        pattern[wildcard_index + 1 :]
+    )
+
+
 def discover_latest_metrics_path(runtime_dir: Path | None, source_name: str) -> Path | None:
     if runtime_dir is None:
         return None
@@ -74,7 +85,7 @@ def discover_latest_metrics_path(runtime_dir: Path | None, source_name: str) -> 
         latest_mtime: float | None = None
         with os.scandir(os.fspath(runtime_dir.expanduser())) as entries:
             for entry in entries:
-                if not fnmatch.fnmatchcase(entry.name, pattern) or not entry.is_file():
+                if not _matches_runtime_pattern(entry.name, pattern) or not entry.is_file():
                     continue
                 mtime = entry.stat().st_mtime
                 if latest_mtime is None or mtime > latest_mtime:
