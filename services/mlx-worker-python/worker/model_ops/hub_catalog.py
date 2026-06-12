@@ -15,6 +15,7 @@ from worker.productization.device_identity import collect_device_identity
 MEMORY_COMFORT_BUDGET_FACTOR = 0.60
 RESIDENT_MEMORY_OVERHEAD_FACTOR = 1.35
 GEMMA4_QAT_AUTOMATIC_ORG = "mlx-community"
+MLX_ONLY_SEARCH_MAX_PAGES = 4
 
 _SIZE_HINT_KB = 1024
 _SIZE_HINT_MB = _SIZE_HINT_KB * 1024
@@ -141,13 +142,38 @@ class HubCatalog:
         cursor: str,
         mlx_only: bool,
     ) -> HubSearchPage:
-        payloads, next_cursor = self._fetch_models(
-            search=query,
-            page_size=page_size,
-            cursor=cursor,
-        )
-        if mlx_only:
-            payloads = [payload for payload in payloads if _payload_is_mlx_compatible(payload)]
+        normalized_page_size = max(1, page_size or 20)
+        if not mlx_only:
+            payloads, next_cursor = self._fetch_models(
+                search=query,
+                page_size=normalized_page_size,
+                cursor=cursor,
+                hub_filter="",
+            )
+            items = [self._summary_record(payload) for payload in payloads]
+            return HubSearchPage(items=items, next_cursor=next_cursor)
+
+        payloads: list[dict[str, Any]] = []
+        next_cursor = ""
+        current_cursor = cursor
+        pages_fetched = 0
+        while pages_fetched < MLX_ONLY_SEARCH_MAX_PAGES:
+            page_payloads, next_cursor = self._fetch_models(
+                search=query,
+                page_size=normalized_page_size,
+                cursor=current_cursor,
+                hub_filter="mlx",
+            )
+            payloads.extend(
+                payload
+                for payload in page_payloads
+                if _payload_is_mlx_compatible(payload)
+            )
+            pages_fetched += 1
+            if len(payloads) >= normalized_page_size or not next_cursor:
+                break
+            current_cursor = next_cursor
+
         items = [self._summary_record(payload) for payload in payloads]
         return HubSearchPage(items=items, next_cursor=next_cursor)
 
@@ -155,7 +181,7 @@ class HubCatalog:
         if not repo_id.strip():
             raise HubCatalogError("invalid_argument", "Hub repo_id is required.")
 
-        payloads, _ = self._fetch_models(search=repo_id, page_size=10, cursor="")
+        payloads, _ = self._fetch_models(search=repo_id, page_size=10, cursor="", hub_filter="")
         payload = next(
             (
                 item
@@ -174,6 +200,7 @@ class HubCatalog:
         search: str,
         page_size: int,
         cursor: str,
+        hub_filter: str,
     ) -> tuple[list[dict[str, Any]], str]:
         normalized_page_size = max(1, page_size or 20)
         params: list[tuple[str, str]] = [
@@ -184,6 +211,8 @@ class HubCatalog:
         ]
         if search:
             params.append(("search", search))
+        if hub_filter:
+            params.append(("filter", hub_filter))
         if cursor:
             params.append(("cursor", cursor))
 
