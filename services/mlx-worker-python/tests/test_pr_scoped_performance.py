@@ -602,6 +602,8 @@ def test_tool_registry_select_probe_script_emits_metrics(
     assert metrics["missing_selection_errors_mean"] == 4.0
     assert metrics["selector_planning_elapsed_ms_mean"] >= 0.0
     assert metrics["selector_selected_schema_bytes_mean"] > 0.0
+    assert metrics["always_only_planning_elapsed_ms_mean"] >= 0.0
+    assert metrics["always_only_selected_schema_bytes_mean"] > 0.0
 
 
 def test_tool_registry_names_probe_script_emits_metrics(
