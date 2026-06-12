@@ -30,6 +30,8 @@ This follow-up slice keeps the same registered probe and adds a single-field pay
 
 This follow-up narrows receipt-copy overhead by binding `dict.copy` directly for projected receipt copies. The loop still produces a fresh shallow copy for each receipt, preserving the existing object isolation boundary while avoiding the generic `dict(receipt)` constructor path.
 
+This follow-up keeps the single-field payload path but consumes `admission.user_payload.items()` once. The projection loop obtains the payload field and value together, avoiding a second dictionary lookup before assigning the value into the accumulated `user_payload` map.
+
 ## Verification Plan
 
 Run the registered focused test command, changed-scope coverage command, and registered probe command locally on Linux before opening the PR. The PR-scoped performance workflow remains the authoritative CI validation source after push.

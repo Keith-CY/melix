@@ -125,7 +125,7 @@ def project_retrieval_contexts(
 
         admission_payload = admission.user_payload
         if len(admission_payload) == 1:
-            source_field = next(iter(admission_payload))
+            source_field, payload_value = next(iter(admission_payload.items()))
             if source_field in user_payload:
                 refusal_receipts_extend(
                     duplicate_projection_receipt(
@@ -135,7 +135,7 @@ def project_retrieval_contexts(
                     for receipt in admission.untrusted_context_receipts
                 )
                 continue
-            user_payload[source_field] = admission_payload[source_field]
+            user_payload[source_field] = payload_value
         else:
             duplicate_fields: list[str] | None = None
             for source_field in admission_payload:
