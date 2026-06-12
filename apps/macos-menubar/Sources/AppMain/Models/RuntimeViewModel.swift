@@ -79,6 +79,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let actionTitle: String
     public let maxContext: UInt32
     public let alias: String
+    public let visibility: String
     public let typeOverrideText: String
     public let memoryPolicyText: String
     public let diskStreamingModeText: String
@@ -127,6 +128,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         actionTitle: String,
         maxContext: UInt32,
         alias: String,
+        visibility: String = "",
         typeOverrideText: String = "",
         memoryPolicyText: String,
         diskStreamingModeText: String,
@@ -166,6 +168,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.actionTitle = actionTitle
         self.maxContext = maxContext
         self.alias = alias
+        self.visibility = visibility
         self.typeOverrideText = typeOverrideText
         self.memoryPolicyText = memoryPolicyText
         self.diskStreamingModeText = diskStreamingModeText
@@ -3184,7 +3187,14 @@ public final class RuntimeViewModel {
     private static let remoteEvaluationUnsupportedMessage = "Remote Server evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running server."
     private static let hiddenPlaceholderModelIDs: Set<String> = [
         "melix-dev-text",
+        "melix-dev-embed",
+        "melix-dev-rerank",
+        "melix-dev-model-ops",
+        "melix-dev-ocr",
         "melix-dev-vlm",
+        "melix-dev-transcribe",
+        "melix-dev-speech",
+        "melix-dev-image",
     ]
 
     private static func serverTargetID(kind: RuntimeServerTargetKind, serverID: String) -> String {
@@ -16146,8 +16156,13 @@ public final class RuntimeViewModel {
     }
 
     private static func isHiddenPlaceholderModel(_ model: RuntimeModelRow) -> Bool {
-        isHiddenPlaceholderModelID(model.modelID)
+        normalizedVisibility(model.visibility) == "internal"
+            || isHiddenPlaceholderModelID(model.modelID)
             || isHiddenPlaceholderModelAlias(model.alias)
+    }
+
+    private static func normalizedVisibility(_ visibility: String) -> String {
+        visibility.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private static func isHiddenPlaceholderModelID(_ modelID: String) -> Bool {
@@ -17009,6 +17024,7 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         actionTitle: runtimeCacheMissing ? "Restore Download" : runtimeActionTitle(for: model.state),
         maxContext: model.maxContext,
         alias: model.settings.alias,
+        visibility: model.settings.ext["melix.visibility"] ?? "",
         typeOverrideText: model.settings.typeOverride,
         memoryPolicyText: runtimeMemoryPolicyText(model.settings.memoryPolicy),
         diskStreamingModeText: runtimeDiskStreamingModeText(model.settings.diskStreamingMode),

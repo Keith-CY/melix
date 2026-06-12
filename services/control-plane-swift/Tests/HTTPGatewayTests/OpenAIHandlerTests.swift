@@ -76,7 +76,7 @@ struct OpenAIHandlerTests {
     func localServerSecurityAllowsExplicitBrowserOriginWithExactCORSEcho() async throws {
         let metricsStore = MetricsStore()
         let handler = OpenAIHandler(
-            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            modelCatalog: ModelCatalog(seedModels: [publicWarmModel()]),
             requestCoordinator: RequestCoordinator(
                 workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
                 abortRegistry: AbortRegistry()
@@ -108,10 +108,11 @@ struct OpenAIHandlerTests {
                 body: Data()
             )
         )
-        let payload = try await collectBody(response.body)
+        let payload = try await jsonPayload(from: response.body)
+        let rows = try #require(payload["data"] as? [[String: Any]])
 
         #expect(response.statusCode == 200)
-        #expect(payload.contains("\"id\":\"melix-dev-text\""))
+        #expect(rows.contains { ($0["id"] as? String) == "mlx-community/Qwen3.5-9B-MLX-8bit" })
         #expect(response.headers["access-control-allow-origin"] == "http://localhost:5173")
         #expect(response.headers["vary"] == "Origin")
         #expect(response.headers.values.contains("*") == false)
@@ -237,7 +238,7 @@ struct OpenAIHandlerTests {
     func getModelsAcceptsConfiguredSharedAccessAPIKeysAndRecordsMetrics() async throws {
         let metricsStore = MetricsStore()
         let handler = OpenAIHandler(
-            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            modelCatalog: ModelCatalog(seedModels: [publicWarmModel()]),
             requestCoordinator: RequestCoordinator(
                 workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
                 abortRegistry: AbortRegistry()
@@ -261,10 +262,11 @@ struct OpenAIHandlerTests {
                 body: Data()
             )
         )
-        let payload = try await collectBody(response.body)
+        let payload = try await jsonPayload(from: response.body)
+        let rows = try #require(payload["data"] as? [[String: Any]])
 
         #expect(response.statusCode == 200)
-        #expect(payload.contains("\"id\":\"melix-dev-text\""))
+        #expect(rows.contains { ($0["id"] as? String) == "mlx-community/Qwen3.5-9B-MLX-8bit" })
         #expect(await metricsStore.value(forKey: "shared_access.accepted_client_count") == 1)
         #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 0)
     }
@@ -1971,7 +1973,8 @@ struct OpenAIHandlerTests {
             ),
             workerRegistry: workerRegistry,
             translator: ChatRequestTranslator(requestIDGenerator: { "req-http-imported-vlm-text" }),
-            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) }),
+            gatewayServingDefaultsStore: isolatedGatewayServingDefaultsStore(prefix: "melix-imported-vlm")
         )
 
         let body = try #require(
@@ -7107,7 +7110,8 @@ struct OpenAIHandlerTests {
                 modelCatalog: catalog
             ),
             workerRegistry: registry,
-            translator: ChatRequestTranslator(requestIDGenerator: { "req-derived-response" })
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-derived-response" }),
+            gatewayServingDefaultsStore: isolatedGatewayServingDefaultsStore(prefix: "melix-derived-response")
         )
         let body = try #require(
             """
@@ -7133,7 +7137,11 @@ struct OpenAIHandlerTests {
 
     @Test("GET /v1/models returns model state from the catalog")
     func getModelsReturnsCatalogState() async throws {
-        let catalog = ModelCatalog(seedModels: [warmModel()])
+        var publicModel = warmModel()
+        publicModel.modelID = "mlx-community/Qwen3.5-9B-MLX-8bit"
+        publicModel.settings.alias = "Qwen 3.5 9B"
+        publicModel.settings.ext.removeValue(forKey: "melix.visibility")
+        let catalog = ModelCatalog(seedModels: [publicModel])
         let handler = OpenAIHandler(
             modelCatalog: catalog,
             requestCoordinator: RequestCoordinator(
@@ -7146,19 +7154,30 @@ struct OpenAIHandlerTests {
             HTTPRequest(method: .get, path: "/v1/models", headers: [:], body: Data())
         )
 
-        let body = try await collectBody(response.body)
+        let payload = try await jsonPayload(from: response.body)
+        let rows = try #require(payload["data"] as? [[String: Any]])
+        let row = try #require(rows.first { ($0["id"] as? String) == "mlx-community/Qwen3.5-9B-MLX-8bit" })
 
         #expect(response.statusCode == 200)
         #expect(response.headers["content-type"] == "application/json")
-        #expect(body.contains("\"object\":\"list\""))
-        #expect(body.contains("\"id\":\"melix-dev-text\""))
-        #expect(body.contains("\"melix_state\":\"warm\""))
-        #expect(body.contains("\"owned_by\":\"melix\""))
+        #expect(payload["object"] as? String == "list")
+        #expect(row["melix_state"] as? String == "warm")
+        #expect(row["owned_by"] as? String == "melix")
     }
 
-    @Test("GET /v1/models hides internal operations and exposes user-facing metadata")
-    func getModelsHidesInternalOperationsAndExposesUserFacingMetadata() async throws {
-        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+    @Test("GET /v1/models hides internal dev seeds and exposes user-facing metadata")
+    func getModelsHidesInternalDevSeedsAndExposesUserFacingMetadata() async throws {
+        var publicText = ModelCatalog.devTextModel()
+        publicText.modelID = "mlx-community/Qwen3.5-9B-MLX-8bit"
+        publicText.settings.alias = "Qwen 3.5 9B"
+        publicText.settings.ext.removeValue(forKey: "melix.visibility")
+        var publicImage = ModelCatalog.devImageModel()
+        publicImage.modelID = "black-forest-labs/FLUX.1-schnell-MLX"
+        publicImage.settings.alias = "Flux Schnell MLX"
+        publicImage.settings.ext.removeValue(forKey: "melix.visibility")
+        let catalog = ModelCatalog(
+            seedModels: ModelCatalog.phaseSevenContractSeedModels() + [publicText, publicImage]
+        )
         let handler = OpenAIHandler(
             modelCatalog: catalog,
             requestCoordinator: RequestCoordinator(
@@ -7173,9 +7192,9 @@ struct OpenAIHandlerTests {
         let payload = try await jsonPayload(from: response.body)
         let rows = try #require(payload["data"] as? [[String: Any]])
         let ids = Set(rows.compactMap { $0["id"] as? String })
-        let text = try #require(rows.first { ($0["id"] as? String) == "melix-dev-text" })
+        let text = try #require(rows.first { ($0["id"] as? String) == "mlx-community/Qwen3.5-9B-MLX-8bit" })
         let textMetadata = try #require(text["metadata"] as? [String: Any])
-        let image = try #require(rows.first { ($0["id"] as? String) == "melix-dev-image" })
+        let image = try #require(rows.first { ($0["id"] as? String) == "black-forest-labs/FLUX.1-schnell-MLX" })
         let imageMetadata = try #require(image["metadata"] as? [String: Any])
         let imageTasks = Set(
             (imageMetadata["melix.capability.supported_tasks"] as? String ?? "")
@@ -7184,10 +7203,18 @@ struct OpenAIHandlerTests {
         )
 
         #expect(response.statusCode == 200)
-        #expect(ids.contains("melix-dev-text"))
-        #expect(ids.contains("melix-dev-image"))
-        #expect(ids.contains("melix-dev-model-ops") == false)
-        #expect(textMetadata["melix.display_name"] as? String == "Melix Text")
+        #expect(ids.isDisjoint(with: [
+            "melix-dev-text",
+            "melix-dev-embed",
+            "melix-dev-rerank",
+            "melix-dev-model-ops",
+            "melix-dev-ocr",
+            "melix-dev-vlm",
+            "melix-dev-transcribe",
+            "melix-dev-speech",
+            "melix-dev-image",
+        ]))
+        #expect(textMetadata["melix.display_name"] as? String == "Qwen 3.5 9B")
         #expect(textMetadata["melix.kind"] as? String == "text")
         #expect(textMetadata["melix.capability.class"] as? String == "text")
         #expect(textMetadata["melix.capability.supported_tasks"] as? String == "generate")
@@ -7197,7 +7224,7 @@ struct OpenAIHandlerTests {
         #expect(textMetadata["melix.load_trust.policy_source"] as? String == "not_applicable")
         #expect(textMetadata["melix.load_trust.receipt_present"] as? String == "false")
         #expect(textMetadata["melix.model_path"] == nil)
-        #expect(imageMetadata["melix.display_name"] as? String == "Melix Image")
+        #expect(imageMetadata["melix.display_name"] as? String == "Flux Schnell MLX")
         #expect(imageMetadata["melix.capability.class"] as? String == "image_generation")
         #expect(imageTasks.contains("image_generate"))
     }
@@ -7207,6 +7234,7 @@ struct OpenAIHandlerTests {
         var fallbackModel = ModelCatalog.devVLMModel()
         fallbackModel.modelID = "melix-vlm-text-fallback"
         fallbackModel.routeClass = .workerRouteSwiftText
+        fallbackModel.settings.ext.removeValue(forKey: "melix.visibility")
         fallbackModel.settings.ext["melix.capability.route_kind"] = "swift_text"
         let catalog = ModelCatalog(seedModels: [fallbackModel])
         let registry = WorkerRegistry(
@@ -7396,30 +7424,37 @@ struct OpenAIHandlerTests {
         var pinned = ModelCatalog.devTextModel()
         pinned.modelID = "melix-pinned"
         pinned.state = .modelPinned
+        pinned.settings.ext.removeValue(forKey: "melix.visibility")
 
         var unloaded = ModelCatalog.devTextModel()
         unloaded.modelID = "melix-unloaded"
         unloaded.state = .modelUnloaded
+        unloaded.settings.ext.removeValue(forKey: "melix.visibility")
 
         var loading = ModelCatalog.devTextModel()
         loading.modelID = "melix-loading"
         loading.state = .modelLoading
+        loading.settings.ext.removeValue(forKey: "melix.visibility")
 
         var discovered = ModelCatalog.devTextModel()
         discovered.modelID = "melix-discovered"
         discovered.state = .modelDiscovered
+        discovered.settings.ext.removeValue(forKey: "melix.visibility")
 
         var failed = ModelCatalog.devTextModel()
         failed.modelID = "melix-failed"
         failed.state = .modelFailed
+        failed.settings.ext.removeValue(forKey: "melix.visibility")
 
         var evicting = ModelCatalog.devTextModel()
         evicting.modelID = "melix-evicting"
         evicting.state = .modelEvicting
+        evicting.settings.ext.removeValue(forKey: "melix.visibility")
 
         var unknown = ModelCatalog.devTextModel()
         unknown.modelID = "melix-unknown"
         unknown.state = .UNRECOGNIZED(99)
+        unknown.settings.ext.removeValue(forKey: "melix.visibility")
 
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [pinned, unloaded, loading, discovered, failed, evicting, unknown]),
@@ -12286,6 +12321,27 @@ struct OpenAIHandlerTests {
         var model = ModelCatalog.devTextModel()
         model.state = .modelWarm
         return model
+    }
+
+    private func publicWarmModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = warmModel()
+        model.modelID = "mlx-community/Qwen3.5-9B-MLX-8bit"
+        model.settings.alias = "Qwen 3.5 9B"
+        model.settings.ext.removeValue(forKey: "melix.visibility")
+        return model
+    }
+
+    private func isolatedGatewayServingDefaultsStore(prefix: String) -> GatewayServingDefaultsStore {
+        GatewayServingDefaultsStore(
+            storeURL: FileManager.default.temporaryDirectory.appendingPathComponent(
+                "\(prefix)-\(UUID().uuidString).json"
+            ),
+            defaults: [
+                "MELIX_GATEWAY_DEFAULT_TOP_P": "1.0",
+                "MELIX_GATEWAY_ACCELERATION_MODE": "baseline",
+                "MELIX_GATEWAY_ACCELERATION_PROFILE": "balanced",
+            ]
+        )
     }
 
     private func warmEmbeddingModel() -> Melix_Controlplane_V1_ModelSummary {

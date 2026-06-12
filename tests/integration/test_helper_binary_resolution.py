@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -261,6 +262,54 @@ def test_live_stack_starts_and_stops_swift_vision_worker(
     assert stack.swift_vision_worker_stderr is None
     assert not stack.swift_vision_worker_stdout_path.exists()
     assert not stack.swift_vision_worker_stderr_path.exists()
+
+
+def test_live_stack_exposes_capabilities_url(tmp_path: Path) -> None:
+    stack = helpers.LiveMelixStack(tmp_path)
+
+    assert stack.capabilities_url() == f"http://127.0.0.1:{stack.http_port}/api/capabilities"
+
+
+def test_wait_for_http_model_states_reads_capabilities_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    perf_times = iter([0.0, 0.1])
+    observed_requests: list[tuple[str, str, str | None]] = []
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "models": [
+                        {"model_id": "melix-dev-image", "state": "pinned"},
+                    ]
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float) -> FakeResponse:
+        observed_requests.append(
+            (request.full_url, request.get_method(), dict(request.header_items()).get("X-test"))
+        )
+        return FakeResponse()
+
+    monkeypatch.setattr(helpers.time, "time", lambda: next(perf_times))
+    monkeypatch.setattr(helpers.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(helpers.urllib.request, "urlopen", fake_urlopen)
+
+    helpers.wait_for_http_model_states(
+        12436,
+        required_states={"melix-dev-image": "warm"},
+        request_headers={"X-Test": "1"},
+        timeout_seconds=0.5,
+    )
+
+    assert observed_requests == [("http://127.0.0.1:12436/api/capabilities", "GET", "1")]
 
 
 def test_wait_for_http_model_states_reports_swift_vision_exit(tmp_path: Path) -> None:

@@ -6131,7 +6131,7 @@ struct DesktopFoundationViewTests {
     func diagnosticsToolSectionRendersEmptyBenchmarkStates() async throws {
         let client = FakeControlPlaneXPCClient()
         await client.configureSnapshot(
-            makeAudioSetupSnapshot(models: [makeMenuBarImageModelSummary()])
+            makeAudioSetupSnapshot(models: [makeMenuBarImageModelSummary(modelID: "mlx-community/flux-dev-local")])
         )
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
@@ -6147,7 +6147,7 @@ struct DesktopFoundationViewTests {
 
         #expect(view.subviews.isEmpty == false)
         #expect(viewModel.benchmarkModels.isEmpty == false)
-        #expect(viewModel.benchmarkModels.first?.modelID == "melix-dev-image")
+        #expect(viewModel.benchmarkModels.first?.modelID == "mlx-community/flux-dev-local")
         #expect(viewModel.benchmarkHistory.isEmpty)
         #expect(await client.recordedActions.contains("bench.export"))
     }
@@ -9782,10 +9782,8 @@ struct Phase8WindowUIAcceptanceRunnerTests {
 
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
-        var baseModel = ModelCatalog.devTextModel()
-        baseModel.modelID = "melix-dev-text"
-        var derivedModel = ModelCatalog.devTextModel()
-        derivedModel.modelID = derivedModelID
+        let baseModel = makeMenuBarModelSummary(modelID: materializedModelID, state: .modelWarm)
+        let derivedModel = makeMenuBarModelSummary(modelID: derivedModelID, state: .modelWarm)
         snapshot.models = [baseModel, derivedModel]
         var runtimeSession = makeDesktopRuntimeSession()
         runtimeSession.serverSessionID = "server-session-1"
@@ -10051,10 +10049,8 @@ struct Phase8WindowUIAcceptanceRunnerTests {
 
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
-        var fallbackTextModel = ModelCatalog.devTextModel()
-        fallbackTextModel.modelID = "melix-dev-text"
-        var derivedModel = ModelCatalog.devTextModel()
-        derivedModel.modelID = derivedModelID
+        let fallbackTextModel = makeMenuBarModelSummary(modelID: materializedModelID, state: .modelWarm)
+        let derivedModel = makeMenuBarModelSummary(modelID: derivedModelID, state: .modelWarm)
         snapshot.models = [fallbackTextModel, derivedModel]
         var runtimeSession = makeDesktopRuntimeSession()
         runtimeSession.serverSessionID = "server-session-1"
@@ -10335,16 +10331,10 @@ struct Phase8WindowUIAcceptanceRunnerTests {
 
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
-        var fallbackTextModel = ModelCatalog.devTextModel()
-        fallbackTextModel.modelID = "melix-dev-text"
-        var importedModel = ModelCatalog.devTextModel()
-        importedModel.modelID = materializedModelID
-        importedModel.kind = "text"
-        importedModel.features = ["chat"]
+        var importedModel = makeMenuBarModelSummary(modelID: materializedModelID, state: .modelWarm)
         importedModel.settings.alias = "Qwen Local"
-        var derivedModel = ModelCatalog.devTextModel()
-        derivedModel.modelID = "\(materializedModelID)-lora-adapter"
-        snapshot.models = [fallbackTextModel, importedModel, derivedModel]
+        let derivedModel = makeMenuBarModelSummary(modelID: "\(materializedModelID)-lora-adapter", state: .modelWarm)
+        snapshot.models = [importedModel, derivedModel]
         var runtimeSession = makeDesktopRuntimeSession()
         runtimeSession.serverSessionID = "server-session-1"
         runtimeSession.lifecycleState = .ready
@@ -10465,7 +10455,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         )
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
-        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.models = [makeMenuBarModelSummary(modelID: materializedModelID, state: .modelWarm)]
         snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
         await client.configureSnapshot(snapshot)
         await configurePhase8ReadyRegistrySnapshot(client, modelID: materializedModelID)

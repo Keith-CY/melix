@@ -89,12 +89,9 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
-        #expect(viewModel.models.map(\.modelID) == ["melix-dev-image", "melix-dev-text"])
-        #expect(viewModel.models.first { $0.modelID == "melix-dev-text" }?.alias == "Melix Text")
-        #expect(viewModel.models.first { $0.modelID == "melix-dev-image" }?.alias == "Melix Image")
-        #expect(viewModel.models.allSatisfy { !$0.alias.contains("Dev") })
-        #expect(viewModel.serveableModels.map(\.modelID) == ["melix-dev-text"])
-        #expect(viewModel.imageModels.map(\.modelID) == ["melix-dev-image"])
+        #expect(viewModel.models.isEmpty)
+        #expect(viewModel.serveableModels.isEmpty)
+        #expect(viewModel.imageModels.isEmpty)
     }
 
     @Test("remote server draft saves through app store and clears the API key field")
@@ -3373,6 +3370,72 @@ struct RuntimeViewModelTests {
             entry.repoID == "mlx-community/new-model-4bit"
                 && entry.availabilityGroup == .discoverAndDownload
         })
+    }
+
+    @Test("model registry ready to run hides internal dev seed models")
+    @MainActor
+    func modelRegistryReadyToRunHidesInternalDevSeedModels() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let visibleModelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-embed",
+                        kind: "embedding",
+                        state: .modelPinned,
+                        features: ["embeddings"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-rerank",
+                        kind: "rerank",
+                        state: .modelPinned,
+                        features: ["rerank"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-ocr",
+                        kind: "ocr",
+                        state: .modelPinned,
+                        features: ["ocr", "vision"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-vlm",
+                        kind: "vlm",
+                        state: .modelWarm,
+                        features: ["vlm", "text", "chat"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-transcribe",
+                        kind: "transcription",
+                        state: .modelPinned,
+                        features: ["audio", "transcription"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-speech",
+                        kind: "speech",
+                        state: .modelPinned,
+                        features: ["audio", "speech"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-image",
+                        kind: "image",
+                        state: .modelPinned,
+                        features: ["image_generate", "image_edit", "artifact_jobs"]
+                    ),
+                    makeModelSummary(modelID: visibleModelID, state: .modelWarm),
+                ]
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let readyToRunIDs = viewModel.modelRegistryEntries
+            .filter { $0.availabilityGroup == .readyToRun }
+            .map(\.title)
+        #expect(readyToRunIDs == [visibleModelID])
     }
 
     @Test("hub search result size text uses raw byte values")
@@ -6988,10 +7051,46 @@ struct RuntimeViewModelTests {
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeCapabilityModelSummary(
+                        modelID: "melix-dev-embed",
+                        kind: "embedding",
+                        state: .modelPinned,
+                        features: ["embeddings"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-rerank",
+                        kind: "rerank",
+                        state: .modelPinned,
+                        features: ["rerank"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-ocr",
+                        kind: "ocr",
+                        state: .modelPinned,
+                        features: ["ocr", "vision"]
+                    ),
+                    makeCapabilityModelSummary(
                         modelID: "melix-dev-vlm",
                         kind: "vlm",
                         state: .modelWarm,
                         features: ["vlm", "text", "chat"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-transcribe",
+                        kind: "transcription",
+                        state: .modelPinned,
+                        features: ["audio", "transcription"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-speech",
+                        kind: "speech",
+                        state: .modelPinned,
+                        features: ["audio", "speech"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-image",
+                        kind: "image",
+                        state: .modelPinned,
+                        features: ["image_generate", "image_edit", "artifact_jobs"]
                     ),
                 ]
             )
@@ -7012,9 +7111,18 @@ struct RuntimeViewModelTests {
         #expect(viewModel.serverModelOptions.map(\.modelID) == [
             "unsloth/gemma-4-E4B-it-MLX-8bit",
         ])
-        #expect(viewModel.diagnosticsServerTargets.contains { target in
-            target.modelID == "melix-dev-text" || target.modelID == "melix-dev-vlm"
-        } == false)
+        let internalDevModelIDs = Set([
+            "melix-dev-text",
+            "melix-dev-embed",
+            "melix-dev-rerank",
+            "melix-dev-ocr",
+            "melix-dev-vlm",
+            "melix-dev-transcribe",
+            "melix-dev-speech",
+            "melix-dev-image",
+        ])
+        #expect(viewModel.serverModelOptions.contains { internalDevModelIDs.contains($0.modelID) } == false)
+        #expect(viewModel.diagnosticsServerTargets.contains { internalDevModelIDs.contains($0.modelID) } == false)
 
         viewModel.createServerSession()
 

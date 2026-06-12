@@ -27,7 +27,7 @@ def _write_registry_manifest(
     (variant_dir / "manifest.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
-def test_models_endpoint_reports_the_discovered_dev_model_before_first_text_request() -> None:
+def test_models_endpoint_hides_internal_dev_seed_models_before_first_text_request() -> None:
     stack = LiveMelixStack(
         Path(__file__).resolve().parents[2],
         start_swift_text_worker=False,
@@ -41,15 +41,17 @@ def test_models_endpoint_reports_the_discovered_dev_model_before_first_text_requ
         assert response.status == 200
         assert payload["object"] == "list"
         model_rows = {item["id"]: item for item in payload["data"]}
-        assert model_rows["melix-dev-text"]["melix_state"] == "discovered"
-        assert "melix-dev-model-ops" not in model_rows
-        assert model_rows["melix-dev-text"]["metadata"]["melix.display_name"] == "Melix Text"
-        assert model_rows["melix-dev-text"]["metadata"]["melix.kind"] == "text"
-        assert (
-            model_rows["melix-dev-text"]["metadata"]["melix.capability.supported_tasks"]
-            == "generate"
-        )
-        assert "melix.model_path" not in model_rows["melix-dev-text"]["metadata"]
+        assert not {
+            "melix-dev-text",
+            "melix-dev-embed",
+            "melix-dev-rerank",
+            "melix-dev-model-ops",
+            "melix-dev-ocr",
+            "melix-dev-vlm",
+            "melix-dev-transcribe",
+            "melix-dev-speech",
+            "melix-dev-image",
+        }.intersection(model_rows)
     finally:
         stack.stop()
 
