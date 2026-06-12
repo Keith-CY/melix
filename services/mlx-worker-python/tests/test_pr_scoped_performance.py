@@ -5245,6 +5245,21 @@ def test_mlx_audio_local_uri_probe_script_emits_metrics() -> None:
     assert metrics["sample_count"] == 5.0
 
 
+def test_mlx_audio_local_uri_probe_covers_audio_catalog_metadata_assertions() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-audio-local-uri-zero-copy-preprocess"
+    )
+    selector = (
+        "services/mlx-worker-python/tests/test_audio_runtime.py"
+        "::test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries"
+    )
+
+    assert selector in probe.test_command
+    assert selector in probe.coverage_command
+
+
 def test_mlx_audio_local_uri_probe_script_main_covers_checked_in_file(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

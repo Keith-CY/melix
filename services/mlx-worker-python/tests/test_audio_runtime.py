@@ -462,6 +462,9 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
     assert whisper.ext["melix.audio.backend_id"] == "mlx_audio.stt"
     assert whisper.ext["melix.audio.install_profile"] == "audio-stt"
     assert whisper.ext["melix.audio.family_id"] == "whisper"
+    assert whisper.ext["melix.audio.capability"] == "stt"
+    assert whisper.ext["melix.audio.setup_role"] == "recommended"
+    assert whisper.ext["melix.audio.setup_priority"] == "0"
 
     assert parakeet is not None
     assert parakeet.model_kind == "transcription"
@@ -469,6 +472,9 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
     assert parakeet.ext["melix.audio.backend_id"] == "mlx_audio.stt"
     assert parakeet.ext["melix.audio.install_profile"] == "audio-stt"
     assert parakeet.ext["melix.audio.family_id"] == "parakeet"
+    assert parakeet.ext["melix.audio.capability"] == "stt"
+    assert parakeet.ext["melix.audio.setup_role"] == "optional"
+    assert parakeet.ext["melix.audio.setup_priority"] == "20"
 
     assert kokoro is not None
     assert kokoro.model_kind == "speech"
@@ -477,6 +483,9 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
     assert kokoro.ext["melix.audio.install_profile"] == "audio-tts"
     assert kokoro.ext["melix.audio.family_id"] == "kokoro"
     assert kokoro.ext["melix.audio.output_formats"] == "wav"
+    assert kokoro.ext["melix.audio.capability"] == "tts"
+    assert kokoro.ext["melix.audio.setup_role"] == "recommended"
+    assert kokoro.ext["melix.audio.setup_priority"] == "0"
     assert kokoro.ext["melix.audio.voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog."
     assert kokoro.ext["melix.audio.voice_locales"] == "en"
     assert kokoro.ext["melix.audio.default_locale"] == "en"
@@ -491,6 +500,9 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
     assert qwen3_tts.ext["melix.audio.family_id"] == "qwen3-tts"
     assert qwen3_tts.ext["melix.audio.languages"] == "zh,en"
     assert qwen3_tts.ext["melix.audio.voice_mode"] == "hybrid"
+    assert qwen3_tts.ext["melix.audio.capability"] == "tts"
+    assert qwen3_tts.ext["melix.audio.setup_role"] == "optional"
+    assert qwen3_tts.ext["melix.audio.setup_priority"] == "20"
     assert qwen3_tts.ext["melix.audio.supports_instructions"] == "true"
     assert (
         qwen3_tts.ext["melix.audio.voice_catalog_summary"]

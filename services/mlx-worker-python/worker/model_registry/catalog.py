@@ -2006,6 +2006,14 @@ def _audio_metadata(
     }
 
 
+def _audio_setup_metadata(*, capability: str, role: str, priority: int) -> dict[str, str]:
+    return {
+        "melix.audio.capability": capability,
+        "melix.audio.setup_role": role,
+        "melix.audio.setup_priority": str(priority),
+    }
+
+
 class WorkerModelCatalog:
     def __init__(self, environment: dict[str, str] | None = None) -> None:
         self._uses_explicit_environment = environment is not None
@@ -3023,6 +3031,7 @@ class WorkerModelCatalog:
                     install_profile="audio-stt",
                     languages=("auto",),
                 ),
+                **_audio_setup_metadata(capability="stt", role="recommended", priority=0),
             },
         )
 
@@ -3052,6 +3061,7 @@ class WorkerModelCatalog:
                     install_profile="audio-stt",
                     languages=("auto",),
                 ),
+                **_audio_setup_metadata(capability="stt", role="optional", priority=20),
             },
         )
 
@@ -3089,6 +3099,7 @@ class WorkerModelCatalog:
                     packaged_default_locale="en",
                     locale_policy="request>model_default>packaged_default",
                 ),
+                **_audio_setup_metadata(capability="tts", role="recommended", priority=0),
             },
         )
 
@@ -3129,6 +3140,7 @@ class WorkerModelCatalog:
                     packaged_default_locale="zh",
                     locale_policy="request>model_default>packaged_default",
                 ),
+                **_audio_setup_metadata(capability="tts", role="optional", priority=20),
             },
         )
 
