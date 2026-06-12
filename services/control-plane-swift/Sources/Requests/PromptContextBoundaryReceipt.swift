@@ -58,7 +58,7 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
 
     private static func sourceType(for message: NormalizedTextMessage) -> String {
         let normalizedRole = message.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalizedRole == "tool" {
+        if isToolOutputRole(normalizedRole) {
             return "tool_output"
         }
 
@@ -91,6 +91,12 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
             return "model_final_answer"
         }
         return "chat_prompt_message"
+    }
+
+    private static func isToolOutputRole(_ normalizedRole: String) -> Bool {
+        normalizedRole == "tool"
+            || normalizedRole == "function"
+            || normalizedRole.hasPrefix("functions.")
     }
 
     private static func sourcePolicy(for sourceType: String) -> (reason: String, correctiveAction: String) {
