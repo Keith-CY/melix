@@ -106,10 +106,60 @@ def run_probe(*, record_count: int = 500, samples: int = 5) -> dict[str, float]:
     }
 
 
+def run_projection_probe(*, record_count: int = 250, samples: int = 5) -> dict[str, float]:
+    elapsed_samples: list[float] = []
+    projection_samples: list[float] = []
+    followup_message_samples: list[float] = []
+    receipt_samples: list[float] = []
+
+    for _ in range(samples):
+        with tempfile.TemporaryDirectory(prefix="melix-local-job-projection-") as tmp:
+            store = _prepare_store(Path(tmp), record_count=record_count)
+            followup_session_ids = {
+                f"job-{index:05d}": f"followup-job-{index:05d}"
+                for index in range(record_count)
+            }
+            completion_summaries = {
+                f"job-{index:05d}": {
+                    "status": "completed",
+                    "summary": f"Redacted completion summary {index}",
+                }
+                for index in range(record_count)
+            }
+            owner_scope_checked = {f"job-{index:05d}": True for index in range(record_count)}
+
+            started = time.perf_counter()
+            projection_batch = target.project_local_job_session_followups(
+                store,
+                followup_session_ids_by_job_id=followup_session_ids,
+                completion_summaries_by_job_id=completion_summaries,
+                owner_scope_checked_by_job_id=owner_scope_checked,
+            )
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+            projection_samples.append(float(len(projection_batch.projections)))
+            followup_message_samples.append(float(len(projection_batch.followup_messages)))
+            receipt_samples.append(float(len(projection_batch.receipts)))
+
+    return {
+        "projection_elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
+        "projection_elapsed_ms_min": round(min(elapsed_samples), 6),
+        "projection_count_mean": statistics.fmean(projection_samples),
+        "projection_followup_message_count_mean": statistics.fmean(followup_message_samples),
+        "projection_receipt_count_mean": statistics.fmean(receipt_samples),
+    }
+
+
 def main() -> int:
     record_count = int(os.environ.get("MELIX_LOCAL_JOB_SCAN_RECORDS", "500"))
     samples = int(os.environ.get("MELIX_LOCAL_JOB_SCAN_SAMPLES", "5"))
-    print(json.dumps(run_probe(record_count=record_count, samples=samples), sort_keys=True))
+    projection_record_count = int(
+        os.environ.get("MELIX_LOCAL_JOB_PROJECTION_RECORDS", "250")
+    )
+    metrics = run_probe(record_count=record_count, samples=samples)
+    metrics.update(
+        run_projection_probe(record_count=projection_record_count, samples=samples)
+    )
+    print(json.dumps(metrics, sort_keys=True))
     return 0
 
 

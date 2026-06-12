@@ -5553,6 +5553,32 @@
         "key": "receipt_count_mean",
         "unit": "count",
         "direction": "informational"
+      },
+      {
+        "key": "projection_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "projection_elapsed_ms_min",
+        "unit": "ms",
+        "direction": "lower_is_better"
+      },
+      {
+        "key": "projection_count_mean",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
+        "key": "projection_followup_message_count_mean",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
+        "key": "projection_receipt_count_mean",
+        "unit": "count",
+        "direction": "informational"
       }
     ]
   },

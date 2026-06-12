@@ -329,6 +329,7 @@ def test_local_job_followup_scan_probe_script_emits_metrics(
 ) -> None:
     monkeypatch.setenv("MELIX_LOCAL_JOB_SCAN_RECORDS", "5")
     monkeypatch.setenv("MELIX_LOCAL_JOB_SCAN_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_LOCAL_JOB_PROJECTION_RECORDS", "3")
     probe_script = runpy.run_path(str(REPO_ROOT / "scripts/local_job_followup_scan_probe.py"))
 
     assert probe_script["main"]() == 0
@@ -340,6 +341,10 @@ def test_local_job_followup_scan_probe_script_emits_metrics(
     assert metrics["scandir_calls_mean"] == 1.0
     assert metrics["path_glob_calls_mean"] == 0.0
     assert metrics["path_exists_calls_mean"] == 0.0
+    assert metrics["projection_elapsed_ms_mean"] >= 0.0
+    assert metrics["projection_count_mean"] == 3.0
+    assert metrics["projection_followup_message_count_mean"] == 3.0
+    assert metrics["projection_receipt_count_mean"] == 6.0
 
 
 
