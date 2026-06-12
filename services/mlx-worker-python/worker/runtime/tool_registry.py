@@ -475,32 +475,20 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
         elif source == "keyword" or source == "keyword_context":
             has_keyword_selection = True
 
-    def build_selection_result() -> ToolSelectionResult:
-        selected_registry = registry.select(tuple(selected_names))
-        selected_tool_count = selected_registry.metrics().tool_count
-        receipt = {
-            "schema_version": "melix.agentic_tool_selection.v1",
-            "toolset_version": BUILTIN_TOOLSET_VERSION,
-            "selection_mode": selection_mode,
-            "vector_available": selection_input.vector_available,
-            "fallback_reason": fallback_reason,
-            "selected_tools": [
-                {"tool_id": tool_name, "source": selected_sources[tool_name]}
-                for tool_name in selected_registry.names()
-            ],
-            "dropped_tool_count": max(0, registry.metrics().tool_count - selected_tool_count),
-            "full_schema_bytes": registry.metrics().schema_bytes,
-            "selected_schema_bytes": selected_registry.metrics().schema_bytes,
-        }
-        return ToolSelectionResult(registry=selected_registry, receipt=receipt)
-
     for tool_name in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES:
         add_tool(tool_name, "always")
 
     selection_mode = "fallback"
     fallback_reason = "no_keyword_match"
     if len(selected_names) >= max_selected_tools:
-        return build_selection_result()
+        return _build_tool_selection_result(
+            registry,
+            selected_names,
+            selected_sources,
+            selection_input,
+            selection_mode,
+            fallback_reason,
+        )
 
     if selection_input.vector_available and selection_input.vector_selected_tool_ids:
         for tool_name in selection_input.vector_selected_tool_ids:
@@ -525,7 +513,41 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
             selection_mode = "keyword"
             fallback_reason = "vector_unavailable" if not selection_input.vector_available else "vector_no_match"
 
-    return build_selection_result()
+    return _build_tool_selection_result(
+        registry,
+        selected_names,
+        selected_sources,
+        selection_input,
+        selection_mode,
+        fallback_reason,
+    )
+
+
+def _build_tool_selection_result(
+    registry: ToolRegistry,
+    selected_names: list[str],
+    selected_sources: dict[str, str],
+    selection_input: ToolSelectionInput,
+    selection_mode: str,
+    fallback_reason: str,
+) -> ToolSelectionResult:
+    selected_registry = registry.select(tuple(selected_names))
+    selected_tool_count = selected_registry.metrics().tool_count
+    receipt = {
+        "schema_version": "melix.agentic_tool_selection.v1",
+        "toolset_version": BUILTIN_TOOLSET_VERSION,
+        "selection_mode": selection_mode,
+        "vector_available": selection_input.vector_available,
+        "fallback_reason": fallback_reason,
+        "selected_tools": [
+            {"tool_id": tool_name, "source": selected_sources[tool_name]}
+            for tool_name in selected_registry.names()
+        ],
+        "dropped_tool_count": max(0, registry.metrics().tool_count - selected_tool_count),
+        "full_schema_bytes": registry.metrics().schema_bytes,
+        "selected_schema_bytes": selected_registry.metrics().schema_bytes,
+    }
+    return ToolSelectionResult(registry=selected_registry, receipt=receipt)
 
 
 def _recent_user_turns_keyword_context(recent_user_turns: tuple[str, ...]) -> str:
