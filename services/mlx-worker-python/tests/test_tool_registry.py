@@ -634,6 +634,42 @@ def test_agentic_tool_selection_keyword_matchable_names_omit_always_available_to
     assert result.receipt["selection_mode"] == "fallback"
 
 
+def test_agentic_tool_selection_max_always_only_skips_optional_routing_scans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_keyword_tool_matches(text: str) -> tuple[str, ...]:  # pragma: no cover
+        raise AssertionError("always-only selection should skip keyword scans")
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "_keyword_tool_matches",
+        fail_keyword_tool_matches,
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search the local text evidence and visit fixture://docs/provider-contract.",
+            recent_user_turns=("Crop the image region.",),
+            vector_selected_tool_ids=("text_search", "visit"),
+            vector_available=True,
+            max_selected_tools=1,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt == {
+        "schema_version": "melix.agentic_tool_selection.v1",
+        "toolset_version": "melix.agentic_tools.builtin.v1",
+        "selection_mode": "fallback",
+        "vector_available": True,
+        "fallback_reason": "no_keyword_match",
+        "selected_tools": [{"tool_id": "local_compute", "source": "always"}],
+        "dropped_tool_count": 5,
+        "full_schema_bytes": built_in_tool_registry().metrics().schema_bytes,
+        "selected_schema_bytes": result.registry.metrics().schema_bytes,
+    }
+
+
 def test_agentic_tool_selection_uses_keyword_fallback_when_vector_unavailable() -> None:
     result = select_agentic_tools_for_turn(
         ToolSelectionInput(

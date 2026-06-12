@@ -480,6 +480,16 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
 
     selection_mode = "fallback"
     fallback_reason = "no_keyword_match"
+    if len(selected_names) >= max_selected_tools:
+        return _build_tool_selection_result(
+            registry,
+            selected_names,
+            selected_sources,
+            selection_input,
+            selection_mode,
+            fallback_reason,
+        )
+
     if selection_input.vector_available and selection_input.vector_selected_tool_ids:
         for tool_name in selection_input.vector_selected_tool_ids:
             add_tool(tool_name, "vector")
@@ -503,6 +513,24 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
             selection_mode = "keyword"
             fallback_reason = "vector_unavailable" if not selection_input.vector_available else "vector_no_match"
 
+    return _build_tool_selection_result(
+        registry,
+        selected_names,
+        selected_sources,
+        selection_input,
+        selection_mode,
+        fallback_reason,
+    )
+
+
+def _build_tool_selection_result(
+    registry: ToolRegistry,
+    selected_names: list[str],
+    selected_sources: dict[str, str],
+    selection_input: ToolSelectionInput,
+    selection_mode: str,
+    fallback_reason: str,
+) -> ToolSelectionResult:
     selected_registry = registry.select(tuple(selected_names))
     selected_tool_count = selected_registry.metrics().tool_count
     receipt = {
