@@ -70,8 +70,7 @@ class DeterministicEmbeddingRuntime:
                 append_vector(vector)
             cycle_vectors = tuple(vectors)
             for _ in range(len(inputs) // cycle_length - 1):
-                for vector in cycle_vectors:
-                    append_vector(vector.copy())
+                vectors.extend(vector.copy() for vector in cycle_vectors)
             return vectors
 
         vector_cache: dict[str, list[float]] = {}
