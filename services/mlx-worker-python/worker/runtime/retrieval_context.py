@@ -93,12 +93,18 @@ def project_retrieval_contexts(
     user_payload: dict[str, Any] = {}
     receipts: list[dict[str, object]] = []
     refusal_receipts: list[dict[str, object]] = []
+    admit_entry = _admit_entry
+    duplicate_projection_receipt = _duplicate_projection_receipt
+    refusal_receipts_extend = refusal_receipts.extend
+    receipts_extend = receipts.extend
+    user_payload_update = user_payload.update
+    copy_receipt = dict
 
     for entry in entries:
         try:
-            admission = _admit_entry(entry)
+            admission = admit_entry(entry)
         except RetrievalContextAdmissionError as exc:
-            refusal_receipts.extend(dict(receipt) for receipt in exc.refusal_receipts)
+            refusal_receipts_extend(copy_receipt(receipt) for receipt in exc.refusal_receipts)
             continue
 
         admission_payload = admission.user_payload
@@ -109,8 +115,8 @@ def project_retrieval_contexts(
                     duplicate_fields = []
                 duplicate_fields.append(source_field)
         if duplicate_fields is not None:
-            refusal_receipts.extend(
-                _duplicate_projection_receipt(
+            refusal_receipts_extend(
+                duplicate_projection_receipt(
                     receipt,
                     duplicate_fields=duplicate_fields,
                 )
@@ -118,8 +124,8 @@ def project_retrieval_contexts(
             )
             continue
 
-        user_payload.update(admission_payload)
-        receipts.extend(dict(receipt) for receipt in admission.untrusted_context_receipts)
+        user_payload_update(admission_payload)
+        receipts_extend(copy_receipt(receipt) for receipt in admission.untrusted_context_receipts)
 
     return RetrievalContextProjection(
         user_payload=user_payload,
