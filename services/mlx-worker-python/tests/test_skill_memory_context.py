@@ -963,9 +963,36 @@ def test_project_skill_memory_lookup_result_refuses_malformed_wrapper(
     assert projection.refusal_receipts == [
         {
             "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "unknown-skill-memory-lookup:lookup-result",
+            "source_type": "skill_memory_lookup",
+            "source_field": "lookup_result",
+            "source_id": "unknown-skill-memory-lookup",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "invalid_skill_memory_lookup_result",
+            "corrective_action": (
+                "Reject malformed skill or memory lookup result before prompt assembly."
+            ),
+        }
+    ]
+
+
+def test_project_skill_memory_lookup_result_refuses_missing_records_key() -> None:
+    projection = project_skill_memory_lookup_result({})
+
+    assert projection.prompt_user_payload == {}
+    assert projection.untrusted_context_receipts == []
+    assert projection.lookup_message is None
+    assert projection.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
             "segment_id": "unknown-skill:skill-context",
             "source_type": "skill",
-            "source_field": "lookup_result",
+            "source_field": "records",
             "source_id": "unknown-skill",
             "message_role": "user",
             "trust_level": "untrusted",

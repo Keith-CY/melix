@@ -8,6 +8,7 @@ from worker.runtime.prompt_context import (
     PromptContextAdmission,
     PromptContextSourceEvidence,
     admit_prompt_context_source_evidence,
+    refused_prompt_context_receipt,
     refused_source_prompt_context_receipt,
 )
 
@@ -46,7 +47,6 @@ class SkillMemoryContextProjection:
 
 @dataclass(frozen=True, slots=True)
 class SkillMemoryLookupResultProjection:
-    store_projection: SkillMemoryContextProjection | None
     prompt_user_payload: dict[str, Any]
     untrusted_context_receipts: list[dict[str, object]]
     refusal_receipts: list[dict[str, object]]
@@ -221,16 +221,9 @@ def project_skill_memory_store_records(records: Any) -> SkillMemoryContextProjec
 def project_skill_memory_lookup_result(lookup_result: Any) -> SkillMemoryLookupResultProjection:
     if not isinstance(lookup_result, Mapping):
         return SkillMemoryLookupResultProjection(
-            store_projection=None,
             prompt_user_payload={},
             untrusted_context_receipts=[],
-            refusal_receipts=[
-                _store_record_refusal(
-                    source_field="lookup_result",
-                    source_id="unknown-skill",
-                    context_kind="skill",
-                )
-            ],
+            refusal_receipts=[_lookup_result_refusal()],
             lookup_message=None,
         )
 
@@ -249,7 +242,6 @@ def project_skill_memory_lookup_result(lookup_result: Any) -> SkillMemoryLookupR
         }
 
     return SkillMemoryLookupResultProjection(
-        store_projection=store_projection,
         prompt_user_payload=prompt_user_payload,
         untrusted_context_receipts=untrusted_context_receipts,
         refusal_receipts=refusal_receipts,
@@ -262,6 +254,7 @@ def _copy_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _copy_receipts(receipts: list[dict[str, object]]) -> list[dict[str, object]]:
+    # Receipt schemas are flat JSON metadata; payload-bearing values are never copied here.
     return [dict(receipt) for receipt in receipts]
 
 
@@ -369,6 +362,17 @@ def _store_record_refusal(
         source_id=source_id,
         reason=f"invalid_{context_kind}_context_field",
         corrective_action=f"Reject malformed {context_kind} context before prompt assembly.",
+    )
+
+
+def _lookup_result_refusal() -> dict[str, object]:
+    return refused_prompt_context_receipt(
+        segment_id="unknown-skill-memory-lookup:lookup-result",
+        source_type="skill_memory_lookup",
+        source_field="lookup_result",
+        source_id="unknown-skill-memory-lookup",
+        reason="invalid_skill_memory_lookup_result",
+        corrective_action="Reject malformed skill or memory lookup result before prompt assembly.",
     )
 
 
