@@ -28,6 +28,8 @@ Bind loop-stable helpers (`_admit_entry`, `_duplicate_projection_receipt`, list 
 
 This follow-up slice keeps the same registered probe and adds a single-field payload fast path for the common `PromptContextAdmission` shape. Single-field admissions can check duplicate membership once and assign directly into the projected payload, while multi-field admissions continue to use the existing full duplicate-field scan and `dict.update()` path.
 
+This follow-up narrows receipt-copy overhead by binding `dict.copy` directly for projected receipt copies. The loop still produces a fresh shallow copy for each receipt, preserving the existing object isolation boundary while avoiding the generic `dict(receipt)` constructor path.
+
 ## Verification Plan
 
 Run the registered focused test command, changed-scope coverage command, and registered probe command locally on Linux before opening the PR. The PR-scoped performance workflow remains the authoritative CI validation source after push.
