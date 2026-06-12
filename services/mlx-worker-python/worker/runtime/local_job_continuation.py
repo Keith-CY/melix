@@ -5,6 +5,7 @@ import os
 import re
 from collections.abc import Mapping
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from errno import EPERM
 from pathlib import Path
@@ -163,6 +164,15 @@ class LocalJobSessionFollowupProjection:
     prompt_user_payload: dict[str, Any]
     untrusted_context_receipts: list[dict[str, object]]
     followup_message: dict[str, Any] | None
+
+
+@dataclass(frozen=True, slots=True)
+class LocalJobSessionFollowupProjectionBatch:
+    claim_batch: LocalJobContinuationFollowupClaimBatch
+    projections: tuple[LocalJobSessionFollowupProjection, ...]
+    followup_messages: tuple[dict[str, Any], ...]
+    receipts: tuple[dict[str, Any], ...]
+    refusal_receipts: tuple[dict[str, Any], ...]
 
 
 class LocalJobContinuationStore:
@@ -856,8 +866,46 @@ def project_local_job_session_followup(
     if claim is None:
         return None
 
-    prompt_user_payload = dict(claim.prompt_context.user_payload)
-    receipts = [dict(receipt) for receipt in claim.prompt_context.untrusted_context_receipts]
+    return _project_local_job_session_followup_claim(claim)
+
+
+def project_local_job_session_followups(
+    store: LocalJobContinuationStore,
+    *,
+    followup_session_ids_by_job_id: dict[str, str] | None,
+    completion_summaries_by_job_id: dict[str, dict[str, Any]] | None,
+    owner_scope_checked_by_job_id: dict[str, bool] | None,
+    live_evidence_by_job_id: dict[str, LocalJobLiveEvidence] | None = None,
+) -> LocalJobSessionFollowupProjectionBatch:
+    claim_batch = store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id=followup_session_ids_by_job_id,
+        completion_summaries_by_job_id=completion_summaries_by_job_id,
+        owner_scope_checked_by_job_id=owner_scope_checked_by_job_id,
+        live_evidence_by_job_id=live_evidence_by_job_id,
+    )
+    projections: list[LocalJobSessionFollowupProjection] = []
+    followup_messages: list[dict[str, Any]] = []
+
+    for claim in claim_batch.claims:
+        projection = _project_local_job_session_followup_claim(claim)
+        projections.append(projection)
+        if projection.followup_message is not None:
+            followup_messages.append(projection.followup_message)
+
+    return LocalJobSessionFollowupProjectionBatch(
+        claim_batch=claim_batch,
+        projections=tuple(projections),
+        followup_messages=tuple(followup_messages),
+        receipts=deepcopy(claim_batch.receipts),
+        refusal_receipts=deepcopy(claim_batch.refusal_receipts),
+    )
+
+
+def _project_local_job_session_followup_claim(
+    claim: LocalJobContinuationFollowupClaim,
+) -> LocalJobSessionFollowupProjection:
+    prompt_user_payload = deepcopy(claim.prompt_context.user_payload)
+    receipts = deepcopy(claim.prompt_context.untrusted_context_receipts)
     followup_message: dict[str, Any] | None = None
     if prompt_user_payload:
         followup_message = {
@@ -867,7 +915,7 @@ def project_local_job_session_followup(
         }
     return LocalJobSessionFollowupProjection(
         claim=claim,
-        claim_receipt=dict(claim.reconciliation.receipt),
+        claim_receipt=deepcopy(claim.reconciliation.receipt),
         prompt_user_payload=prompt_user_payload,
         untrusted_context_receipts=receipts,
         followup_message=followup_message,
