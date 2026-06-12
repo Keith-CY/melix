@@ -415,9 +415,26 @@ def test_size_hint_scans_multiple_text_fields_before_joining(monkeypatch: pytest
         )
         == 12 * GB
     )
-    assert scanned_texts == [
-        "README\nModel size: 12 GB\nother metadata",
-    ]
+    assert scanned_texts == []
+
+
+def test_direct_explicit_size_hint_handles_common_readme_lines() -> None:
+    assert (
+        hub_catalog_module._direct_explicit_size_hint_from_text(
+            "README\nModel size: 12 GB\nother metadata"
+        )
+        == 12 * GB
+    )
+    assert (
+        hub_catalog_module._direct_explicit_size_hint_from_text(
+            "README\nMODEL SIZE | 7 kb\nother metadata"
+        )
+        == 7 * KB
+    )
+    assert hub_catalog_module._direct_explicit_size_hint_from_text("model size 1.5 MB") == int(
+        1.5 * MB
+    )
+    assert hub_catalog_module._direct_explicit_size_hint_from_text("mOdel size: 12 GB") == 0
 
 
 def test_weight_or_config_file_preserves_case_insensitive_matches() -> None:
