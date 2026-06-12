@@ -13,6 +13,32 @@ from worker.runtime.retrieval_context import (
 )
 
 
+def _assert_retrieval_entry_container_is_refused(entries: object) -> None:
+    projection = project_retrieval_contexts(entries)  # type: ignore[arg-type]
+
+    assert projection.user_payload == {}
+    assert projection.untrusted_context_receipts == []
+    assert projection.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "unknown-retrieved-document:retrieved-document-context",
+            "source_type": "retrieved_document",
+            "source_field": "entries",
+            "source_id": "unknown-retrieved-document",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "invalid_retrieved_document_context_field",
+            "corrective_action": (
+                "Reject malformed retrieved document evidence before prompt assembly."
+            ),
+        }
+    ]
+
+
 def test_retrieved_document_context_admits_redacted_payload_with_receipt() -> None:
     admission = admit_retrieved_document_context(
         document_id="doc:local-7",
@@ -575,6 +601,9 @@ def test_project_retrieval_contexts_isolates_refusals_without_dropping_valid_ent
 
 
 def test_project_retrieval_contexts_refuses_malformed_entry_objects_without_dropping_valid_entries() -> None:
+    _assert_retrieval_entry_container_is_refused({"context_kind": "retrieved_document"})
+    _assert_retrieval_entry_container_is_refused("not entries")
+
     projection = project_retrieval_contexts(
         [
             None,  # type: ignore[list-item]

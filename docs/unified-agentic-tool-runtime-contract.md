@@ -614,6 +614,9 @@ items should use
 accepts ordered `SkillMemoryContextEntry` descriptors, delegates each item to
 the single-entry admission helpers above, returns one combined user-role prompt
 payload, and returns copied admitted receipts plus copied refusal receipts.
+The top-level entries container must be a list or tuple; malformed containers
+fail closed with `source_field = entries`, no user payload, and no admitted
+receipts.
 Malformed skill or memory entries are isolated into `refusal_receipts` and must
 not drop valid sibling entries. Non-`SkillMemoryContextEntry` objects are
 refused with `source_field = entry` and no user payload. Duplicate prompt
@@ -653,6 +656,8 @@ The helper accepts ordered `RetrievalContextEntry` descriptors for retrieved
 documents and retrieved images, delegates every item to the single-entry
 admission helpers above, returns one combined user-role prompt payload, and
 returns copied admitted receipts plus copied refusal receipts. Malformed
+top-level entries containers fail closed with `source_field = entries`, no user
+payload, and no admitted receipts.
 retrieved entries are isolated into `refusal_receipts` and must not drop valid
 sibling entries. Duplicate prompt payload fields fail closed for the later
 duplicate item with `reason = duplicate_retrieved_document_context_field` or

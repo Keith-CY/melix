@@ -88,8 +88,23 @@ def admit_retrieved_image_context(
 
 
 def project_retrieval_contexts(
-    entries: list[RetrievalContextEntry] | tuple[RetrievalContextEntry, ...],
+    entries: Any,
 ) -> RetrievalContextProjection:
+    entries_type = type(entries)
+    if entries_type is not list and entries_type is not tuple:
+        return RetrievalContextProjection(
+            user_payload={},
+            untrusted_context_receipts=[],
+            refusal_receipts=[
+                refused_source_prompt_context_receipt(
+                    segment_id="unknown-retrieved-document:retrieved-document-context",
+                    source_type="retrieved_document",
+                    source_field="entries",
+                    source_id="unknown-retrieved-document",
+                    reason="invalid_retrieved_document_context_field",
+                )
+            ],
+        )
     user_payload: dict[str, Any] = {}
     receipts: list[dict[str, object]] = []
     refusal_receipts: list[dict[str, object]] = []
@@ -97,6 +112,7 @@ def project_retrieval_contexts(
     duplicate_projection_receipt = _duplicate_projection_receipt
     refusal_receipts_extend = refusal_receipts.extend
     receipts_extend = receipts.extend
+    receipts_append = receipts.append
     user_payload_update = user_payload.update
     copy_receipt = dict
 
@@ -125,7 +141,8 @@ def project_retrieval_contexts(
             continue
 
         user_payload_update(admission_payload)
-        receipts_extend(copy_receipt(receipt) for receipt in admission.untrusted_context_receipts)
+        for receipt in admission.untrusted_context_receipts:
+            receipts_append(copy_receipt(receipt))
 
     return RetrievalContextProjection(
         user_payload=user_payload,
