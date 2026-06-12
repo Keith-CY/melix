@@ -890,7 +890,7 @@ def project_local_job_session_followups(
         projection = _project_local_job_session_followup_claim(claim)
         projections.append(projection)
         if projection.followup_message is not None:
-            followup_messages.append(deepcopy(projection.followup_message))
+            followup_messages.append(projection.followup_message)
 
     return LocalJobSessionFollowupProjectionBatch(
         claim_batch=claim_batch,

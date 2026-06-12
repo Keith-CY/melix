@@ -1047,7 +1047,7 @@ def test_store_scan_followup_candidates_reconciles_and_filters_ready_records(
         projection_batch.projections[0].followup_message,
         projection_batch.projections[1].followup_message,
     )
-    assert projection_batch.followup_messages[0] is not (
+    assert projection_batch.followup_messages[0] is (
         projection_batch.projections[0].followup_message
     )
     assert projection_batch.followup_messages[0]["role"] == "user"
@@ -1141,7 +1141,9 @@ def test_store_scan_followup_candidates_reconciles_and_filters_ready_records(
             followup_session_ids_by_job_id={
                 "projection-refusal": "followup-refusal"
             },
-            completion_summaries_by_job_id={"projection-refusal": "not-a-dict"},
+            completion_summaries_by_job_id={  # type: ignore[arg-type]
+                "projection-refusal": "not-a-dict"
+            },
             owner_scope_checked_by_job_id={"projection-refusal": True},
         )
     )
