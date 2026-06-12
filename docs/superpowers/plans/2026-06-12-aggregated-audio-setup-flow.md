@@ -17,6 +17,24 @@
 - Chat and provider UI receive only capability-specific inline prompts in this slice if the current code path already exposes the relevant capability hooks. The main blocker remediation stays in Models > Downloads.
 - Runtime performance probes are `N/A` for setup-state aggregation; verification evidence is focused Swift/Python tests and SwiftUI smoke coverage.
 
+## As-Built API Notes
+
+This implementation plan records the delivery path and keeps some early draft
+names. The PR landed with these final API names and integration points:
+
+- `RuntimeAudioSetupState.kind: RuntimeAudioSetupStateKind` landed as
+  `phase: RuntimeAudioSetupPhase`.
+- `RuntimeAudioSetupState.affectedModelIDs` landed as `selectedModelIDs`, with
+  `recommendedModelIDs` and `readySelectedModelIDs` carrying the additional
+  setup-scope details.
+- `startAudioModelDownloads(modelIDs:)` landed as `downloadAudioModels(modelIDs:)`,
+  while `downloadAudioModel(modelID:)` remains as the single-model compatibility
+  wrapper.
+- The Downloads UI landed by extending `DesktopAudioSetupNoticeRow(setup:)`
+  rather than introducing a standalone `DesktopAudioSetupSurfaceView`.
+- `RuntimeAudioSetupState.isExpandedByDefault` did not land as stored state; the
+  rendered setup detail is derived from the setup phase and selected models.
+
 ## File Structure
 
 - `services/control-plane-swift/Sources/ModelCatalog/ModelCatalog.swift`
