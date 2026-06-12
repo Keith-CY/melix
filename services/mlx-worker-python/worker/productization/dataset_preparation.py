@@ -482,16 +482,17 @@ def list_dataset_versions(
     read_json_file = _read_json_file
     for manifest_path in _iter_dataset_version_manifest_paths(versions_root):
         version = read_json_file(manifest_path)
+        version_get = version.get
         versions_append(
             {
-                "dataset_id": version.get("dataset_id", ""),
-                "version_id": version.get("version_id", ""),
-                "created_at": version.get("created_at", ""),
-                "status": version.get("status", ""),
-                "train_count": version.get("train_count", 0),
-                "validation_count": version.get("validation_count", 0),
-                "failed_count": version.get("failed_count", 0),
-                "quality_summary_path": version.get("quality_summary_path", ""),
+                "dataset_id": version_get("dataset_id", ""),
+                "version_id": version_get("version_id", ""),
+                "created_at": version_get("created_at", ""),
+                "status": version_get("status", ""),
+                "train_count": version_get("train_count", 0),
+                "validation_count": version_get("validation_count", 0),
+                "failed_count": version_get("failed_count", 0),
+                "quality_summary_path": version_get("quality_summary_path", ""),
                 "dataset_version_path": manifest_path,
             }
         )
