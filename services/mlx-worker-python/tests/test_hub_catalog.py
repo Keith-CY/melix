@@ -806,6 +806,93 @@ def test_search_models_uses_next_cursor_from_link_header() -> None:
     assert page.next_cursor == "page+2"
 
 
+def test_search_models_with_mlx_only_fetches_next_page_when_first_page_has_no_mlx_results() -> None:
+    first_response = FakeHTTPResponse(
+        [
+            {
+                "id": "google/gemma-4-12B-it",
+                "author": "google",
+                "pipeline_tag": "image-text-to-text",
+                "tags": ["gemma4", "transformers", "safetensors"],
+                "siblings": [],
+                "cardData": {},
+            },
+            {
+                "id": "unsloth/gemma-4-12b-it-GGUF",
+                "author": "unsloth",
+                "pipeline_tag": "text-generation",
+                "tags": ["gguf", "gemma4"],
+                "siblings": [],
+                "cardData": {},
+            },
+        ]
+    )
+    first_response.headers["Link"] = '<https://huggingface.co/api/models?limit=2&cursor=page%2B2>; rel="next"'
+    second_response = FakeHTTPResponse(
+        [
+            {
+                "id": "mlx-community/gemma-4-E4B-it-qat-4bit",
+                "author": "mlx-community",
+                "pipeline_tag": "image-text-to-text",
+                "tags": ["mlx", "gemma4", "qat", "4-bit"],
+                "siblings": [{"rfilename": "model.safetensors", "size": 2 * GB}],
+                "cardData": {"base_model": "google/gemma-4-E4B-it-qat-q4_0-unquantized"},
+            }
+        ]
+    )
+    responses = [first_response, second_response]
+    requested_urls: list[str] = []
+
+    def opener(request: Request):
+        requested_urls.append(request.full_url)
+        return responses.pop(0)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=32)
+    page = catalog.search_models(query="Gemma", page_size=2, cursor="", mlx_only=True)
+
+    assert [item.repo_id for item in page.items] == ["mlx-community/gemma-4-E4B-it-qat-4bit"]
+    assert page.next_cursor == ""
+    assert len(requested_urls) == 2
+    assert "search=Gemma" in requested_urls[0]
+    assert "filter=mlx" in requested_urls[0]
+    assert "cursor=page%2B2" in requested_urls[1]
+    assert "filter=mlx" in requested_urls[1]
+
+
+def test_search_models_with_mlx_only_keeps_all_compatible_results_from_fetched_pages() -> None:
+    response = FakeHTTPResponse(
+        [
+            {
+                "id": "mlx-community/gemma-4-E4B-it-qat-4bit",
+                "author": "mlx-community",
+                "pipeline_tag": "image-text-to-text",
+                "tags": ["mlx", "gemma4", "4-bit"],
+                "siblings": [],
+                "cardData": {},
+            },
+            {
+                "id": "mlx-community/gemma-4-12B-it-qat-4bit",
+                "author": "mlx-community",
+                "pipeline_tag": "image-text-to-text",
+                "tags": ["mlx", "gemma4", "4-bit"],
+                "siblings": [],
+                "cardData": {},
+            },
+        ]
+    )
+
+    def opener(_request: Request):
+        return response
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=32)
+    page = catalog.search_models(query="Gemma", page_size=1, cursor="", mlx_only=True)
+
+    assert [item.repo_id for item in page.items] == [
+        "mlx-community/gemma-4-E4B-it-qat-4bit",
+        "mlx-community/gemma-4-12B-it-qat-4bit",
+    ]
+
+
 def test_search_models_with_mlx_only_false_returns_all_results() -> None:
     payload = [
         {
@@ -827,7 +914,10 @@ def test_search_models_with_mlx_only_false_returns_all_results() -> None:
         },
     ]
 
-    def opener(_request: Request):
+    requested_urls: list[str] = []
+
+    def opener(request: Request):
+        requested_urls.append(request.full_url)
         return FakeHTTPResponse(payload)
 
     catalog = HubCatalog(opener=opener)
@@ -836,6 +926,7 @@ def test_search_models_with_mlx_only_false_returns_all_results() -> None:
     assert len(page.items) == 2
     assert page.items[0].mlx_compatible is True
     assert page.items[1].mlx_compatible is False
+    assert "filter=mlx" not in requested_urls[0]
 
 
 def test_search_models_marks_small_mlx_model_as_good_local_fit() -> None:
