@@ -20,9 +20,13 @@ entries and reports listing elapsed time plus version count.
 2. Reuse local loop bindings for version append/read operations and avoid a
    redundant `str()` conversion for manifest paths that are already yielded as
    strings.
-3. Run the registered focused tests, changed-scope coverage, and the registered
+3. 2026-06-12 follow-up: bind each loaded manifest's `dict.get` method once
+   before copying the summary fields into the listing row. This keeps the same
+   missing-field defaults and ordering while removing repeated bound-method
+   lookups across large version directories.
+4. Run the registered focused tests, changed-scope coverage, and the registered
    probe locally on Linux.
-4. Use GitHub Actions PR-scoped performance as the merge gate after opening the
+5. Use GitHub Actions PR-scoped performance as the merge gate after opening the
    PR.
 
 ## Validation
