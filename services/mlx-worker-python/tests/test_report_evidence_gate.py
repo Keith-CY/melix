@@ -281,6 +281,19 @@ def test_report_evidence_gate_matrix_roles_keep_non_string_run_kind_match() -> N
     assert roles == ["numeric_run"]
 
 
+def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> None:
+    roles = report_evidence_gate_module._report_matrix_roles(
+        {"runs": [{"run_kind": "serving_benchmark"}, {"run_kind": "evaluation"}]},
+        {
+            "serving": {"run_kinds": ("serving_benchmark",)},
+            "evaluation": {"run_kinds": ("evaluation", "dialogue_evaluation")},
+            "adapter": {"run_kinds": ("adapter_check",)},
+        },
+    )
+
+    assert roles == ["serving", "evaluation"]
+
+
 def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple() -> None:
     report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_clear()
     rule = {"metric_prefixes": ("adapter.", "runtime.")}
