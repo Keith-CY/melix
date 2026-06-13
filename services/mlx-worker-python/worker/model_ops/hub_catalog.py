@@ -776,23 +776,11 @@ def _size_hint_bytes(payload: dict[str, Any], *, card_data: dict[str, Any] | Non
     readme_text = _string(payload.get("readme"))
     card_description_text = _string(card_data.get("description"))
     if not readme_text and not card_description_text:
-        return (
-            _size_hint_from_text(description_text, allow_bare=False)
-            if description_text and _may_contain_model_marker(description_text)
-            else 0
-        )
+        return _size_hint_from_marked_text(description_text) if description_text else 0
     if not description_text and not card_description_text:
-        return (
-            _size_hint_from_text(readme_text, allow_bare=False)
-            if readme_text and _may_contain_model_marker(readme_text)
-            else 0
-        )
+        return _size_hint_from_marked_text(readme_text) if readme_text else 0
     if not description_text and not readme_text:
-        return (
-            _size_hint_from_text(card_description_text, allow_bare=False)
-            if card_description_text and _may_contain_model_marker(card_description_text)
-            else 0
-        )
+        return _size_hint_from_marked_text(card_description_text) if card_description_text else 0
 
     found_model_marker = False
     for text in (description_text, readme_text, card_description_text):
@@ -812,6 +800,15 @@ def _size_hint_bytes(payload: dict[str, Any], *, card_data: dict[str, Any] | Non
         for text in (description_text, readme_text, card_description_text)
         if text
     )
+    return _size_hint_from_text(text, allow_bare=False)
+
+
+def _size_hint_from_marked_text(text: str) -> int:
+    if not _may_contain_model_marker(text):
+        return 0
+    direct_hint = _direct_explicit_size_hint_from_text(text)
+    if direct_hint > 0:
+        return direct_hint
     return _size_hint_from_text(text, allow_bare=False)
 
 
