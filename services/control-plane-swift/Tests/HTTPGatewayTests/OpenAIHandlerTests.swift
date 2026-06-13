@@ -750,6 +750,142 @@ struct OpenAIHandlerTests {
         #expect(await metricsStore.value(forKey: "persistent_session.active_session_count") == 0)
     }
 
+    @Test("companion auth sessions can read status and revoke themselves but cannot mutate runtime")
+    func companionAuthSessionsCanReadStatusAndRevokeThemselvesButCannotMutateRuntime() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-companion-auth-session-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            persistentAuthSessionStore: PersistentAuthSessionStore(
+                storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                metricsStore: metricsStore,
+                retentionTTLSeconds: 3600,
+                nowUnixMs: { 1_000 }
+            )
+        )
+
+        let createResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("""
+                {
+                  "remember_me": true,
+                  "scope": "companion_read_only"
+                }
+                """.data(using: .utf8))
+            )
+        )
+        let createPayload = try await jsonPayload(from: createResponse.body)
+        let createSession = try #require(createPayload["session"] as? [String: Any])
+        let sessionToken = try #require((createPayload["resume"] as? [String: Any])?["token"] as? String)
+
+        let modelsResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let diagnosticsResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/health",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let inspectResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/auth/session",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let inspectPayload = try await jsonPayload(from: inspectResponse.body)
+        let inspectSession = try #require(inspectPayload["session"] as? [String: Any])
+
+        let privatePrompt = "PRIVATE PROMPT: do not expose this companion secret"
+        let mutationResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: [
+                    "content-type": "application/json",
+                    "X-Melix-Session": sessionToken,
+                ],
+                body: Data("""
+                {
+                  "model": "melix-dev-text",
+                  "messages": [
+                    { "role": "user", "content": "\(privatePrompt)" }
+                  ]
+                }
+                """.utf8)
+            )
+        )
+        let mutationBody = try await collectBody(mutationResponse.body)
+        let mutationPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(mutationBody.utf8)) as? [String: Any]
+        )
+        let mutationError = try #require(mutationPayload["error"] as? [String: Any])
+
+        let signOutResponse = try await handler.handle(
+            HTTPRequest(
+                method: .delete,
+                path: "/v1/melix/auth/session",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let revokedModelsResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let revokedPayload = try await jsonPayload(from: revokedModelsResponse.body)
+        let revokedError = try #require(revokedPayload["error"] as? [String: Any])
+
+        #expect(createResponse.statusCode == 200)
+        #expect(createSession["scope"] as? String == "companion_read_only")
+        #expect(modelsResponse.statusCode == 200)
+        #expect(diagnosticsResponse.statusCode == 200)
+        #expect(inspectResponse.statusCode == 200)
+        #expect(inspectSession["scope"] as? String == "companion_read_only")
+        #expect(mutationResponse.statusCode == 403)
+        #expect(mutationError["code"] as? String == "companion_read_only_scope_violation")
+        #expect(mutationBody.contains(privatePrompt) == false)
+        #expect(signOutResponse.statusCode == 200)
+        #expect(revokedModelsResponse.statusCode == 401)
+        #expect(revokedError["code"] as? String == "revoked_session")
+        #expect(await metricsStore.value(forKey: "companion_auth.rejected_request_count") == 1)
+    }
+
     @Test("gateway auth session responses sanitize rich output in encoded and manual json payloads")
     func gatewayAuthSessionResponsesSanitizeRichOutputAcrossResponsePaths() async throws {
         let metricsStore = MetricsStore()
