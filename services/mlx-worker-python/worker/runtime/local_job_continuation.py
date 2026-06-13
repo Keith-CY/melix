@@ -357,16 +357,14 @@ class LocalJobContinuationStore:
         live_evidence_by_job_id = live_evidence_by_job_id or {}
         root = self.root
         try:
-            record_names = sorted(
-                entry.name
+            record_job_ids = sorted(
+                _record_job_id_from_filename(entry.name)
                 for entry in os.scandir(os.fspath(root))
                 if entry.name.endswith(".json") and entry.is_file()
             )
         except FileNotFoundError:
             return LocalJobContinuationFollowupScan(candidates=(), receipts=())
-        for record_name in record_names:
-            path = root / record_name
-            job_id = path.stem
+        for job_id in record_job_ids:
             try:
                 reconciliation = self.reconcile_record(
                     job_id,
@@ -1274,6 +1272,14 @@ def _optional_int(value: Any, field_name: str) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{field_name} must be an integer or null")
     return value
+
+
+def _record_job_id_from_filename(record_name: str) -> str:
+    # scan_followup_candidates has already filtered this to a .json file name.
+    # Avoid constructing a Path only to read .stem in large follow-up stores.
+    if record_name == ".json":
+        return ".json"
+    return record_name[:-5]
 
 
 def _safe_job_id(job_id: str) -> str:

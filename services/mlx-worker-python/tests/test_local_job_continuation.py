@@ -1191,6 +1191,14 @@ def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
     )
     store.save_record(
         _record(
+            job_id="a.ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/a.ready.json",),
+        )
+    )
+    store.save_record(
+        _record(
             job_id="a-ready",
             status="completed",
             exit_status=0,
@@ -1198,6 +1206,7 @@ def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
         )
     )
     (tmp_path / "z-ignored.json.tmp").write_text("{}", encoding="utf-8")
+    (tmp_path / ".json").write_text("{}", encoding="utf-8")
     (tmp_path / "nested.json").mkdir()
 
     def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
@@ -1219,6 +1228,7 @@ def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
 
     assert [candidate.record.job_id for candidate in scan.candidates] == [
         "a-ready",
+        "a.ready",
         "b-ready",
     ]
     assert scandir_calls == [os.fspath(tmp_path)]
