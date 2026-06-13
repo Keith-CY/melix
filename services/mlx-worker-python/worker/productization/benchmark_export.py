@@ -1013,10 +1013,34 @@ def _rows_to_csv(rows: Iterable[dict[str, object]], fieldnames: Sequence[str]) -
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     fields = tuple(fieldnames)
+    field_indexes = {field: index for index, field in enumerate(fields)}
+    field_count = len(fields)
     writer.writerow(fields)
 
     def csv_rows() -> Iterable[list[str]]:
         for row in rows:
+            if len(row) < field_count:
+                csv_row = [""] * field_count
+                for field, value in row.items():
+                    index = field_indexes.get(field)
+                    if index is None or value is None:
+                        continue
+                    value_type = type(value)
+                    if value_type is str:
+                        csv_row[index] = value
+                        continue
+                    if value_type is int or value_type is float or value_type is bool:
+                        csv_row[index] = str(value)
+                        continue
+                    if value_type is list or value_type is tuple:
+                        csv_row[index] = ",".join(map(str, value)) if value else ""
+                        continue
+                    if value_type is dict:
+                        csv_row[index] = json.dumps(value, sort_keys=True) if value else ""
+                        continue
+                    csv_row[index] = _csv_value(value)
+                yield csv_row
+                continue
             row_get = row.get
             csv_row: list[str] = []
             append_value = csv_row.append
@@ -1136,6 +1160,8 @@ def _canonical_benchmark_request_columns() -> list[str]:
         "tool_name",
         "tool_arguments_json",
         "tool_observation_json",
+        "untrusted_context_receipt_schema",
+        "untrusted_context_receipt_count",
         "tool_call_count",
         "tool_latency_ms",
         "observation_bytes",

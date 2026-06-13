@@ -385,6 +385,8 @@ class ServingBenchmarkRequestRow:
     tool_name: str = ""
     tool_arguments_json: str = ""
     tool_observation_json: str = ""
+    untrusted_context_receipt_schema: str = ""
+    untrusted_context_receipt_count: int = 0
     tool_call_count: int = 0
     tool_latency_ms: float = 0.0
     observation_bytes: int = 0
@@ -436,6 +438,8 @@ class ServingBenchmarkRequestRow:
             "tool_name": self.tool_name,
             "tool_arguments_json": self.tool_arguments_json,
             "tool_observation_json": self.tool_observation_json,
+            "untrusted_context_receipt_schema": self.untrusted_context_receipt_schema,
+            "untrusted_context_receipt_count": self.untrusted_context_receipt_count,
             "tool_call_count": self.tool_call_count,
             "tool_latency_ms": self.tool_latency_ms,
             "observation_bytes": self.observation_bytes,
@@ -883,6 +887,22 @@ def _compact_json_text(payload: object) -> str:
     return json.dumps(payload, **_COMPACT_JSON_KWARGS)
 
 
+def _untrusted_context_receipt_summary(payload: object) -> tuple[str, int]:
+    if not isinstance(payload, dict):
+        return "", 0
+    raw_receipts = payload.get("untrusted_context_receipts")
+    if not isinstance(raw_receipts, list):
+        return "", 0
+    receipts = tuple(receipt for receipt in raw_receipts if isinstance(receipt, dict))
+    schema = ""
+    for receipt in receipts:
+        raw_schema = receipt.get("schema_version")
+        if isinstance(raw_schema, str) and raw_schema:
+            schema = raw_schema
+            break
+    return schema, len(receipts)
+
+
 def _agentic_metric_float(metrics: dict[str, float] | None, key: str) -> float:
     if not metrics:
         return 0.0
@@ -1008,6 +1028,9 @@ def build_serving_benchmark_request_row(
         base_model_id
         or (model_id if resolved_compare_target_kind == "base" else "")
     )
+    untrusted_context_receipt_schema, untrusted_context_receipt_count = (
+        _untrusted_context_receipt_summary(tool_observation)
+    )
     return ServingBenchmarkRequestRow(
         schema_version=_SERVING_BENCHMARK_REQUEST_ROW_SCHEMA_VERSION,
         job_id=job_id,
@@ -1045,6 +1068,8 @@ def build_serving_benchmark_request_row(
         tool_name=tool_name,
         tool_arguments_json=_compact_json_text(tool_arguments or {}),
         tool_observation_json=_compact_json_text(tool_observation or {}),
+        untrusted_context_receipt_schema=untrusted_context_receipt_schema,
+        untrusted_context_receipt_count=untrusted_context_receipt_count,
         tool_call_count=int(agentic_fields["tool_call_count"]),
         tool_latency_ms=float(agentic_fields["tool_latency_ms"]),
         observation_bytes=int(agentic_fields["observation_bytes"]),
