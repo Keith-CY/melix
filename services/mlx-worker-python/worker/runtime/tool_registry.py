@@ -612,16 +612,24 @@ def _keyword_boundary_text(text: str) -> str:
 def _compile_keyword_hint_rules(
     hints_by_tool: dict[str, tuple[str, ...]],
 ) -> dict[str, tuple[_KeywordHintRule, ...]]:
-    return {
-        tool_name: tuple(
-            (hint.casefold(), any(character in hint for character in _KEYWORD_LITERAL_HINT_CHARACTERS))
-            if any(character in hint for character in _KEYWORD_LITERAL_HINT_CHARACTERS)
-            else (_keyword_boundary_text(hint.casefold()), False)
-            for hint in hints
-            if hint
-        )
-        for tool_name, hints in hints_by_tool.items()
-    }
+    literal_hint_characters = _KEYWORD_LITERAL_HINT_CHARACTERS
+    keyword_boundary_text = _keyword_boundary_text
+    compiled_rules: dict[str, tuple[_KeywordHintRule, ...]] = {}
+    for tool_name, hints in hints_by_tool.items():
+        rules: list[_KeywordHintRule] = []
+        append_rule = rules.append
+        for hint in hints:
+            if not hint:
+                continue
+            casefolded_hint = hint.casefold()
+            is_literal = any(character in hint for character in literal_hint_characters)
+            append_rule(
+                (casefolded_hint, True)
+                if is_literal
+                else (keyword_boundary_text(casefolded_hint), False)
+            )
+        compiled_rules[tool_name] = tuple(rules)
+    return compiled_rules
 
 
 def _arg(
