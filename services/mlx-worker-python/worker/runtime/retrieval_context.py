@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping, NoReturn
 
@@ -7,6 +8,7 @@ from worker.runtime.prompt_context import (
     PromptContextAdmission,
     PromptContextSourceEvidence,
     admit_prompt_context_source_evidence,
+    refused_prompt_context_receipt,
     refused_source_prompt_context_receipt,
 )
 
@@ -41,6 +43,14 @@ class RetrievalContextProjection:
     @property
     def untrusted_context_receipt_count(self) -> int:
         return len(self.untrusted_context_receipts)
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalLookupResultProjection:
+    prompt_user_payload: dict[str, Any]
+    untrusted_context_receipts: list[dict[str, object]]
+    refusal_receipts: list[dict[str, object]]
+    lookup_message: dict[str, Any] | None
 
 
 def admit_retrieved_document_context(
@@ -233,6 +243,46 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     )
 
 
+def project_retrieval_lookup_result(lookup_result: Any) -> RetrievalLookupResultProjection:
+    if not isinstance(lookup_result, Mapping):
+        return RetrievalLookupResultProjection(
+            prompt_user_payload={},
+            untrusted_context_receipts=[],
+            refusal_receipts=[_lookup_result_refusal()],
+            lookup_message=None,
+        )
+
+    store_projection = project_retrieval_store_records(lookup_result.get("records"))
+    prompt_user_payload = _copy_payload(store_projection.user_payload)
+    untrusted_context_receipts = _copy_receipts(
+        store_projection.untrusted_context_receipts
+    )
+    refusal_receipts = _copy_receipts(store_projection.refusal_receipts)
+    lookup_message: dict[str, Any] | None = None
+    if prompt_user_payload:
+        lookup_message = {
+            "role": "user",
+            "content": prompt_user_payload,
+            "untrusted_context_receipts": untrusted_context_receipts,
+        }
+
+    return RetrievalLookupResultProjection(
+        prompt_user_payload=prompt_user_payload,
+        untrusted_context_receipts=untrusted_context_receipts,
+        refusal_receipts=refusal_receipts,
+        lookup_message=lookup_message,
+    )
+
+
+def _copy_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return deepcopy(dict(payload))
+
+
+def _copy_receipts(receipts: list[dict[str, object]]) -> list[dict[str, object]]:
+    # Receipt schemas are flat JSON metadata; payload-bearing values are never copied here.
+    return [dict(receipt) for receipt in receipts]
+
+
 def _admit_entry(entry: RetrievalContextEntry) -> PromptContextAdmission:
     if not isinstance(entry, RetrievalContextEntry):
         _raise_refusal(
@@ -344,6 +394,17 @@ def _store_record_refusal(
         corrective_action=(
             f"Reject malformed {context_kind.replace('_', ' ')} evidence before prompt assembly."
         ),
+    )
+
+
+def _lookup_result_refusal() -> dict[str, object]:
+    return refused_prompt_context_receipt(
+        segment_id="unknown-retrieval-lookup:lookup-result",
+        source_type="retrieval_lookup",
+        source_field="lookup_result",
+        source_id="unknown-retrieval-lookup",
+        reason="invalid_retrieval_lookup_result",
+        corrective_action="Reject malformed retrieval lookup result before prompt assembly.",
     )
 
 
@@ -524,8 +585,10 @@ __all__ = [
     "RetrievalContextAdmissionError",
     "RetrievalContextEntry",
     "RetrievalContextProjection",
+    "RetrievalLookupResultProjection",
     "admit_retrieved_document_context",
     "admit_retrieved_image_context",
     "project_retrieval_contexts",
+    "project_retrieval_lookup_result",
     "project_retrieval_store_records",
 ]
