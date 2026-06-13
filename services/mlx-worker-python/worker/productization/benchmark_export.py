@@ -555,9 +555,8 @@ def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
 
 
 def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
-    return _rows_to_csv(
+    return _benchmark_summary_rows_to_csv(
         (row for row in bundle.get("benchmark_summary_rows", []) if isinstance(row, dict)),
-        _BENCHMARK_SUMMARY_COLUMNS,
     )
 
 
@@ -1045,6 +1044,124 @@ def _rows_to_csv(rows: Iterable[dict[str, object]], fieldnames: Sequence[str]) -
     return buffer.getvalue()
 
 
+def _benchmark_summary_rows_to_csv(rows: Iterable[dict[str, object]]) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(_BENCHMARK_SUMMARY_COLUMNS)
+
+    def csv_value(value: object) -> object:
+        if value is None:
+            return ""
+        value_type = type(value)
+        if value_type is str or value_type is int or value_type is float or value_type is bool:
+            return value
+        if value_type is list or value_type is tuple:
+            return ",".join(map(str, value)) if value else ""
+        if value_type is dict:
+            return json.dumps(value, sort_keys=True) if value else ""
+        return _csv_value(value)
+
+    def sequence_value(value: object) -> object:
+        value_type = type(value)
+        if value_type is list or value_type is tuple:
+            if not value:
+                return ""
+            if len(value) == 1:
+                return str(value[0])
+            return ",".join(map(str, value))
+        return csv_value(value)
+
+    def csv_rows() -> Iterable[tuple[object, ...]]:
+        for row in rows:
+            row_get = row.get
+            job_id = row_get("job_id", "")
+            model_id = row_get("model_id", "")
+            task_kind = row_get("task_kind", "")
+            source_repo = row_get("source_repo", "")
+            suites = row_get("suites", "")
+            context_lengths = row_get("context_lengths", "")
+            generation_length = row_get("generation_length", "")
+            batch_sizes = row_get("batch_sizes", "")
+            repeats = row_get("repeats", "")
+            cache_profile = row_get("cache_profile", "")
+            reasoning_mode = row_get("reasoning_mode", "")
+            structured_output_mode = row_get("structured_output_mode", "")
+            request_p50_ms = row_get("request_p50_ms", "")
+            request_p95_ms = row_get("request_p95_ms", "")
+            status = row_get("status", "")
+            output_dir = row_get("output_dir", "")
+            created_at_unix_ms = row_get("created_at_unix_ms", "")
+            updated_at_unix_ms = row_get("updated_at_unix_ms", "")
+
+            if (
+                type(job_id) is str
+                and type(model_id) is str
+                and type(task_kind) is str
+                and type(source_repo) is str
+                and (type(suites) is list or type(suites) is tuple)
+                and (type(context_lengths) is list or type(context_lengths) is tuple)
+                and (type(generation_length) is int or type(generation_length) is float)
+                and (type(batch_sizes) is list or type(batch_sizes) is tuple)
+                and type(repeats) is int
+                and type(cache_profile) is str
+                and type(reasoning_mode) is str
+                and type(structured_output_mode) is str
+                and type(request_p50_ms) is float
+                and type(request_p95_ms) is float
+                and type(status) is str
+                and type(output_dir) is str
+                and type(created_at_unix_ms) is int
+                and type(updated_at_unix_ms) is int
+            ):
+                yield (
+                    job_id,
+                    model_id,
+                    task_kind,
+                    source_repo,
+                    str(suites[0]) if len(suites) == 1 else ",".join(map(str, suites)),
+                    str(context_lengths[0])
+                    if len(context_lengths) == 1
+                    else ",".join(map(str, context_lengths)),
+                    generation_length,
+                    str(batch_sizes[0]) if len(batch_sizes) == 1 else ",".join(map(str, batch_sizes)),
+                    repeats,
+                    cache_profile,
+                    reasoning_mode,
+                    structured_output_mode,
+                    request_p50_ms,
+                    request_p95_ms,
+                    status,
+                    output_dir,
+                    created_at_unix_ms,
+                    updated_at_unix_ms,
+                )
+                continue
+
+            yield (
+                csv_value(row_get("job_id", "")),
+                csv_value(row_get("model_id", "")),
+                csv_value(row_get("task_kind", "")),
+                csv_value(row_get("source_repo", "")),
+                sequence_value(row_get("suites", "")),
+                sequence_value(row_get("context_lengths", "")),
+                csv_value(row_get("generation_length", "")),
+                sequence_value(row_get("batch_sizes", "")),
+                csv_value(row_get("repeats", "")),
+                csv_value(row_get("cache_profile", "")),
+                csv_value(row_get("reasoning_mode", "")),
+                csv_value(row_get("structured_output_mode", "")),
+                csv_value(row_get("request_p50_ms", "")),
+                csv_value(row_get("request_p95_ms", "")),
+                csv_value(row_get("status", "")),
+                csv_value(row_get("output_dir", "")),
+                csv_value(row_get("created_at_unix_ms", "")),
+                csv_value(row_get("updated_at_unix_ms", "")),
+            )
+
+    writer.writerows(csv_rows())
+    return buffer.getvalue()
+
+
 def _canonical_benchmark_row_columns() -> list[str]:
     return [
         "job_id",
@@ -1136,6 +1253,8 @@ def _canonical_benchmark_request_columns() -> list[str]:
         "tool_name",
         "tool_arguments_json",
         "tool_observation_json",
+        "untrusted_context_receipt_schema",
+        "untrusted_context_receipt_count",
         "tool_call_count",
         "tool_latency_ms",
         "observation_bytes",

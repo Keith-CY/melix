@@ -854,6 +854,15 @@ the sanitized payload. This keeps payload redaction, truncation, replay hashes,
 and byte metrics focused on the emitted tool output while still making the
 prompt boundary visible to downstream prompt assemblers.
 
+Benchmark request rows derived from agentic tool turns must preserve that
+boundary evidence without promoting untrusted payload text into scalar CSV
+fields. Each `tool_turn` request row keeps the full observation, including
+`untrusted_context_receipts`, in `tool_observation_json`, and exposes only
+`untrusted_context_receipt_schema` plus `untrusted_context_receipt_count` as
+metadata columns. The count includes mapping-shaped receipt entries only; the
+schema field is the first string `schema_version` found in those receipts or an
+empty string when no receipt schema is available.
+
 The v1 generic tool-output slice adds this receipt in the shared Python worker
 tool observation normalizer. The follow-up prompt-context admission slice
 generates the receipt through `worker.runtime.prompt_context` by admitting one
