@@ -62,7 +62,7 @@ _GEMMA4_QAT_DRAFT_COMPANION_RECOVERY_HINT = (
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RegistryRootSnapshot:
     root_id: str
     root_path: str
@@ -73,7 +73,7 @@ class RegistryRootSnapshot:
     discovered_model_ids: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RegistrySnapshot:
     roots: tuple[RegistryRootSnapshot, ...]
     models: tuple[common_pb2.ModelSpec, ...]
