@@ -2067,9 +2067,11 @@ def test_event_alignment_precomputes_only_accepted_sparse_edges(monkeypatch) -> 
 
     edges = event_extraction_module._accepted_event_matching_edges(scores, accepted)
     precomputed_round_calls = len(round_calls)
+    round_calls.clear()
     matches = event_extraction_module._maximum_weight_event_matching(scores, accepted)
 
-    assert precomputed_round_calls == 0
+    assert precomputed_round_calls == 5
+    assert len(round_calls) == 5
     assert edges == (
         ((0, 0.91), (3, 0.77)),
         ((1, 0.82),),

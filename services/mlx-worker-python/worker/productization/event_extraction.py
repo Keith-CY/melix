@@ -15,6 +15,8 @@ from urllib.request import Request, urlopen
 
 
 FIELD_NAMES = ("actor", "time", "location", "action")
+_EventMatchingPairs = tuple[tuple[int, int, float], ...]
+_EventMatchingState = tuple[float, _EventMatchingPairs]
 FIELD_WEIGHTS = {
     "actor": 0.30,
     "time": 0.25,
@@ -2243,7 +2245,7 @@ def _accepted_event_matching_edges(
     accepted: list[list[bool]],
 ) -> tuple[tuple[tuple[int, float], ...], ...]:
     return tuple(
-        tuple((pred_index, score) for pred_index, _pred_mask, score in edge_row)
+        tuple((pred_index, score) for pred_index, _pred_mask, score, _rounded_score in edge_row)
         for edge_row in _accepted_event_matching_edge_states(scores, accepted)
     )
 
@@ -2251,10 +2253,10 @@ def _accepted_event_matching_edges(
 def _accepted_event_matching_edge_states(
     scores: list[list[float]],
     accepted: list[list[bool]],
-) -> tuple[tuple[tuple[int, int, float], ...], ...]:
+) -> tuple[tuple[tuple[int, int, float, float], ...], ...]:
     return tuple(
         tuple(
-            (pred_index, 1 << pred_index, float(score))
+            (pred_index, 1 << pred_index, float(score), _round_metric(float(score)))
             for pred_index, score in enumerate(score_row)
             if pred_index < len(accepted_row) and accepted_row[pred_index]
         )
@@ -2268,22 +2270,19 @@ def _maximum_weight_event_matching(
 ) -> list[tuple[int, int, float]]:
     gold_count = len(scores)
     accepted_edges = _accepted_event_matching_edge_states(scores, accepted)
-    memo: dict[tuple[int, int], tuple[float, tuple[tuple[int, int, float], ...]]] = {}
-
-    def rounded_pairs(pairs: tuple[tuple[int, int, float], ...]) -> tuple[tuple[int, int, float], ...]:
-        return tuple((gold_index, pred_index, _round_metric(score)) for gold_index, pred_index, score in pairs)
+    memo: dict[tuple[int, int], _EventMatchingState] = {}
 
     def better(
-        candidate: tuple[float, tuple[tuple[int, int, float], ...]],
-        current: tuple[float, tuple[tuple[int, int, float], ...]],
+        candidate: _EventMatchingState,
+        current: _EventMatchingState,
     ) -> bool:
         if candidate[0] > current[0] + 1e-12:
             return True
         if abs(candidate[0] - current[0]) <= 1e-12:
-            return rounded_pairs(candidate[1]) < rounded_pairs(current[1])
+            return candidate[1] < current[1]
         return False
 
-    def solve(gold_index: int, used_pred_mask: int) -> tuple[float, tuple[tuple[int, int, float], ...]]:
+    def solve(gold_index: int, used_pred_mask: int) -> _EventMatchingState:
         key = (gold_index, used_pred_mask)
         cached = memo.get(key)
         if cached is not None:
@@ -2292,18 +2291,18 @@ def _maximum_weight_event_matching(
             return (0.0, ())
 
         best = solve(gold_index + 1, used_pred_mask)
-        for pred_index, pred_mask, score in accepted_edges[gold_index]:
+        for pred_index, pred_mask, score, rounded_score in accepted_edges[gold_index]:
             if used_pred_mask & pred_mask:
                 continue
-            next_score, next_pairs = solve(gold_index + 1, used_pred_mask | pred_mask)
-            pair = (gold_index, pred_index, score)
-            candidate = (score + next_score, (pair,) + next_pairs)
+            next_score, next_rounded_pairs = solve(gold_index + 1, used_pred_mask | pred_mask)
+            rounded_pair = (gold_index, pred_index, rounded_score)
+            candidate = (score + next_score, (rounded_pair,) + next_rounded_pairs)
             if better(candidate, best):
                 best = candidate
         memo[key] = best
         return best
 
-    return list(rounded_pairs(solve(0, 0)[1]))
+    return list(solve(0, 0)[1])
 
 
 def _build_row_alignment_audit(
