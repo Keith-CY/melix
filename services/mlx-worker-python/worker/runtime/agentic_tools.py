@@ -9,7 +9,7 @@ from urllib.request import url2pathname
 
 from worker.runtime.retrieval_context import (
     admit_retrieved_document_context,
-    admit_retrieved_image_context,
+    project_retrieval_lookup_result,
 )
 from worker.runtime.tool_observation import (
     ToolObservationPolicy,
@@ -360,7 +360,7 @@ def _text_search_payload(
     corpus = _context_list(fixture_context, "text_corpus", corpus_ref)
     lowered_query = query.lower()
     results: list[dict[str, str]] = []
-    result_receipts: list[dict[str, object]] = []
+    result_records: list[dict[str, object]] = []
     owner_scope_checked = _owner_scope_is_configured(fixture_context)
     for index, item in enumerate(corpus, start=1):
         source_id = _source_id(item.get("id"), default=f"doc-{index}")
@@ -381,8 +381,8 @@ def _text_search_payload(
         if lowered_query in text.lower():
             result = {"id": source_id, "text": text}
             results.append(result)
-            result_receipts.append(
-                _retrieval_result_receipt(
+            result_records.append(
+                _retrieval_result_record(
                     tool_call_id=tool_call_id,
                     result_index=len(results),
                     value=result,
@@ -398,7 +398,7 @@ def _text_search_payload(
         "corpus_ref": corpus_ref,
         "results": results,
         "result_count": len(results),
-        "_untrusted_context_receipts": result_receipts,
+        "_untrusted_context_receipts": _retrieval_lookup_result_receipts(result_records),
     }
 
 
@@ -414,7 +414,7 @@ def _image_search_payload(
     corpus = _context_list(fixture_context, "image_corpus", corpus_ref)
     lowered_query = query.lower()
     results: list[dict[str, str]] = []
-    result_receipts: list[dict[str, object]] = []
+    result_records: list[dict[str, object]] = []
     owner_scope_checked = _owner_scope_is_configured(fixture_context)
     for index, item in enumerate(corpus, start=1):
         source_id = _source_id(item.get("id"), default=f"image-{index}")
@@ -441,8 +441,8 @@ def _image_search_payload(
             )
             result = {"id": source_id, "media_ref": media_ref, "caption": caption}
             results.append(result)
-            result_receipts.append(
-                _retrieval_result_receipt(
+            result_records.append(
+                _retrieval_result_record(
                     tool_call_id=tool_call_id,
                     result_index=len(results),
                     value=result,
@@ -458,7 +458,7 @@ def _image_search_payload(
         "corpus_ref": corpus_ref,
         "results": results,
         "result_count": len(results),
-        "_untrusted_context_receipts": result_receipts,
+        "_untrusted_context_receipts": _retrieval_lookup_result_receipts(result_records),
     }
 
 
@@ -812,7 +812,7 @@ def _enforce_owner_scope(
     )
 
 
-def _retrieval_result_receipt(
+def _retrieval_result_record(
     *,
     tool_call_id: str,
     result_index: int,
@@ -822,7 +822,10 @@ def _retrieval_result_receipt(
     owner_scope_checked: bool,
 ) -> dict[str, object]:
     source_label = "document" if source_type == "retrieved_document" else "image"
-    kwargs = {
+    return {
+        "context_kind": source_type,
+        "source_id": source_id,
+        "payload": value,
         "owner_scope_checked": owner_scope_checked,
         "segment_id": f"{tool_call_id}:result-{result_index}",
         "source_field": f"results[{result_index - 1}]",
@@ -832,19 +835,16 @@ def _retrieval_result_receipt(
             "them into system or developer instructions."
         ),
     }
-    if source_type == "retrieved_document":
-        admission = admit_retrieved_document_context(
-            document_id=source_id,
-            document_payload=value,
-            **kwargs,
-        )
-    else:
-        admission = admit_retrieved_image_context(
-            image_id=source_id,
-            image_payload=value,
-            **kwargs,
-        )
-    return admission.untrusted_context_receipts[0]
+
+
+def _retrieval_lookup_result_receipts(
+    records: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    projection = project_retrieval_lookup_result({"records": records})
+    return [
+        *projection.untrusted_context_receipts,
+        *projection.refusal_receipts,
+    ]
 
 
 def _visit_document_receipt(
