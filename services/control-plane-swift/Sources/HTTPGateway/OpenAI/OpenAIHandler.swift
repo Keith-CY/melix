@@ -971,15 +971,23 @@ public struct OpenAIHandler: Sendable {
         authorization: GatewayAuthorizationContext
     ) async throws -> HTTPResponse {
         let startedAt = Date()
-        let routes = await healthRoutes()
-        let models = await modelCatalog.listModels()
-        let visibleModels = models.filter(ModelCatalogPresentation.isUserVisible)
-        let readyCount = visibleModels.filter { $0.state == .modelWarm || $0.state == .modelPinned }.count
-        let summary = if let cacheMetadataStore {
+        async let routesTask = healthRoutes()
+        async let modelsTask = modelCatalog.listModels()
+        async let cacheSummaryTask: Melix_Controlplane_V1_CacheSummary = if let cacheMetadataStore {
             await cacheMetadataStore.cacheSummary()
         } else {
             CacheMetadataStore.emptySummary()
         }
+        async let queueSnapshotTask = schedulerReadModel?.snapshot()
+        async let imageJobsSnapshotTask = imageJobReadModel?.snapshot()
+
+        let routes = await routesTask
+        let models = await modelsTask
+        let visibleModels = models.filter(ModelCatalogPresentation.isUserVisible)
+        let readyCount = visibleModels.filter { $0.state == .modelWarm || $0.state == .modelPinned }.count
+        let summary = await cacheSummaryTask
+        let queueSnapshot = await queueSnapshotTask
+        let imageJobsSnapshot = await imageJobsSnapshotTask ?? []
         let response = CompanionStatusResponse(
             readOnly: true,
             status: routes.values.allSatisfy { $0 } ? "ok" : "degraded",
@@ -994,8 +1002,8 @@ public struct OpenAIHandler: Sendable {
                 items: visibleModels.map(CompanionModelPayload.init(model:))
             ),
             cache: CompanionCacheStatusPayload(summary: summary),
-            queue: CompanionQueueStatusPayload(summary: await schedulerReadModel?.snapshot()),
-            imageJobs: CompanionImageJobStatusPayload(jobs: await imageJobReadModel?.snapshot() ?? []),
+            queue: CompanionQueueStatusPayload(summary: queueSnapshot),
+            imageJobs: CompanionImageJobStatusPayload(jobs: imageJobsSnapshot),
             redaction: CompanionRedactionStatusPayload()
         )
         await metricsStore.set(
