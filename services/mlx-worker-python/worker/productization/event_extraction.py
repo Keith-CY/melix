@@ -2854,6 +2854,12 @@ def _coerce_string_list(value: object) -> list[str]:
 
 def _parse_response_json(response_text: str) -> dict[str, object]:
     response_length = len(response_text)
+    if response_length and response_text[0] == "{":
+        parsed, end_index = _JSON_RAW_DECODE(response_text, 0)
+        if not _has_only_trailing_whitespace(response_text, end_index, response_length):
+            raise json.JSONDecodeError("Extra data", response_text, end_index)
+        return parsed
+
     if response_text.startswith(_JSON_FENCE_PREFIX):
         parsed, end_index = _JSON_RAW_DECODE(
             response_text,
