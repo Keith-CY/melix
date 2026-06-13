@@ -1,10 +1,16 @@
 import CryptoKit
 import Foundation
 
+public enum PersistentAuthSessionScope: String, Codable, Equatable, Sendable {
+    case operatorControl = "operator_control"
+    case companionReadOnly = "companion_read_only"
+}
+
 public struct PersistentAuthSessionMetadata: Equatable, Sendable {
     public let sessionID: String
     public let keyID: String
     public let rememberMe: Bool
+    public let scope: PersistentAuthSessionScope
     public let createdAtUnixMs: Int64
     public let expiresAtUnixMs: Int64
     public let revokedAtUnixMs: Int64
@@ -39,6 +45,7 @@ private struct PersistentAuthSessionRecord: Codable, Equatable, Sendable {
     let sessionID: String
     let keyID: String
     let rememberMe: Bool
+    let scope: PersistentAuthSessionScope
     let tokenHash: String
     let createdAtUnixMs: Int64
     let expiresAtUnixMs: Int64
@@ -49,6 +56,7 @@ private struct PersistentAuthSessionRecord: Codable, Equatable, Sendable {
         case sessionID = "session_id"
         case keyID = "key_id"
         case rememberMe = "remember_me"
+        case scope
         case tokenHash = "token_hash"
         case createdAtUnixMs = "created_at_unix_ms"
         case expiresAtUnixMs = "expires_at_unix_ms"
@@ -56,11 +64,47 @@ private struct PersistentAuthSessionRecord: Codable, Equatable, Sendable {
         case lastRestoredAtUnixMs = "last_restored_at_unix_ms"
     }
 
+    init(
+        sessionID: String,
+        keyID: String,
+        rememberMe: Bool,
+        scope: PersistentAuthSessionScope,
+        tokenHash: String,
+        createdAtUnixMs: Int64,
+        expiresAtUnixMs: Int64,
+        revokedAtUnixMs: Int64,
+        lastRestoredAtUnixMs: Int64
+    ) {
+        self.sessionID = sessionID
+        self.keyID = keyID
+        self.rememberMe = rememberMe
+        self.scope = scope
+        self.tokenHash = tokenHash
+        self.createdAtUnixMs = createdAtUnixMs
+        self.expiresAtUnixMs = expiresAtUnixMs
+        self.revokedAtUnixMs = revokedAtUnixMs
+        self.lastRestoredAtUnixMs = lastRestoredAtUnixMs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionID = try container.decode(String.self, forKey: .sessionID)
+        keyID = try container.decode(String.self, forKey: .keyID)
+        rememberMe = try container.decode(Bool.self, forKey: .rememberMe)
+        scope = try container.decodeIfPresent(PersistentAuthSessionScope.self, forKey: .scope) ?? .operatorControl
+        tokenHash = try container.decode(String.self, forKey: .tokenHash)
+        createdAtUnixMs = try container.decode(Int64.self, forKey: .createdAtUnixMs)
+        expiresAtUnixMs = try container.decode(Int64.self, forKey: .expiresAtUnixMs)
+        revokedAtUnixMs = try container.decode(Int64.self, forKey: .revokedAtUnixMs)
+        lastRestoredAtUnixMs = try container.decode(Int64.self, forKey: .lastRestoredAtUnixMs)
+    }
+
     var metadata: PersistentAuthSessionMetadata {
         PersistentAuthSessionMetadata(
             sessionID: sessionID,
             keyID: keyID,
             rememberMe: rememberMe,
+            scope: scope,
             createdAtUnixMs: createdAtUnixMs,
             expiresAtUnixMs: expiresAtUnixMs,
             revokedAtUnixMs: revokedAtUnixMs,
@@ -151,7 +195,8 @@ public actor PersistentAuthSessionStore {
 
     public func issueSession(
         keyID: String,
-        rememberMe: Bool
+        rememberMe: Bool,
+        scope: PersistentAuthSessionScope = .operatorControl
     ) async throws -> PersistentAuthSessionIssue {
         let createdAtUnixMs = nowUnixMs()
         let token = "melix_sess_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
@@ -159,6 +204,7 @@ public actor PersistentAuthSessionStore {
             sessionID: "auth-session-\(UUID().uuidString)",
             keyID: keyID,
             rememberMe: rememberMe,
+            scope: scope,
             tokenHash: Self.hash(token),
             createdAtUnixMs: createdAtUnixMs,
             expiresAtUnixMs: createdAtUnixMs + Int64(retentionTTLSeconds * 1_000),
