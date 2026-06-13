@@ -533,8 +533,9 @@ abort the whole scan; they emit `reason = record_unreadable`, and
 revision-guarded store conflicts keep their store-level receipt so the monitor
 can continue scanning other records. The registered PR-scoped performance probe
 for this path is `local-job-followup-scan-scandir`, which verifies the scandir
-scan and reports elapsed time plus `Path.exists`/`Path.glob`/`os.scandir` call
-counts.
+scan, derives job IDs directly from `.json` filenames without per-entry `Path`
+stem construction, and reports elapsed time plus `Path.exists`/`Path.glob`/
+`os.scandir` call counts.
 
 When a monitor already has redacted completion summaries for candidate records,
 it may compose discovery and guarded claiming through
