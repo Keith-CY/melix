@@ -757,6 +757,17 @@ read files, fetch media, infer owner scope, mutate sessions, or copy raw
 retrieved text, captions, media URIs, local paths, or prompt bodies into
 receipt JSON.
 
+The deterministic Python-worker `text_search` and `image_search` adapters are
+the concrete v1 callers of this lookup projection. They keep their observation
+payloads shaped as `query`, `corpus_ref`, `results`, and `result_count`, but
+convert selected results into lookup records and attach
+`project_retrieval_lookup_result(...).untrusted_context_receipts` as source
+receipts for `normalize_tool_observation`. They do not emit the projection's
+`lookup_message` because the tool observation already carries the visible
+result payload. `visit` remains a direct retrieved-document admission path
+because it projects one visited document payload, not a multi-result lookup
+wrapper.
+
 The v1 control-plane rerank document-boundary slice applies the same receipt
 schema to the OpenAI-compatible `/v1/rerank` HTTP response. The handler emits
 one redacted `source_type = retrieved_document` receipt per candidate document
