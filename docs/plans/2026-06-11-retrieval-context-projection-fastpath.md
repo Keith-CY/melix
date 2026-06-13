@@ -1,9 +1,9 @@
-# Retrieval context projection duplicate-field fast path
+# Retrieval context projection and store-record local binding fast paths
 
 ## Scope
 
-This Python-only performance slice is limited to `project_retrieval_contexts()` in
-`services/mlx-worker-python/worker/runtime/retrieval_context.py`.
+This Python-only performance slice is limited to retrieval context projection and
+store-record projection in `services/mlx-worker-python/worker/runtime/retrieval_context.py`.
 
 ## Registered probe
 
@@ -34,6 +34,13 @@ unique-field overhead:
    intermediate shallow dict copy.
 3. Preserve defensive receipt copying and duplicate receipt fallback behavior.
 
+The 2026-06-13 follow-up keeps the same registered probe and narrows the next
+change to `project_retrieval_store_records()`: bind `RetrievalContextEntry` and
+each record's `.get` method once per valid record, then reuse those local
+bindings while building the entry descriptor. This preserves all validation and
+refusal behavior while trimming repeated attribute lookup overhead in the
+registered store-record projection workload.
+
 ## Verification plan
 
 ```bash
@@ -49,4 +56,6 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" MELIX_RETRIEVAL_CONTEXT_PROJEC
   threshold.
 - The registered probe reports lower `optimized_elapsed_ms_mean` than
   `baseline_elapsed_ms_mean`, positive `speedup`, and negative `delta_ms` on the
-  synthetic projection workload.
+  synthetic projection workload. For the store-record follow-up, the same probe
+  must also keep `store_optimized_elapsed_ms_mean` below
+  `store_baseline_elapsed_ms_mean` with negative `store_delta_ms`.
