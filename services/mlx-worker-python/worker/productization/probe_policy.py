@@ -68,6 +68,8 @@ class ProbePolicy:
             return _probe_policy_from_uncached_string(value, default_mode)
         elif isinstance(value, ProbeMode):
             return _PROBE_POLICY_BY_MODE[value]
+        elif value is None:
+            return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
         elif isinstance(value, str):
             policy = _PROBE_POLICY_BY_VALUE_GET(value)
             if policy is not None:
