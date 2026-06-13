@@ -5634,6 +5634,29 @@
         "warn_abs": 1.0
       },
       {
+        "key": "store_baseline_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "informational"
+      },
+      {
+        "key": "store_optimized_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "store_delta_ms",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_abs": 0.0
+      },
+      {
+        "key": "store_speedup",
+        "unit": "x",
+        "direction": "higher_is_better",
+        "warn_abs": 1.0
+      },
+      {
         "key": "entry_count",
         "unit": "count",
         "direction": "informational"

@@ -32,6 +32,10 @@ This follow-up narrows receipt-copy overhead by binding `dict.copy` directly for
 
 This slice adds a single-receipt append fast path for the common admission shape emitted by retrieval entries. Multi-receipt admissions still copy every receipt through the existing loop, while the one-receipt case avoids setting up a per-receipt loop iterator.
 
+This follow-up adds fast paths for valid store-record projection in `project_retrieval_store_records()`. The store bridge now skips the generic `Mapping` ABC check for exact `dict` records, binds loop-stable append/refusal helpers once, and returns the already isolated `project_retrieval_contexts()` projection directly when no malformed top-level records are present. Mapping subclasses and mixed valid/malformed records keep the existing defensive validation and refusal-copy path.
+
+The registered `retrieval-context-projection-fastpath` probe is extended with store-record projection metrics so the store bridge fast path is measured by the same PR-scoped performance gate.
+
 ## Verification Plan
 
 Run the registered focused test command, changed-scope coverage command, and registered probe command locally on Linux before opening the PR. The PR-scoped performance workflow remains the authoritative CI validation source after push.
