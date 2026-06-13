@@ -979,7 +979,7 @@ def _skill_memory_lookup_result_item(
             source_id=source_id,
         )
         summary = _optional_untrusted_text(
-            item.get("summary", item.get("description", "")),
+            item.get("summary") or item.get("description") or "",
             field="skill_store.summary",
             source_type="skill",
             source_id=source_id,
@@ -994,7 +994,7 @@ def _skill_memory_lookup_result_item(
 
     if context_kind == "memory":
         text = _optional_untrusted_text(
-            item.get("text", item.get("summary", "")),
+            item.get("text") or item.get("summary") or "",
             field="memory_store.text",
             source_type="memory",
             source_id=source_id,
@@ -1009,7 +1009,9 @@ def _skill_memory_lookup_result_item(
 
 
 def _skill_memory_lookup_match_text(result: dict[str, Any]) -> str:
-    return " ".join(str(value).lower() for value in result.values())
+    return " ".join(
+        str(value).lower() for key, value in result.items() if key != "id"
+    )
 
 
 def _skill_memory_result_record(

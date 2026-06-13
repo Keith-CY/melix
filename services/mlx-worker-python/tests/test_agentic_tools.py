@@ -784,6 +784,97 @@ def test_agentic_tool_runtime_skill_lookup_uses_named_store_refs() -> None:
     ]
 
 
+def test_agentic_tool_runtime_skill_memory_lookup_does_not_match_source_ids_only() -> None:
+    run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "skill-id-only",
+                "name": "skill_lookup",
+                "arguments": {"query": "skill"},
+            },
+            {
+                "id": "memory-id-only",
+                "name": "memory_lookup",
+                "arguments": {"query": "memory"},
+            },
+        ],
+        fixture_context={
+            "skill_store": [
+                {
+                    "id": "skill:repo-search",
+                    "name": "repository helper",
+                    "summary": "Find project files.",
+                }
+            ],
+            "memory_store": [
+                {
+                    "id": "memory:pinned-7",
+                    "text": "Prefers terse status updates.",
+                }
+            ],
+        },
+    )
+
+    assert [observation["status"] for observation in run.observations] == [
+        "completed",
+        "completed",
+    ]
+    assert run.observations[0]["payload"]["results"] == []
+    assert run.observations[1]["payload"]["results"] == []
+
+
+def test_agentic_tool_runtime_skill_memory_lookup_falls_back_for_empty_primary_fields() -> None:
+    run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "skill-description",
+                "name": "skill_lookup",
+                "arguments": {"query": "fallback description"},
+            },
+            {
+                "id": "memory-summary",
+                "name": "memory_lookup",
+                "arguments": {"query": "fallback summary"},
+            },
+        ],
+        fixture_context={
+            "skill_store": [
+                {
+                    "id": "skill:fallback",
+                    "name": "fallback helper",
+                    "summary": "",
+                    "description": "Fallback description for repo tasks.",
+                }
+            ],
+            "memory_store": [
+                {
+                    "id": "memory:fallback",
+                    "text": None,
+                    "summary": "Fallback summary for operator preferences.",
+                }
+            ],
+        },
+    )
+
+    assert [observation["status"] for observation in run.observations] == [
+        "completed",
+        "completed",
+    ]
+    assert run.observations[0]["payload"]["results"] == [
+        {
+            "id": "skill:fallback",
+            "name": "fallback helper",
+            "summary": "Fallback description for repo tasks.",
+        }
+    ]
+    assert run.observations[1]["payload"]["results"] == [
+        {
+            "id": "memory:fallback",
+            "text": "Fallback summary for operator preferences.",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     (
         "tool_call",
