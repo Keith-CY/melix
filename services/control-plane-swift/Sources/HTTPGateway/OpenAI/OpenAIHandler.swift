@@ -733,6 +733,8 @@ public struct OpenAIHandler: Sendable {
                 response = try await handleHealthDiagnostics()
             case (.get, "/v1/cache/stats"):
                 response = try await handleCacheStats()
+            case (.get, "/v1/melix/companion/status"):
+                response = try await handleCompanionStatus(authorization: authorizationContext)
             case (.post, "/v1/melix/auth/session"):
                 response = try await handleCreateAuthSession(request, authorization: authorizationContext)
             case (.get, "/v1/melix/auth/session"):
@@ -784,7 +786,7 @@ public struct OpenAIHandler: Sendable {
         return HTTPResponse(
             statusCode: 204,
             headers: [
-                "access-control-allow-headers": "authorization, content-type, x-api-key, x-melix-auth-session",
+                "access-control-allow-headers": "authorization, content-type, x-api-key, x-melix-auth-session, x-melix-session",
                 "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
                 "access-control-max-age": "600",
             ],
@@ -961,6 +963,44 @@ public struct OpenAIHandler: Sendable {
         await metricsStore.set(
             Date().timeIntervalSince(startedAt) * 1000,
             forKey: "operator.health_diagnostics_latency_ms"
+        )
+        return try encodedJSONResponse(response)
+    }
+
+    private func handleCompanionStatus(
+        authorization: GatewayAuthorizationContext
+    ) async throws -> HTTPResponse {
+        let startedAt = Date()
+        let routes = await healthRoutes()
+        let models = await modelCatalog.listModels()
+        let visibleModels = models.filter(ModelCatalogPresentation.isUserVisible)
+        let readyCount = visibleModels.filter { $0.state == .modelWarm || $0.state == .modelPinned }.count
+        let summary = if let cacheMetadataStore {
+            await cacheMetadataStore.cacheSummary()
+        } else {
+            CacheMetadataStore.emptySummary()
+        }
+        let response = CompanionStatusResponse(
+            readOnly: true,
+            status: routes.values.allSatisfy { $0 } ? "ok" : "degraded",
+            runtime: CompanionRuntimeStatusPayload(
+                status: routes.values.allSatisfy { $0 } ? "ok" : "degraded",
+                routes: routes
+            ),
+            authorization: CompanionAuthorizationStatusPayload(authorization: authorization),
+            models: CompanionModelStatusPayload(
+                ready: readyCount,
+                total: visibleModels.count,
+                items: visibleModels.map(CompanionModelPayload.init(model:))
+            ),
+            cache: CompanionCacheStatusPayload(summary: summary),
+            queue: CompanionQueueStatusPayload(summary: await schedulerReadModel?.snapshot()),
+            imageJobs: CompanionImageJobStatusPayload(jobs: await imageJobReadModel?.snapshot() ?? []),
+            redaction: CompanionRedactionStatusPayload()
+        )
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: "companion.status_latency_ms"
         )
         return try encodedJSONResponse(response)
     }
@@ -4470,7 +4510,8 @@ public struct OpenAIHandler: Sendable {
              (.get, "/api/config-metadata"),
              (.get, "/v1/models"),
              (.get, "/v1/melix/health"),
-             (.get, "/v1/cache/stats"):
+             (.get, "/v1/cache/stats"),
+             (.get, "/v1/melix/companion/status"):
             return .companionReadOnly
         case (.post, "/v1/melix/auth/session"):
             return .createSession
@@ -5450,6 +5491,305 @@ private struct HealthDiagnosticsModelResponse: Codable {
         case modelID = "model_id"
         case supportedModalities = "supported_modalities"
         case mediaRouteReceipt = "media_route_receipt"
+    }
+}
+
+private struct CompanionStatusResponse: Codable {
+    let schemaVersion = "melix.companion.status.v1"
+    let readOnly: Bool
+    let status: String
+    let runtime: CompanionRuntimeStatusPayload
+    let authorization: CompanionAuthorizationStatusPayload
+    let models: CompanionModelStatusPayload
+    let cache: CompanionCacheStatusPayload
+    let queue: CompanionQueueStatusPayload
+    let imageJobs: CompanionImageJobStatusPayload
+    let redaction: CompanionRedactionStatusPayload
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case readOnly = "read_only"
+        case status
+        case runtime
+        case authorization
+        case models
+        case cache
+        case queue
+        case imageJobs = "image_jobs"
+        case redaction
+    }
+}
+
+private struct CompanionRuntimeStatusPayload: Codable {
+    let status: String
+    let routes: [String: Bool]
+}
+
+private struct CompanionAuthorizationStatusPayload: Codable {
+    let mode: String
+    let scope: String
+    let state: String
+    let sessionID: String?
+    let keyID: String?
+    let rememberMe: Bool?
+    let expiresAtUnixMs: Int64?
+
+    init(authorization: GatewayAuthorizationContext) {
+        switch authorization {
+        case .localTrusted:
+            mode = "local_trusted"
+            scope = "operator_control"
+            state = "active"
+            sessionID = nil
+            keyID = nil
+            rememberMe = nil
+            expiresAtUnixMs = nil
+        case let .credential(keyID, _):
+            mode = "credential"
+            scope = "operator_control"
+            state = "active"
+            sessionID = nil
+            self.keyID = keyID
+            rememberMe = nil
+            expiresAtUnixMs = nil
+        case let .session(_, metadata):
+            mode = "session"
+            scope = metadata.scope.rawValue
+            state = metadata.state
+            sessionID = metadata.sessionID
+            keyID = metadata.keyID
+            rememberMe = metadata.rememberMe
+            expiresAtUnixMs = metadata.expiresAtUnixMs
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case mode
+        case scope
+        case state
+        case sessionID = "session_id"
+        case keyID = "key_id"
+        case rememberMe = "remember_me"
+        case expiresAtUnixMs = "expires_at_unix_ms"
+    }
+}
+
+private struct CompanionModelStatusPayload: Codable {
+    let ready: Int
+    let total: Int
+    let items: [CompanionModelPayload]
+}
+
+private struct CompanionModelPayload: Codable {
+    let modelID: String
+    let state: String
+    let kind: String
+    let supportedModalities: [String]
+
+    init(model: Melix_Controlplane_V1_ModelSummary) {
+        let receipt = ModelCatalogPresentation.publicMediaRouteReceipt(for: model)
+        modelID = model.modelID
+        state = model.state.melixString
+        kind = model.kind
+        supportedModalities = receipt.effectiveSupportedModalities
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case modelID = "model_id"
+        case state
+        case kind
+        case supportedModalities = "supported_modalities"
+    }
+}
+
+private struct CompanionCacheStatusPayload: Codable {
+    let l1Bytes: UInt64
+    let l2Bytes: UInt64
+    let l1HitRate: Double
+    let l2HitRate: Double
+    let checkpointCount: UInt64
+    let blockCount: UInt64
+    let quantizedBytes: UInt64
+    let compressionRatio: Double
+    let l2RestoreHitRate: Double
+    let activeCacheMode: String
+
+    init(summary: Melix_Controlplane_V1_CacheSummary) {
+        l1Bytes = summary.l1Bytes
+        l2Bytes = summary.l2Bytes
+        l1HitRate = summary.l1HitRate
+        l2HitRate = summary.l2HitRate
+        checkpointCount = summary.checkpointCount
+        blockCount = summary.blockCount
+        quantizedBytes = summary.quantizedBytes
+        compressionRatio = summary.compressionRatio
+        l2RestoreHitRate = summary.l2RestoreHitRate
+        activeCacheMode = cacheModeLabel(summary.activeMode)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case l1Bytes = "l1_bytes"
+        case l2Bytes = "l2_bytes"
+        case l1HitRate = "l1_hit_rate"
+        case l2HitRate = "l2_hit_rate"
+        case checkpointCount = "checkpoint_count"
+        case blockCount = "block_count"
+        case quantizedBytes = "quantized_bytes"
+        case compressionRatio = "compression_ratio"
+        case l2RestoreHitRate = "l2_restore_hit_rate"
+        case activeCacheMode = "active_cache_mode"
+    }
+}
+
+private struct CompanionQueueStatusPayload: Codable {
+    let queuedRequests: UInt32
+    let activeRequests: UInt32
+    let admissionLatencyMs: Double
+    let backpressure: Double
+    let admittedRequests: UInt32
+    let rejectedRequests: UInt32
+    let lanes: [CompanionQueueLanePayload]
+
+    init(summary: Melix_Controlplane_V1_QueueSummary?) {
+        let summary = summary ?? Melix_Controlplane_V1_QueueSummary()
+        queuedRequests = summary.queuedRequests
+        activeRequests = summary.activeRequests
+        admissionLatencyMs = summary.admissionLatencyMs
+        backpressure = summary.backpressure
+        admittedRequests = summary.admittedRequests
+        rejectedRequests = summary.rejectedRequests
+        lanes = summary.lanes.map(CompanionQueueLanePayload.init(lane:))
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case queuedRequests = "queued_requests"
+        case activeRequests = "active_requests"
+        case admissionLatencyMs = "admission_latency_ms"
+        case backpressure
+        case admittedRequests = "admitted_requests"
+        case rejectedRequests = "rejected_requests"
+        case lanes
+    }
+}
+
+private struct CompanionQueueLanePayload: Codable {
+    let laneID: String
+    let laneClass: String
+    let queuedRequests: UInt32
+    let activeRequests: UInt32
+    let queueDelayMsP50: Double
+    let queueDelayMsP95: Double
+    let admissionRate: Double
+    let backpressure: Double
+    let priorityScore: Double
+
+    init(lane: Melix_Controlplane_V1_QueueLaneSummary) {
+        laneID = lane.laneID
+        laneClass = lane.laneClass
+        queuedRequests = lane.queuedRequests
+        activeRequests = lane.activeRequests
+        queueDelayMsP50 = lane.queueDelayMsP50
+        queueDelayMsP95 = lane.queueDelayMsP95
+        admissionRate = lane.admissionRate
+        backpressure = lane.backpressure
+        priorityScore = lane.priorityScore
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case laneID = "lane_id"
+        case laneClass = "lane_class"
+        case queuedRequests = "queued_requests"
+        case activeRequests = "active_requests"
+        case queueDelayMsP50 = "queue_delay_ms_p50"
+        case queueDelayMsP95 = "queue_delay_ms_p95"
+        case admissionRate = "admission_rate"
+        case backpressure
+        case priorityScore = "priority_score"
+    }
+}
+
+private struct CompanionImageJobStatusPayload: Codable {
+    let active: Int
+    let total: Int
+    let jobs: [CompanionImageJobPayload]
+
+    init(jobs: [Melix_Controlplane_V1_ImageJobSummary]) {
+        let sortedJobs = jobs.sorted { lhs, rhs in
+            if lhs.updatedAtUnixMs == rhs.updatedAtUnixMs {
+                return lhs.jobID < rhs.jobID
+            }
+            return lhs.updatedAtUnixMs > rhs.updatedAtUnixMs
+        }
+        let visibleJobs = Array(sortedJobs.prefix(10))
+        active = jobs.filter { $0.state == .imageJobQueued || $0.state == .imageJobRunning }.count
+        total = jobs.count
+        self.jobs = visibleJobs.map(CompanionImageJobPayload.init(job:))
+    }
+}
+
+private struct CompanionImageJobPayload: Codable {
+    let jobID: String
+    let requestID: String
+    let modelID: String
+    let operation: String
+    let state: String
+    let lane: String
+    let workerID: String
+    let progress: OpenAIImageJobProgressPayload
+    let cancelable: Bool
+    let createdAtUnixMs: Int64
+    let updatedAtUnixMs: Int64
+    let promptDigest: String
+    let editMode: String
+
+    init(job: Melix_Controlplane_V1_ImageJobSummary) {
+        jobID = job.jobID
+        requestID = job.requestID
+        modelID = job.modelID
+        operation = job.operation
+        state = job.state.melixString
+        lane = job.lane
+        workerID = job.workerID
+        progress = OpenAIImageJobProgressPayload(progress: job.progress)
+        cancelable = job.cancelable
+        createdAtUnixMs = job.createdAtUnixMs
+        updatedAtUnixMs = job.updatedAtUnixMs
+        promptDigest = job.promptDigest
+        editMode = job.editMode.melixString
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case jobID = "job_id"
+        case requestID = "request_id"
+        case modelID = "model_id"
+        case operation
+        case state
+        case lane
+        case workerID = "worker_id"
+        case progress
+        case cancelable
+        case createdAtUnixMs = "created_at_unix_ms"
+        case updatedAtUnixMs = "updated_at_unix_ms"
+        case promptDigest = "prompt_digest"
+        case editMode = "edit_mode"
+    }
+}
+
+private struct CompanionRedactionStatusPayload: Codable {
+    let rawPrompts = "omitted"
+    let rawRequestBodies = "omitted"
+    let localPaths = "omitted"
+    let artifactURIs = "omitted"
+    let logs = "omitted"
+    let recentReceipts = "omitted"
+
+    enum CodingKeys: String, CodingKey {
+        case rawPrompts = "raw_prompts"
+        case rawRequestBodies = "raw_request_bodies"
+        case localPaths = "local_paths"
+        case artifactURIs = "artifact_uris"
+        case logs
+        case recentReceipts = "recent_receipts"
     }
 }
 
