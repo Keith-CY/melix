@@ -596,6 +596,13 @@ def test_resolved_vision_family_config_uses_slots_for_hot_path_instances() -> No
     assert not hasattr(adapter.descriptor, "__dict__")
 
 
+def test_prepared_vision_request_uses_slots_for_hot_path_instances() -> None:
+    request = text_only_vlm_request("Describe this image.")
+
+    assert not hasattr(request, "__dict__")
+    assert request.prompt_text == "Describe this image."
+
+
 def test_generate_streams_vlm_response_from_file_image_uri(tmp_path: Path) -> None:
     runtime_service, inference_service, maintenance_core = build_services()
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_vlm_model())
