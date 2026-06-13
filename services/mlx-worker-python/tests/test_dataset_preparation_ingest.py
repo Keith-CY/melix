@@ -49,6 +49,7 @@ def test_dataset_ingest_source_file_paths_use_scandir_without_rglob(
         "b/b.txt",
         "z.txt",
     ]
+    assert all(isinstance(path, Path) for path in _iter_source_file_paths(input_root))
 
 
 def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
