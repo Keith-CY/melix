@@ -122,7 +122,6 @@ def project_retrieval_contexts(
     duplicate_projection_receipt = _duplicate_projection_receipt
     refusal_receipts_extend = refusal_receipts.extend
     refusal_receipts_append = refusal_receipts.append
-    receipts_extend = receipts.extend
     receipts_append = receipts.append
     user_payload_update = user_payload.update
 
@@ -193,18 +192,25 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             ],
         )
 
-    entries: list[RetrievalContextEntry] = []
-    refusal_receipts: list[dict[str, object]] = []
-    entries_append = entries.append
-    refusal_receipts_append = refusal_receipts.append
+    user_payload: dict[str, Any] = {}
+    receipts: list[dict[str, object]] = []
+    store_refusal_receipts: list[dict[str, object]] = []
+    projection_refusal_receipts: list[dict[str, object]] = []
+    store_refusal_receipts_append = store_refusal_receipts.append
+    projection_refusal_receipts_append = projection_refusal_receipts.append
     store_record_refusal = _store_record_refusal
     store_record_source_id = _store_record_source_id
     store_record_refusal_context_kind = _store_record_refusal_context_kind
+    admit_entry = _admit_entry
     entry_type = RetrievalContextEntry
+    duplicate_projection_receipt = _duplicate_projection_receipt
+    projection_refusal_receipts_extend = projection_refusal_receipts.extend
+    receipts_append = receipts.append
+    user_payload_update = user_payload.update
 
     for record in records:
         if type(record) is not dict and not isinstance(record, Mapping):
-            refusal_receipts_append(
+            store_refusal_receipts_append(
                 store_record_refusal(
                     source_field="record",
                     source_id="unknown-retrieved-document",
@@ -218,7 +224,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
         if context_kind not in ("retrieved_document", "retrieved_image"):
             source_id = store_record_source_id(record)
             refusal_context_kind = store_record_refusal_context_kind(source_id)
-            refusal_receipts_append(
+            store_refusal_receipts_append(
                 store_record_refusal(
                     source_field="context_kind",
                     source_id=source_id,
@@ -227,28 +233,67 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             )
             continue
 
-        entries_append(
-            entry_type(
-                context_kind=context_kind,
-                source_id=record_get("source_id"),
-                payload=record_get("payload"),
-                owner_scope_checked=record_get("owner_scope_checked"),
-                segment_id=record_get("segment_id", ""),
-                source_field=record_get("source_field", ""),
-                reason=record_get("reason", ""),
-                corrective_action=record_get("corrective_action", ""),
+        try:
+            admission = admit_entry(
+                entry_type(
+                    context_kind=context_kind,
+                    source_id=record_get("source_id"),
+                    payload=record_get("payload"),
+                    owner_scope_checked=record_get("owner_scope_checked"),
+                    segment_id=record_get("segment_id", ""),
+                    source_field=record_get("source_field", ""),
+                    reason=record_get("reason", ""),
+                    corrective_action=record_get("corrective_action", ""),
+                )
             )
-        )
+        except RetrievalContextAdmissionError as exc:
+            for receipt in exc.refusal_receipts:
+                projection_refusal_receipts_append(receipt.copy())
+            continue
 
-    projection = project_retrieval_contexts(entries)
-    if not refusal_receipts:
-        return projection
+        admission_payload = admission.user_payload
+        if len(admission_payload) == 1:
+            source_field = next(iter(admission_payload))
+            if source_field in user_payload:
+                projection_refusal_receipts_extend(
+                    duplicate_projection_receipt(
+                        receipt,
+                        duplicate_fields=[source_field],
+                    )
+                    for receipt in admission.untrusted_context_receipts
+                )
+                continue
+            user_payload[source_field] = admission_payload[source_field]
+        else:
+            duplicate_fields: list[str] | None = None
+            for source_field in admission_payload:
+                if source_field in user_payload:
+                    if duplicate_fields is None:
+                        duplicate_fields = []
+                    duplicate_fields.append(source_field)
+            if duplicate_fields is not None:
+                projection_refusal_receipts_extend(
+                    duplicate_projection_receipt(
+                        receipt,
+                        duplicate_fields=duplicate_fields,
+                    )
+                    for receipt in admission.untrusted_context_receipts
+                )
+                continue
+            user_payload_update(admission_payload)
+        admission_receipts = admission.untrusted_context_receipts
+        if len(admission_receipts) == 1:
+            receipts_append(admission_receipts[0].copy())
+        else:
+            for receipt in admission_receipts:
+                receipts_append(receipt.copy())
+
     return RetrievalContextProjection(
-        user_payload=projection.user_payload,
-        untrusted_context_receipts=projection.untrusted_context_receipts,
+        user_payload=user_payload,
+        untrusted_context_receipts=receipts,
         refusal_receipts=[
-            *(dict(receipt) for receipt in refusal_receipts),
-            *(dict(receipt) for receipt in projection.refusal_receipts),
+            *store_refusal_receipts,
+            *projection_refusal_receipts,
         ],
     )
 
