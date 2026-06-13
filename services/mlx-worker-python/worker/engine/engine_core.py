@@ -870,14 +870,20 @@ class EngineCore:
     def _allowed_tools_receipt_json(request: inference_pb2.GenerateRequest) -> str:
         execution = request.execution
         ext = execution.ext
+        ext_get = ext.get
+        tool_choice_resolved = ext_get("melix.compat.tool_choice_resolved", "").strip()
+        tool_config_source = ext_get("melix.tool_config.source", "").strip()
+        raw_tool_count = ext_get("melix.tool_config.tool_count", "").strip()
+        raw_source_ids = ext_get("melix.mcp.source_ids", "")
+        suppressed_reason = ext_get("melix.tool_parser.suppressed_reason", "").strip()
         if (
             not execution.tool_config.tools
             and not execution.tool_config.tool_choice
-            and not ext.get("melix.compat.tool_choice_resolved", "").strip()
-            and not ext.get("melix.tool_config.source", "").strip()
-            and not ext.get("melix.tool_config.tool_count", "").strip()
-            and not ext.get("melix.mcp.source_ids", "").strip()
-            and not ext.get("melix.tool_parser.suppressed_reason", "").strip()
+            and not tool_choice_resolved
+            and not tool_config_source
+            and not raw_tool_count
+            and not raw_source_ids.strip()
+            and not suppressed_reason
         ):
             return _DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
         seen_tools: dict[str, str] = {}
@@ -895,11 +901,10 @@ class EngineCore:
             elif previous_schema != schema and name not in schema_conflicts:
                 schema_conflicts.append(name)
 
-        raw_tool_count = ext.get("melix.tool_config.tool_count", "").strip()
         explicit_empty = (
             not allowed_names
             and execution.HasField("tool_config")
-            and (raw_tool_count == "0" or bool(ext.get("melix.tool_config.source", "").strip()))
+            and (raw_tool_count == "0" or bool(tool_config_source))
         )
         if allowed_names:
             tool_config_state = "declared"
@@ -910,24 +915,24 @@ class EngineCore:
 
         tool_choice_policy = (
             execution.tool_config.tool_choice.strip()
-            or ext.get("melix.compat.tool_choice_resolved", "").strip()
+            or tool_choice_resolved
             or "auto"
         )
-        source_ids = [
-            item.strip()
-            for item in ext.get("melix.mcp.source_ids", "").split(",")
-            if item.strip()
-        ]
+        source_ids: list[str] = []
+        for item in raw_source_ids.split(","):
+            source_id = item.strip()
+            if source_id:
+                source_ids.append(source_id)
         payload = {
             "allowed_tool_names": allowed_names,
             "allowed_tool_count": len(allowed_names),
             "tool_choice_policy": tool_choice_policy,
-            "tool_config_source": ext.get("melix.tool_config.source", "").strip(),
+            "tool_config_source": tool_config_source,
             "tool_source_ids": source_ids,
             "tool_config_state": tool_config_state,
             "schema_conflict_count": len(schema_conflicts),
             "schema_conflicts": schema_conflicts,
-            "suppressed_reason": ext.get("melix.tool_parser.suppressed_reason", "").strip(),
+            "suppressed_reason": suppressed_reason,
         }
         return _COMPACT_SORTED_JSON_ENCODER.encode(payload)
 
