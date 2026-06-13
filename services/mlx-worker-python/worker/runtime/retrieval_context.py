@@ -200,6 +200,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     store_record_refusal = _store_record_refusal
     store_record_source_id = _store_record_source_id
     store_record_refusal_context_kind = _store_record_refusal_context_kind
+    entry_type = RetrievalContextEntry
 
     for record in records:
         if type(record) is not dict and not isinstance(record, Mapping):
@@ -212,7 +213,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             )
             continue
 
-        record_get = record.get
+        record_get: Any = record.get
         context_kind = record_get("context_kind")
         if context_kind not in ("retrieved_document", "retrieved_image"):
             source_id = store_record_source_id(record)
@@ -227,15 +228,15 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             continue
 
         entries_append(
-            RetrievalContextEntry(
+            entry_type(
                 context_kind=context_kind,
-                source_id=record.get("source_id"),
-                payload=record.get("payload"),
-                owner_scope_checked=record.get("owner_scope_checked"),
-                segment_id=record.get("segment_id", ""),
-                source_field=record.get("source_field", ""),
-                reason=record.get("reason", ""),
-                corrective_action=record.get("corrective_action", ""),
+                source_id=record_get("source_id"),
+                payload=record_get("payload"),
+                owner_scope_checked=record_get("owner_scope_checked"),
+                segment_id=record_get("segment_id", ""),
+                source_field=record_get("source_field", ""),
+                reason=record_get("reason", ""),
+                corrective_action=record_get("corrective_action", ""),
             )
         )
 
