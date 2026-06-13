@@ -163,6 +163,14 @@ def test_parse_response_json_accepts_unfenced_json_without_pretrim_copy() -> Non
     }
 
 
+def test_parse_response_json_accepts_direct_object_fast_path() -> None:
+    response = '{"events": [{"event_type": "direct"}]}  '
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "direct"}]
+    }
+
+
 def test_parse_response_json_rejects_unfenced_closing_fence() -> None:
     response = '{"events": []}\n```'
 
