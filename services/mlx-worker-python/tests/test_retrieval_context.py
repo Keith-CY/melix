@@ -638,6 +638,126 @@ def test_project_retrieval_contexts_copies_multi_receipt_admissions(
     assert projection.untrusted_context_receipts[1] is not Admission.untrusted_context_receipts[1]
 
 
+def test_project_retrieval_store_records_projects_records_without_entry_reentry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_reentry(_entries: object) -> None:  # pragma: no cover - regression guard
+        raise AssertionError("store record projection should avoid entry-list reentry")
+
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "project_retrieval_contexts",
+        fail_reentry,
+    )
+
+    projection = project_retrieval_store_records(
+        [
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "doc:local-7",
+                "payload": {"title": "Local note"},
+                "owner_scope_checked": True,
+                "segment_id": "retrieval-store:document-0",
+                "source_field": "retrieved_document_0",
+            }
+        ]
+    )
+
+    assert projection.user_payload == {"retrieved_document_0": {"title": "Local note"}}
+    assert projection.refusal_receipts == []
+    assert len(projection.untrusted_context_receipts) == 1
+    assert projection.untrusted_context_receipts[0]["source_id"] == "doc:local-7"
+
+    duplicate_projection = project_retrieval_store_records(
+        [
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "doc:first",
+                "payload": {"title": "first"},
+                "owner_scope_checked": True,
+            },
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "doc:second",
+                "payload": {"title": "second"},
+                "owner_scope_checked": True,
+            },
+        ]
+    )
+
+    assert duplicate_projection.user_payload == {"retrieved_document": {"title": "first"}}
+    assert duplicate_projection.refusal_receipts[0]["reason"] == (
+        "duplicate_retrieved_document_context_field"
+    )
+    assert duplicate_projection.refusal_receipts[0]["source_id"] == "doc:second"
+
+    class MultiAdmission:
+        user_payload = {
+            "retrieved_document": {"title": "Local note"},
+            "retrieved_document_metadata": {"score": 1.0},
+        }
+        untrusted_context_receipts = [
+            {"source_id": "doc:multi", "source_field": "retrieved_document"},
+            {"source_id": "doc:multi", "source_field": "retrieved_document_metadata"},
+        ]
+
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "_admit_entry",
+        lambda _entry: MultiAdmission(),
+    )
+
+    multi_projection = project_retrieval_store_records(
+        [
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "doc:multi",
+                "payload": {"title": "ignored by monkeypatch"},
+                "owner_scope_checked": True,
+            }
+        ]
+    )
+
+    assert multi_projection.user_payload == MultiAdmission.user_payload
+    assert multi_projection.untrusted_context_receipts == MultiAdmission.untrusted_context_receipts
+    assert multi_projection.untrusted_context_receipts[0] is not MultiAdmission.untrusted_context_receipts[0]
+
+    class SeedAdmission:
+        user_payload = {"retrieved_document": {"title": "Seed"}}
+        untrusted_context_receipts = [
+            {"source_id": "doc:seed", "source_field": "retrieved_document"}
+        ]
+
+    def admit_by_source(entry: RetrievalContextEntry) -> object:
+        if entry.source_id == "doc:seed":
+            return SeedAdmission()
+        return MultiAdmission()
+
+    monkeypatch.setattr(retrieval_context_module, "_admit_entry", admit_by_source)
+
+    multi_duplicate_projection = project_retrieval_store_records(
+        [
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "doc:seed",
+                "payload": {"title": "seed"},
+                "owner_scope_checked": True,
+            },
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "doc:multi",
+                "payload": {"title": "ignored by monkeypatch"},
+                "owner_scope_checked": True,
+            },
+        ]
+    )
+
+    assert multi_duplicate_projection.user_payload == SeedAdmission.user_payload
+    assert multi_duplicate_projection.refusal_receipts[0]["reason"] == (
+        "duplicate_retrieved_document_context_field"
+    )
+
+
 def test_project_retrieval_contexts_isolates_refusals_without_dropping_valid_entries() -> None:
     _assert_retrieval_lookup_result_preserves_refusals_and_valid_siblings()
 
