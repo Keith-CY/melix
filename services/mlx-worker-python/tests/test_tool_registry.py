@@ -634,6 +634,30 @@ def test_agentic_tool_selection_keyword_matchable_names_omit_always_available_to
     assert result.receipt["selection_mode"] == "fallback"
 
 
+def test_agentic_tool_selection_compiles_keyword_hint_rules_once_per_hint() -> None:
+    compiled_rules = tool_registry_module._compile_keyword_hint_rules(
+        {
+            "visit": ("fixture://docs", "Visit", ""),
+            "text_search": ("local evidence",),
+        }
+    )
+
+    assert compiled_rules == {
+        "visit": (("fixture://docs", True), (" visit ", False)),
+        "text_search": ((" local evidence ", False),),
+    }
+    assert tool_registry_module._keyword_hint_matches(
+        "Open fixture://docs/provider-contract.",
+        compiled_rules["visit"][0][0],
+        literal=compiled_rules["visit"][0][1],
+    )
+    assert tool_registry_module._keyword_hint_matches(
+        "Please VISIT the cited page.",
+        compiled_rules["visit"][1][0],
+        literal=compiled_rules["visit"][1][1],
+    )
+
+
 def test_agentic_tool_selection_max_always_only_skips_optional_routing_scans(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
