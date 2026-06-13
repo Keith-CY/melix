@@ -1128,31 +1128,6 @@ def test_project_retrieval_contexts_refuses_unknown_context_kind_with_fallback_i
     ]
 
 
-def test_project_retrieval_lookup_result_returns_user_message_projection() -> None:
-    _assert_retrieval_lookup_result_returns_user_message_projection()
-
-
-@pytest.mark.parametrize("lookup_result", (["not", "a", "mapping"], "bad-wrapper"))
-def test_project_retrieval_lookup_result_refuses_malformed_wrapper(
-    lookup_result: object,
-) -> None:
-    _assert_retrieval_lookup_result_refuses_malformed_wrapper(lookup_result)
-
-
-def test_project_retrieval_lookup_result_refuses_missing_records_key() -> None:
-    _assert_retrieval_lookup_result_refuses_missing_records_key()
-
-
-def test_project_retrieval_lookup_result_preserves_refusals_and_valid_siblings() -> None:
-    _assert_retrieval_lookup_result_preserves_refusals_and_valid_siblings()
-
-
-def test_project_retrieval_lookup_result_copies_store_projection_outputs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _assert_retrieval_lookup_result_copies_store_projection_outputs(monkeypatch)
-
-
 def _assert_retrieval_lookup_result_returns_user_message_projection() -> None:
     projection = project_retrieval_lookup_result(
         {
@@ -1368,6 +1343,24 @@ def _assert_retrieval_lookup_result_copies_store_projection_outputs(
     )
     assert projection.refusal_receipts is not store_projection.refusal_receipts
     assert projection.refusal_receipts[0] is not store_projection.refusal_receipts[0]
+
+
+test_project_retrieval_lookup_result_returns_user_message_projection = (
+    _assert_retrieval_lookup_result_returns_user_message_projection
+)
+test_project_retrieval_lookup_result_refuses_malformed_wrapper = pytest.mark.parametrize(
+    "lookup_result",
+    (["not", "a", "mapping"], "bad-wrapper"),
+)(_assert_retrieval_lookup_result_refuses_malformed_wrapper)
+test_project_retrieval_lookup_result_refuses_missing_records_key = (
+    _assert_retrieval_lookup_result_refuses_missing_records_key
+)
+test_project_retrieval_lookup_result_preserves_refusals_and_valid_siblings = (
+    _assert_retrieval_lookup_result_preserves_refusals_and_valid_siblings
+)
+test_project_retrieval_lookup_result_copies_store_projection_outputs = (
+    _assert_retrieval_lookup_result_copies_store_projection_outputs
+)
 
 
 def test_project_retrieval_contexts_refuses_duplicate_with_defensive_receipt_fallbacks(
