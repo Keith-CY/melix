@@ -480,7 +480,7 @@ def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:
                 duration_ms = duration
             elif type(duration) is int:
                 duration_ms = float(duration)
-            elif isinstance(duration, str):
+            elif type(duration) is str:
                 duration_ms = float(duration or 0.0)
             else:
                 duration_ms = 0.0
