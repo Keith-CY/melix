@@ -677,6 +677,29 @@ def test_generate_empty_ext_plain_path_uses_default_allowed_tools_receipt(monkey
     assert completed.parser_metrics["allowed_tools_receipt_json"] == engine_core_module._DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
 
 
+def test_allowed_tools_receipt_trims_source_ids_with_cached_ext_fields() -> None:
+    request = inference_pb2.GenerateRequest()
+    request.execution.ext["melix.compat.tool_choice_resolved"] = " required "
+    request.execution.ext["melix.tool_config.source"] = " client "
+    request.execution.ext["melix.tool_config.tool_count"] = "0"
+    request.execution.ext["melix.mcp.source_ids"] = " source-a, , source-b "
+    request.execution.ext["melix.tool_parser.suppressed_reason"] = " disabled "
+
+    receipt = json.loads(EngineCore._allowed_tools_receipt_json(request))
+
+    assert receipt == {
+        "allowed_tool_count": 0,
+        "allowed_tool_names": [],
+        "schema_conflict_count": 0,
+        "schema_conflicts": [],
+        "suppressed_reason": "disabled",
+        "tool_choice_policy": "required",
+        "tool_config_source": "client",
+        "tool_config_state": "omitted",
+        "tool_source_ids": ["source-a", "source-b"],
+    }
+
+
 def test_generate_routing_ext_preserves_client_ext_and_positive_block_size() -> None:
     runtime = UsageCountingRuntime(prompt_tokens=0)
     inference_service, model_handle = build_usage_counting_services(runtime)
