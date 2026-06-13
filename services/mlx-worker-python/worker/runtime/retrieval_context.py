@@ -195,11 +195,16 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
 
     entries: list[RetrievalContextEntry] = []
     refusal_receipts: list[dict[str, object]] = []
+    entries_append = entries.append
+    refusal_receipts_append = refusal_receipts.append
+    store_record_refusal = _store_record_refusal
+    store_record_source_id = _store_record_source_id
+    store_record_refusal_context_kind = _store_record_refusal_context_kind
 
     for record in records:
-        if not isinstance(record, Mapping):
-            refusal_receipts.append(
-                _store_record_refusal(
+        if type(record) is not dict and not isinstance(record, Mapping):
+            refusal_receipts_append(
+                store_record_refusal(
                     source_field="record",
                     source_id="unknown-retrieved-document",
                     context_kind="retrieved_document",
@@ -207,12 +212,13 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             )
             continue
 
-        context_kind = record.get("context_kind")
+        record_get = record.get
+        context_kind = record_get("context_kind")
         if context_kind not in ("retrieved_document", "retrieved_image"):
-            source_id = _store_record_source_id(record)
-            refusal_context_kind = _store_record_refusal_context_kind(source_id)
-            refusal_receipts.append(
-                _store_record_refusal(
+            source_id = store_record_source_id(record)
+            refusal_context_kind = store_record_refusal_context_kind(source_id)
+            refusal_receipts_append(
+                store_record_refusal(
                     source_field="context_kind",
                     source_id=source_id,
                     context_kind=refusal_context_kind,
@@ -220,7 +226,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             )
             continue
 
-        entries.append(
+        entries_append(
             RetrievalContextEntry(
                 context_kind=context_kind,
                 source_id=record.get("source_id"),
@@ -234,6 +240,8 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
         )
 
     projection = project_retrieval_contexts(entries)
+    if not refusal_receipts:
+        return projection
     return RetrievalContextProjection(
         user_payload=projection.user_payload,
         untrusted_context_receipts=projection.untrusted_context_receipts,
