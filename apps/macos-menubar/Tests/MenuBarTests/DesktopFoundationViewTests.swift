@@ -6942,8 +6942,19 @@ struct DesktopFoundationViewTests {
             actionTitle: "Install Audio Support",
             kind: .installRuntime
         )
+        let setup = RuntimeAudioSetupState(
+            phase: .runtimeRequired,
+            title: "Audio Setup Required",
+            summary: action.detail,
+            detail: action.detail,
+            primaryAction: action,
+            capabilityGroups: [],
+            recommendedModelIDs: action.modelIDs,
+            selectedModelIDs: action.modelIDs,
+            readySelectedModelIDs: []
+        )
         let hosted = hostView(
-            DesktopAudioSetupNoticeRow(action: action, performAction: {})
+            DesktopAudioSetupNoticeRow(setup: setup, performAction: {})
         )
 
         #expect(hosted.subviews.isEmpty == false)

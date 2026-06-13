@@ -5357,7 +5357,7 @@ enum DesktopDownloadsLayoutMetrics {
 }
 
 struct DesktopAudioSetupNoticeRow: View {
-    let setup: RuntimeAudioSetupState?
+    let setup: RuntimeAudioSetupState
     let action: RuntimeAudioSetupActionState
     let performAction: () -> Void
 
@@ -5377,17 +5377,15 @@ struct DesktopAudioSetupNoticeRow: View {
         self.performAction = performAction
     }
 
-    init(
-        action: RuntimeAudioSetupActionState,
-        performAction: @escaping () -> Void
-    ) {
-        self.setup = nil
-        self.action = action
-        self.performAction = performAction
-    }
-
     var body: some View {
-        if let setup {
+        if setup.phase == .runtimeRequired {
+            compactRow(title: setup.title, detail: setup.summary)
+                .padding(.horizontal, 10)
+                .frame(height: DesktopDownloadsLayoutMetrics.compactAudioNoticeHeightBudget)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(audioSetupAccessibilitySummary(setup))
+        } else {
             VStack(alignment: .leading, spacing: 10) {
                 compactRow(title: setup.title, detail: setup.summary)
                 if setup.phase != .runtimeRequired {
@@ -5399,13 +5397,6 @@ struct DesktopAudioSetupNoticeRow: View {
             .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             .accessibilityElement(children: .combine)
             .accessibilityLabel(audioSetupAccessibilitySummary(setup))
-        } else {
-            compactRow(title: "Audio Setup Required", detail: action.detail)
-                .padding(.horizontal, 10)
-                .frame(height: DesktopDownloadsLayoutMetrics.compactAudioNoticeHeightBudget)
-                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Audio Setup Required \(action.detail) \(action.actionTitle)")
         }
     }
 

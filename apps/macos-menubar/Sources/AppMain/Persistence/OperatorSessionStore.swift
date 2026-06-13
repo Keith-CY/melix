@@ -98,6 +98,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         paneVisibility = DesktopPaneVisibilityState.mergedWithDefaults(paneVisibility)
     }
 
+    // Keep this in sync with MelixOperatorSessionState.normalizedAudioSetupModelIDs.
     private static func normalizedAudioSetupModelIDs(_ modelIDs: [String]) -> [String] {
         Array(
             Set(
