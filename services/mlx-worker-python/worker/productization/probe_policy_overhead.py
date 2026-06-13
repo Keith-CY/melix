@@ -27,6 +27,7 @@ class ProbeOverheadMetrics:
     no_op_policy_check_call_ms_mean: float
     no_op_reason_call_ms_mean: float
     mode_parse_empty_call_ms_mean: float
+    mode_parse_none_call_ms_mean: float
     mode_parse_valid_call_ms_mean: float
     mode_parse_invalid_call_ms_mean: float
     env_parse_empty_call_ms_mean: float
@@ -57,6 +58,7 @@ class ProbeOverheadMetrics:
             "no_op_policy_check_call_ms_mean": self.no_op_policy_check_call_ms_mean,
             "no_op_reason_call_ms_mean": self.no_op_reason_call_ms_mean,
             "mode_parse_empty_call_ms_mean": self.mode_parse_empty_call_ms_mean,
+            "mode_parse_none_call_ms_mean": self.mode_parse_none_call_ms_mean,
             "mode_parse_valid_call_ms_mean": self.mode_parse_valid_call_ms_mean,
             "mode_parse_invalid_call_ms_mean": self.mode_parse_invalid_call_ms_mean,
             "env_parse_empty_call_ms_mean": self.env_parse_empty_call_ms_mean,
@@ -113,6 +115,11 @@ def measure_no_op_probe_policy_overhead(
         iterations=iteration_count,
         samples=sample_count,
     )
+    parse_none_samples = _sample_call_ms(
+        lambda: ProbePolicy.from_value(None),
+        iterations=iteration_count,
+        samples=sample_count,
+    )
     parse_valid_samples = _sample_call_ms(
         lambda: ProbePolicy.from_value("debug"),
         iterations=iteration_count,
@@ -144,6 +151,7 @@ def measure_no_op_probe_policy_overhead(
     policy_mean = _mean(policy_samples)
     reason_mean = _mean(reason_samples)
     parse_empty_mean = _mean(parse_empty_samples)
+    parse_none_mean = _mean(parse_none_samples)
     parse_valid_mean = _mean(parse_valid_samples)
     parse_invalid_mean = _mean(parse_invalid_samples)
     env_parse_empty_mean = _mean(env_parse_empty_samples)
@@ -169,6 +177,7 @@ def measure_no_op_probe_policy_overhead(
         no_op_policy_check_call_ms_mean=policy_mean,
         no_op_reason_call_ms_mean=reason_mean,
         mode_parse_empty_call_ms_mean=parse_empty_mean,
+        mode_parse_none_call_ms_mean=parse_none_mean,
         mode_parse_valid_call_ms_mean=parse_valid_mean,
         mode_parse_invalid_call_ms_mean=parse_invalid_mean,
         env_parse_empty_call_ms_mean=env_parse_empty_mean,
