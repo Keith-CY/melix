@@ -33,6 +33,26 @@ def test_built_in_agentic_tool_registry_exports_stable_contracts() -> None:
     assert {schema["type"] for schema in schemas} == {"function"}
     assert schemas[0]["x-melix-tool-kind"] == "vision.image_crop"
     assert schemas[0]["x-melix-observation-kind"] == "image_region"
+    assert "skill_lookup" not in registry.names()
+    assert "memory_lookup" not in registry.names()
+
+
+def test_agentic_tool_catalog_exposes_opt_in_skill_and_memory_lookup_tools() -> None:
+    catalog = tool_registry_module.agentic_tool_catalog_registry()
+
+    assert catalog.names() == tool_registry_module.SELECTABLE_AGENTIC_TOOL_NAMES
+    assert catalog.metrics().tool_count == 8
+    assert "skill_lookup" in catalog.names()
+    assert "memory_lookup" in catalog.names()
+
+    selected = catalog.select(("skill_lookup", "memory_lookup"))
+
+    assert selected.names() == ("skill_lookup", "memory_lookup")
+    assert [tool.tool_kind for tool in selected.tools] == ["skill.lookup", "memory.lookup"]
+
+    config = built_in_tool_config(("skill_lookup", "memory_lookup"))
+
+    assert [tool.name for tool in config.tools] == ["skill_lookup", "memory_lookup"]
 
 
 def test_built_in_tool_registry_reuses_singleton_snapshot() -> None:
@@ -588,11 +608,16 @@ def test_agentic_tool_selection_preserves_always_available_tools_with_vector_hit
             {"tool_id": "local_compute", "source": "always"},
             {"tool_id": "text_search", "source": "vector"},
         ],
-        "dropped_tool_count": 4,
-        "full_schema_bytes": built_in_tool_registry().metrics().schema_bytes,
+        "dropped_tool_count": 6,
+        "full_schema_bytes": tool_registry_module.agentic_tool_catalog_registry()
+        .metrics()
+        .schema_bytes,
         "selected_schema_bytes": result.registry.metrics().schema_bytes,
     }
-    assert result.registry.metrics().schema_bytes < built_in_tool_registry().metrics().schema_bytes
+    assert (
+        result.registry.metrics().schema_bytes
+        < tool_registry_module.agentic_tool_catalog_registry().metrics().schema_bytes
+    )
 
 
 def test_agentic_tool_selection_uses_builtin_name_set_for_membership() -> None:
@@ -606,7 +631,7 @@ def test_agentic_tool_selection_uses_builtin_name_set_for_membership() -> None:
     )
 
     assert tool_registry_module._BUILTIN_AGENTIC_TOOL_NAME_SET == frozenset(
-        BUILTIN_AGENTIC_TOOL_NAMES
+        tool_registry_module.SELECTABLE_AGENTIC_TOOL_NAMES
     )
     assert result.registry.names() == ("local_compute", "text_search")
     assert result.receipt["selected_tools"] == [
@@ -618,7 +643,7 @@ def test_agentic_tool_selection_uses_builtin_name_set_for_membership() -> None:
 def test_agentic_tool_selection_keyword_matchable_names_omit_always_available_tool() -> None:
     assert tool_registry_module._KEYWORD_MATCHABLE_TOOL_NAMES == tuple(
         tool_name
-        for tool_name in BUILTIN_AGENTIC_TOOL_NAMES
+        for tool_name in tool_registry_module.SELECTABLE_AGENTIC_TOOL_NAMES
         if tool_name not in tool_registry_module.ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES
     )
 
@@ -688,8 +713,10 @@ def test_agentic_tool_selection_max_always_only_skips_optional_routing_scans(
         "vector_available": True,
         "fallback_reason": "no_keyword_match",
         "selected_tools": [{"tool_id": "local_compute", "source": "always"}],
-        "dropped_tool_count": 5,
-        "full_schema_bytes": built_in_tool_registry().metrics().schema_bytes,
+        "dropped_tool_count": 7,
+        "full_schema_bytes": tool_registry_module.agentic_tool_catalog_registry()
+        .metrics()
+        .schema_bytes,
         "selected_schema_bytes": result.registry.metrics().schema_bytes,
     }
 
@@ -827,6 +854,33 @@ def test_agentic_tool_selection_keyword_fallback_keeps_multiple_punctuated_tools
 
     assert result.registry.names() == ("local_compute", "image_crop", "text_search")
     assert result.receipt["selection_mode"] == "keyword"
+
+
+@pytest.mark.parametrize(
+    ("current_user_turn", "expected_tool"),
+    [
+        ("Find the best repo skill for this task.", "skill_lookup"),
+        ("Look up pinned memory for this operator preference.", "memory_lookup"),
+    ],
+)
+def test_agentic_tool_selection_keyword_fallback_selects_skill_and_memory_lookup(
+    current_user_turn: str,
+    expected_tool: str,
+) -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn=current_user_turn,
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", expected_tool)
+    assert result.receipt["selection_mode"] == "keyword"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": expected_tool, "source": "keyword"},
+    ]
 
 
 def test_agentic_tool_selection_keyword_matcher_ignores_empty_hints() -> None:

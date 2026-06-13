@@ -81,7 +81,8 @@ redefining equivalent contracts:
 
 ## Built-In Tool Set
 
-The v1 Melix built-in tool names are:
+The v1 Melix default built-in tool names are exported by
+`built_in_tool_config()` when no caller provides an explicit tool selection:
 
 | Tool | Kind | Observation Kind | Required Role |
 | --- | --- | --- | --- |
@@ -92,9 +93,18 @@ The v1 Melix built-in tool names are:
 | `visit` | `browser.visit` | `page_extract` | fetch or read a fixture-backed page/document |
 | `local_compute` | `compute.local` | `compute_result` | run deterministic local computation over supplied values |
 
-Additional tools may be added only by extending the registry contract, tests,
-and evidence fields in the same change. Ad hoc per-surface tool names are not
-allowed.
+The selectable agentic tool catalog also includes opt-in tools that can be
+requested by name, vector selection, or keyword selection without increasing the
+default no-selection tool schema:
+
+| Tool | Kind | Observation Kind | Required Role |
+| --- | --- | --- | --- |
+| `skill_lookup` | `skill.lookup` | `skill_lookup_results` | look up fixture-backed agent skill evidence |
+| `memory_lookup` | `memory.lookup` | `memory_lookup_results` | look up fixture-backed memory evidence |
+
+Additional tools may be added only by extending the registry contract, catalog
+tests, and evidence fields in the same change. Ad hoc per-surface tool names
+are not allowed.
 
 ## Tool Registry Contract
 
@@ -110,9 +120,10 @@ Each tool descriptor must include:
 - `toolset_version`
 - parser family and parser contract version
 
-The worker-facing registry must be serializable to a deterministic `ToolConfig`
-receipt. Any request that selects a subset of tools must preserve request order,
-deduplicate repeated names, and fail before execution on unknown names.
+The worker-facing default registry must be serializable to a deterministic
+`ToolConfig` receipt. Explicit selections are resolved against the selectable
+catalog, must preserve request order, deduplicate repeated names, and fail
+before execution on unknown names.
 
 ## Tool Selection Receipt Contract
 
@@ -137,10 +148,11 @@ The v1 selector receipt is `melix.agentic_tool_selection.v1` and records:
 
 Receipts must not include raw prompt text, private context, or tool arguments.
 They exist to explain why a schema was included or dropped and to measure prompt
-schema overhead. The deterministic agentic runtime records the selector receipt
-inside its `melix.agentic_tool_run.v1` registry receipt when a caller provides a
-selection input, and the selected registry is the execution allowlist for that
-run.
+schema overhead. `full_schema_bytes` measures the selectable catalog, not only
+the default no-selection tool set. The deterministic agentic runtime records
+the selector receipt inside its `melix.agentic_tool_run.v1` registry receipt
+when a caller provides a selection input, and the selected registry is the
+execution allowlist for that run.
 
 ## Observation Contract
 
@@ -682,6 +694,22 @@ valid sibling records can still produce a lookup message. The projection does
 not load skill files, read or write memory stores, rank retrieval results, infer
 owner scope, mutate sessions, enqueue chat messages, or copy raw source text
 into receipt JSON.
+
+The deterministic Python-worker `skill_lookup` and `memory_lookup` adapters are
+the concrete v1 callers of this lookup projection. They are opt-in selectable
+catalog tools rather than default no-selection tool schemas, so ordinary
+default tool configuration does not grow unless a caller explicitly selects or
+routes to them. They are fixture-backed and keep observation payloads shaped as
+`query`, `store_ref`, `results`, and `result_count`, while selected rows are
+converted into already-redacted skill or memory store records before receipt
+projection. They attach
+`project_skill_memory_lookup_result(...).untrusted_context_receipts` and
+`refusal_receipts` as source receipts for `normalize_tool_observation`. They do
+not emit the projection's `lookup_message` because the tool observation already
+carries the visible result payload. These adapters do not read skill files,
+persist memories, perform semantic ranking, infer owner scope, mutate sessions,
+or copy raw skill summaries, memory text, query strings, store refs, config
+paths, or prompt bodies into receipt JSON.
 
 The Python worker retrieval admission primitives are
 `worker.runtime.retrieval_context.admit_retrieved_document_context` and
