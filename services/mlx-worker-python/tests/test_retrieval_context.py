@@ -588,6 +588,53 @@ def test_project_retrieval_contexts_admits_multiple_entries_with_redacted_receip
     assert "system instruction" not in store_receipt_json
 
 
+def test_project_retrieval_contexts_copies_multi_receipt_admissions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Admission:
+        user_payload = {"retrieved_document": {"title": "Local note"}}
+        untrusted_context_receipts = [
+            {
+                "source_type": "retrieved_document",
+                "source_field": "retrieved_document",
+                "source_id": "doc:local-7",
+                "segment_id": "text-search:result-0",
+                "owner_scope_checked": True,
+            },
+            {
+                "source_type": "retrieved_document",
+                "source_field": "retrieved_document_metadata",
+                "source_id": "doc:local-7",
+                "segment_id": "text-search:result-0:metadata",
+                "owner_scope_checked": True,
+            },
+        ]
+
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "_admit_entry",
+        lambda _entry: Admission(),
+    )
+
+    projection = project_retrieval_contexts(
+        [
+            RetrievalContextEntry(
+                context_kind="retrieved_document",
+                source_id="doc:local-7",
+                payload={"title": "Local note"},
+                owner_scope_checked=True,
+                source_field="retrieved_document",
+            )
+        ]
+    )
+
+    assert projection.user_payload == {"retrieved_document": {"title": "Local note"}}
+    assert projection.refusal_receipts == []
+    assert projection.untrusted_context_receipts == Admission.untrusted_context_receipts
+    assert projection.untrusted_context_receipts[0] is not Admission.untrusted_context_receipts[0]
+    assert projection.untrusted_context_receipts[1] is not Admission.untrusted_context_receipts[1]
+
+
 def test_project_retrieval_contexts_isolates_refusals_without_dropping_valid_entries() -> None:
     projection = project_retrieval_contexts(
         [

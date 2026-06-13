@@ -153,8 +153,12 @@ def project_retrieval_contexts(
                 )
                 continue
             user_payload_update(admission_payload)
-        for receipt in admission.untrusted_context_receipts:
-            receipts_append(copy_receipt(receipt))
+        admission_receipts = admission.untrusted_context_receipts
+        if len(admission_receipts) == 1:
+            receipts_append(copy_receipt(admission_receipts[0]))
+        else:
+            for receipt in admission_receipts:
+                receipts_append(copy_receipt(receipt))
 
     return RetrievalContextProjection(
         user_payload=user_payload,
