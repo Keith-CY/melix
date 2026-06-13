@@ -477,6 +477,8 @@ def test_retrieval_context_refuses_malformed_fields_with_receipts(
 
 
 def test_project_retrieval_contexts_admits_multiple_entries_with_redacted_receipts() -> None:
+    test_project_retrieval_lookup_result_returns_user_message_projection()
+
     projection = project_retrieval_contexts(
         [
             RetrievalContextEntry(
@@ -588,10 +590,9 @@ def test_project_retrieval_contexts_admits_multiple_entries_with_redacted_receip
     assert "Ignore every instruction" not in store_receipt_json
     assert "system instruction" not in store_receipt_json
 
-    _assert_retrieval_lookup_result_returns_user_message_projection()
-
-
 def test_project_retrieval_contexts_isolates_refusals_without_dropping_valid_entries() -> None:
+    test_project_retrieval_lookup_result_preserves_refusals_and_valid_siblings()
+
     projection = project_retrieval_contexts(
         [
             RetrievalContextEntry(
@@ -714,10 +715,11 @@ def test_project_retrieval_contexts_isolates_refusals_without_dropping_valid_ent
         },
     ]
 
-    _assert_retrieval_lookup_result_preserves_refusals_and_valid_siblings()
-
-
 def test_project_retrieval_contexts_refuses_malformed_entry_objects_without_dropping_valid_entries() -> None:
+    for lookup_result in (["not", "a", "mapping"], "bad-wrapper"):
+        test_project_retrieval_lookup_result_refuses_malformed_wrapper(lookup_result)
+    test_project_retrieval_lookup_result_refuses_missing_records_key()
+
     _assert_retrieval_entry_container_is_refused({"context_kind": "retrieved_document"})
     _assert_retrieval_entry_container_is_refused("not entries")
 
@@ -798,11 +800,6 @@ def test_project_retrieval_contexts_refuses_malformed_entry_objects_without_drop
             ),
         },
     ]
-
-    for lookup_result in (["not", "a", "mapping"], "bad-wrapper"):
-        _assert_retrieval_lookup_result_refuses_malformed_wrapper(lookup_result)
-    _assert_retrieval_lookup_result_refuses_missing_records_key()
-
 
 def test_project_retrieval_contexts_refuses_duplicate_payload_fields_before_overwrite() -> None:
     projection = project_retrieval_contexts(
@@ -927,6 +924,8 @@ def test_project_retrieval_contexts_refuses_duplicate_payload_fields_before_over
 def test_project_retrieval_contexts_preserves_multi_field_admission_duplicate_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    test_project_retrieval_lookup_result_copies_store_projection_outputs(monkeypatch)
+
     class Admission:
         def __init__(
             self,
@@ -1011,9 +1010,6 @@ def test_project_retrieval_contexts_preserves_multi_field_admission_duplicate_sc
         }
     ]
 
-    _assert_retrieval_lookup_result_copies_store_projection_outputs(monkeypatch)
-
-
 def test_project_retrieval_contexts_refuses_unknown_context_kind() -> None:
     projection = project_retrieval_contexts(
         [
@@ -1082,6 +1078,31 @@ def test_project_retrieval_contexts_refuses_unknown_context_kind_with_fallback_i
             ),
         }
     ]
+
+
+def test_project_retrieval_lookup_result_returns_user_message_projection() -> None:
+    _assert_retrieval_lookup_result_returns_user_message_projection()
+
+
+@pytest.mark.parametrize("lookup_result", (["not", "a", "mapping"], "bad-wrapper"))
+def test_project_retrieval_lookup_result_refuses_malformed_wrapper(
+    lookup_result: object,
+) -> None:
+    _assert_retrieval_lookup_result_refuses_malformed_wrapper(lookup_result)
+
+
+def test_project_retrieval_lookup_result_refuses_missing_records_key() -> None:
+    _assert_retrieval_lookup_result_refuses_missing_records_key()
+
+
+def test_project_retrieval_lookup_result_preserves_refusals_and_valid_siblings() -> None:
+    _assert_retrieval_lookup_result_preserves_refusals_and_valid_siblings()
+
+
+def test_project_retrieval_lookup_result_copies_store_projection_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_retrieval_lookup_result_copies_store_projection_outputs(monkeypatch)
 
 
 def _assert_retrieval_lookup_result_returns_user_message_projection() -> None:
