@@ -121,16 +121,17 @@ def project_retrieval_contexts(
     admit_entry = _admit_entry
     duplicate_projection_receipt = _duplicate_projection_receipt
     refusal_receipts_extend = refusal_receipts.extend
+    refusal_receipts_append = refusal_receipts.append
     receipts_extend = receipts.extend
     receipts_append = receipts.append
     user_payload_update = user_payload.update
-    copy_receipt = dict.copy
 
     for entry in entries:
         try:
             admission = admit_entry(entry)
         except RetrievalContextAdmissionError as exc:
-            refusal_receipts_extend(copy_receipt(receipt) for receipt in exc.refusal_receipts)
+            for receipt in exc.refusal_receipts:
+                refusal_receipts_append(receipt.copy())
             continue
 
         admission_payload = admission.user_payload
@@ -165,10 +166,10 @@ def project_retrieval_contexts(
             user_payload_update(admission_payload)
         admission_receipts = admission.untrusted_context_receipts
         if len(admission_receipts) == 1:
-            receipts_append(copy_receipt(admission_receipts[0]))
+            receipts_append(admission_receipts[0].copy())
         else:
             for receipt in admission_receipts:
-                receipts_append(copy_receipt(receipt))
+                receipts_append(receipt.copy())
 
     return RetrievalContextProjection(
         user_payload=user_payload,
