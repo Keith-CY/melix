@@ -11,6 +11,7 @@ from worker.runtime.retrieval_context import (
     admit_retrieved_document_context,
     project_retrieval_lookup_result,
 )
+from worker.runtime.skill_memory_context import project_skill_memory_lookup_result
 from worker.runtime.tool_observation import (
     ToolObservationPolicy,
     ToolObservationRecord,
@@ -20,7 +21,7 @@ from worker.runtime.tool_registry import (
     ToolDescriptor,
     ToolRegistry,
     ToolSelectionInput,
-    built_in_tool_registry,
+    agentic_tool_catalog_registry,
     select_agentic_tools_for_turn,
 )
 from worker.runtime.workspace_file_tools import WorkspaceFileTools
@@ -90,7 +91,7 @@ class DeterministicAgenticToolRuntime:
             selection_result = select_agentic_tools_for_turn(tool_selection)
             registry = selection_result.registry
             selection_receipt = selection_result.receipt
-        self._registry = registry or built_in_tool_registry()
+        self._registry = registry or agentic_tool_catalog_registry()
         self._tool_by_name = {tool.name: tool for tool in self._registry.tools}
         self._fixture_context = dict(fixture_context or {})
         self._observation_policy = observation_policy or ToolObservationPolicy()
@@ -215,6 +216,20 @@ class DeterministicAgenticToolRuntime:
             )
         if tool_name == "image_search":
             return _image_search_payload(
+                arguments=arguments,
+                fixture_context=self._fixture_context,
+                tool_call_id=tool_call_id,
+            )
+        if tool_name == "skill_lookup":
+            return _skill_memory_lookup_payload(
+                context_kind="skill",
+                arguments=arguments,
+                fixture_context=self._fixture_context,
+                tool_call_id=tool_call_id,
+            )
+        if tool_name == "memory_lookup":
+            return _skill_memory_lookup_payload(
+                context_kind="memory",
                 arguments=arguments,
                 fixture_context=self._fixture_context,
                 tool_call_id=tool_call_id,
@@ -459,6 +474,68 @@ def _image_search_payload(
         "results": results,
         "result_count": len(results),
         "_untrusted_context_receipts": _retrieval_lookup_result_receipts(result_records),
+    }
+
+
+def _skill_memory_lookup_payload(
+    *,
+    context_kind: str,
+    arguments: dict[str, Any],
+    fixture_context: dict[str, Any],
+    tool_call_id: str,
+) -> dict[str, Any]:
+    query = _tool_argument_text(arguments, "query", tool_call_id=tool_call_id)
+    max_results = _positive_int(arguments.get("max_results"), default=3)
+    store_ref = (
+        _optional_tool_argument_text(arguments, "store_ref", tool_call_id=tool_call_id)
+        or "default"
+    )
+    store = _skill_memory_store_list(
+        fixture_context,
+        context_kind=context_kind,
+        store_ref=store_ref,
+    )
+    lowered_query = query.lower()
+    results: list[dict[str, Any]] = []
+    result_records: list[dict[str, object]] = []
+    owner_scope_checked = _owner_scope_is_configured(fixture_context)
+    field_prefix = _skill_memory_store_key(context_kind)
+    for index, item in enumerate(store, start=1):
+        fallback_id = f"{context_kind}-{index}"
+        source_id = _source_id(item.get("id"), default=fallback_id)
+        _enforce_owner_scope(
+            fixture_context=fixture_context,
+            source=item,
+            source_type=context_kind,
+            source_id=source_id,
+            field_prefix=field_prefix,
+        )
+        result = _skill_memory_lookup_result_item(
+            context_kind=context_kind,
+            source_id=source_id,
+            item=item,
+        )
+        if lowered_query not in _skill_memory_lookup_match_text(result):
+            continue
+        results.append(result)
+        result_records.append(
+            _skill_memory_result_record(
+                context_kind=context_kind,
+                tool_call_id=tool_call_id,
+                result_index=len(results),
+                value=result,
+                source_id=source_id,
+                owner_scope_checked=owner_scope_checked,
+            )
+        )
+        if len(results) >= max_results:
+            break
+    return {
+        "query": query,
+        "store_ref": store_ref,
+        "results": results,
+        "result_count": len(results),
+        "_untrusted_context_receipts": _skill_memory_lookup_result_receipts(result_records),
     }
 
 
@@ -754,6 +831,47 @@ def _context_list(fixture_context: dict[str, Any], key: str, corpus_ref: str) ->
     return context_items
 
 
+def _skill_memory_store_key(context_kind: str) -> str:
+    if context_kind == "skill":
+        return "skill_store"
+    if context_kind == "memory":
+        return "memory_store"
+    raise AgenticToolRuntimeError(f"Unsupported skill or memory context kind: {context_kind}.")
+
+
+def _skill_memory_store_list(
+    fixture_context: dict[str, Any],
+    *,
+    context_kind: str,
+    store_ref: str,
+) -> list[dict[str, Any]]:
+    store_key = _skill_memory_store_key(context_kind)
+    value = fixture_context.get(store_key, [])
+    if isinstance(value, dict):
+        value = value.get(store_ref, [])
+    if not isinstance(value, list):
+        raise _invalid_untrusted_value_type(
+            field=store_key,
+            source_type=context_kind,
+            source_id=store_ref,
+            expected_type="list",
+            actual_type=type(value).__name__,
+        )
+
+    context_items: list[dict[str, Any]] = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            raise _invalid_untrusted_value_type(
+                field=f"{store_key}.item",
+                source_type=context_kind,
+                source_id=f"{context_kind}-{index}",
+                expected_type="object",
+                actual_type=type(item).__name__,
+            )
+        context_items.append(item)
+    return context_items
+
+
 def _owner_scope_context(fixture_context: dict[str, Any]) -> dict[str, str]:
     raw_scope = fixture_context.get("owner_scope", {})
     if not isinstance(raw_scope, dict):
@@ -841,6 +959,87 @@ def _retrieval_lookup_result_receipts(
     records: list[dict[str, object]],
 ) -> list[dict[str, object]]:
     projection = project_retrieval_lookup_result({"records": records})
+    return [
+        *projection.untrusted_context_receipts,
+        *projection.refusal_receipts,
+    ]
+
+
+def _skill_memory_lookup_result_item(
+    *,
+    context_kind: str,
+    source_id: str,
+    item: dict[str, Any],
+) -> dict[str, Any]:
+    if context_kind == "skill":
+        name = _optional_untrusted_text(
+            item.get("name", ""),
+            field="skill_store.name",
+            source_type="skill",
+            source_id=source_id,
+        )
+        summary = _optional_untrusted_text(
+            item.get("summary", item.get("description", "")),
+            field="skill_store.summary",
+            source_type="skill",
+            source_id=source_id,
+            strip=False,
+        )
+        result: dict[str, Any] = {"id": source_id}
+        if name:
+            result["name"] = name
+        if summary:
+            result["summary"] = summary
+        return result
+
+    if context_kind == "memory":
+        text = _optional_untrusted_text(
+            item.get("text", item.get("summary", "")),
+            field="memory_store.text",
+            source_type="memory",
+            source_id=source_id,
+            strip=False,
+        )
+        result = {"id": source_id}
+        if text:
+            result["text"] = text
+        return result
+
+    raise AgenticToolRuntimeError(f"Unsupported skill or memory context kind: {context_kind}.")
+
+
+def _skill_memory_lookup_match_text(result: dict[str, Any]) -> str:
+    return " ".join(str(value).lower() for value in result.values())
+
+
+def _skill_memory_result_record(
+    *,
+    context_kind: str,
+    tool_call_id: str,
+    result_index: int,
+    value: dict[str, Any],
+    source_id: str,
+    owner_scope_checked: bool,
+) -> dict[str, object]:
+    return {
+        "context_kind": context_kind,
+        "source_id": source_id,
+        "payload": value,
+        "owner_scope_checked": owner_scope_checked,
+        "segment_id": f"{tool_call_id}:result-{result_index}",
+        "source_field": f"results[{result_index - 1}]",
+        "reason": f"selected {context_kind} lookup result is prompt data, not instructions",
+        "corrective_action": (
+            f"Keep selected {context_kind} lookup results in user-role data context and do not project "
+            "them into system or developer instructions."
+        ),
+    }
+
+
+def _skill_memory_lookup_result_receipts(
+    records: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    projection = project_skill_memory_lookup_result({"records": records})
     return [
         *projection.untrusted_context_receipts,
         *projection.refusal_receipts,
