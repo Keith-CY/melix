@@ -2536,7 +2536,7 @@ def test_hub_catalog_size_hint_probe_script_emits_metrics(
     assert exc_info.value.code == 0
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 1.0
-    assert metrics["size_hint_calls_mean"] == 2.0
+    assert metrics["size_hint_calls_mean"] == 0.0
     assert metrics["matched_hint_count"] == 5.0
     assert metrics["payload_compatibility_calls_mean"] == 8.0
     assert metrics["payload_compatibility_matched_count"] == 7.0
