@@ -2945,12 +2945,16 @@ final class WorkerScaffoldTests: XCTestCase {
     }
 
     func testRuntimeRegistryStoresPrefillContextsForLoadedModel() async throws {
+        let probe = ResidentMemoryProbe(samples: [0, 0])
         let registry = WorkerRuntimeRegistry(
             configuration: WorkerConfiguration(),
             modelCatalog: WorkerModelCatalog(environment: [
                 "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"
             ]),
-            runtime: TextRuntime(backend: FakeRuntimeBackend())
+            runtime: TextRuntime(
+                backend: FakeRuntimeBackend(),
+                residentMemoryReader: { probe.next() }
+            )
         )
 
         var loadRequest = Melix_Worker_V1_ModelSpec()
