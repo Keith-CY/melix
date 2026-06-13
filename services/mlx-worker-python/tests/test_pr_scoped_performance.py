@@ -1542,13 +1542,14 @@ def test_scope_report_selects_macos_app_bundle_probes() -> None:
         changed_files=["services/mlx-worker-python/worker/productization/macos_app_bundle.py"],
     )
 
-    assert scope["selected_count"] == 5
+    assert scope["selected_count"] == 6
     assert _selected_probe_ids(scope) == [
         "macos-app-resource-bundle-scandir",
         "macos-app-native-binary-scandir",
         "macos-app-path-size-scandir",
         "macos-app-signing-targets-scandir",
         "macos-app-package-prune-scandir",
+        "macos-app-runtime-prune-scandir",
     ]
 
 
@@ -1572,6 +1573,20 @@ def test_macos_app_package_prune_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["package_count"] == 400.0
     assert metrics["pruned_count"] == 2400.0
+    assert metrics["bytes_saved"] > 0.0
+    assert metrics["elapsed_ms_mean"] > 0.0
+    assert metrics["sample_count"] == 9.0
+
+
+def test_macos_app_runtime_prune_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runpy.run_path(str(REPO_ROOT / "scripts/macos_app_runtime_prune_probe.py"), run_name="__main__")
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["runtime_package_count"] == 180.0
+    assert metrics["directories_pruned"] == 361.0
+    assert metrics["files_pruned"] == 120.0
     assert metrics["bytes_saved"] > 0.0
     assert metrics["elapsed_ms_mean"] > 0.0
     assert metrics["sample_count"] == 9.0
@@ -3379,6 +3394,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "macos-app-path-size-scandir",
         "macos-app-signing-targets-scandir",
         "macos-app-package-prune-scandir",
+        "macos-app-runtime-prune-scandir",
         "package-macos-resolve-fallback-scandir",
         "melix-metrics-snapshot-runtime-scandir",
         "pr-scoped-performance-scope-json-read-bytes",
