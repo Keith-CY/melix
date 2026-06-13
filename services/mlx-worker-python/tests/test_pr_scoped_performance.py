@@ -2500,8 +2500,11 @@ def test_event_extraction_response_json_probe_script_emits_metrics(
     assert metrics["iterations_per_sample"] == 3.0
     assert metrics["sample_count"] == 1.0
     assert metrics["checksum"] == 12.0
+    assert metrics["direct_checksum"] == 12.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["direct_elapsed_ms_mean"] >= 0
+    assert metrics["direct_peak_bytes_mean"] > 0
 
 
 def test_hub_catalog_tag_normalization_probe_script_emits_metrics(
