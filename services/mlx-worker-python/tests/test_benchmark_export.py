@@ -1719,6 +1719,10 @@ def test_build_benchmark_summary_csv_uses_canonical_rows(tmp_path: Path) -> None
 
 
 def test_build_benchmark_summary_csv_serializes_tuple_and_none_values() -> None:
+    class CustomOutputPath:
+        def __str__(self) -> str:
+            return "/tmp/custom"
+
     bundle = {
         "benchmark_summary_rows": [
             {
@@ -1736,8 +1740,8 @@ def test_build_benchmark_summary_csv_serializes_tuple_and_none_values() -> None:
                 "structured_output_mode": None,
                 "request_p50_ms": 11.0,
                 "request_p95_ms": 12.0,
-                "status": "completed",
-                "output_dir": "/tmp",
+                "status": {"phase": "completed"},
+                "output_dir": CustomOutputPath(),
                 "created_at_unix_ms": 1,
                 "updated_at_unix_ms": 2,
             }
@@ -1745,9 +1749,92 @@ def test_build_benchmark_summary_csv_serializes_tuple_and_none_values() -> None:
     }
 
     csv_text = build_benchmark_summary_csv(bundle)
+    csv_row = next(csv.DictReader(io.StringIO(csv_text)))
 
     assert "smoke,latency" in csv_text
     assert "16,32" in csv_text
+    assert json.loads(csv_row["status"]) == {"phase": "completed"}
+    assert csv_row["output_dir"] == "/tmp/custom"
+
+
+def test_build_benchmark_summary_csv_serializes_sequence_edge_cases() -> None:
+    bundle = {
+        "benchmark_summary_rows": [
+            {
+                "job_id": "bench-single",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "synthetic",
+                "suites": ["smoke"],
+                "context_lengths": [32],
+                "generation_length": 8,
+                "batch_sizes": [1],
+                "repeats": 1,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "request_p50_ms": 24.45,
+                "request_p95_ms": 24.45,
+                "status": "completed",
+                "output_dir": "/tmp/single",
+                "created_at_unix_ms": 101,
+                "updated_at_unix_ms": 202,
+            },
+            {
+                "job_id": "bench-edge",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "synthetic",
+                "suites": [],
+                "context_lengths": [16, 32],
+                "generation_length": 8,
+                "batch_sizes": [1, 2],
+                "repeats": 1,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "request_p50_ms": 24.45,
+                "request_p95_ms": 24.45,
+                "status": "completed",
+                "output_dir": "/tmp/edge",
+                "created_at_unix_ms": 101,
+                "updated_at_unix_ms": 202,
+            },
+            {
+                "job_id": "bench-fallback",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "synthetic",
+                "suites": [],
+                "context_lengths": [64],
+                "generation_length": 8,
+                "batch_sizes": "1",
+                "repeats": 1,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "request_p50_ms": 24.45,
+                "request_p95_ms": 24.45,
+                "status": ["completed"],
+                "output_dir": "/tmp/fallback",
+                "created_at_unix_ms": 101,
+                "updated_at_unix_ms": 202,
+            },
+        ]
+    }
+
+    rows = list(csv.DictReader(io.StringIO(build_benchmark_summary_csv(bundle))))
+
+    assert rows[0]["suites"] == "smoke"
+    assert rows[0]["context_lengths"] == "32"
+    assert rows[0]["batch_sizes"] == "1"
+    assert rows[1]["suites"] == ""
+    assert rows[1]["context_lengths"] == "16,32"
+    assert rows[1]["batch_sizes"] == "1,2"
+    assert rows[2]["suites"] == ""
+    assert rows[2]["context_lengths"] == "64"
+    assert rows[2]["batch_sizes"] == "1"
+    assert rows[2]["status"] == "completed"
 
 
 def test_build_benchmark_context_and_batch_csv_use_canonical_rows(tmp_path: Path) -> None:
@@ -2263,17 +2350,71 @@ def test_rows_to_csv_falls_back_for_custom_values() -> None:
     assert csv_text == "job_id,custom\r\nbench-1,custom-value\r\n"
 
 
-def test_rows_to_csv_sparse_rows_fall_back_for_custom_values() -> None:
-    class CustomValue:
-        def __str__(self) -> str:
-            return "custom-value"
+def test_rows_to_csv_ignores_unknown_row_fields_without_sparse_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingEnumerate:
+        def __call__(self, *args: object, **kwargs: object) -> object:
+            raise AssertionError(  # pragma: no cover - regression sentinel
+                "CSV row serialization should not build sparse indexes"
+            )
 
-    csv_text = _rows_to_csv(
-        iter(({"job_id": "bench-1", "custom": CustomValue()},)),
-        ["job_id", "missing", "custom"],
+    monkeypatch.setattr(
+        benchmark_export_module,
+        "enumerate",
+        FailingEnumerate(),
+        raising=False,
     )
 
-    assert csv_text == "job_id,missing,custom\r\nbench-1,,custom-value\r\n"
+    csv_text = _rows_to_csv(
+        iter(({"job_id": "bench-1", "typed_score": 1.0, "ignored": "x"},)),
+        ["job_id", "typed_score"],
+    )
+
+    assert csv_text == "job_id,typed_score\r\nbench-1,1.0\r\n"
+
+
+def test_benchmark_summary_csv_preserves_dense_serialization_without_generic_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failing_rows_to_csv(*args: object, **kwargs: object) -> str:
+        raise AssertionError(  # pragma: no cover - regression sentinel
+            "benchmark summary CSV should use its fixed-column writer"
+        )
+
+    monkeypatch.setattr(benchmark_export_module, "_rows_to_csv", failing_rows_to_csv)
+
+    csv_text = build_benchmark_summary_csv(
+        {
+            "benchmark_summary_rows": [
+                {
+                    "job_id": "bench-9",
+                    "model_id": "melix-dev-text",
+                    "task_kind": "text-generation",
+                    "source_repo": "HuggingFaceH4/ultrachat_200k",
+                    "suites": ("smoke", "latency"),
+                    "context_lengths": (16, 32),
+                    "generation_length": 8,
+                    "batch_sizes": (1, 2),
+                    "repeats": 2,
+                    "cache_profile": "cold",
+                    "reasoning_mode": None,
+                    "structured_output_mode": None,
+                    "request_p50_ms": 11.0,
+                    "request_p95_ms": 12.0,
+                    "status": "completed",
+                    "output_dir": "/tmp",
+                    "created_at_unix_ms": 1,
+                    "updated_at_unix_ms": 2,
+                }
+            ]
+        }
+    )
+
+    assert "smoke,latency" in csv_text
+    assert "16,32" in csv_text
+    assert "1,2" in csv_text
+    assert ",cold,,," in csv_text
 
 
 def test_evaluation_compare_csv_builders_emit_compare_rows() -> None:
