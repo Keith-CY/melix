@@ -456,6 +456,7 @@ private enum GatewayAuthorizationContext: Sendable {
 private enum GatewayAuthorizationRoute {
     case health
     case standard
+    case companionReadOnly
     case createSession
     case currentSession
 }
@@ -807,6 +808,13 @@ public struct OpenAIHandler: Sendable {
         {
             switch await persistentAuthSessionStore.validateSessionToken(sessionToken, policy: gatewayAccessPolicy) {
             case .success(let metadata):
+                if let failure = await companionScopeFailureResponse(
+                    route: route,
+                    request: request,
+                    metadata: metadata
+                ) {
+                    return .failure(failure)
+                }
                 return .success(.session(token: sessionToken, metadata: metadata))
             case .failure(let failure):
                 return .failure(await authSessionFailureResponse(for: failure))
@@ -1060,7 +1068,8 @@ public struct OpenAIHandler: Sendable {
         let createRequest = try decoder.decode(OpenAICreateAuthSessionRequest.self, from: request.body)
         let issued = try await persistentAuthSessionStore.issueSession(
             keyID: keyID,
-            rememberMe: createRequest.rememberMe
+            rememberMe: createRequest.rememberMe,
+            scope: createRequest.scope
         )
         let response = OpenAIAuthSessionResponse(
             session: OpenAIAuthSessionPayload(metadata: issued.metadata),
@@ -4458,14 +4467,52 @@ public struct OpenAIHandler: Sendable {
         case (.get, "/.well-known/melix.json"),
              (.get, "/api/capabilities"),
              (.get, "/api/instructions"),
-             (.get, "/api/config-metadata"):
-            return .standard
+             (.get, "/api/config-metadata"),
+             (.get, "/v1/models"),
+             (.get, "/v1/melix/health"),
+             (.get, "/v1/cache/stats"):
+            return .companionReadOnly
         case (.post, "/v1/melix/auth/session"):
             return .createSession
         case (.get, "/v1/melix/auth/session"), (.delete, "/v1/melix/auth/session"):
             return .currentSession
         default:
             return .standard
+        }
+    }
+
+    private func companionScopeFailureResponse(
+        route: GatewayAuthorizationRoute,
+        request: HTTPRequest,
+        metadata: PersistentAuthSessionMetadata
+    ) async -> HTTPResponse? {
+        guard metadata.scope == .companionReadOnly else {
+            return nil
+        }
+        switch route {
+        case .health, .companionReadOnly, .currentSession:
+            return nil
+        case .standard, .createSession:
+            await metricsStore.increment("companion_auth.rejected_request_count")
+            return jsonResponse(
+                statusCode: 403,
+                payload: [
+                    "error": [
+                        "code": "companion_read_only_scope_violation",
+                        "message": "Companion sessions are read-only and cannot call this route.",
+                        "session_state": [
+                            "state": metadata.state,
+                            "session_id": metadata.sessionID,
+                            "key_id": metadata.keyID,
+                            "scope": metadata.scope.rawValue,
+                        ],
+                        "route": [
+                            "method": request.method.rawValue,
+                            "path": request.path,
+                        ],
+                    ]
+                ]
+            )
         }
     }
 
@@ -5432,11 +5479,19 @@ private struct CacheStatsResponse: Codable {
     }
 }
 
-private struct OpenAICreateAuthSessionRequest: Codable {
+private struct OpenAICreateAuthSessionRequest: Decodable {
     let rememberMe: Bool
+    let scope: PersistentAuthSessionScope
 
     enum CodingKeys: String, CodingKey {
         case rememberMe = "remember_me"
+        case scope
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        rememberMe = try container.decode(Bool.self, forKey: .rememberMe)
+        scope = try container.decodeIfPresent(PersistentAuthSessionScope.self, forKey: .scope) ?? .operatorControl
     }
 }
 
@@ -5449,6 +5504,7 @@ private struct OpenAIAuthSessionPayload: Codable {
     let sessionID: String
     let keyID: String
     let rememberMe: Bool
+    let scope: PersistentAuthSessionScope
     let createdAtUnixMs: Int64
     let expiresAtUnixMs: Int64
     let revokedAtUnixMs: Int64
@@ -5459,6 +5515,7 @@ private struct OpenAIAuthSessionPayload: Codable {
         sessionID = metadata.sessionID
         keyID = metadata.keyID
         rememberMe = metadata.rememberMe
+        scope = metadata.scope
         createdAtUnixMs = metadata.createdAtUnixMs
         expiresAtUnixMs = metadata.expiresAtUnixMs
         revokedAtUnixMs = metadata.revokedAtUnixMs
@@ -5470,6 +5527,7 @@ private struct OpenAIAuthSessionPayload: Codable {
         case sessionID = "session_id"
         case keyID = "key_id"
         case rememberMe = "remember_me"
+        case scope
         case createdAtUnixMs = "created_at_unix_ms"
         case expiresAtUnixMs = "expires_at_unix_ms"
         case revokedAtUnixMs = "revoked_at_unix_ms"
