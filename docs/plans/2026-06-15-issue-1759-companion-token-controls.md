@@ -87,19 +87,19 @@ Excluded:
 Focused AppMain tests:
 
 ```bash
-HOME="$PWD/.swift-home" CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests/(issuesCompanionPairingWithStoredPrimaryKey|revokesActiveCompanionPairingToken|companionPairingRequiresStoredPrimaryKey|companionPairingSurfacesKeyStoreAndTransportFailures|liveCompanionPairingClientIssuesAndRevokesGatewaySessions|liveCompanionPairingClientReportsGatewayErrorsAndNormalizesRouteDisplayText)|DesktopFoundationViewTests/(apiAuthenticationSurfaceIncludesCompanionPairingTokenControls|companionPairingPanelRendersIdleActiveAndFailureStates)'
+HOME="$PWD/.swift-home" CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --filter 'RuntimeViewModelTests/(issuesCompanionPairingWithStoredPrimaryKey|revokesActiveCompanionPairingToken|companionPairingRequiresStoredPrimaryKey|companionPairingIssueIgnoresDuplicateInFlightRequests|companionPairingRevokeIgnoresDuplicateInFlightRequests|companionPairingSurfacesKeyStoreAndTransportFailures|liveCompanionPairingClientIssuesAndRevokesGatewaySessions|liveCompanionPairingClientReportsGatewayErrorsAndNormalizesRouteDisplayText)|DesktopFoundationViewTests/(apiAuthenticationSurfaceIncludesCompanionPairingTokenControls|companionPairingPanelRendersIdleActiveAndFailureStates)'
 ```
 
-Result: passed, 8 tests in 2 suites.
+Result: passed, 10 tests in 2 suites.
 
 Changed-line coverage:
 
 ```bash
-HOME="$PWD/.swift-home" CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests/(issuesCompanionPairingWithStoredPrimaryKey|revokesActiveCompanionPairingToken|companionPairingRequiresStoredPrimaryKey|companionPairingSurfacesKeyStoreAndTransportFailures|liveCompanionPairingClientIssuesAndRevokesGatewaySessions|liveCompanionPairingClientReportsGatewayErrorsAndNormalizesRouteDisplayText)|DesktopFoundationViewTests/(apiAuthenticationSurfaceIncludesCompanionPairingTokenControls|companionPairingPanelRendersIdleActiveAndFailureStates)'
+HOME="$PWD/.swift-home" CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache.noindex" swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests/(issuesCompanionPairingWithStoredPrimaryKey|revokesActiveCompanionPairingToken|companionPairingRequiresStoredPrimaryKey|companionPairingIssueIgnoresDuplicateInFlightRequests|companionPairingRevokeIgnoresDuplicateInFlightRequests|companionPairingSurfacesKeyStoreAndTransportFailures|liveCompanionPairingClientIssuesAndRevokesGatewaySessions|liveCompanionPairingClientReportsGatewayErrorsAndNormalizesRouteDisplayText)|DesktopFoundationViewTests/(apiAuthenticationSurfaceIncludesCompanionPairingTokenControls|companionPairingPanelRendersIdleActiveAndFailureStates)'
 UV_PYTHON=3.12 uv run python scripts/swift_changed_line_coverage.py --binary apps/macos-menubar/.build/arm64-apple-macosx/debug/MelixMacOSMenubarPackageTests.xctest/Contents/MacOS/MelixMacOSMenubarPackageTests --profdata apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/default.profdata --diff-from origin/main apps/macos-menubar/Sources/AppMain/Models/CompanionPairingClient.swift apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift apps/macos-menubar/Tests/MenuBarTests/RuntimeViewModelTests.swift apps/macos-menubar/Tests/MenuBarTests/DesktopFoundationViewTests.swift apps/macos-menubar/Tests/MenuBarTests/TestSupport.swift
 ```
 
-Result: changed-line coverage `96.08%` (`907/944`).
+Result: changed-line coverage `96.24%` (`973/1011`).
 
 Full gate before commit:
 

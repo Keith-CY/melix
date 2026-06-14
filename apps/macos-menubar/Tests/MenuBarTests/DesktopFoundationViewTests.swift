@@ -4639,6 +4639,8 @@ struct DesktopFoundationViewTests {
         _ = hostView(DesktopAPICompanionPairingPanel(viewModel: activeViewModel))
 
         #expect(activePresentation.statusTitle == "Read-only companion token active")
+        #expect(activePresentation.statusDetail.contains("1718000000000") == false)
+        #expect(activePresentation.statusDetail.contains("expires at"))
         #expect(activePresentation.statusURL == "http://127.0.0.1:12436/v1/melix/companion/status")
         #expect(activePresentation.allowedRoutesText == "Allowed routes: GET /v1/melix/companion/status")
         #expect(activePresentation.copyDisabled == false)

@@ -10377,9 +10377,11 @@ struct DesktopAPICompanionPairingPresentation: Equatable {
         case .issuing:
             return "Requesting a scoped companion session from the gateway."
         case .active:
-            return pairing.expiresAtUnixMS > 0
-                ? "Session \(pairing.sessionID) expires at \(pairing.expiresAtUnixMS)."
-                : "Session \(pairing.sessionID) is active."
+            if pairing.expiresAtUnixMS > 0 {
+                let expiresAt = Date(timeIntervalSince1970: Double(pairing.expiresAtUnixMS) / 1_000)
+                return "Session \(pairing.sessionID) expires at \(expiresAt.formatted(date: .abbreviated, time: .shortened))."
+            }
+            return "Session \(pairing.sessionID) is active."
         case .revoking:
             return "Revocation uses the current companion session token once."
         case .failed:

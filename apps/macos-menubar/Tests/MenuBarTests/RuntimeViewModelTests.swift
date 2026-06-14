@@ -1699,6 +1699,57 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["companion.pairing_issue_failures"] == 1)
     }
 
+    @Test("companion pairing issue ignores duplicate in-flight requests")
+    @MainActor
+    func companionPairingIssueIgnoresDuplicateInFlightRequests() async throws {
+        let companionClient = FakeCompanionPairingClient()
+        await companionClient.configureIssueDelay(.milliseconds(50))
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: companionClient
+        )
+
+        await viewModel.start()
+
+        async let firstIssue: Void = viewModel.issueCompanionPairing()
+        await viewModel.issueCompanionPairing()
+        await firstIssue
+
+        #expect(await companionClient.issueRequests.count == 1)
+        #expect(viewModel.companionPairing.phase == .active)
+    }
+
+    @Test("companion pairing revoke ignores duplicate in-flight requests")
+    @MainActor
+    func companionPairingRevokeIgnoresDuplicateInFlightRequests() async throws {
+        let companionClient = FakeCompanionPairingClient()
+        await companionClient.configureRevokeDelay(.milliseconds(50))
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: companionClient
+        )
+
+        await viewModel.start()
+        await viewModel.issueCompanionPairing()
+
+        async let firstRevoke: Void = viewModel.revokeCompanionPairing()
+        await viewModel.revokeCompanionPairing()
+        await firstRevoke
+
+        #expect(await companionClient.revokeRequests.count == 1)
+        #expect(viewModel.companionPairing.phase == .idle)
+    }
+
     @Test("companion pairing surfaces key store and transport failures")
     @MainActor
     func companionPairingSurfacesKeyStoreAndTransportFailures() async throws {

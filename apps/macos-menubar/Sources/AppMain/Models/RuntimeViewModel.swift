@@ -6030,6 +6030,9 @@ public final class RuntimeViewModel {
     }
 
     public func issueCompanionPairing() async {
+        guard companionPairing.phase != .issuing && companionPairing.phase != .revoking else {
+            return
+        }
         guard let serverSession = selectedServerSession else {
             await failCompanionPairingIssue("Select a local server session before creating companion pairing.")
             return
@@ -6073,6 +6076,9 @@ public final class RuntimeViewModel {
     }
 
     public func revokeCompanionPairing() async {
+        guard companionPairing.phase != .revoking else {
+            return
+        }
         guard let baseURL = activeCompanionPairingBaseURL, activeCompanionSessionToken.isEmpty == false else {
             await failCompanionPairingRevoke("No active companion pairing token to revoke.")
             return

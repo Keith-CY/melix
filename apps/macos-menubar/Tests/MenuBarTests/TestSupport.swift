@@ -148,6 +148,8 @@ actor FakeCompanionPairingClient: CompanionPairingClient {
     )
     private var issueError: Error?
     private var revokeError: Error?
+    private var issueDelay: Duration?
+    private var revokeDelay: Duration?
 
     func configureIssueResult(_ result: CompanionPairingIssueResult) {
         issueResult = result
@@ -162,8 +164,19 @@ actor FakeCompanionPairingClient: CompanionPairingClient {
         revokeError = error
     }
 
+    func configureIssueDelay(_ delay: Duration?) {
+        issueDelay = delay
+    }
+
+    func configureRevokeDelay(_ delay: Duration?) {
+        revokeDelay = delay
+    }
+
     func issuePairing(baseURL: URL, apiKey: String) async throws -> CompanionPairingIssueResult {
         issueRequests.append(CompanionPairingIssueRequestRecord(baseURL: baseURL, apiKey: apiKey))
+        if let issueDelay {
+            try? await Task.sleep(for: issueDelay)
+        }
         if let issueError {
             throw issueError
         }
@@ -172,6 +185,9 @@ actor FakeCompanionPairingClient: CompanionPairingClient {
 
     func revokePairing(baseURL: URL, sessionToken: String) async throws {
         revokeRequests.append(CompanionPairingRevokeRequestRecord(baseURL: baseURL, sessionToken: sessionToken))
+        if let revokeDelay {
+            try? await Task.sleep(for: revokeDelay)
+        }
         if let revokeError {
             throw revokeError
         }
