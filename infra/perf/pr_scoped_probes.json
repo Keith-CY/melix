@@ -2350,6 +2350,41 @@
     ]
   },
   {
+    "id": "macos-app-runtime-prune-scandir",
+    "name": "macOS app Python runtime prune scandir",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/macos_app_bundle.py",
+      "services/mlx-worker-python/tests/test_macos_app_bundle.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/macos_app_runtime_prune_probe.py",
+      "infra/perf/pr_scoped_probes.json"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_macos_app_bundle.py::test_bundle_slimming_helpers_cover_runtime_edge_cases services/mlx-worker-python/tests/test_macos_app_bundle.py::test_prune_python_runtime_baggage_uses_scandir_without_os_walk services/mlx-worker-python/tests/test_macos_app_bundle.py::test_prune_python_runtime_baggage_tolerates_scan_and_metadata_errors services/mlx-worker-python/tests/test_macos_app_bundle.py::test_prune_python_runtime_baggage_tolerates_file_unlink_errors services/mlx-worker-python/tests/test_macos_app_bundle.py::test_prune_python_runtime_baggage_tolerates_file_delete_errors services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_macos_app_bundle_probes services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_macos_app_runtime_prune_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_macos_app_bundle.py::test_bundle_slimming_helpers_cover_runtime_edge_cases services/mlx-worker-python/tests/test_macos_app_bundle.py::test_prune_python_runtime_baggage_uses_scandir_without_os_walk services/mlx-worker-python/tests/test_macos_app_bundle.py::test_prune_python_runtime_baggage_tolerates_scan_and_metadata_errors services/mlx-worker-python/tests/test_macos_app_bundle.py::test_prune_python_runtime_baggage_tolerates_file_unlink_errors services/mlx-worker-python/tests/test_macos_app_bundle.py::test_prune_python_runtime_baggage_tolerates_file_delete_errors services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_macos_app_bundle_probes services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_macos_app_runtime_prune_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/macos_app_bundle.py services/mlx-worker-python/tests/test_macos_app_bundle.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/macos_app_runtime_prune_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'SCRIPT=\"scripts/macos_app_runtime_prune_probe.py\"; for CANDIDATE in \"${MELIX_PR_SCOPED_PROBE_ROOT:-$PWD}/scripts/macos_app_runtime_prune_probe.py\" \"$PWD/scripts/macos_app_runtime_prune_probe.py\" \"$PWD/../head/scripts/macos_app_runtime_prune_probe.py\"; do if [ -f \"$CANDIDATE\" ]; then SCRIPT=\"$CANDIDATE\"; break; fi; done; python3 \"$SCRIPT\"'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "directories_pruned",
+        "unit": "directories",
+        "direction": "informational"
+      },
+      {
+        "key": "files_pruned",
+        "unit": "files",
+        "direction": "informational"
+      }
+    ]
+  },
+  {
     "id": "package-macos-resolve-fallback-scandir",
     "name": "Package macOS fallback build product scandir",
     "runner": "ubuntu-latest",
