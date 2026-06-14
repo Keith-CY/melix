@@ -108,6 +108,8 @@ def _measure() -> dict[str, float]:
         )
 
     return {
+        "hf_cache_elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
+        "hf_cache_peak_bytes_mean": round(statistics.fmean(peak_samples), 1),
         "sample_count": float(SAMPLE_COUNT),
         "snapshot_count": float(SNAPSHOT_COUNT),
         "selected_latest_snapshot": float(SNAPSHOT_COUNT - 1),
