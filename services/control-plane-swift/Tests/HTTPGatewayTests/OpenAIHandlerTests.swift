@@ -1023,7 +1023,7 @@ struct OpenAIHandlerTests {
         #expect(firstJob["state"] as? String == "running")
         #expect(firstJob["prompt_digest"] as? String == "sha256:prompt-digest")
         #expect(redaction["raw_prompts"] as? String == "omitted")
-        #expect(redaction["logs"] as? String == "omitted")
+        #expect(redaction["logs"] as? String == "redacted_tail")
         #expect(body.contains(privatePrompt) == false)
         #expect(body.contains(privateNegativePrompt) == false)
         #expect(body.contains(privateArtifactURI) == false)
@@ -1080,6 +1080,35 @@ struct OpenAIHandlerTests {
         #expect(queue["queued_requests"] as? Int == 0)
         #expect(imageJobs["active"] as? Int == 2)
         #expect(jobs.map { $0["job_id"] as? String } == ["job-a", "job-z"])
+    }
+
+    @Test("companion status endpoint returns empty logs without image job read model")
+    func companionStatusEndpointReturnsEmptyLogsWithoutImageJobReadModel() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let logs = try #require(payload["logs"] as? [String: Any])
+        let entries = try #require(logs["entries"] as? [[String: Any]])
+
+        #expect(response.statusCode == 200)
+        #expect(logs["source"] as? String == "image_jobs")
+        #expect(logs["total"] as? Int == 0)
+        #expect(logs["visible"] as? Int == 0)
+        #expect(entries.isEmpty)
     }
 
     @Test("companion status endpoint supports credential auth and newest job ordering")
@@ -1194,6 +1223,7 @@ struct OpenAIHandlerTests {
         recipe.prompt = privatePrompt
         recipe.negativePrompt = privateNegativePrompt
         recipe.sourceImageUri = privateSourceURI
+        recipe.maskUri = privateStorageURI
 
         await imageJobReadModel.recordQueued(
             requestID: "req-receipt-old",
@@ -1281,7 +1311,7 @@ struct OpenAIHandlerTests {
         #expect(firstRedaction["local_paths"] as? String == "omitted")
         #expect(firstRedaction["error_message"] as? String == "omitted")
         #expect(redaction["recent_receipts"] as? String == "redacted_summary")
-        #expect(redaction["logs"] as? String == "omitted")
+        #expect(redaction["logs"] as? String == "redacted_tail")
         #expect(body.contains(privatePrompt) == false)
         #expect(body.contains(privatePromptDelta) == false)
         #expect(body.contains(privateNegativePrompt) == false)
@@ -1289,6 +1319,138 @@ struct OpenAIHandlerTests {
         #expect(body.contains(privateStorageURI) == false)
         #expect(body.contains(privateSourceArtifactID) == false)
         #expect(body.contains(privateErrorMessage) == false)
+        #expect(body.contains("storage_uri") == false)
+        #expect(body.contains("source_artifact_id") == false)
+    }
+
+    @Test("companion status endpoint returns redacted log tail")
+    func companionStatusEndpointReturnsRedactedLogTail() async throws {
+        final class Clock: @unchecked Sendable {
+            private var lockedDate: Date
+            private let lock = NSLock()
+
+            var date: Date {
+                get {
+                    lock.withLock { lockedDate }
+                }
+                set {
+                    lock.withLock {
+                        lockedDate = newValue
+                    }
+                }
+            }
+
+            init(date: Date) {
+                self.lockedDate = date
+            }
+        }
+
+        let clock = Clock(date: Date(timeIntervalSince1970: 2_100))
+        let imageJobReadModel = ImageJobReadModel(now: { clock.date })
+
+        let privatePrompt = "PRIVATE LOG TAIL PROMPT"
+        let privatePromptDelta = "PRIVATE LOG TAIL DELTA"
+        let privateNegativePrompt = "PRIVATE LOG TAIL NEGATIVE"
+        let privateSourceURI = "file:///Users/chenyu/private/log-source.png"
+        let privateStorageURI = "file:///Users/chenyu/private/log-output.png"
+        let privateErrorMessage = "PRIVATE LOG TAIL ERROR"
+
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = privatePrompt
+        recipe.negativePrompt = privateNegativePrompt
+        recipe.sourceImageUri = privateSourceURI
+
+        await imageJobReadModel.recordQueued(
+            requestID: "req-log-tail",
+            jobID: "job-log-tail",
+            modelID: "melix-dev-image",
+            operation: "image.generation",
+            lane: "multimodal.vision.background",
+            promptDigest: "sha256:log-tail",
+            recipe: recipe,
+            sourceArtifactID: "private-log-source-artifact",
+            promptDelta: privatePromptDelta
+        )
+        await imageJobReadModel.recordRunning(
+            jobID: "job-log-tail",
+            workerID: "vision-worker",
+            stage: "sampling",
+            pct: 0.5,
+            completedSteps: 1,
+            totalSteps: 2
+        )
+        var error = Melix_Controlplane_V1_ErrorStatus()
+        error.code = "worker_failed"
+        error.message = privateErrorMessage
+        clock.date = Date(timeIntervalSince1970: 2_101)
+        await imageJobReadModel.recordFailed(jobID: "job-log-tail", error: error)
+        for index in 0..<55 {
+            clock.date = Date(timeIntervalSince1970: 2_102 + TimeInterval(index))
+            await imageJobReadModel.recordQueued(
+                requestID: "req-log-tail-\(index)",
+                jobID: "job-log-tail-\(String(format: "%02d", index))",
+                modelID: "melix-dev-image",
+                operation: "image.generation",
+                lane: "multimodal.vision.background",
+                promptDigest: "sha256:log-tail-\(index)",
+                recipe: recipe
+            )
+        }
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let body = try await collectBody(response.body)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        let logs = try #require(payload["logs"] as? [String: Any])
+        let entries = try #require(logs["entries"] as? [[String: Any]])
+        let first = try #require(entries.first)
+        let firstRedaction = try #require(first["redaction"] as? [String: Any])
+        let redaction = try #require(payload["redaction"] as? [String: Any])
+
+        #expect(response.statusCode == 200)
+        #expect(logs["source"] as? String == "image_jobs")
+        #expect(logs["total"] as? Int == 50)
+        #expect(logs["visible"] as? Int == 20)
+        #expect(entries.count == 20)
+        #expect(entries.map { $0["state"] as? String } == Array(repeating: "queued", count: 20))
+        #expect(first["event_type"] as? String == "image.job.state_changed")
+        #expect(first["job_id"] as? String == "job-log-tail-54")
+        #expect(first["request_id"] as? String == "req-log-tail-54")
+        #expect(first["model_id"] as? String == "melix-dev-image")
+        #expect(first["operation"] as? String == "image.generation")
+        #expect(first["lane"] as? String == "multimodal.vision.background")
+        #expect(first["worker_id"] as? String == "")
+        #expect(first["progress_stage"] as? String == "queued")
+        #expect(first["failure_code"] as? String == "")
+        #expect(firstRedaction["raw_log_line"] as? String == "omitted")
+        #expect(firstRedaction["raw_prompt"] as? String == "omitted")
+        #expect(firstRedaction["request_body"] as? String == "omitted")
+        #expect(firstRedaction["artifact_uris"] as? String == "omitted")
+        #expect(firstRedaction["local_paths"] as? String == "omitted")
+        #expect(firstRedaction["error_message"] as? String == "omitted")
+        #expect(redaction["logs"] as? String == "redacted_tail")
+        #expect(body.contains(privatePrompt) == false)
+        #expect(body.contains(privatePromptDelta) == false)
+        #expect(body.contains(privateNegativePrompt) == false)
+        #expect(body.contains(privateSourceURI) == false)
+        #expect(body.contains(privateStorageURI) == false)
+        #expect(body.contains(privateErrorMessage) == false)
+        #expect(body.contains("private-log-source-artifact") == false)
         #expect(body.contains("storage_uri") == false)
         #expect(body.contains("source_artifact_id") == false)
     }
