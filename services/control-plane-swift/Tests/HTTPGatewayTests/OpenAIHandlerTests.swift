@@ -1028,7 +1028,6 @@ struct OpenAIHandlerTests {
         #expect(body.contains(privateNegativePrompt) == false)
         #expect(body.contains(privateArtifactURI) == false)
         #expect(body.contains("source_image_uri") == false)
-        #expect(body.contains("prompt_delta") == false)
         #expect(await metricsStore.value(forKey: "companion.status_latency_ms") >= 0)
     }
 
@@ -1086,10 +1085,22 @@ struct OpenAIHandlerTests {
     @Test("companion status endpoint supports credential auth and newest job ordering")
     func companionStatusEndpointSupportsCredentialAuthAndNewestJobOrdering() async throws {
         final class Clock: @unchecked Sendable {
-            var date: Date
+            private var lockedDate: Date
+            private let lock = NSLock()
+
+            var date: Date {
+                get {
+                    lock.withLock { lockedDate }
+                }
+                set {
+                    lock.withLock {
+                        lockedDate = newValue
+                    }
+                }
+            }
 
             init(date: Date) {
-                self.date = date
+                self.lockedDate = date
             }
         }
 
@@ -1144,6 +1155,142 @@ struct OpenAIHandlerTests {
         #expect(authorization["mode"] as? String == "credential")
         #expect(authorization["key_id"] as? String == "browser-client")
         #expect(jobs.map { $0["job_id"] as? String } == ["job-newer", "job-older"])
+    }
+
+    @Test("companion status endpoint returns redacted recent receipt summaries")
+    func companionStatusEndpointReturnsRedactedRecentReceiptSummaries() async throws {
+        final class Clock: @unchecked Sendable {
+            private var lockedDate: Date
+            private let lock = NSLock()
+
+            var date: Date {
+                get {
+                    lock.withLock { lockedDate }
+                }
+                set {
+                    lock.withLock {
+                        lockedDate = newValue
+                    }
+                }
+            }
+
+            init(date: Date) {
+                self.lockedDate = date
+            }
+        }
+
+        let clock = Clock(date: Date(timeIntervalSince1970: 2_000))
+        let imageJobReadModel = ImageJobReadModel(now: { clock.date })
+
+        let privatePrompt = "PRIVATE RECENT RECEIPT PROMPT"
+        let privatePromptDelta = "PRIVATE RECENT RECEIPT DELTA"
+        let privateNegativePrompt = "PRIVATE RECENT RECEIPT NEGATIVE"
+        let privateSourceURI = "file:///Users/chenyu/private/recent-source.png"
+        let privateStorageURI = "file:///Users/chenyu/private/recent-output.png"
+        let privateErrorMessage = "PRIVATE RECENT RECEIPT ERROR"
+        let privateSourceArtifactID = "private-source-artifact"
+
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = privatePrompt
+        recipe.negativePrompt = privateNegativePrompt
+        recipe.sourceImageUri = privateSourceURI
+
+        await imageJobReadModel.recordQueued(
+            requestID: "req-receipt-old",
+            jobID: "job-receipt-old",
+            modelID: "melix-dev-image",
+            operation: "image.generation",
+            lane: "multimodal.vision.background",
+            promptDigest: "sha256:old",
+            recipe: recipe,
+            sourceArtifactID: privateSourceArtifactID,
+            promptDelta: privatePromptDelta
+        )
+
+        var artifact = Melix_Controlplane_V1_ImageArtifactRef()
+        artifact.artifactID = "private-output-artifact"
+        artifact.jobID = "job-receipt-old"
+        artifact.role = .imageArtifactGenerated
+        artifact.mimeType = "image/png"
+        artifact.format = "png"
+        artifact.width = 1024
+        artifact.height = 1024
+        artifact.byteLength = 4096
+        artifact.storageUri = privateStorageURI
+        artifact.variantIndex = 0
+        await imageJobReadModel.recordCompleted(jobID: "job-receipt-old", artifacts: [artifact])
+
+        clock.date = Date(timeIntervalSince1970: 2_001)
+        await imageJobReadModel.recordQueued(
+            requestID: "req-receipt-new",
+            jobID: "job-receipt-new",
+            modelID: "melix-dev-image",
+            operation: "image.edit",
+            lane: "multimodal.vision.background",
+            promptDigest: "sha256:new",
+            recipe: recipe,
+            sourceArtifactID: privateSourceArtifactID,
+            promptDelta: privatePromptDelta,
+            editMode: .iterate
+        )
+        var error = Melix_Controlplane_V1_ErrorStatus()
+        error.code = "worker_failed"
+        error.message = privateErrorMessage
+        await imageJobReadModel.recordFailed(jobID: "job-receipt-new", error: error)
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let body = try await collectBody(response.body)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        let recentReceipts = try #require(payload["recent_receipts"] as? [String: Any])
+        let items = try #require(recentReceipts["items"] as? [[String: Any]])
+        let first = try #require(items.first)
+        let firstRedaction = try #require(first["redaction"] as? [String: Any])
+        let redaction = try #require(payload["redaction"] as? [String: Any])
+
+        #expect(response.statusCode == 200)
+        #expect(recentReceipts["total"] as? Int == 2)
+        #expect(recentReceipts["visible"] as? Int == 2)
+        #expect(recentReceipts["source"] as? String == "image_jobs")
+        #expect(items.map { $0["job_id"] as? String } == ["job-receipt-new", "job-receipt-old"])
+        #expect(first["receipt_type"] as? String == "image_job")
+        #expect(first["source"] as? String == "image_jobs")
+        #expect(first["request_id"] as? String == "req-receipt-new")
+        #expect(first["state"] as? String == "failed")
+        #expect(first["prompt_digest"] as? String == "sha256:new")
+        #expect(first["artifact_count"] as? Int == 0)
+        #expect(first["failure_code"] as? String == "worker_failed")
+        #expect(firstRedaction["raw_prompt"] as? String == "omitted")
+        #expect(firstRedaction["prompt_delta"] as? String == "omitted")
+        #expect(firstRedaction["artifact_uris"] as? String == "omitted")
+        #expect(firstRedaction["local_paths"] as? String == "omitted")
+        #expect(firstRedaction["error_message"] as? String == "omitted")
+        #expect(redaction["recent_receipts"] as? String == "redacted_summary")
+        #expect(redaction["logs"] as? String == "omitted")
+        #expect(body.contains(privatePrompt) == false)
+        #expect(body.contains(privatePromptDelta) == false)
+        #expect(body.contains(privateNegativePrompt) == false)
+        #expect(body.contains(privateSourceURI) == false)
+        #expect(body.contains(privateStorageURI) == false)
+        #expect(body.contains(privateSourceArtifactID) == false)
+        #expect(body.contains(privateErrorMessage) == false)
+        #expect(body.contains("storage_uri") == false)
+        #expect(body.contains("source_artifact_id") == false)
     }
 
     @Test("gateway auth session responses sanitize rich output in encoded and manual json payloads")
