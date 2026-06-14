@@ -1134,9 +1134,10 @@ _VISUAL_SOURCE_ID_SAFE_CHARS = frozenset(
 
 def _redacted_visual_source_id(source_id: str) -> str:
     normalized = source_id.strip()
+    if not normalized:
+        return normalized
     if (
-        normalized
-        and len(normalized) <= 128
+        len(normalized) <= 128
         and all(char in _VISUAL_SOURCE_ID_SAFE_CHARS for char in normalized)
     ):
         return normalized

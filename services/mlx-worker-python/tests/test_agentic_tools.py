@@ -549,6 +549,10 @@ def test_agentic_tool_runtime_visual_source_receipts_redact_raw_media_refs() -> 
     assert media_ref not in json.dumps(source_receipts, ensure_ascii=False)
 
 
+def test_agentic_tool_runtime_visual_source_id_redaction_preserves_empty_ids_for_admission_refusal() -> None:
+    assert agentic_tools_module._redacted_visual_source_id("   ") == ""
+
+
 def test_agentic_tool_runtime_projects_search_results_through_retrieval_lookup_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
