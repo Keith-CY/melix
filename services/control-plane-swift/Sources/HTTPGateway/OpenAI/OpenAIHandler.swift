@@ -984,11 +984,12 @@ public struct OpenAIHandler: Sendable {
         let summary = await cacheSummaryTask
         let queueSnapshot = await queueSnapshotTask
         let imageJobsSnapshot = await imageJobsSnapshotTask
+        let status = routes.values.allSatisfy { $0 } ? "ok" : "degraded"
         let response = CompanionStatusResponse(
             readOnly: true,
-            status: routes.values.allSatisfy { $0 } ? "ok" : "degraded",
+            status: status,
             runtime: CompanionRuntimeStatusPayload(
-                status: routes.values.allSatisfy { $0 } ? "ok" : "degraded",
+                status: status,
                 routes: routes
             ),
             authorization: CompanionAuthorizationStatusPayload(authorization: authorization),
@@ -5727,6 +5728,8 @@ private struct CompanionQueueLanePayload: Codable {
     }
 }
 
+private let companionImageJobVisibleLimit = 10
+
 private struct CompanionImageJobStatusPayload: Codable {
     let active: Int
     let total: Int
@@ -5739,7 +5742,7 @@ private struct CompanionImageJobStatusPayload: Codable {
             }
             return lhs.updatedAtUnixMs > rhs.updatedAtUnixMs
         }
-        let visibleJobs = Array(sortedJobs.prefix(10))
+        let visibleJobs = Array(sortedJobs.prefix(companionImageJobVisibleLimit))
         active = jobs.filter { $0.state == .imageJobQueued || $0.state == .imageJobRunning }.count
         total = jobs.count
         self.jobs = visibleJobs.map(CompanionImageJobPayload.init(job:))
