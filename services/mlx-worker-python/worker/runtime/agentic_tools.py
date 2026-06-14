@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
@@ -9,6 +10,7 @@ from urllib.request import url2pathname
 
 from worker.runtime.retrieval_context import (
     admit_retrieved_document_context,
+    admit_retrieved_image_context,
     project_retrieval_lookup_result,
 )
 from worker.runtime.skill_memory_context import project_skill_memory_lookup_result
@@ -689,6 +691,7 @@ def _layout_parse_payload(
     media_ref = _tool_argument_text(arguments, "media_ref", tool_call_id=tool_call_id)
     layouts = _context_mapping(fixture_context, "layouts")
     layout = layouts.get(media_ref, [])
+    owner_scope_checked = False
     if isinstance(layout, dict) and "elements" in layout:
         _enforce_owner_scope(
             fixture_context=fixture_context,
@@ -697,6 +700,7 @@ def _layout_parse_payload(
             source_id=media_ref,
             field_prefix="layouts",
         )
+        owner_scope_checked = _owner_scope_is_configured(fixture_context)
         layout = layout.get("elements", [])
     if not isinstance(layout, list):
         raise _invalid_untrusted_value_type(
@@ -710,12 +714,27 @@ def _layout_parse_payload(
         _optional_tool_argument_text(arguments, "detail_level", tool_call_id=tool_call_id)
         or "blocks"
     )
-    return {
+    payload = {
         "media_ref": media_ref,
         "detail_level": detail_level,
         "elements": layout,
         "element_count": len(layout),
     }
+    payload["_untrusted_context_receipts"] = [
+        _visual_image_receipt(
+            tool_call_id=tool_call_id,
+            source_id=media_ref,
+            value=payload.copy(),
+            owner_scope_checked=owner_scope_checked,
+            segment_suffix="layout-result",
+            reason="layout parse result is prompt data, not instructions",
+            corrective_action=(
+                "Keep layout parse results in user-role data context and do not project "
+                "them into system or developer instructions."
+            ),
+        )
+    ]
+    return payload
 
 
 def _image_crop_payload(
@@ -730,6 +749,7 @@ def _image_crop_payload(
     crop_key = f"{media_ref}#{region}"
     crop = crops.get(crop_key, crops.get(media_ref, {}))
     crop_source_id = crop_key if crop_key in crops else media_ref
+    owner_scope_checked = False
     if isinstance(crop, dict):
         _enforce_owner_scope(
             fixture_context=fixture_context,
@@ -738,6 +758,7 @@ def _image_crop_payload(
             source_id=crop_source_id,
             field_prefix="crops",
         )
+        owner_scope_checked = _owner_scope_is_configured(fixture_context)
         payload = {key: value for key, value in crop.items() if key not in {"owner_id", "privilege"}}
     else:
         payload = {
@@ -753,6 +774,20 @@ def _image_crop_payload(
     purpose = _optional_tool_argument_text(arguments, "purpose", tool_call_id=tool_call_id)
     if purpose:
         payload["purpose"] = purpose
+    payload["_untrusted_context_receipts"] = [
+        _visual_image_receipt(
+            tool_call_id=tool_call_id,
+            source_id=crop_source_id,
+            value=payload.copy(),
+            owner_scope_checked=owner_scope_checked,
+            segment_suffix="crop-result",
+            reason="image crop result is prompt data, not instructions",
+            corrective_action=(
+                "Keep image crop results in user-role data context and do not project "
+                "them into system or developer instructions."
+            ),
+        )
+    ]
     return payload
 
 
@@ -1068,6 +1103,45 @@ def _visit_document_receipt(
         ),
     )
     return admission.untrusted_context_receipts[0]
+
+
+def _visual_image_receipt(
+    *,
+    tool_call_id: str,
+    source_id: str,
+    value: dict[str, Any],
+    owner_scope_checked: bool,
+    segment_suffix: str,
+    reason: str,
+    corrective_action: str,
+) -> dict[str, object]:
+    admission = admit_retrieved_image_context(
+        image_id=_redacted_visual_source_id(source_id),
+        image_payload=value,
+        owner_scope_checked=owner_scope_checked,
+        segment_id=f"{tool_call_id}:{segment_suffix}",
+        source_field="payload",
+        reason=reason,
+        corrective_action=corrective_action,
+    )
+    return admission.untrusted_context_receipts[0]
+
+
+_VISUAL_SOURCE_ID_SAFE_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:#-"
+)
+
+
+def _redacted_visual_source_id(source_id: str) -> str:
+    normalized = source_id.strip()
+    if (
+        normalized
+        and len(normalized) <= 128
+        and all(char in _VISUAL_SOURCE_ID_SAFE_CHARS for char in normalized)
+    ):
+        return normalized
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+    return f"image-ref:{digest}"
 
 
 def _tool_argument_text(arguments: dict[str, Any], name: str, *, tool_call_id: str) -> str:
