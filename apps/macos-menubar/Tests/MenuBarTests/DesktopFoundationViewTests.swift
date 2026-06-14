@@ -4567,6 +4567,93 @@ struct DesktopFoundationViewTests {
         )
     }
 
+    @Test("api authentication surface includes companion pairing token controls")
+    func apiAuthenticationSurfaceIncludesCompanionPairingTokenControls() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let shellSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift"
+        )
+        let shellSource = try String(contentsOf: shellSourceURL, encoding: .utf8)
+
+        #expect(shellSource.contains("DesktopAPICompanionPairingPanel"))
+        #expect(shellSource.contains("Companion Pairing"))
+        #expect(shellSource.contains("Issue Read-Only Token"))
+        #expect(shellSource.contains("Copy Pairing Bundle"))
+        #expect(shellSource.contains("Revoke Token"))
+    }
+
+    @Test("companion pairing panel renders idle active and failure states")
+    @MainActor
+    func companionPairingPanelRendersIdleActiveAndFailureStates() async throws {
+        let idleViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await idleViewModel.start()
+        let idlePresentation = DesktopAPICompanionPairingPresentation(pairing: idleViewModel.companionPairing)
+        _ = hostView(DesktopAPICompanionPairingPanel(viewModel: idleViewModel))
+
+        #expect(idlePresentation.statusTitle == "No active companion token")
+        #expect(idlePresentation.scopeText == "companion_read_only")
+        #expect(idlePresentation.issueDisabled == false)
+        #expect(idlePresentation.copyDisabled)
+        #expect(idlePresentation.revokeDisabled)
+
+        let activeClient = FakeCompanionPairingClient()
+        await activeClient.configureIssueResult(
+            CompanionPairingIssueResult(
+                sessionID: "companion-ui-session",
+                scope: "companion_read_only",
+                rememberMe: true,
+                expiresAtUnixMS: 1_718_000_000_000,
+                resumeHeader: "x-melix-session",
+                resumeToken: "melix_companion_ui_secret",
+                pairing: CompanionPairingDescriptor(
+                    schemaVersion: "melix.companion.pairing.v1",
+                    statusURL: "http://127.0.0.1:12436/v1/melix/companion/status",
+                    resumeHeader: "x-melix-session",
+                    tokenTransport: "resume_header",
+                    allowedRoutes: ["GET /v1/melix/companion/status"],
+                    forbiddenCapabilities: ["mutate_runtime"],
+                    expiresAtUnixMS: 1_718_000_000_000
+                )
+            )
+        )
+        let activeTemporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-companion-panel-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: activeTemporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: activeTemporaryRoot) }
+        let activeMelixHome = MelixHome(environment: ["MELIX_HOME": activeTemporaryRoot.path])
+        let activeAPIKeyStore = ServerSessionAPIKeyStore(melixHome: activeMelixHome)
+        let activeViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            serverSessionAPIKeyStore: activeAPIKeyStore,
+            companionPairingClient: activeClient
+        )
+
+        await activeViewModel.start()
+        try activeAPIKeyStore.savePrimaryKey(
+            serverSessionID: try #require(activeViewModel.selectedServerSession?.id),
+            primaryKey: "melix_primary_desktop",
+            keyID: "primary"
+        )
+        await activeViewModel.issueCompanionPairing()
+        let activePresentation = DesktopAPICompanionPairingPresentation(pairing: activeViewModel.companionPairing)
+        _ = hostView(DesktopAPICompanionPairingPanel(viewModel: activeViewModel))
+
+        #expect(activePresentation.statusTitle == "Read-only companion token active")
+        #expect(activePresentation.statusURL == "http://127.0.0.1:12436/v1/melix/companion/status")
+        #expect(activePresentation.allowedRoutesText == "Allowed routes: GET /v1/melix/companion/status")
+        #expect(activePresentation.copyDisabled == false)
+        #expect(activePresentation.revokeDisabled == false)
+
+        let failureViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await failureViewModel.start()
+        await failureViewModel.revokeCompanionPairing()
+        let failurePresentation = DesktopAPICompanionPairingPresentation(pairing: failureViewModel.companionPairing)
+        _ = hostView(DesktopAPICompanionPairingPanel(viewModel: failureViewModel))
+
+        #expect(failurePresentation.statusTitle == "Companion pairing needs attention")
+        #expect(failurePresentation.errorText == "No active companion pairing token to revoke.")
+    }
+
     @Test("api reference tab projects typed onboarding surfaces and endpoints")
     @MainActor
     func apiReferenceTabProjectsTypedOnboardingSurfacesAndEndpoints() throws {

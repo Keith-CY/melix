@@ -1560,6 +1560,389 @@ struct RuntimeViewModelTests {
         #expect(metricValues["gateway.api_key_persist_failures"] == 0)
     }
 
+    @Test("issues companion pairing with stored primary key")
+    @MainActor
+    func issuesCompanionPairingWithStoredPrimaryKey() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-companion-issue-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let companionClient = FakeCompanionPairingClient()
+        await companionClient.configureIssueResult(
+            CompanionPairingIssueResult(
+                sessionID: "companion-session-1",
+                scope: "companion_read_only",
+                rememberMe: true,
+                expiresAtUnixMS: 1_718_000_000_000,
+                resumeHeader: "x-melix-session",
+                resumeToken: "melix_companion_secret",
+                pairing: CompanionPairingDescriptor(
+                    schemaVersion: "melix.companion.pairing.v1",
+                    statusURL: "http://127.0.0.1:18081/v1/melix/companion/status",
+                    resumeHeader: "x-melix-session",
+                    tokenTransport: "resume_header",
+                    allowedRoutes: ["/v1/melix/companion/status"],
+                    forbiddenCapabilities: ["run_inference", "mutate_runtime", "read_private_prompts"],
+                    expiresAtUnixMS: 1_718_000_000_000
+                )
+            )
+        )
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            operatorSessionStore: operatorSessionStore,
+            serverSessionAPIKeyStore: apiKeyStore,
+            companionPairingClient: companionClient
+        )
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionHost("0.0.0.0")
+        viewModel.updateSelectedServerSessionPort(18_081)
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        try apiKeyStore.savePrimaryKey(
+            serverSessionID: serverSessionID,
+            primaryKey: "melix_primary_desktop",
+            keyID: "primary"
+        )
+
+        await viewModel.issueCompanionPairing()
+
+        let request = try #require(await companionClient.issueRequests.last)
+        #expect(request.baseURL.absoluteString == "http://127.0.0.1:18081")
+        #expect(request.apiKey == "melix_primary_desktop")
+        #expect(viewModel.companionPairing.phase == .active)
+        #expect(viewModel.companionPairing.sessionID == "companion-session-1")
+        #expect(viewModel.companionPairing.statusURL == "http://127.0.0.1:18081/v1/melix/companion/status")
+        #expect(viewModel.companionPairing.resumeHeader == "x-melix-session")
+        #expect(viewModel.companionPairing.allowedRoutes == ["/v1/melix/companion/status"])
+        #expect(viewModel.companionPairing.copyBundleAvailable)
+        #expect(String(describing: viewModel.companionPairing).contains("melix_companion_secret") == false)
+        let copyBundle = try #require(viewModel.companionPairingBundleText())
+        #expect(copyBundle.contains("melix_companion_secret"))
+        #expect(copyBundle.contains("melix.companion.pairing.bundle.v1"))
+        #expect(copyBundle.contains("http://127.0.0.1:18081/v1/melix/companion/status"))
+        #expect(await metrics.snapshot()["companion.pairing_issue_ms"] != nil)
+    }
+
+    @Test("revokes active companion pairing token")
+    @MainActor
+    func revokesActiveCompanionPairingToken() async throws {
+        let companionClient = FakeCompanionPairingClient()
+        await companionClient.configureIssueResult(
+            CompanionPairingIssueResult(
+                sessionID: "companion-session-2",
+                scope: "companion_read_only",
+                rememberMe: true,
+                expiresAtUnixMS: 1_718_000_000_000,
+                resumeHeader: "x-melix-session",
+                resumeToken: "melix_companion_revoke_secret",
+                pairing: CompanionPairingDescriptor(
+                    schemaVersion: "melix.companion.pairing.v1",
+                    statusURL: "http://127.0.0.1:12436/v1/melix/companion/status",
+                    resumeHeader: "x-melix-session",
+                    tokenTransport: "resume_header",
+                    allowedRoutes: ["/v1/melix/companion/status"],
+                    forbiddenCapabilities: ["mutate_runtime"],
+                    expiresAtUnixMS: 1_718_000_000_000
+                )
+            )
+        )
+        let apiKeyStore = ThrowingServerSessionAPIKeyStore(
+            throwOnLoad: false,
+            throwOnSave: false,
+            loadPrimaryKeyValue: "melix_primary_desktop"
+        )
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            serverSessionAPIKeyStore: apiKeyStore,
+            companionPairingClient: companionClient
+        )
+
+        await viewModel.start()
+        await viewModel.issueCompanionPairing()
+        await viewModel.revokeCompanionPairing()
+
+        let revokeRequest = try #require(await companionClient.revokeRequests.last)
+        #expect(revokeRequest.sessionToken == "melix_companion_revoke_secret")
+        #expect(viewModel.companionPairing.phase == .idle)
+        #expect(viewModel.companionPairing.sessionID.isEmpty)
+        #expect(viewModel.companionPairing.copyBundleAvailable == false)
+        #expect(await metrics.snapshot()["companion.pairing_revoke_ms"] != nil)
+    }
+
+    @Test("companion pairing requires stored primary key")
+    @MainActor
+    func companionPairingRequiresStoredPrimaryKey() async throws {
+        let companionClient = FakeCompanionPairingClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            serverSessionAPIKeyStore: NullServerSessionAPIKeyStore(),
+            companionPairingClient: companionClient
+        )
+
+        await viewModel.start()
+        await viewModel.issueCompanionPairing()
+
+        #expect(await companionClient.issueRequests.isEmpty)
+        #expect(viewModel.companionPairing.phase == .failed)
+        #expect(viewModel.companionPairing.lastError == "Generate or restore a primary gateway API key before creating companion pairing.")
+        #expect(viewModel.lastError == "Generate or restore a primary gateway API key before creating companion pairing.")
+        #expect(await metrics.snapshot()["companion.pairing_issue_failures"] == 1)
+    }
+
+    @Test("companion pairing surfaces key store and transport failures")
+    @MainActor
+    func companionPairingSurfacesKeyStoreAndTransportFailures() async throws {
+        let keyLookupMetrics = MenuBarMetricsStore()
+        let keyLookupViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: keyLookupMetrics,
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: true,
+                throwOnSave: false,
+                loadPrimaryKeyValue: nil
+            ),
+            companionPairingClient: FakeCompanionPairingClient()
+        )
+
+        await keyLookupViewModel.start()
+        await keyLookupViewModel.issueCompanionPairing()
+
+        #expect(keyLookupViewModel.companionPairing.phase == .failed)
+        #expect(keyLookupViewModel.lastError?.contains("Primary gateway API key lookup failed") == true)
+        #expect(await keyLookupMetrics.snapshot()["companion.pairing_issue_failures"] == 1)
+
+        let issueClient = FakeCompanionPairingClient()
+        await issueClient.configureIssueError(MenuBarTestError(description: "gateway offline"))
+        let issueMetrics = MenuBarMetricsStore()
+        let issueViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: issueMetrics,
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: issueClient
+        )
+
+        await issueViewModel.start()
+        await issueViewModel.issueCompanionPairing()
+
+        #expect(await issueClient.issueRequests.count == 1)
+        #expect(issueViewModel.companionPairing.phase == .failed)
+        #expect(issueViewModel.lastError?.contains("Companion pairing creation failed") == true)
+        #expect(await issueMetrics.snapshot()["companion.pairing_issue_failures"] == 1)
+
+        let revokeClient = FakeCompanionPairingClient()
+        await revokeClient.configureRevokeError(MenuBarTestError(description: "revocation failed"))
+        let revokeMetrics = MenuBarMetricsStore()
+        let revokeViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: revokeMetrics,
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: revokeClient
+        )
+
+        await revokeViewModel.start()
+        await revokeViewModel.issueCompanionPairing()
+        await revokeViewModel.revokeCompanionPairing()
+
+        #expect(await revokeClient.revokeRequests.count == 1)
+        #expect(revokeViewModel.companionPairing.phase == .failed)
+        #expect(revokeViewModel.lastError?.contains("Companion pairing revocation failed") == true)
+        #expect(await revokeMetrics.snapshot()["companion.pairing_revoke_failures"] == 1)
+
+        let emptyRevokeMetrics = MenuBarMetricsStore()
+        let emptyRevokeViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: emptyRevokeMetrics
+        )
+
+        await emptyRevokeViewModel.start()
+        await emptyRevokeViewModel.revokeCompanionPairing()
+
+        #expect(emptyRevokeViewModel.companionPairing.phase == .failed)
+        #expect(emptyRevokeViewModel.lastError == "No active companion pairing token to revoke.")
+        #expect(await emptyRevokeMetrics.snapshot()["companion.pairing_revoke_failures"] == 1)
+        #expect(emptyRevokeViewModel.companionPairingBundleText() == nil)
+    }
+
+    @Test("live companion pairing client issues and revokes gateway sessions")
+    func liveCompanionPairingClientIssuesAndRevokesGatewaySessions() async throws {
+        let issuePayload = #"""
+        {
+          "session": {
+            "session_id": "companion-live-session",
+            "key_id": "primary",
+            "remember_me": true,
+            "scope": "companion_read_only",
+            "created_at_unix_ms": 1717000000000,
+            "expires_at_unix_ms": 1718000000000,
+            "revoked_at_unix_ms": 0,
+            "last_restored_at_unix_ms": 0,
+            "state": "active"
+          },
+          "resume": {
+            "header": "x-melix-session",
+            "token": "melix_live_secret"
+          },
+          "pairing": {
+            "schema_version": "melix.companion.pairing.v1",
+            "scope": "companion_read_only",
+            "token_transport": "resume_header",
+            "resume_header": "x-melix-session",
+            "status_url": "http://127.0.0.1:12436/v1/melix/companion/status",
+            "expires_at_unix_ms": 1718000000000,
+            "allowed_origins": [],
+            "allowed_routes": [
+              {"method": "GET", "path": "/v1/melix/companion/status"},
+              {"method": "delete", "path": "/v1/melix/auth/session"}
+            ],
+            "forbidden_capabilities": ["mutate_runtime", "read_private_prompts"]
+          }
+        }
+        """#.data(using: .utf8)!
+        let transport = FakeCompanionPairingHTTPTransport()
+        await transport.configureIssueResponse(body: issuePayload)
+        await transport.configureRevokeResponse(statusCode: 204)
+        let client = LiveCompanionPairingClient(transport: transport)
+        let baseURL = try #require(URL(string: "http://127.0.0.1:12436"))
+
+        let result = try await client.issuePairing(baseURL: baseURL, apiKey: "melix_primary_desktop")
+
+        #expect(result.sessionID == "companion-live-session")
+        #expect(result.scope == "companion_read_only")
+        #expect(result.rememberMe)
+        #expect(result.resumeHeader == "x-melix-session")
+        #expect(result.resumeToken == "melix_live_secret")
+        #expect(result.pairing.schemaVersion == "melix.companion.pairing.v1")
+        #expect(result.pairing.statusURL == "http://127.0.0.1:12436/v1/melix/companion/status")
+        #expect(result.pairing.allowedRoutes == [
+            "GET /v1/melix/companion/status",
+            "DELETE /v1/melix/auth/session",
+        ])
+        #expect(result.pairing.forbiddenCapabilities == ["mutate_runtime", "read_private_prompts"])
+
+        let issueRequest = try #require(await transport.requests.first)
+        #expect(issueRequest.url?.absoluteString == "http://127.0.0.1:12436/v1/melix/auth/session")
+        #expect(issueRequest.method == "POST")
+        let issueHeaders = Dictionary(
+            uniqueKeysWithValues: issueRequest.headers.map { ($0.key.lowercased(), $0.value) }
+        )
+        #expect(issueHeaders["content-type"] == "application/json")
+        #expect(issueHeaders["x-api-key"] == "melix_primary_desktop")
+        let issueBody = try #require(issueRequest.body)
+        let issueJSON = try #require(JSONSerialization.jsonObject(with: issueBody) as? [String: Any])
+        #expect(issueJSON["remember_me"] as? Bool == true)
+        #expect(issueJSON["scope"] as? String == "companion_read_only")
+
+        try await client.revokePairing(baseURL: baseURL, sessionToken: "melix_live_secret")
+
+        let requests = await transport.requests
+        #expect(requests.count == 2)
+        let revokeRequest = try #require(requests.last)
+        #expect(revokeRequest.url?.absoluteString == "http://127.0.0.1:12436/v1/melix/auth/session")
+        #expect(revokeRequest.method == "DELETE")
+        let revokeHeaders = Dictionary(
+            uniqueKeysWithValues: revokeRequest.headers.map { ($0.key.lowercased(), $0.value) }
+        )
+        #expect(revokeHeaders["x-melix-session"] == "melix_live_secret")
+    }
+
+    @Test("live companion pairing client reports gateway errors and normalizes route display text")
+    func liveCompanionPairingClientReportsGatewayErrorsAndNormalizesRouteDisplayText() async throws {
+        let baseURL = try #require(URL(string: "http://127.0.0.1:12436"))
+
+        let httpFailureTransport = FakeCompanionPairingHTTPTransport()
+        await httpFailureTransport.configureIssueResponse(
+            statusCode: 500,
+            body: Data("gateway offline".utf8)
+        )
+        let httpFailureClient = LiveCompanionPairingClient(transport: httpFailureTransport)
+        do {
+            _ = try await httpFailureClient.issuePairing(baseURL: baseURL, apiKey: "melix_primary_desktop")
+            Issue.record("Expected companion pairing HTTP failure.")
+        } catch let error as CompanionPairingClientError {
+            #expect(error.description == "Companion pairing HTTP 500: gateway offline")
+        }
+
+        let missingPairingPayload = #"""
+        {
+          "session": {
+            "session_id": "companion-missing-pairing",
+            "remember_me": true,
+            "scope": "companion_read_only",
+            "expires_at_unix_ms": 1718000000000
+          },
+          "resume": {
+            "header": "x-melix-session",
+            "token": "melix_missing_pairing_secret"
+          }
+        }
+        """#.data(using: .utf8)!
+        let missingPairingTransport = FakeCompanionPairingHTTPTransport()
+        await missingPairingTransport.configureIssueResponse(body: missingPairingPayload)
+        let missingPairingClient = LiveCompanionPairingClient(transport: missingPairingTransport)
+        do {
+            _ = try await missingPairingClient.issuePairing(baseURL: baseURL, apiKey: "melix_primary_desktop")
+            Issue.record("Expected missing pairing descriptor failure.")
+        } catch let error as CompanionPairingClientError {
+            #expect(error.description == "Companion pairing response did not include a pairing descriptor.")
+        }
+
+        let routeNormalizationPayload = #"""
+        {
+          "session": {
+            "session_id": "companion-route-normalization",
+            "remember_me": true,
+            "scope": "companion_read_only",
+            "expires_at_unix_ms": 1718000000000
+          },
+          "resume": {
+            "header": "x-melix-session",
+            "token": "melix_route_secret"
+          },
+          "pairing": {
+            "schema_version": "melix.companion.pairing.v1",
+            "token_transport": "resume_header",
+            "resume_header": "x-melix-session",
+            "status_url": "http://127.0.0.1:12436/v1/melix/companion/status",
+            "expires_at_unix_ms": 1718000000000,
+            "allowed_routes": [
+              {"method": "   ", "path": "/v1/path-only"},
+              {"method": "get", "path": "   "}
+            ],
+            "forbidden_capabilities": []
+          }
+        }
+        """#.data(using: .utf8)!
+        let routeNormalizationTransport = FakeCompanionPairingHTTPTransport()
+        await routeNormalizationTransport.configureIssueResponse(body: routeNormalizationPayload)
+        let routeNormalizationClient = LiveCompanionPairingClient(transport: routeNormalizationTransport)
+
+        let routeNormalizationResult = try await routeNormalizationClient.issuePairing(
+            baseURL: baseURL,
+            apiKey: "melix_primary_desktop"
+        )
+
+        #expect(routeNormalizationResult.pairing.allowedRoutes == ["/v1/path-only", "GET"])
+        #expect(CompanionPairingClientError.invalidResponse("not HTTP").description == "not HTTP")
+    }
+
     @Test("defers gateway apply when selected server session is not running")
     @MainActor
     func defersGatewayApplyWhenSelectedServerSessionIsNotRunning() async throws {
