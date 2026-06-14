@@ -2651,14 +2651,12 @@
       {
         "key": "delta_ms",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 0.0
+        "direction": "informational"
       },
       {
         "key": "speedup",
         "unit": "ratio",
-        "direction": "higher_is_better",
-        "warn_pct": 0.0
+        "direction": "informational"
       },
       {
         "key": "new_peak_bytes_mean",

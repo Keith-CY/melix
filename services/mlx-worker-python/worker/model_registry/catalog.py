@@ -57,6 +57,15 @@ _HF_CACHE_PRUNED_SUBTREE_NAMES = frozenset({"snapshots", "refs"})
 _MODEL_WEIGHT_FILE_SUFFIXES = (".safetensors", ".npz")
 _GEMMA4_QAT_AUTOMATIC_ORG = "mlx-community"
 _GEMMA4_QAT_AUTOMATIC_SCOPE = "mlx-community-gemma4-q4"
+_GEMMA4_QAT_BASE_MODEL_MARKER = "base_model:"
+_GEMMA4_QAT_BASE_MODEL_MARKER_LEN = len(_GEMMA4_QAT_BASE_MODEL_MARKER)
+_GEMMA4_QAT_BASE_MODEL_STRIP_CHARS = " \t\r\n'\"[]"
+_GEMMA4_QAT_SIZE_NAMES = {
+    "e2b": "E2B",
+    "e4b": "E4B",
+    "12b": "12B",
+    "26b-a4b": "26B-A4B",
+}
 _GEMMA4_QAT_DRAFT_COMPANION_RECOVERY_HINT = (
     "Download or select a compatible Gemma 4 QAT draft companion."
 )
@@ -1457,9 +1466,11 @@ def _gemma4_qat_source_model(
     model_size: str,
     companion: bool,
 ) -> str:
+    marker = _GEMMA4_QAT_BASE_MODEL_MARKER
+    marker_len = _GEMMA4_QAT_BASE_MODEL_MARKER_LEN
     search_start = 0
     while True:
-        marker_index = readme_text.find("base_model:", search_start)
+        marker_index = readme_text.find(marker, search_start)
         if marker_index < 0:
             break
         line_start = readme_text.rfind("\n", 0, marker_index) + 1
@@ -1469,17 +1480,12 @@ def _gemma4_qat_source_model(
         line_end = readme_text.find("\n", marker_index)
         if line_end < 0:
             line_end = len(readme_text)
-        value = readme_text[marker_index + len("base_model:") : line_end].strip().strip("'\"[] ")
+        value = readme_text[marker_index + marker_len : line_end].strip(_GEMMA4_QAT_BASE_MODEL_STRIP_CHARS)
         if value:
             return value
         search_start = marker_index + 1
 
-    size_name = {
-        "e2b": "E2B",
-        "e4b": "E4B",
-        "12b": "12B",
-        "26b-a4b": "26B-A4B",
-    }.get(model_size)
+    size_name = _GEMMA4_QAT_SIZE_NAMES.get(model_size)
     if not size_name:
         return ""
     suffix = "-assistant" if companion else ""
