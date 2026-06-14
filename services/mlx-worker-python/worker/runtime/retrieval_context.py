@@ -288,13 +288,12 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             for receipt in admission_receipts:
                 receipts_append(receipt.copy())
 
+    if projection_refusal_receipts:
+        store_refusal_receipts.extend(projection_refusal_receipts)
     return RetrievalContextProjection(
         user_payload=user_payload,
         untrusted_context_receipts=receipts,
-        refusal_receipts=[
-            *store_refusal_receipts,
-            *projection_refusal_receipts,
-        ],
+        refusal_receipts=store_refusal_receipts,
     )
 
 
