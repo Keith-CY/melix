@@ -875,6 +875,22 @@ The `model_final_answer` classification records the projection boundary for
 prior assistant output only; it does not mark generated text as trusted
 instructions and does not change assistant transcript storage.
 
+Runtime-generated GRPO candidate traces must preserve tool-observation receipt
+evidence for every candidate that executed tools. Selected candidates continue
+to include full `agentic_tool_observations` through the selected policy trace.
+Non-selected candidate reward trace rows intentionally omit full observations,
+but each generated candidate and each candidate reward trace row with a tool
+run must expose scalar receipt evidence:
+
+- `agentic_tool_untrusted_context_receipt_schema`
+- `agentic_tool_untrusted_context_receipt_count`
+
+The schema is the first string `schema_version` found on a mapping-shaped
+receipt from the candidate tool observations. The count is the total number of
+mapping-shaped receipts across those observations. These scalar fields must not
+copy tool payloads, retrieved text, page content, media references, prompt
+text, or receipt bodies into non-selected candidate rows.
+
 The v1 deterministic retrieval source slice lets callers attach
 source-specific untrusted-context receipts beside the generic tool-observation
 receipt without adding those receipts to the sanitized payload or replay hash.
