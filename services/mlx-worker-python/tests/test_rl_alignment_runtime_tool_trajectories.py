@@ -137,8 +137,16 @@ def test_mlx_lm_runner_runtime_grpo_executes_candidate_tool_trajectories(
     assert row["reward_components"]["tool_efficiency"] == 0.0
     assert row["generated_candidates"][0]["tool_calls"][0]["name"] == "visit"
     assert row["generated_candidates"][0]["agentic_tool_observation_count"] == 1
+    assert row["generated_candidates"][0]["agentic_tool_untrusted_context_receipt_schema"] == (
+        "melix.untrusted_context_receipt.v1"
+    )
+    assert row["generated_candidates"][0]["agentic_tool_untrusted_context_receipt_count"] == 2
     assert row["generated_candidates"][1]["tool_calls"][1]["name"] == "local_compute"
     assert row["generated_candidates"][1]["agentic_tool_metrics"]["agentic_tool.call_count"] == 2.0
+    assert row["generated_candidates"][1]["agentic_tool_untrusted_context_receipt_schema"] == (
+        "melix.untrusted_context_receipt.v1"
+    )
+    assert row["generated_candidates"][1]["agentic_tool_untrusted_context_receipt_count"] == 3
     assert row["generated_candidates"][1]["reward_components"]["tool_efficiency"] == -1.0
 
     candidate_trace_rows = [
@@ -168,12 +176,20 @@ def test_mlx_lm_runner_runtime_grpo_executes_candidate_tool_trajectories(
     assert selected_trace["agentic_tool_calls"][0]["id"] == "visit-selected"
     assert selected_trace["agentic_tool_observations"][0]["payload"]["text"] == "Selected source."
     assert selected_trace["agentic_tool_metrics"]["agentic_tool.call_count"] == 1.0
+    assert selected_trace["agentic_tool_untrusted_context_receipt_schema"] == (
+        "melix.untrusted_context_receipt.v1"
+    )
+    assert selected_trace["agentic_tool_untrusted_context_receipt_count"] == 2
     assert len(selected_trace["replay_fingerprint"]) == 64
     assert extra_trace["candidate_index"] == 1
     assert extra_trace["selected"] is False
     assert extra_trace["tool_call_count"] == 2
     assert extra_trace["agentic_tool_observation_count"] == 2
     assert extra_trace["tool_calls"][1]["name"] == "local_compute"
+    assert extra_trace["agentic_tool_untrusted_context_receipt_schema"] == (
+        "melix.untrusted_context_receipt.v1"
+    )
+    assert extra_trace["agentic_tool_untrusted_context_receipt_count"] == 3
     assert "agentic_tool_observations" not in extra_trace
 
 
@@ -412,6 +428,7 @@ def test_runtime_grpo_keeps_unselected_fatal_timeout_trace_penalized_without_cla
 def test_alignment_runtime_tool_helpers_cover_namespaces_and_invalid_events() -> None:
     from worker.model_ops.rl_alignment_training import (
         _agentic_tool_run_for_generated_candidate,
+        _agentic_tool_receipt_summary,
         _attach_runtime_candidate_tool_evidence,
         _runtime_tool_namespaces,
         _tool_call_from_runtime_event,
@@ -430,6 +447,33 @@ def test_alignment_runtime_tool_helpers_cover_namespaces_and_invalid_events() ->
         None,
     )
     assert candidate == {"tool_calls": [{"id": "call-1", "name": "visit", "arguments": {}}]}
+    assert _agentic_tool_receipt_summary(
+        type(
+            "ToolRun",
+            (),
+            {
+                "observations": (
+                    "not-an-observation",
+                    {"untrusted_context_receipts": "not-a-list"},
+                    {
+                        "untrusted_context_receipts": (
+                            "not-a-receipt",
+                            {
+                                "schema_version": "melix.untrusted_context_receipt.v1",
+                                "included": True,
+                            },
+                            {"included": False},
+                        )
+                    },
+                )
+            },
+        )()
+    ) == {
+        "agentic_tool_untrusted_context_receipt_schema": (
+            "melix.untrusted_context_receipt.v1"
+        ),
+        "agentic_tool_untrusted_context_receipt_count": 2,
+    }
 
     with pytest.raises(ModelOperationError) as invalid_json_exc:
         _tool_call_from_runtime_event(
