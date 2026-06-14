@@ -29,6 +29,14 @@ Register `real-model-support-hf-cache-latest-snapshot` in the PR-scoped performa
 - `snapshot_count` (guardrail)
 - `selected_latest_snapshot` (guardrail)
 
+2026-06-14 follow-up slice: after the single-pass scan has selected the latest
+snapshot name, the fallback now returns the already-absolute `snapshots_root /
+latest_snapshot_name` path directly instead of resolving that snapshot path a
+second time. The registered script now reports the HF-cache fallback metrics as
+`hf_cache_elapsed_ms_mean` and `hf_cache_peak_bytes_mean` alongside the existing
+weight-file scan metric, so the PR-scoped report gates this fallback path
+directly.
+
 ## Success metrics
 
 - Focused pytest for the real-model support fallback and PR-scoped probe registration passes.

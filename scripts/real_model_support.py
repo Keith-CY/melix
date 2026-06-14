@@ -301,7 +301,7 @@ def _huggingface_cache_model_path(
                 latest_snapshot_name = entry.name
     if latest_snapshot_name is None:
         return None
-    fallback = (snapshots_root / latest_snapshot_name).resolve()
+    fallback = snapshots_root / latest_snapshot_name
     return _HuggingFaceCacheModelPath(
         path=fallback,
         warnings=(

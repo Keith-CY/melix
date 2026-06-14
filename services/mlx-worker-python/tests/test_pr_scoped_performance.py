@@ -4660,6 +4660,8 @@ def test_real_model_support_hf_cache_probe_script_emits_metrics(
     assert payload["sample_count"] == 7.0
     assert payload["snapshot_count"] == 6000.0
     assert payload["selected_latest_snapshot"] == 5999.0
+    assert payload["hf_cache_elapsed_ms_mean"] > 0
+    assert payload["hf_cache_peak_bytes_mean"] > 0
     assert payload["weight_scan_elapsed_ms_mean"] > 0
     assert payload["weight_file_count"] == 20_000.0
 
