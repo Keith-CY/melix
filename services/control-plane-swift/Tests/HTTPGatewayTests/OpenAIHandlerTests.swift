@@ -740,6 +740,7 @@ struct OpenAIHandlerTests {
         let sessionState = try #require(error["session_state"] as? [String: Any])
 
         #expect(createResponse.statusCode == 200)
+        #expect(createPayload["pairing"] == nil)
         #expect(modelsResponse.statusCode == 200)
         #expect(inspectResponse.statusCode == 200)
         #expect(signOutResponse.statusCode == 200)
@@ -885,6 +886,118 @@ struct OpenAIHandlerTests {
         #expect(revokedModelsResponse.statusCode == 401)
         #expect(revokedError["code"] as? String == "revoked_session")
         #expect(await metricsStore.value(forKey: "companion_auth.rejected_request_count") == 1)
+    }
+
+    @Test("companion auth session creation returns pairing descriptor")
+    func companionAuthSessionCreationReturnsPairingDescriptor() async throws {
+        func createPairingDescriptor(
+            host: String,
+            port: UInt32 = 12_499
+        ) async throws -> (
+            response: HTTPResponse,
+            session: [String: Any],
+            resume: [String: Any],
+            pairing: [String: Any],
+            body: String
+        ) {
+            let metricsStore = MetricsStore()
+            let temporaryRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-companion-pairing-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+            let handler = OpenAIHandler(
+                modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+                requestCoordinator: RequestCoordinator(
+                    workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                    abortRegistry: AbortRegistry()
+                ),
+                metricsStore: metricsStore,
+                gatewayAccessPolicy: GatewayAccessPolicy(
+                    mode: .apiKeys,
+                    sharedAccessEnabled: true,
+                    keys: [
+                        .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                    ]
+                ),
+                gatewayRuntimeBinding: GatewayRuntimeBinding(
+                    host: host,
+                    port: port,
+                    allowedOrigins: ["http://127.0.0.1:52499"]
+                ),
+                persistentAuthSessionStore: PersistentAuthSessionStore(
+                    storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                    metricsStore: metricsStore,
+                    retentionTTLSeconds: 3_600,
+                    nowUnixMs: { 1_000 }
+                )
+            )
+
+            let createResponse = try await handler.handle(
+                HTTPRequest(
+                    method: .post,
+                    path: "/v1/melix/auth/session",
+                    headers: [
+                        "content-type": "application/json",
+                        "x-api-key": "sk-codex",
+                    ],
+                    body: try #require("""
+                    {
+                      "remember_me": true,
+                      "scope": "companion_read_only"
+                    }
+                    """.data(using: .utf8))
+                )
+            )
+            let payload = try await jsonPayload(from: createResponse.body)
+            let session = try #require(payload["session"] as? [String: Any])
+            let resume = try #require(payload["resume"] as? [String: Any])
+            let pairing = try #require(payload["pairing"] as? [String: Any])
+            let body = try await collectBody(createResponse.body)
+            return (createResponse, session, resume, pairing, body)
+        }
+
+        let result = try await createPairingDescriptor(host: "0.0.0.0")
+        let session = result.session
+        let resume = result.resume
+        let pairing = result.pairing
+        let allowedRoutes = try #require(pairing["allowed_routes"] as? [[String: Any]])
+        let forbiddenCapabilities = try #require(pairing["forbidden_capabilities"] as? [String])
+        let token = try #require(resume["token"] as? String)
+
+        #expect(result.response.statusCode == 200)
+        #expect(session["scope"] as? String == "companion_read_only")
+        #expect(pairing["schema_version"] as? String == "melix.companion.pairing.v1")
+        #expect(pairing["scope"] as? String == "companion_read_only")
+        #expect(pairing["resume_header"] as? String == "x-melix-session")
+        #expect(pairing["token_transport"] as? String == "resume_header")
+        #expect(pairing["status_url"] as? String == "http://127.0.0.1:12499/v1/melix/companion/status")
+        #expect(pairing["expires_at_unix_ms"] as? Int == 3_601_000)
+        #expect(pairing["allowed_origins"] as? [String] == ["http://127.0.0.1:52499"])
+        #expect(allowedRoutes.contains { route in
+            route["method"] as? String == "GET" && route["path"] as? String == "/v1/melix/companion/status"
+        })
+        #expect(allowedRoutes.contains { route in
+            route["method"] as? String == "DELETE" && route["path"] as? String == "/v1/melix/auth/session"
+        })
+        #expect(forbiddenCapabilities.contains("mutate_runtime"))
+        #expect(forbiddenCapabilities.contains("run_inference"))
+        #expect(forbiddenCapabilities.contains("read_private_prompts"))
+        #expect((pairing["token"] as? String) == nil)
+        #expect(result.body.contains("\"pairing\""))
+        #expect(result.body.components(separatedBy: token).count == 2)
+
+        let loopbackResult = try await createPairingDescriptor(host: "127.0.0.1", port: 12_500)
+        #expect(loopbackResult.pairing["status_url"] as? String == "http://127.0.0.1:12500/v1/melix/companion/status")
+
+        let emptyHostResult = try await createPairingDescriptor(host: "   \n", port: 12_501)
+        #expect(emptyHostResult.pairing["status_url"] as? String == "http://127.0.0.1:12501/v1/melix/companion/status")
+
+        let ipv6Result = try await createPairingDescriptor(host: "fd00::1", port: 12_502)
+        #expect(ipv6Result.pairing["status_url"] as? String == "http://[fd00::1]:12502/v1/melix/companion/status")
+
+        let bracketedIPv6Result = try await createPairingDescriptor(host: "[fd00::2]", port: 12_503)
+        #expect(bracketedIPv6Result.pairing["status_url"] as? String == "http://[fd00::2]:12503/v1/melix/companion/status")
     }
 
     @Test("companion status endpoint returns redacted runtime queue job and session summary")
