@@ -1119,14 +1119,11 @@ def test_prune_python_runtime_baggage_tolerates_file_delete_errors(
     runtime.mkdir()
     archive = runtime / "libpython3.12.a"
     archive.write_text("archive\n", encoding="utf-8")
-    original_unlink = Path.unlink
+    def fail_unlink(path: str) -> None:
+        assert Path(path) == archive
+        raise OSError("synthetic delete failure")
 
-    def fail_unlink(self: Path, *args: object, **kwargs: object) -> None:
-        if self == archive:
-            raise OSError("synthetic delete failure")
-        original_unlink(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "unlink", fail_unlink)
+    monkeypatch.setattr(macos_app_bundle_module.os, "unlink", fail_unlink)
 
     result = _prune_python_runtime_baggage(runtime)
 
