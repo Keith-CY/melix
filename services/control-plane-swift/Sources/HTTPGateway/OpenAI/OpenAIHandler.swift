@@ -1001,6 +1001,7 @@ public struct OpenAIHandler: Sendable {
             cache: CompanionCacheStatusPayload(summary: summary),
             queue: CompanionQueueStatusPayload(summary: queueSnapshot),
             imageJobs: CompanionImageJobStatusPayload(jobs: imageJobsSnapshot),
+            recentReceipts: CompanionRecentReceiptStatusPayload(jobs: imageJobsSnapshot),
             redaction: CompanionRedactionStatusPayload()
         )
         await metricsStore.set(
@@ -5514,7 +5515,7 @@ private struct HealthDiagnosticsModelResponse: Codable {
     }
 }
 
-private struct CompanionStatusResponse: Codable {
+private struct CompanionStatusResponse: Encodable {
     let schemaVersion = "melix.companion.status.v1"
     let readOnly: Bool
     let status: String
@@ -5524,6 +5525,7 @@ private struct CompanionStatusResponse: Codable {
     let cache: CompanionCacheStatusPayload
     let queue: CompanionQueueStatusPayload
     let imageJobs: CompanionImageJobStatusPayload
+    let recentReceipts: CompanionRecentReceiptStatusPayload
     let redaction: CompanionRedactionStatusPayload
 
     enum CodingKeys: String, CodingKey {
@@ -5536,6 +5538,7 @@ private struct CompanionStatusResponse: Codable {
         case cache
         case queue
         case imageJobs = "image_jobs"
+        case recentReceipts = "recent_receipts"
         case redaction
     }
 }
@@ -5797,13 +5800,111 @@ private struct CompanionImageJobPayload: Codable {
     }
 }
 
+private let companionRecentReceiptVisibleLimit = 10
+
+private struct CompanionRecentReceiptStatusPayload: Encodable {
+    let source: String
+    let visible: Int
+    let total: Int
+    let items: [CompanionRecentReceiptPayload]
+
+    init(jobs: [Melix_Controlplane_V1_ImageJobSummary]) {
+        let sortedJobs = jobs.sorted { lhs, rhs in
+            if lhs.updatedAtUnixMs == rhs.updatedAtUnixMs {
+                return lhs.jobID < rhs.jobID
+            }
+            return lhs.updatedAtUnixMs > rhs.updatedAtUnixMs
+        }
+        let visibleJobs = Array(sortedJobs.prefix(companionRecentReceiptVisibleLimit))
+        source = "image_jobs"
+        visible = visibleJobs.count
+        total = jobs.count
+        items = visibleJobs.map(CompanionRecentReceiptPayload.init(job:))
+    }
+}
+
+private struct CompanionRecentReceiptPayload: Encodable {
+    let receiptType = "image_job"
+    let source = "image_jobs"
+    let jobID: String
+    let requestID: String
+    let modelID: String
+    let operation: String
+    let state: String
+    let lane: String
+    let workerID: String
+    let progress: OpenAIImageJobProgressPayload
+    let createdAtUnixMs: Int64
+    let updatedAtUnixMs: Int64
+    let promptDigest: String
+    let artifactCount: Int
+    let failureCode: String
+    let redaction: CompanionRecentReceiptRedactionPayload
+
+    init(job: Melix_Controlplane_V1_ImageJobSummary) {
+        jobID = job.jobID
+        requestID = job.requestID
+        modelID = job.modelID
+        operation = job.operation
+        state = job.state.melixString
+        lane = job.lane
+        workerID = job.workerID
+        progress = OpenAIImageJobProgressPayload(progress: job.progress)
+        createdAtUnixMs = job.createdAtUnixMs
+        updatedAtUnixMs = job.updatedAtUnixMs
+        promptDigest = job.promptDigest
+        artifactCount = job.artifacts.count
+        failureCode = job.error.code
+        redaction = CompanionRecentReceiptRedactionPayload()
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case receiptType = "receipt_type"
+        case source
+        case jobID = "job_id"
+        case requestID = "request_id"
+        case modelID = "model_id"
+        case operation
+        case state
+        case lane
+        case workerID = "worker_id"
+        case progress
+        case createdAtUnixMs = "created_at_unix_ms"
+        case updatedAtUnixMs = "updated_at_unix_ms"
+        case promptDigest = "prompt_digest"
+        case artifactCount = "artifact_count"
+        case failureCode = "failure_code"
+        case redaction
+    }
+}
+
+private struct CompanionRecentReceiptRedactionPayload: Encodable {
+    let rawPrompt = "omitted"
+    let promptDelta = "omitted"
+    let requestBody = "omitted"
+    let artifactURIs = "omitted"
+    let localPaths = "omitted"
+    let errorMessage = "omitted"
+    let logs = "omitted"
+
+    enum CodingKeys: String, CodingKey {
+        case rawPrompt = "raw_prompt"
+        case promptDelta = "prompt_delta"
+        case requestBody = "request_body"
+        case artifactURIs = "artifact_uris"
+        case localPaths = "local_paths"
+        case errorMessage = "error_message"
+        case logs
+    }
+}
+
 private struct CompanionRedactionStatusPayload: Codable {
     let rawPrompts = "omitted"
     let rawRequestBodies = "omitted"
     let localPaths = "omitted"
     let artifactURIs = "omitted"
     let logs = "omitted"
-    let recentReceipts = "omitted"
+    let recentReceipts = "redacted_summary"
 
     enum CodingKeys: String, CodingKey {
         case rawPrompts = "raw_prompts"
