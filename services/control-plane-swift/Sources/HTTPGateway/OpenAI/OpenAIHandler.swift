@@ -973,13 +973,9 @@ public struct OpenAIHandler: Sendable {
         let startedAt = Date()
         async let routesTask = healthRoutes()
         async let modelsTask = modelCatalog.listModels()
-        async let cacheSummaryTask: Melix_Controlplane_V1_CacheSummary = if let cacheMetadataStore {
-            await cacheMetadataStore.cacheSummary()
-        } else {
-            CacheMetadataStore.emptySummary()
-        }
-        async let queueSnapshotTask = schedulerReadModel?.snapshot()
-        async let imageJobsSnapshotTask = imageJobReadModel?.snapshot()
+        async let cacheSummaryTask = companionCacheSummary()
+        async let queueSnapshotTask = companionQueueSnapshot()
+        async let imageJobsSnapshotTask = companionImageJobsSnapshot()
 
         let routes = await routesTask
         let models = await modelsTask
@@ -987,7 +983,7 @@ public struct OpenAIHandler: Sendable {
         let readyCount = visibleModels.filter { $0.state == .modelWarm || $0.state == .modelPinned }.count
         let summary = await cacheSummaryTask
         let queueSnapshot = await queueSnapshotTask
-        let imageJobsSnapshot = await imageJobsSnapshotTask ?? []
+        let imageJobsSnapshot = await imageJobsSnapshotTask
         let response = CompanionStatusResponse(
             readOnly: true,
             status: routes.values.allSatisfy { $0 } ? "ok" : "degraded",
@@ -1011,6 +1007,21 @@ public struct OpenAIHandler: Sendable {
             forKey: "companion.status_latency_ms"
         )
         return try encodedJSONResponse(response)
+    }
+
+    private func companionCacheSummary() async -> Melix_Controlplane_V1_CacheSummary {
+        guard let store = cacheMetadataStore else {
+            return CacheMetadataStore.emptySummary()
+        }
+        return await store.cacheSummary()
+    }
+
+    private func companionQueueSnapshot() async -> Melix_Controlplane_V1_QueueSummary? {
+        await schedulerReadModel?.snapshot()
+    }
+
+    private func companionImageJobsSnapshot() async -> [Melix_Controlplane_V1_ImageJobSummary] {
+        await imageJobReadModel?.snapshot() ?? []
     }
 
     private func handleCacheStats() async throws -> HTTPResponse {
