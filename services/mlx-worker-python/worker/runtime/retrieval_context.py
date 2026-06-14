@@ -330,7 +330,8 @@ def project_retrieval_lookup_result(lookup_result: Any) -> RetrievalLookupResult
 
 
 def _copy_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: _copy_payload_value(value) for key, value in payload.items()}
+    copy_value = _copy_payload_value
+    return {key: copy_value(value) for key, value in payload.items()}
 
 
 def _copy_payload_value(value: Any) -> Any:
@@ -343,12 +344,13 @@ def _copy_payload_value(value: Any) -> Any:
         or value is None
     ):
         return value
+    copy_value = _copy_payload_value
     if value_type is dict:
-        return {key: _copy_payload_value(item) for key, item in value.items()}
+        return {key: copy_value(item) for key, item in value.items()}
     if value_type is list:
-        return [_copy_payload_value(item) for item in value]
+        return [copy_value(item) for item in value]
     if value_type is tuple:
-        return tuple([_copy_payload_value(item) for item in value])
+        return tuple([copy_value(item) for item in value])
     return deepcopy(value)
 
 
