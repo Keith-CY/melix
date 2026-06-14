@@ -78,13 +78,9 @@ def _summarize_command(command: str, *, max_length: int = 180) -> str:
     if not command:
         return "<empty command>"
 
-    line_end = command.find("\n")
-    if line_end == -1:
-        summary = command.rstrip()
-        has_more_lines = False
-    else:
-        summary = command[:line_end].rstrip()
-        has_more_lines = bool(command[line_end + 1 :].lstrip())
+    first_line, separator, remaining_lines = command.partition("\n")
+    summary = first_line.rstrip()
+    has_more_lines = bool(separator and remaining_lines.lstrip())
 
     if has_more_lines:
         summary = f"{summary} ..."
