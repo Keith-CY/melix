@@ -57,6 +57,35 @@ Expected response:
 - `resume.token` present
 - `session.remember_me = true`
 
+### Create A Companion Pairing Session
+
+```bash
+curl -sS \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: sk-desktop' \
+  -d '{"remember_me":true,"scope":"companion_read_only"}' \
+  http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/melix/auth/session
+```
+
+Expected response:
+
+- `200`
+- `session.scope = "companion_read_only"`
+- `resume.header = "x-melix-session"`
+- `resume.token` present
+- `pairing.schema_version = "melix.companion.pairing.v1"`
+- `pairing.status_url` points at `/v1/melix/companion/status`
+- `pairing.allowed_routes` lists the read-only companion routes and
+  self-revocation route
+- `pairing.forbidden_capabilities` includes mutating and private-content
+  capabilities such as `run_inference`, `mutate_runtime`, and
+  `read_private_prompts`
+
+The pairing descriptor is safe to render in a QR/token-management sheet because
+it describes how the companion client should use the session. It does not
+duplicate the raw token. Keep treating `resume.token` as the only secret value
+in the response.
+
 ### Reuse The Session
 
 ```bash
