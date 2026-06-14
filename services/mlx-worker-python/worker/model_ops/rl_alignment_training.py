@@ -1030,13 +1030,13 @@ def _runtime_candidate_reward_trace_rows(
         if isinstance(candidate.get("agentic_tool_metrics"), dict):
             row["agentic_tool_metrics"] = dict(candidate["agentic_tool_metrics"])
         if "agentic_tool_untrusted_context_receipt_schema" in candidate:
-            row["agentic_tool_untrusted_context_receipt_schema"] = str(
-                candidate["agentic_tool_untrusted_context_receipt_schema"]
-            )
+            row["agentic_tool_untrusted_context_receipt_schema"] = candidate[
+                "agentic_tool_untrusted_context_receipt_schema"
+            ]
         if "agentic_tool_untrusted_context_receipt_count" in candidate:
-            row["agentic_tool_untrusted_context_receipt_count"] = int(
-                candidate["agentic_tool_untrusted_context_receipt_count"]
-            )
+            row["agentic_tool_untrusted_context_receipt_count"] = candidate[
+                "agentic_tool_untrusted_context_receipt_count"
+            ]
         if reward_scorer is not None:
             row["reward_scoring_backend"] = reward_scorer.runtime_name
             row["reward_model_id"] = reward_scorer.reward_model_id
