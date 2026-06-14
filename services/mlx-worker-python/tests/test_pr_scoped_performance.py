@@ -321,6 +321,9 @@ def test_retrieval_context_projection_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["iteration_count"] == 2.0
     assert metrics["speedup"] >= 0.0
+    assert metrics["lookup_copy_baseline_elapsed_ms_mean"] >= 0.0
+    assert metrics["lookup_copy_optimized_elapsed_ms_mean"] >= 0.0
+    assert metrics["lookup_copy_speedup"] >= 0.0
 
 
 def test_local_job_followup_scan_probe_script_emits_metrics(

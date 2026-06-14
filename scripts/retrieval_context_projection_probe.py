@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import copy
 import json
 import os
 import statistics
@@ -75,6 +76,23 @@ def _build_store_records(entries: Iterable[rc.RetrievalContextEntry]) -> list[di
         }
         for entry in entries
     ]
+
+
+def _build_lookup_payload(count: int) -> dict[str, Any]:
+    return {
+        f"retrieved_context_{index}": {
+            "index": index,
+            "title": f"retrieved payload {index}",
+            "metadata": {
+                "scores": [index, index + 1, {"rank": index % 7}],
+                "labels": (
+                    "retrieved",
+                    {"kind": "document" if index % 2 == 0 else "image"},
+                ),
+            },
+        }
+        for index in range(count)
+    }
 
 
 def _build_admissions(entries: Iterable[rc.RetrievalContextEntry]) -> dict[str, PromptContextAdmission]:
@@ -220,6 +238,26 @@ def _measure_store(func: Any, records: list[dict[str, Any]], iterations: int) ->
     return elapsed_ms / iterations
 
 
+def _baseline_copy_lookup_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return copy.deepcopy(dict(payload))
+
+
+def _measure_lookup_copy(func: Any, payload: Mapping[str, Any], iterations: int) -> float:
+    start = time.perf_counter()
+    projected_count = 0
+    checksum = 0
+    for _ in range(iterations):
+        copied = func(payload)
+        projected_count += len(copied)
+        checksum += copied["retrieved_context_0"]["metadata"]["scores"][2]["rank"]
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    if projected_count != len(payload) * iterations or checksum != 0:
+        raise AssertionError(
+            f"lookup payload copy drift: projected={projected_count} checksum={checksum}"
+        )
+    return elapsed_ms / iterations
+
+
 def _mean(values: list[float]) -> float:
     return float(statistics.fmean(values))
 
@@ -230,6 +268,7 @@ def main() -> int:
     iteration_count = _iterations()
     entries = _build_entries(entry_count)
     records = _build_store_records(entries)
+    lookup_payload = _build_lookup_payload(entry_count)
     admissions = _build_admissions(entries)
     original_admit_entry = rc._admit_entry  # type: ignore[attr-defined]
 
@@ -243,6 +282,8 @@ def main() -> int:
         _measure(rc.project_retrieval_contexts, entries, 1)
         _measure_store(_baseline_project_retrieval_store_records, records, 1)
         _measure_store(rc.project_retrieval_store_records, records, 1)
+        _measure_lookup_copy(_baseline_copy_lookup_payload, lookup_payload, 1)
+        _measure_lookup_copy(rc._copy_payload, lookup_payload, 1)  # type: ignore[attr-defined]
         baseline = [
             _measure(_baseline_project_retrieval_contexts, entries, iteration_count)
             for _ in range(sample_count)
@@ -259,6 +300,14 @@ def main() -> int:
             _measure_store(rc.project_retrieval_store_records, records, iteration_count)
             for _ in range(sample_count)
         ]
+        lookup_copy_baseline = [
+            _measure_lookup_copy(_baseline_copy_lookup_payload, lookup_payload, iteration_count)
+            for _ in range(sample_count)
+        ]
+        lookup_copy_optimized = [
+            _measure_lookup_copy(rc._copy_payload, lookup_payload, iteration_count)  # type: ignore[attr-defined]
+            for _ in range(sample_count)
+        ]
     finally:
         rc._admit_entry = original_admit_entry  # type: ignore[attr-defined]
 
@@ -266,10 +315,18 @@ def main() -> int:
     optimized_mean = _mean(optimized)
     store_baseline_mean = _mean(store_baseline)
     store_optimized_mean = _mean(store_optimized)
+    lookup_copy_baseline_mean = _mean(lookup_copy_baseline)
+    lookup_copy_optimized_mean = _mean(lookup_copy_optimized)
     delta_ms = optimized_mean - baseline_mean
     store_delta_ms = store_optimized_mean - store_baseline_mean
+    lookup_copy_delta_ms = lookup_copy_optimized_mean - lookup_copy_baseline_mean
     speedup = baseline_mean / optimized_mean if optimized_mean > 0.0 else 0.0
     store_speedup = store_baseline_mean / store_optimized_mean if store_optimized_mean > 0.0 else 0.0
+    lookup_copy_speedup = (
+        lookup_copy_baseline_mean / lookup_copy_optimized_mean
+        if lookup_copy_optimized_mean > 0.0
+        else 0.0
+    )
     payload = {
         "baseline_elapsed_ms_mean": baseline_mean,
         "optimized_elapsed_ms_mean": optimized_mean,
@@ -279,6 +336,10 @@ def main() -> int:
         "store_optimized_elapsed_ms_mean": store_optimized_mean,
         "store_delta_ms": store_delta_ms,
         "store_speedup": store_speedup,
+        "lookup_copy_baseline_elapsed_ms_mean": lookup_copy_baseline_mean,
+        "lookup_copy_optimized_elapsed_ms_mean": lookup_copy_optimized_mean,
+        "lookup_copy_delta_ms": lookup_copy_delta_ms,
+        "lookup_copy_speedup": lookup_copy_speedup,
         "entry_count": float(entry_count),
         "sample_count": float(sample_count),
         "iteration_count": float(iteration_count),
