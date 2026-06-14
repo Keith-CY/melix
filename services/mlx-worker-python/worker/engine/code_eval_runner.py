@@ -279,8 +279,12 @@ def _count_assert_nodes(
     _type=type,
 ) -> int:
     module_body = getattr(module, "body", ())
-    if module_body and all(_type(node) is _assert_type for node in module_body):
-        return len(module_body)
+    if module_body:
+        for node in module_body:
+            if _type(node) is not _assert_type:
+                break
+        else:
+            return len(module_body)
 
     count = 0
     stack: list[ast.AST] = []

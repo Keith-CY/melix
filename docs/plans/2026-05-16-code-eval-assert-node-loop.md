@@ -26,6 +26,12 @@ The traversal order is not observable because the helper only counts
 `ast.Assert` nodes, and behavior stays unchanged for nested asserts and modules
 without asserts.
 
+2026-06-14 follow-up: the all-top-level-assert fast path now uses an explicit
+loop/`else` instead of `all(...)` with a generator expression. The probe's
+`assert_elapsed_ms_mean` path repeatedly counts a flat assert module, so this
+slice avoids generator overhead while preserving the nested traversal fallback
+for mixed or nested statement containers.
+
 ## Verification Plan
 
 - Run focused code-evaluation count tests, including the new no-assert helper
