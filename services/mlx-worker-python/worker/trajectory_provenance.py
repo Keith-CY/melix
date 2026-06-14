@@ -144,7 +144,10 @@ def _trajectory_provenance_from_snapshot_manifest(
     if trace_digest:
         provenance["trajectory_trace_digest"] = trace_digest
     if snapshot_manifest_path is not None:
-        provenance["trajectory_snapshot_manifest_path"] = str(snapshot_manifest_path)
+        if type(snapshot_manifest_path) is str:
+            provenance["trajectory_snapshot_manifest_path"] = snapshot_manifest_path
+        else:
+            provenance["trajectory_snapshot_manifest_path"] = _STR(snapshot_manifest_path)
     trajectory_toolset_version = manifest_get("trajectory_toolset_version")
     if trajectory_toolset_version is not None and trajectory_toolset_version != "":
         provenance["trajectory_toolset_version"] = trajectory_toolset_version
@@ -182,18 +185,19 @@ def load_trajectory_provenance_from_snapshot_manifest(
     extract_provenance = _trajectory_provenance_from_snapshot_manifest
     if not isinstance(manifest_path, Path):
         manifest_path = Path(manifest_path)
+    manifest_path_text = _STR(manifest_path)
     payload = loads(read_bytes(manifest_path))
     if type(payload) is dict:
         return extract_provenance(
             payload,
-            snapshot_manifest_path=manifest_path,
+            snapshot_manifest_path=manifest_path_text,
             copy_nested=False,
         )
     if not isinstance(payload, dict):
         return {}
     return extract_provenance(
         payload,
-        snapshot_manifest_path=manifest_path,
+        snapshot_manifest_path=manifest_path_text,
         copy_nested=False,
     )
 
