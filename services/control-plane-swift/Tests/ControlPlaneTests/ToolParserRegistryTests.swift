@@ -953,6 +953,31 @@ struct ToolParserRegistryTests {
         #expect(receipts.compactMap { $0["segment_id"] as? String } == ["req-mcp-trimmed:mcp-source-0"])
     }
 
+    @Test("MCP prompt context receipts redact non-public source ids")
+    func mcpPromptContextReceiptsRedactNonPublicSourceIDs() throws {
+        let rawSourceID = "file:///Users/operator/.melix/mcp/private-tools.json#Filesystem Read"
+        let ext = MCPPromptContextBoundaryReceipts(
+            requestID: "req-mcp-private-source",
+            sourceIDs: [rawSourceID, "math"]
+        ).extFields
+        let receiptsJSON = try #require(ext["melix.mcp.prompt_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+
+        let sourceIDs = receipts.compactMap { $0["source_id"] as? String }
+        let redactedSourceID = try #require(sourceIDs.first)
+
+        #expect(ext["melix.mcp.prompt_context.receipt_count"] == "2")
+        #expect(redactedSourceID.hasPrefix("mcp-source:"))
+        #expect(redactedSourceID.count == "mcp-source:".count + 12)
+        #expect(sourceIDs.last == "math")
+        #expect(receiptsJSON.contains(rawSourceID) == false)
+        #expect(receiptsJSON.contains("/Users/operator") == false)
+        #expect(receiptsJSON.contains("private-tools") == false)
+        #expect(receiptsJSON.contains("Filesystem Read") == false)
+    }
+
     @Test("mcp tool catalogs merge into model defaults without losing model parser mode")
     func mcpToolCatalogsMergeIntoModelDefaultsWithoutLosingModelParserMode() throws {
         var settings = Melix_Controlplane_V1_ModelSettings()
