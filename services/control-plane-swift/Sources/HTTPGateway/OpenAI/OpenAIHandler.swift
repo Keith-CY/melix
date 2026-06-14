@@ -976,6 +976,7 @@ public struct OpenAIHandler: Sendable {
         async let cacheSummaryTask = companionCacheSummary()
         async let queueSnapshotTask = companionQueueSnapshot()
         async let imageJobsSnapshotTask = companionImageJobsSnapshot()
+        async let imageJobLogsTask = companionImageJobLogTail()
 
         let routes = await routesTask
         let models = await modelsTask
@@ -984,6 +985,7 @@ public struct OpenAIHandler: Sendable {
         let summary = await cacheSummaryTask
         let queueSnapshot = await queueSnapshotTask
         let imageJobsSnapshot = await imageJobsSnapshotTask
+        let imageJobLogs = await imageJobLogsTask
         let status = routes.values.allSatisfy { $0 } ? "ok" : "degraded"
         let response = CompanionStatusResponse(
             readOnly: true,
@@ -1002,6 +1004,7 @@ public struct OpenAIHandler: Sendable {
             queue: CompanionQueueStatusPayload(summary: queueSnapshot),
             imageJobs: CompanionImageJobStatusPayload(jobs: imageJobsSnapshot),
             recentReceipts: CompanionRecentReceiptStatusPayload(jobs: imageJobsSnapshot),
+            logs: CompanionLogTailStatusPayload(entries: imageJobLogs),
             redaction: CompanionRedactionStatusPayload()
         )
         await metricsStore.set(
@@ -1024,6 +1027,10 @@ public struct OpenAIHandler: Sendable {
 
     private func companionImageJobsSnapshot() async -> [Melix_Controlplane_V1_ImageJobSummary] {
         await imageJobReadModel?.snapshot() ?? []
+    }
+
+    private func companionImageJobLogTail() async -> [ImageJobLogEntry] {
+        await imageJobReadModel?.logTailSnapshot(limit: companionLogTailVisibleLimit) ?? []
     }
 
     private func handleCacheStats() async throws -> HTTPResponse {
@@ -5526,6 +5533,7 @@ private struct CompanionStatusResponse: Encodable {
     let queue: CompanionQueueStatusPayload
     let imageJobs: CompanionImageJobStatusPayload
     let recentReceipts: CompanionRecentReceiptStatusPayload
+    let logs: CompanionLogTailStatusPayload
     let redaction: CompanionRedactionStatusPayload
 
     enum CodingKeys: String, CodingKey {
@@ -5539,6 +5547,7 @@ private struct CompanionStatusResponse: Encodable {
         case queue
         case imageJobs = "image_jobs"
         case recentReceipts = "recent_receipts"
+        case logs
         case redaction
     }
 }
@@ -5898,12 +5907,97 @@ private struct CompanionRecentReceiptRedactionPayload: Encodable {
     }
 }
 
+private let companionLogTailVisibleLimit = 20
+
+private struct CompanionLogTailStatusPayload: Encodable {
+    let source: String
+    let visible: Int
+    let total: Int
+    let entries: [CompanionLogTailEntryPayload]
+
+    init(entries: [ImageJobLogEntry]) {
+        source = "image_jobs"
+        visible = entries.count
+        total = entries.count
+        self.entries = entries.map(CompanionLogTailEntryPayload.init(entry:))
+    }
+}
+
+private struct CompanionLogTailEntryPayload: Encodable {
+    let eventType: String
+    let source: String
+    let jobID: String
+    let requestID: String
+    let modelID: String
+    let operation: String
+    let state: String
+    let lane: String
+    let workerID: String
+    let progressStage: String
+    let createdAtUnixMs: Int64
+    let updatedAtUnixMs: Int64
+    let failureCode: String
+    let redaction: CompanionLogTailRedactionPayload
+
+    init(entry: ImageJobLogEntry) {
+        eventType = entry.eventType
+        source = entry.source
+        jobID = entry.jobID
+        requestID = entry.requestID
+        modelID = entry.modelID
+        operation = entry.operation
+        state = entry.state
+        lane = entry.lane
+        workerID = entry.workerID
+        progressStage = entry.progressStage
+        createdAtUnixMs = entry.createdAtUnixMs
+        updatedAtUnixMs = entry.updatedAtUnixMs
+        failureCode = entry.failureCode
+        redaction = CompanionLogTailRedactionPayload()
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case eventType = "event_type"
+        case source
+        case jobID = "job_id"
+        case requestID = "request_id"
+        case modelID = "model_id"
+        case operation
+        case state
+        case lane
+        case workerID = "worker_id"
+        case progressStage = "progress_stage"
+        case createdAtUnixMs = "created_at_unix_ms"
+        case updatedAtUnixMs = "updated_at_unix_ms"
+        case failureCode = "failure_code"
+        case redaction
+    }
+}
+
+private struct CompanionLogTailRedactionPayload: Encodable {
+    let rawLogLine = "omitted"
+    let rawPrompt = "omitted"
+    let requestBody = "omitted"
+    let artifactURIs = "omitted"
+    let localPaths = "omitted"
+    let errorMessage = "omitted"
+
+    enum CodingKeys: String, CodingKey {
+        case rawLogLine = "raw_log_line"
+        case rawPrompt = "raw_prompt"
+        case requestBody = "request_body"
+        case artifactURIs = "artifact_uris"
+        case localPaths = "local_paths"
+        case errorMessage = "error_message"
+    }
+}
+
 private struct CompanionRedactionStatusPayload: Codable {
     let rawPrompts = "omitted"
     let rawRequestBodies = "omitted"
     let localPaths = "omitted"
     let artifactURIs = "omitted"
-    let logs = "omitted"
+    let logs = "redacted_tail"
     let recentReceipts = "redacted_summary"
 
     enum CodingKeys: String, CodingKey {

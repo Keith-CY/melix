@@ -1,14 +1,33 @@
 import Foundation
 import MelixControlPlaneProtocol
 
+public struct ImageJobLogEntry: Sendable, Equatable {
+    public let eventType: String
+    public let source: String
+    public let jobID: String
+    public let requestID: String
+    public let modelID: String
+    public let operation: String
+    public let state: String
+    public let lane: String
+    public let workerID: String
+    public let progressStage: String
+    public let createdAtUnixMs: Int64
+    public let updatedAtUnixMs: Int64
+    public let failureCode: String
+}
+
 public actor ImageJobReadModel {
     public typealias EventPublisher = @Sendable (Melix_Controlplane_V1_ControlPlaneEvent) async -> Void
+
+    private static let logTailRetainedLimit = 50
 
     private let eventPublisher: EventPublisher?
     private let now: @Sendable () -> Date
 
     private var jobsByID: [String: Melix_Controlplane_V1_ImageJobSummary]
     private var requestToJobID: [String: String]
+    private var logEntries: [ImageJobLogEntry]
 
     public init(
         eventPublisher: EventPublisher? = nil,
@@ -18,6 +37,7 @@ public actor ImageJobReadModel {
         self.now = now
         self.jobsByID = [:]
         self.requestToJobID = [:]
+        self.logEntries = []
     }
 
     public func recordQueued(
@@ -141,6 +161,24 @@ public actor ImageJobReadModel {
         }
     }
 
+    public func logTailSnapshot(limit: Int) -> [ImageJobLogEntry] {
+        let boundedLimit = max(0, limit)
+        guard boundedLimit > 0 else {
+            return []
+        }
+        return logEntries.enumerated().sorted { lhs, rhs in
+            let left = lhs.element
+            let right = rhs.element
+            if left.updatedAtUnixMs != right.updatedAtUnixMs {
+                return left.updatedAtUnixMs > right.updatedAtUnixMs
+            }
+            if left.jobID != right.jobID {
+                return left.jobID < right.jobID
+            }
+            return lhs.offset > rhs.offset
+        }.prefix(boundedLimit).map(\.element)
+    }
+
     public func job(jobID: String) -> Melix_Controlplane_V1_ImageJobSummary? {
         jobsByID[jobID]
     }
@@ -162,6 +200,7 @@ public actor ImageJobReadModel {
     }
 
     private func publish(_ job: Melix_Controlplane_V1_ImageJobSummary) async {
+        appendLogEntry(job)
         guard let eventPublisher else {
             return
         }
@@ -177,8 +216,50 @@ public actor ImageJobReadModel {
         await eventPublisher(event)
     }
 
+    private func appendLogEntry(_ job: Melix_Controlplane_V1_ImageJobSummary) {
+        logEntries.append(
+            ImageJobLogEntry(
+                eventType: "image.job.state_changed",
+                source: "image_jobs",
+                jobID: job.jobID,
+                requestID: job.requestID,
+                modelID: job.modelID,
+                operation: job.operation,
+                state: Self.imageJobStateLabel(job.state),
+                lane: job.lane,
+                workerID: job.workerID,
+                progressStage: job.progress.stage,
+                createdAtUnixMs: job.createdAtUnixMs,
+                updatedAtUnixMs: job.updatedAtUnixMs,
+                failureCode: job.error.code
+            )
+        )
+        if logEntries.count > Self.logTailRetainedLimit {
+            logEntries.removeFirst(logEntries.count - Self.logTailRetainedLimit)
+        }
+    }
+
     private func unixMilliseconds() -> Int64 {
         Int64((now().timeIntervalSince1970 * 1000).rounded())
+    }
+
+    private static func imageJobStateLabel(_ state: Melix_Controlplane_V1_ImageJobState) -> String {
+        switch state {
+        case .unspecified:
+            return "unknown"
+        case .imageJobQueued:
+            return "queued"
+        case .imageJobRunning:
+            return "running"
+        case .imageJobCanceled:
+            return "canceled"
+        case .imageJobFailed:
+            return "failed"
+        case .imageJobCompleted:
+            return "completed"
+        case .UNRECOGNIZED(let value):
+            return "unrecognized_\(value)"
+        }
     }
 
     private func progress(
