@@ -107,11 +107,10 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
     }
 
     private static func sourceID(fromHarmonyMetadata metadata: HarmonyMessageMetadata?) -> String? {
-        guard let recipient = metadata?.recipient else {
+        guard let recipient = metadata?.recipient, isToolOutputRecipient(recipient) else {
             return nil
         }
-        let normalizedRecipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
-        return isToolOutputRecipient(normalizedRecipient) ? normalizedRecipient : nil
+        return recipient.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func normalizeForComparison(_ value: String?) -> String? {
