@@ -1420,11 +1420,22 @@ def _assert_retrieval_lookup_result_preserves_refusals_and_valid_siblings() -> N
 def _assert_retrieval_lookup_result_copies_store_projection_outputs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    mutable_default: list[str] = ["fallback"]
+
     store_projection = type(
         "StoreProjection",
         (),
         {
-            "user_payload": {"retrieved_document_0": {"title": "Valid note"}},
+            "user_payload": {
+                "retrieved_document_0": {
+                    "title": "Valid note",
+                    "nested": {
+                        "scores": [1, 2, {"label": "safe"}],
+                        "tuple_values": ("a", {"b": "c"}),
+                        "custom_mutable": mutable_default,
+                    },
+                }
+            },
             "untrusted_context_receipts": [{"source_id": "doc:valid"}],
             "refusal_receipts": [{"source_id": "image:bad"}],
         },
@@ -1442,7 +1453,14 @@ def _assert_retrieval_lookup_result_copies_store_projection_outputs(
     projection = project_retrieval_lookup_result({"records": ("sentinel-record",)})
 
     assert projection.prompt_user_payload == {
-        "retrieved_document_0": {"title": "Valid note"}
+        "retrieved_document_0": {
+            "title": "Valid note",
+            "nested": {
+                "scores": [1, 2, {"label": "safe"}],
+                "tuple_values": ("a", {"b": "c"}),
+                "custom_mutable": ["fallback"],
+            },
+        }
     }
     assert projection.untrusted_context_receipts == [{"source_id": "doc:valid"}]
     assert projection.refusal_receipts == [{"source_id": "image:bad"}]
@@ -1455,6 +1473,15 @@ def _assert_retrieval_lookup_result_copies_store_projection_outputs(
     assert projection.prompt_user_payload["retrieved_document_0"] is not (
         store_projection.user_payload["retrieved_document_0"]
     )
+    source_payload = getattr(store_projection, "user_payload")
+    copied_nested = projection.prompt_user_payload["retrieved_document_0"]["nested"]
+    source_nested = source_payload["retrieved_document_0"]["nested"]
+    assert copied_nested is not source_nested
+    assert copied_nested["scores"] is not source_nested["scores"]
+    assert copied_nested["scores"][2] is not source_nested["scores"][2]
+    assert copied_nested["tuple_values"] is not source_nested["tuple_values"]
+    assert copied_nested["tuple_values"][1] is not source_nested["tuple_values"][1]
+    assert copied_nested["custom_mutable"] is not source_nested["custom_mutable"]
     assert projection.untrusted_context_receipts is not (
         store_projection.untrusted_context_receipts
     )
