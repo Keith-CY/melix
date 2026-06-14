@@ -420,7 +420,8 @@ def _prune_python_runtime_baggage(python_runtime: Path) -> dict[str, int]:
             result["bytes_saved"] += bytes_saved
             result["directories_pruned"] += 1
 
-    stack = [python_runtime]
+    prunable_suffixes = tuple(_PRUNABLE_PYTHON_RUNTIME_FILE_SUFFIXES)
+    stack: list[Path | str] = [python_runtime]
     while stack:
         current = stack.pop()
         try:
@@ -452,17 +453,14 @@ def _prune_python_runtime_baggage(python_runtime: Path) -> dict[str, int]:
                         continue
 
                     if is_directory:
-                        stack.append(Path(entry.path))
+                        stack.append(entry.path)
                         continue
 
-                    if not any(
-                        entry.name.endswith(suffix)
-                        for suffix in _PRUNABLE_PYTHON_RUNTIME_FILE_SUFFIXES
-                    ):
+                    if not entry.name.endswith(prunable_suffixes):
                         continue
                     try:
                         result["bytes_saved"] += entry.stat(follow_symlinks=False).st_size
-                        Path(entry.path).unlink()
+                        os.unlink(entry.path)
                     except OSError:
                         continue
                     result["files_pruned"] += 1

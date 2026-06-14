@@ -842,25 +842,29 @@ def test_prune_python_runtime_baggage_tolerates_file_unlink_errors(
     nested.mkdir(parents=True)
     non_directory_pycache = nested / "__pycache__"
     archive = nested / "libpython3.12.a"
+    bytecode = nested / "module.pyc"
     non_directory_pycache.write_text("not a directory\n", encoding="utf-8")
     archive.write_text("archive\n", encoding="utf-8")
+    bytecode.write_bytes(b"cache")
+    expected_bytes_saved = archive.stat().st_size + bytecode.stat().st_size
 
-    original_unlink = Path.unlink
+    original_unlink = macos_app_bundle_module.os.unlink
 
-    def flaky_unlink(path: Path, missing_ok: bool = False) -> None:
-        if path == archive:
+    def flaky_unlink(path: str) -> None:
+        if Path(path) == archive:
             raise OSError("synthetic runtime file unlink failure")
-        original_unlink(path, missing_ok=missing_ok)
+        original_unlink(path)
 
-    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+    monkeypatch.setattr(macos_app_bundle_module.os, "unlink", flaky_unlink)
 
     result = _prune_python_runtime_baggage(runtime)
 
     assert result["directories_pruned"] == 0
-    assert result["files_pruned"] == 0
-    assert result["bytes_saved"] == archive.stat().st_size
+    assert result["files_pruned"] == 1
+    assert result["bytes_saved"] == expected_bytes_saved
     assert non_directory_pycache.is_file()
     assert archive.is_file()
+    assert bytecode.exists() is False
 
 
 def test_iter_python_native_binary_candidates_tolerates_scandir_metadata_errors(

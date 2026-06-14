@@ -27,7 +27,10 @@ prune elapsed time and preserved pruning counts.
    `os.walk` and still tolerates scan, metadata, and delete errors.
 2. Replace the `os.walk` traversal in `_prune_python_runtime_baggage` with an
    explicit `os.scandir` stack that uses `follow_symlinks=False` and skips broken
-   entries instead of failing the prune pass.
+   entries instead of failing the prune pass. Keep the hot traversal loop on
+   `DirEntry` strings where possible: precompute the prunable suffix tuple,
+   push `entry.path` strings onto the traversal stack, and unlink prunable files
+   with `os.unlink(entry.path)` to avoid transient `Path` allocations.
 3. Add and register the focused runtime prune performance probe.
 4. Validate with focused tests, changed-scope coverage, and the registered probe
    locally on Linux; rely on PR-scoped CI to replay the registered probe.
