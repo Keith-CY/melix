@@ -34,6 +34,7 @@ _EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
 _JSON_COMPACT_SEPARATORS = (",", ":")
 _JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
 _JSON_STRING_ENCODER = json.encoder.encode_basestring_ascii
+_IS_FINITE = math.isfinite
 _SET_FROZEN_ATTR = object.__setattr__
 _EMPTY_EVENT_JSON_DECODE_COMPLETED_PREFIX = b'{"attributes":{},"duration_ms":'
 _EMPTY_EVENT_JSON_DECODE_COMPLETED_MID = b',"event_index":'
@@ -622,7 +623,7 @@ def _extend_empty_attribute_event_json_line_bytes(
     duration_ms = event.duration_ms
     if type(event_index) is not int or type(duration_ms) is not float:
         return False
-    if not math.isfinite(duration_ms):
+    if not _IS_FINITE(duration_ms):
         return False
     phase = event.phase
     request_id = event.request_id
@@ -666,7 +667,7 @@ def _empty_attribute_event_json_line_bytes(
     duration_ms = event.duration_ms
     if type(event_index) is not int or type(duration_ms) is not float:
         return None
-    if not math.isfinite(duration_ms):
+    if not _IS_FINITE(duration_ms):
         return None
     phase = event.phase
     request_id = event.request_id
