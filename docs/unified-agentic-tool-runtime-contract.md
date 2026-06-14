@@ -355,7 +355,11 @@ mcp_tool_catalog`, and `source_id` set to the redacted MCP source ID. This
 records that the catalog source is prompt-adjacent skill/tool evidence and not
 trusted instructions. The receipt must not include MCP config paths, tool
 namespaces, tool schemas, tool arguments, private prompt text, or raw source
-payloads.
+payloads. Short public source IDs containing only ASCII letters, digits, `.`,
+`_`, or `-` remain readable for diagnostics. Path-like, URL-like, delimiter-heavy,
+non-ASCII, or long source IDs are replaced with `mcp-source:<sha256-prefix>` in
+receipt JSON while `melix.mcp.source_ids` remains unchanged for tool-parser
+reconstruction.
 
 The v1 control-plane session-context slice records the same receipt shape when
 `RequestCoordinator` resolves an implicit follow-up restore snapshot from
