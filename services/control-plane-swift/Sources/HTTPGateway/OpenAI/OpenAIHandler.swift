@@ -1148,6 +1148,10 @@ public struct OpenAIHandler: Sendable {
             resume: OpenAIAuthSessionResumePayload(
                 header: PersistentAuthSessionStore.sessionHeaderName,
                 token: issued.token
+            ),
+            pairing: OpenAICompanionPairingPayload(
+                metadata: issued.metadata,
+                gatewayRuntimeBinding: gatewayRuntimeBinding
             )
         )
         return try encodedJSONResponse(response)
@@ -1161,7 +1165,8 @@ public struct OpenAIHandler: Sendable {
         }
         let response = OpenAIAuthSessionResponse(
             session: OpenAIAuthSessionPayload(metadata: metadata),
-            resume: nil
+            resume: nil,
+            pairing: nil
         )
         return try encodedJSONResponse(response)
     }
@@ -1179,7 +1184,8 @@ public struct OpenAIHandler: Sendable {
         case .success(let metadata):
             let response = OpenAIAuthSessionResponse(
                 session: OpenAIAuthSessionPayload(metadata: metadata),
-                resume: nil
+                resume: nil,
+                pairing: nil
             )
             return try encodedJSONResponse(response)
         case .failure(let failure):
@@ -6059,6 +6065,7 @@ private struct OpenAICreateAuthSessionRequest: Decodable {
 private struct OpenAIAuthSessionResponse: Codable {
     let session: OpenAIAuthSessionPayload
     let resume: OpenAIAuthSessionResumePayload?
+    let pairing: OpenAICompanionPairingPayload?
 }
 
 private struct OpenAIAuthSessionPayload: Codable {
@@ -6100,6 +6107,92 @@ private struct OpenAIAuthSessionPayload: Codable {
 private struct OpenAIAuthSessionResumePayload: Codable {
     let header: String
     let token: String
+}
+
+private struct OpenAICompanionPairingPayload: Codable {
+    let schemaVersion: String
+    let scope: PersistentAuthSessionScope
+    let tokenTransport: String
+    let resumeHeader: String
+    let statusURL: String
+    let expiresAtUnixMs: Int64
+    let allowedOrigins: [String]
+    let allowedRoutes: [OpenAICompanionPairingRoutePayload]
+    let forbiddenCapabilities: [String]
+
+    init?(
+        metadata: PersistentAuthSessionMetadata,
+        gatewayRuntimeBinding: GatewayRuntimeBinding
+    ) {
+        guard metadata.scope == .companionReadOnly else {
+            return nil
+        }
+        schemaVersion = "melix.companion.pairing.v1"
+        scope = metadata.scope
+        tokenTransport = "resume_header"
+        resumeHeader = PersistentAuthSessionStore.sessionHeaderName
+        let displayHost = Self.displayHost(for: gatewayRuntimeBinding.host)
+        statusURL = "http://\(Self.urlHost(displayHost)):\(gatewayRuntimeBinding.port)/v1/melix/companion/status"
+        expiresAtUnixMs = metadata.expiresAtUnixMs
+        allowedOrigins = gatewayRuntimeBinding.allowedOrigins
+        allowedRoutes = [
+            OpenAICompanionPairingRoutePayload(method: "GET", path: "/.well-known/melix.json"),
+            OpenAICompanionPairingRoutePayload(method: "GET", path: "/api/capabilities"),
+            OpenAICompanionPairingRoutePayload(method: "GET", path: "/api/instructions"),
+            OpenAICompanionPairingRoutePayload(method: "GET", path: "/api/config-metadata"),
+            OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/models"),
+            OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/health"),
+            OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/cache/stats"),
+            OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/companion/status"),
+            OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/auth/session"),
+            OpenAICompanionPairingRoutePayload(method: "DELETE", path: "/v1/melix/auth/session"),
+        ]
+        forbiddenCapabilities = [
+            "mutate_runtime",
+            "run_inference",
+            "start_jobs",
+            "read_private_prompts",
+            "read_raw_logs",
+            "read_local_paths",
+        ]
+    }
+
+    private static func displayHost(for bindHost: String) -> String {
+        let candidate = bindHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch candidate.lowercased() {
+        case "0.0.0.0", "::", "[::]":
+            return "127.0.0.1"
+        default:
+            return candidate
+        }
+    }
+
+    private static func urlHost(_ host: String) -> String {
+        guard !host.hasPrefix("["),
+              !host.hasSuffix("]"),
+              host.filter({ $0 == ":" }).count > 1
+        else {
+            return host
+        }
+        return "[\(host)]"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case scope
+        case tokenTransport = "token_transport"
+        case resumeHeader = "resume_header"
+        case statusURL = "status_url"
+        case expiresAtUnixMs = "expires_at_unix_ms"
+        case allowedOrigins = "allowed_origins"
+        case allowedRoutes = "allowed_routes"
+        case forbiddenCapabilities = "forbidden_capabilities"
+    }
+}
+
+private struct OpenAICompanionPairingRoutePayload: Codable {
+    let method: String
+    let path: String
 }
 
 private struct OpenAIEmbeddingsRequest: Codable {
