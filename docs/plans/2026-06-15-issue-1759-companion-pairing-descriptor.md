@@ -104,6 +104,11 @@ Verification results on 2026-06-15:
 - After merging `origin/main` at `36a94fd5`, focused Swift tests passed again,
   changed-line coverage remained `TOTAL 99.29% 140/141`, and
   `git diff --check` passed again.
+- Review follow-up: static pairing route/capability lists were hoisted out of
+  the initializer, empty bind hosts now fall back to `127.0.0.1`, IPv4 hosts are
+  no longer bracketed, and IPv6 literal/bracketed hosts remain URL-safe.
+- After the review follow-up, focused Swift tests passed again and changed-line
+  coverage was `TOTAL 100.00% 155/155`.
 - Scoped performance report:
   `.runtime/pre-commit-performance/20260614-180426-36a94fd5/report/report.md`,
   `Status: ok`, 0 regressions, 0 selected probes.

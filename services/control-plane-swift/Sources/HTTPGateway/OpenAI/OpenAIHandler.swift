@@ -6135,30 +6135,37 @@ private struct OpenAICompanionPairingPayload: Codable {
         statusURL = "http://\(Self.urlHost(displayHost)):\(gatewayRuntimeBinding.port)/v1/melix/companion/status"
         expiresAtUnixMs = metadata.expiresAtUnixMs
         allowedOrigins = gatewayRuntimeBinding.allowedOrigins
-        allowedRoutes = [
-            OpenAICompanionPairingRoutePayload(method: "GET", path: "/.well-known/melix.json"),
-            OpenAICompanionPairingRoutePayload(method: "GET", path: "/api/capabilities"),
-            OpenAICompanionPairingRoutePayload(method: "GET", path: "/api/instructions"),
-            OpenAICompanionPairingRoutePayload(method: "GET", path: "/api/config-metadata"),
-            OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/models"),
-            OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/health"),
-            OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/cache/stats"),
-            OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/companion/status"),
-            OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/auth/session"),
-            OpenAICompanionPairingRoutePayload(method: "DELETE", path: "/v1/melix/auth/session"),
-        ]
-        forbiddenCapabilities = [
-            "mutate_runtime",
-            "run_inference",
-            "start_jobs",
-            "read_private_prompts",
-            "read_raw_logs",
-            "read_local_paths",
-        ]
+        allowedRoutes = Self.defaultAllowedRoutes
+        forbiddenCapabilities = Self.defaultForbiddenCapabilities
     }
+
+    private static let defaultAllowedRoutes = [
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/.well-known/melix.json"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/api/capabilities"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/api/instructions"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/api/config-metadata"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/models"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/health"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/cache/stats"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/companion/status"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/auth/session"),
+        OpenAICompanionPairingRoutePayload(method: "DELETE", path: "/v1/melix/auth/session"),
+    ]
+
+    private static let defaultForbiddenCapabilities = [
+        "mutate_runtime",
+        "run_inference",
+        "start_jobs",
+        "read_private_prompts",
+        "read_raw_logs",
+        "read_local_paths",
+    ]
 
     private static func displayHost(for bindHost: String) -> String {
         let candidate = bindHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else {
+            return "127.0.0.1"
+        }
         switch candidate.lowercased() {
         case "0.0.0.0", "::", "[::]":
             return "127.0.0.1"
@@ -6168,13 +6175,13 @@ private struct OpenAICompanionPairingPayload: Codable {
     }
 
     private static func urlHost(_ host: String) -> String {
-        guard !host.hasPrefix("["),
-              !host.hasSuffix("]"),
-              host.filter({ $0 == ":" }).count > 1
-        else {
+        if host.hasPrefix("[") && host.hasSuffix("]") {
             return host
         }
-        return "[\(host)]"
+        if host.contains(":") {
+            return "[\(host)]"
+        }
+        return host
     }
 
     enum CodingKeys: String, CodingKey {
