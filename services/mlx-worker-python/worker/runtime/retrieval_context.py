@@ -329,23 +329,26 @@ def project_retrieval_lookup_result(lookup_result: Any) -> RetrievalLookupResult
     )
 
 
-_JSON_IMMUTABLE_TYPES = (str, int, float, bool, type(None))
-
-
 def _copy_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {key: _copy_payload_value(value) for key, value in payload.items()}
 
 
 def _copy_payload_value(value: Any) -> Any:
     value_type = type(value)
-    if value_type in _JSON_IMMUTABLE_TYPES:
+    if (
+        value_type is str
+        or value_type is int
+        or value_type is float
+        or value_type is bool
+        or value is None
+    ):
         return value
     if value_type is dict:
         return {key: _copy_payload_value(item) for key, item in value.items()}
     if value_type is list:
         return [_copy_payload_value(item) for item in value]
     if value_type is tuple:
-        return tuple(_copy_payload_value(item) for item in value)
+        return tuple([_copy_payload_value(item) for item in value])
     return deepcopy(value)
 
 
