@@ -5150,6 +5150,7 @@ def test_command_summary_keeps_ci_heartbeats_compact() -> None:
     assert _summarize_command("python3 - <<'PY'\nprint('x')\nPY") == "python3 - <<'PY' ..."
     assert _summarize_command(" \n  python3 - <<'PY'  \nprint('x')") == "python3 - <<'PY' ..."
     assert _summarize_command(" \n ") == "<empty command>"
+    assert _summarize_command("python3 -m pytest\n \t\n") == "python3 -m pytest"
 
     long_summary = _summarize_command("python3 -c " + "x" * 300, max_length=80)
     assert len(long_summary) <= 80
