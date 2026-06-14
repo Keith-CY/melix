@@ -891,6 +891,22 @@ selected-result receipt through `worker.runtime.prompt_context` by admitting one
 `PromptContextSegment` for the sanitized selected result value while preserving
 the same emitted receipt fields and observation payload.
 
+The deterministic visual tool source slice applies the same source-specific
+receipt pattern to successful `layout_parse` and `image_crop` observations.
+Each successful `layout_parse` observation emits one `retrieved_image` receipt
+with `segment_id = <tool_call_id>:layout-result` and `source_field = payload`.
+Each successful `image_crop` observation emits one `retrieved_image` receipt
+with `segment_id = <tool_call_id>:crop-result` and `source_field = payload`.
+Short symbolic fixture identifiers may be preserved in `source_id`; raw media
+references, file paths, URLs, whitespace-bearing identifiers, and long
+identifiers must be replaced with stable redacted identifiers shaped as
+`image-ref:<sha256-prefix>`. The source receipt records `owner_scope_checked =
+true` only when the existing visual fixture owner check ran and matched before
+payload emission. These visual source receipts must be generated through
+`worker.runtime.retrieval_context.admit_retrieved_image_context` and must omit
+layout text, crop text, raw media refs, paths, URLs, tool arguments, and private
+prompt text.
+
 ### Workspace Path Boundary
 
 Agent and workflow tools that read, write, or edit local files must resolve
