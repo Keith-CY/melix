@@ -80,12 +80,31 @@ def discover_latest_metrics_path(runtime_dir: Path | None, source_name: str) -> 
     if runtime_dir is None:
         return None
     pattern = SOURCE_DEFINITIONS[source_name]["runtime_pattern"]
+    wildcard_index = pattern.find("*")
+    if wildcard_index == -1:
+        exact_name = pattern
+        prefix = suffix = None
+    elif pattern.find("*", wildcard_index + 1) == -1:
+        exact_name = None
+        prefix = pattern[:wildcard_index]
+        suffix = pattern[wildcard_index + 1 :]
+    else:
+        exact_name = prefix = suffix = None
     try:
         latest_path: Path | None = None
         latest_mtime: float | None = None
         with os.scandir(os.fspath(runtime_dir.expanduser())) as entries:
             for entry in entries:
-                if not _matches_runtime_pattern(entry.name, pattern) or not entry.is_file():
+                entry_name = entry.name
+                if exact_name is not None:
+                    if entry_name != exact_name:
+                        continue
+                elif prefix is not None and suffix is not None:
+                    if not entry_name.startswith(prefix) or not entry_name.endswith(suffix):
+                        continue
+                elif not _matches_runtime_pattern(entry_name, pattern):
+                    continue
+                if not entry.is_file():
                     continue
                 mtime = entry.stat().st_mtime
                 if latest_mtime is None or mtime > latest_mtime:

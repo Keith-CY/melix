@@ -173,13 +173,49 @@ def test_runtime_dir_discovery_uses_single_scandir_without_path_glob(
         scanned_paths.append(path)
         return original_scandir(path)
 
+    def fail_runtime_matcher(name: str, pattern: str) -> bool:
+        raise AssertionError(  # pragma: no cover - failure-only guard.
+            f"single-wildcard discovery should precompute pattern bounds for {name!r} {pattern!r}"
+        )
+
     monkeypatch.setattr(snapshot_cli.Path, "glob", fail_glob)
     monkeypatch.setattr(snapshot_cli.os, "scandir", counting_scandir)
+    monkeypatch.setattr(snapshot_cli, "_matches_runtime_pattern", fail_runtime_matcher)
 
     latest = snapshot_cli.discover_latest_metrics_path(tmp_path, "control_plane")
 
     assert latest == newer
     assert scanned_paths == [str(tmp_path)]
+
+
+def test_runtime_dir_discovery_preserves_exact_and_multi_wildcard_patterns(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    exact_match = tmp_path / "exact-metrics.json"
+    exact_noise = tmp_path / "exact-metrics-old.json"
+    multi_match = tmp_path / "multi-metrics-new-latest.json"
+    multi_noise = tmp_path / "multi-metrics-old.tmp"
+    write_metrics(exact_match, updated_at_unix_ms=1_000, values={"exact": 1})
+    write_metrics(exact_noise, updated_at_unix_ms=2_000, values={"noise": 2})
+    write_metrics(multi_match, updated_at_unix_ms=3_000, values={"multi": 3})
+    write_metrics(multi_noise, updated_at_unix_ms=4_000, values={"noise": 4})
+    os.utime(exact_match, (1, 1))
+    os.utime(multi_match, (2, 2))
+
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "exact_probe",
+        {"runtime_pattern": "exact-metrics.json"},
+    )
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "multi_probe",
+        {"runtime_pattern": "multi*latest*.json"},
+    )
+
+    assert snapshot_cli.discover_latest_metrics_path(tmp_path, "exact_probe") == exact_match
+    assert snapshot_cli.discover_latest_metrics_path(tmp_path, "multi_probe") == multi_match
 
 
 def test_env_and_not_configured_sources_are_resolved(tmp_path: Path) -> None:
