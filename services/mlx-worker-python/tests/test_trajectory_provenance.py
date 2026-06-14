@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -238,6 +239,42 @@ def test_load_trajectory_provenance_from_snapshot_manifest_reads_bytes(
         "trajectory_split": "train",
         "trajectory_trace_digest": "abc123",
     }
+
+
+def test_load_trajectory_provenance_from_snapshot_manifest_reuses_path_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(b"{}")
+    observed_path: object = None
+
+    def capture_extract(
+        manifest: Mapping[str, object],
+        *,
+        snapshot_manifest_path: Path | str | None = None,
+        copy_nested: bool,
+    ) -> dict[str, object]:
+        nonlocal observed_path
+        observed_path = snapshot_manifest_path
+        assert copy_nested is False
+        return {"trajectory_snapshot_manifest_path": snapshot_manifest_path}
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_JSON_LOADS",
+        lambda _payload: {"format": "agentic_tool_trace"},
+    )
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_trajectory_provenance_from_snapshot_manifest",
+        capture_extract,
+    )
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_snapshot_manifest_path": str(manifest_path)
+    }
+    assert type(observed_path) is str
 
 
 def test_load_trajectory_provenance_from_snapshot_manifest_accepts_dict_subclass(
