@@ -86,6 +86,30 @@ it describes how the companion client should use the session. It does not
 duplicate the raw token. Keep treating `resume.token` as the only secret value
 in the response.
 
+### Desktop Companion Token Controls
+
+The macOS API workspace includes a `Companion Pairing` panel under the
+Authentication section. It uses the selected local server session's stored
+primary gateway API key to issue a remembered `companion_read_only` session,
+then renders the safe pairing descriptor returned by the gateway.
+
+Operator actions:
+
+- `Issue Read-Only Token` calls `POST /v1/melix/auth/session` with
+  `remember_me = true` and `scope = companion_read_only`.
+- `Copy Pairing Bundle` copies a one-time JSON bundle containing the descriptor
+  and the raw companion token for the operator to transfer to a companion
+  client.
+- `Revoke Token` calls `DELETE /v1/melix/auth/session` with the active
+  companion token through `X-Melix-Session`.
+
+The desktop view model keeps the raw companion token only in transient process
+memory so the current operator session can copy or revoke it. The token is not
+written into operator session state, server-session configuration, logs,
+metrics, or the safe descriptor displayed in the panel. Closing the desktop
+process drops the transient token reference; create a new companion token if the
+current token can no longer be copied or revoked from the panel.
+
 ### Reuse The Session
 
 ```bash

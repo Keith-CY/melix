@@ -10249,6 +10249,147 @@ struct DesktopAPIAuthenticationReferenceView: View {
     }
 }
 
+struct DesktopAPICompanionPairingPanel: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        let presentation = DesktopAPICompanionPairingPresentation(pairing: viewModel.companionPairing)
+
+        MelixSectionCard("Companion Pairing") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(presentation.statusTitle)
+                            .font(.headline)
+                        Text(presentation.statusDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(presentation.scopeText)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+
+                if let statusURL = presentation.statusURL {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Status URL")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(statusURL)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
+
+                if let allowedRoutesText = presentation.allowedRoutesText {
+                    Text(allowedRoutesText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+
+                if let errorText = presentation.errorText {
+                    Text(errorText)
+                        .font(.caption)
+                        .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                }
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        companionPairingButtons(presentation)
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        companionPairingButtons(presentation)
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func companionPairingButtons(_ presentation: DesktopAPICompanionPairingPresentation) -> some View {
+        Button("Issue Read-Only Token") {
+            Task { await viewModel.issueCompanionPairing() }
+        }
+        .disabled(presentation.issueDisabled)
+
+        Button("Copy Pairing Bundle") {
+            if let bundleText = viewModel.companionPairingBundleText() {
+                copyToPasteboard(bundleText)
+            }
+        }
+        .disabled(presentation.copyDisabled)
+
+        Button("Revoke Token") {
+            Task { await viewModel.revokeCompanionPairing() }
+        }
+        .disabled(presentation.revokeDisabled)
+    }
+}
+
+struct DesktopAPICompanionPairingPresentation: Equatable {
+    let statusTitle: String
+    let statusDetail: String
+    let scopeText: String
+    let statusURL: String?
+    let allowedRoutesText: String?
+    let errorText: String?
+    let issueDisabled: Bool
+    let copyDisabled: Bool
+    let revokeDisabled: Bool
+
+    init(pairing: CompanionPairingState) {
+        statusTitle = Self.statusTitle(pairing.phase)
+        statusDetail = Self.statusDetail(pairing)
+        scopeText = pairing.scope.isEmpty ? "companion_read_only" : pairing.scope
+        statusURL = pairing.statusURL.isEmpty ? nil : pairing.statusURL
+        allowedRoutesText = pairing.allowedRoutes.isEmpty
+            ? nil
+            : "Allowed routes: \(pairing.allowedRoutes.joined(separator: ", "))"
+        errorText = (pairing.lastError?.isEmpty == false) ? pairing.lastError : nil
+        issueDisabled = pairing.phase == .issuing || pairing.phase == .revoking
+        copyDisabled = pairing.copyBundleAvailable == false
+        revokeDisabled = pairing.copyBundleAvailable == false || pairing.phase == .revoking
+    }
+
+    private static func statusTitle(_ phase: CompanionPairingPhase) -> String {
+        switch phase {
+        case .idle:
+            return "No active companion token"
+        case .issuing:
+            return "Issuing companion token"
+        case .active:
+            return "Read-only companion token active"
+        case .revoking:
+            return "Revoking companion token"
+        case .failed:
+            return "Companion pairing needs attention"
+        }
+    }
+
+    private static func statusDetail(_ pairing: CompanionPairingState) -> String {
+        switch pairing.phase {
+        case .idle:
+            return "Create a transient read-only session for the selected local server."
+        case .issuing:
+            return "Requesting a scoped companion session from the gateway."
+        case .active:
+            if pairing.expiresAtUnixMS > 0 {
+                let expiresAt = Date(timeIntervalSince1970: Double(pairing.expiresAtUnixMS) / 1_000)
+                return "Session \(pairing.sessionID) expires at \(expiresAt.formatted(date: .abbreviated, time: .shortened))."
+            }
+            return "Session \(pairing.sessionID) is active."
+        case .revoking:
+            return "Revocation uses the current companion session token once."
+        case .failed:
+            return pairing.lastError ?? "The companion token action failed."
+        }
+    }
+}
+
 struct DesktopAPIQuickStartSnippet: Identifiable {
     let id: String
     let language: String
@@ -10892,12 +11033,16 @@ struct DesktopAPIWorkspaceView: View {
                             selectedExport: viewModel.selectedAgentIntegrationExport
                         )
                     case .authentication:
-                        DesktopAPIAuthenticationReferenceView(
-                            referenceText: desktopAPIAuthenticationReferenceText(
-                                selectedSession: viewModel.selectedServerSession,
-                                selectedExport: viewModel.selectedAgentIntegrationExport
+                        VStack(alignment: .leading, spacing: 18) {
+                            DesktopAPIAuthenticationReferenceView(
+                                referenceText: desktopAPIAuthenticationReferenceText(
+                                    selectedSession: viewModel.selectedServerSession,
+                                    selectedExport: viewModel.selectedAgentIntegrationExport
+                                )
                             )
-                        )
+                            DesktopAPICompanionPairingPanel(viewModel: viewModel)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     case .quickStarts:
                         VStack(alignment: .leading, spacing: 18) {
                             DesktopAPIQuickStartPanel(

@@ -116,6 +116,131 @@ final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
     }
 }
 
+struct CompanionPairingIssueRequestRecord: Equatable, Sendable {
+    let baseURL: URL
+    let apiKey: String
+}
+
+struct CompanionPairingRevokeRequestRecord: Equatable, Sendable {
+    let baseURL: URL
+    let sessionToken: String
+}
+
+actor FakeCompanionPairingClient: CompanionPairingClient {
+    private(set) var issueRequests: [CompanionPairingIssueRequestRecord] = []
+    private(set) var revokeRequests: [CompanionPairingRevokeRequestRecord] = []
+    private var issueResult = CompanionPairingIssueResult(
+        sessionID: "companion-session-test",
+        scope: "companion_read_only",
+        rememberMe: true,
+        expiresAtUnixMS: 1_718_000_000_000,
+        resumeHeader: "x-melix-session",
+        resumeToken: "melix_companion_test_token",
+        pairing: CompanionPairingDescriptor(
+            schemaVersion: "melix.companion.pairing.v1",
+            statusURL: "http://127.0.0.1:12436/v1/melix/companion/status",
+            resumeHeader: "x-melix-session",
+            tokenTransport: "resume_header",
+            allowedRoutes: ["/v1/melix/companion/status"],
+            forbiddenCapabilities: ["mutate_runtime"],
+            expiresAtUnixMS: 1_718_000_000_000
+        )
+    )
+    private var issueError: Error?
+    private var revokeError: Error?
+    private var issueDelay: Duration?
+    private var revokeDelay: Duration?
+
+    func configureIssueResult(_ result: CompanionPairingIssueResult) {
+        issueResult = result
+        issueError = nil
+    }
+
+    func configureIssueError(_ error: Error?) {
+        issueError = error
+    }
+
+    func configureRevokeError(_ error: Error?) {
+        revokeError = error
+    }
+
+    func configureIssueDelay(_ delay: Duration?) {
+        issueDelay = delay
+    }
+
+    func configureRevokeDelay(_ delay: Duration?) {
+        revokeDelay = delay
+    }
+
+    func issuePairing(baseURL: URL, apiKey: String) async throws -> CompanionPairingIssueResult {
+        issueRequests.append(CompanionPairingIssueRequestRecord(baseURL: baseURL, apiKey: apiKey))
+        if let issueDelay {
+            try? await Task.sleep(for: issueDelay)
+        }
+        if let issueError {
+            throw issueError
+        }
+        return issueResult
+    }
+
+    func revokePairing(baseURL: URL, sessionToken: String) async throws {
+        revokeRequests.append(CompanionPairingRevokeRequestRecord(baseURL: baseURL, sessionToken: sessionToken))
+        if let revokeDelay {
+            try? await Task.sleep(for: revokeDelay)
+        }
+        if let revokeError {
+            throw revokeError
+        }
+    }
+}
+
+struct CompanionPairingHTTPRequestRecord: Equatable, Sendable {
+    let url: URL?
+    let method: String
+    let headers: [String: String]
+    let body: Data?
+}
+
+actor FakeCompanionPairingHTTPTransport: CompanionPairingHTTPTransport {
+    private(set) var requests: [CompanionPairingHTTPRequestRecord] = []
+    private var issueStatusCode = 200
+    private var issueBody = Data()
+    private var revokeStatusCode = 204
+    private var revokeBody = Data()
+
+    func configureIssueResponse(statusCode: Int = 200, body: Data) {
+        issueStatusCode = statusCode
+        issueBody = body
+    }
+
+    func configureRevokeResponse(statusCode: Int = 204, body: Data = Data()) {
+        revokeStatusCode = statusCode
+        revokeBody = body
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let method = request.httpMethod ?? "GET"
+        requests.append(
+            CompanionPairingHTTPRequestRecord(
+                url: request.url,
+                method: method,
+                headers: request.allHTTPHeaderFields ?? [:],
+                body: request.httpBody
+            )
+        )
+
+        let body = method == "DELETE" ? revokeBody : issueBody
+        let statusCode = method == "DELETE" ? revokeStatusCode : issueStatusCode
+        let response = HTTPURLResponse(
+            url: request.url ?? URL(string: "http://127.0.0.1")!,
+            statusCode: statusCode,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        return (body, response)
+    }
+}
+
 final class FakeEvaluationPromptStore: EvaluationPromptStoring, @unchecked Sendable {
     enum StoreError: Error, Equatable {
         case list

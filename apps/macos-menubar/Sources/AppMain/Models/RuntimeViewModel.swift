@@ -2478,6 +2478,7 @@ public final class RuntimeViewModel {
     public private(set) var serverSessions: [DesktopServerSessionState] = []
     public private(set) var remoteServers: [RemoteServer] = []
     public private(set) var chatSessions: [DesktopChatSessionState] = []
+    public private(set) var companionPairing = CompanionPairingState()
     public private(set) var lastError: String?
     public private(set) var lastCLIWorkflowFailure: RuntimeCLIWorkflowFailureState?
     public private(set) var productUpdateSummary: String?
@@ -3141,6 +3142,7 @@ public final class RuntimeViewModel {
     private let cliWorkflowRunner: (any MelixCLIWorkflowRunning)?
     private let operatorCommandRunner: MelixCLIRunner?
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
+    private let companionPairingClient: any CompanionPairingClient
     private let remoteServerStore: any RemoteServerStoring
     private let evaluationPromptStore: any EvaluationPromptStoring
     private let loraTrainingJobStore: any LoraTrainingJobStoring
@@ -3167,6 +3169,10 @@ public final class RuntimeViewModel {
     private var operatorStateRestored = false
     private var lastPersistedOperatorSessionState: OperatorSessionState?
     private var gatewayAPIKeyPersistFailures = 0.0
+    private var companionPairingIssueFailures = 0.0
+    private var companionPairingRevokeFailures = 0.0
+    private var activeCompanionSessionToken = ""
+    private var activeCompanionPairingBaseURL: URL?
     private var remoteServerPersistFailures = 0.0
     private var evaluationPromptPersistFailures = 0.0
     private var loraTrainingJobPersistFailures = 0.0
@@ -3402,6 +3408,7 @@ public final class RuntimeViewModel {
         cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
         operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
+        companionPairingClient: any CompanionPairingClient = LiveCompanionPairingClient(),
         remoteServerStore: any RemoteServerStoring = NullRemoteServerStore(),
         evaluationPromptStore: any EvaluationPromptStoring = NullEvaluationPromptStore(),
         loraTrainingJobStore: any LoraTrainingJobStoring = NullLoraTrainingJobStore(),
@@ -3414,6 +3421,7 @@ public final class RuntimeViewModel {
         self.cliWorkflowRunner = cliWorkflowRunner
         self.operatorCommandRunner = operatorCommandRunner
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
+        self.companionPairingClient = companionPairingClient
         self.remoteServerStore = remoteServerStore
         self.evaluationPromptStore = evaluationPromptStore
         self.loraTrainingJobStore = loraTrainingJobStore
@@ -6019,6 +6027,105 @@ public final class RuntimeViewModel {
             session.servingDefaults.numDraftTokens = max(0, value)
             session.updatedAt = Date()
         }
+    }
+
+    public func issueCompanionPairing() async {
+        guard companionPairing.phase != .issuing && companionPairing.phase != .revoking else {
+            return
+        }
+        guard let serverSession = selectedServerSession else {
+            await failCompanionPairingIssue("Select a local server session before creating companion pairing.")
+            return
+        }
+        guard let baseURL = Self.companionPairingBaseURL(for: serverSession) else {
+            await failCompanionPairingIssue("Selected server session does not have a valid companion pairing URL.")
+            return
+        }
+
+        let primaryKey: String
+        do {
+            guard let record = try serverSessionAPIKeyStore.loadPrimaryKey(serverSessionID: serverSession.id) else {
+                await failCompanionPairingIssue("Generate or restore a primary gateway API key before creating companion pairing.")
+                return
+            }
+            primaryKey = record.primaryKey
+        } catch {
+            await failCompanionPairingIssue("Primary gateway API key lookup failed: \(error)")
+            return
+        }
+
+        companionPairing = CompanionPairingState(phase: .issuing)
+        activeCompanionSessionToken = ""
+        activeCompanionPairingBaseURL = nil
+        notifyStateChanged()
+
+        let startedAt = Date()
+        do {
+            let result = try await companionPairingClient.issuePairing(baseURL: baseURL, apiKey: primaryKey)
+            activeCompanionSessionToken = result.resumeToken
+            activeCompanionPairingBaseURL = baseURL
+            companionPairing = CompanionPairingState.active(from: result)
+            await metrics.record(
+                name: "companion.pairing_issue_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            notifyStateChanged()
+        } catch {
+            await failCompanionPairingIssue("Companion pairing creation failed: \(error)")
+        }
+    }
+
+    public func revokeCompanionPairing() async {
+        guard companionPairing.phase != .revoking else {
+            return
+        }
+        guard let baseURL = activeCompanionPairingBaseURL, activeCompanionSessionToken.isEmpty == false else {
+            await failCompanionPairingRevoke("No active companion pairing token to revoke.")
+            return
+        }
+
+        let sessionToken = activeCompanionSessionToken
+        companionPairing.phase = .revoking
+        notifyStateChanged()
+
+        let startedAt = Date()
+        do {
+            try await companionPairingClient.revokePairing(baseURL: baseURL, sessionToken: sessionToken)
+            activeCompanionSessionToken = ""
+            activeCompanionPairingBaseURL = nil
+            companionPairing = CompanionPairingState()
+            await metrics.record(
+                name: "companion.pairing_revoke_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            notifyStateChanged()
+        } catch {
+            await failCompanionPairingRevoke("Companion pairing revocation failed: \(error)")
+        }
+    }
+
+    public func companionPairingBundleText() -> String? {
+        guard companionPairing.copyBundleAvailable, activeCompanionSessionToken.isEmpty == false else {
+            return nil
+        }
+        let payload = CompanionPairingClipboardBundle(
+            schemaVersion: "melix.companion.pairing.bundle.v1",
+            sessionID: companionPairing.sessionID,
+            scope: companionPairing.scope,
+            statusURL: companionPairing.statusURL,
+            resumeHeader: companionPairing.resumeHeader,
+            token: activeCompanionSessionToken,
+            tokenTransport: companionPairing.tokenTransport,
+            allowedRoutes: companionPairing.allowedRoutes,
+            forbiddenCapabilities: companionPairing.forbiddenCapabilities,
+            expiresAtUnixMS: companionPairing.expiresAtUnixMS
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(payload) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 
     public func updateSelectedServerSessionAutoSleepEnabled(_ value: Bool) {
@@ -13862,6 +13969,31 @@ public final class RuntimeViewModel {
         trimRecentEvents()
     }
 
+    private func failCompanionPairingIssue(_ message: String) async {
+        companionPairingIssueFailures += 1
+        activeCompanionSessionToken = ""
+        activeCompanionPairingBaseURL = nil
+        companionPairing = CompanionPairingState.failed(message)
+        recordLocalError(message)
+        await metrics.record(
+            name: "companion.pairing_issue_failures",
+            valueMs: companionPairingIssueFailures
+        )
+        notifyStateChanged()
+    }
+
+    private func failCompanionPairingRevoke(_ message: String) async {
+        companionPairingRevokeFailures += 1
+        companionPairing.phase = .failed
+        companionPairing.lastError = message
+        recordLocalError(message)
+        await metrics.record(
+            name: "companion.pairing_revoke_failures",
+            valueMs: companionPairingRevokeFailures
+        )
+        notifyStateChanged()
+    }
+
     private func beginRuntimeSettingsOperation() {
         runtimeSettingsOperationInProgress = true
         runtimeSettingsOperationMessage = ""
@@ -18160,4 +18292,61 @@ private func runtimeFormatBytes(_ bytes: UInt64) -> String {
     formatter.includesUnit = true
     formatter.includesCount = true
     return formatter.string(fromByteCount: Int64(bytes))
+}
+
+private struct CompanionPairingClipboardBundle: Encodable {
+    let schemaVersion: String
+    let sessionID: String
+    let scope: String
+    let statusURL: String
+    let resumeHeader: String
+    let token: String
+    let tokenTransport: String
+    let allowedRoutes: [String]
+    let forbiddenCapabilities: [String]
+    let expiresAtUnixMS: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case sessionID = "session_id"
+        case scope
+        case statusURL = "status_url"
+        case resumeHeader = "resume_header"
+        case token
+        case tokenTransport = "token_transport"
+        case allowedRoutes = "allowed_routes"
+        case forbiddenCapabilities = "forbidden_capabilities"
+        case expiresAtUnixMS = "expires_at_unix_ms"
+    }
+}
+
+private extension RuntimeViewModel {
+    static func companionPairingBaseURL(for session: DesktopServerSessionState) -> URL? {
+        let host = companionPairingDisplayHost(
+            session.gatewayConfigActiveBinding ? session.effectiveHost : session.host
+        )
+        let port = session.gatewayConfigActiveBinding ? session.effectivePort : session.port
+        guard port > 0 else {
+            return nil
+        }
+
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = host
+        components.port = port
+        return components.url
+    }
+
+    static func companionPairingDisplayHost(_ host: String) -> String {
+        let candidate = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard candidate.isEmpty == false else {
+            return "127.0.0.1"
+        }
+        switch candidate.lowercased() {
+        case "0.0.0.0", "::", "[::]":
+            return "127.0.0.1"
+        default:
+            return candidate.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        }
+    }
 }
