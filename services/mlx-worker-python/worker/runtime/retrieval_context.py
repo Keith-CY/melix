@@ -366,20 +366,12 @@ def _admit_entry(entry: RetrievalContextEntry) -> PromptContextAdmission:
             source_field="entry",
             owner_scope_checked=False,
         )
-    if entry.context_kind == "retrieved_document":
-        return admit_retrieved_document_context(
-            document_id=entry.source_id,
-            document_payload=entry.payload,
-            owner_scope_checked=entry.owner_scope_checked,
-            segment_id=entry.segment_id,
-            source_field=entry.source_field,
-            reason=entry.reason,
-            corrective_action=entry.corrective_action,
-        )
-    if entry.context_kind == "retrieved_image":
-        return admit_retrieved_image_context(
-            image_id=entry.source_id,
-            image_payload=entry.payload,
+    context_kind = entry.context_kind
+    if context_kind == "retrieved_document" or context_kind == "retrieved_image":
+        return _admit_context(
+            context_kind=context_kind,
+            source_id=entry.source_id,
+            payload=entry.payload,
             owner_scope_checked=entry.owner_scope_checked,
             segment_id=entry.segment_id,
             source_field=entry.source_field,
