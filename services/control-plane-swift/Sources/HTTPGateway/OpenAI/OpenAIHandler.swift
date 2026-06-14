@@ -1004,7 +1004,7 @@ public struct OpenAIHandler: Sendable {
             queue: CompanionQueueStatusPayload(summary: queueSnapshot),
             imageJobs: CompanionImageJobStatusPayload(jobs: imageJobsSnapshot),
             recentReceipts: CompanionRecentReceiptStatusPayload(jobs: imageJobsSnapshot),
-            logs: CompanionLogTailStatusPayload(entries: imageJobLogs),
+            logs: CompanionLogTailStatusPayload(entries: imageJobLogs.entries, total: imageJobLogs.total),
             redaction: CompanionRedactionStatusPayload()
         )
         await metricsStore.set(
@@ -1029,8 +1029,12 @@ public struct OpenAIHandler: Sendable {
         await imageJobReadModel?.snapshot() ?? []
     }
 
-    private func companionImageJobLogTail() async -> [ImageJobLogEntry] {
-        await imageJobReadModel?.logTailSnapshot(limit: companionLogTailVisibleLimit) ?? []
+    private func companionImageJobLogTail() async -> (entries: [ImageJobLogEntry], total: Int) {
+        guard let imageJobReadModel else {
+            return ([], 0)
+        }
+        let available = await imageJobReadModel.logTailSnapshot(limit: ImageJobReadModel.logTailRetainedLimit)
+        return (Array(available.prefix(companionLogTailVisibleLimit)), available.count)
     }
 
     private func handleCacheStats() async throws -> HTTPResponse {
@@ -5915,10 +5919,10 @@ private struct CompanionLogTailStatusPayload: Encodable {
     let total: Int
     let entries: [CompanionLogTailEntryPayload]
 
-    init(entries: [ImageJobLogEntry]) {
+    init(entries: [ImageJobLogEntry], total: Int) {
         source = "image_jobs"
         visible = entries.count
-        total = entries.count
+        self.total = total
         self.entries = entries.map(CompanionLogTailEntryPayload.init(entry:))
     }
 }

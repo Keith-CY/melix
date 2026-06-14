@@ -20,7 +20,7 @@ public struct ImageJobLogEntry: Sendable, Equatable {
 public actor ImageJobReadModel {
     public typealias EventPublisher = @Sendable (Melix_Controlplane_V1_ControlPlaneEvent) async -> Void
 
-    private static let logTailRetainedLimit = 50
+    public static let logTailRetainedLimit = 50
 
     private let eventPublisher: EventPublisher?
     private let now: @Sendable () -> Date

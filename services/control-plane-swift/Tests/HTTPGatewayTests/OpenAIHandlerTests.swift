@@ -1082,6 +1082,35 @@ struct OpenAIHandlerTests {
         #expect(jobs.map { $0["job_id"] as? String } == ["job-a", "job-z"])
     }
 
+    @Test("companion status endpoint returns empty logs without image job read model")
+    func companionStatusEndpointReturnsEmptyLogsWithoutImageJobReadModel() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let logs = try #require(payload["logs"] as? [String: Any])
+        let entries = try #require(logs["entries"] as? [[String: Any]])
+
+        #expect(response.statusCode == 200)
+        #expect(logs["source"] as? String == "image_jobs")
+        #expect(logs["total"] as? Int == 0)
+        #expect(logs["visible"] as? Int == 0)
+        #expect(entries.isEmpty)
+    }
+
     @Test("companion status endpoint supports credential auth and newest job ordering")
     func companionStatusEndpointSupportsCredentialAuthAndNewestJobOrdering() async throws {
         final class Clock: @unchecked Sendable {
@@ -1355,6 +1384,18 @@ struct OpenAIHandlerTests {
         error.message = privateErrorMessage
         clock.date = Date(timeIntervalSince1970: 2_101)
         await imageJobReadModel.recordFailed(jobID: "job-log-tail", error: error)
+        for index in 0..<55 {
+            clock.date = Date(timeIntervalSince1970: 2_102 + TimeInterval(index))
+            await imageJobReadModel.recordQueued(
+                requestID: "req-log-tail-\(index)",
+                jobID: "job-log-tail-\(String(format: "%02d", index))",
+                modelID: "melix-dev-image",
+                operation: "image.generation",
+                lane: "multimodal.vision.background",
+                promptDigest: "sha256:log-tail-\(index)",
+                recipe: recipe
+            )
+        }
 
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: []),
@@ -1383,18 +1424,19 @@ struct OpenAIHandlerTests {
 
         #expect(response.statusCode == 200)
         #expect(logs["source"] as? String == "image_jobs")
-        #expect(logs["total"] as? Int == 3)
-        #expect(logs["visible"] as? Int == 3)
-        #expect(entries.map { $0["state"] as? String } == ["failed", "running", "queued"])
+        #expect(logs["total"] as? Int == 50)
+        #expect(logs["visible"] as? Int == 20)
+        #expect(entries.count == 20)
+        #expect(entries.map { $0["state"] as? String } == Array(repeating: "queued", count: 20))
         #expect(first["event_type"] as? String == "image.job.state_changed")
-        #expect(first["job_id"] as? String == "job-log-tail")
-        #expect(first["request_id"] as? String == "req-log-tail")
+        #expect(first["job_id"] as? String == "job-log-tail-54")
+        #expect(first["request_id"] as? String == "req-log-tail-54")
         #expect(first["model_id"] as? String == "melix-dev-image")
         #expect(first["operation"] as? String == "image.generation")
         #expect(first["lane"] as? String == "multimodal.vision.background")
-        #expect(first["worker_id"] as? String == "vision-worker")
-        #expect(first["progress_stage"] as? String == "failed")
-        #expect(first["failure_code"] as? String == "worker_failed")
+        #expect(first["worker_id"] as? String == "")
+        #expect(first["progress_stage"] as? String == "queued")
+        #expect(first["failure_code"] as? String == "")
         #expect(firstRedaction["raw_log_line"] as? String == "omitted")
         #expect(firstRedaction["raw_prompt"] as? String == "omitted")
         #expect(firstRedaction["request_body"] as? String == "omitted")

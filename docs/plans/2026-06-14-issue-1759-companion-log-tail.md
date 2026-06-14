@@ -45,7 +45,9 @@ This transaction does not add:
 - Runtime metric remains `companion.status_latency_ms` on the aggregate endpoint.
 - The new read model appends one small value per image-job state update and caps
   retained entries at 50.
-- The companion status endpoint sorts and returns at most 20 visible log entries.
+- The companion status endpoint sorts and returns at most 20 visible log entries;
+  `logs.total` reports the retained read-model tail count while `logs.visible`
+  reports the number of entries returned in the payload.
 - Success metric: focused Swift tests cover the log-tail payload and redaction
   contract; changed-line coverage for touched Swift files remains at least 95
   percent.
@@ -121,7 +123,8 @@ descending.
 
 - [x] **Step 3: Expose companion logs**
 
-Read `logTailSnapshot(limit: 20)` in `handleCompanionStatus`, add a
+Read the retained log tail in `handleCompanionStatus`, expose at most 20
+visible entries, report the retained count in `logs.total`, add a
 `CompanionLogTailStatusPayload`, and change `CompanionRedactionStatusPayload`
 `logs` to `redacted_tail`.
 
@@ -143,9 +146,9 @@ Run Swift coverage for the focused tests, then:
 UV_PYTHON=3.12 uv run python scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata --diff-from origin/main services/control-plane-swift/Sources/ImageJobs/ImageJobReadModel.swift services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift services/control-plane-swift/Tests/ControlPlaneTests/ImageJobReadModelTests.swift services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIHandlerTests.swift
 ```
 
-Result: changed-line coverage is 99.27 percent total for touched Swift files;
-`ImageJobReadModel.swift` is 96.15 percent, with only defensive enum fallback
-branches uncovered.
+Result after review-thread fix: changed-line coverage is 99.37 percent total
+for touched Swift files; `ImageJobReadModel.swift` is 96.15 percent, with only
+defensive enum fallback branches uncovered.
 
 - [ ] **Step 3: Run full local gate and PR lifecycle**
 
