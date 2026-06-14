@@ -420,34 +420,52 @@ def _prune_python_runtime_baggage(python_runtime: Path) -> dict[str, int]:
             result["bytes_saved"] += bytes_saved
             result["directories_pruned"] += 1
 
-    for root, dirnames, filenames in os.walk(python_runtime, followlinks=False):
-        root_path = Path(root)
-        for dirname in list(dirnames):
-            if dirname not in _PRUNABLE_PYTHON_RUNTIME_DIR_NAMES:
-                continue
-            target = root_path / dirname
-            try:
-                bytes_saved = _path_size_bytes(target)
-                if target.is_symlink():
-                    target.unlink()
-                else:
-                    shutil.rmtree(target)
-            except OSError:
-                dirnames.remove(dirname)
-                continue
-            result["bytes_saved"] += bytes_saved
-            result["directories_pruned"] += 1
-            dirnames.remove(dirname)
-        for filename in filenames:
-            target = root_path / filename
-            if target.suffix not in _PRUNABLE_PYTHON_RUNTIME_FILE_SUFFIXES:
-                continue
-            try:
-                result["bytes_saved"] += target.lstat().st_size
-                target.unlink()
-            except OSError:
-                continue
-            result["files_pruned"] += 1
+    prunable_suffixes = tuple(_PRUNABLE_PYTHON_RUNTIME_FILE_SUFFIXES)
+    stack: list[Path | str] = [python_runtime]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        is_directory = entry.is_dir(follow_symlinks=False)
+                    except OSError:
+                        continue
+
+                    if entry.name in _PRUNABLE_PYTHON_RUNTIME_DIR_NAMES:
+                        if not is_directory:
+                            try:
+                                if not entry.is_symlink():
+                                    continue
+                            except OSError:
+                                continue
+                        target = Path(entry.path)
+                        try:
+                            bytes_saved = _path_size_bytes(target)
+                            if entry.is_symlink():
+                                target.unlink()
+                            else:
+                                shutil.rmtree(target)
+                        except OSError:
+                            continue
+                        result["bytes_saved"] += bytes_saved
+                        result["directories_pruned"] += 1
+                        continue
+
+                    if is_directory:
+                        stack.append(entry.path)
+                        continue
+
+                    if not entry.name.endswith(prunable_suffixes):
+                        continue
+                    try:
+                        result["bytes_saved"] += entry.stat(follow_symlinks=False).st_size
+                        os.unlink(entry.path)
+                    except OSError:
+                        continue
+                    result["files_pruned"] += 1
+        except OSError:
+            continue
     return result
 
 
