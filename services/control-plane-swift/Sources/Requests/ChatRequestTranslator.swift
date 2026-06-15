@@ -1368,6 +1368,10 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
                 self = .text(text)
                 return
             }
+            if let messages = try? singleValue.decode([Message].self) {
+                self = .messages(messages)
+                return
+            }
             let inputItems = try singleValue.decode([InputItem].self)
             var messages: [Message] = []
             for item in inputItems {
