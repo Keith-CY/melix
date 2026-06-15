@@ -546,7 +546,9 @@ def _build_tool_selection_result(
     fallback_reason: str,
 ) -> ToolSelectionResult:
     selected_registry = registry.select(tuple(selected_names))
-    selected_tool_count = selected_registry.metrics().tool_count
+    registry_metrics = registry.metrics()
+    selected_metrics = selected_registry.metrics()
+    selected_tool_count = selected_metrics.tool_count
     receipt = {
         "schema_version": "melix.agentic_tool_selection.v1",
         "toolset_version": BUILTIN_TOOLSET_VERSION,
@@ -557,9 +559,9 @@ def _build_tool_selection_result(
             {"tool_id": tool_name, "source": selected_sources[tool_name]}
             for tool_name in selected_registry.names()
         ],
-        "dropped_tool_count": max(0, registry.metrics().tool_count - selected_tool_count),
-        "full_schema_bytes": registry.metrics().schema_bytes,
-        "selected_schema_bytes": selected_registry.metrics().schema_bytes,
+        "dropped_tool_count": max(0, registry_metrics.tool_count - selected_tool_count),
+        "full_schema_bytes": registry_metrics.schema_bytes,
+        "selected_schema_bytes": selected_metrics.schema_bytes,
     }
     return ToolSelectionResult(registry=selected_registry, receipt=receipt)
 
@@ -575,7 +577,7 @@ def _keyword_tool_matches(text: str) -> tuple[str, ...]:
     if not text:
         return ()
     normalized_text = text.casefold()
-    if not normalized_text.strip():
+    if normalized_text.isspace():
         return ()
     boundary_text = ""
     matches: list[str] = []
