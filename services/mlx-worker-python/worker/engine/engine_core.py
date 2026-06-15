@@ -1098,8 +1098,15 @@ class EngineCore:
     ) -> common_pb2.SamplingConfig:
         if not stop_sequences and not sampling.stop:
             return sampling
-        if tuple(sampling.stop) == stop_sequences:
-            return sampling
+        sampling_stop = sampling.stop
+        if len(sampling_stop) == len(stop_sequences):
+            stop_sequences_match = True
+            for index, stop_sequence in enumerate(stop_sequences):
+                if sampling_stop[index] != stop_sequence:
+                    stop_sequences_match = False
+                    break
+            if stop_sequences_match:
+                return sampling
         resolved = common_pb2.SamplingConfig()
         resolved.CopyFrom(sampling)
         del resolved.stop[:]

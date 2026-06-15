@@ -736,6 +736,15 @@ def test_sampling_with_resolved_stop_reuses_sampling_when_stop_sequences_match()
     assert resolved is sampling
 
 
+def test_sampling_with_resolved_stop_reuses_sampling_when_non_empty_stop_sequences_match() -> None:
+    sampling = common_pb2.SamplingConfig(max_output_tokens=4, stop=["</turn>", "</model>"])
+
+    resolved = EngineCore._sampling_with_resolved_stop(sampling, ("</turn>", "</model>"))
+
+    assert resolved is sampling
+    assert list(resolved.stop) == ["</turn>", "</model>"]
+
+
 def test_sampling_with_resolved_stop_clones_when_stop_sequences_change() -> None:
     sampling = common_pb2.SamplingConfig(max_output_tokens=4, stop=["old"])
 
