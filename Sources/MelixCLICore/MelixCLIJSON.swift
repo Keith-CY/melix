@@ -129,6 +129,9 @@ enum MelixCLIJSON {
         adding metricName: String,
         placeholder: MelixCLIJSONMetricPatch.Placeholder
     ) -> [String: Any] {
+        if metrics.isEmpty {
+            return [metricName: placeholder.token]
+        }
         var finalMetrics = [String: Any](minimumCapacity: metrics.count + 1)
         for (key, value) in metrics {
             finalMetrics[key] = value
