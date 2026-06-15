@@ -218,12 +218,51 @@ def project_skill_memory_store_records(records: Any) -> SkillMemoryContextProjec
     )
 
 
-def project_skill_memory_lookup_result(lookup_result: Any) -> SkillMemoryLookupResultProjection:
+def project_skill_memory_lookup_result(
+    lookup_result: Any,
+    *,
+    lookup_source_id: Any = "",
+    lookup_segment_id: Any = "",
+    lookup_source_field: Any = "",
+) -> SkillMemoryLookupResultProjection:
+    wrapper_metadata_refusal = _lookup_result_metadata_refusal(
+        lookup_source_id=lookup_source_id,
+        lookup_segment_id=lookup_segment_id,
+        lookup_source_field=lookup_source_field,
+    )
+    if wrapper_metadata_refusal is not None:
+        return SkillMemoryLookupResultProjection(
+            prompt_user_payload={},
+            untrusted_context_receipts=[],
+            refusal_receipts=[wrapper_metadata_refusal],
+            lookup_message=None,
+        )
+    normalized_lookup_source_id = _lookup_metadata_text_or_default(
+        lookup_source_id,
+        default="unknown-skill-memory-lookup",
+    )
+    normalized_lookup_segment_id = _lookup_metadata_text_or_default(
+        lookup_segment_id,
+        default=f"{normalized_lookup_source_id}:lookup-result",
+    )
+    normalized_lookup_source_field = _lookup_metadata_text_or_default(
+        lookup_source_field,
+        default="lookup_result",
+    )
+    has_lookup_metadata = (
+        lookup_source_id != "" or lookup_segment_id != "" or lookup_source_field != ""
+    )
     if not isinstance(lookup_result, Mapping):
         return SkillMemoryLookupResultProjection(
             prompt_user_payload={},
             untrusted_context_receipts=[],
-            refusal_receipts=[_lookup_result_refusal()],
+            refusal_receipts=[
+                _lookup_result_refusal(
+                    source_id=normalized_lookup_source_id,
+                    segment_id=normalized_lookup_segment_id,
+                    source_field=normalized_lookup_source_field,
+                )
+            ],
             lookup_message=None,
         )
 
@@ -233,6 +272,23 @@ def project_skill_memory_lookup_result(lookup_result: Any) -> SkillMemoryLookupR
         store_projection.untrusted_context_receipts
     )
     refusal_receipts = _copy_receipts(store_projection.refusal_receipts)
+    if (
+        has_lookup_metadata
+        and (
+            "records" not in lookup_result
+            or not isinstance(lookup_result.get("records"), list)
+        )
+        and len(refusal_receipts) == 1
+        and not prompt_user_payload
+        and not untrusted_context_receipts
+    ):
+        refusal_receipts = [
+            _lookup_result_refusal(
+                source_id=normalized_lookup_source_id,
+                segment_id=normalized_lookup_segment_id,
+                source_field=normalized_lookup_source_field,
+            )
+        ]
     lookup_message: dict[str, Any] | None = None
     if prompt_user_payload:
         lookup_message = {
@@ -365,15 +421,68 @@ def _store_record_refusal(
     )
 
 
-def _lookup_result_refusal() -> dict[str, object]:
+def _lookup_result_refusal(
+    *,
+    source_id: str = "unknown-skill-memory-lookup",
+    segment_id: str = "unknown-skill-memory-lookup:lookup-result",
+    source_field: str = "lookup_result",
+) -> dict[str, object]:
     return refused_prompt_context_receipt(
-        segment_id="unknown-skill-memory-lookup:lookup-result",
+        segment_id=segment_id,
         source_type="skill_memory_lookup",
-        source_field="lookup_result",
-        source_id="unknown-skill-memory-lookup",
+        source_field=source_field,
+        source_id=source_id,
         reason="invalid_skill_memory_lookup_result",
         corrective_action="Reject malformed skill or memory lookup result before prompt assembly.",
     )
+
+
+def _lookup_result_metadata_refusal(
+    *,
+    lookup_source_id: Any,
+    lookup_segment_id: Any,
+    lookup_source_field: Any,
+) -> dict[str, object] | None:
+    fallback_source_id = "unknown-skill-memory-lookup"
+    fallback_segment_id = f"{fallback_source_id}:lookup-result"
+    if not _valid_lookup_metadata_text(lookup_source_id):
+        return _lookup_result_refusal(
+            source_id=fallback_source_id,
+            segment_id=fallback_segment_id,
+            source_field="lookup_source_id",
+        )
+    normalized_source_id = _lookup_metadata_text_or_default(
+        lookup_source_id,
+        default=fallback_source_id,
+    )
+    normalized_segment_id = f"{normalized_source_id}:lookup-result"
+    if not _valid_lookup_metadata_text(lookup_segment_id):
+        return _lookup_result_refusal(
+            source_id=normalized_source_id,
+            segment_id=normalized_segment_id,
+            source_field="lookup_segment_id",
+        )
+    normalized_segment_id = _lookup_metadata_text_or_default(
+        lookup_segment_id,
+        default=normalized_segment_id,
+    )
+    if not _valid_lookup_metadata_text(lookup_source_field):
+        return _lookup_result_refusal(
+            source_id=normalized_source_id,
+            segment_id=normalized_segment_id,
+            source_field="lookup_source_field",
+        )
+    return None
+
+
+def _valid_lookup_metadata_text(value: Any) -> bool:
+    return value == "" or (isinstance(value, str) and bool(value.strip()))
+
+
+def _lookup_metadata_text_or_default(value: Any, *, default: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return default
 
 
 def _admit_context(

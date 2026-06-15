@@ -712,6 +712,17 @@ not load skill files, read or write memory stores, rank retrieval results, infer
 owner scope, mutate sessions, enqueue chat messages, or copy raw source text
 into receipt JSON.
 
+Concrete live or durable skill/memory lookup entrypoints may pass
+`lookup_source_id`, `lookup_segment_id`, and `lookup_source_field` to
+`project_skill_memory_lookup_result` when they need wrapper-level refusal
+receipts to reference a stable lookup source instead of the default
+`unknown-skill-memory-lookup`. The metadata is used only for top-level wrapper
+refusals and missing-wrapper-record refusals; individual store records still
+own their own `source_id`, `segment_id`, and `source_field` metadata. Malformed
+lookup wrapper metadata fails closed with `source_type = skill_memory_lookup`,
+the offending metadata field as `source_field`, no prompt payload, no admitted
+receipts, and no lookup message.
+
 The deterministic Python-worker `skill_lookup` and `memory_lookup` adapters are
 the concrete v1 callers of this lookup projection. They are opt-in selectable
 catalog tools rather than default no-selection tool schemas, so ordinary
@@ -801,6 +812,16 @@ side-effect-free: it does not perform RAG store lookup, rank retrieval results,
 read files, fetch media, infer owner scope, mutate sessions, or copy raw
 retrieved text, captions, media URIs, local paths, or prompt bodies into
 receipt JSON.
+
+Concrete live or durable retrieval lookup entrypoints may pass
+`lookup_source_id`, `lookup_segment_id`, and `lookup_source_field` to
+`project_retrieval_lookup_result` when wrapper-level refusals should identify a
+stable lookup source instead of the default `unknown-retrieval-lookup`. The
+metadata is used only for top-level wrapper refusals and missing-wrapper-record
+refusals; per-result retrieval store records still own their own source and
+segment metadata. Malformed lookup wrapper metadata fails closed with
+`source_type = retrieval_lookup`, the offending metadata field as
+`source_field`, no prompt payload, no admitted receipts, and no lookup message.
 
 The deterministic Python-worker `text_search` and `image_search` adapters are
 the concrete v1 callers of this lookup projection. They keep their observation
