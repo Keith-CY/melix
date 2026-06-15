@@ -31,6 +31,8 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
                 ]
                 if let sourceID = message.name {
                     receipt["source_id"] = .string(sourceID)
+                } else if let sourceID = Self.sourceID(fromHarmonyMetadata: message.harmonyMetadata) {
+                    receipt["source_id"] = .string(sourceID)
                 }
                 receipts.append(receipt)
             }
@@ -58,7 +60,8 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
 
     private static func sourceType(for message: NormalizedTextMessage) -> String {
         let normalizedRole = message.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if isToolOutputRole(normalizedRole) {
+        if isToolOutputRole(normalizedRole)
+            || isToolOutputRecipient(message.harmonyMetadata?.recipient) {
             return "tool_output"
         }
 
@@ -97,6 +100,25 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
         normalizedRole == "tool"
             || normalizedRole == "function"
             || normalizedRole.hasPrefix("functions.")
+    }
+
+    private static func isToolOutputRecipient(_ recipient: String?) -> Bool {
+        normalizeForComparison(recipient)?.hasPrefix("functions.") == true
+    }
+
+    private static func sourceID(fromHarmonyMetadata metadata: HarmonyMessageMetadata?) -> String? {
+        guard let recipient = metadata?.recipient, isToolOutputRecipient(recipient) else {
+            return nil
+        }
+        return recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func normalizeForComparison(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ? nil : normalized
     }
 
     private static func sourcePolicy(for sourceType: String) -> (reason: String, correctiveAction: String) {

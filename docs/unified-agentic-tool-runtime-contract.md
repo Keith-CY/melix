@@ -288,8 +288,11 @@ The v1 source-specific control-plane classification slice refines those chat
 prompt receipts using request-local message metadata already present at prompt
 assembly time. Tool-output messages record `source_type = tool_output` when the
 normalized role is `tool`, legacy OpenAI-compatible `function`, or
-Harmony-style `functions.<name>`. Non-tool messages whose normalized `name` uses
-the reserved prefixes `retrieved_image`,
+Harmony-style `functions.<name>`. Harmony/Responses messages whose normalized
+recipient is `functions.<name>` also record `source_type = tool_output`, even
+when the original message role remains `assistant`, because the recipient marks
+the prompt segment as a tool-directed payload. Non-tool messages whose
+normalized `name` uses the reserved prefixes `retrieved_image`,
 `retrieved-image`, `image_retrieval`, `image-retrieval`, `rag_image`, or
 `rag-image` record `source_type = retrieved_image`. Non-tool
 messages whose normalized `name` uses the reserved prefixes `retrieved_document`,
@@ -310,11 +313,13 @@ compatibility with standard OpenAI-compatible message names while the `:` and
 `.` separators keep local and legacy source identifiers classifiable.
 
 When the normalized message name is present, the prompt receipt records it as
-`source_id`. `source_id` is source metadata only; the receipt must still omit
-message text, media URIs, media bytes, tool arguments, private prompt text, and
-other raw source payloads. The classification is evidentiary and does not
-replace source-specific owner-scope checks, admission/refusal checks, or
-background-continuation link validation.
+`source_id`. When the message has no name and its Harmony recipient identifies a
+`functions.<name>` target, the prompt receipt records that request-local
+recipient metadata as `source_id`. `source_id` is source metadata only; the
+receipt must still omit message text, media URIs, media bytes, tool arguments,
+private prompt text, and other raw source payloads. The classification is
+evidentiary and does not replace source-specific owner-scope checks,
+admission/refusal checks, or background-continuation link validation.
 
 The live chat prompt receipt uses source-specific data-only policy text for the
 classified source type. Tool output records `reason = tool output is prompt
