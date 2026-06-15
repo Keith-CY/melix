@@ -1234,6 +1234,40 @@ def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
     assert scandir_calls == [os.fspath(tmp_path)]
 
 
+def test_store_scan_followup_candidates_records_store_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+    receipt = {
+        "schema_version": RECEIPT_SCHEMA_VERSION,
+        "job_id": "ready",
+        "reason": "lock_busy",
+    }
+
+    def raise_store_error(
+        job_id: str,
+        *,
+        live_evidence: LocalJobLiveEvidence | None = None,
+    ) -> None:
+        raise LocalJobContinuationStoreError("busy", receipt=receipt)
+
+    monkeypatch.setattr(store, "reconcile_record", raise_store_error)
+
+    scan = store.scan_followup_candidates()
+
+    assert scan.candidates == ()
+    assert scan.receipts == (receipt,)
+
+
 def test_store_scan_followup_candidates_returns_empty_for_missing_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

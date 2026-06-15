@@ -1410,6 +1410,31 @@ def test_project_retrieval_lookup_result_uses_wrapper_metadata_for_malformed_rec
     assert projection.refusal_receipts[0]["source_id"] == "live-rag:search-8"
 
 
+def test_project_retrieval_lookup_result_reads_records_once_for_metadata_refusal() -> None:
+    class CountingLookupResult(dict[str, object]):
+        def __init__(self) -> None:
+            super().__init__({"records": None})
+            self.get_calls: list[str] = []
+
+        def get(self, key: str, default: object = None) -> object:
+            self.get_calls.append(key)
+            return super().get(key, default)
+
+    lookup_result = CountingLookupResult()
+
+    projection = project_retrieval_lookup_result(
+        lookup_result,
+        lookup_source_id="live-rag:search-8",
+        lookup_segment_id="live-rag:search-8:lookup",
+        lookup_source_field="live_rag_records",
+    )
+
+    assert lookup_result.get_calls == ["records"]
+    assert projection.prompt_user_payload == {}
+    assert projection.lookup_message is None
+    assert projection.refusal_receipts[0]["source_field"] == "live_rag_records"
+
+
 @pytest.mark.parametrize(
     ("kwargs", "expected_field"),
     (

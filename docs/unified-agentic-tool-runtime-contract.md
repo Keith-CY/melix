@@ -929,6 +929,19 @@ mapping-shaped receipts across those observations. These scalar fields must not
 copy tool payloads, retrieved text, page content, media references, prompt
 text, or receipt bodies into non-selected candidate rows.
 
+Training dataset normalization applies the same scalar-summary rule to
+`agentic_tool_trace` samples whose `tool_calls` are replayed through the shared
+deterministic runtime. The normalized sample keeps full
+`agentic_tool_observations` for trace replay, and exposes
+`agentic_tool_untrusted_context_receipt_count` at the sample top level when the
+replayed observations contain mapping-shaped receipts. It also exposes
+`agentic_tool_untrusted_context_receipt_schema` only when at least one counted
+receipt carries a string `schema_version`. These fields are metadata only: they
+record the first receipt schema string when present and the total receipt count
+across replayed observations, and must not copy tool payloads, retrieved text,
+page content, media references, prompt text, receipt JSON bodies, or private
+context into scalar training-package fields.
+
 The v1 deterministic retrieval source slice lets callers attach
 source-specific untrusted-context receipts beside the generic tool-observation
 receipt without adding those receipts to the sanitized payload or replay hash.
