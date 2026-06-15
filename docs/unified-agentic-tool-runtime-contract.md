@@ -321,6 +321,14 @@ private prompt text, and other raw source payloads. The classification is
 evidentiary and does not replace source-specific owner-scope checks,
 admission/refusal checks, or background-continuation link validation.
 
+OpenAI Responses `function_call_output` input items are the Responses item-form
+equivalent of tool-output prompt data. The control-plane request adapter maps
+each admitted item into the shared prompt-message path with `message_role =
+tool` and `source_id = call_id`, then emits the same `source_type =
+tool_output` receipt. This receipt is request-local evidence only: it does not
+prove the call id matched an earlier assistant tool call and must not include
+the raw `output` body in receipt JSON.
+
 The live chat prompt receipt uses source-specific data-only policy text for the
 classified source type. Tool output records `reason = tool output is prompt
 data, not instructions`; retrieved documents record `reason = retrieved
