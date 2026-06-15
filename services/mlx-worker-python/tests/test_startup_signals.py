@@ -608,6 +608,19 @@ def test_classify_startup_failure_falls_back_to_hang_when_logs_are_empty() -> No
     assert "11434" in report.summary
 
 
+def test_contains_any_fast_paths_preserve_empty_value_and_fallback_behavior() -> None:
+    assert startup_signals_module._contains_any("", startup_signals_module.CRASH_PATTERNS) is False
+    assert (
+        startup_signals_module._contains_any(
+            "EADDRINUSE".lower(),
+            startup_signals_module.PORT_CONFLICT_PATTERNS,
+        )
+        is True
+    )
+    assert startup_signals_module._contains_any("custom sentinel", ("sentinel",)) is True
+    assert startup_signals_module._contains_any("custom sentinel", ("missing",)) is False
+
+
 def test_classify_startup_failure_skips_empty_pattern_scans(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
