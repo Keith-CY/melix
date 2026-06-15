@@ -529,6 +529,43 @@ struct ToolParserRegistryTests {
         #expect(receiptsJSON.contains("ordinary note") == false)
     }
 
+    @Test("prompt context boundary receipts redact non-public source IDs")
+    func promptContextBoundaryReceiptsRedactNonPublicSourceIDs() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-prompt-source-redaction" })
+        let longPrivateID = "skill-" + String(repeating: "private-store-key-", count: 8)
+        let request = makeNormalizedRequest(messages: [
+            .init(role: "user", name: "rag_doc-17", content: "public document content stays out"),
+            .init(role: "user", name: "file:///Users/chenyu/private/rag.md", content: "path document content stays out"),
+            .init(role: "user", name: "https://internal.example.test/rag?id=secret", content: "url document content stays out"),
+            .init(role: "user", name: longPrivateID, content: "long skill content stays out"),
+            .init(role: "user", name: "memory-日本語-secret", content: "non-ascii memory content stays out"),
+        ])
+
+        let translated = try translator.translate(request, modelHandle: "worker-text")
+        let ext = translated.workerRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.prompt_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        let sourceIDs = receipts.compactMap { $0["source_id"] as? String }
+
+        #expect(ext["melix.prompt_context.receipt_count"] == "5")
+        #expect(sourceIDs.count == 5)
+        #expect(sourceIDs[0] == "rag_doc-17")
+        #expect(sourceIDs.dropFirst().allSatisfy { $0.hasPrefix("prompt-source:") })
+        #expect(Set(sourceIDs.dropFirst()).count == 4)
+        #expect(receipts.allSatisfy { $0["included"] as? Bool == true })
+        #expect(receipts.allSatisfy { $0["policy"] as? String == "data_only" })
+        #expect(receiptsJSON.contains("file:///Users/chenyu/private/rag.md") == false)
+        #expect(receiptsJSON.contains("https://internal.example.test") == false)
+        #expect(receiptsJSON.contains(longPrivateID) == false)
+        #expect(receiptsJSON.contains("memory-日本語-secret") == false)
+        #expect(receiptsJSON.contains("path document content") == false)
+        #expect(receiptsJSON.contains("url document content") == false)
+        #expect(receiptsJSON.contains("long skill content") == false)
+        #expect(receiptsJSON.contains("non-ascii memory content") == false)
+    }
+
     @Test("prompt context boundary receipts use source-specific data-only policies")
     func promptContextBoundaryReceiptsUseSourceSpecificPolicyText() throws {
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-prompt-policy" })

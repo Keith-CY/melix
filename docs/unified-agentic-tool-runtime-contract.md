@@ -313,13 +313,17 @@ compatibility with standard OpenAI-compatible message names while the `:` and
 `.` separators keep local and legacy source identifiers classifiable.
 
 When the normalized message name is present, the prompt receipt records it as
-`source_id`. When the message has no name and its Harmony recipient identifies a
-`functions.<name>` target, the prompt receipt records that request-local
-recipient metadata as `source_id`. `source_id` is source metadata only; the
-receipt must still omit message text, media URIs, media bytes, tool arguments,
-private prompt text, and other raw source payloads. The classification is
-evidentiary and does not replace source-specific owner-scope checks,
-admission/refusal checks, or background-continuation link validation.
+`source_id` only when it is a short public identifier. When the message has no
+name and its Harmony recipient identifies a `functions.<name>` target, the
+prompt receipt records that request-local recipient metadata as `source_id` only
+when it is likewise public. Short public prompt source IDs may contain ASCII
+letters, digits, `.`, `_`, `-`, and `:`. Path-like, URL-like, non-ASCII, or
+long source IDs are replaced with `prompt-source:<sha256-prefix>` in receipt
+JSON. `source_id` is source metadata only; the receipt must still omit message
+text, media URIs, media bytes, tool arguments, private prompt text, and other
+raw source payloads. The classification is evidentiary and does not replace
+source-specific owner-scope checks, admission/refusal checks, or
+background-continuation link validation.
 
 OpenAI Responses `function_call_output` input items are the Responses item-form
 equivalent of tool-output prompt data. The control-plane request adapter maps

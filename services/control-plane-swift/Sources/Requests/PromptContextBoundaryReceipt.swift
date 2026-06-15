@@ -30,9 +30,21 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
                     "corrective_action": .string(policy.correctiveAction),
                 ]
                 if let sourceID = message.name {
-                    receipt["source_id"] = .string(sourceID)
+                    receipt["source_id"] = .string(
+                        PromptContextSourceIDRedactor.redactedSourceID(
+                            sourceID,
+                            prefix: "prompt-source",
+                            allowColon: true
+                        )
+                    )
                 } else if let sourceID = Self.sourceID(fromHarmonyMetadata: message.harmonyMetadata) {
-                    receipt["source_id"] = .string(sourceID)
+                    receipt["source_id"] = .string(
+                        PromptContextSourceIDRedactor.redactedSourceID(
+                            sourceID,
+                            prefix: "prompt-source",
+                            allowColon: true
+                        )
+                    )
                 }
                 receipts.append(receipt)
             }
