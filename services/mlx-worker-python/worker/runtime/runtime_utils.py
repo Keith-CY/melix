@@ -115,16 +115,24 @@ def clear_callable_kwarg_signature_cache() -> None:
     _callable_kwarg_signature_cached.cache_clear()
 
 
-@lru_cache(maxsize=128)
+_INSTALLED_PACKAGE_VERSION_CACHE: dict[str, str] = {}
+
+
 def installed_package_version(package_name: str) -> str:
     try:
-        return importlib.metadata.version(package_name)
+        return _INSTALLED_PACKAGE_VERSION_CACHE[package_name]
+    except KeyError:
+        pass
+    try:
+        version = importlib.metadata.version(package_name)
     except importlib.metadata.PackageNotFoundError:
-        return ""
+        version = ""
+    _INSTALLED_PACKAGE_VERSION_CACHE[package_name] = version
+    return version
 
 
 def clear_installed_package_version_cache() -> None:
-    installed_package_version.cache_clear()
+    _INSTALLED_PACKAGE_VERSION_CACHE.clear()
 
 
 def estimate_model_weight_resident_bytes(model_path: str) -> int:
