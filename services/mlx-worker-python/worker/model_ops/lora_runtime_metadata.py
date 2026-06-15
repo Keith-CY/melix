@@ -33,6 +33,9 @@ _AUXILIARY_MODULE_PATTERNS = (
 _AUXILIARY_MODULE_PREFIXES = tuple(
     pattern.removesuffix("*.py") for pattern in _AUXILIARY_MODULE_PATTERNS
 )
+_AUXILIARY_MODULE_PREFIX_CHARS = frozenset(
+    prefix[0] for prefix in _AUXILIARY_MODULE_PREFIXES
+)
 _PROCESSOR_RESUME_FILENAMES = (
     ("processor_config.json", "processor_config"),
     ("preprocessor_config.json", "preprocessor_config"),
@@ -337,12 +340,17 @@ def _processor_resume_mode(base_model_dir: Path) -> str:
 
 def _aux_modules_restored(base_model_dir: Path) -> bool:
     auxiliary_prefixes = _AUXILIARY_MODULE_PREFIXES
+    auxiliary_prefix_chars = _AUXILIARY_MODULE_PREFIX_CHARS
     scandir = os.scandir
     try:
         with scandir(base_model_dir) as entries:
             for entry in entries:
                 name = entry.name
-                if name.endswith(".py") and name.startswith(auxiliary_prefixes):
+                if (
+                    name[0] in auxiliary_prefix_chars
+                    and name.endswith(".py")
+                    and name.startswith(auxiliary_prefixes)
+                ):
                     return True
     except OSError:
         return False
