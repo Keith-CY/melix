@@ -354,7 +354,11 @@ class LocalJobContinuationStore:
     ) -> LocalJobContinuationFollowupScan:
         candidates: list[LocalJobContinuationFollowupCandidate] = []
         receipts: list[dict[str, Any]] = []
-        live_evidence_by_job_id = live_evidence_by_job_id or {}
+        live_evidence_get = (
+            live_evidence_by_job_id.get
+            if live_evidence_by_job_id is not None
+            else _missing_live_evidence
+        )
         root = self.root
         try:
             record_job_ids = sorted(
@@ -364,17 +368,20 @@ class LocalJobContinuationStore:
             )
         except FileNotFoundError:
             return LocalJobContinuationFollowupScan(candidates=(), receipts=())
+        reconcile_record = self.reconcile_record
+        receipts_append = receipts.append
+        candidates_append = candidates.append
         for job_id in record_job_ids:
             try:
-                reconciliation = self.reconcile_record(
+                reconciliation = reconcile_record(
                     job_id,
-                    live_evidence=live_evidence_by_job_id.get(job_id),
+                    live_evidence=live_evidence_get(job_id),
                 )
             except LocalJobContinuationStoreError as exc:
-                receipts.append(exc.receipt)
+                receipts_append(exc.receipt)
                 continue
             except (json.JSONDecodeError, OSError, ValueError):
-                receipts.append(_unreadable_record_scan_receipt(job_id=job_id))
+                receipts_append(_unreadable_record_scan_receipt(job_id=job_id))
                 continue
             if reconciliation is None:
                 continue
@@ -382,19 +389,19 @@ class LocalJobContinuationStore:
             # Scan-level follow-up state wins for ready or already-claimed records.
             # Otherwise surface reconciliation changes before the generic scan result.
             if receipt["reason"] == "followup_candidate_ready":
-                receipts.append(receipt)
-                candidates.append(
+                receipts_append(receipt)
+                candidates_append(
                     LocalJobContinuationFollowupCandidate(
                         record=reconciliation.record,
                         receipt=receipt,
                     )
                 )
             elif receipt["reason"] == "followup_already_claimed":
-                receipts.append(receipt)
+                receipts_append(receipt)
             elif reconciliation.receipt.get("reason") != "record_state_preserved":
-                receipts.append(reconciliation.receipt)
+                receipts_append(reconciliation.receipt)
             else:
-                receipts.append(receipt)
+                receipts_append(receipt)
 
         return LocalJobContinuationFollowupScan(
             candidates=tuple(candidates),
@@ -1272,6 +1279,10 @@ def _optional_int(value: Any, field_name: str) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{field_name} must be an integer or null")
     return value
+
+
+def _missing_live_evidence(job_id: str) -> None:
+    return None
 
 
 def _record_job_id_from_filename(record_name: str) -> str:
