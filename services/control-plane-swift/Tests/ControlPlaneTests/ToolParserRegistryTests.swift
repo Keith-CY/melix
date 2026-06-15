@@ -535,7 +535,7 @@ struct ToolParserRegistryTests {
         let longPrivateID = "skill-" + String(repeating: "private-store-key-", count: 8)
         let request = makeNormalizedRequest(messages: [
             .init(role: "user", name: "rag_doc-17", content: "public document content stays out"),
-            .init(role: "user", name: "file:///Users/chenyu/private/rag.md", content: "path document content stays out"),
+            .init(role: "user", name: "file:///Users/testuser/private/rag.md", content: "path document content stays out"),
             .init(role: "user", name: "https://internal.example.test/rag?id=secret", content: "url document content stays out"),
             .init(role: "user", name: longPrivateID, content: "long skill content stays out"),
             .init(role: "user", name: "memory-日本語-secret", content: "non-ascii memory content stays out"),
@@ -556,7 +556,7 @@ struct ToolParserRegistryTests {
         #expect(Set(sourceIDs.dropFirst()).count == 4)
         #expect(receipts.allSatisfy { $0["included"] as? Bool == true })
         #expect(receipts.allSatisfy { $0["policy"] as? String == "data_only" })
-        #expect(receiptsJSON.contains("file:///Users/chenyu/private/rag.md") == false)
+        #expect(receiptsJSON.contains("file:///Users/testuser/private/rag.md") == false)
         #expect(receiptsJSON.contains("https://internal.example.test") == false)
         #expect(receiptsJSON.contains(longPrivateID) == false)
         #expect(receiptsJSON.contains("memory-日本語-secret") == false)
