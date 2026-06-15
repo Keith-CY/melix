@@ -84,6 +84,7 @@ def _build_lookup_payload(count: int) -> dict[str, Any]:
             "index": index,
             "title": f"retrieved payload {index}",
             "metadata": {
+                "optional_note": None,
                 "scores": [index, index + 1, {"rank": index % 7}],
                 "labels": (
                     "retrieved",
