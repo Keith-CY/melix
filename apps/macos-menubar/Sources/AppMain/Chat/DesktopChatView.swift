@@ -300,13 +300,13 @@ struct DesktopChatSessionSidebar: View {
                 MelixActionableEmptyState(
                     title: "No Chat Sessions",
                     systemImage: "message.badge",
-                    detail: "Start a chat after choosing a local or remote server. Sessions keep transcript, model, and export context together."
+                    detail: "Start a chat after choosing a local or remote provider. Sessions keep transcript, model, and export context together."
                 ) {
                     VStack(spacing: MelixDesignTokens.Spacing.sm) {
                         Button("New Chat", action: createChatSessionAction)
                         .buttonStyle(.borderedProminent)
 
-                        Button("Open Server", action: openServerAction)
+                        Button("Open Providers", action: openServerAction)
                         .buttonStyle(.bordered)
                     }
                 }
@@ -537,7 +537,7 @@ struct DesktopChatSessionInspector: View {
             DesktopInspectorActionRow(title: "Open Command Center", systemImage: "command.circle") {
                 viewModel.selectSurface(.commandCenter)
             },
-            DesktopInspectorActionRow(title: "Open Server", systemImage: "server.rack") {
+            DesktopInspectorActionRow(title: "Open Providers", systemImage: "server.rack") {
                 viewModel.selectSurface(.server)
             },
             DesktopInspectorActionRow(title: "Open Diagnostics", systemImage: "stethoscope") {
@@ -714,16 +714,16 @@ private struct DesktopChatServerPicker: View {
             Button {
                 viewModel.selectSurface(.server)
             } label: {
-                Label("Choose Server", systemImage: "server.rack")
+                Label("Choose Provider", systemImage: "server.rack")
                     .labelStyle(.titleAndIcon)
             }
             .font(.caption2)
             .buttonStyle(.borderless)
-            .help("Open Server to create a chat provider")
-            .accessibilityLabel("Choose Chat Server")
+            .help("Open Providers to create a chat provider")
+            .accessibilityLabel("Choose Chat Provider")
         } else {
-            Picker("Server", selection: selectedServerBinding) {
-                Text("Choose Server").tag("")
+            Picker("Provider", selection: selectedServerBinding) {
+                Text("Choose Provider").tag("")
                 ForEach(viewModel.serverSessions) { session in
                     Text(session.title).tag(session.id)
                 }
@@ -732,8 +732,8 @@ private struct DesktopChatServerPicker: View {
             .pickerStyle(.menu)
             .controlSize(.small)
             .frame(maxWidth: 180)
-            .help("Choose the server or provider for this chat session")
-            .accessibilityLabel("Chat Server")
+            .help("Choose the provider for this chat session")
+            .accessibilityLabel("Chat Provider")
         }
     }
 }
@@ -988,15 +988,15 @@ struct DesktopChatRuntimeControlStrip: View {
     var recoveryAction: RecoveryAction? {
         switch serverSession?.lifecycle {
         case .none:
-            return RecoveryAction(title: "Choose Server", kind: .openServer, isProminent: false)
+            return RecoveryAction(title: "Choose Provider", kind: .openServer, isProminent: false)
         case .paused:
-            return RecoveryAction(title: "Resume Server", kind: .resumeServer, isProminent: true)
+            return RecoveryAction(title: "Resume Provider", kind: .resumeServer, isProminent: true)
         case .sleeping:
             return RecoveryAction(title: "Wake", kind: .wakeServer, isProminent: false)
         case .draft, .stopped, .unavailable:
-            return RecoveryAction(title: "Start Server", kind: .startServer, isProminent: true)
+            return RecoveryAction(title: "Start Provider", kind: .startServer, isProminent: true)
         case .error:
-            return RecoveryAction(title: "Open Server", kind: .openServer, isProminent: true)
+            return RecoveryAction(title: "Open Providers", kind: .openServer, isProminent: true)
         case .starting, .stopping, .running:
             return nil
         }
@@ -1020,8 +1020,8 @@ struct DesktopChatRuntimeControlStrip: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .help("Open Server")
-            .accessibilityLabel("Open Server")
+            .help("Open Providers")
+            .accessibilityLabel("Open Providers")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1086,18 +1086,18 @@ struct DesktopChatRuntimeServerCapsule: View {
             Capsule()
                 .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
         )
-        .help(serverSession?.runtimeDetailText ?? "Choose a server for this chat")
+        .help(serverSession?.runtimeDetailText ?? "Choose a provider for this chat")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(serverTitle), \(serverDetail)")
     }
 
     var serverTitle: String {
-        serverSession?.title ?? "No Server"
+        serverSession?.title ?? "No Provider"
     }
 
     var serverDetail: String {
         guard let serverSession else {
-            return "Choose Server"
+            return "Choose Provider"
         }
         return "\(serverSession.lifecycle.rawValue) • \(serverSession.modelID)"
     }

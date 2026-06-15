@@ -229,7 +229,7 @@ struct RuntimeViewModelTests {
 
         #expect(viewModel.remoteServers.map(\.id) == ["sub2api"])
         #expect(store.savedMutations.isEmpty)
-        #expect(viewModel.lastError == "Remote Server ID cannot be changed after creation. Use New to create another server.")
+        #expect(viewModel.lastError == "Remote Provider ID cannot be changed after creation. Use New to create another provider.")
     }
 
     @Test("remote server draft validates required fields and records persistence failures")
@@ -247,7 +247,7 @@ struct RuntimeViewModelTests {
         viewModel.remoteServerIDDraft = " "
         viewModel.saveRemoteServerDraft()
 
-        #expect(viewModel.lastError == "Remote Server requires id, title, provider, base URL, and default model.")
+        #expect(viewModel.lastError == "Remote Provider requires id, title, provider, base URL, and default model.")
         #expect(store.savedMutations.isEmpty)
 
         viewModel.remoteServerIDDraft = "sub2api"
@@ -263,7 +263,7 @@ struct RuntimeViewModelTests {
             equals: 1
         )
 
-        #expect(viewModel.lastError == "Remote Server save failed: save")
+        #expect(viewModel.lastError == "Remote Provider save failed: save")
     }
 
     @Test("remote server removal selects the next server and surfaces failures")
@@ -318,7 +318,7 @@ struct RuntimeViewModelTests {
             equals: 1
         )
 
-        #expect(viewModel.lastError == "Remote Server remove failed: remove")
+        #expect(viewModel.lastError == "Remote Provider remove failed: remove")
     }
 
     @Test("null remote server store materializes non-secret state")
@@ -2719,7 +2719,7 @@ struct RuntimeViewModelTests {
         let actions = await client.recordedActions
         #expect(actions.contains(where: { $0.hasPrefix("chat:") }) == false)
         #expect(viewModel.chatStatusText == "Stopped")
-        #expect(viewModel.lastError == "Start the bound Server Session before sending chat prompts.")
+        #expect(viewModel.lastError == "Start the bound Provider before sending chat prompts.")
     }
 
     @Test("sleeping chat stays interactive while paused chat is blocked")
@@ -2780,7 +2780,7 @@ struct RuntimeViewModelTests {
 
         #expect(await client.recordedActions.filter { $0.hasPrefix("chat:") }.count == recordedChatCount)
         #expect(viewModel.chatStatusText == "Paused")
-        #expect(viewModel.lastError == "Resume the paused Server Session before sending chat prompts.")
+        #expect(viewModel.lastError == "Resume the paused Provider before sending chat prompts.")
     }
 
     @Test("new chat sessions require an explicit server selection before sending")
@@ -2802,8 +2802,8 @@ struct RuntimeViewModelTests {
         await viewModel.submitChatPrompt()
 
         #expect(await client.recordedActions.contains(where: { $0.hasPrefix("chat:") }) == false)
-        #expect(viewModel.chatStatusText == "Choose Server")
-        #expect(viewModel.lastError == "Choose a Server Session before sending chat prompts.")
+        #expect(viewModel.chatStatusText == "Choose Provider")
+        #expect(viewModel.lastError == "Choose a Provider before sending chat prompts.")
 
         viewModel.bindSelectedChatSessionToServer(serverSessionID: originalServerID)
         viewModel.chatComposerText = "send after server choice"
@@ -2873,7 +2873,7 @@ struct RuntimeViewModelTests {
 
         let createdServer = try #require(viewModel.selectedServerSession)
         #expect(createdServer.id != originalServerID)
-        #expect(createdServer.title == "Server 2")
+        #expect(createdServer.title == "Provider 2")
         #expect(createdServer.lifecycle == .draft)
         #expect(viewModel.selectedSurface == .server)
 
@@ -3095,7 +3095,7 @@ struct RuntimeViewModelTests {
         try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "starting blocked"
         await viewModel.submitChatPrompt()
-        #expect(viewModel.lastError == "Wait for the Server Session to finish starting before sending chat prompts.")
+        #expect(viewModel.lastError == "Wait for the Provider to finish starting before sending chat prompts.")
 
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-menubar-stopping-chat-\(UUID().uuidString)")
@@ -3132,7 +3132,7 @@ struct RuntimeViewModelTests {
         #expect(stoppingViewModel.selectedChatServerSession?.lifecycle == .stopped)
         stoppingViewModel.chatComposerText = "stopping blocked"
         await stoppingViewModel.submitChatPrompt()
-        #expect(stoppingViewModel.lastError == "Start the bound Server Session before sending chat prompts.")
+        #expect(stoppingViewModel.lastError == "Start the bound Provider before sending chat prompts.")
 
         let failingClient = FakeControlPlaneXPCClient()
         let failingSnapshot = makeSnapshot(
@@ -3154,7 +3154,7 @@ struct RuntimeViewModelTests {
         await failingViewModel.pauseSelectedServerSession()
         failingViewModel.chatComposerText = "error blocked"
         await failingViewModel.submitChatPrompt()
-        #expect(failingViewModel.lastError == "Recover the failed Server Session before sending chat prompts. gpu lost")
+        #expect(failingViewModel.lastError == "Recover the failed Provider before sending chat prompts. gpu lost")
     }
 
     @Test("agent integration exports mirror the selected server session and record metrics")
@@ -3469,12 +3469,12 @@ struct RuntimeViewModelTests {
 
         viewModel.chatComposerText = "wait for server"
         await viewModel.submitChatPrompt()
-        #expect(viewModel.chatStatusText == "Choose Server")
-        #expect(viewModel.lastError == "Choose a Server Session before sending chat prompts.")
+        #expect(viewModel.chatStatusText == "Choose Provider")
+        #expect(viewModel.lastError == "Choose a Provider before sending chat prompts.")
 
         viewModel.createServerSession()
         #expect(viewModel.serverSessions.isEmpty)
-        #expect(viewModel.lastError == "No Ready to Run model is available. Rescan or download a model before creating a local server.")
+        #expect(viewModel.lastError == "No Ready to Run model is available. Rescan or download a model before creating a local provider.")
 
         viewModel.createServerSession(modelID: "melix-dev-text")
 
@@ -3482,7 +3482,7 @@ struct RuntimeViewModelTests {
         let seededChat = try #require(viewModel.selectedChatSession)
         #expect(viewModel.serverSessions.count == 1)
         #expect(viewModel.chatSessions.count == 2)
-        #expect(seededServer.title == "Primary Server")
+        #expect(seededServer.title == "Primary Provider")
         #expect(seededServer.modelID == "melix-dev-text")
         #expect(seededServer.port == 12436)
         #expect(seededChat.serverSessionID == "")
@@ -3586,8 +3586,8 @@ struct RuntimeViewModelTests {
 
         #expect(exportPath == nil)
         #expect(await client.recordedActions.isEmpty)
-        #expect(viewModel.chatStatusText == "No Server Session")
-        #expect(viewModel.lastError == "Create a Server Session before sending chat prompts.")
+        #expect(viewModel.chatStatusText == "No Provider")
+        #expect(viewModel.lastError == "Create a Provider before sending chat prompts.")
         #expect(viewModel.selectedSurface == .server)
     }
 
@@ -3617,9 +3617,9 @@ struct RuntimeViewModelTests {
         drainingEvent.state = .serverDraining
         await client.sendServerStateChanged(state: .serverDraining)
         try await waitForRuntimeViewModelCondition("warning banner should surface draining runtime state") {
-            viewModel.desktopBannerState?.title == "Runtime Needs Monitoring"
+            viewModel.desktopBannerState?.title == "Provider Needs Monitoring"
         }
-        #expect(viewModel.desktopBannerState?.title == "Runtime Needs Monitoring")
+        #expect(viewModel.desktopBannerState?.title == "Provider Needs Monitoring")
 
         let imageOnlySnapshot = makeSnapshot(
             serverState: .serverReady,
@@ -6992,7 +6992,7 @@ struct RuntimeViewModelTests {
         await imageOnlyViewModel.runBench()
 
         #expect(await imageOnlyClient.recordedBenchRequests.isEmpty)
-        #expect(imageOnlyViewModel.lastError == "Select a local running server before running Benchmark.")
+        #expect(imageOnlyViewModel.lastError == "Select a local running provider before running Benchmark.")
     }
 
     @Test("capability guards surface unsupported targets before benchmark evaluation and training dispatch")
@@ -7615,12 +7615,12 @@ struct RuntimeViewModelTests {
 
         let remoteTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .remoteServer })
         viewModel.selectDiagnosticsServerTarget(id: remoteTarget.id)
-        #expect(viewModel.diagnosticsBenchmarkUnavailableText == "Remote Server benchmark is not supported yet; select a local running server.")
+        #expect(viewModel.diagnosticsBenchmarkUnavailableText == "Remote Provider benchmark is not supported yet; select a local running provider.")
 
         await viewModel.runBench()
 
         #expect(await client.recordedBenchRequests.isEmpty)
-        #expect(viewModel.lastError == "Remote Server benchmark is not supported yet; select a local running server.")
+        #expect(viewModel.lastError == "Remote Provider benchmark is not supported yet; select a local running provider.")
 
         let startNewTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .startNewServer })
         let serverSessionCount = viewModel.serverSessions.count
@@ -7962,7 +7962,7 @@ struct RuntimeViewModelTests {
         #expect(viewModel.serverSessions.count == sessionCount)
         #expect(viewModel.serverTargets.count == targetCount)
         #expect(viewModel.isCreatingServerTarget)
-        #expect(viewModel.lastError == "Local Server requires a session name.")
+        #expect(viewModel.lastError == "Local Provider requires a session name.")
     }
 
     @Test("server target rows expose session model endpoint and runtime summary")
@@ -8088,7 +8088,7 @@ struct RuntimeViewModelTests {
         viewModel.selectDiagnosticsServerTarget(id: remoteTarget.id)
 
         viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
-        #expect(viewModel.diagnosticsEvaluationUnavailableText == "Remote Server evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running server.")
+        #expect(viewModel.diagnosticsEvaluationUnavailableText == "Remote Provider evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running provider.")
         await viewModel.runEvaluation()
         #expect(await client.recordedEvaluationRequests.isEmpty)
 
@@ -8182,12 +8182,12 @@ struct RuntimeViewModelTests {
         viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
 
         #expect(viewModel.benchmarkTargetTaskKind == "text-generation")
-        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local server for Benchmark.")
+        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local provider for Benchmark.")
 
         await viewModel.runBench()
 
         #expect(await client.recordedBenchRequests.isEmpty)
-        #expect(viewModel.lastError == "Select a local running server before running Benchmark.")
+        #expect(viewModel.lastError == "Select a local running provider before running Benchmark.")
     }
 
     @Test("benchmark target summaries and task inference cover missing running server fallback")
@@ -8210,7 +8210,7 @@ struct RuntimeViewModelTests {
         await viewModel.start()
 
         #expect(viewModel.benchmarkTargetTaskKind == "text-generation")
-        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local server for Benchmark.")
+        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local provider for Benchmark.")
     }
 
     @Test("benchmark task inference covers catalog OCR and image model families")
@@ -8241,7 +8241,7 @@ struct RuntimeViewModelTests {
         viewModel.selectedBenchmarkModelID = "melix-dev-image"
         #expect(viewModel.benchmarkTargetTaskKind == "image-text-to-image")
         #expect(viewModel.benchmarkTargetTaskTitle == "Image + Text to Image")
-        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local server for Benchmark.")
+        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local provider for Benchmark.")
     }
 
     @Test("benchmark run guard rails require a local running server target")
@@ -8265,7 +8265,7 @@ struct RuntimeViewModelTests {
 
         viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
         await viewModel.runBench()
-        #expect(viewModel.lastError == "Select a local running server before running Benchmark.")
+        #expect(viewModel.lastError == "Select a local running provider before running Benchmark.")
 
         #expect(await client.recordedBenchRequests.isEmpty)
     }
@@ -8473,7 +8473,7 @@ struct RuntimeViewModelTests {
         missingRepoViewModel.selectedBenchmarkPresentationMode = .matrix
         missingRepoViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
         await missingRepoViewModel.runBenchMatrix()
-        #expect(missingRepoViewModel.lastError == "Select a local running server before running Benchmark.")
+        #expect(missingRepoViewModel.lastError == "Select a local running provider before running Benchmark.")
 
         let imageClient = FakeControlPlaneXPCClient()
         await imageClient.configureSnapshot(
@@ -8488,7 +8488,7 @@ struct RuntimeViewModelTests {
         imageViewModel.selectedBenchmarkPresentationMode = .matrix
         imageViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
         await imageViewModel.runBenchMatrix()
-        #expect(imageViewModel.lastError == "Select a local running server before running Benchmark.")
+        #expect(imageViewModel.lastError == "Select a local running provider before running Benchmark.")
 
         let requestsClient = FakeControlPlaneXPCClient()
         await requestsClient.configureSnapshot(
@@ -9081,7 +9081,7 @@ struct RuntimeViewModelTests {
         let operatorStore = OperatorSessionStore(melixHome: melixHome)
         let initialServerSession = DesktopServerSessionState(
             id: "server-session-1",
-            title: "Primary Server",
+            title: "Primary Provider",
             modelID: testReadyModelID,
             host: "127.0.0.1",
             port: 18_080
@@ -9123,7 +9123,7 @@ struct RuntimeViewModelTests {
                   "server_sessions": [
                     {
                       "id": "server-session-1",
-                      "title": "Primary Server",
+                      "title": "Primary Provider",
                       "model_id": "\(modelID)",
                       "host": "127.0.0.1",
                       "port": 18080,
@@ -10090,7 +10090,7 @@ struct RuntimeViewModelTests {
 
         await audioOnlyViewModel.runEvaluation()
 
-        #expect(audioOnlyViewModel.lastError == "Select a running server before running Evaluation.")
+        #expect(audioOnlyViewModel.lastError == "Select a running provider before running Evaluation.")
     }
 
     @Test("desktop alignment training routes CLI backed runs through alignment train")
@@ -10963,7 +10963,7 @@ struct RuntimeViewModelTests {
 
         await viewModel.activateLatestAdapter()
 
-        let disabledReason = "Fused activation is disabled for fake_relora: non_mergeable_adapter. Use Adapter-backed Runtime instead."
+        let disabledReason = "Fused activation is disabled for fake_relora: non_mergeable_adapter. Use Adapter-backed Serving instead."
         #expect(viewModel.lastError == disabledReason)
         #expect(viewModel.loraWorkflowStatus?.phase == .failed)
         #expect(viewModel.loraWorkflowStatus?.detail == disabledReason)
@@ -14152,7 +14152,7 @@ struct RuntimeViewModelTests {
         )
         let adapterRow = makeRuntimeModelRow(adapterBacked)
         #expect(adapterRow.runtimeModeText == "adapter")
-        #expect(adapterRow.runtimeModeAccessibilityLabel == "Runtime mode: adapter-backed")
+        #expect(adapterRow.runtimeModeAccessibilityLabel == "Serving mode: adapter-backed")
 
         // Fused derived model: short "fused" tag + explicit a11y.
         let fused = makeModelSummary(
@@ -14162,7 +14162,7 @@ struct RuntimeViewModelTests {
         )
         let fusedRow = makeRuntimeModelRow(fused)
         #expect(fusedRow.runtimeModeText == "fused")
-        #expect(fusedRow.runtimeModeAccessibilityLabel == "Runtime mode: fused derived model")
+        #expect(fusedRow.runtimeModeAccessibilityLabel == "Serving mode: fused derived model")
 
         // Base / legacy models: both fields empty so the view hides the
         // badge and VoiceOver announces nothing for this element.
@@ -14180,7 +14180,7 @@ struct RuntimeViewModelTests {
         )
         let unknownRow = makeRuntimeModelRow(unknown)
         #expect(unknownRow.runtimeModeText == "?")
-        #expect(unknownRow.runtimeModeAccessibilityLabel == "Runtime mode: unrecognized")
+        #expect(unknownRow.runtimeModeAccessibilityLabel == "Serving mode: unrecognized")
     }
 }
 

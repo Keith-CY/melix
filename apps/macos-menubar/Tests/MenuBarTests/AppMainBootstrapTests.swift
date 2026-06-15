@@ -1176,7 +1176,7 @@ struct AppMainBootstrapTests {
             let hfTokenStore = HuggingFaceTokenStore(melixHome: melixHome)
             let serverSession = DesktopServerSessionState(
                 id: "server-session-1",
-                title: "Primary Server",
+                title: "Primary Provider",
                 modelID: "melix-dev-text"
             )
 

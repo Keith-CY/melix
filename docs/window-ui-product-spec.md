@@ -60,12 +60,12 @@ This specification governs:
 - route and selected-object behavior;
 - header action behavior;
 - Inspector behavior;
-- server creation and chat runtime binding;
+- provider creation and chat runtime binding;
 - Jobs and artifact lineage visibility;
-- API, Diagnostics, Image, Workflows, Models, Servers, Settings, and Command
+- API, Diagnostics, Image, Workflows, Models, Providers, Settings, and Command
   Center roles;
 - security boundary language for inbound and outbound credentials;
-- first-run simplification rules for local server creation;
+- first-run simplification rules for local provider creation;
 - accessibility and selection semantics for object-heavy rows;
 - production safety rules for route metadata, dynamic runtime text, and icon
   loading.
@@ -98,8 +98,8 @@ conditions are true:
 - navigation clears selected-object state when the destination cannot display
   it meaningfully;
 - health, execution, and review status channels are rendered separately;
-- Chat cannot send until a concrete server profile is selected and usable;
-- Servers owns runtime profiles and remote-provider credentials;
+- Chat cannot send until a concrete provider profile is selected and usable;
+- Providers owns runtime profiles and remote-provider credentials;
 - API / Inbound Auth owns only inbound credentials for clients calling Melix;
 - Jobs exposes durable operation state and artifact lineage across domains;
 - Inspector selected-object mode never shows stale context from an unrelated
@@ -111,11 +111,11 @@ conditions are true:
 
 1. Chat stays the default first surface.
 2. There is no hidden default provider. Chat sessions must bind to an explicit
-   local or remote server before sending.
+   local or remote provider before sending.
 3. Command Center is the operator cockpit for what needs attention now, not the
    default home page and not the Diagnostics area.
 4. Diagnostics is the canonical evidence and debugging domain.
-5. Servers owns runtime profiles, lifecycle, credentials, active runtime
+5. Providers owns runtime profiles, lifecycle, credentials, active runtime
    switching, and capability receipts.
 6. Models owns model and adapter assets, not running endpoints.
 7. Jobs is top-level because durable operation state crosses product domains.
@@ -139,7 +139,7 @@ The production desktop window uses these top-level domains:
 ```text
 Chat
 Command Center
-Servers
+Providers
 Models
 Workflows
 Jobs
@@ -162,14 +162,14 @@ Each top-level domain owns secondary pages inside the shared desktop shell:
 |---|---|
 | Chat | Session; Inspector Collapsed |
 | Command Center | Overview; Menu Bar Command Center |
-| Servers | Overview; Local Servers; Remote Servers; Create Local Server; Add Remote Server; Capability Receipts |
+| Providers | Overview; Local Providers; Remote Providers; Create Local Provider; Add Remote Provider; Capability Receipts |
 | Models | Library; Downloads & Imports |
 | Workflows | Training; Workflow Recipes; Dataset Generation; Batch Runs |
 | Jobs | Overview; Queue; History |
 | Diagnostics | Overview; Benchmark; Matrix; Evaluation; Logs |
 | API | Overview; Inbound Auth; Playground; Endpoints |
 | Image | Generate; Edit |
-| Settings | Runtime & Storage; Reserved IA |
+| Settings | Providers & Storage; Reserved IA |
 
 Breadcrumbs and headings should use the domain and page names. User-visible
 labels should not expose implementation buckets such as `Tools / ...`.
@@ -214,7 +214,7 @@ IDs should not change without a migration.
 |---|---|---|
 | Chat | `chat` | `session`, `inspector-collapsed` |
 | Command Center | `command` | `overview`, `menu-bar` |
-| Servers | `servers` | `overview`, `local`, `remote`, `create-local`, `add-remote`, `receipts` |
+| Providers | `providers` | `overview`, `local`, `remote`, `create-local`, `add-remote`, `receipts` |
 | Models | `models` | `library`, `downloads-imports` |
 | Workflows | `workflows` | `training`, `recipes`, `dataset-generation`, `batch-runs` |
 | Jobs | `jobs` | `overview`, `queue`, `history` |
@@ -254,12 +254,12 @@ specification expands the route schema.
 
 | Object | Owner | Contract |
 |---|---|---|
-| Server Profile | Servers | Durable local or remote runtime configuration, endpoint or launch policy, auth policy, routing constraints, and capability receipts. |
-| Model Asset | Models | Downloaded or remote model artifact/reference that can be imported, validated, quantized, or used to create a server. It is not a running endpoint. |
-| Adapter Asset | Models / Workflows | Fine-tuned artifact that can be attached to a compatible model asset or server after validation. |
+| Provider Profile | Providers | Durable local or remote runtime configuration, endpoint or launch policy, auth policy, routing constraints, and capability receipts. |
+| Model Asset | Models | Downloaded or remote model artifact/reference that can be imported, validated, quantized, or used to create a provider. It is not a running endpoint. |
+| Adapter Asset | Models / Workflows | Fine-tuned artifact that can be attached to a compatible model asset or provider after validation. |
 | Job | Jobs | Durable operation state for downloads, training, evaluation, benchmark, image, batch, capability refresh, and debug-bundle work. |
 | Artifact | Owner domain plus Jobs lineage | Durable output or referenced input produced, imported, or consumed by a job or operation. Artifacts remain surfaced in owner domains in this phase. |
-| Capability Receipt | Servers / Diagnostics | Evidence record that proves runtime capabilities, unsupported routes, probe timing, and routing eligibility. |
+| Capability Receipt | Providers / Diagnostics | Evidence record that proves runtime capabilities, unsupported routes, probe timing, and routing eligibility. |
 | Diagnostic Report Artifact | Diagnostics | Benchmark, matrix, evaluation, log bundle, or debug-bundle artifact with evidence and provenance. |
 | API Token | API / Inbound Auth | Inbound credential for clients calling Melix. It is separate from outbound remote-provider credentials. |
 
@@ -268,14 +268,14 @@ Supporting concepts:
 | Concept | Owner | Contract |
 |---|---|---|
 | Workflow Template | Workflows | Repeatable user-configured operation template that creates concrete Jobs and may reference input Artifacts. |
-| Chat Session | Chat | User interaction context bound to one explicit Server Profile and its runtime state. |
-| Remote Provider Credential | Servers | Outbound secret used by Melix to call a remote runtime or provider. It is managed through Servers, not API / Inbound Auth. |
+| Chat Session | Chat | User interaction context bound to one explicit Provider Profile and its runtime state. |
+| Remote Provider Credential | Providers | Outbound secret used by Melix to call a remote runtime or provider. It is managed through Providers, not API / Inbound Auth. |
 
 Supporting concepts must not be encoded as selected-object route kinds in the
 first implementation phase. Actions for supporting concepts should route to the
 nearest owning routable object or owner page. For example, editing a remote
-provider credential routes through Servers / Remote Servers or Servers / Add
-Remote Server, not through an API token route.
+provider credential routes through Providers / Remote Providers or Providers / Add
+Remote Provider, not through an API token route.
 
 ### Object Relationships
 
@@ -287,8 +287,8 @@ Job -> produces Artifact
 Job -> may produce Capability Receipt or Diagnostic Report Artifact
 Artifact -> belongs to an owner domain
 Artifact -> keeps lineage to source Job and input Artifacts
-Server Profile -> references Model Asset and optional Adapter Asset
-Chat Session -> binds to Server Profile
+Provider Profile -> references Model Asset and optional Adapter Asset
+Chat Session -> binds to Provider Profile
 API Token -> authorizes inbound clients calling Melix
 Remote Provider Credential -> authorizes Melix calling a remote runtime
 ```
@@ -301,7 +301,7 @@ Selected-object route values use these object-kind prefixes:
 
 | Kind | Route prefix | Example |
 |---|---|---|
-| Server Profile | `server` | `server:remote-lab` |
+| Provider Profile | `server` | `server:remote-lab` |
 | Model Asset | `model` | `model:example-local-text-8b` |
 | Adapter Asset | `adapter` | `adapter:support-v23` |
 | Job | `job` | `job:adapter-train-119` |
@@ -322,8 +322,8 @@ object-aware actions:
 - `Download`
 - `Validate`
 - `Quantize`
-- `Create Local Server From Model`
-- `Add Remote Server From Reference`
+- `Create Local Provider From Model`
+- `Add Remote Provider From Reference`
 - `Attach Adapter`
 
 ## Status Model
@@ -373,7 +373,7 @@ Allowed status by object:
 
 | Object | Health status | Execution status | Review status |
 |---|---|---|---|
-| Server Profile | ready, degraded, offline, blocked | N/A | N/A |
+| Provider Profile | ready, degraded, offline, blocked | N/A | N/A |
 | Model Asset | valid, unsupported, failed | validating | N/A |
 | Adapter Asset | valid, unsupported, failed | validating | N/A |
 | Job | N/A | draft, queued, running, validating, blocked, completed, recoverable, failed | N/A |
@@ -386,8 +386,8 @@ Artifact creation, import, export, and repair progress belongs to the Job that
 produces or mutates the artifact. The Artifact itself should not carry
 `queued`, `running`, or `validating`.
 
-Server launch failures, failed capability probes, and failed start/stop actions
-belong to the relevant Job, runtime event, or Capability Receipt. The Server
+Provider launch failures, failed capability probes, and failed start/stop actions
+belong to the relevant Job, runtime event, or Capability Receipt. The Provider
 Profile health should describe the profile's current operability as `ready`,
 `degraded`, `offline`, or `blocked`, not as a terminal `failed` object.
 
@@ -413,7 +413,7 @@ not a health or execution status.
 Implementations may add internal states, but user-visible transitions must
 preserve these rules:
 
-- Server Profile: `offline -> ready` only after a successful start or health
+- Provider Profile: `offline -> ready` only after a successful start or health
   probe; `ready -> degraded` when runtime risk is non-blocking; `ready` or
   `degraded -> blocked` when operator intervention is required before use.
 - Model Asset and Adapter Asset: `validating -> valid` only after validation
@@ -454,7 +454,7 @@ Production should preserve the route concepts proven by the walkthrough:
 Examples:
 
 ```text
-/servers/overview?selected=server:remote-lab
+/providers/overview?selected=server:remote-lab
 /jobs/queue?selected=job:adapter-train-119
 /diagnostics/evaluation?selected=diagnostic-report:support-dialogue-v23
 ```
@@ -502,7 +502,7 @@ Header metadata must render consistently. Each page may define:
 
 The Inspector toggle is shell chrome, not the page primary action. Page primary
 actions must be concrete and object-aware. Use labels such as
-`Review Eval Drift`, `Create Local Server`, `Add Remote Server`, or
+`Review Eval Drift`, `Create Local Provider`, `Add Remote Provider`, or
 `Send Request`; avoid generic labels such as `Run Recovery`.
 
 History behavior should match operator intent:
@@ -522,8 +522,8 @@ Row action routing must be object-aware:
   only when that destination can display it meaningfully.
 - If the action produces or repairs a more specific object, select that object
   instead. For example, `remote-lab -> Test` routes to
-  `/servers/receipts?selected=receipt:remote-lab-expired`, not
-  `/servers/receipts?selected=server:remote-lab`.
+  `/providers/receipts?selected=receipt:remote-lab-expired`, not
+  `/providers/receipts?selected=server:remote-lab`.
 - If the destination page cannot display the row object or a more specific
   action object, clear selection to avoid stale Inspector context.
 
@@ -531,12 +531,12 @@ Canonical detail routes:
 
 | Object kind | Preferred detail route |
 |---|---|
-| server | `/servers/overview?selected=server:<id>` |
+| server | `/providers/overview?selected=server:<id>` |
 | model | `/models/library?selected=model:<id>` |
 | adapter | `/models/library?selected=adapter:<id>` |
 | job | `/jobs/queue?selected=job:<id>` |
 | artifact | `/jobs/history?selected=artifact:<id>` |
-| receipt | `/servers/receipts?selected=receipt:<id>` |
+| receipt | `/providers/receipts?selected=receipt:<id>` |
 | diagnostic-report | `/diagnostics/evaluation?selected=diagnostic-report:<id>` |
 | api-token | `/api/inbound-auth?selected=api-token:<id>` |
 
@@ -617,8 +617,8 @@ Inspector action rules:
 
 - row actions that navigate should select the acted-on object or the more
   specific object created by the action;
-- if a server capability test produces a receipt, the destination should select
-  the receipt, not the source server profile;
+- if a provider capability test produces a receipt, the destination should select
+  the receipt, not the source provider profile;
 - page-level primary actions should preserve selection only when the selected
   object remains meaningful on the destination page;
 - destructive, credential-changing, or privacy-sensitive actions require an
@@ -642,12 +642,12 @@ selected object, route, evidence links, or page primary action.
 
 Chat is the default first screen and the default user interaction surface.
 
-The composer must block send until an explicit local or remote server is
+The composer must block send until an explicit local or remote provider is
 selected. Required composer states:
 
-- no server selected;
-- selected server degraded;
-- selected server unavailable;
+- no provider selected;
+- selected provider degraded;
+- selected provider unavailable;
 - ready.
 
 Production composer state is driven by runtime state, not by a user-facing
@@ -657,14 +657,14 @@ Chat should expose runtime failure locally before forcing the operator into
 Command Center:
 
 ```text
-Select a server before sending.
-[Choose Local Server] [Connect Remote Server]
+Select a provider before sending.
+[Choose Local Provider] [Connect Remote Provider]
 
-Primary Server is running, but active model is cold.
-[Warm Model] [Switch Server]
+Primary Provider is running, but active model is cold.
+[Warm Model] [Switch Provider]
 
-Primary Server is offline.
-[Start Server] [Switch Server] [Open Logs]
+Primary Provider is offline.
+[Start Provider] [Switch Provider] [Open Logs]
 ```
 
 ### Command Center
@@ -680,7 +680,7 @@ Its first viewport should prioritize:
 
 It may show recovery items and recent critical events, but it must not duplicate
 full diagnostics, logs, benchmark tables, evaluation reports, or debug-bundle
-details. Deeper evidence links to Diagnostics, Jobs, or Servers.
+details. Deeper evidence links to Diagnostics, Jobs, or Providers.
 
 The primary action must be concrete, such as `Review Eval Drift`, not generic
 recovery copy such as `Run Recovery`.
@@ -697,17 +697,17 @@ Command Center header actions must come from route metadata. Examples:
 The page should link to Jobs and Diagnostics instead of embedding full job
 history or full diagnostic reports.
 
-### Servers
+### Providers
 
-Servers owns local and remote runtime profiles, health, lifecycle controls,
+Providers owns local and remote runtime profiles, health, lifecycle controls,
 credentials, active runtime switching, and capability receipts.
 
-Server creation is split:
+Provider creation is split:
 
-- `Create Local Server`;
-- `Add Remote Server`.
+- `Create Local Provider`;
+- `Add Remote Provider`.
 
-Create Local Server concerns:
+Create Local Provider concerns:
 
 - model asset;
 - adapter asset;
@@ -719,7 +719,7 @@ Create Local Server concerns:
 - `MELIX_HOME`;
 - local inbound auth.
 
-Add Remote Server concerns:
+Add Remote Provider concerns:
 
 - base URL;
 - provider compatibility;
@@ -728,16 +728,16 @@ Add Remote Server concerns:
 - capability test;
 - capability receipt.
 
-Add Remote Server is a strict four-step flow:
+Add Remote Provider is a strict four-step flow:
 
 1. Endpoint
 2. Authentication
 3. Capabilities Test
 4. Review
 
-Create Local Server uses first-run disclosure:
+Create Local Provider uses first-run disclosure:
 
-- Basic: Server name, Model Asset, Memory Profile, Create and Start.
+- Basic: Provider name, Model Asset, Memory Profile, Create and Start.
 - Advanced: Adapter Asset, Worker route, HTTP port, Bind address, Runtime
   directory, `MELIX_HOME`, and Inbound auth.
 - Review: profile summary, bind policy, auth policy, runtime directories,
@@ -746,10 +746,10 @@ Create Local Server uses first-run disclosure:
 Advanced fields are collapsed by default for first-run setup unless the operator
 entered through an explicit advanced setup affordance.
 
-Basic, Advanced, and Review are sections inside `Create Local Server`, not new
+Basic, Advanced, and Review are sections inside `Create Local Provider`, not new
 top-level pages. The first-run path should land on Basic. Operators entering
 through advanced setup may open Advanced by default, but Review must always be
-available before creating or starting the server.
+available before creating or starting the provider.
 
 ### Models
 
@@ -762,10 +762,10 @@ Models owns asset management:
 - LoRA and adapter assets.
 
 Models must not become a runtime cockpit. Running or switching a model belongs
-to Servers and Command Center.
+to Providers and Command Center.
 
 Model rows should communicate whether the asset is downloaded, validated,
-worker-compatible, used by a server, or linked to adapters and receipts.
+worker-compatible, used by a provider, or linked to adapters and receipts.
 
 ### Workflows
 
@@ -785,7 +785,7 @@ are evidence and measurement artifacts.
 ### Jobs
 
 Jobs is top-level because durable operation state crosses Workflows, Models,
-Diagnostics, Image, Servers, and API.
+Diagnostics, Image, Providers, and API.
 
 Jobs must expose:
 
@@ -852,11 +852,11 @@ visible while the operator edits the request. The page should support copying a
 request as `curl` without requiring logs or debug-bundle export.
 
 API / Inbound Auth protects clients calling Melix. Remote Provider Credentials
-belong under Servers.
+belong under Providers.
 
 API pages must not imply outbound provider credential ownership. Any remote
-provider token warning or edit action routes to Servers / Remote Servers or
-Servers / Add Remote Server.
+provider token warning or edit action routes to Providers / Remote Providers or
+Providers / Add Remote Provider.
 
 Production must not depend on `lucide@latest`, remote icon injection, or any
 other unpinned runtime CDN dependency. Icons should be bundled or pinned through
@@ -876,7 +876,7 @@ Inspector.
 
 Settings reserves IA for:
 
-- Runtime & Storage;
+- Providers & Storage;
 - Discovery;
 - Security;
 - Appearance;
@@ -936,7 +936,7 @@ Required security copy rules:
 
 - loopback-only no-auth is valid only for `127.0.0.1`;
 - LAN bind requires token auth;
-- remote exposed server requires token auth plus explicit bind confirmation;
+- externally exposed provider requires token auth plus explicit bind confirmation;
 - remote-provider credentials must never appear in plaintext after save;
 - debug bundles need privacy controls and redaction before export.
 
@@ -1023,7 +1023,7 @@ Recommended implementation slice order:
 1. Route metadata and top-level IA.
 2. Header primary and secondary actions from route metadata.
 3. Selected-object route state and Inspector switching.
-4. Server creation split and Chat runtime binding states.
+4. Provider creation split and Chat runtime binding states.
 5. Jobs, artifact lineage, and row action routing.
 6. Status-channel rendering and disabled-action explanations.
 7. Accessibility pass for selection-heavy rows and keyboard detail opening.
@@ -1040,7 +1040,7 @@ window implementation slice governed by this specification.
 
 ### IA And Route Metadata
 
-- The visible primary sidebar contains only Chat, Command Center, Servers,
+- The visible primary sidebar contains only Chat, Command Center, Providers,
   Models, Workflows, Jobs, Diagnostics, API, Image, and Settings.
 - Secondary pages use canonical route IDs from this document.
 - Legacy route aliases, when supported, are parse-only compatibility paths and
@@ -1087,13 +1087,13 @@ window implementation slice governed by this specification.
 
 ### First-Run And Forms
 
-- Create Local Server starts in Basic mode unless the operator explicitly enters
+- Create Local Provider starts in Basic mode unless the operator explicitly enters
   advanced setup.
-- Advanced local-server fields are disclosed, not forced into the first-run
+- Advanced local-provider fields are disclosed, not forced into the first-run
   path.
-- Create Local Server review exposes bind policy, auth policy, runtime
+- Create Local Provider review exposes bind policy, auth policy, runtime
   directory, `MELIX_HOME`, model compatibility, and disabled-action reasons.
-- Add Remote Server remains a strict Endpoint, Authentication, Capabilities
+- Add Remote Provider remains a strict Endpoint, Authentication, Capabilities
   Test, Review flow.
 - Form warnings distinguish field-level errors, form-level blockers,
   non-blocking warnings, capability receipts, and disabled save reasons.
@@ -1122,7 +1122,7 @@ The first SwiftUI implementation slice should define or preserve probes for:
 - desktop shell navigation latency;
 - Inspector toggle latency and layout stability;
 - initial Chat hydration time;
-- server creation validation latency;
+- provider creation validation latency;
 - capability-test duration;
 - workflow form validation latency;
 - Diagnostics page switch latency;
@@ -1134,7 +1134,7 @@ Representative probe names:
 desktop.shell_navigation_ms
 desktop.inspector_toggle_ms
 desktop.chat_initial_hydration_ms
-desktop.servers_create_capability_test_ms
+desktop.providers_create_capability_test_ms
 desktop.workflow_validation_ms
 desktop.diagnostics_page_switch_ms
 ```

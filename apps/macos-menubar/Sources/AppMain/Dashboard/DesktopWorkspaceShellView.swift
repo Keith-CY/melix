@@ -395,7 +395,7 @@ enum DesktopCommandCenterVisuals {
     static let visualDirection = "Digital Broadsheet Command Center"
     static let operatorLabel = "Melix Operator"
     static let windowTitle = "Command Center"
-    static let runtimeSectionTitle = "Runtime"
+    static let runtimeSectionTitle = "Providers"
     static let pressureSectionTitle = "Resource And Queue Pressure"
     static let recoverySectionTitle = "Recovery"
     static let workflowSectionTitle = "Workflow"
@@ -449,15 +449,15 @@ private struct DesktopCommandCenterHeaderView: View {
     private var healthLabel: String {
         switch resolvedHealthState {
         case .runtimeReady:
-            return "Runtime Ready"
+            return "Providers Ready"
         case .runtimeWarning:
-            return "Runtime Warning"
+            return "Provider Warning"
         case .recoveryAvailable:
             return "Recovery Available"
         case .needsAttention:
             return "Needs Attention"
         case .runtimeState:
-            return "Runtime State"
+            return "Provider State"
         }
     }
 
@@ -912,7 +912,7 @@ private struct DesktopCommandCenterSessionSummaryPanel: View {
                     detail: chatSessions.first?.summaryText ?? "No chat sessions"
                 )
                 DesktopCommandCenterSessionMetricView(
-                    title: "Server Sessions",
+                    title: "Providers",
                     value: "\(serverSessions.count)",
                     detail: serverSessions.first?.effectiveListenerLabel ?? "No listener configured"
                 )
@@ -1062,32 +1062,32 @@ private struct DesktopServerSessionSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Servers")
+                Text("Providers")
                     .font(.headline)
                 Spacer()
                 Menu {
-                    Button("Add Local Server", action: DesktopServerCreationActions.makeAddLocalServerAction(viewModel: viewModel))
-                    Button("Add Remote Server", action: DesktopServerCreationActions.makeAddRemoteServerAction(viewModel: viewModel))
+                    Button("Add Local Provider", action: DesktopServerCreationActions.makeAddLocalServerAction(viewModel: viewModel))
+                    Button("Add Remote Provider", action: DesktopServerCreationActions.makeAddRemoteServerAction(viewModel: viewModel))
                 } label: {
                     Image(systemName: "plus")
                 }
                 .menuStyle(.borderlessButton)
                 .focusable(false)
-                .help("New Server")
-                .accessibilityLabel("New Server")
+                .help("New Provider")
+                .accessibilityLabel("New Provider")
             }
 
             if viewModel.serverTargets.isEmpty {
                 MelixActionableEmptyState(
-                    title: "No Servers Yet",
+                    title: "No Providers Yet",
                     systemImage: "server.rack",
                     detail: "Create a local Apple Silicon runtime or connect a remote provider before chatting, benchmarking, or generating artifacts."
                 ) {
                     VStack(spacing: MelixDesignTokens.Spacing.sm) {
-                        Button("Add Local Server", action: DesktopServerCreationActions.makeAddLocalServerAction(viewModel: viewModel))
+                        Button("Add Local Provider", action: DesktopServerCreationActions.makeAddLocalServerAction(viewModel: viewModel))
                         .buttonStyle(.borderedProminent)
 
-                        Button("Add Remote Server", action: DesktopServerCreationActions.makeAddRemoteServerAction(viewModel: viewModel))
+                        Button("Add Remote Provider", action: DesktopServerCreationActions.makeAddRemoteServerAction(viewModel: viewModel))
                         .buttonStyle(.bordered)
                     }
                 }
@@ -1153,7 +1153,7 @@ private struct DesktopRemoteServerEditor: View {
     }
 
     var body: some View {
-        MelixSectionCard("Remote Server") {
+        MelixSectionCard("Remote Provider") {
             VStack(alignment: .leading, spacing: 12) {
                 if let selectedRemoteServer {
                     HStack(alignment: .center, spacing: 10) {
@@ -1172,7 +1172,7 @@ private struct DesktopRemoteServerEditor: View {
 
                 HStack(alignment: .top, spacing: 12) {
                     TextField(
-                        "Remote Server ID",
+                        "Remote Provider ID",
                         text: Binding(
                             get: { viewModel.remoteServerIDDraft },
                             set: { viewModel.remoteServerIDDraft = $0 }
@@ -1262,7 +1262,7 @@ private struct DesktopRemoteServerEditor: View {
                     }
                     .buttonStyle(.bordered)
 
-                    Button("Save Remote Server") {
+                    Button("Save Remote Provider") {
                         viewModel.saveRemoteServerDraft()
                     }
                     .buttonStyle(.borderedProminent)
@@ -1288,16 +1288,16 @@ private struct DesktopServerCreationEditor: View {
         VStack(alignment: .leading, spacing: 14) {
             if viewModel.selectedServerCreationKind == .localServer {
                 DesktopServerCreationStepperHeader(
-                    title: "Local Server Setup",
-                    steps: ["Runtime", "Review"],
+                    title: "Local Provider Setup",
+                    steps: ["Provider", "Review"],
                     activeIndex: viewModel.serverModelOptions.isEmpty ? 0 : 1
                 )
-                MelixSectionCard("Runtime") {
+                MelixSectionCard("Provider") {
                     localServerCreationContent
                 }
             } else {
                 DesktopServerCreationStepperHeader(
-                    title: "Remote Server Setup",
+                    title: "Remote Provider Setup",
                     steps: ["Endpoint", "Authentication", "Capabilities Test", "Review"],
                     activeIndex: remoteServerActiveStepIndex
                 )
@@ -1333,7 +1333,7 @@ private struct DesktopServerCreationEditor: View {
                     ContentUnavailableView(
                         "No Ready to Run Models",
                         systemImage: "shippingbox",
-                        description: Text("Rescan model roots or download a model before creating a local server.")
+                        description: Text("Rescan model roots or download a model before creating a local provider.")
                     )
                 }
             } else {
@@ -1565,8 +1565,8 @@ private struct DesktopServerSessionEditor: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 DesktopWorkspaceHeader(
-                    title: "Server",
-                    subtitle: "Choose model, configure listener, then start the server session."
+                    title: "Provider",
+                    subtitle: "Choose model, configure listener, then start the provider."
                 ) {}
 
                 if viewModel.isCreatingServerTarget {
@@ -1597,7 +1597,7 @@ private struct DesktopServerSessionEditor: View {
                             if viewModel.serverModelOptions.isEmpty {
                                 Text(viewModel.isRefreshingServerModelOptions
                                     ? "Scanning Ready to Run model roots..."
-                                    : "No Ready to Run models are available. Rescan model roots or download a model before starting a local server.")
+                                    : "No Ready to Run models are available. Rescan model roots or download a model before starting a local provider.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -1722,8 +1722,8 @@ private struct DesktopServerSessionEditor: View {
                                     Image(systemName: "ellipsis.circle")
                                 }
                                 .menuStyle(.borderlessButton)
-                                .help("More Server Actions")
-                                .accessibilityLabel("More Server Actions")
+                                .help("More Provider Actions")
+                                .accessibilityLabel("More Provider Actions")
                             }
 
                             Toggle(
@@ -1765,15 +1765,15 @@ private struct DesktopServerSessionEditor: View {
                     }
                 } else {
                     MelixActionableEmptyState(
-                        title: "No Server Selected",
+                        title: "No Provider Selected",
                         systemImage: "server.rack",
-                        detail: "Pick an existing server in the sidebar, or start a new target when this workspace is empty."
+                        detail: "Pick an existing provider in the sidebar, or start a new target when this workspace is empty."
                     ) {
                         HStack(spacing: MelixDesignTokens.Spacing.sm) {
-                            Button("Add Local Server", action: DesktopServerCreationActions.makeAddLocalServerAction(viewModel: viewModel))
+                            Button("Add Local Provider", action: DesktopServerCreationActions.makeAddLocalServerAction(viewModel: viewModel))
                             .buttonStyle(.borderedProminent)
 
-                            Button("Add Remote Server", action: DesktopServerCreationActions.makeAddRemoteServerAction(viewModel: viewModel))
+                            Button("Add Remote Provider", action: DesktopServerCreationActions.makeAddRemoteServerAction(viewModel: viewModel))
                             .buttonStyle(.bordered)
                         }
                     }
@@ -1943,13 +1943,13 @@ private struct DesktopServerSessionEditor: View {
             .padding(10)
             .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
         case "accelerated_prefill":
-            accelerationModeReadOnlyCard("Uses the backend accelerated prefill profile for this server session.")
+            accelerationModeReadOnlyCard("Uses the backend accelerated prefill profile for this provider.")
         case "active_kv_quantized":
-            accelerationModeReadOnlyCard("Uses the backend active KV quantization profile for this server session.")
+            accelerationModeReadOnlyCard("Uses the backend active KV quantization profile for this provider.")
         case "sparse_prefill":
-            accelerationModeReadOnlyCard("Uses the backend sparse prefill profile for this server session.")
+            accelerationModeReadOnlyCard("Uses the backend sparse prefill profile for this provider.")
         default:
-            accelerationModeReadOnlyCard("No additional acceleration settings are enabled for this server session.")
+            accelerationModeReadOnlyCard("No additional acceleration settings are enabled for this provider.")
         }
     }
 
@@ -1969,7 +1969,7 @@ private struct DesktopServerSessionInspector: View {
     var body: some View {
         if let session = viewModel.selectedServerSession {
             DesktopInspectorContractView(
-                title: "Server Inspector",
+                title: "Provider Inspector",
                 context: "\(session.title) • \(session.modelID)",
                 health: session.lifecycleSummaryText,
                 metrics: "\(session.effectiveBaseURL) • \(session.idlePolicySummaryText)",
@@ -1988,19 +1988,19 @@ private struct DesktopServerSessionInspector: View {
             }
         } else {
             DesktopInspectorContractView(
-                title: "Server Inspector",
-                context: "No server selected",
-                health: "Choose or create a server target",
+                title: "Provider Inspector",
+                context: "No provider selected",
+                health: "Choose or create a provider target",
                 metrics: "No runtime metrics",
                 actions: [
-                    DesktopInspectorActionRow(title: "Create Local Server", systemImage: "plus.circle") {
+                    DesktopInspectorActionRow(title: "Create Local Provider", systemImage: "plus.circle") {
                         viewModel.beginServerCreation(kind: .localServer)
                     },
-                    DesktopInspectorActionRow(title: "Create Remote Server", systemImage: "network.badge.shield.half.filled") {
+                    DesktopInspectorActionRow(title: "Create Remote Provider", systemImage: "network.badge.shield.half.filled") {
                         viewModel.beginServerCreation(kind: .remoteServer)
                     },
                 ],
-                evidence: ["Server status and copy actions appear here."]
+                evidence: ["Provider status and copy actions appear here."]
             )
         }
     }
@@ -2416,7 +2416,7 @@ struct DesktopDownloadsToolSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Model ingress and artifact publishing stay under Tools, not Server.")
+            Text("Model ingress and artifact publishing stay under Tools, not Providers.")
                 .foregroundStyle(.secondary)
 
             MelixSectionCard("Packaging Target") {
@@ -8109,7 +8109,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            DesktopEditorialSectionCard("Runtime Diagnostics") {
+            DesktopEditorialSectionCard("Provider Diagnostics") {
                 VStack(alignment: .leading, spacing: 10) {
                     if report.probeRows.isEmpty {
                         DesktopInlineEmptyStateView(
@@ -8690,12 +8690,12 @@ struct DesktopDiagnosticsToolSectionView: View {
             if selectedStage != .evaluation {
                 DesktopEditorialSectionCard(selectedStage == .matrix ? "Matrix Configuration" : "Bench Configuration") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Running Server")
+                        Text("Running Provider")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
 
                         Picker(
-                            "Running Server",
+                            "Running Provider",
                             selection: Binding(
                                 get: { viewModel.selectedDiagnosticsServerTargetID },
                                 set: { viewModel.selectDiagnosticsServerTarget(id: $0) }
@@ -9448,12 +9448,12 @@ struct DesktopDiagnosticsToolSectionView: View {
             if selectedStage == .evaluation {
                 DesktopEditorialSectionCard("Evaluation Configuration") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Running Server")
+                        Text("Running Provider")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
 
                         Picker(
-                            "Running Server",
+                            "Running Provider",
                             selection: Binding(
                                 get: { viewModel.selectedDiagnosticsServerTargetID },
                                 set: { viewModel.selectDiagnosticsServerTarget(id: $0) }
@@ -9585,7 +9585,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                             .foregroundStyle(.secondary)
 
                         Picker(
-                            "Judge Remote Server",
+                            "Judge Remote Provider",
                             selection: Binding(
                                 get: { viewModel.selectedEvaluationSemanticJudgeRemoteServerID },
                                 set: { viewModel.selectedEvaluationSemanticJudgeRemoteServerID = $0 }
@@ -10069,7 +10069,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 }
             }
 
-            DesktopEditorialSectionCard("Runtime Metrics Snapshot") {
+            DesktopEditorialSectionCard("Provider Metrics Snapshot") {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(foundation.benchMetrics.prefix(10)) { metric in
                         HStack {
@@ -10137,7 +10137,7 @@ struct DesktopAgentIntegrationExportsPanel: View {
                     ContentUnavailableView(
                         "No Integration Export",
                         systemImage: "square.and.arrow.up.on.square",
-                        description: Text("Start or select a server session to render reproducible agent integration exports.")
+                        description: Text("Start or select a provider to render reproducible agent integration exports.")
                     )
                 }
             }
@@ -10373,7 +10373,7 @@ struct DesktopAPICompanionPairingPresentation: Equatable {
     private static func statusDetail(_ pairing: CompanionPairingState) -> String {
         switch pairing.phase {
         case .idle:
-            return "Create a transient read-only session for the selected local server."
+            return "Create a transient read-only session for the selected local provider."
         case .issuing:
             return "Requesting a scoped companion session from the gateway."
         case .active:
@@ -10603,9 +10603,9 @@ struct DesktopAPIQuickStartPanel: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ContentUnavailableView(
-                    "No Server Session Selected",
+                    "No Provider Selected",
                     systemImage: "network.slash",
-                    description: Text("Start or select a server session to render session-aware quick-start snippets.")
+                    description: Text("Start or select a provider to render provider-aware quick-start snippets.")
                 )
             }
         }
@@ -11226,7 +11226,7 @@ struct DesktopAPIWorkspaceView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    GroupBox("Current Server") {
+                    GroupBox("Current Provider") {
                         if let session = viewModel.selectedServerSession {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(session.title)
@@ -11240,7 +11240,7 @@ struct DesktopAPIWorkspaceView: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
-                            Text("No server session selected.")
+                            Text("No provider selected.")
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -11296,7 +11296,7 @@ private struct DesktopAPIEndpointConsoleView: View {
                     DesktopAPIEndpointRow(
                         title: "Chat Completions",
                         endpoint: chatEndpoint,
-                        detail: selectedSession?.lifecycleSummaryText ?? "No server session selected."
+                        detail: selectedSession?.lifecycleSummaryText ?? "No provider selected."
                     )
                     DesktopAPIEndpointRow(
                         title: "Models",
@@ -11359,7 +11359,7 @@ func desktopAPIAuthenticationReferenceText(
     selectedExport: AgentIntegrationExport?
 ) -> String {
     guard let selectedSession else {
-        return "Select a server session to render auth guidance."
+        return "Select a provider to render auth guidance."
     }
 
     let exportLead = if let selectedExport {
@@ -11420,7 +11420,7 @@ func desktopAPIAuthenticationReferenceText(selectedExport: AgentIntegrationExpor
     if let export = selectedExport {
         return "Selected target: \(export.target.rawValue). Use \(export.authPlaceholder) as the reproducible credential placeholder for \(export.baseURL)."
     }
-    return "Select a server session to render auth guidance."
+    return "Select a provider to render auth guidance."
 }
 
 enum RuntimeDiagnosticsArtifactClipboard {

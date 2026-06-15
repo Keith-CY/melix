@@ -64,7 +64,7 @@ struct RuntimeDiscoveryStateTests {
         #expect(legacyCapabilities.models.first?.mediaRouteReceipt == nil)
 
         let instructions = try #require(snapshot.payload(for: .instructions))
-        #expect(instructions.instructionAreas.first?.title == "Runtime settings")
+        #expect(instructions.instructionAreas.first?.title == "Provider settings")
         #expect(instructions.instructionAreas.first?.commandsText.contains("melix settings show --json") == true)
 
         let schema = try #require(snapshot.payload(for: .schema))
@@ -123,7 +123,7 @@ struct RuntimeDiscoveryStateTests {
         await viewModel.refreshRuntimeDiscovery()
 
         #expect(viewModel.runtimeDiscoveryRefreshInProgress == false)
-        #expect(viewModel.runtimeDiscoveryOperationMessage == "Runtime discovery refreshed.")
+        #expect(viewModel.runtimeDiscoveryOperationMessage == "Provider discovery refreshed.")
         #expect(viewModel.runtimeDiscoveryOperationErrorMessage.isEmpty)
         #expect(viewModel.runtimeDiscoveryPayloads.map(\.endpoint) == RuntimeDiscoveryEndpoint.allCases)
         #expect(viewModel.runtimeDiscoveryPayloads.first { $0.endpoint == .configMetadata }?.configSettings.first?.key == "max_concurrent_jobs")
@@ -308,7 +308,7 @@ struct RuntimeDiscoveryStateTests {
       "areas": [
         {
           "id": "settings",
-          "title": "Runtime settings",
+          "title": "Provider settings",
           "commands": [
             "melix settings show --json",
             "melix settings validate"

@@ -22,7 +22,7 @@ struct DesktopShellStateTests {
         #expect(DesktopSurface.visibleNavigationCases.map(\.rawValue) == [
             "Chat",
             "Command Center",
-            "Servers",
+            "Providers",
             "Models",
             "Workflows",
             "Jobs",
@@ -36,7 +36,7 @@ struct DesktopShellStateTests {
         #expect(metadata.domains.map(\.domain.routeDomainID) == [
             "chat",
             "command",
-            "servers",
+            "providers",
             "models",
             "workflows",
             "jobs",
@@ -60,13 +60,13 @@ struct DesktopShellStateTests {
         #expect(command.secondaryActions.first?.target == .page(domain: .jobs, pageID: "queue"))
 
         let localServer = try #require(metadata.page(domain: .server, pageID: "create-local"))
-        #expect(localServer.title == "Create Local Server")
+        #expect(localServer.title == "Create Local Provider")
         #expect(localServer.primaryAction?.title == "Create And Start")
         #expect(localServer.inspectorModule == .serverProfile)
 
         let remoteServer = try #require(metadata.page(domain: .server, pageID: "add-remote"))
-        #expect(remoteServer.title == "Add Remote Server")
-        #expect(remoteServer.primaryAction?.title == "Save Remote Server")
+        #expect(remoteServer.title == "Add Remote Provider")
+        #expect(remoteServer.primaryAction?.title == "Save Remote Provider")
         #expect(remoteServer.inspectorModule == .capabilityReceipt)
 
         let jobsQueue = try #require(metadata.page(domain: .jobs, pageID: "queue"))
@@ -295,7 +295,7 @@ struct DesktopShellStateTests {
         #expect(makeDesktopShellSession(lifecycle: .running, powerState: .active).lifecycleBannerState == nil)
 
         #expect(starting.lifecycleBannerState?.severity == .info)
-        #expect(starting.lifecycleBannerState?.title == "Server Is Starting")
+        #expect(starting.lifecycleBannerState?.title == "Provider Is Starting")
 
         #expect(paused.lifecycleBannerState?.severity == .warning)
         #expect(paused.lifecycleBannerState?.detail.contains("Auto sleep enabled") ?? false)
@@ -304,7 +304,7 @@ struct DesktopShellStateTests {
         #expect(sleeping.lifecycleBannerState?.detail.contains("Deep Sleep mode is active") ?? false)
 
         #expect(stopping.lifecycleBannerState?.severity == .info)
-        #expect(stopping.lifecycleBannerState?.title == "Server Is Stopping")
+        #expect(stopping.lifecycleBannerState?.title == "Provider Is Stopping")
 
         #expect(stopped.lifecycleBannerState?.severity == .warning)
         #expect(stopped.lifecycleBannerState?.detail.contains("serve melix-dev-text") ?? false)
@@ -316,8 +316,8 @@ struct DesktopShellStateTests {
         #expect(unavailable.lifecycleBannerState?.detail.contains("available text model") ?? false)
     }
 
-    @Test("chat workspace notices cover operator-facing server states")
-    func chatWorkspaceNoticesCoverOperatorFacingServerStates() {
+    @Test("chat workspace notices cover operator-facing provider states")
+    func chatWorkspaceNoticesCoverOperatorFacingProviderStates() {
         let sleeping = makeDesktopShellSession(lifecycle: .sleeping, powerState: .deepSleep)
         let paused = makeDesktopShellSession(lifecycle: .paused, powerState: .active)
         let starting = makeDesktopShellSession(lifecycle: .starting, powerState: .active)
@@ -334,28 +334,28 @@ struct DesktopShellStateTests {
         #expect(sleeping.chatWorkspaceNoticeState?.detail.contains("deep sleep") ?? false)
 
         #expect(paused.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(paused.chatWorkspaceNoticeState?.title == "Server Is Paused")
+        #expect(paused.chatWorkspaceNoticeState?.title == "Provider Is Paused")
 
         #expect(starting.chatWorkspaceNoticeState?.severity == .info)
         #expect(starting.chatWorkspaceNoticeState?.detail.contains("read-only") ?? false)
 
         #expect(stopping.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(stopping.chatWorkspaceNoticeState?.title == "Server Is Stopping")
+        #expect(stopping.chatWorkspaceNoticeState?.title == "Provider Is Stopping")
 
         #expect(stopped.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(stopped.chatWorkspaceNoticeState?.detail.contains("Start the bound server session") ?? false)
+        #expect(stopped.chatWorkspaceNoticeState?.detail.contains("Start the bound provider") ?? false)
 
         #expect(failedEmpty.chatWorkspaceNoticeState?.severity == .critical)
-        #expect(failedEmpty.chatWorkspaceNoticeState?.detail == "The bound server session failed.")
+        #expect(failedEmpty.chatWorkspaceNoticeState?.detail == "The bound provider failed.")
 
         #expect(failedFilled.chatWorkspaceNoticeState?.severity == .critical)
         #expect(failedFilled.chatWorkspaceNoticeState?.detail == "gpu lost")
 
         #expect(draft.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(draft.chatWorkspaceNoticeState?.title == "No Active Server Session")
+        #expect(draft.chatWorkspaceNoticeState?.title == "No Active Provider")
 
         #expect(unavailable.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(unavailable.chatWorkspaceNoticeState?.detail.contains("Choose a valid server session") ?? false)
+        #expect(unavailable.chatWorkspaceNoticeState?.detail.contains("Choose a valid provider") ?? false)
     }
 
     @Test("effective listener helpers and codable restore preserve gateway config projection")

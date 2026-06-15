@@ -197,7 +197,7 @@ struct RuntimeSettingsStateTests {
 
         await viewModel.validateRuntimeSettings()
         #expect(viewModel.runtimeSettingsValidationResult?.valid == true)
-        #expect(viewModel.runtimeSettingsOperationMessage == "Runtime settings are valid.")
+        #expect(viewModel.runtimeSettingsOperationMessage == "Provider settings are valid.")
 
         await viewModel.resetRuntimeSetting()
         #expect(viewModel.runtimeSettingsOperationMessage == "Reset max_concurrent_jobs.")

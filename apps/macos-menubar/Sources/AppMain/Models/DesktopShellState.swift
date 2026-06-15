@@ -6,7 +6,7 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
     case chat = "Chat"
     case commandCenter = "Command Center"
     case image = "Image"
-    case server = "Servers"
+    case server = "Providers"
     case models = "Models"
     case workflows = "Workflows"
     case jobs = "Jobs"
@@ -57,7 +57,7 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
         case .commandCenter:
             return "command"
         case .server:
-            return "servers"
+            return "providers"
         case .models:
             return "models"
         case .workflows:
@@ -343,11 +343,11 @@ public struct DesktopRuntimeEndpointState: Equatable, Sendable {
 
     public static let fallback = DesktopRuntimeEndpointState(
         serverSessionID: "",
-        serverTitle: "No Server",
+        serverTitle: "No Provider",
         modelID: "",
         requestedBaseURL: "http://\(MelixGatewayDefaults.host):\(MelixGatewayDefaults.port)/v1",
         effectiveBaseURL: "http://\(MelixGatewayDefaults.host):\(MelixGatewayDefaults.port)/v1",
-        sharedAccessSummaryText: "No server session selected."
+        sharedAccessSummaryText: "No provider selected."
     )
 }
 
@@ -452,7 +452,7 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     id: "session",
                     label: "Session",
                     title: "Chat",
-                    subtitle: "Chat sessions must bind to an explicit local or remote server before sending.",
+                    subtitle: "Chat sessions must bind to an explicit local or remote provider before sending.",
                     inspectorModule: .chatRuntime
                 ),
                 .page(
@@ -500,49 +500,49 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     domain: .server,
                     id: "overview",
                     label: "Overview",
-                    title: "Servers",
-                    subtitle: "Manage local and remote server profiles, health, credentials, and capability receipts.",
+                    title: "Providers",
+                    subtitle: "Manage local and remote providers, health, credentials, and capability receipts.",
                     inspectorModule: .serverProfile,
-                    primaryAction: .init(title: "Create Local Server", target: .page(domain: .server, pageID: "create-local")),
+                    primaryAction: .init(title: "Create Local Provider", target: .page(domain: .server, pageID: "create-local")),
                     secondaryActions: [
-                        .init(title: "Add Remote Server", target: .page(domain: .server, pageID: "add-remote")),
+                        .init(title: "Add Remote Provider", target: .page(domain: .server, pageID: "add-remote")),
                     ]
                 ),
                 .page(
                     domain: .server,
                     id: "local",
-                    label: "Local Servers",
-                    title: "Local Servers",
-                    subtitle: "Start, stop, and inspect local runtime profiles.",
+                    label: "Local Providers",
+                    title: "Local Providers",
+                    subtitle: "Start, stop, and inspect local provider profiles.",
                     inspectorModule: .serverProfile,
-                    primaryAction: .init(title: "Create Local Server", target: .page(domain: .server, pageID: "create-local"))
+                    primaryAction: .init(title: "Create Local Provider", target: .page(domain: .server, pageID: "create-local"))
                 ),
                 .page(
                     domain: .server,
                     id: "remote",
-                    label: "Remote Servers",
-                    title: "Remote Servers",
+                    label: "Remote Providers",
+                    title: "Remote Providers",
                     subtitle: "Manage outbound provider targets and credential boundaries.",
                     inspectorModule: .serverProfile,
-                    primaryAction: .init(title: "Add Remote Server", target: .page(domain: .server, pageID: "add-remote"))
+                    primaryAction: .init(title: "Add Remote Provider", target: .page(domain: .server, pageID: "add-remote"))
                 ),
                 .page(
                     domain: .server,
                     id: "create-local",
-                    label: "Create Local Server",
-                    title: "Create Local Server",
-                    subtitle: "Basic setup first, advanced runtime fields collapsed for first-run creation.",
+                    label: "Create Local Provider",
+                    title: "Create Local Provider",
+                    subtitle: "Basic setup first, advanced provider fields collapsed for first-run creation.",
                     inspectorModule: .serverProfile,
                     primaryAction: .init(title: "Create And Start", target: .page(domain: .server, pageID: "local"))
                 ),
                 .page(
                     domain: .server,
                     id: "add-remote",
-                    label: "Add Remote Server",
-                    title: "Add Remote Server",
+                    label: "Add Remote Provider",
+                    title: "Add Remote Provider",
                     subtitle: "Endpoint, authentication, capability test, and review for outbound provider setup.",
                     inspectorModule: .capabilityReceipt,
-                    primaryAction: .init(title: "Save Remote Server", target: .page(domain: .server, pageID: "remote"))
+                    primaryAction: .init(title: "Save Remote Provider", target: .page(domain: .server, pageID: "remote"))
                 ),
                 .page(
                     domain: .server,
@@ -625,7 +625,7 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     id: "overview",
                     label: "Overview",
                     title: "Jobs",
-                    subtitle: "Durable operation state across models, workflows, diagnostics, image, servers, and API.",
+                    subtitle: "Durable operation state across models, workflows, diagnostics, image, providers, and API.",
                     inspectorModule: .jobLineage,
                     primaryAction: .init(title: "Refresh Jobs", target: .page(domain: .jobs, pageID: "overview"))
                 ),
@@ -712,7 +712,7 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     id: "inbound-auth",
                     label: "Inbound Auth",
                     title: "Inbound Auth",
-                    subtitle: "Configure credentials for clients calling Melix; remote provider credentials live under Servers.",
+                    subtitle: "Configure credentials for clients calling Melix; remote provider credentials live under Providers.",
                     inspectorModule: .apiInboundAuth
                 ),
                 .page(
@@ -763,9 +763,9 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                 .page(
                     domain: .settings,
                     id: "runtime-storage",
-                    label: "Runtime & Storage",
-                    title: "Runtime & Storage",
-                    subtitle: "Configure runtime discovery, model roots, storage, and operator preferences.",
+                    label: "Providers & Storage",
+                    title: "Providers & Storage",
+                    subtitle: "Configure provider discovery, model roots, storage, and operator preferences.",
                     inspectorModule: .runtimeStorage
                 ),
                 .page(
@@ -902,7 +902,7 @@ extension DesktopSurface {
             self = .commandCenter
         case "image":
             self = .image
-        case "server", "servers":
+        case "server", "servers", "provider", "providers":
             self = .server
         case "models":
             self = .models
@@ -1781,46 +1781,46 @@ public extension DesktopServerSessionState {
             return nil
         case .starting:
             return DesktopBannerState(
-                title: "\(title) Is Starting",
-                detail: "Preparing \(listenerLabel) for \(modelID). Requests stay queued until the session reaches Running.",
+                title: "Provider Is Starting",
+                detail: "Preparing \(listenerLabel) for \(modelID). Requests stay queued until the provider reaches Running.",
                 severity: .info
             )
         case .running:
             return nil
         case .paused:
             return DesktopBannerState(
-                title: "\(title) Is Paused",
-                detail: "Resume the session to accept prompts and API requests. \(idlePolicySummaryText)",
+                title: "Provider Is Paused",
+                detail: "Resume the provider to accept prompts and API requests. \(idlePolicySummaryText)",
                 severity: .warning
             )
         case .sleeping:
             return DesktopBannerState(
-                title: "\(title) Is Sleeping",
-                detail: "\(powerState.rawValue) mode is active. The next request can wake the session automatically, or you can wake it manually now.",
+                title: "Provider Is Sleeping",
+                detail: "\(powerState.rawValue) mode is active. The next request can wake the provider automatically, or you can wake it manually now.",
                 severity: .info
             )
         case .stopping:
             return DesktopBannerState(
-                title: "\(title) Is Stopping",
-                detail: "Melix is draining the session and closing \(listenerLabel).",
+                title: "Provider Is Stopping",
+                detail: "Melix is draining the provider and closing \(listenerLabel).",
                 severity: .info
             )
         case .stopped:
             return DesktopBannerState(
-                title: "\(title) Is Stopped",
-                detail: "Start the session to serve \(modelID) at \(listenerLabel).",
+                title: "Provider Is Stopped",
+                detail: "Start the provider to serve \(modelID) at \(listenerLabel).",
                 severity: .warning
             )
         case .error:
             return DesktopBannerState(
-                title: "\(title) Needs Recovery",
-                detail: lastError.isEmpty ? "The session entered an error state." : lastError,
+                title: "Provider Needs Recovery",
+                detail: lastError.isEmpty ? "The provider entered an error state." : lastError,
                 severity: .critical
             )
         case .unavailable:
             return DesktopBannerState(
-                title: "\(title) Is Unavailable",
-                detail: "Bind the session to an available text model before serving requests.",
+                title: "Provider Is Unavailable",
+                detail: "Bind the provider to an available text model before serving requests.",
                 severity: .warning
             )
         }
@@ -1832,44 +1832,44 @@ public extension DesktopServerSessionState {
             return nil
         case .sleeping:
             return DesktopBannerState(
-                title: "\(title) Will Wake On Demand",
-                detail: "You can send the next prompt immediately. Melix will wake the session from \(powerState.rawValue.lowercased()) first.",
+                title: "Provider Will Wake On Demand",
+                detail: "You can send the next prompt immediately. Melix will wake the provider from \(powerState.rawValue.lowercased()) first.",
                 severity: .info
             )
         case .paused:
             return DesktopBannerState(
-                title: "\(title) Is Paused",
-                detail: "Resume the bound server session before sending prompts from this chat.",
+                title: "Provider Is Paused",
+                detail: "Resume the bound provider before sending prompts from this chat.",
                 severity: .warning
             )
         case .starting:
             return DesktopBannerState(
-                title: "\(title) Is Starting",
-                detail: "Chat stays read-only until the server session finishes booting.",
+                title: "Provider Is Starting",
+                detail: "Chat stays read-only until the provider finishes booting.",
                 severity: .info
             )
         case .stopping:
             return DesktopBannerState(
-                title: "\(title) Is Stopping",
-                detail: "This chat stays read-only while the bound server session drains.",
+                title: "Provider Is Stopping",
+                detail: "This chat stays read-only while the bound provider drains.",
                 severity: .warning
             )
         case .stopped:
             return DesktopBannerState(
-                title: "\(title) Is Stopped",
-                detail: "Start the bound server session before sending prompts from this chat.",
+                title: "Provider Is Stopped",
+                detail: "Start the bound provider before sending prompts from this chat.",
                 severity: .warning
             )
         case .error:
             return DesktopBannerState(
-                title: "\(title) Needs Recovery",
-                detail: lastError.isEmpty ? "The bound server session failed." : lastError,
+                title: "Provider Needs Recovery",
+                detail: lastError.isEmpty ? "The bound provider failed." : lastError,
                 severity: .critical
             )
         case .draft, .unavailable:
             return DesktopBannerState(
-                title: "No Active Server Session",
-                detail: "Choose a valid server session and start it before sending prompts from this chat.",
+                title: "No Active Provider",
+                detail: "Choose a valid provider and start it before sending prompts from this chat.",
                 severity: .warning
             )
         }

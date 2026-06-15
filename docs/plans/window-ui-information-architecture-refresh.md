@@ -18,7 +18,7 @@ The accepted direction is:
 ```text
 Chat
 Command Center
-Servers
+Providers
 Models
 Workflows
 Jobs
@@ -39,9 +39,9 @@ Implementation slices must follow
 - Inspector contract;
 - inbound and outbound credential boundaries;
 - Chat runtime-binding rules;
-- server creation split;
+- provider creation split;
 - Jobs and artifact-lineage rules;
-- first-run local-server simplification;
+- first-run local-provider simplification;
 - visual-system constraints.
 
 ## Walkthrough Evidence
@@ -60,9 +60,9 @@ The walkthrough established these durable decisions:
 
 - Chat remains the default first surface.
 - Command Center is a top-level cockpit, not the home page.
-- Servers and Jobs are first-class domains.
-- Create Local Server and Add Remote Server are separate pages.
-- Add Remote Server is a strict Endpoint, Authentication, Capabilities Test,
+- Providers and Jobs are first-class domains.
+- Create Local Provider and Add Remote Provider are separate pages.
+- Add Remote Provider is a strict Endpoint, Authentication, Capabilities Test,
   Review flow.
 - Chat composer state is runtime-driven in production.
 - Inspector state is selected-object driven when an object is selected.
@@ -71,7 +71,7 @@ The walkthrough established these durable decisions:
 - Row action navigation carries a meaningful object selection or clears it.
 - `pending_review` is review state, not health state.
 - API Playground should read as a request/response developer console.
-- Advanced local-server fields are collapsed by default for first-run setup.
+- Advanced local-provider fields are collapsed by default for first-run setup.
 
 ## First Implementation Slices
 
@@ -103,13 +103,13 @@ rewrite.
 
 3. Chat Runtime Contract
    - Keep Chat default.
-   - Block send without explicit server binding.
-   - Add no-server, degraded, offline, and ready composer states driven by
+   - Block send without explicit provider binding.
+   - Add no-provider, degraded, offline, and ready composer states driven by
      runtime status.
 
-4. Servers And Jobs Domains
-   - Split Create Local Server and Add Remote Server.
-   - Expose server profiles, capability receipts, job queue, job history, and
+4. Providers And Jobs Domains
+   - Split Create Local Provider and Add Remote Provider.
+   - Expose provider profiles, capability receipts, job queue, job history, and
      artifact lineage.
 
 5. Domain Polish

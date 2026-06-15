@@ -122,7 +122,7 @@ public struct RuntimeSettingsValidationResultState: Equatable, Sendable {
 
     public var summaryText: String {
         if valid {
-            return "Runtime settings are valid."
+            return "Provider settings are valid."
         }
         if issues.count == 1 {
             return "1 validation issue."

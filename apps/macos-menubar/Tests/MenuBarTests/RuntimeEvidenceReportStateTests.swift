@@ -119,7 +119,7 @@ struct RuntimeEvidenceReportStateTests {
 
         #expect(renderedTexts.contains("Run Evidence Report"))
         #expect(renderedTexts.contains("Run History"))
-        #expect(renderedTexts.contains("Runtime Diagnostics"))
+        #expect(renderedTexts.contains("Provider Diagnostics"))
         #expect(renderedTexts.contains("Hardware Monitor"))
         #expect(renderedTexts.contains("Evidence Artifacts"))
         #expect(renderedTexts.contains("Open CSV"))
@@ -427,7 +427,7 @@ struct RuntimeEvidenceReportStateTests {
         let emptyTexts = evidenceRenderedTextValues(in: emptyView)
 
         #expect(emptyTexts.contains("Run History"))
-        #expect(emptyTexts.contains("Runtime Diagnostics"))
+        #expect(emptyTexts.contains("Provider Diagnostics"))
         #expect(emptyTexts.contains("Hardware Monitor"))
         #expect(emptyTexts.contains("Evidence Artifacts"))
         #expect(emptyTexts.contains("run_evidence_missing"))

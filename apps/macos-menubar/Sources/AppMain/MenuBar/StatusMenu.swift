@@ -152,7 +152,7 @@ public final class StatusMenu: NSObject {
 
     func content() -> StatusMenuContent {
         var items: [StatusMenuContentItem] = [
-            .info("Server: \(viewModel.serverStateText)")
+            .info("Provider: \(viewModel.serverStateText)")
         ]
 
         for banner in viewModel.desktopSignalStates.prefix(3) {
@@ -243,13 +243,13 @@ public final class StatusMenu: NSObject {
         }
         switch session.lifecycle {
         case .sleeping:
-            items.append(.action("Wake Server", .wakeSelectedServer))
-            items.append(.action("Open Server", .openServer))
+            items.append(.action("Wake Provider", .wakeSelectedServer))
+            items.append(.action("Open Providers", .openServer))
         case .stopped, .error, .unavailable:
-            items.append(.action("Start Server", .startSelectedServer))
-            items.append(.action("Open Server", .openServer))
+            items.append(.action("Start Provider", .startSelectedServer))
+            items.append(.action("Open Providers", .openServer))
         case .paused:
-            items.append(.action("Open Server", .openServer))
+            items.append(.action("Open Providers", .openServer))
         case .draft, .starting, .running, .stopping:
             break
         }

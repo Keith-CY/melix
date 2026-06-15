@@ -2017,7 +2017,7 @@ struct DesktopSettingsTabView: View {
         VStack(alignment: .leading, spacing: 14) {
             if let viewModel, viewModel.runtimeSettingRows.isEmpty == false {
                 runtimeSettingsControls(viewModel)
-                Text("Runtime Settings")
+                Text("Provider Settings")
                     .font(.headline)
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(viewModel.runtimeSettingRows) { row in
@@ -2312,7 +2312,7 @@ struct DesktopSettingsTabView: View {
                 }
             }
             if payload.configSettings.isEmpty == false {
-                Text("Runtime Setting Metadata")
+                Text("Provider Setting Metadata")
                     .font(.caption)
                     .fontWeight(.semibold)
                 ForEach(payload.configSettings) { setting in
@@ -2382,7 +2382,7 @@ struct DesktopSettingsTabView: View {
     private func copyRuntimeDiscoveryValue(_ value: String) {
         let didCopy = RuntimeDiscoveryClipboard.copy(value)
         if didCopy == false {
-            assertionFailure("Runtime discovery copy failed for a non-empty value.")
+            assertionFailure("Provider discovery copy failed for a non-empty value.")
         }
     }
 
@@ -2397,7 +2397,7 @@ struct DesktopSettingsTabView: View {
                 "Validate Settings",
                 viewModel.runtimeSettingsOperationMessage,
                 viewModel.runtimeSettingsOperationErrorMessage,
-                "Runtime Settings",
+                "Provider Settings",
             ]
             values.append(contentsOf: viewModel.runtimeSettingRows.flatMap { row in
                 [

@@ -1304,7 +1304,7 @@ public enum RuntimeLoraActivationMode: String, CaseIterable, Identifiable, Senda
         case .fusedDerivedModel:
             return "Fused Derived Model"
         case .adapterBackedRuntime:
-            return "Adapter-backed Runtime"
+            return "Adapter-backed Serving"
         }
     }
 }
@@ -1740,7 +1740,7 @@ public struct RuntimeAdapterCapabilityReceiptState: Equatable, Sendable {
         let reason = unsupportedReason.isEmpty
             ? "non_mergeable_adapter"
             : unsupportedReason
-        return "Fused activation is disabled for \(adapterFamilyText): \(reason). Use Adapter-backed Runtime instead."
+        return "Fused activation is disabled for \(adapterFamilyText): \(reason). Use Adapter-backed Serving instead."
     }
 
     private func supportText(_ value: Bool?) -> String {
@@ -2945,8 +2945,8 @@ public final class RuntimeViewModel {
             RuntimeDiagnosticsServerTargetState(
                 id: Self.startNewDiagnosticsServerTargetID,
                 kind: .startNewServer,
-                title: "Start New Server...",
-                detailText: "Open Server configuration",
+                title: "Start New Provider...",
+                detailText: "Open Provider configuration",
                 modelID: "",
                 serverID: ""
             ),
@@ -2979,7 +2979,7 @@ public final class RuntimeViewModel {
 
     public var diagnosticsTargetSummaryText: String {
         guard let target = selectedDiagnosticsServerTarget else {
-            return "Select a running server for Diagnostics."
+            return "Select a running provider for Diagnostics."
         }
         switch target.kind {
         case .localServer:
@@ -2987,18 +2987,18 @@ public final class RuntimeViewModel {
         case .remoteServer:
             return "\(target.title) • \(target.modelID) • \(target.detailText)"
         case .startNewServer:
-            return "Create or configure a server before running Diagnostics."
+            return "Create or configure a provider before running Diagnostics."
         }
     }
 
     public var diagnosticsBenchmarkUnavailableText: String? {
         guard let target = selectedDiagnosticsServerTarget else {
-            return "Select a local running server before running Benchmark."
+            return "Select a local running provider before running Benchmark."
         }
         switch target.kind {
         case .localServer:
             if target.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return "Selected local server has no model configured."
+                return "Selected local provider has no model configured."
             }
             if selectedBenchmarkSuiteIDs.isEmpty {
                 return "Select at least one benchmark dataset before running Benchmark."
@@ -3023,18 +3023,18 @@ public final class RuntimeViewModel {
         case .remoteServer:
             return Self.remoteBenchmarkUnsupportedMessage
         case .startNewServer:
-            return "Select a local running server before running Benchmark."
+            return "Select a local running provider before running Benchmark."
         }
     }
 
     public var diagnosticsEvaluationUnavailableText: String? {
         guard let target = selectedDiagnosticsServerTarget else {
-            return "Select a running server before running Evaluation."
+            return "Select a running provider before running Evaluation."
         }
         switch target.kind {
         case .localServer:
             if target.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return "Selected local server has no model configured."
+                return "Selected local provider has no model configured."
             }
             if selectedEvaluationSuiteIDs.isEmpty {
                 return "Select at least one evaluation suite before running Evaluation."
@@ -3061,14 +3061,14 @@ public final class RuntimeViewModel {
                 return "Select at least one evaluation suite before running Evaluation."
             }
             if selectedEvaluationMode == .compare {
-                return "Remote Server evaluation is available for standard Evaluation runs."
+                return "Remote Provider evaluation is available for standard Evaluation runs."
             }
             if selectedEvaluationSuiteIDs != Set(["event_extraction"]) {
                 return Self.remoteEvaluationUnsupportedMessage
             }
             return nil
         case .startNewServer:
-            return "Select a running server before running Evaluation."
+            return "Select a running provider before running Evaluation."
         }
     }
 
@@ -3189,8 +3189,8 @@ public final class RuntimeViewModel {
     private var benchmarkExportBundle: ControlPlaneBenchmarkExportBundle?
 
     private static let startNewDiagnosticsServerTargetID = "start-new-server"
-    private static let remoteBenchmarkUnsupportedMessage = "Remote Server benchmark is not supported yet; select a local running server."
-    private static let remoteEvaluationUnsupportedMessage = "Remote Server evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running server."
+    private static let remoteBenchmarkUnsupportedMessage = "Remote Provider benchmark is not supported yet; select a local running provider."
+    private static let remoteEvaluationUnsupportedMessage = "Remote Provider evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running provider."
     private static let hiddenPlaceholderModelIDs: Set<String> = [
         "melix-dev-text",
         "melix-dev-vlm",
@@ -3601,7 +3601,7 @@ public final class RuntimeViewModel {
             refreshDiagnosticsServerTargetSelection()
         } catch {
             remoteServerPersistFailures += 1
-            recordLocalError("Remote Server load failed: \(error)")
+            recordLocalError("Remote Provider load failed: \(error)")
         }
     }
 
@@ -3699,7 +3699,7 @@ public final class RuntimeViewModel {
         let selectedID = selectedRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
         if selectedID.isEmpty == false, id != selectedID {
             remoteServerIDDraft = selectedID
-            recordLocalError("Remote Server ID cannot be changed after creation. Use New to create another server.")
+            recordLocalError("Remote Provider ID cannot be changed after creation. Use New to create another provider.")
             notifyStateChanged()
             return
         }
@@ -3709,7 +3709,7 @@ public final class RuntimeViewModel {
               baseURL.isEmpty == false,
               defaultModelID.isEmpty == false
         else {
-            recordLocalError("Remote Server requires id, title, provider, base URL, and default model.")
+            recordLocalError("Remote Provider requires id, title, provider, base URL, and default model.")
             notifyStateChanged()
             return
         }
@@ -3746,7 +3746,7 @@ public final class RuntimeViewModel {
                     valueMs: remoteServerPersistFailures
                 )
             }
-            recordLocalError("Remote Server save failed: \(error)")
+            recordLocalError("Remote Provider save failed: \(error)")
             notifyStateChanged()
         }
     }
@@ -3776,7 +3776,7 @@ public final class RuntimeViewModel {
                     valueMs: remoteServerPersistFailures
                 )
             }
-            recordLocalError("Remote Server remove failed: \(error)")
+            recordLocalError("Remote Provider remove failed: \(error)")
             notifyStateChanged()
         }
     }
@@ -5102,7 +5102,7 @@ public final class RuntimeViewModel {
             ]
             runtimeDiscoverySnapshot = try RuntimeDiscoveryPayloadDecoder.decodeSnapshot(entries)
             runtimeDiscoveryOperationInProgress = false
-            runtimeDiscoveryOperationMessage = "Runtime discovery refreshed."
+            runtimeDiscoveryOperationMessage = "Provider discovery refreshed."
             runtimeDiscoveryOperationErrorMessage = ""
             clearCLIWorkflowFailure()
             notifyStateChanged()
@@ -5709,7 +5709,7 @@ public final class RuntimeViewModel {
         guard newLocalServerTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
             selectedSurface = .server
             isCreatingServerTarget = true
-            recordLocalError("Local Server requires a session name.")
+            recordLocalError("Local Provider requires a session name.")
             notifyStateChanged()
             return
         }
@@ -5731,12 +5731,12 @@ public final class RuntimeViewModel {
         let modelID = explicitModelID.isEmpty ? (serverModelOptions.first?.modelID ?? "") : explicitModelID
         guard modelID.isEmpty == false else {
             selectedSurface = .server
-            recordLocalError("No Ready to Run model is available. Rescan or download a model before creating a local server.")
+            recordLocalError("No Ready to Run model is available. Rescan or download a model before creating a local provider.")
             notifyStateChanged()
             return
         }
         let nextIndex = serverSessions.count + 1
-        let defaultTitle = nextIndex == 1 ? "Primary Server" : "Server \(nextIndex)"
+        let defaultTitle = nextIndex == 1 ? "Primary Provider" : "Provider \(nextIndex)"
         let title = titleOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? defaultTitle
             : titleOverride.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -6039,11 +6039,11 @@ public final class RuntimeViewModel {
             return
         }
         guard let serverSession = selectedServerSession else {
-            await failCompanionPairingIssue("Select a local server session before creating companion pairing.")
+            await failCompanionPairingIssue("Select a local provider before creating companion pairing.")
             return
         }
         guard let baseURL = Self.companionPairingBaseURL(for: serverSession) else {
-            await failCompanionPairingIssue("Selected server session does not have a valid companion pairing URL.")
+            await failCompanionPairingIssue("Selected provider does not have a valid companion pairing URL.")
             return
         }
 
@@ -6399,8 +6399,8 @@ public final class RuntimeViewModel {
 
     public func createChatSession() {
         guard operatorStateRestored || serverSessions.isEmpty == false else {
-            setLastError("Create a Server Session before opening chat.")
-            chatStatusText = "No Server Session"
+            setLastError("Create a Provider before opening chat.")
+            chatStatusText = "No Provider"
             selectedSurface = .server
             notifyStateChanged()
             return
@@ -6411,7 +6411,7 @@ public final class RuntimeViewModel {
             id: "chat-session-\(UUID().uuidString)",
             title: nextIndex == 1 ? "Chat 1" : "Chat \(nextIndex)",
             serverSessionID: "",
-            statusText: "Choose Server"
+            statusText: "Choose Provider"
         )
         chatSessions.append(session)
         loadChatSession(session)
@@ -6486,7 +6486,7 @@ public final class RuntimeViewModel {
 
         replaceChatSession(id: selectedChatSession.id) { session in
             session.serverSessionID = serverSession.id
-            if session.statusText == "Choose Server" || session.statusText == "No Server Session" {
+            if session.statusText == "Choose Provider" || session.statusText == "Choose Server" || session.statusText == "No Provider" || session.statusText == "No Server Session" {
                 session.statusText = "Idle"
             }
             session.updatedAt = Date()
@@ -6494,7 +6494,7 @@ public final class RuntimeViewModel {
         selectedServerSessionID = serverSession.id
         selectedChatModelID = serverSession.modelID
         if selectedChatSessionID == selectedChatSession.id {
-            chatStatusText = chatStatusText == "Choose Server" || chatStatusText == "No Server Session"
+            chatStatusText = chatStatusText == "Choose Provider" || chatStatusText == "Choose Server" || chatStatusText == "No Provider" || chatStatusText == "No Server Session"
                 ? "Idle"
                 : chatStatusText
         }
@@ -6518,7 +6518,7 @@ public final class RuntimeViewModel {
         let payload = """
         # \(sanitizedRichText(session.title))
 
-        - Server Session: \(session.serverSessionID)
+        - Provider: \(session.serverSessionID)
         - Branch: \(sanitizedRichText(session.branchTitle))
         - Status: \(sanitizedRichText(session.statusText))
 
@@ -6707,7 +6707,7 @@ public final class RuntimeViewModel {
             signals.append(
                 DesktopBannerState(
                     id: "runtime-monitoring",
-                    title: "Runtime Needs Monitoring",
+                    title: "Provider Needs Monitoring",
                     detail: connectionDetailText,
                     severity: .warning
                 )
@@ -7102,7 +7102,7 @@ public final class RuntimeViewModel {
 
     public var benchmarkTargetSummaryText: String {
         guard let target = selectedDiagnosticsServerTarget else {
-            return "Select a local running server for Benchmark."
+            return "Select a local running provider for Benchmark."
         }
         switch target.kind {
         case .localServer:
@@ -7111,9 +7111,9 @@ public final class RuntimeViewModel {
             }
             return "\(benchmarkTargetTaskTitle) • \(target.title) • \(model.displayNameWithID)\(Self.diagnosticsProfileSummarySuffix(for: target))"
         case .remoteServer:
-            return "\(benchmarkTargetTaskTitle) • \(target.title) • Remote Server"
+            return "\(benchmarkTargetTaskTitle) • \(target.title) • Remote Provider"
         case .startNewServer:
-            return "Start or select a local server for Benchmark."
+            return "Start or select a local provider for Benchmark."
         }
     }
 
@@ -7153,7 +7153,7 @@ public final class RuntimeViewModel {
 
     public var evaluationTargetSummaryText: String {
         guard let target = selectedDiagnosticsServerTarget else {
-            return "Select a running server for Evaluation."
+            return "Select a running provider for Evaluation."
         }
         switch target.kind {
         case .localServer:
@@ -7164,7 +7164,7 @@ public final class RuntimeViewModel {
         case .remoteServer:
             return "\(evaluationTargetTaskTitle) • \(target.title) • \(target.modelID)"
         case .startNewServer:
-            return "Start or select a server for Evaluation."
+            return "Start or select a provider for Evaluation."
         }
     }
 
@@ -7448,18 +7448,18 @@ public final class RuntimeViewModel {
 
         guard let serverSession = selectedChatServerSession else {
             guard selectedChatSession != nil || serverSessions.isEmpty == false else {
-                chatStatusText = "No Server Session"
-                setLastError("Create a Server Session before sending chat prompts.")
+                chatStatusText = "No Provider"
+                setLastError("Create a Provider before sending chat prompts.")
                 selectedSurface = .server
                 notifyStateChanged()
                 return
             }
-            chatStatusText = "Choose Server"
-            setLastError("Choose a Server Session before sending chat prompts.")
+            chatStatusText = "Choose Provider"
+            setLastError("Choose a Provider before sending chat prompts.")
             selectedSurface = .chat
             if let selectedChatSession {
                 replaceChatSession(id: selectedChatSession.id) { session in
-                    session.statusText = "Choose Server"
+                    session.statusText = "Choose Provider"
                     session.updatedAt = Date()
                 }
             }
@@ -10079,7 +10079,7 @@ public final class RuntimeViewModel {
         }
         let modelID = resolvedBenchmarkModelID()
         guard !modelID.isEmpty else {
-            recordLocalError("Select a local running server before running Benchmark.")
+            recordLocalError("Select a local running provider before running Benchmark.")
             notifyStateChanged()
             return
         }
@@ -10328,7 +10328,7 @@ public final class RuntimeViewModel {
         }
         let modelID = resolvedBenchmarkModelID()
         guard !modelID.isEmpty else {
-            recordLocalError("Select a local running server before running Matrix.")
+            recordLocalError("Select a local running provider before running Matrix.")
             notifyStateChanged()
             return
         }
@@ -10550,13 +10550,13 @@ public final class RuntimeViewModel {
         let usesCustomSource = evaluationDatasetSourceKind != .builtinPackage
         if usesRemoteTarget == false {
             guard !modelID.isEmpty else {
-                recordLocalError("Select a local running server before running Evaluation.")
+                recordLocalError("Select a local running provider before running Evaluation.")
                 notifyStateChanged()
                 return
             }
         } else {
             guard !remoteServerID.isEmpty else {
-                recordLocalError("Select a remote server before running Evaluation.")
+                recordLocalError("Select a remote provider before running Evaluation.")
                 notifyStateChanged()
                 return
             }
@@ -10576,7 +10576,7 @@ public final class RuntimeViewModel {
             return
         }
         if selectedEvaluationMode == .compare, usesRemoteTarget {
-            recordLocalError("Remote server targets are available for standard Evaluation runs.")
+            recordLocalError("Remote provider targets are available for standard Evaluation runs.")
             notifyStateChanged()
             return
         }
@@ -11426,17 +11426,17 @@ public final class RuntimeViewModel {
     private func chatSubmissionBlockedMessage(for serverSession: DesktopServerSessionState) -> String {
         switch serverSession.lifecycle {
         case .paused:
-            return "Resume the paused Server Session before sending chat prompts."
+            return "Resume the paused Provider before sending chat prompts."
         case .starting:
-            return "Wait for the Server Session to finish starting before sending chat prompts."
+            return "Wait for the Provider to finish starting before sending chat prompts."
         case .stopping:
-            return "Wait for the Server Session to finish stopping or start it again before sending chat prompts."
+            return "Wait for the Provider to finish stopping or start it again before sending chat prompts."
         case .stopped, .draft, .unavailable:
-            return "Start the bound Server Session before sending chat prompts."
+            return "Start the bound Provider before sending chat prompts."
         case .error:
             return serverSession.lastError.isEmpty
-                ? "Recover the failed Server Session before sending chat prompts."
-                : "Recover the failed Server Session before sending chat prompts. \(serverSession.lastError)"
+                ? "Recover the failed Provider before sending chat prompts."
+                : "Recover the failed Provider before sending chat prompts. \(serverSession.lastError)"
         case .running, .sleeping:
             return ""
         }
@@ -11490,7 +11490,7 @@ public final class RuntimeViewModel {
                 id: "chat-session-\(UUID().uuidString)",
                 title: "Chat 1",
                 serverSessionID: "",
-                statusText: "Choose Server"
+                statusText: "Choose Provider"
             )
             chatSessions = [session]
             loadChatSession(session)
@@ -11503,7 +11503,7 @@ public final class RuntimeViewModel {
             }
             var unbound = session
             unbound.serverSessionID = ""
-            unbound.statusText = "Choose Server"
+            unbound.statusText = "Choose Provider"
             unbound.updatedAt = Date()
             return unbound
         }
@@ -11530,7 +11530,7 @@ public final class RuntimeViewModel {
                 for: projectedConfig.flatMap { projection in
                     textModels.first { $0.modelID == projection.defaultModelID }
                 } ?? firstTextModel,
-                title: "Primary Server",
+                title: "Primary Provider",
                 port: projectedConfig?.port ?? MelixGatewayDefaults.port,
                 serverSessionID: seededServerSessionID,
                 modelIDOverride: projectedDefaultModelID?.isEmpty == false ? projectedDefaultModelID : nil
@@ -11575,7 +11575,7 @@ public final class RuntimeViewModel {
                 applyRuntimeSessionProjection(to: &updated, runtimeSession: runtimeSession)
             }
             if updated.title.isEmpty {
-                updated.title = offset == 0 ? "Primary Server" : "Server \(offset + 1)"
+                updated.title = offset == 0 ? "Primary Provider" : "Provider \(offset + 1)"
             }
             applyGatewayAccessProjection(to: &updated)
             return updated
@@ -11593,7 +11593,7 @@ public final class RuntimeViewModel {
     private func resetLocalServerDraft() {
         let nextIndex = serverTargets.filter { $0.kind == .localServer }.count + 1
         if newLocalServerTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            newLocalServerTitleDraft = nextIndex == 1 ? "Primary Server" : "Server \(nextIndex)"
+            newLocalServerTitleDraft = nextIndex == 1 ? "Primary Provider" : "Provider \(nextIndex)"
         }
         if newLocalServerModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || serverModelOptions.contains(where: { $0.modelID == newLocalServerModelID }) == false
@@ -15480,9 +15480,9 @@ public final class RuntimeViewModel {
         switch event.payload {
         case .serverState(let serverStateChanged):
             if let runtimeSession = serverStateChanged.runtimeSessions.first {
-                return "Server is now \(serverStateText(serverStateChanged.state)) • \(serverSessionLifecycle(runtimeSession.lifecycleState).rawValue) • \(serverSessionPowerState(runtimeSession.powerState).rawValue)"
+                return "Provider is now \(serverStateText(serverStateChanged.state)) • \(serverSessionLifecycle(runtimeSession.lifecycleState).rawValue) • \(serverSessionPowerState(runtimeSession.powerState).rawValue)"
             }
-            return "Server is now \(serverStateText(serverStateChanged.state))"
+            return "Provider is now \(serverStateText(serverStateChanged.state))"
         case .modelState(let modelStateChanged):
             return "\(modelStateChanged.modelID) -> \(modelStateText(modelStateChanged.state))"
         case .requestProgress(let progress):
@@ -17164,19 +17164,19 @@ private func runtimeModeBadgeFields(_ model: Melix_Controlplane_V1_ModelSummary)
     case "adapter_backed_runtime":
         return RuntimeModeBadgeFields(
             text: "adapter",
-            accessibilityLabel: "Runtime mode: adapter-backed"
+            accessibilityLabel: "Serving mode: adapter-backed"
         )
     case "fused_derived_model":
         return RuntimeModeBadgeFields(
             text: "fused",
-            accessibilityLabel: "Runtime mode: fused derived model"
+            accessibilityLabel: "Serving mode: fused derived model"
         )
     case "":
         return RuntimeModeBadgeFields(text: "", accessibilityLabel: "")
     default:
         return RuntimeModeBadgeFields(
             text: "?",
-            accessibilityLabel: "Runtime mode: unrecognized"
+            accessibilityLabel: "Serving mode: unrecognized"
         )
     }
 }
