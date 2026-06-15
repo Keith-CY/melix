@@ -8100,6 +8100,7 @@ struct DesktopFoundationViewTests {
                 )
             ]
         )
+        let emptyCapabilitySignal = DesktopChatCapabilityStatusSignal(capabilities: [])
 
         #expect(emptySignal.serverTitle == "No Provider")
         #expect(emptySignal.serverDetail == "Choose Provider")
@@ -8110,6 +8111,8 @@ struct DesktopFoundationViewTests {
         #expect(startingSignal.statusColor == MelixDesignTokens.StatusColor.warning)
         #expect(capabilitySignal.readyCount == 1)
         #expect(capabilitySignal.statusColor == MelixDesignTokens.StatusColor.warning)
+        #expect(emptyCapabilitySignal.statusColor == Color.secondary)
+        #expect(emptyCapabilitySignal.helpText == "No model capabilities detected")
         #expect(DesktopChatProviderSignalMetrics.providerSignalWidth <= 72)
         #expect(DesktopChatProviderSignalMetrics.capabilitySignalWidth <= 68)
     }

@@ -1499,6 +1499,9 @@ struct DesktopChatCapabilityStatusSignal: View {
     }
 
     var statusColor: Color {
+        if capabilities.isEmpty {
+            return Color.secondary
+        }
         if readyCount == capabilities.count {
             return MelixDesignTokens.StatusColor.success
         }
