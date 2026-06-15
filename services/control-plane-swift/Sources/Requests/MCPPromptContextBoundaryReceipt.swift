@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 struct MCPPromptContextBoundaryReceipts: Sendable, Equatable {
@@ -11,7 +10,10 @@ struct MCPPromptContextBoundaryReceipts: Sendable, Equatable {
             guard !normalizedSourceID.isEmpty else {
                 continue
             }
-            let redactedSourceID = Self.redactedSourceID(normalizedSourceID)
+            let redactedSourceID = PromptContextSourceIDRedactor.redactedSourceID(
+                normalizedSourceID,
+                prefix: "mcp-source"
+            )
             receipts.append([
                 "schema_version": .string(PromptContextBoundaryReceipts.schemaVersion),
                 "segment_id": .string("\(requestID):mcp-source-\(sourceIndex)"),
@@ -50,28 +52,6 @@ struct MCPPromptContextBoundaryReceipts: Sendable, Equatable {
         return String(data: data, encoding: .utf8) ?? "[]"
     }
 
-    private static func redactedSourceID(_ sourceID: String) -> String {
-        guard isPublicSourceID(sourceID) else {
-            return "mcp-source:\(sha256Hex(sourceID).prefix(12))"
-        }
-        return sourceID
-    }
-
-    private static func isPublicSourceID(_ sourceID: String) -> Bool {
-        guard sourceID.count <= 96 else {
-            return false
-        }
-        return sourceID.allSatisfy { character in
-            character.isASCII
-                && (character.isLetter || character.isNumber || character == "." || character == "_" || character == "-")
-        }
-    }
-
-    private static func sha256Hex(_ value: String) -> String {
-        SHA256.hash(data: Data(value.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
-    }
 }
 
 private enum MCPPromptContextReceiptValue: Sendable, Equatable {
