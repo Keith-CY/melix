@@ -801,6 +801,12 @@ Models owns asset management:
 Models must not become a runtime cockpit. Running or switching a model belongs
 to Providers and Command Center.
 
+Hugging Face search and import actions in Models are local-provider asset
+workflows. They must expose only local provider targets and must not offer
+remote providers as selectable targets for a Hub import. Remote providers can
+reference their own upstream model IDs through the Providers domain, but they
+do not receive Melix-managed Hugging Face downloads from Models.
+
 Model rows should communicate whether the asset is downloaded, validated,
 worker-compatible, used by a provider, or linked to adapters and receipts.
 

@@ -1703,12 +1703,15 @@ struct DesktopFoundationViewTests {
         #expect(modelsSource.contains("MelixSectionCard(\"Registry Roots\")") == false)
         #expect(modelsTabSource.contains("DesktopRegistryBroadsheetSection(\"Model Registry\")"))
         #expect(modelsTabSource.contains("DesktopRegistryBroadsheetSection(\"Model Settings\")"))
+        #expect(modelsTabSource.contains("Local Provider Target"))
+        #expect(modelsTabSource.contains("modelHubLocalProviderTargets"))
         #expect(registrySource.contains("registryGroup(.readyToRun, title: \"Ready to Run\")"))
         #expect(registrySource.contains("registryGroup(.discoverAndDownload, title: \"Discover & Download\")"))
         #expect(registrySource.contains("DesktopRegistryInspectorPane(\"Model Card\")"))
         #expect(modelsSource.contains("DesktopRegistryBroadsheetSection(\"Registry Roots\")"))
         #expect(registrySource.contains("DesktopRegistryRowBackground"))
         #expect(registrySource.contains("Run Suitability"))
+        #expect(registrySource.contains("Target \\(entry.targetText)"))
     }
 
     @Test("desktop workspace keeps titlebar chrome compact")
@@ -1747,6 +1750,12 @@ struct DesktopFoundationViewTests {
     @MainActor
     func modelsTabRendersHuggingFaceHubIngressState() async throws {
         let client = FakeControlPlaneXPCClient()
+        let localModelID = "melix-local-target"
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarModelSummary(modelID: localModelID, state: .modelWarm)]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
         var searchResult = Melix_Controlplane_V1_HubSearchResult()
         var model = Melix_Controlplane_V1_HubModelSummary()
         model.repoID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
@@ -1781,9 +1790,13 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
         #expect(renderedTexts.contains("qwen3.5"))
         #expect(renderedTexts.contains("main"))
-        #expect(registryView.entries.contains(where: {
-            $0.repoID == model.repoID && $0.runSuitabilityText == "Good"
-        }))
+        #expect(viewModel.modelHubLocalProviderTargets.map(\.modelID) == [localModelID])
+        let hasLocalProviderHubEntry = registryView.entries.contains(where: {
+            $0.repoID == model.repoID
+                && $0.runSuitabilityText == "Good"
+                && $0.targetText == "Local Provider"
+        })
+        #expect(hasLocalProviderHubEntry)
         #expect(viewModel.modelHubSearchResults.count == 1)
     }
 

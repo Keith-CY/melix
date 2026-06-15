@@ -155,7 +155,19 @@ rewrite.
    Receipts intentionally renders an empty evidence state until provider
    capability probe data is available.
 
-5. Domain Polish
+5. Models Hub Boundary
+   - Keep Hugging Face search and download as model-asset workflows.
+   - Expose only local provider targets for Hub imports.
+   - Do not offer remote providers as targets for Melix-managed Hub downloads.
+
+   Status: Models Hub follow-up now renders a Local Provider Target selector
+   for Hugging Face search/import context. The selector is fed only by local
+   provider profiles; remote providers are omitted because they own upstream
+   model references in Providers instead of receiving Melix-managed Hub
+   downloads. Direct model-operation downloads carry local-provider target
+   evidence in their extension payload when a local provider exists.
+
+6. Domain Polish
    - Apply the visual signatures and domain layouts from the product spec.
    - Update screenshot capture coverage for the new shell.
 

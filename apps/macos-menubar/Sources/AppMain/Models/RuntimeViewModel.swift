@@ -602,6 +602,7 @@ public struct RuntimeRegistryEntryState: Identifiable, Equatable, Sendable {
     public let runSuitabilityText: String
     public let sizeText: String
     public let taskText: String
+    public let targetText: String
     public let repoID: String
     public let canInspect: Bool
     public let canDownload: Bool
@@ -616,6 +617,7 @@ public struct RuntimeRegistryEntryState: Identifiable, Equatable, Sendable {
         runSuitabilityText: String,
         sizeText: String,
         taskText: String,
+        targetText: String = "",
         repoID: String = "",
         canInspect: Bool = false,
         canDownload: Bool = false
@@ -629,6 +631,7 @@ public struct RuntimeRegistryEntryState: Identifiable, Equatable, Sendable {
         self.runSuitabilityText = runSuitabilityText
         self.sizeText = sizeText
         self.taskText = taskText
+        self.targetText = targetText
         self.repoID = repoID
         self.canInspect = canInspect
         self.canDownload = canDownload
@@ -1003,6 +1006,28 @@ public struct RuntimeServerTargetState: Identifiable, Equatable, Sendable {
         self.accelerationModeText = accelerationModeText
         self.contextText = contextText
         self.isRunning = isRunning
+    }
+}
+
+public struct RuntimeModelHubLocalProviderTargetState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let detailText: String
+    public let providerID: String
+    public let modelID: String
+
+    public init(
+        id: String,
+        title: String,
+        detailText: String,
+        providerID: String,
+        modelID: String
+    ) {
+        self.id = id
+        self.title = title
+        self.detailText = detailText
+        self.providerID = providerID
+        self.modelID = modelID
     }
 }
 
@@ -2565,6 +2590,7 @@ public final class RuntimeViewModel {
     public private(set) var selectedAgentIntegrationTarget: AgentIntegrationExportTarget = .openAICompatible
     public var selectedRemoteServerID = ""
     public var selectedServerTargetID = ""
+    public private(set) var selectedModelHubLocalProviderTargetID = ""
     public private(set) var isCreatingServerTarget = false
     public var selectedServerCreationKind: RuntimeServerCreationKind = .localServer
     public var newLocalServerTitleDraft = ""
@@ -2847,6 +2873,37 @@ public final class RuntimeViewModel {
             )
         }
         return localTargets + remoteTargets
+    }
+
+    public var modelHubLocalProviderTargets: [RuntimeModelHubLocalProviderTargetState] {
+        serverTargets
+            .filter { $0.kind == .localServer }
+            .map { target in
+                RuntimeModelHubLocalProviderTargetState(
+                    id: target.id,
+                    title: target.title.isEmpty ? "Local Provider" : target.title,
+                    detailText: target.detailText,
+                    providerID: target.serverID,
+                    modelID: target.modelID
+                )
+            }
+    }
+
+    public var selectedModelHubLocalProviderTarget: RuntimeModelHubLocalProviderTargetState? {
+        let targets = modelHubLocalProviderTargets
+        if selectedModelHubLocalProviderTargetID.isEmpty == false,
+           let selected = targets.first(where: { $0.id == selectedModelHubLocalProviderTargetID })
+        {
+            return selected
+        }
+        return targets.first
+    }
+
+    public var modelHubLocalProviderTargetSummaryText: String {
+        guard let target = selectedModelHubLocalProviderTarget else {
+            return "No local provider target"
+        }
+        return "\(target.title) • \(target.detailText)"
     }
 
     public var selectedServerTarget: RuntimeServerTargetState? {
@@ -5702,6 +5759,14 @@ public final class RuntimeViewModel {
 
     public func selectAgentIntegrationTarget(_ target: AgentIntegrationExportTarget) {
         selectedAgentIntegrationTarget = target
+        notifyStateChanged()
+    }
+
+    public func selectModelHubLocalProviderTarget(id: String) {
+        guard modelHubLocalProviderTargets.contains(where: { $0.id == id }) else {
+            return
+        }
+        selectedModelHubLocalProviderTargetID = id
         notifyStateChanged()
     }
 
@@ -8654,7 +8719,13 @@ public final class RuntimeViewModel {
                     "melix.hf_repo_id": normalizedRepoID,
                     "melix.hf_revision": revision,
                     "melix.managed_import": "true",
+                    "melix.provider_target_kind": "local_provider",
                 ]
+                if let target = selectedModelHubLocalProviderTarget {
+                    ext["melix.local_provider_id"] = target.providerID
+                    ext["melix.local_provider_title"] = target.title
+                    ext["melix.local_provider_model_id"] = target.modelID
+                }
                 if effectiveToken.isEmpty == false {
                     ext["melix.hf_token"] = effectiveToken
                 }
@@ -11600,6 +11671,7 @@ public final class RuntimeViewModel {
 
         maybeApplyStoredGatewayAccessForSelectedRunningSession()
         refreshServerTargetSelection()
+        refreshModelHubLocalProviderTargetSelection()
         refreshDiagnosticsServerTargetSelection()
     }
 
@@ -11646,6 +11718,16 @@ public final class RuntimeViewModel {
             return
         }
         selectedServerTargetID = targets.first?.id ?? ""
+    }
+
+    private func refreshModelHubLocalProviderTargetSelection() {
+        let targets = modelHubLocalProviderTargets
+        if selectedModelHubLocalProviderTargetID.isEmpty == false,
+           targets.contains(where: { $0.id == selectedModelHubLocalProviderTargetID })
+        {
+            return
+        }
+        selectedModelHubLocalProviderTargetID = targets.first?.id ?? ""
     }
 
     private func refreshDiagnosticsServerTargetSelection() {
@@ -16329,6 +16411,7 @@ public final class RuntimeViewModel {
                 runSuitabilityText: result.runSuitabilityText,
                 sizeText: result.sizeText,
                 taskText: result.pipelineTag,
+                targetText: "Local Provider",
                 repoID: result.repoID,
                 canInspect: true,
                 canDownload: result.canDownload

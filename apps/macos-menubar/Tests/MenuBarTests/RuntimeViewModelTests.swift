@@ -4286,6 +4286,62 @@ struct RuntimeViewModelTests {
         })
     }
 
+    @Test("model hub local provider target excludes remote providers and records target metadata")
+    @MainActor
+    func modelHubLocalProviderTargetExcludesRemoteProvidersAndRecordsTargetMetadata() async throws {
+        let modelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: modelID, state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: "gemini",
+                    title: "Gemini",
+                    providerPreset: .gemini,
+                    providerKind: "gemini-generative-language",
+                    baseURL: "https://generativelanguage.googleapis.com/v1beta",
+                    defaultModelID: "gemini-2.5-flash",
+                    timeoutSeconds: 120,
+                    rateLimitPerMinute: 0,
+                    credentialRef: RemoteServerStore.credentialRef(for: "gemini"),
+                    apiKeyHint: "AIza...cret",
+                    healthStatus: "healthy"
+                ),
+            ]
+        )
+        let viewModel = RuntimeViewModel(client: client, remoteServerStore: remoteStore)
+        await viewModel.start()
+
+        let localTargets = viewModel.modelHubLocalProviderTargets
+        let hasRemoteTarget = viewModel.serverTargets.contains {
+            $0.kind == .remoteServer && $0.serverID == "gemini"
+        }
+        let includesRemoteHubTarget = localTargets.contains { $0.id == "remote:gemini" }
+        #expect(hasRemoteTarget)
+        #expect(localTargets.map(\.providerID) == ["server-session-1"])
+        #expect(includesRemoteHubTarget == false)
+        #expect(viewModel.selectedModelHubLocalProviderTarget?.providerID == "server-session-1")
+
+        viewModel.selectModelHubLocalProviderTarget(id: "remote:gemini")
+        #expect(viewModel.selectedModelHubLocalProviderTarget?.providerID == "server-session-1")
+
+        await viewModel.downloadHubModel(repoID: modelID)
+
+        let request = try #require(await client.recordedModelOperationRequests.first {
+            $0.operation == "download"
+        })
+        #expect(request.ext["melix.provider_target_kind"] == "local_provider")
+        #expect(request.ext["melix.local_provider_id"] == "server-session-1")
+        #expect(request.ext["melix.local_provider_title"] == "Primary Provider")
+        #expect(request.ext["melix.local_provider_model_id"] == modelID)
+    }
+
     @Test("resume download reuses original output directory and mirror before refreshing queue state")
     @MainActor
     func resumeDownloadReusesOriginalOutputDirectoryAndMirror() async throws {

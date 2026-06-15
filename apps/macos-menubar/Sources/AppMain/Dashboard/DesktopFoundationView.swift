@@ -170,6 +170,37 @@ struct DesktopModelsTabView: View {
                                 .fixedSize(horizontal: true, vertical: false)
                         }
                     }
+
+                    VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                        Text("Local Provider Target")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        if viewModel.modelHubLocalProviderTargets.isEmpty {
+                            Text("Hugging Face imports create local model assets for local providers only.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Picker(
+                                "Local Provider Target",
+                                selection: Binding(
+                                    get: { viewModel.selectedModelHubLocalProviderTarget?.id ?? "" },
+                                    set: { viewModel.selectModelHubLocalProviderTarget(id: $0) }
+                                )
+                            ) {
+                                ForEach(viewModel.modelHubLocalProviderTargets) { target in
+                                    Text(target.title).tag(target.id)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+
+                            Text(viewModel.modelHubLocalProviderTargetSummaryText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -748,6 +779,9 @@ private struct DesktopRegistryEntryRowView: View {
                 HStack(alignment: .center, spacing: MelixDesignTokens.Spacing.xs) {
                     DesktopRegistryMetadataChipView(title: entry.taskText)
                     DesktopRegistryMetadataChipView(title: entry.statusText)
+                    if !entry.targetText.isEmpty {
+                        DesktopRegistryMetadataChipView(title: "Target \(entry.targetText)")
+                    }
                     if !entry.sizeText.isEmpty {
                         DesktopRegistryMetadataChipView(title: entry.sizeText, monospaced: true)
                     }
