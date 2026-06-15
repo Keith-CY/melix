@@ -253,6 +253,9 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
         "agentic_tool_untrusted_context_receipt_count": 2,
     }
     assert training_dataset_module._agentic_tool_observation_receipt_summary(
+        [{"untrusted_context_receipts": [{"source_type": "tool_observation"}]}]
+    ) == {"agentic_tool_untrusted_context_receipt_count": 1}
+    assert training_dataset_module._agentic_tool_observation_receipt_summary(
         [{"untrusted_context_receipts": []}, {}]
     ) == {}
 

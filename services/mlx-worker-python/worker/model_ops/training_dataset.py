@@ -1203,10 +1203,12 @@ def _agentic_tool_observation_receipt_summary(
                 receipt_schema = schema_version
     if receipt_count == 0:
         return {}
-    return {
-        "agentic_tool_untrusted_context_receipt_schema": receipt_schema,
+    summary: dict[str, Any] = {
         "agentic_tool_untrusted_context_receipt_count": receipt_count,
     }
+    if receipt_schema:
+        summary["agentic_tool_untrusted_context_receipt_schema"] = receipt_schema
+    return summary
 
 
 def _copy_optional_agentic_trace_fields(

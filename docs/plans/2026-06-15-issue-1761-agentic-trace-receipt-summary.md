@@ -23,13 +23,14 @@ tool-output boundary evidence exists without parsing full observation payloads.
 ## Plan
 
 1. Add a failing normalization test for a replayed `agentic_tool_trace` sample
-   that expects `agentic_tool_untrusted_context_receipt_schema` and
-   `agentic_tool_untrusted_context_receipt_count`.
+   that expects `agentic_tool_untrusted_context_receipt_schema` when a string
+   schema is present and `agentic_tool_untrusted_context_receipt_count` when
+   mapping-shaped receipts are present.
 2. Implement a small receipt-summary helper in `training_dataset.py` that
    counts mapping-shaped receipts across `AgenticToolRun.observations` and
    records the first string `schema_version`.
-3. Attach the scalar fields to replay evidence only when at least one receipt
-   exists.
+3. Attach the receipt count to replay evidence only when at least one receipt
+   exists, and attach the schema only when a string schema version is present.
 4. Update the unified agentic tool runtime contract to document the normalized
    training-trace summary fields.
 
@@ -43,9 +44,12 @@ tool-output boundary evidence exists without parsing full observation payloads.
 
 - Replayed `agentic_tool_trace` samples expose
   `agentic_tool_untrusted_context_receipt_schema =
-  melix.untrusted_context_receipt.v1`.
+  melix.untrusted_context_receipt.v1` when a counted receipt carries that string
+  schema version.
 - Replayed samples expose the total count of mapping-shaped receipts across all
   replayed tool observations.
+- Replayed samples with counted receipts but no string schema version omit the
+  schema field instead of emitting an empty string.
 - Scalar fields do not copy tool payloads, retrieved text, prompt text, or
   receipt JSON bodies.
 - Existing observation, turn, and training formatter behavior remains
