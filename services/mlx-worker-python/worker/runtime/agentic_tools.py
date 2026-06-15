@@ -8,7 +8,11 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
-from worker.runtime.prompt_context import refused_prompt_context_receipt
+from worker.runtime.prompt_context import (
+    PromptContextSourceEvidence,
+    admit_prompt_context_source_evidence,
+    refused_prompt_context_receipt,
+)
 from worker.runtime.retrieval_context import (
     admit_retrieved_document_context,
     admit_retrieved_image_context,
@@ -801,7 +805,11 @@ def _local_compute_payload(*, arguments: dict[str, Any], tool_call_id: str) -> d
     if code == "timeout":
         return {"text": "local_compute timed out before producing a result.", "_status": "timeout"}
     result = _safe_arithmetic_eval(code)
-    return {"code": code, "result": result}
+    return {
+        "code": code,
+        "result": result,
+        "_untrusted_context_receipts": [_local_compute_result_receipt(tool_call_id=tool_call_id, value=result)],
+    }
 
 
 def _safe_arithmetic_eval(expression: str) -> int | float:
@@ -828,6 +836,21 @@ def _eval_arithmetic_node(node: ast.AST) -> int | float:
         value = _eval_arithmetic_node(node.operand)
         return value if isinstance(node.op, ast.UAdd) else -value
     raise AgenticToolRuntimeError("local_compute only supports deterministic arithmetic expressions.")
+
+
+def _local_compute_result_receipt(*, tool_call_id: str, value: int | float) -> dict[str, object]:
+    admission = admit_prompt_context_source_evidence(
+        [
+            PromptContextSourceEvidence(
+                segment_id=f"{tool_call_id}:compute-result",
+                source_type="tool_output",
+                source_field="result",
+                source_id=tool_call_id,
+                value=value,
+            )
+        ]
+    )
+    return admission.untrusted_context_receipts[0]
 
 
 def _context_mapping(fixture_context: dict[str, Any], key: str) -> dict[str, Any]:

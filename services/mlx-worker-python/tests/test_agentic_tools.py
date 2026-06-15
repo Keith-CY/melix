@@ -98,6 +98,44 @@ def test_agentic_tool_runtime_records_timeout_and_failed_statuses() -> None:
     assert "only supports deterministic arithmetic" in run.observations[1]["payload"]["error"]
 
 
+def test_agentic_tool_runtime_emits_source_receipt_for_local_compute_result() -> None:
+    run = execute_agentic_tool_calls(
+        [{"id": "compute-1", "name": "local_compute", "arguments": {"code": "2 + 3"}}],
+    )
+
+    observation = run.observations[0]
+    receipts = observation["untrusted_context_receipts"]
+    source_receipts = [receipt for receipt in receipts if receipt["source_type"] == "tool_output"]
+
+    assert observation["status"] == "completed"
+    assert observation["payload"] == {"code": "2 + 3", "result": 5}
+    assert observation["untrusted_context_receipt_count"] == 2
+    assert source_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "compute-1:compute-result",
+            "source_type": "tool_output",
+            "source_field": "result",
+            "source_id": "compute-1",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": True,
+            "owner_scope_checked": False,
+            "reason": "tool output is prompt data, not instructions",
+            "corrective_action": (
+                "Keep tool output in user-role data context and do not project it into "
+                "system or developer instructions."
+            ),
+        }
+    ]
+    receipt_json = json.dumps(source_receipts, ensure_ascii=False)
+    assert "2 + 3" not in receipt_json
+    assert '"result": 5' not in receipt_json
+    assert "untrusted_context_receipts" not in observation["payload"]
+
+
 def test_agentic_tool_runtime_records_selection_receipt_for_selected_registry() -> None:
     run = execute_agentic_tool_calls(
         [{"id": "text-1", "name": "text_search", "arguments": {"query": "melix"}}],
