@@ -1172,12 +1172,43 @@ def _agentic_trace_replay_turns(
     turns: list[dict[str, Any]] = [{"role": "user", "content": question}]
     turns.extend(dict(turn) for turn in tool_run.trace_turns)
     turns.append({"role": "assistant", "content": final_answer})
-    return turns, {
+    observations = [dict(observation) for observation in tool_run.observations]
+    replay_evidence = {
         "agentic_tool_registry": tool_run.registry_receipt,
         "agentic_tool_calls": [dict(call) for call in tool_run.tool_calls],
-        "agentic_tool_observations": [dict(observation) for observation in tool_run.observations],
+        "agentic_tool_observations": observations,
         "agentic_tool_metrics": dict(tool_run.metrics),
     }
+    replay_evidence.update(_agentic_tool_observation_receipt_summary(observations))
+    return turns, replay_evidence
+
+
+def _agentic_tool_observation_receipt_summary(
+    observations: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    receipt_schema = ""
+    receipt_count = 0
+    for observation in observations:
+        if not isinstance(observation, Mapping):
+            continue
+        receipts = observation.get("untrusted_context_receipts")
+        if not isinstance(receipts, list):
+            continue
+        for receipt in receipts:
+            if not isinstance(receipt, Mapping):
+                continue
+            receipt_count += 1
+            schema_version = receipt.get("schema_version")
+            if not receipt_schema and isinstance(schema_version, str):
+                receipt_schema = schema_version
+    if receipt_count == 0:
+        return {}
+    summary: dict[str, Any] = {
+        "agentic_tool_untrusted_context_receipt_count": receipt_count,
+    }
+    if receipt_schema:
+        summary["agentic_tool_untrusted_context_receipt_schema"] = receipt_schema
+    return summary
 
 
 def _copy_optional_agentic_trace_fields(

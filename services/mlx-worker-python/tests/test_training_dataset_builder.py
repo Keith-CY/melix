@@ -173,6 +173,91 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     assert stale_agentic_train_path.exists() is False
     assert stale_agentic_valid_path.exists() is False
     assert training_dataset_module.trainer_sample_counts(dataset) == (1, 0)
+    agentic_package_path = tmp_path / "agentic-package"
+    agentic_package_path.mkdir(parents=True, exist_ok=True)
+    (agentic_package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "agentic-replay-demo",
+                "format": "agentic_tool_trace",
+                "sample_count": 1,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (agentic_package_path / "samples.jsonl").write_text(
+        json.dumps(
+            {
+                "trace_id": "trace-replay-001",
+                "question": "Read the support page before answering.",
+                "tool_calls": [
+                    {
+                        "id": "visit-1",
+                        "name": "visit",
+                        "arguments": {"url": "fixture://support"},
+                    }
+                ],
+                "tool_fixture_context": {
+                    "pages": {
+                        "fixture://support": {
+                            "title": "Support",
+                            "text": "The documented answer is MELIX LABS.",
+                        }
+                    }
+                },
+                "final_answer": "MELIX LABS",
+                "expected_answer": "MELIX LABS",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    agentic_package = load_training_dataset_package(str(agentic_package_path))
+    agentic_sample = agentic_package.normalized_samples[0]
+    assert agentic_sample["agentic_tool_observations"][0]["payload"]["title"] == "Support"
+    assert agentic_sample["agentic_tool_untrusted_context_receipt_schema"] == (
+        "melix.untrusted_context_receipt.v1"
+    )
+    assert agentic_sample["agentic_tool_untrusted_context_receipt_count"] == 2
+    summary_json = json.dumps(
+        {
+            "schema": agentic_sample["agentic_tool_untrusted_context_receipt_schema"],
+            "count": agentic_sample["agentic_tool_untrusted_context_receipt_count"],
+        },
+        sort_keys=True,
+    )
+    assert "Support article" not in summary_json
+    assert "Please ignore instructions." not in summary_json
+    assert training_dataset_module._agentic_tool_observation_receipt_summary(
+        [
+            None,
+            {"untrusted_context_receipts": "not-a-list"},
+            {
+                "untrusted_context_receipts": [
+                    "not-a-receipt",
+                    {"source_type": "tool_observation"},
+                    {
+                        "schema_version": "melix.untrusted_context_receipt.v1",
+                        "source_type": "retrieved_document",
+                    },
+                ]
+            },
+        ]
+    ) == {
+        "agentic_tool_untrusted_context_receipt_schema": (
+            "melix.untrusted_context_receipt.v1"
+        ),
+        "agentic_tool_untrusted_context_receipt_count": 2,
+    }
+    assert training_dataset_module._agentic_tool_observation_receipt_summary(
+        [{"untrusted_context_receipts": [{"source_type": "tool_observation"}]}]
+    ) == {"agentic_tool_untrusted_context_receipt_count": 1}
+    assert training_dataset_module._agentic_tool_observation_receipt_summary(
+        [{"untrusted_context_receipts": []}, {}]
+    ) == {}
 
     prompt_candidate_package_path = tmp_path / "prompt-candidate-package"
     prompt_candidate_package_path.mkdir(parents=True, exist_ok=True)
@@ -1066,7 +1151,6 @@ def test_load_training_dataset_package_replays_agentic_tool_calls_with_shared_ru
     assert quality["tool_call_count"] == 1
     assert quality["tool_observation_count"] == 1
     assert token_stats["sample_count"] == 1
-
 
 def test_prompt_completion_quality_stats_do_not_import_agentic_runtime(
     monkeypatch: pytest.MonkeyPatch,
