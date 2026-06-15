@@ -750,11 +750,11 @@ struct DesktopFoundationViewTests {
             DesktopWorkspaceShellView(viewModel: localViewModel),
             size: CGSize(width: 1280, height: 1200)
         )
-        DesktopServerCreationActions.addLocalServer(viewModel: localViewModel)
+        DesktopProviderCreationActions.addLocalProvider(viewModel: localViewModel)
 
         #expect(localView.subviews.isEmpty == false)
-        #expect(localViewModel.isCreatingServerTarget)
-        #expect(localViewModel.selectedServerCreationKind == .localServer)
+        #expect(localViewModel.isCreatingProviderTarget)
+        #expect(localViewModel.selectedProviderCreationKind == .localServer)
         #expect(localViewModel.selectedSurface == .server)
 
         let remoteViewModel = RuntimeViewModel(client: EmptyToolsSnapshotControlPlaneXPCClient())
@@ -765,17 +765,17 @@ struct DesktopFoundationViewTests {
             DesktopWorkspaceShellView(viewModel: remoteViewModel),
             size: CGSize(width: 1280, height: 1200)
         )
-        DesktopServerCreationActions.addRemoteServer(viewModel: remoteViewModel)
+        DesktopProviderCreationActions.addRemoteProvider(viewModel: remoteViewModel)
 
         #expect(remoteView.subviews.isEmpty == false)
-        #expect(remoteViewModel.isCreatingServerTarget)
-        #expect(remoteViewModel.selectedServerCreationKind == .remoteServer)
+        #expect(remoteViewModel.isCreatingProviderTarget)
+        #expect(remoteViewModel.selectedProviderCreationKind == .remoteServer)
         #expect(remoteViewModel.selectedSurface == .server)
     }
 
-    @Test("server creation editor renders local basic fields with ready models")
+    @Test("provider creation editor renders local basic fields with ready models")
     @MainActor
-    func serverCreationEditorRendersLocalBasicFieldsWithReadyModels() async throws {
+    func providerCreationEditorRendersLocalBasicFieldsWithReadyModels() async throws {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
@@ -784,7 +784,7 @@ struct DesktopFoundationViewTests {
 
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
-        viewModel.beginServerCreation(kind: .localServer)
+        viewModel.beginProviderCreation(kind: .localServer)
 
         let view = hostView(
             DesktopWorkspaceShellView(viewModel: viewModel),
@@ -793,8 +793,8 @@ struct DesktopFoundationViewTests {
         let renderedTexts = renderedTextValues(in: view)
 
         #expect(view.subviews.isEmpty == false)
-        #expect(viewModel.isCreatingServerTarget)
-        #expect(viewModel.selectedServerCreationKind == .localServer)
+        #expect(viewModel.isCreatingProviderTarget)
+        #expect(viewModel.selectedProviderCreationKind == .localServer)
         #expect(viewModel.serverModelOptions.isEmpty == false)
         #expect(renderedTexts.contains("Provider 2"))
         #expect(renderedTexts.contains(where: { $0.contains(desktopTestReadyModelID) }))
@@ -1634,7 +1634,7 @@ struct DesktopFoundationViewTests {
         )
         let serverSidebarSource = try #require(
             shellSource.slice(
-                from: "private struct DesktopServerSessionSidebar: View",
+                from: "private struct DesktopProviderWorkspaceSidebar: View",
                 to: "private struct DesktopRemoteServerEditor: View"
             )
         )
@@ -1663,7 +1663,7 @@ struct DesktopFoundationViewTests {
         #expect(shellSource.contains("selectedObject: .init(kind: .provider, objectID: session.id)"))
         #expect(shellSource.contains("LoRA Adapter"))
         #expect(shellSource.contains("Color.accentColor") == false)
-        #expect(shellSource.contains("selectedServerCreationKind"))
+        #expect(shellSource.contains("selectedProviderCreationKind"))
         #expect(shellSource.contains("\"Provider Name\""))
         #expect(shellSource.contains("DesktopProviderSurfaceNavigationRow"))
         #expect(shellSource.contains("case localProviders"))
@@ -1673,7 +1673,7 @@ struct DesktopFoundationViewTests {
         #expect(shellSource.contains("case capabilityReceipts"))
         #expect(shellSource.contains("Button(\"Create Local Provider\")"))
         #expect(shellSource.contains("Button(\"Add Remote Provider\")"))
-        #expect(shellSource.contains("DesktopServerCreationStepperHeader"))
+        #expect(shellSource.contains("DesktopProviderCreationStepperHeader"))
         #expect(shellSource.contains("\"Create Local Provider\""))
         #expect(shellSource.contains("steps: [\"Basic\", \"Advanced\", \"Review\"]"))
         #expect(shellSource.contains("\"Add Remote Provider\""))
@@ -1704,7 +1704,7 @@ struct DesktopFoundationViewTests {
         #expect(modelsTabSource.contains("DesktopRegistryBroadsheetSection(\"Model Registry\")"))
         #expect(modelsTabSource.contains("DesktopRegistryBroadsheetSection(\"Model Settings\")"))
         #expect(modelsTabSource.contains("Local Provider Target"))
-        #expect(modelsTabSource.contains("modelHubLocalProviderTargets"))
+        #expect(modelsTabSource.contains("modelHubProviderTargets"))
         #expect(registrySource.contains("registryGroup(.readyToRun, title: \"Ready to Run\")"))
         #expect(registrySource.contains("registryGroup(.discoverAndDownload, title: \"Discover & Download\")"))
         #expect(registrySource.contains("DesktopRegistryInspectorPane(\"Model Card\")"))
@@ -1790,7 +1790,7 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
         #expect(renderedTexts.contains("qwen3.5"))
         #expect(renderedTexts.contains("main"))
-        #expect(viewModel.modelHubLocalProviderTargets.map(\.modelID) == [localModelID])
+        #expect(viewModel.modelHubProviderTargets.map(\.modelID) == [localModelID])
         let hasLocalProviderHubEntry = registryView.entries.contains(where: {
             $0.repoID == model.repoID
                 && $0.runSuitabilityText == "Good"
@@ -7712,7 +7712,7 @@ struct DesktopFoundationViewTests {
             isReady: true
         )
 
-        let chooseStrip = DesktopChatRuntimeControlStrip(
+        let chooseStrip = DesktopChatProviderControlStrip(
             serverSession: nil,
             capabilities: [],
             onOpenServer: { openedServerCount += 1 },
@@ -7729,7 +7729,7 @@ struct DesktopFoundationViewTests {
         var stoppedSession = baseSession
         stoppedSession.lifecycle = .stopped
         stoppedSession.powerState = .stopped
-        let stoppedStrip = DesktopChatRuntimeControlStrip(
+        let stoppedStrip = DesktopChatProviderControlStrip(
             serverSession: stoppedSession,
             capabilities: [capability],
             onOpenServer: { openedServerCount += 1 },
@@ -7745,7 +7745,7 @@ struct DesktopFoundationViewTests {
 
         var pausedSession = baseSession
         pausedSession.lifecycle = .paused
-        let pausedStrip = DesktopChatRuntimeControlStrip(
+        let pausedStrip = DesktopChatProviderControlStrip(
             serverSession: pausedSession,
             capabilities: [capability],
             onOpenServer: { openedServerCount += 1 },
@@ -7761,7 +7761,7 @@ struct DesktopFoundationViewTests {
         var sleepingSession = baseSession
         sleepingSession.lifecycle = .sleeping
         sleepingSession.powerState = .deepSleep
-        let sleepingStrip = DesktopChatRuntimeControlStrip(
+        let sleepingStrip = DesktopChatProviderControlStrip(
             serverSession: sleepingSession,
             capabilities: [capability],
             onOpenServer: { openedServerCount += 1 },
@@ -7778,7 +7778,7 @@ struct DesktopFoundationViewTests {
         var errorSession = baseSession
         errorSession.lifecycle = .error
         errorSession.lastError = "worker failed"
-        let errorStrip = DesktopChatRuntimeControlStrip(
+        let errorStrip = DesktopChatProviderControlStrip(
             serverSession: errorSession,
             capabilities: [capability],
             onOpenServer: { openedServerCount += 1 },
@@ -7792,7 +7792,7 @@ struct DesktopFoundationViewTests {
             errorStrip.perform(action)
         }
 
-        let runningStrip = DesktopChatRuntimeControlStrip(
+        let runningStrip = DesktopChatProviderControlStrip(
             serverSession: baseSession,
             capabilities: [capability],
             onOpenServer: { openedServerCount += 1 },
@@ -8110,8 +8110,8 @@ struct DesktopFoundationViewTests {
         #expect(startingSignal.statusColor == MelixDesignTokens.StatusColor.warning)
         #expect(capabilitySignal.readyCount == 1)
         #expect(capabilitySignal.statusColor == MelixDesignTokens.StatusColor.warning)
-        #expect(DesktopChatRuntimeSignalMetrics.providerSignalWidth <= 72)
-        #expect(DesktopChatRuntimeSignalMetrics.capabilitySignalWidth <= 68)
+        #expect(DesktopChatProviderSignalMetrics.providerSignalWidth <= 72)
+        #expect(DesktopChatProviderSignalMetrics.capabilitySignalWidth <= 68)
     }
 
     @Test("chat transcript auto-scroll snapshot tracks trailing content growth")
@@ -9090,9 +9090,9 @@ struct DesktopFoundationViewTests {
         #expect(source.contains("MelixSectionCard(\"Analysis Routes\")") == false)
     }
 
-    @Test("chat composer owns runtime control strip inside the input surface")
+    @Test("chat composer owns compact provider status strip inside the input surface")
     @MainActor
-    func chatComposerOwnsRuntimeControlStripInsideTheInputSurface() throws {
+    func chatComposerOwnsCompactProviderStatusStripInsideTheInputSurface() throws {
         let source = try String(
             contentsOf: repositoryRootForDesktopFoundationTests()
                 .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
@@ -9100,17 +9100,18 @@ struct DesktopFoundationViewTests {
         )
 
         #expect(source.contains("DesktopChatComposerSurface"))
-        #expect(source.contains("DesktopChatRuntimeControlStrip"))
+        #expect(source.contains("DesktopChatProviderControlStrip"))
         #expect(source.contains("DesktopChatProviderStatusSignal"))
         #expect(source.contains("DesktopChatCapabilityStatusSignal"))
-        #expect(source.contains("DesktopChatRuntimeSignalMetrics.providerSignalWidth"))
-        #expect(source.contains("DesktopChatRuntimeSignalMetrics.capabilitySignalWidth"))
+        #expect(source.contains("DesktopChatProviderSignalMetrics.providerSignalWidth"))
+        #expect(source.contains("DesktopChatProviderSignalMetrics.capabilitySignalWidth"))
         #expect(source.contains("DesktopChatComposerRepairPanel"))
         #expect(source.contains("selectedChatModelNeedsAttachment"))
         #expect(source.contains("Button(\"Send Anyway\", action: primaryAction)"))
         #expect(source.contains(".accessibilityLabel(\"Open Providers\")"))
         #expect(source.contains("primaryActionTitle: \"Attach Model\""))
         #expect(source.contains("primaryActionTitle: \"Run Capabilities Test\""))
+        #expect(source.contains("DesktopChatRuntimeControlStrip") == false)
         #expect(source.contains("DesktopChatRuntimeServerCapsule") == false)
         #expect(source.contains("DesktopChatInlineCapabilityCluster") == false)
         #expect(source.contains("Label(\"Send\", systemImage: \"paperplane.fill\")"))

@@ -886,7 +886,7 @@ public struct RuntimeDoctorReportState: Equatable, Sendable {
     }
 }
 
-public enum RuntimeDiagnosticsServerTargetKind: String, Identifiable, Sendable {
+public enum RuntimeDiagnosticsProviderTargetKind: String, Identifiable, Sendable {
     case localServer = "local_server"
     case remoteServer = "remote_server"
     case startNewServer = "start_new_server"
@@ -896,9 +896,9 @@ public enum RuntimeDiagnosticsServerTargetKind: String, Identifiable, Sendable {
     }
 }
 
-public struct RuntimeDiagnosticsServerTargetState: Identifiable, Equatable, Sendable {
+public struct RuntimeDiagnosticsProviderTargetState: Identifiable, Equatable, Sendable {
     public let id: String
-    public let kind: RuntimeDiagnosticsServerTargetKind
+    public let kind: RuntimeDiagnosticsProviderTargetKind
     public let title: String
     public let detailText: String
     public let profileSummaryText: String
@@ -907,7 +907,7 @@ public struct RuntimeDiagnosticsServerTargetState: Identifiable, Equatable, Send
 
     public init(
         id: String,
-        kind: RuntimeDiagnosticsServerTargetKind,
+        kind: RuntimeDiagnosticsProviderTargetKind,
         title: String,
         detailText: String,
         profileSummaryText: String = "",
@@ -924,7 +924,7 @@ public struct RuntimeDiagnosticsServerTargetState: Identifiable, Equatable, Send
     }
 }
 
-public enum RuntimeServerTargetKind: String, Identifiable, Sendable {
+public enum RuntimeProviderTargetKind: String, Identifiable, Sendable {
     case localServer = "local_server"
     case remoteServer = "remote_server"
 
@@ -942,7 +942,7 @@ public enum RuntimeServerTargetKind: String, Identifiable, Sendable {
     }
 }
 
-public enum RuntimeServerCreationKind: String, CaseIterable, Identifiable, Sendable {
+public enum RuntimeProviderCreationKind: String, CaseIterable, Identifiable, Sendable {
     case localServer = "local_server"
     case remoteServer = "remote_server"
 
@@ -960,9 +960,9 @@ public enum RuntimeServerCreationKind: String, CaseIterable, Identifiable, Senda
     }
 }
 
-public struct RuntimeServerTargetState: Identifiable, Equatable, Sendable {
+public struct RuntimeProviderTargetState: Identifiable, Equatable, Sendable {
     public let id: String
-    public let kind: RuntimeServerTargetKind
+    public let kind: RuntimeProviderTargetKind
     public let title: String
     public let detailText: String
     public let badgeText: String
@@ -978,7 +978,7 @@ public struct RuntimeServerTargetState: Identifiable, Equatable, Sendable {
 
     public init(
         id: String,
-        kind: RuntimeServerTargetKind,
+        kind: RuntimeProviderTargetKind,
         title: String,
         detailText: String,
         badgeText: String,
@@ -1009,7 +1009,7 @@ public struct RuntimeServerTargetState: Identifiable, Equatable, Sendable {
     }
 }
 
-public struct RuntimeModelHubLocalProviderTargetState: Identifiable, Equatable, Sendable {
+public struct RuntimeModelHubProviderTargetState: Identifiable, Equatable, Sendable {
     public let id: String
     public let title: String
     public let detailText: String
@@ -2589,10 +2589,10 @@ public final class RuntimeViewModel {
     }
     public private(set) var selectedAgentIntegrationTarget: AgentIntegrationExportTarget = .openAICompatible
     public var selectedRemoteServerID = ""
-    public var selectedServerTargetID = ""
-    public private(set) var selectedModelHubLocalProviderTargetID = ""
-    public private(set) var isCreatingServerTarget = false
-    public var selectedServerCreationKind: RuntimeServerCreationKind = .localServer
+    public var selectedProviderTargetID = ""
+    public private(set) var selectedModelHubProviderTargetID = ""
+    public private(set) var isCreatingProviderTarget = false
+    public var selectedProviderCreationKind: RuntimeProviderCreationKind = .localServer
     public var newLocalServerTitleDraft = ""
     public var newLocalServerModelID = ""
     public var newLocalServerHostDraft = MelixGatewayDefaults.host
@@ -2654,7 +2654,7 @@ public final class RuntimeViewModel {
     public var selectedBenchmarkModelID = "melix-dev-text"
     public var selectedBenchmarkPresentationMode: RuntimeBenchmarkPresentationMode = .standard
     public var preferredDiagnosticsStage: RuntimeDiagnosticsStagePreference?
-    public var selectedDiagnosticsServerTargetID = ""
+    public var selectedDiagnosticsProviderTargetID = ""
     public var selectedBenchmarkSuiteIDs: Set<String> = ["smoke"]
     public var benchmarkPreflightFitCheck = false
     public var benchmarkAllowMemoryRisk = false
@@ -2813,21 +2813,21 @@ public final class RuntimeViewModel {
             && remoteServerDefaultModelIDDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
-    public var serverTargets: [RuntimeServerTargetState] {
+    public var providerTargets: [RuntimeProviderTargetState] {
         let localTargets = serverSessions.filter { session in
             Self.isHiddenPlaceholderModelID(session.modelID) == false
         }.map { session in
-            let modelName = serverTargetModelName(for: session.modelID)
+            let modelName = providerTargetModelName(for: session.modelID)
             let endpoint = session.effectiveListenerLabel
-            let loraActive = serverTargetLoRAStatusText(for: session.modelID)
+            let loraActive = providerTargetLoRAStatusText(for: session.modelID)
             let accelerationMode = runtimeAccelerationModeDisplayText(from: session.servingDefaults.effectiveAccelerationMode)
             let context = "Context \(session.servingDefaults.effectiveMaxTokens)"
-            return RuntimeServerTargetState(
-                id: Self.serverTargetID(kind: .localServer, serverID: session.id),
+            return RuntimeProviderTargetState(
+                id: Self.providerTargetID(kind: .localServer, serverID: session.id),
                 kind: .localServer,
                 title: session.title.trimmingCharacters(in: .whitespacesAndNewlines),
                 detailText: "\(modelName) • \(endpoint)",
-                badgeText: RuntimeServerTargetKind.localServer.badgeText,
+                badgeText: RuntimeProviderTargetKind.localServer.badgeText,
                 modelID: session.modelID,
                 modelName: modelName,
                 endpointText: endpoint,
@@ -2845,18 +2845,18 @@ public final class RuntimeViewModel {
             )
         }
         let remoteTargets = remoteServers.map { server in
-            let modelName = serverTargetModelName(for: server.defaultModelID)
+            let modelName = providerTargetModelName(for: server.defaultModelID)
             let endpoint = server.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
             let healthStatus = server.healthStatus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "Unknown"
                 : server.healthStatus.trimmingCharacters(in: .whitespacesAndNewlines)
             let provider = server.providerKind.trimmingCharacters(in: .whitespacesAndNewlines)
-            return RuntimeServerTargetState(
-                id: Self.serverTargetID(kind: .remoteServer, serverID: server.id),
+            return RuntimeProviderTargetState(
+                id: Self.providerTargetID(kind: .remoteServer, serverID: server.id),
                 kind: .remoteServer,
                 title: server.title.trimmingCharacters(in: .whitespacesAndNewlines),
                 detailText: "\(modelName) • \(endpoint)",
-                badgeText: RuntimeServerTargetKind.remoteServer.badgeText,
+                badgeText: RuntimeProviderTargetKind.remoteServer.badgeText,
                 modelID: server.defaultModelID,
                 modelName: modelName,
                 endpointText: endpoint,
@@ -2875,11 +2875,11 @@ public final class RuntimeViewModel {
         return localTargets + remoteTargets
     }
 
-    public var modelHubLocalProviderTargets: [RuntimeModelHubLocalProviderTargetState] {
-        serverTargets
+    public var modelHubProviderTargets: [RuntimeModelHubProviderTargetState] {
+        providerTargets
             .filter { $0.kind == .localServer }
             .map { target in
-                RuntimeModelHubLocalProviderTargetState(
+                RuntimeModelHubProviderTargetState(
                     id: target.id,
                     title: target.title.isEmpty ? "Local Provider" : target.title,
                     detailText: target.detailText,
@@ -2889,27 +2889,27 @@ public final class RuntimeViewModel {
             }
     }
 
-    public var selectedModelHubLocalProviderTarget: RuntimeModelHubLocalProviderTargetState? {
-        let targets = modelHubLocalProviderTargets
-        if selectedModelHubLocalProviderTargetID.isEmpty == false,
-           let selected = targets.first(where: { $0.id == selectedModelHubLocalProviderTargetID })
+    public var selectedModelHubProviderTarget: RuntimeModelHubProviderTargetState? {
+        let targets = modelHubProviderTargets
+        if selectedModelHubProviderTargetID.isEmpty == false,
+           let selected = targets.first(where: { $0.id == selectedModelHubProviderTargetID })
         {
             return selected
         }
         return targets.first
     }
 
-    public var modelHubLocalProviderTargetSummaryText: String {
-        guard let target = selectedModelHubLocalProviderTarget else {
+    public var modelHubProviderTargetSummaryText: String {
+        guard let target = selectedModelHubProviderTarget else {
             return "No local provider target"
         }
         return "\(target.title) • \(target.detailText)"
     }
 
-    public var selectedServerTarget: RuntimeServerTargetState? {
-        let targets = serverTargets
-        if selectedServerTargetID.isEmpty == false,
-           let selected = targets.first(where: { $0.id == selectedServerTargetID })
+    public var selectedProviderTarget: RuntimeProviderTargetState? {
+        let targets = providerTargets
+        if selectedProviderTargetID.isEmpty == false,
+           let selected = targets.first(where: { $0.id == selectedProviderTargetID })
         {
             return selected
         }
@@ -2964,8 +2964,8 @@ public final class RuntimeViewModel {
         return merged
     }
 
-    public var diagnosticsServerTargets: [RuntimeDiagnosticsServerTargetState] {
-        let localTargets = serverTargets.compactMap { target -> RuntimeDiagnosticsServerTargetState? in
+    public var diagnosticsProviderTargets: [RuntimeDiagnosticsProviderTargetState] {
+        let localTargets = providerTargets.compactMap { target -> RuntimeDiagnosticsProviderTargetState? in
             guard target.kind == .localServer, target.isRunning else {
                 return nil
             }
@@ -2975,8 +2975,8 @@ public final class RuntimeViewModel {
             let detailText = [target.detailText, target.statusText, profileSummaryText]
                 .filter { $0.isEmpty == false }
                 .joined(separator: " • ")
-            return RuntimeDiagnosticsServerTargetState(
-                id: Self.diagnosticsLocalServerTargetID(serverID: target.serverID),
+            return RuntimeDiagnosticsProviderTargetState(
+                id: Self.diagnosticsLocalProviderTargetID(serverID: target.serverID),
                 kind: .localServer,
                 title: target.title,
                 detailText: detailText,
@@ -2985,12 +2985,12 @@ public final class RuntimeViewModel {
                 serverID: target.serverID
             )
         }
-        let remoteTargets = serverTargets.compactMap { target -> RuntimeDiagnosticsServerTargetState? in
+        let remoteTargets = providerTargets.compactMap { target -> RuntimeDiagnosticsProviderTargetState? in
             guard target.kind == .remoteServer else {
                 return nil
             }
-            return RuntimeDiagnosticsServerTargetState(
-                id: Self.diagnosticsRemoteServerTargetID(serverID: target.serverID),
+            return RuntimeDiagnosticsProviderTargetState(
+                id: Self.diagnosticsRemoteProviderTargetID(serverID: target.serverID),
                 kind: .remoteServer,
                 title: target.title,
                 detailText: target.detailText,
@@ -2999,8 +2999,8 @@ public final class RuntimeViewModel {
             )
         }
         return localTargets + remoteTargets + [
-            RuntimeDiagnosticsServerTargetState(
-                id: Self.startNewDiagnosticsServerTargetID,
+            RuntimeDiagnosticsProviderTargetState(
+                id: Self.startNewDiagnosticsProviderTargetID,
                 kind: .startNewServer,
                 title: "Start New Provider...",
                 detailText: "Open Provider configuration",
@@ -3010,10 +3010,10 @@ public final class RuntimeViewModel {
         ]
     }
 
-    public var selectedDiagnosticsServerTarget: RuntimeDiagnosticsServerTargetState? {
-        let targets = diagnosticsServerTargets
-        if selectedDiagnosticsServerTargetID.isEmpty == false,
-           let selected = targets.first(where: { $0.id == selectedDiagnosticsServerTargetID })
+    public var selectedDiagnosticsProviderTarget: RuntimeDiagnosticsProviderTargetState? {
+        let targets = diagnosticsProviderTargets
+        if selectedDiagnosticsProviderTargetID.isEmpty == false,
+           let selected = targets.first(where: { $0.id == selectedDiagnosticsProviderTargetID })
         {
             return selected
         }
@@ -3029,13 +3029,13 @@ public final class RuntimeViewModel {
     }
 
     private static func diagnosticsProfileSummarySuffix(
-        for target: RuntimeDiagnosticsServerTargetState
+        for target: RuntimeDiagnosticsProviderTargetState
     ) -> String {
         target.profileSummaryText.isEmpty ? "" : " • \(target.profileSummaryText)"
     }
 
     public var diagnosticsTargetSummaryText: String {
-        guard let target = selectedDiagnosticsServerTarget else {
+        guard let target = selectedDiagnosticsProviderTarget else {
             return "Select a running provider for Diagnostics."
         }
         switch target.kind {
@@ -3049,7 +3049,7 @@ public final class RuntimeViewModel {
     }
 
     public var diagnosticsBenchmarkUnavailableText: String? {
-        guard let target = selectedDiagnosticsServerTarget else {
+        guard let target = selectedDiagnosticsProviderTarget else {
             return "Select a local running provider before running Benchmark."
         }
         switch target.kind {
@@ -3085,7 +3085,7 @@ public final class RuntimeViewModel {
     }
 
     public var diagnosticsEvaluationUnavailableText: String? {
-        guard let target = selectedDiagnosticsServerTarget else {
+        guard let target = selectedDiagnosticsProviderTarget else {
             return "Select a running provider before running Evaluation."
         }
         switch target.kind {
@@ -3222,7 +3222,7 @@ public final class RuntimeViewModel {
     private var chatPresentationMaxLagMs = 0.0
     private var chatPresentationFlushCount = 0.0
     private var persistedServerSessions: [DesktopServerSessionState] = []
-    private var diagnosticsServerTargetSelectionUserOverridden = false
+    private var diagnosticsProviderTargetSelectionUserOverridden = false
     private var dismissedBannerIDs: Set<String> = []
     private var modelSettingsDraftModelID = ""
     private var operatorStateRestored = false
@@ -3245,7 +3245,7 @@ public final class RuntimeViewModel {
     private var gatewayApplyTask: Task<Void, Never>?
     private var benchmarkExportBundle: ControlPlaneBenchmarkExportBundle?
 
-    private static let startNewDiagnosticsServerTargetID = "start-new-server"
+    private static let startNewDiagnosticsProviderTargetID = "start-new-server"
     private static let remoteBenchmarkUnsupportedMessage = "Remote Provider benchmark is not supported yet; select a local running provider."
     private static let remoteEvaluationUnsupportedMessage = "Remote Provider evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running provider."
     private static let hiddenPlaceholderModelIDs: Set<String> = [
@@ -3253,7 +3253,7 @@ public final class RuntimeViewModel {
         "melix-dev-vlm",
     ]
 
-    private static func serverTargetID(kind: RuntimeServerTargetKind, serverID: String) -> String {
+    private static func providerTargetID(kind: RuntimeProviderTargetKind, serverID: String) -> String {
         "\(kind == .localServer ? "local" : "remote"):\(serverID)"
     }
 
@@ -3265,11 +3265,11 @@ public final class RuntimeViewModel {
         return trimmedModelID.split(separator: "/").last.map(String.init) ?? trimmedModelID
     }
 
-    private static func diagnosticsLocalServerTargetID(serverID: String) -> String {
+    private static func diagnosticsLocalProviderTargetID(serverID: String) -> String {
         "local:\(serverID)"
     }
 
-    private static func diagnosticsRemoteServerTargetID(serverID: String) -> String {
+    private static func diagnosticsRemoteProviderTargetID(serverID: String) -> String {
         "remote:\(serverID)"
     }
 
@@ -3654,8 +3654,8 @@ public final class RuntimeViewModel {
                 selectedEvaluationRemoteServerID = servers.first?.id ?? ""
                 evaluationRemoteModelID = ""
             }
-            refreshServerTargetSelection()
-            refreshDiagnosticsServerTargetSelection()
+            refreshProviderTargetSelection()
+            refreshDiagnosticsProviderTargetSelection()
         } catch {
             remoteServerPersistFailures += 1
             recordLocalError("Remote Provider load failed: \(error)")
@@ -3740,8 +3740,8 @@ public final class RuntimeViewModel {
         if let server = remoteServers.first(where: { $0.id == id }) {
             applyRemoteServerDraft(from: server)
         }
-        selectedServerTargetID = Self.serverTargetID(kind: .remoteServer, serverID: id)
-        isCreatingServerTarget = false
+        selectedProviderTargetID = Self.providerTargetID(kind: .remoteServer, serverID: id)
+        isCreatingProviderTarget = false
         selectedSurface = .server
         notifyStateChanged()
     }
@@ -3790,10 +3790,10 @@ public final class RuntimeViewModel {
             selectedRemoteServerID = saved.id
             remoteServers = try remoteServerStore.list()
             applyRemoteServerDraft(from: saved)
-            selectedServerTargetID = Self.serverTargetID(kind: .remoteServer, serverID: saved.id)
-            isCreatingServerTarget = false
-            refreshServerTargetSelection()
-            refreshDiagnosticsServerTargetSelection()
+            selectedProviderTargetID = Self.providerTargetID(kind: .remoteServer, serverID: saved.id)
+            isCreatingProviderTarget = false
+            refreshProviderTargetSelection()
+            refreshDiagnosticsProviderTargetSelection()
             notifyStateChanged()
         } catch {
             remoteServerPersistFailures += 1
@@ -3822,8 +3822,8 @@ public final class RuntimeViewModel {
             } else {
                 prepareNewRemoteServerDraft()
             }
-            refreshServerTargetSelection()
-            refreshDiagnosticsServerTargetSelection()
+            refreshProviderTargetSelection()
+            refreshDiagnosticsProviderTargetSelection()
             notifyStateChanged()
         } catch {
             remoteServerPersistFailures += 1
@@ -5698,10 +5698,10 @@ public final class RuntimeViewModel {
         openCommandCenterAction?()
     }
 
-    public func beginServerCreation(kind: RuntimeServerCreationKind = .localServer) {
-        selectedServerCreationKind = kind
-        isCreatingServerTarget = true
-        selectedServerTargetID = ""
+    public func beginProviderCreation(kind: RuntimeProviderCreationKind = .localServer) {
+        selectedProviderCreationKind = kind
+        isCreatingProviderTarget = true
+        selectedProviderTargetID = ""
         selectedSurface = .server
         switch kind {
         case .localServer:
@@ -5714,8 +5714,8 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
-    public func selectServerCreationKind(_ kind: RuntimeServerCreationKind) {
-        selectedServerCreationKind = kind
+    public func selectProviderCreationKind(_ kind: RuntimeProviderCreationKind) {
+        selectedProviderCreationKind = kind
         switch kind {
         case .localServer:
             resetLocalServerDraft()
@@ -5727,30 +5727,30 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
-    public func cancelServerCreation() {
-        isCreatingServerTarget = false
-        refreshServerTargetSelection()
+    public func cancelProviderCreation() {
+        isCreatingProviderTarget = false
+        refreshProviderTargetSelection()
         notifyStateChanged()
     }
 
-    public func selectDiagnosticsServerTarget(id: String) {
-        guard let target = diagnosticsServerTargets.first(where: { $0.id == id }) else {
+    public func selectDiagnosticsProviderTarget(id: String) {
+        guard let target = diagnosticsProviderTargets.first(where: { $0.id == id }) else {
             return
         }
         if target.kind == .startNewServer {
-            beginServerCreation(kind: .localServer)
+            beginProviderCreation(kind: .localServer)
             return
         }
-        selectedDiagnosticsServerTargetID = target.id
-        diagnosticsServerTargetSelectionUserOverridden = true
+        selectedDiagnosticsProviderTargetID = target.id
+        diagnosticsProviderTargetSelectionUserOverridden = true
         switch target.kind {
         case .localServer:
             selectedServerSessionID = target.serverID
-            selectedServerTargetID = Self.serverTargetID(kind: .localServer, serverID: target.serverID)
+            selectedProviderTargetID = Self.providerTargetID(kind: .localServer, serverID: target.serverID)
         case .remoteServer:
             selectedEvaluationRemoteServerID = target.serverID
             evaluationRemoteModelID = ""
-            selectedServerTargetID = Self.serverTargetID(kind: .remoteServer, serverID: target.serverID)
+            selectedProviderTargetID = Self.providerTargetID(kind: .remoteServer, serverID: target.serverID)
         case .startNewServer:
             break
         }
@@ -5762,18 +5762,18 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
-    public func selectModelHubLocalProviderTarget(id: String) {
-        guard modelHubLocalProviderTargets.contains(where: { $0.id == id }) else {
+    public func selectModelHubProviderTarget(id: String) {
+        guard modelHubProviderTargets.contains(where: { $0.id == id }) else {
             return
         }
-        selectedModelHubLocalProviderTargetID = id
+        selectedModelHubProviderTargetID = id
         notifyStateChanged()
     }
 
     public func createLocalServerFromDraft() {
         guard newLocalServerTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
             selectedSurface = .server
-            isCreatingServerTarget = true
+            isCreatingProviderTarget = true
             recordLocalError("Local Provider requires a session name.")
             notifyStateChanged()
             return
@@ -5790,7 +5790,7 @@ public final class RuntimeViewModel {
         let draftTitle = newLocalServerTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         createLocalServerFromDraft()
         guard commandWorkflowRunner == nil,
-              isCreatingServerTarget == false,
+              isCreatingProviderTarget == false,
               let createdSession = selectedServerSession,
               draftTitle.isEmpty || createdSession.title == draftTitle
         else {
@@ -5841,7 +5841,7 @@ public final class RuntimeViewModel {
                     syncServerSessionsWithModels()
                     refreshAgentIntegrationExports()
                     selectedSurface = .server
-                    isCreatingServerTarget = false
+                    isCreatingProviderTarget = false
                     if chatSessions.isEmpty {
                         createChatSession()
                     }
@@ -5863,8 +5863,8 @@ public final class RuntimeViewModel {
         )
         persistedServerSessions.append(session)
         selectedServerSessionID = session.id
-        selectedServerTargetID = Self.serverTargetID(kind: .localServer, serverID: session.id)
-        isCreatingServerTarget = false
+        selectedProviderTargetID = Self.providerTargetID(kind: .localServer, serverID: session.id)
+        isCreatingProviderTarget = false
         syncServerSessionsWithModels()
         refreshAgentIntegrationExports()
         selectedSurface = .server
@@ -5874,12 +5874,12 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
-    public func selectServerTarget(id: String) {
-        guard let target = serverTargets.first(where: { $0.id == id }) else {
+    public func selectProviderTarget(id: String) {
+        guard let target = providerTargets.first(where: { $0.id == id }) else {
             return
         }
-        selectedServerTargetID = target.id
-        isCreatingServerTarget = false
+        selectedProviderTargetID = target.id
+        isCreatingProviderTarget = false
         switch target.kind {
         case .localServer:
             selectServerSession(id: target.serverID)
@@ -5892,8 +5892,8 @@ public final class RuntimeViewModel {
         guard serverSessions.contains(where: { $0.id == id }) else {
             return
         }
-        selectedServerTargetID = Self.serverTargetID(kind: .localServer, serverID: id)
-        isCreatingServerTarget = false
+        selectedProviderTargetID = Self.providerTargetID(kind: .localServer, serverID: id)
+        isCreatingProviderTarget = false
         if let commandWorkflowRunner {
             Task {
                 do {
@@ -7160,7 +7160,7 @@ public final class RuntimeViewModel {
     }
 
     public var evaluationCompareTargetModels: [RuntimeModelRow] {
-        let baseModelID = selectedDiagnosticsServerTarget?.kind == .localServer ? resolvedEvaluationModelID() : ""
+        let baseModelID = selectedDiagnosticsProviderTarget?.kind == .localServer ? resolvedEvaluationModelID() : ""
         return evaluationModels.filter { model in
             baseModelID.isEmpty || model.modelID != baseModelID
         }
@@ -7179,7 +7179,7 @@ public final class RuntimeViewModel {
     }
 
     public var benchmarkTargetSummaryText: String {
-        guard let target = selectedDiagnosticsServerTarget else {
+        guard let target = selectedDiagnosticsProviderTarget else {
             return "Select a local running provider for Benchmark."
         }
         switch target.kind {
@@ -7230,7 +7230,7 @@ public final class RuntimeViewModel {
     }
 
     public var evaluationTargetSummaryText: String {
-        guard let target = selectedDiagnosticsServerTarget else {
+        guard let target = selectedDiagnosticsProviderTarget else {
             return "Select a running provider for Evaluation."
         }
         switch target.kind {
@@ -8721,7 +8721,7 @@ public final class RuntimeViewModel {
                     "melix.managed_import": "true",
                     "melix.provider_target_kind": "local_provider",
                 ]
-                if let target = selectedModelHubLocalProviderTarget {
+                if let target = selectedModelHubProviderTarget {
                     ext["melix.local_provider_id"] = target.providerID
                     ext["melix.local_provider_title"] = target.title
                     ext["melix.local_provider_model_id"] = target.modelID
@@ -10627,7 +10627,7 @@ public final class RuntimeViewModel {
             notifyStateChanged()
             return
         }
-        let usesRemoteTarget = selectedDiagnosticsServerTarget?.kind == .remoteServer
+        let usesRemoteTarget = selectedDiagnosticsProviderTarget?.kind == .remoteServer
         let modelID = resolvedEvaluationModelID()
         let remoteServerID = resolvedEvaluationRemoteServerID()
         let remoteModelID = resolvedEvaluationRemoteModelID()
@@ -11229,7 +11229,7 @@ public final class RuntimeViewModel {
                 refreshFoundationAfterSuccess: rescan
             )
             self.isRefreshingServerModelOptions = false
-            if self.selectedServerCreationKind == .localServer {
+            if self.selectedProviderCreationKind == .localServer {
                 self.resetLocalServerDraft()
             }
             self.notifyStateChanged()
@@ -11670,13 +11670,13 @@ public final class RuntimeViewModel {
         }
 
         maybeApplyStoredGatewayAccessForSelectedRunningSession()
-        refreshServerTargetSelection()
-        refreshModelHubLocalProviderTargetSelection()
-        refreshDiagnosticsServerTargetSelection()
+        refreshProviderTargetSelection()
+        refreshModelHubProviderTargetSelection()
+        refreshDiagnosticsProviderTargetSelection()
     }
 
     private func resetLocalServerDraft() {
-        let nextIndex = serverTargets.filter { $0.kind == .localServer }.count + 1
+        let nextIndex = providerTargets.filter { $0.kind == .localServer }.count + 1
         if newLocalServerTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             newLocalServerTitleDraft = nextIndex == 1 ? "Primary Provider" : "Provider \(nextIndex)"
         }
@@ -11698,53 +11698,53 @@ public final class RuntimeViewModel {
         MelixGatewayDefaults.port + max(0, sessionOffset)
     }
 
-    private func refreshServerTargetSelection() {
-        let targets = serverTargets
-        if selectedServerTargetID.isEmpty == false,
-           targets.contains(where: { $0.id == selectedServerTargetID })
+    private func refreshProviderTargetSelection() {
+        let targets = providerTargets
+        if selectedProviderTargetID.isEmpty == false,
+           targets.contains(where: { $0.id == selectedProviderTargetID })
         {
             return
         }
         if selectedServerSessionID.isEmpty == false,
            let localTarget = targets.first(where: { $0.kind == .localServer && $0.serverID == selectedServerSessionID })
         {
-            selectedServerTargetID = localTarget.id
+            selectedProviderTargetID = localTarget.id
             return
         }
         if selectedRemoteServerID.isEmpty == false,
            let remoteTarget = targets.first(where: { $0.kind == .remoteServer && $0.serverID == selectedRemoteServerID })
         {
-            selectedServerTargetID = remoteTarget.id
+            selectedProviderTargetID = remoteTarget.id
             return
         }
-        selectedServerTargetID = targets.first?.id ?? ""
+        selectedProviderTargetID = targets.first?.id ?? ""
     }
 
-    private func refreshModelHubLocalProviderTargetSelection() {
-        let targets = modelHubLocalProviderTargets
-        if selectedModelHubLocalProviderTargetID.isEmpty == false,
-           targets.contains(where: { $0.id == selectedModelHubLocalProviderTargetID })
+    private func refreshModelHubProviderTargetSelection() {
+        let targets = modelHubProviderTargets
+        if selectedModelHubProviderTargetID.isEmpty == false,
+           targets.contains(where: { $0.id == selectedModelHubProviderTargetID })
         {
             return
         }
-        selectedModelHubLocalProviderTargetID = targets.first?.id ?? ""
+        selectedModelHubProviderTargetID = targets.first?.id ?? ""
     }
 
-    private func refreshDiagnosticsServerTargetSelection() {
-        let targets = diagnosticsServerTargets
-        if diagnosticsServerTargetSelectionUserOverridden == false {
-            selectedDiagnosticsServerTargetID = targets.first(where: { $0.kind == .localServer })?.id
+    private func refreshDiagnosticsProviderTargetSelection() {
+        let targets = diagnosticsProviderTargets
+        if diagnosticsProviderTargetSelectionUserOverridden == false {
+            selectedDiagnosticsProviderTargetID = targets.first(where: { $0.kind == .localServer })?.id
                 ?? targets.first(where: { $0.kind != .startNewServer })?.id
                 ?? targets.first?.id
                 ?? ""
             return
         }
-        if selectedDiagnosticsServerTargetID.isEmpty == false,
-           targets.contains(where: { $0.id == selectedDiagnosticsServerTargetID })
+        if selectedDiagnosticsProviderTargetID.isEmpty == false,
+           targets.contains(where: { $0.id == selectedDiagnosticsProviderTargetID })
         {
             return
         }
-        selectedDiagnosticsServerTargetID = targets.first(where: { $0.kind != .startNewServer })?.id
+        selectedDiagnosticsProviderTargetID = targets.first(where: { $0.kind != .startNewServer })?.id
             ?? targets.first?.id
             ?? ""
     }
@@ -12455,7 +12455,7 @@ public final class RuntimeViewModel {
     }
 
     private func resolvedBenchmarkModelID() -> String {
-        if let target = selectedDiagnosticsServerTarget, target.kind == .localServer {
+        if let target = selectedDiagnosticsProviderTarget, target.kind == .localServer {
             return target.modelID
         }
         if !selectedBenchmarkModelID.isEmpty {
@@ -12465,7 +12465,7 @@ public final class RuntimeViewModel {
     }
 
     private func resolvedEvaluationModelID() -> String {
-        if let target = selectedDiagnosticsServerTarget, target.kind == .localServer {
+        if let target = selectedDiagnosticsProviderTarget, target.kind == .localServer {
             return target.modelID
         }
         if !selectedEvaluationModelID.isEmpty {
@@ -12671,7 +12671,7 @@ public final class RuntimeViewModel {
         catalogModelsIncludingRegistry.first { $0.modelID == modelID }
     }
 
-    private func serverTargetModelName(for modelID: String) -> String {
+    private func providerTargetModelName(for modelID: String) -> String {
         let trimmedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         if let row = catalogModelRow(for: trimmedModelID) {
             let displayName = row.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -12682,7 +12682,7 @@ public final class RuntimeViewModel {
         return Self.modelName(from: trimmedModelID)
     }
 
-    private func serverTargetLoRAStatusText(for modelID: String) -> String {
+    private func providerTargetLoRAStatusText(for modelID: String) -> String {
         let trimmedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedModelID.isEmpty == false else {
             return ""
@@ -12702,7 +12702,7 @@ public final class RuntimeViewModel {
     }
 
     private func selectedEvaluationRemoteServer() -> RemoteServer? {
-        if let target = selectedDiagnosticsServerTarget, target.kind == .remoteServer {
+        if let target = selectedDiagnosticsProviderTarget, target.kind == .remoteServer {
             return remoteServers.first(where: { $0.id == target.serverID })
         }
         let selectedID = selectedEvaluationRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -12726,7 +12726,7 @@ public final class RuntimeViewModel {
     }
 
     private func resolvedBenchmarkTaskKind() -> String {
-        if selectedDiagnosticsServerTarget?.kind == .localServer {
+        if selectedDiagnosticsProviderTarget?.kind == .localServer {
             let modelID = resolvedBenchmarkModelID()
             if let model = latestSnapshot.models.first(where: { $0.modelID == modelID }) {
                 return Self.benchmarkTaskKind(for: model)
@@ -12736,7 +12736,7 @@ public final class RuntimeViewModel {
             }
             return Self.benchmarkTaskKind(for: model)
         }
-        if selectedDiagnosticsServerTarget?.kind == .remoteServer {
+        if selectedDiagnosticsProviderTarget?.kind == .remoteServer {
             return "text-generation"
         }
         let modelID = resolvedBenchmarkModelID()
@@ -12772,7 +12772,7 @@ public final class RuntimeViewModel {
     }
 
     private func selectedDiagnosticsEffectiveAccelerationProfileID() -> String {
-        guard let target = selectedDiagnosticsServerTarget,
+        guard let target = selectedDiagnosticsProviderTarget,
               target.kind == .localServer,
               let session = serverSessions.first(where: { $0.id == target.serverID })
         else {
@@ -14991,10 +14991,10 @@ public final class RuntimeViewModel {
     }
 
     private func selectLocalDiagnosticsTargetForLoraFollowUp() {
-        guard let localTarget = diagnosticsServerTargets.first(where: { $0.kind == .localServer }) else {
+        guard let localTarget = diagnosticsProviderTargets.first(where: { $0.kind == .localServer }) else {
             return
         }
-        selectedDiagnosticsServerTargetID = localTarget.id
+        selectedDiagnosticsProviderTargetID = localTarget.id
     }
 
     private func loraAdapterManifestPath(for job: LoraTrainingJobRecord) -> String {

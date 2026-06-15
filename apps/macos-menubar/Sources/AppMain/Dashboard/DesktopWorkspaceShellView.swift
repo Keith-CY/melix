@@ -36,7 +36,7 @@ struct DesktopWorkspaceShellView: View {
                         showsInspector: paneVisibilityBinding(.inspector, for: .image)
                     )
                 case .server:
-                    DesktopServerWorkspaceView(
+                    DesktopProviderWorkspaceView(
                         viewModel: viewModel,
                         showsSidebar: paneVisibilityBinding(.sidebar, for: .server),
                         showsInspector: paneVisibilityBinding(.inspector, for: .server)
@@ -1012,7 +1012,7 @@ private struct DesktopCommandCenterSessionMetricView: View {
     }
 }
 
-private struct DesktopServerWorkspaceView: View {
+private struct DesktopProviderWorkspaceView: View {
     let viewModel: RuntimeViewModel
     @Binding var showsSidebar: Bool
     @Binding var showsInspector: Bool
@@ -1028,7 +1028,7 @@ private struct DesktopServerWorkspaceView: View {
         _showsSidebar = showsSidebar
         _showsInspector = showsInspector
         _selectedProviderPage = State(
-            initialValue: Self.defaultProviderSurfacePage(for: viewModel.selectedServerTarget)
+            initialValue: Self.defaultProviderSurfacePage(for: viewModel.selectedProviderTarget)
         )
     }
 
@@ -1039,13 +1039,13 @@ private struct DesktopServerWorkspaceView: View {
                 isVisible: showsSidebar,
                 idealWidth: 260
             ) {
-                DesktopServerSessionSidebar(
+                DesktopProviderWorkspaceSidebar(
                     viewModel: viewModel,
                     selectedPage: $selectedProviderPage
                 )
             }
 
-            DesktopServerSessionEditor(
+            DesktopProviderWorkspaceEditor(
                 viewModel: viewModel,
                 showsSidebar: $showsSidebar,
                 showsInspector: $showsInspector,
@@ -1065,7 +1065,7 @@ private struct DesktopServerWorkspaceView: View {
     }
 
     private static func defaultProviderSurfacePage(
-        for target: RuntimeServerTargetState?
+        for target: RuntimeProviderTargetState?
     ) -> DesktopProviderSurfacePage {
         target?.kind == .remoteServer ? .remoteProviders : .localProviders
     }
@@ -1123,34 +1123,34 @@ private struct DesktopServerMetricCard: View {
 }
 
 @MainActor
-enum DesktopServerCreationActions {
-    static func addLocalServer(viewModel: RuntimeViewModel) {
-        viewModel.beginServerCreation(kind: .localServer)
+enum DesktopProviderCreationActions {
+    static func addLocalProvider(viewModel: RuntimeViewModel) {
+        viewModel.beginProviderCreation(kind: .localServer)
     }
 
-    static func addRemoteServer(viewModel: RuntimeViewModel) {
-        viewModel.beginServerCreation(kind: .remoteServer)
+    static func addRemoteProvider(viewModel: RuntimeViewModel) {
+        viewModel.beginProviderCreation(kind: .remoteServer)
     }
 
-    static func makeAddLocalServerAction(viewModel: RuntimeViewModel) -> () -> Void {
-        { addLocalServer(viewModel: viewModel) }
+    static func makeAddLocalProviderAction(viewModel: RuntimeViewModel) -> () -> Void {
+        { addLocalProvider(viewModel: viewModel) }
     }
 
-    static func makeAddRemoteServerAction(viewModel: RuntimeViewModel) -> () -> Void {
-        { addRemoteServer(viewModel: viewModel) }
+    static func makeAddRemoteProviderAction(viewModel: RuntimeViewModel) -> () -> Void {
+        { addRemoteProvider(viewModel: viewModel) }
     }
 }
 
-private struct DesktopServerSessionSidebar: View {
+private struct DesktopProviderWorkspaceSidebar: View {
     let viewModel: RuntimeViewModel
     @Binding var selectedPage: DesktopProviderSurfacePage
 
-    private var localTargets: [RuntimeServerTargetState] {
-        viewModel.serverTargets.filter { $0.kind == .localServer }
+    private var localTargets: [RuntimeProviderTargetState] {
+        viewModel.providerTargets.filter { $0.kind == .localServer }
     }
 
-    private var remoteTargets: [RuntimeServerTargetState] {
-        viewModel.serverTargets.filter { $0.kind == .remoteServer }
+    private var remoteTargets: [RuntimeProviderTargetState] {
+        viewModel.providerTargets.filter { $0.kind == .remoteServer }
     }
 
     var body: some View {
@@ -1162,11 +1162,11 @@ private struct DesktopServerSessionSidebar: View {
                 Menu {
                     Button("Create Local Provider") {
                         selectedPage = .createLocalProvider
-                        DesktopServerCreationActions.addLocalServer(viewModel: viewModel)
+                        DesktopProviderCreationActions.addLocalProvider(viewModel: viewModel)
                     }
                     Button("Add Remote Provider") {
                         selectedPage = .addRemoteProvider
-                        DesktopServerCreationActions.addRemoteServer(viewModel: viewModel)
+                        DesktopProviderCreationActions.addRemoteProvider(viewModel: viewModel)
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -1189,7 +1189,7 @@ private struct DesktopServerSessionSidebar: View {
                 }
             }
 
-            if viewModel.serverTargets.isEmpty {
+            if viewModel.providerTargets.isEmpty {
                 MelixActionableEmptyState(
                     title: "No Providers Yet",
                     systemImage: "server.rack",
@@ -1198,13 +1198,13 @@ private struct DesktopServerSessionSidebar: View {
                     VStack(spacing: MelixDesignTokens.Spacing.sm) {
                         Button("Create Local Provider") {
                             selectedPage = .createLocalProvider
-                            DesktopServerCreationActions.addLocalServer(viewModel: viewModel)
+                            DesktopProviderCreationActions.addLocalProvider(viewModel: viewModel)
                         }
                         .buttonStyle(.borderedProminent)
 
                         Button("Add Remote Provider") {
                             selectedPage = .addRemoteProvider
-                            DesktopServerCreationActions.addRemoteServer(viewModel: viewModel)
+                            DesktopProviderCreationActions.addRemoteProvider(viewModel: viewModel)
                         }
                         .buttonStyle(.bordered)
                     }
@@ -1235,11 +1235,11 @@ private struct DesktopServerSessionSidebar: View {
         selectedPage = page
         switch page {
         case .createLocalProvider:
-            DesktopServerCreationActions.addLocalServer(viewModel: viewModel)
+            DesktopProviderCreationActions.addLocalProvider(viewModel: viewModel)
         case .addRemoteProvider:
-            DesktopServerCreationActions.addRemoteServer(viewModel: viewModel)
+            DesktopProviderCreationActions.addRemoteProvider(viewModel: viewModel)
         default:
-            viewModel.cancelServerCreation()
+            viewModel.cancelProviderCreation()
         }
     }
 
@@ -1259,7 +1259,7 @@ private struct DesktopServerSessionSidebar: View {
     @ViewBuilder
     private func providerTargetGroup(
         title: String,
-        targets: [RuntimeServerTargetState],
+        targets: [RuntimeProviderTargetState],
         emptyText: String
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1273,10 +1273,10 @@ private struct DesktopServerSessionSidebar: View {
                 ForEach(targets) { target in
                     DesktopProviderTargetSidebarRow(
                         target: target,
-                        isSelected: viewModel.selectedServerTarget?.id == target.id
+                        isSelected: viewModel.selectedProviderTarget?.id == target.id
                     ) {
                         selectedPage = target.kind == .localServer ? .localProviders : .remoteProviders
-                        viewModel.selectServerTarget(id: target.id)
+                        viewModel.selectProviderTarget(id: target.id)
                     }
                 }
             }
@@ -1323,7 +1323,7 @@ private struct DesktopProviderSurfaceNavigationRow: View {
 }
 
 private struct DesktopProviderTargetSidebarRow: View {
-    let target: RuntimeServerTargetState
+    let target: RuntimeProviderTargetState
     let isSelected: Bool
     let action: @MainActor () -> Void
 
@@ -1373,12 +1373,12 @@ private struct DesktopProviderOverviewView: View {
     let createLocalProvider: @MainActor () -> Void
     let addRemoteProvider: @MainActor () -> Void
 
-    private var localTargets: [RuntimeServerTargetState] {
-        viewModel.serverTargets.filter { $0.kind == .localServer }
+    private var localTargets: [RuntimeProviderTargetState] {
+        viewModel.providerTargets.filter { $0.kind == .localServer }
     }
 
-    private var remoteTargets: [RuntimeServerTargetState] {
-        viewModel.serverTargets.filter { $0.kind == .remoteServer }
+    private var remoteTargets: [RuntimeProviderTargetState] {
+        viewModel.providerTargets.filter { $0.kind == .remoteServer }
     }
 
     var body: some View {
@@ -1396,7 +1396,7 @@ private struct DesktopProviderOverviewView: View {
                 )
                 DesktopProviderSummaryTile(
                     title: "Running",
-                    value: "\(viewModel.serverTargets.filter(\.isRunning).count)",
+                    value: "\(viewModel.providerTargets.filter(\.isRunning).count)",
                     detail: "Providers available for routing"
                 )
                 DesktopProviderSummaryTile(
@@ -1413,14 +1413,14 @@ private struct DesktopProviderOverviewView: View {
                     .buttonStyle(.bordered)
             }
 
-            if viewModel.serverTargets.isEmpty == false {
+            if viewModel.providerTargets.isEmpty == false {
                 DesktopProviderTargetListView(
                     title: "Provider Profiles",
                     emptyTitle: "No Providers",
                     emptyDetail: "Create a local provider or add a remote provider.",
-                    targets: viewModel.serverTargets,
-                    selectedTargetID: viewModel.selectedServerTarget?.id,
-                    selectTarget: viewModel.selectServerTarget
+                    targets: viewModel.providerTargets,
+                    selectedTargetID: viewModel.selectedProviderTarget?.id,
+                    selectTarget: viewModel.selectProviderTarget
                 )
             }
         }
@@ -1452,7 +1452,7 @@ private struct DesktopProviderTargetListView: View {
     let title: String
     let emptyTitle: String
     let emptyDetail: String
-    let targets: [RuntimeServerTargetState]
+    let targets: [RuntimeProviderTargetState]
     let selectedTargetID: String?
     let selectTarget: @MainActor (String) -> Void
 
@@ -1481,7 +1481,7 @@ private struct DesktopProviderTargetListView: View {
 }
 
 private struct DesktopProviderProfileRow: View {
-    let target: RuntimeServerTargetState
+    let target: RuntimeProviderTargetState
     let isSelected: Bool
     let action: @MainActor () -> Void
 
@@ -1537,7 +1537,7 @@ private struct DesktopProviderCapabilityReceiptsView: View {
                     systemImage: "checkmark.seal",
                     description: Text("Run a capability test from Add Remote Provider or inspect a provider detail after receipts are captured.")
                 )
-                if viewModel.serverTargets.isEmpty == false {
+                if viewModel.providerTargets.isEmpty == false {
                     Text("Provider profiles are available; receipt evidence will appear here after provider capability probes are recorded.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1759,22 +1759,22 @@ private struct DesktopProviderReviewRow: View {
     }
 }
 
-private struct DesktopServerCreationEditor: View {
+private struct DesktopProviderCreationEditor: View {
     let viewModel: RuntimeViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if viewModel.selectedServerCreationKind == .localServer {
-                DesktopServerCreationStepperHeader(
+            if viewModel.selectedProviderCreationKind == .localServer {
+                DesktopProviderCreationStepperHeader(
                     title: "Create Local Provider",
                     steps: ["Basic", "Advanced", "Review"],
                     activeIndex: viewModel.serverModelOptions.isEmpty ? 0 : 1
                 )
                 MelixSectionCard("Create Local Provider") {
-                    localServerCreationContent
+                    localProviderCreationContent
                 }
             } else {
-                DesktopServerCreationStepperHeader(
+                DesktopProviderCreationStepperHeader(
                     title: "Add Remote Provider",
                     steps: ["Endpoint", "Authentication", "Capabilities Test", "Review"],
                     activeIndex: remoteServerActiveStepIndex
@@ -1798,7 +1798,7 @@ private struct DesktopServerCreationEditor: View {
         return 3
     }
 
-    private var localServerCreationContent: some View {
+    private var localProviderCreationContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             if viewModel.serverModelOptions.isEmpty {
                 if viewModel.isRefreshingServerModelOptions {
@@ -1905,7 +1905,7 @@ private struct DesktopServerCreationEditor: View {
                 HStack {
                     Spacer()
                     Button("Cancel") {
-                        viewModel.cancelServerCreation()
+                        viewModel.cancelProviderCreation()
                     }
                     .buttonStyle(.bordered)
 
@@ -1921,7 +1921,7 @@ private struct DesktopServerCreationEditor: View {
     }
 }
 
-private struct DesktopServerCreationStepperHeader: View {
+private struct DesktopProviderCreationStepperHeader: View {
     let title: String
     let steps: [String]
     let activeIndex: Int
@@ -2032,7 +2032,7 @@ private struct DesktopServerLoRAAdapterSection: View {
             )
         } else {
             VStack(alignment: .leading, spacing: 8) {
-                Text("The selected server model is being served directly.")
+                Text("The selected provider model is being served directly.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 ForEach(viewModel.serverAdapterOptions) { option in
@@ -2068,7 +2068,7 @@ private struct DesktopServerLoRAAdapterSection: View {
     }
 }
 
-private struct DesktopServerSessionEditor: View {
+private struct DesktopProviderWorkspaceEditor: View {
     let viewModel: RuntimeViewModel
     @Binding var showsSidebar: Bool
     @Binding var showsInspector: Bool
@@ -2091,48 +2091,48 @@ private struct DesktopServerSessionEditor: View {
                     subtitle: selectedPage.subtitle
                 ) {}
 
-                if selectedPage == .overview, viewModel.isCreatingServerTarget == false {
+                if selectedPage == .overview, viewModel.isCreatingProviderTarget == false {
                     DesktopProviderOverviewView(
                         viewModel: viewModel,
                         createLocalProvider: {
                             selectedPage = .createLocalProvider
-                            DesktopServerCreationActions.addLocalServer(viewModel: viewModel)
+                            DesktopProviderCreationActions.addLocalProvider(viewModel: viewModel)
                         },
                         addRemoteProvider: {
                             selectedPage = .addRemoteProvider
-                            DesktopServerCreationActions.addRemoteServer(viewModel: viewModel)
+                            DesktopProviderCreationActions.addRemoteProvider(viewModel: viewModel)
                         }
                     )
-                } else if selectedPage == .capabilityReceipts, viewModel.isCreatingServerTarget == false {
+                } else if selectedPage == .capabilityReceipts, viewModel.isCreatingProviderTarget == false {
                     DesktopProviderCapabilityReceiptsView(viewModel: viewModel)
                 } else if selectedPage == .localProviders,
-                          viewModel.isCreatingServerTarget == false,
-                          viewModel.selectedServerTarget?.kind != .localServer {
+                          viewModel.isCreatingProviderTarget == false,
+                          viewModel.selectedProviderTarget?.kind != .localServer {
                     DesktopProviderTargetListView(
                         title: "Local Providers",
                         emptyTitle: "No Local Providers",
                         emptyDetail: "Create a local Apple Silicon provider to run models on this Mac.",
-                        targets: viewModel.serverTargets.filter { $0.kind == .localServer },
-                        selectedTargetID: viewModel.selectedServerTarget?.id,
-                        selectTarget: viewModel.selectServerTarget
+                        targets: viewModel.providerTargets.filter { $0.kind == .localServer },
+                        selectedTargetID: viewModel.selectedProviderTarget?.id,
+                        selectTarget: viewModel.selectProviderTarget
                     )
                 } else if selectedPage == .remoteProviders,
-                          viewModel.isCreatingServerTarget == false,
-                          viewModel.selectedServerTarget?.kind != .remoteServer {
+                          viewModel.isCreatingProviderTarget == false,
+                          viewModel.selectedProviderTarget?.kind != .remoteServer {
                     DesktopProviderTargetListView(
                         title: "Remote Providers",
                         emptyTitle: "No Remote Providers",
                         emptyDetail: "Add a remote provider for outbound calls to an OpenAI-compatible runtime.",
-                        targets: viewModel.serverTargets.filter { $0.kind == .remoteServer },
-                        selectedTargetID: viewModel.selectedServerTarget?.id,
-                        selectTarget: viewModel.selectServerTarget
+                        targets: viewModel.providerTargets.filter { $0.kind == .remoteServer },
+                        selectedTargetID: viewModel.selectedProviderTarget?.id,
+                        selectTarget: viewModel.selectProviderTarget
                     )
-                } else if viewModel.isCreatingServerTarget {
-                    DesktopServerCreationEditor(viewModel: viewModel)
-                } else if viewModel.selectedServerTarget?.kind == .remoteServer {
+                } else if viewModel.isCreatingProviderTarget {
+                    DesktopProviderCreationEditor(viewModel: viewModel)
+                } else if viewModel.selectedProviderTarget?.kind == .remoteServer {
                     DesktopRemoteServerEditor(viewModel: viewModel)
                 } else if let session = viewModel.selectedServerSession,
-                          viewModel.selectedServerTarget?.kind == .localServer {
+                          viewModel.selectedProviderTarget?.kind == .localServer {
                     if let notice = session.lifecycleBannerState {
                         DesktopInlineNoticeCardView(notice: notice)
                     }
@@ -2330,13 +2330,13 @@ private struct DesktopServerSessionEditor: View {
                         HStack(spacing: MelixDesignTokens.Spacing.sm) {
                             Button("Create Local Provider") {
                                 selectedPage = .createLocalProvider
-                                DesktopServerCreationActions.addLocalServer(viewModel: viewModel)
+                                DesktopProviderCreationActions.addLocalProvider(viewModel: viewModel)
                             }
                             .buttonStyle(.borderedProminent)
 
                             Button("Add Remote Provider") {
                                 selectedPage = .addRemoteProvider
-                                DesktopServerCreationActions.addRemoteServer(viewModel: viewModel)
+                                DesktopProviderCreationActions.addRemoteProvider(viewModel: viewModel)
                             }
                             .buttonStyle(.bordered)
                         }
@@ -2567,13 +2567,13 @@ private struct DesktopServerSessionInspector: View {
                 title: "Provider Inspector",
                 context: "No provider selected",
                 health: "Choose or create a provider target",
-                metrics: "No runtime metrics",
+                metrics: "No provider metrics",
                 actions: [
                     DesktopInspectorActionRow(title: "Create Local Provider", systemImage: "plus.circle") {
-                        viewModel.beginServerCreation(kind: .localServer)
+                        viewModel.beginProviderCreation(kind: .localServer)
                     },
                     DesktopInspectorActionRow(title: "Create Remote Provider", systemImage: "network.badge.shield.half.filled") {
-                        viewModel.beginServerCreation(kind: .remoteServer)
+                        viewModel.beginProviderCreation(kind: .remoteServer)
                     },
                 ],
                 evidence: ["Provider status and copy actions appear here."]
@@ -6178,8 +6178,8 @@ struct DesktopTrainingToolSectionView: View {
                 return fusedActivationUnavailableText
             }
             return adapter.derivedModelID.isEmpty
-                ? "Activate the selected adapter when you want to expose it as a runtime target."
-                : "The selected adapter already has a derived runtime target available."
+                ? "Activate the selected adapter when you want to expose it as a provider target."
+                : "The selected adapter already has a derived provider target available."
         }
         return "Start training first, then activate or publish the resulting adapter package."
     }
@@ -9286,11 +9286,11 @@ struct DesktopDiagnosticsToolSectionView: View {
                         Picker(
                             "Running Provider",
                             selection: Binding(
-                                get: { viewModel.selectedDiagnosticsServerTargetID },
-                                set: { viewModel.selectDiagnosticsServerTarget(id: $0) }
+                                get: { viewModel.selectedDiagnosticsProviderTargetID },
+                                set: { viewModel.selectDiagnosticsProviderTarget(id: $0) }
                             )
                         ) {
-                            ForEach(viewModel.diagnosticsServerTargets) { target in
+                            ForEach(viewModel.diagnosticsProviderTargets) { target in
                                 Text(target.title).tag(target.id)
                             }
                         }
@@ -10044,11 +10044,11 @@ struct DesktopDiagnosticsToolSectionView: View {
                         Picker(
                             "Running Provider",
                             selection: Binding(
-                                get: { viewModel.selectedDiagnosticsServerTargetID },
-                                set: { viewModel.selectDiagnosticsServerTarget(id: $0) }
+                                get: { viewModel.selectedDiagnosticsProviderTargetID },
+                                set: { viewModel.selectDiagnosticsProviderTarget(id: $0) }
                             )
                         ) {
-                            ForEach(viewModel.diagnosticsServerTargets) { target in
+                            ForEach(viewModel.diagnosticsProviderTargets) { target in
                                 Text(target.title).tag(target.id)
                             }
                         }

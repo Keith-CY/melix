@@ -127,8 +127,8 @@ struct Phase8LoRAWindowSmokeTests {
 
         viewModel.selectToolSection(.diagnostics)
         viewModel.updateSelectedServerSessionModelID(baseModelID)
-        if let localTarget = viewModel.diagnosticsServerTargets.first(where: { $0.kind == .localServer }) {
-            viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+        if let localTarget = viewModel.diagnosticsProviderTargets.first(where: { $0.kind == .localServer }) {
+            viewModel.selectDiagnosticsProviderTarget(id: localTarget.id)
         }
         viewModel.selectedEvaluationModelID = baseModelID
         viewModel.selectedEvaluationMode = .compare

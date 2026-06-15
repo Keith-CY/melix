@@ -175,7 +175,7 @@ struct DesktopModelsTabView: View {
                         Text("Local Provider Target")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
-                        if viewModel.modelHubLocalProviderTargets.isEmpty {
+                        if viewModel.modelHubProviderTargets.isEmpty {
                             Text("Hugging Face imports create local model assets for local providers only.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -183,18 +183,18 @@ struct DesktopModelsTabView: View {
                             Picker(
                                 "Local Provider Target",
                                 selection: Binding(
-                                    get: { viewModel.selectedModelHubLocalProviderTarget?.id ?? "" },
-                                    set: { viewModel.selectModelHubLocalProviderTarget(id: $0) }
+                                    get: { viewModel.selectedModelHubProviderTarget?.id ?? "" },
+                                    set: { viewModel.selectModelHubProviderTarget(id: $0) }
                                 )
                             ) {
-                                ForEach(viewModel.modelHubLocalProviderTargets) { target in
+                                ForEach(viewModel.modelHubProviderTargets) { target in
                                     Text(target.title).tag(target.id)
                                 }
                             }
                             .labelsHidden()
                             .pickerStyle(.menu)
 
-                            Text(viewModel.modelHubLocalProviderTargetSummaryText)
+                            Text(viewModel.modelHubProviderTargetSummaryText)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)

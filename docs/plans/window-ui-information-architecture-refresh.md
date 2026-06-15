@@ -141,6 +141,14 @@ rewrite.
    compact Providers repair entry. Screenshot capture now includes no-provider,
    missing-model, offline-provider, and degraded-provider Chat composer states.
 
+   Status: provider naming follow-up now renames window-level target and
+   creation state from Server/Runtime terminology to Provider terminology:
+   `RuntimeProviderTargetState`, `RuntimeProviderCreationKind`, Provider
+   Targets, Running Provider diagnostics pickers, and `DesktopChatProvider`
+   status strip. The execution layer keeps `runtime` and `serverSession` terms
+   where they describe protocol sessions, runtime jobs, runtime directories, or
+   diagnostic artifacts rather than user-selected provider objects.
+
 4. Providers And Jobs Domains
    - Split Create Local Provider and Add Remote Provider.
    - Expose provider profiles, capability receipts, job queue, job history, and

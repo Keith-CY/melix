@@ -663,6 +663,12 @@ selected. Required composer states:
 Production composer state is driven by runtime state, not by a user-facing
 manual segmented control.
 
+User-facing Chat binding language must use Provider terms. Starter prompts,
+empty states, composer repair actions, diagnostics pickers, and selected-object
+labels should say provider, provider profile, or provider target. Use `runtime`
+only for execution-layer evidence such as runtime directories, runtime packs,
+runtime jobs, protocol sessions, and detailed diagnostics artifacts.
+
 The composer provider strip should remain compact and glanceable. Its status
 lamps or colored icon plus short-code signals exist to reduce occupied space and
 make state recognizable at a glance. They must not become a dense metric strip.
@@ -1014,7 +1020,7 @@ Domain visual signatures:
 | Domain | Visual treatment |
 |---|---|
 | Command Center | status dashboard, next-action first, recovery-first |
-| Chat | conversational, minimal chrome, runtime-aware composer |
+| Chat | conversational, minimal chrome, provider-aware composer |
 | Models | inventory/table/detail-drawer behavior |
 | Workflows | form plus pipeline or job-output context |
 | Jobs | queue, history, timeline, lineage |

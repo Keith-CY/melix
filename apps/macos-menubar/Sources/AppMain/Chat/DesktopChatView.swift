@@ -15,7 +15,7 @@ enum DesktopChatLayoutMetrics {
 }
 
 private enum DesktopChatStarterPrompt: String, CaseIterable, Identifiable {
-    case runtimeState = "Explain current runtime state"
+    case providerStatus = "Explain current provider status"
     case benchmark = "Benchmark the active model"
     case syntheticDataset = "Draft a synthetic dataset recipe"
     case apiExample = "Show a local API request"
@@ -24,8 +24,8 @@ private enum DesktopChatStarterPrompt: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .runtimeState:
-            return "Summarize server, model, queue, and recent warnings."
+        case .providerStatus:
+            return "Summarize provider, model, queue, and recent warnings."
         case .benchmark:
             return "Prepare a small latency and throughput run."
         case .syntheticDataset:
@@ -37,14 +37,14 @@ private enum DesktopChatStarterPrompt: String, CaseIterable, Identifiable {
 
     var prompt: String {
         switch self {
-        case .runtimeState:
-            return "Explain the current Melix runtime state and call out anything that needs attention."
+        case .providerStatus:
+            return "Explain the current Melix provider status and call out anything that needs attention."
         case .benchmark:
             return "Set up a quick benchmark for the active model and explain what metrics to watch."
         case .syntheticDataset:
             return "Draft a synthetic dataset recipe for event extraction and list the fields I should verify."
         case .apiExample:
-            return "Show a local API request for the selected Melix server and explain the auth requirements."
+            return "Show a local API request for the selected Melix provider and explain the auth requirements."
         }
     }
 }
@@ -541,13 +541,13 @@ struct DesktopChatSessionInspector: View {
         if let server = viewModel.selectedChatServerSession {
             return "\(server.title) • \(server.modelID)"
         }
-        return "No chat server selected"
+        return "No provider selected"
     }
 
     private var runtimeHealthText: String {
         viewModel.selectedChatServerSession?.lifecycleSummaryText
             ?? viewModel.selectedChatSession?.statusText
-            ?? "Choose a server to start chatting"
+            ?? "Choose a provider to start chatting"
     }
 
     private var runtimeMetricsText: String {
@@ -654,7 +654,7 @@ private struct DesktopChatEmptyStateView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Ask Melix")
                     .font(.title3.weight(.semibold))
-                Text("Start from a runtime-aware prompt, or continue a recent local session.")
+                Text("Start from a provider-aware prompt, or continue a recent local session.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -916,7 +916,7 @@ struct DesktopChatComposerSurface: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            DesktopChatRuntimeControlStrip(
+            DesktopChatProviderControlStrip(
                 serverSession: serverSession,
                 capabilities: capabilities,
                 onOpenServer: onOpenServer,
@@ -1256,7 +1256,7 @@ struct DesktopChatComposerRepairPanel: View {
     }
 }
 
-struct DesktopChatRuntimeControlStrip: View {
+struct DesktopChatProviderControlStrip: View {
     enum RecoveryActionKind {
         case openServer
         case startServer
@@ -1361,16 +1361,16 @@ struct DesktopChatProviderStatusSignal: View {
             Image(systemName: statusSymbolName)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(statusColor)
-                .frame(width: DesktopChatRuntimeSignalMetrics.iconSize, height: DesktopChatRuntimeSignalMetrics.iconSize)
+                .frame(width: DesktopChatProviderSignalMetrics.iconSize, height: DesktopChatProviderSignalMetrics.iconSize)
             Text(statusShortText)
                 .font(.caption2.monospacedDigit().weight(.semibold))
                 .foregroundStyle(statusColor)
                 .lineLimit(1)
-                .frame(width: DesktopChatRuntimeSignalMetrics.shortTextWidth, alignment: .leading)
+                .frame(width: DesktopChatProviderSignalMetrics.shortTextWidth, alignment: .leading)
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 4)
-        .frame(width: DesktopChatRuntimeSignalMetrics.providerSignalWidth, alignment: .leading)
+        .frame(width: DesktopChatProviderSignalMetrics.providerSignalWidth, alignment: .leading)
         .background(Color.secondary.opacity(0.06), in: Capsule())
         .overlay(
             Capsule()
@@ -1475,7 +1475,7 @@ struct DesktopChatCapabilityStatusSignal: View {
             Image(systemName: "square.grid.2x2.fill")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(statusColor)
-                .frame(width: DesktopChatRuntimeSignalMetrics.iconSize, height: DesktopChatRuntimeSignalMetrics.iconSize)
+                .frame(width: DesktopChatProviderSignalMetrics.iconSize, height: DesktopChatProviderSignalMetrics.iconSize)
             Text("\(readyCount)/\(capabilities.count)")
                 .font(.caption2.monospacedDigit().weight(.semibold))
                 .foregroundStyle(statusColor)
@@ -1483,7 +1483,7 @@ struct DesktopChatCapabilityStatusSignal: View {
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 4)
-        .frame(width: DesktopChatRuntimeSignalMetrics.capabilitySignalWidth, alignment: .leading)
+        .frame(width: DesktopChatProviderSignalMetrics.capabilitySignalWidth, alignment: .leading)
         .background(Color.secondary.opacity(0.06), in: Capsule())
         .overlay(
             Capsule()
@@ -1516,7 +1516,7 @@ struct DesktopChatCapabilityStatusSignal: View {
     }
 }
 
-enum DesktopChatRuntimeSignalMetrics {
+enum DesktopChatProviderSignalMetrics {
     static let iconSize: CGFloat = 16
     static let shortTextWidth: CGFloat = 28
     static let providerSignalWidth: CGFloat = 68
