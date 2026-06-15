@@ -1189,6 +1189,8 @@ def _agentic_tool_observation_receipt_summary(
     receipt_schema = ""
     receipt_count = 0
     for observation in observations:
+        if not isinstance(observation, Mapping):
+            continue
         receipts = observation.get("untrusted_context_receipts")
         if not isinstance(receipts, list):
             continue
