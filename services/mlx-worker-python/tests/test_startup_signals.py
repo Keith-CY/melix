@@ -606,3 +606,41 @@ def test_classify_startup_failure_falls_back_to_hang_when_logs_are_empty() -> No
 
     assert report.classification == "startup_hang"
     assert "11434" in report.summary
+
+
+def test_contains_any_fast_paths_preserve_empty_value_and_fallback_behavior() -> None:
+    assert startup_signals_module._contains_any("", startup_signals_module.CRASH_PATTERNS) is False
+    assert (
+        startup_signals_module._contains_any(
+            "EADDRINUSE".lower(),
+            startup_signals_module.PORT_CONFLICT_PATTERNS,
+        )
+        is True
+    )
+    assert startup_signals_module._contains_any("custom sentinel", ("sentinel",)) is True
+    assert startup_signals_module._contains_any("custom sentinel", ("missing",)) is False
+
+
+def test_classify_startup_failure_skips_empty_pattern_scans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    empty_pattern_scan_calls = 0
+    original_contains_any = startup_signals_module._contains_any
+
+    def tracked_contains_any(value: str, patterns: tuple[str, ...]) -> bool:
+        nonlocal empty_pattern_scan_calls
+        if value == "":  # pragma: no cover - regression path only
+            empty_pattern_scan_calls += 1  # pragma: no cover
+        return original_contains_any(value, patterns)
+
+    monkeypatch.setattr(startup_signals_module, "_contains_any", tracked_contains_any)
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+        }
+    )
+
+    assert report.classification == "startup_hang"
+    assert empty_pattern_scan_calls == 0
