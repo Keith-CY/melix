@@ -354,7 +354,10 @@ def project_retrieval_lookup_result(
     refusal_receipts = copy_receipts(store_projection.refusal_receipts)
     if (
         has_lookup_metadata
-        and "records" not in lookup_result
+        and (
+            "records" not in lookup_result
+            or not isinstance(lookup_result.get("records"), list)
+        )
         and len(refusal_receipts) == 1
         and not prompt_user_payload
         and not untrusted_context_receipts

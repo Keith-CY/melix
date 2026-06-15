@@ -336,6 +336,8 @@ def test_retrieval_context_projection_probe_covers_lookup_wrapper_metadata() -> 
         "services/mlx-worker-python/tests/test_retrieval_context.py::"
         "test_project_retrieval_lookup_result_uses_wrapper_metadata_for_refusals",
         "services/mlx-worker-python/tests/test_retrieval_context.py::"
+        "test_project_retrieval_lookup_result_uses_wrapper_metadata_for_malformed_records",
+        "services/mlx-worker-python/tests/test_retrieval_context.py::"
         "test_project_retrieval_lookup_result_refuses_malformed_wrapper_metadata",
         "services/mlx-worker-python/tests/test_pr_scoped_performance.py::"
         "test_retrieval_context_projection_probe_covers_lookup_wrapper_metadata",

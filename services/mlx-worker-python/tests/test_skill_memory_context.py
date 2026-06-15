@@ -1028,6 +1028,27 @@ def test_project_skill_memory_lookup_result_uses_wrapper_metadata_for_refusals()
     assert malformed.refusal_receipts[0]["source_id"] == "skill-store:lookup-9"
 
 
+def test_project_skill_memory_lookup_result_uses_wrapper_metadata_for_malformed_records() -> (
+    None
+):
+    projection = project_skill_memory_lookup_result(
+        {"records": None},
+        lookup_source_id="skill-store:lookup-10",
+        lookup_segment_id="skill-store:lookup-10:lookup",
+        lookup_source_field="skill_memory_records",
+    )
+
+    assert projection.prompt_user_payload == {}
+    assert projection.untrusted_context_receipts == []
+    assert projection.lookup_message is None
+    assert projection.refusal_receipts[0]["segment_id"] == (
+        "skill-store:lookup-10:lookup"
+    )
+    assert projection.refusal_receipts[0]["source_type"] == "skill_memory_lookup"
+    assert projection.refusal_receipts[0]["source_field"] == "skill_memory_records"
+    assert projection.refusal_receipts[0]["source_id"] == "skill-store:lookup-10"
+
+
 @pytest.mark.parametrize(
     ("kwargs", "expected_field"),
     (
