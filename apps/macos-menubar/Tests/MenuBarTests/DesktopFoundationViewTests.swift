@@ -4582,6 +4582,20 @@ struct DesktopFoundationViewTests {
         #expect(shellSource.contains("Revoke Token"))
     }
 
+    @Test("api authentication surface includes companion status log tail panel")
+    func apiAuthenticationSurfaceIncludesCompanionStatusLogTailPanel() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let shellSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift"
+        )
+        let shellSource = try String(contentsOf: shellSourceURL, encoding: .utf8)
+
+        #expect(shellSource.contains("DesktopAPICompanionStatusPanel"))
+        #expect(shellSource.contains("Companion Status"))
+        #expect(shellSource.contains("Refresh Status"))
+        #expect(shellSource.contains("Redacted Log Tail"))
+    }
+
     @Test("companion pairing panel renders idle active and failure states")
     @MainActor
     func companionPairingPanelRendersIdleActiveAndFailureStates() async throws {
@@ -4654,6 +4668,130 @@ struct DesktopFoundationViewTests {
 
         #expect(failurePresentation.statusTitle == "Companion pairing needs attention")
         #expect(failurePresentation.errorText == "No active companion pairing token to revoke.")
+    }
+
+    @Test("companion status panel renders idle loaded and failure states")
+    @MainActor
+    func companionStatusPanelRendersIdleLoadedAndFailureStates() async throws {
+        let idleViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await idleViewModel.start()
+        let idlePresentation = DesktopAPICompanionStatusPresentation(status: idleViewModel.companionStatus)
+        _ = hostView(DesktopAPICompanionStatusPanel(viewModel: idleViewModel))
+
+        #expect(idlePresentation.statusTitle == "Companion status not loaded")
+        #expect(idlePresentation.statusDetail == "Refresh after issuing a read-only companion token.")
+        #expect(idlePresentation.refreshDisabled == false)
+        #expect(idlePresentation.logRows.isEmpty)
+
+        let loadingPresentation = DesktopAPICompanionStatusPresentation(
+            status: CompanionStatusState(phase: .loading)
+        )
+        #expect(loadingPresentation.statusTitle == "Refreshing companion status")
+        #expect(loadingPresentation.statusDetail == "Reading the companion status endpoint with the transient read-only token.")
+        #expect(loadingPresentation.refreshDisabled)
+
+        let activePairingClient = FakeCompanionPairingClient()
+        let statusClient = FakeCompanionStatusClient()
+        let activeTemporaryRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "melix-menubar-companion-status-panel-\(UUID().uuidString)"
+        )
+        try FileManager.default.createDirectory(at: activeTemporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: activeTemporaryRoot) }
+        let activeMelixHome = MelixHome(environment: ["MELIX_HOME": activeTemporaryRoot.path])
+        let activeAPIKeyStore = ServerSessionAPIKeyStore(melixHome: activeMelixHome)
+        await statusClient.configureRefreshResult(
+            CompanionStatusSnapshot(
+                status: "ok",
+                readOnly: true,
+                authorizationScope: "companion_read_only",
+                logTail: CompanionStatusLogTailState(
+                    source: "image_jobs",
+                    visible: 1,
+                    total: 2,
+                    entries: [
+                        CompanionStatusLogEntryState(
+                            eventType: "state_update",
+                            source: "image_jobs",
+                            jobID: "image-job-ui",
+                            requestID: "request-ui",
+                            modelID: "melix-dev-image",
+                            operation: "image_generate",
+                            state: "failed",
+                            lane: "interactive",
+                            workerID: "image-worker-ui",
+                            progressStage: "failed",
+                            updatedAtUnixMS: 1_718_000_020_000,
+                            failureCode: "image_worker_failed",
+                            redactionSummary: "raw log line omitted; raw prompt omitted; request body omitted; artifact URIs omitted; local paths omitted; error message omitted"
+                        ),
+                    ]
+                ),
+                redactionLogs: "redacted_tail"
+            )
+        )
+        let activeViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            serverSessionAPIKeyStore: activeAPIKeyStore,
+            companionPairingClient: activePairingClient,
+            companionStatusClient: statusClient
+        )
+
+        await activeViewModel.start()
+        try activeAPIKeyStore.savePrimaryKey(
+            serverSessionID: try #require(activeViewModel.selectedServerSession?.id),
+            primaryKey: "melix_primary_desktop",
+            keyID: "primary"
+        )
+        await activeViewModel.issueCompanionPairing()
+        await activeViewModel.refreshCompanionStatus()
+        let loadedPresentation = DesktopAPICompanionStatusPresentation(status: activeViewModel.companionStatus)
+        _ = hostView(DesktopAPICompanionStatusPanel(viewModel: activeViewModel))
+
+        #expect(loadedPresentation.statusTitle == "Companion status ok")
+        #expect(loadedPresentation.statusDetail == "Read-only companion status, 1 of 2 redacted log entries visible.")
+        #expect(loadedPresentation.logRows.map(\.title) == ["image-job-ui • failed"])
+        #expect(loadedPresentation.logRows.first?.detail.contains("image_worker_failed") == true)
+        #expect(loadedPresentation.logRows.first?.redactionText.contains("raw prompt omitted") == true)
+        #expect(loadedPresentation.redactionText == "redacted_tail")
+
+        let unknownTimePresentation = DesktopAPICompanionStatusPresentation(
+            status: CompanionStatusState.loaded(
+                from: CompanionStatusSnapshot(
+                    status: "",
+                    readOnly: true,
+                    authorizationScope: "companion_read_only",
+                    logTail: CompanionStatusLogTailState(
+                        visible: 1,
+                        total: 1,
+                        entries: [
+                            CompanionStatusLogEntryState(
+                                eventType: "state_update",
+                                source: "image_jobs",
+                                jobID: "image-job-unknown-time",
+                                requestID: "request-ui",
+                                modelID: "melix-dev-image",
+                                operation: "image_generate",
+                                state: "queued",
+                                lane: "background",
+                                workerID: "",
+                                progressStage: "queued",
+                                updatedAtUnixMS: 0,
+                                failureCode: "",
+                                redactionSummary: "raw log line omitted"
+                            )
+                        ]
+                    ),
+                    redactionLogs: ""
+                )
+            )
+        )
+        #expect(unknownTimePresentation.statusTitle == "Companion status loaded")
+        #expect(unknownTimePresentation.logRows.first?.timeText == "unknown")
+
+        let failureStatus = CompanionStatusState.failed("Companion status refresh failed: gateway offline")
+        let failurePresentation = DesktopAPICompanionStatusPresentation(status: failureStatus)
+        #expect(failurePresentation.statusTitle == "Companion status needs attention")
+        #expect(failurePresentation.errorText == "Companion status refresh failed: gateway offline")
     }
 
     @Test("api reference tab projects typed onboarding surfaces and endpoints")
