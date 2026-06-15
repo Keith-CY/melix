@@ -326,6 +326,27 @@ def test_retrieval_context_projection_probe_script_emits_metrics(
     assert metrics["lookup_copy_speedup"] >= 0.0
 
 
+def test_retrieval_context_projection_probe_covers_lookup_wrapper_metadata() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "retrieval-context-projection-fastpath"
+    )
+    focused_tests = (
+        "services/mlx-worker-python/tests/test_retrieval_context.py::"
+        "test_project_retrieval_lookup_result_uses_wrapper_metadata_for_refusals",
+        "services/mlx-worker-python/tests/test_retrieval_context.py::"
+        "test_project_retrieval_lookup_result_refuses_malformed_wrapper_metadata",
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py::"
+        "test_retrieval_context_projection_probe_covers_lookup_wrapper_metadata",
+    )
+    coverage_pytest_selection = probe.coverage_command.split("&&", 1)[0]
+
+    for focused_test in focused_tests:
+        assert focused_test in probe.test_command
+        assert focused_test in coverage_pytest_selection
+
+
 def test_local_job_followup_scan_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
