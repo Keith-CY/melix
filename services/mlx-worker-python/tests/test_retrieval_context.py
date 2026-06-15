@@ -1540,6 +1540,7 @@ def _assert_retrieval_lookup_result_copies_store_projection_outputs(
                         "scores": [1, 2, {"label": "safe"}],
                         "tuple_values": ("a", {"b": "c"}),
                         "custom_mutable": mutable_default,
+                        "optional_note": None,
                     },
                 }
             },
@@ -1566,6 +1567,7 @@ def _assert_retrieval_lookup_result_copies_store_projection_outputs(
                 "scores": [1, 2, {"label": "safe"}],
                 "tuple_values": ("a", {"b": "c"}),
                 "custom_mutable": ["fallback"],
+                "optional_note": None,
             },
         }
     }

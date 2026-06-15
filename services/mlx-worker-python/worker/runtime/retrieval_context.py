@@ -391,14 +391,10 @@ def _copy_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _copy_payload_value(value: Any) -> Any:
+    if value is None:
+        return value
     value_type = type(value)
-    if (
-        value_type is str
-        or value_type is int
-        or value_type is float
-        or value_type is bool
-        or value is None
-    ):
+    if value_type is str or value_type is int or value_type is float or value_type is bool:
         return value
     copy_value = _copy_payload_value
     if value_type is dict:
