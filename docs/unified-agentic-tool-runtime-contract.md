@@ -924,6 +924,23 @@ selected-result receipt through `worker.runtime.prompt_context` by admitting one
 `PromptContextSegment` for the sanitized selected result value while preserving
 the same emitted receipt fields and observation payload.
 
+Deterministic adapter failures that reject a concrete untrusted source must also
+attach one source-specific refusal receipt beside the generic failed
+tool-observation receipt. The failed observation payload remains backward
+compatible and keeps the existing `reason`, `source_type`, `source_id`,
+`corrective_action`, and any diagnostic fields. The source refusal receipt uses
+the same `melix.untrusted_context_receipt.v1` schema with `included = false` and
+does not copy malformed values, cross-owner content, workspace paths beyond the
+public source ID, or private prompt text into receipt fields. The deterministic
+runtime currently emits these refusal receipts for:
+
+- `invalid_untrusted_input_type`: `segment_id = <source_id>:invalid-untrusted-input`
+  and `source_field` set to the rejected field.
+- `owner_scope_mismatch`: `segment_id = <source_id>:owner-scope-refusal`,
+  `source_field = owner_scope`, and `owner_scope_checked = true`.
+- `workspace_path_refused`: `segment_id = <source_id>:workspace-path-refusal`
+  and `source_field = workspace_path`.
+
 The deterministic visual tool source slice applies the same source-specific
 receipt pattern to successful `layout_parse` and `image_crop` observations.
 Each successful `layout_parse` observation emits one `retrieved_image` receipt
@@ -999,7 +1016,9 @@ the configured owner-scope check ran and passed. Workspace-local reads preserve
 their `workspace_path_receipt`, but set `owner_scope_checked = false` unless a
 separate owner-scope check is added later. Missing pages, workspace path
 refusals, and unavailable workspace files must not emit an admitted
-`retrieved_document` source receipt.
+`retrieved_document` source receipt. Workspace path refusals instead emit the
+failed adapter source refusal receipt described above with
+`source_type = workspace_file`.
 
 Live MCP, agent, workflow, and local-job mutation surfaces must reuse this
 operator layer or preserve the same resolver-before-filesystem-access invariant

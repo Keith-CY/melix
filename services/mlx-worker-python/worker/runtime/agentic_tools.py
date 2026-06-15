@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
+from worker.runtime.prompt_context import refused_prompt_context_receipt
 from worker.runtime.retrieval_context import (
     admit_retrieved_document_context,
     admit_retrieved_image_context,
@@ -147,6 +148,7 @@ class DeterministicAgenticToolRuntime:
             raise AgenticToolRuntimeError(f"Unknown agentic tool requested: {tool_name}")
         _validate_required_arguments(descriptor, arguments)
         started_at = perf_counter()
+        source_untrusted_context_receipts: tuple[dict[str, object], ...] = ()
         try:
             payload = self._execute_payload(
                 tool_name=tool_name,
@@ -156,12 +158,15 @@ class DeterministicAgenticToolRuntime:
         except AgenticToolRuntimeError as exc:
             payload = {"error": str(exc), "_status": "failed"}
             payload.update(exc.details)
+            source_untrusted_context_receipts = _runtime_error_refusal_receipts(exc.details)
         except (SyntaxError, TypeError, ValueError) as exc:
             payload = {"error": str(exc), "_status": "failed"}
         status = str(payload.pop("_status", "completed"))
-        source_untrusted_context_receipts = tuple(
+        payload_untrusted_context_receipts = tuple(
             payload.pop("_untrusted_context_receipts", ())
         )
+        if not source_untrusted_context_receipts:
+            source_untrusted_context_receipts = payload_untrusted_context_receipts
         observation = normalize_tool_observation(
             tool_name=tool_name,
             tool_call_id=tool_call_id,
@@ -1081,6 +1086,73 @@ def _skill_memory_lookup_result_receipts(
         *projection.untrusted_context_receipts,
         *projection.refusal_receipts,
     ]
+
+
+def _runtime_error_refusal_receipts(details: dict[str, Any]) -> tuple[dict[str, object], ...]:
+    reason = details.get("reason")
+    if reason == "invalid_untrusted_input_type":
+        receipt = _invalid_untrusted_type_refusal_receipt(details)
+    elif reason == "owner_scope_mismatch":
+        receipt = _owner_scope_refusal_receipt(details)
+    elif reason == "workspace_path_refused":
+        receipt = _workspace_path_refusal_receipt(details)
+    else:
+        return ()
+    return (receipt,) if receipt is not None else ()
+
+
+def _invalid_untrusted_type_refusal_receipt(details: dict[str, Any]) -> dict[str, object] | None:
+    source_id = _receipt_text(details.get("source_id"))
+    source_type = _receipt_text(details.get("source_type"))
+    source_field = _receipt_text(details.get("field"))
+    corrective_action = _receipt_text(details.get("corrective_action"))
+    if not source_id or not source_type or not source_field or not corrective_action:
+        return None
+    return refused_prompt_context_receipt(
+        segment_id=f"{source_id}:invalid-untrusted-input",
+        source_type=source_type,
+        source_field=source_field,
+        source_id=source_id,
+        reason="invalid_untrusted_input_type",
+        corrective_action=corrective_action,
+    )
+
+
+def _owner_scope_refusal_receipt(details: dict[str, Any]) -> dict[str, object] | None:
+    source_id = _receipt_text(details.get("source_id"))
+    source_type = _receipt_text(details.get("source_type"))
+    corrective_action = _receipt_text(details.get("corrective_action"))
+    if not source_id or not source_type or not corrective_action:
+        return None
+    return refused_prompt_context_receipt(
+        segment_id=f"{source_id}:owner-scope-refusal",
+        source_type=source_type,
+        source_field="owner_scope",
+        source_id=source_id,
+        owner_scope_checked=True,
+        reason="owner_scope_mismatch",
+        corrective_action=corrective_action,
+    )
+
+
+def _workspace_path_refusal_receipt(details: dict[str, Any]) -> dict[str, object] | None:
+    source_id = _receipt_text(details.get("source_id"))
+    source_type = _receipt_text(details.get("source_type"))
+    corrective_action = _receipt_text(details.get("corrective_action"))
+    if not source_id or not source_type or not corrective_action:
+        return None
+    return refused_prompt_context_receipt(
+        segment_id=f"{source_id}:workspace-path-refusal",
+        source_type=source_type,
+        source_field="workspace_path",
+        source_id=source_id,
+        reason="workspace_path_refused",
+        corrective_action=corrective_action,
+    )
+
+
+def _receipt_text(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _visit_document_receipt(

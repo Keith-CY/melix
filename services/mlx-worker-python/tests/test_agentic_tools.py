@@ -29,6 +29,28 @@ _BUILT_IN_TOOL_CALLS = (
 )
 
 
+def _source_refusal_receipts(observation: dict[str, object]) -> list[dict[str, object]]:
+    return [
+        receipt
+        for receipt in observation["untrusted_context_receipts"]
+        if isinstance(receipt, dict) and receipt.get("included") is False
+    ]
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        {"reason": "invalid_untrusted_input_type", "source_type": "skill", "source_id": "skill:bad"},
+        {"reason": "owner_scope_mismatch", "source_type": "memory", "corrective_action": "reject"},
+        {"reason": "workspace_path_refused", "source_id": "config/.env", "corrective_action": "reject"},
+    ],
+)
+def test_agentic_tool_runtime_refusal_receipt_mapper_skips_incomplete_metadata(
+    details: dict[str, object],
+) -> None:
+    assert agentic_tools_module._runtime_error_refusal_receipts(details) == ()
+
+
 def test_agentic_tool_runtime_executes_all_builtin_tools_with_shared_observation_shape() -> None:
     run = execute_agentic_tool_calls(
         [
@@ -1169,6 +1191,23 @@ def test_agentic_tool_runtime_fails_closed_for_invalid_skill_memory_lookup_input
     assert observation["payload"]["source_id"] == expected_source_id
     assert observation["payload"]["expected_type"] == expected_type
     assert observation["payload"]["actual_type"] == actual_type
+    assert _source_refusal_receipts(observation) == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": f"{expected_source_id}:invalid-untrusted-input",
+            "source_type": expected_source_type,
+            "source_field": expected_field,
+            "source_id": expected_source_id,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "invalid_untrusted_input_type",
+            "corrective_action": "Provide this untrusted value as a JSON string.",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1223,6 +1262,23 @@ def test_agentic_tool_runtime_fails_closed_for_skill_memory_owner_scope_mismatch
     assert observation["payload"]["owner_scope_checked"] is True
     assert observation["payload"]["expected_owner_id"] == "operator-a"
     assert observation["payload"]["actual_owner_id"] == "operator-b"
+    assert _source_refusal_receipts(observation) == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": f"{expected_source_id}:owner-scope-refusal",
+            "source_type": expected_source_type,
+            "source_field": "owner_scope",
+            "source_id": expected_source_id,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": True,
+            "reason": "owner_scope_mismatch",
+            "corrective_action": "Do not project cross-owner untrusted content into tool observations.",
+        }
+    ]
 
 
 def test_agentic_tool_runtime_emits_source_receipt_for_fixture_visit_page() -> None:
@@ -1460,6 +1516,23 @@ def test_agentic_tool_runtime_fails_closed_for_invalid_untrusted_value_types(
     assert observation["payload"]["expected_type"] == "str"
     assert observation["payload"]["corrective_action"] == "Provide this untrusted value as a JSON string."
     assert run.metrics["agentic_tool.failed_count"] == 1.0
+    assert _source_refusal_receipts(observation) == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": f"{expected_source_id}:invalid-untrusted-input",
+            "source_type": expected_source_type,
+            "source_field": expected_field,
+            "source_id": expected_source_id,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "invalid_untrusted_input_type",
+            "corrective_action": "Provide this untrusted value as a JSON string.",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1512,6 +1585,23 @@ def test_agentic_tool_runtime_fails_closed_for_invalid_layout_and_crop_payloads(
     assert observation["payload"]["source_id"] == expected_source_id
     assert observation["payload"]["expected_type"] == expected_type
     assert observation["payload"]["actual_type"] == actual_type
+    assert _source_refusal_receipts(observation) == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": f"{expected_source_id}:invalid-untrusted-input",
+            "source_type": expected_source_type,
+            "source_field": expected_field,
+            "source_id": expected_source_id,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "invalid_untrusted_input_type",
+            "corrective_action": "Provide this untrusted value as a JSON string.",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1689,6 +1779,23 @@ def test_agentic_tool_runtime_fails_closed_for_owner_scope_mismatch(
     assert observation["payload"]["privilege"] == expected_privilege
     assert "cross-owner" in observation["payload"]["corrective_action"]
     assert run.metrics["agentic_tool.failed_count"] == 1.0
+    assert _source_refusal_receipts(observation) == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": f"{expected_source_id}:owner-scope-refusal",
+            "source_type": expected_source_type,
+            "source_field": "owner_scope",
+            "source_id": expected_source_id,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": True,
+            "reason": "owner_scope_mismatch",
+            "corrective_action": "Do not project cross-owner untrusted content into tool observations.",
+        }
+    ]
 
 
 def test_agentic_tool_runtime_allows_matching_owner_scope_payloads() -> None:
@@ -1898,6 +2005,23 @@ def test_agentic_tool_runtime_visit_refuses_workspace_path_before_reading(
         receipt["source_type"] != "retrieved_document"
         for receipt in observation["untrusted_context_receipts"]
     )
+    assert _source_refusal_receipts(observation) == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": f"{requested_path}:workspace-path-refusal",
+            "source_type": "workspace_file",
+            "source_field": "workspace_path",
+            "source_id": requested_path,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "workspace_path_refused",
+            "corrective_action": "Use a path accepted by the Workspace path resolver before reading local files.",
+        }
+    ]
 
 
 def test_agentic_tool_runtime_visit_reports_missing_workspace_file_with_receipt(tmp_path: Path) -> None:
