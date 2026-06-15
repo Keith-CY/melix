@@ -18,7 +18,7 @@ enum PromptContextSourceIDRedactor {
     }
 
     private static func isPublicSourceID(_ sourceID: String, allowColon: Bool) -> Bool {
-        guard sourceID.count <= 96 else {
+        guard sourceID.utf8.count <= 96 else {
             return false
         }
         return sourceID.allSatisfy { character in
