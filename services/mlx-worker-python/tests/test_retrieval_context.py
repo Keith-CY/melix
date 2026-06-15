@@ -1432,6 +1432,7 @@ def _assert_retrieval_lookup_result_copies_store_projection_outputs(
                     "nested": {
                         "scores": [1, 2, {"label": "safe"}],
                         "tuple_values": ("a", {"b": "c"}),
+                        "tuple_values_three": ("a", {"b": "c"}, ["d"]),
                         "custom_mutable": mutable_default,
                     },
                 }
@@ -1458,6 +1459,7 @@ def _assert_retrieval_lookup_result_copies_store_projection_outputs(
             "nested": {
                 "scores": [1, 2, {"label": "safe"}],
                 "tuple_values": ("a", {"b": "c"}),
+                "tuple_values_three": ("a", {"b": "c"}, ["d"]),
                 "custom_mutable": ["fallback"],
             },
         }
@@ -1481,6 +1483,9 @@ def _assert_retrieval_lookup_result_copies_store_projection_outputs(
     assert copied_nested["scores"][2] is not source_nested["scores"][2]
     assert copied_nested["tuple_values"] is not source_nested["tuple_values"]
     assert copied_nested["tuple_values"][1] is not source_nested["tuple_values"][1]
+    assert copied_nested["tuple_values_three"] is not source_nested["tuple_values_three"]
+    assert copied_nested["tuple_values_three"][1] is not source_nested["tuple_values_three"][1]
+    assert copied_nested["tuple_values_three"][2] is not source_nested["tuple_values_three"][2]
     assert copied_nested["custom_mutable"] is not source_nested["custom_mutable"]
     assert projection.untrusted_context_receipts is not (
         store_projection.untrusted_context_receipts
