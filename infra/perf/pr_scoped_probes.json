@@ -5767,6 +5767,32 @@
         "warn_abs": 1.0
       },
       {
+        "key": "lookup_records_baseline_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "informational"
+      },
+      {
+        "key": "lookup_records_optimized_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "informational"
+      },
+      {
+        "key": "lookup_records_delta_ms",
+        "unit": "ms",
+        "direction": "informational"
+      },
+      {
+        "key": "lookup_records_baseline_get_calls_mean",
+        "unit": "calls",
+        "direction": "informational"
+      },
+      {
+        "key": "lookup_records_optimized_get_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_abs": 0.0
+      },
+      {
         "key": "entry_count",
         "unit": "count",
         "direction": "informational"
