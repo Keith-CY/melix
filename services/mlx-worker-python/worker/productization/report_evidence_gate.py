@@ -4,7 +4,7 @@ import heapq
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import AbstractSet, Any
+from typing import AbstractSet, Any, Iterator
 
 from worker.productization.benchmark_evaluation_report import validate_report_payload
 
@@ -469,33 +469,34 @@ def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:
     probe_summary = report.get("probe_summary")
     if not isinstance(probe_summary, dict):
         return []
-    rows: list[tuple[float, int, str, dict[str, object]]] = []
-    row_index = 0
-    rows_append = rows.append
-    for side in ("baseline", "candidate"):
-        side_summary = probe_summary.get(side)
-        if not isinstance(side_summary, dict):
-            continue
-        slowest_phases = side_summary.get("slowest_phases")
-        if not isinstance(slowest_phases, list):
-            continue
-        for row in slowest_phases:
-            if not isinstance(row, dict):
+
+    def iter_rows() -> Iterator[tuple[float, int, str, dict[str, object]]]:
+        row_index = 0
+        for side in ("baseline", "candidate"):
+            side_summary = probe_summary.get(side)
+            if not isinstance(side_summary, dict):
                 continue
-            duration = row.get("duration_ms")
-            if type(duration) is float:
-                duration_ms = duration
-            elif type(duration) is int:
-                duration_ms = float(duration)
-            elif type(duration) is str:
-                duration_ms = float(duration or 0.0)
-            else:
-                duration_ms = 0.0
-            rows_append((duration_ms, -row_index, side, row))
-            row_index += 1
+            slowest_phases = side_summary.get("slowest_phases")
+            if not isinstance(slowest_phases, list):
+                continue
+            for row in slowest_phases:
+                if not isinstance(row, dict):
+                    continue
+                duration = row.get("duration_ms")
+                if type(duration) is float:
+                    duration_ms = duration
+                elif type(duration) is int:
+                    duration_ms = float(duration)
+                elif type(duration) is str:
+                    duration_ms = float(duration or 0.0)
+                else:
+                    duration_ms = 0.0
+                yield (duration_ms, -row_index, side, row)
+                row_index += 1
+
     return [
         {"side": side, **row}
-        for _duration_ms, _row_order, side, row in heapq.nlargest(5, rows)
+        for _duration_ms, _row_order, side, row in heapq.nlargest(5, iter_rows())
     ]
 
 
