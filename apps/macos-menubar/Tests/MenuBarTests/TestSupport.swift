@@ -126,6 +126,12 @@ struct CompanionPairingRevokeRequestRecord: Equatable, Sendable {
     let sessionToken: String
 }
 
+struct CompanionStatusRequestRecord: Equatable, Sendable {
+    let statusURL: URL
+    let resumeHeader: String
+    let sessionToken: String
+}
+
 actor FakeCompanionPairingClient: CompanionPairingClient {
     private(set) var issueRequests: [CompanionPairingIssueRequestRecord] = []
     private(set) var revokeRequests: [CompanionPairingRevokeRequestRecord] = []
@@ -194,6 +200,62 @@ actor FakeCompanionPairingClient: CompanionPairingClient {
     }
 }
 
+actor FakeCompanionStatusClient: CompanionStatusClient {
+    private(set) var refreshRequests: [CompanionStatusRequestRecord] = []
+    private var refreshResult = CompanionStatusSnapshot(
+        status: "ok",
+        readOnly: true,
+        authorizationScope: "companion_read_only",
+        logTail: CompanionStatusLogTailState(
+            source: "image_jobs",
+            visible: 1,
+            total: 1,
+            entries: [
+                CompanionStatusLogEntryState(
+                    eventType: "state_update",
+                    source: "image_jobs",
+                    jobID: "image-job-1",
+                    requestID: "request-1",
+                    modelID: "melix-dev-image",
+                    operation: "image_generate",
+                    state: "running",
+                    lane: "interactive",
+                    workerID: "image-worker-1",
+                    progressStage: "sampling",
+                    updatedAtUnixMS: 1_718_000_010_000,
+                    failureCode: "",
+                    redactionSummary: "raw log line omitted; raw prompt omitted; request body omitted; artifact URIs omitted; local paths omitted; error message omitted"
+                ),
+            ]
+        ),
+        redactionLogs: "redacted_tail"
+    )
+    private var refreshError: Error?
+
+    func configureRefreshResult(_ result: CompanionStatusSnapshot) {
+        refreshResult = result
+        refreshError = nil
+    }
+
+    func configureRefreshError(_ error: Error?) {
+        refreshError = error
+    }
+
+    func refreshStatus(statusURL: URL, resumeHeader: String, sessionToken: String) async throws -> CompanionStatusSnapshot {
+        refreshRequests.append(
+            CompanionStatusRequestRecord(
+                statusURL: statusURL,
+                resumeHeader: resumeHeader,
+                sessionToken: sessionToken
+            )
+        )
+        if let refreshError {
+            throw refreshError
+        }
+        return refreshResult
+    }
+}
+
 struct CompanionPairingHTTPRequestRecord: Equatable, Sendable {
     let url: URL?
     let method: String
@@ -231,6 +293,35 @@ actor FakeCompanionPairingHTTPTransport: CompanionPairingHTTPTransport {
 
         let body = method == "DELETE" ? revokeBody : issueBody
         let statusCode = method == "DELETE" ? revokeStatusCode : issueStatusCode
+        let response = HTTPURLResponse(
+            url: request.url ?? URL(string: "http://127.0.0.1")!,
+            statusCode: statusCode,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        return (body, response)
+    }
+}
+
+actor FakeCompanionStatusHTTPTransport: CompanionStatusHTTPTransport {
+    private(set) var requests: [CompanionPairingHTTPRequestRecord] = []
+    private var statusCode = 200
+    private var body = Data()
+
+    func configureResponse(statusCode: Int = 200, body: Data) {
+        self.statusCode = statusCode
+        self.body = body
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requests.append(
+            CompanionPairingHTTPRequestRecord(
+                url: request.url,
+                method: request.httpMethod ?? "GET",
+                headers: request.allHTTPHeaderFields ?? [:],
+                body: request.httpBody
+            )
+        )
         let response = HTTPURLResponse(
             url: request.url ?? URL(string: "http://127.0.0.1")!,
             statusCode: statusCode,

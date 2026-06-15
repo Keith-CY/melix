@@ -110,6 +110,26 @@ metrics, or the safe descriptor displayed in the panel. Closing the desktop
 process drops the transient token reference; create a new companion token if the
 current token can no longer be copied or revoked from the panel.
 
+### Desktop Companion Status Refresh
+
+The macOS API workspace also includes a `Companion Status` panel under the
+Authentication section. It is a read-only status probe for the active companion
+pairing token. The panel calls the gateway `GET /v1/melix/companion/status`
+route with the transient companion token and renders only the safe response
+fields returned by the gateway.
+
+Operator action:
+
+- `Refresh Status` calls the descriptor `pairing.status_url` with the descriptor
+  `pairing.resume_header` and active companion token.
+
+The desktop app does not tail local log files, persist fetched companion status,
+or expand the companion session allowlist. Gateway authorization and redaction
+remain the source of truth. The displayed log-tail rows must come from the
+response `logs.entries` collection and must keep raw log lines, private prompts,
+request bodies, artifact URIs, local paths, and raw error text omitted according
+to the response `redaction` labels.
+
 ### Reuse The Session
 
 ```bash
@@ -211,7 +231,8 @@ The smoke covers:
 
 ## Metrics
 
-M9.4 records these metrics in the touched scope:
+Persistent sessions and companion desktop controls record these metrics in the
+touched scope:
 
 - `persistent_session.active_session_count`
 - `persistent_session.remembered_session_count`
@@ -219,3 +240,5 @@ M9.4 records these metrics in the touched scope:
 - `persistent_session.restore_success_rate`
 - `persistent_session.sign_out_latency_ms`
 - `persistent_session.retention_ttl_seconds`
+- `companion.status_refresh_ms`
+- `companion.status_refresh_failures`

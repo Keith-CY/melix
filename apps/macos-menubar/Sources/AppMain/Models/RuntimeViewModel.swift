@@ -2479,6 +2479,7 @@ public final class RuntimeViewModel {
     public private(set) var remoteServers: [RemoteServer] = []
     public private(set) var chatSessions: [DesktopChatSessionState] = []
     public private(set) var companionPairing = CompanionPairingState()
+    public private(set) var companionStatus = CompanionStatusState()
     public private(set) var lastError: String?
     public private(set) var lastCLIWorkflowFailure: RuntimeCLIWorkflowFailureState?
     public private(set) var productUpdateSummary: String?
@@ -3143,6 +3144,7 @@ public final class RuntimeViewModel {
     private let operatorCommandRunner: MelixCLIRunner?
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
     private let companionPairingClient: any CompanionPairingClient
+    private let companionStatusClient: any CompanionStatusClient
     private let remoteServerStore: any RemoteServerStoring
     private let evaluationPromptStore: any EvaluationPromptStoring
     private let loraTrainingJobStore: any LoraTrainingJobStoring
@@ -3171,6 +3173,7 @@ public final class RuntimeViewModel {
     private var gatewayAPIKeyPersistFailures = 0.0
     private var companionPairingIssueFailures = 0.0
     private var companionPairingRevokeFailures = 0.0
+    private var companionStatusRefreshFailures = 0.0
     private var activeCompanionSessionToken = ""
     private var activeCompanionPairingBaseURL: URL?
     private var remoteServerPersistFailures = 0.0
@@ -3409,6 +3412,7 @@ public final class RuntimeViewModel {
         operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
         companionPairingClient: any CompanionPairingClient = LiveCompanionPairingClient(),
+        companionStatusClient: any CompanionStatusClient = LiveCompanionStatusClient(),
         remoteServerStore: any RemoteServerStoring = NullRemoteServerStore(),
         evaluationPromptStore: any EvaluationPromptStoring = NullEvaluationPromptStore(),
         loraTrainingJobStore: any LoraTrainingJobStoring = NullLoraTrainingJobStore(),
@@ -3422,6 +3426,7 @@ public final class RuntimeViewModel {
         self.operatorCommandRunner = operatorCommandRunner
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
         self.companionPairingClient = companionPairingClient
+        self.companionStatusClient = companionStatusClient
         self.remoteServerStore = remoteServerStore
         self.evaluationPromptStore = evaluationPromptStore
         self.loraTrainingJobStore = loraTrainingJobStore
@@ -6057,6 +6062,7 @@ public final class RuntimeViewModel {
         companionPairing = CompanionPairingState(phase: .issuing)
         activeCompanionSessionToken = ""
         activeCompanionPairingBaseURL = nil
+        companionStatus = CompanionStatusState()
         notifyStateChanged()
 
         let startedAt = Date()
@@ -6065,6 +6071,7 @@ public final class RuntimeViewModel {
             activeCompanionSessionToken = result.resumeToken
             activeCompanionPairingBaseURL = baseURL
             companionPairing = CompanionPairingState.active(from: result)
+            companionStatus = CompanionStatusState()
             await metrics.record(
                 name: "companion.pairing_issue_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -6094,6 +6101,7 @@ public final class RuntimeViewModel {
             activeCompanionSessionToken = ""
             activeCompanionPairingBaseURL = nil
             companionPairing = CompanionPairingState()
+            companionStatus = CompanionStatusState()
             await metrics.record(
                 name: "companion.pairing_revoke_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
@@ -6126,6 +6134,44 @@ public final class RuntimeViewModel {
             return nil
         }
         return String(data: data, encoding: .utf8)
+    }
+
+    @MainActor
+    public func refreshCompanionStatus() async {
+        guard companionStatus.phase != .loading else {
+            return
+        }
+        guard companionPairing.phase == .active,
+              activeCompanionSessionToken.isEmpty == false,
+              let statusURL = URL(string: companionPairing.statusURL),
+              companionPairing.resumeHeader.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        else {
+            await failCompanionStatusRefresh("Issue a read-only companion token before refreshing companion status.")
+            return
+        }
+
+        let resumeHeader = companionPairing.resumeHeader
+        let sessionToken = activeCompanionSessionToken
+        companionStatus.phase = .loading
+        companionStatus.lastError = nil
+        notifyStateChanged()
+
+        let startedAt = Date()
+        do {
+            let snapshot = try await companionStatusClient.refreshStatus(
+                statusURL: statusURL,
+                resumeHeader: resumeHeader,
+                sessionToken: sessionToken
+            )
+            companionStatus = CompanionStatusState.loaded(from: snapshot)
+            await metrics.record(
+                name: "companion.status_refresh_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            notifyStateChanged()
+        } catch {
+            await failCompanionStatusRefresh("Companion status refresh failed: \(error)")
+        }
     }
 
     public func updateSelectedServerSessionAutoSleepEnabled(_ value: Bool) {
@@ -13990,6 +14036,18 @@ public final class RuntimeViewModel {
         await metrics.record(
             name: "companion.pairing_revoke_failures",
             valueMs: companionPairingRevokeFailures
+        )
+        notifyStateChanged()
+    }
+
+    @MainActor
+    private func failCompanionStatusRefresh(_ message: String) async {
+        companionStatusRefreshFailures += 1
+        companionStatus = CompanionStatusState.failed(message)
+        recordLocalError(message)
+        await metrics.record(
+            name: "companion.status_refresh_failures",
+            valueMs: 1.0
         )
         notifyStateChanged()
     }

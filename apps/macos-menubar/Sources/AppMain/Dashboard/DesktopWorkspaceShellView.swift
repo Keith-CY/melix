@@ -10390,6 +10390,151 @@ struct DesktopAPICompanionPairingPresentation: Equatable {
     }
 }
 
+struct DesktopAPICompanionStatusPanel: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        let presentation = DesktopAPICompanionStatusPresentation(status: viewModel.companionStatus)
+
+        MelixSectionCard("Companion Status") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(presentation.statusTitle)
+                            .font(.headline)
+                        Text(presentation.statusDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Refresh Status") {
+                        Task { await viewModel.refreshCompanionStatus() }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(presentation.refreshDisabled)
+                }
+
+                if let errorText = presentation.errorText {
+                    Text(errorText)
+                        .font(.caption)
+                        .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Redacted Log Tail")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    if presentation.logRows.isEmpty {
+                        Text("No companion log entries loaded.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(presentation.logRows) { row in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(row.title)
+                                        .font(.caption.weight(.semibold))
+                                    Spacer()
+                                    Text(row.timeText)
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text(row.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(row.redactionText)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }
+
+                if let redactionText = presentation.redactionText {
+                    Text("Logs: \(redactionText)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct DesktopAPICompanionStatusPresentation: Equatable {
+    struct LogRow: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let detail: String
+        let timeText: String
+        let redactionText: String
+    }
+
+    let statusTitle: String
+    let statusDetail: String
+    let errorText: String?
+    let redactionText: String?
+    let refreshDisabled: Bool
+    let logRows: [LogRow]
+
+    init(status: CompanionStatusState) {
+        statusTitle = Self.statusTitle(status)
+        statusDetail = Self.statusDetail(status)
+        errorText = (status.lastError?.isEmpty == false) ? status.lastError : nil
+        redactionText = status.redactionLogs.isEmpty ? nil : status.redactionLogs
+        refreshDisabled = status.phase == .loading
+        logRows = status.logTail.entries.map(Self.logRow(entry:))
+    }
+
+    private static func statusTitle(_ status: CompanionStatusState) -> String {
+        switch status.phase {
+        case .idle:
+            return "Companion status not loaded"
+        case .loading:
+            return "Refreshing companion status"
+        case .loaded:
+            return "Companion status \(status.status.isEmpty ? "loaded" : status.status)"
+        case .failed:
+            return "Companion status needs attention"
+        }
+    }
+
+    private static func statusDetail(_ status: CompanionStatusState) -> String {
+        switch status.phase {
+        case .idle:
+            return "Refresh after issuing a read-only companion token."
+        case .loading:
+            return "Reading the companion status endpoint with the transient read-only token."
+        case .loaded:
+            return "Read-only companion status, \(status.logTail.visible) of \(status.logTail.total) redacted log entries visible."
+        case .failed:
+            return status.lastError ?? "The companion status refresh failed."
+        }
+    }
+
+    private static func logRow(entry: CompanionStatusLogEntryState) -> LogRow {
+        let failureSuffix = entry.failureCode.isEmpty ? "" : " • \(entry.failureCode)"
+        return LogRow(
+            id: "\(entry.jobID)-\(entry.updatedAtUnixMS)-\(entry.eventType)",
+            title: "\(entry.jobID) • \(entry.state)",
+            detail: "\(entry.operation) • \(entry.progressStage) • \(entry.lane)\(failureSuffix)",
+            timeText: companionStatusTimestampText(entry.updatedAtUnixMS),
+            redactionText: entry.redactionSummary
+        )
+    }
+}
+
+private func companionStatusTimestampText(_ unixMS: Int64) -> String {
+    guard unixMS > 0 else {
+        return "unknown"
+    }
+    let date = Date(timeIntervalSince1970: Double(unixMS) / 1_000)
+    return date.formatted(date: .omitted, time: .shortened)
+}
+
 struct DesktopAPIQuickStartSnippet: Identifiable {
     let id: String
     let language: String
@@ -11041,6 +11186,7 @@ struct DesktopAPIWorkspaceView: View {
                                 )
                             )
                             DesktopAPICompanionPairingPanel(viewModel: viewModel)
+                            DesktopAPICompanionStatusPanel(viewModel: viewModel)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     case .quickStarts:

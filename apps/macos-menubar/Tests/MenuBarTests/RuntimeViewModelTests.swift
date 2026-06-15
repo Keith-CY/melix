@@ -1994,6 +1994,368 @@ struct RuntimeViewModelTests {
         #expect(CompanionPairingClientError.invalidResponse("not HTTP").description == "not HTTP")
     }
 
+    @Test("refreshes companion status log tail with active read-only token")
+    @MainActor
+    func refreshesCompanionStatusLogTailWithActiveReadOnlyToken() async throws {
+        let pairingClient = FakeCompanionPairingClient()
+        await pairingClient.configureIssueResult(
+            CompanionPairingIssueResult(
+                sessionID: "companion-status-session",
+                scope: "companion_read_only",
+                rememberMe: true,
+                expiresAtUnixMS: 1_718_000_000_000,
+                resumeHeader: "x-melix-session",
+                resumeToken: "melix_companion_status_secret",
+                pairing: CompanionPairingDescriptor(
+                    schemaVersion: "melix.companion.pairing.v1",
+                    statusURL: "http://127.0.0.1:12436/v1/melix/companion/status",
+                    resumeHeader: "x-melix-session",
+                    tokenTransport: "resume_header",
+                    allowedRoutes: ["GET /v1/melix/companion/status"],
+                    forbiddenCapabilities: ["mutate_runtime", "read_private_prompts"],
+                    expiresAtUnixMS: 1_718_000_000_000
+                )
+            )
+        )
+        let statusClient = FakeCompanionStatusClient()
+        await statusClient.configureRefreshResult(
+            CompanionStatusSnapshot(
+                status: "ok",
+                readOnly: true,
+                authorizationScope: "companion_read_only",
+                logTail: CompanionStatusLogTailState(
+                    source: "image_jobs",
+                    visible: 2,
+                    total: 4,
+                    entries: [
+                        CompanionStatusLogEntryState(
+                            eventType: "state_update",
+                            source: "image_jobs",
+                            jobID: "image-job-2",
+                            requestID: "request-2",
+                            modelID: "melix-dev-image",
+                            operation: "image_generate",
+                            state: "failed",
+                            lane: "interactive",
+                            workerID: "image-worker-1",
+                            progressStage: "failed",
+                            updatedAtUnixMS: 1_718_000_020_000,
+                            failureCode: "image_worker_failed",
+                            redactionSummary: "raw log line omitted; raw prompt omitted; request body omitted; artifact URIs omitted; local paths omitted; error message omitted"
+                        ),
+                        CompanionStatusLogEntryState(
+                            eventType: "state_update",
+                            source: "image_jobs",
+                            jobID: "image-job-1",
+                            requestID: "request-1",
+                            modelID: "melix-dev-image",
+                            operation: "image_generate",
+                            state: "running",
+                            lane: "background",
+                            workerID: "image-worker-2",
+                            progressStage: "sampling",
+                            updatedAtUnixMS: 1_718_000_010_000,
+                            failureCode: "",
+                            redactionSummary: "raw log line omitted; raw prompt omitted"
+                        ),
+                    ]
+                ),
+                redactionLogs: "redacted_tail"
+            )
+        )
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: pairingClient,
+            companionStatusClient: statusClient
+        )
+
+        await viewModel.start()
+        await viewModel.issueCompanionPairing()
+        await viewModel.refreshCompanionStatus()
+
+        let refreshRequest = try #require(await statusClient.refreshRequests.last)
+        #expect(refreshRequest.statusURL.absoluteString == "http://127.0.0.1:12436/v1/melix/companion/status")
+        #expect(refreshRequest.resumeHeader == "x-melix-session")
+        #expect(refreshRequest.sessionToken == "melix_companion_status_secret")
+        #expect(viewModel.companionStatus.phase == .loaded)
+        #expect(viewModel.companionStatus.status == "ok")
+        #expect(viewModel.companionStatus.logTail.visible == 2)
+        #expect(viewModel.companionStatus.logTail.total == 4)
+        #expect(viewModel.companionStatus.logTail.entries.map(\.jobID) == ["image-job-2", "image-job-1"])
+        #expect(viewModel.companionStatus.logTail.entries.first?.failureCode == "image_worker_failed")
+        #expect(viewModel.companionStatus.redactionLogs == "redacted_tail")
+        #expect(String(describing: viewModel.companionStatus).contains("melix_companion_status_secret") == false)
+        #expect(String(describing: viewModel.companionStatus).contains("private prompt") == false)
+        #expect(await metrics.snapshot()["companion.status_refresh_ms"] != nil)
+    }
+
+    @Test("companion status refresh requires active pairing")
+    @MainActor
+    func companionStatusRefreshRequiresActivePairing() async throws {
+        let statusClient = FakeCompanionStatusClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            companionStatusClient: statusClient
+        )
+
+        await viewModel.start()
+        await viewModel.refreshCompanionStatus()
+
+        #expect(await statusClient.refreshRequests.isEmpty)
+        #expect(viewModel.companionStatus.phase == .failed)
+        #expect(viewModel.companionStatus.lastError == "Issue a read-only companion token before refreshing companion status.")
+        #expect(await metrics.snapshot()["companion.status_refresh_failures"] == 1)
+    }
+
+    @Test("companion status refresh surfaces transport failures")
+    @MainActor
+    func companionStatusRefreshSurfacesTransportFailures() async throws {
+        let pairingClient = FakeCompanionPairingClient()
+        await pairingClient.configureIssueResult(
+            CompanionPairingIssueResult(
+                sessionID: "companion-status-failure-session",
+                scope: "companion_read_only",
+                rememberMe: true,
+                expiresAtUnixMS: 1_718_000_000_000,
+                resumeHeader: "x-melix-session",
+                resumeToken: "melix_companion_status_failure_secret",
+                pairing: CompanionPairingDescriptor(
+                    schemaVersion: "melix.companion.pairing.v1",
+                    statusURL: "http://127.0.0.1:12436/v1/melix/companion/status",
+                    resumeHeader: "x-melix-session",
+                    tokenTransport: "resume_header",
+                    allowedRoutes: ["GET /v1/melix/companion/status"],
+                    forbiddenCapabilities: ["mutate_runtime", "read_private_prompts"],
+                    expiresAtUnixMS: 1_718_000_000_000
+                )
+            )
+        )
+        let statusClient = FakeCompanionStatusClient()
+        await statusClient.configureRefreshError(MenuBarTestError(description: "gateway offline"))
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: pairingClient,
+            companionStatusClient: statusClient
+        )
+
+        await viewModel.start()
+        await viewModel.issueCompanionPairing()
+        await viewModel.refreshCompanionStatus()
+
+        #expect(await statusClient.refreshRequests.count == 1)
+        #expect(viewModel.companionStatus.phase == .failed)
+        #expect(viewModel.companionStatus.lastError == "Companion status refresh failed: gateway offline")
+        #expect(await metrics.snapshot()["companion.status_refresh_failures"] == 1)
+    }
+
+    @Test("companion status refresh failure metric records one event per failure")
+    @MainActor
+    func companionStatusRefreshFailureMetricRecordsOneEventPerFailure() async throws {
+        let pairingClient = FakeCompanionPairingClient()
+        await pairingClient.configureIssueResult(
+            CompanionPairingIssueResult(
+                sessionID: "companion-status-repeated-failure-session",
+                scope: "companion_read_only",
+                rememberMe: true,
+                expiresAtUnixMS: 1_718_000_000_000,
+                resumeHeader: "x-melix-session",
+                resumeToken: "melix_companion_status_failure_secret",
+                pairing: CompanionPairingDescriptor(
+                    schemaVersion: "melix.companion.pairing.v1",
+                    statusURL: "http://127.0.0.1:12436/v1/melix/companion/status",
+                    resumeHeader: "x-melix-session",
+                    tokenTransport: "resume_header",
+                    allowedRoutes: ["GET /v1/melix/companion/status"],
+                    forbiddenCapabilities: ["mutate_runtime", "read_private_prompts"],
+                    expiresAtUnixMS: 1_718_000_000_000
+                )
+            )
+        )
+        let statusClient = FakeCompanionStatusClient()
+        await statusClient.configureRefreshError(MenuBarTestError(description: "gateway offline"))
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: pairingClient,
+            companionStatusClient: statusClient
+        )
+
+        await viewModel.start()
+        await viewModel.issueCompanionPairing()
+        await viewModel.refreshCompanionStatus()
+        await viewModel.refreshCompanionStatus()
+
+        #expect(await statusClient.refreshRequests.count == 2)
+        #expect(await metrics.snapshot()["companion.status_refresh_failures"] == 1)
+    }
+
+    @Test("live companion status client fetches redacted log tail and reports errors")
+    func liveCompanionStatusClientFetchesRedactedLogTailAndReportsErrors() async throws {
+        let payload = #"""
+        {
+          "schema_version": "melix.companion.status.v1",
+          "read_only": true,
+          "status": "ok",
+          "authorization": {
+            "mode": "session",
+            "scope": "companion_read_only",
+            "state": "active",
+            "session_id": "companion-live-status"
+          },
+          "logs": {
+            "source": "image_jobs",
+            "visible": 1,
+            "total": 3,
+            "entries": [
+              {
+                "event_type": "state_update",
+                "source": "image_jobs",
+                "job_id": "image-job-live",
+                "request_id": "request-live",
+                "model_id": "melix-dev-image",
+                "operation": "image_generate",
+                "state": "failed",
+                "lane": "interactive",
+                "worker_id": "image-worker-live",
+                "progress_stage": "failed",
+                "created_at_unix_ms": 1718000000000,
+                "updated_at_unix_ms": 1718000001000,
+                "failure_code": "image_worker_failed",
+                "redaction": {
+                  "raw_log_line": "omitted",
+                  "raw_prompt": "omitted",
+                  "request_body": "omitted",
+                  "artifact_uris": "omitted",
+                  "local_paths": "omitted",
+                  "error_message": "omitted"
+                }
+              }
+            ]
+          },
+          "redaction": {
+            "logs": "redacted_tail"
+          }
+        }
+        """#.data(using: .utf8)!
+        let transport = FakeCompanionStatusHTTPTransport()
+        await transport.configureResponse(body: payload)
+        let client = LiveCompanionStatusClient(transport: transport)
+        let statusURL = try #require(URL(string: "http://127.0.0.1:12436/v1/melix/companion/status"))
+
+        let snapshot = try await client.refreshStatus(
+            statusURL: statusURL,
+            resumeHeader: "x-melix-session",
+            sessionToken: "melix_live_companion_status_secret"
+        )
+
+        let request = try #require(await transport.requests.first)
+        #expect(request.url?.absoluteString == "http://127.0.0.1:12436/v1/melix/companion/status")
+        #expect(request.method == "GET")
+        let headers = Dictionary(uniqueKeysWithValues: request.headers.map { ($0.key.lowercased(), $0.value) })
+        #expect(headers["x-melix-session"] == "melix_live_companion_status_secret")
+        #expect(snapshot.status == "ok")
+        #expect(snapshot.authorizationScope == "companion_read_only")
+        #expect(snapshot.logTail.visible == 1)
+        #expect(snapshot.logTail.total == 3)
+        #expect(snapshot.logTail.entries.first?.jobID == "image-job-live")
+        #expect(snapshot.logTail.entries.first?.redactionSummary.contains("raw log line omitted") == true)
+
+        let failureTransport = FakeCompanionStatusHTTPTransport()
+        await failureTransport.configureResponse(statusCode: 403, body: Data("forbidden".utf8))
+        let failureClient = LiveCompanionStatusClient(transport: failureTransport)
+        do {
+            _ = try await failureClient.refreshStatus(
+                statusURL: statusURL,
+                resumeHeader: "x-melix-session",
+                sessionToken: "revoked"
+            )
+            Issue.record("Expected companion status HTTP failure.")
+        } catch let error as CompanionStatusClientError {
+            #expect(error.description == "Companion status HTTP 403: forbidden")
+        }
+    }
+
+    @Test("live companion status client tolerates omitted optional redaction fields")
+    func liveCompanionStatusClientToleratesOmittedOptionalRedactionFields() async throws {
+        let payload = #"""
+        {
+          "schema_version": "melix.companion.status.v1",
+          "read_only": true,
+          "status": "ok",
+          "authorization": {
+            "mode": "session",
+            "scope": "companion_read_only",
+            "state": "active",
+            "session_id": "companion-live-status"
+          },
+          "logs": {
+            "source": "image_jobs",
+            "visible": 1,
+            "total": 1,
+            "entries": [
+              {
+                "event_type": "state_update",
+                "source": "image_jobs",
+                "job_id": "image-job-live",
+                "request_id": "request-live",
+                "model_id": "melix-dev-image",
+                "operation": "image_generate",
+                "state": "succeeded",
+                "lane": "interactive",
+                "worker_id": "image-worker-live",
+                "progress_stage": "complete",
+                "created_at_unix_ms": 1718000000000,
+                "updated_at_unix_ms": 1718000001000,
+                "failure_code": null,
+                "redaction": {
+                  "raw_log_line": "omitted"
+                }
+              }
+            ]
+          },
+          "redaction": {
+            "logs": "redacted_tail"
+          }
+        }
+        """#.data(using: .utf8)!
+        let transport = FakeCompanionStatusHTTPTransport()
+        await transport.configureResponse(body: payload)
+        let client = LiveCompanionStatusClient(transport: transport)
+        let statusURL = try #require(URL(string: "http://127.0.0.1:12436/v1/melix/companion/status"))
+
+        let snapshot = try await client.refreshStatus(
+            statusURL: statusURL,
+            resumeHeader: "x-melix-session",
+            sessionToken: "melix_live_companion_status_secret"
+        )
+
+        let entry = try #require(snapshot.logTail.entries.first)
+        #expect(entry.failureCode == "")
+        #expect(entry.redactionSummary == "raw log line omitted")
+    }
+
     @Test("defers gateway apply when selected server session is not running")
     @MainActor
     func defersGatewayApplyWhenSelectedServerSessionIsNotRunning() async throws {
