@@ -663,6 +663,12 @@ selected. Required composer states:
 Production composer state is driven by runtime state, not by a user-facing
 manual segmented control.
 
+The composer provider strip should remain compact and glanceable. It should
+render provider health and model-capability readiness as fixed-width status
+lamps or colored icon plus short-code signals. Full provider names, model IDs,
+and runtime details belong in help text, accessibility labels, selected-object
+Inspector context, or provider detail views, not in the visible strip.
+
 Chat should expose runtime failure locally before forcing the operator into
 Command Center:
 
@@ -1085,6 +1091,9 @@ window implementation slice governed by this specification.
 - Blocked primary actions and row actions expose a disabled reason.
 - Warning copy distinguishes recoverable risk from blocking failure.
 - Status chips include text and do not rely on color alone.
+- Compact status strips may use colored icons or status lamps only when each
+  signal has a text or short-code component, help/accessibility detail, and a
+  stable bounded width.
 - No page uses generic recovery copy such as `Run Recovery` when a concrete
   next action is known.
 

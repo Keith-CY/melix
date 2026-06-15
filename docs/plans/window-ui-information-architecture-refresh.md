@@ -127,6 +127,11 @@ rewrite.
    - Add no-provider, degraded, offline, and ready composer states driven by
      runtime status.
 
+   Status: provider status strip follow-up now renders provider health and
+   model-capability readiness as fixed-width colored icon plus short-code
+   signals. Visible strip text stays compact; full provider, model, and runtime
+   detail moves to help text, accessibility labels, and selected-object detail.
+
 4. Providers And Jobs Domains
    - Split Create Local Provider and Add Remote Provider.
    - Expose provider profiles, capability receipts, job queue, job history, and

@@ -1004,10 +1004,10 @@ struct DesktopChatRuntimeControlStrip: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            DesktopChatRuntimeServerCapsule(serverSession: serverSession)
+            DesktopChatProviderStatusSignal(serverSession: serverSession)
 
             if capabilities.isEmpty == false {
-                DesktopChatInlineCapabilityCluster(capabilities: Array(capabilities.prefix(5)))
+                DesktopChatCapabilityStatusSignal(capabilities: Array(capabilities.prefix(5)))
             }
 
             Spacer(minLength: 8)
@@ -1061,34 +1061,32 @@ struct DesktopChatRuntimeControlStrip: View {
     }
 }
 
-struct DesktopChatRuntimeServerCapsule: View {
+struct DesktopChatProviderStatusSignal: View {
     let serverSession: DesktopServerSessionState?
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 7, height: 7)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(serverTitle)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Text(serverDetail)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            Image(systemName: statusSymbolName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(statusColor)
+                .frame(width: DesktopChatRuntimeSignalMetrics.iconSize, height: DesktopChatRuntimeSignalMetrics.iconSize)
+            Text(statusShortText)
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(statusColor)
+                .lineLimit(1)
+                .frame(width: DesktopChatRuntimeSignalMetrics.shortTextWidth, alignment: .leading)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .frame(width: DesktopChatRuntimeSignalMetrics.providerSignalWidth, alignment: .leading)
         .background(Color.secondary.opacity(0.06), in: Capsule())
         .overlay(
             Capsule()
                 .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
         )
-        .help(serverSession?.runtimeDetailText ?? "Choose a provider for this chat")
+        .help(helpText)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(serverTitle), \(serverDetail)")
+        .accessibilityLabel(accessibilityLabel)
     }
 
     var serverTitle: String {
@@ -1100,6 +1098,56 @@ struct DesktopChatRuntimeServerCapsule: View {
             return "Choose Provider"
         }
         return "\(serverSession.lifecycle.rawValue) • \(serverSession.modelID)"
+    }
+
+    var statusShortText: String {
+        switch serverSession?.lifecycle {
+        case .running:
+            return "OK"
+        case .sleeping:
+            return "SLP"
+        case .starting:
+            return "ON"
+        case .stopping:
+            return "OFF"
+        case .paused:
+            return "PAU"
+        case .draft:
+            return "NEW"
+        case .stopped:
+            return "OFF"
+        case .unavailable:
+            return "MISS"
+        case .error:
+            return "ERR"
+        case .none:
+            return "SET"
+        }
+    }
+
+    var statusSymbolName: String {
+        switch serverSession?.lifecycle {
+        case .running:
+            return "checkmark.circle.fill"
+        case .sleeping:
+            return "moon.fill"
+        case .starting:
+            return "arrow.clockwise.circle.fill"
+        case .stopping:
+            return "pause.circle.fill"
+        case .paused:
+            return "pause.circle.fill"
+        case .draft:
+            return "plus.circle.fill"
+        case .stopped:
+            return "power.circle.fill"
+        case .unavailable:
+            return "questionmark.circle.fill"
+        case .error:
+            return "exclamationmark.triangle.fill"
+        case .none:
+            return "circle.dashed"
+        }
     }
 
     var statusColor: Color {
@@ -1114,26 +1162,73 @@ struct DesktopChatRuntimeServerCapsule: View {
             return Color.secondary.opacity(0.55)
         }
     }
+
+    var helpText: String {
+        guard let serverSession else {
+            return "Choose a provider for this chat"
+        }
+        return "\(serverSession.title) • \(serverSession.modelID) • \(serverSession.runtimeDetailText)"
+    }
+
+    var accessibilityLabel: String {
+        "\(serverTitle), \(serverDetail)"
+    }
 }
 
-struct DesktopChatInlineCapabilityCluster: View {
+struct DesktopChatCapabilityStatusSignal: View {
     let capabilities: [DesktopChatCapabilityRow]
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(capabilities) { capability in
-                Image(systemName: capability.systemImageName)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(capability.isReady ? MelixDesignTokens.accent : Color.secondary)
-                    .frame(width: 22, height: 22)
-                    .background(Color.primary.opacity(0.035), in: Circle())
-                    .help("\(capability.title): \(capability.detail)")
-                    .accessibilityLabel("\(capability.title), \(capability.isReady ? "ready" : "unavailable")")
-            }
+        HStack(spacing: 6) {
+            Image(systemName: "square.grid.2x2.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(statusColor)
+                .frame(width: DesktopChatRuntimeSignalMetrics.iconSize, height: DesktopChatRuntimeSignalMetrics.iconSize)
+            Text("\(readyCount)/\(capabilities.count)")
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(statusColor)
+                .lineLimit(1)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Model Capabilities")
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .frame(width: DesktopChatRuntimeSignalMetrics.capabilitySignalWidth, alignment: .leading)
+        .background(Color.secondary.opacity(0.06), in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
+        )
+        .help(helpText)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Model capabilities, \(readyCount) of \(capabilities.count) ready")
     }
+
+    var readyCount: Int {
+        capabilities.filter(\.isReady).count
+    }
+
+    var statusColor: Color {
+        if readyCount == capabilities.count {
+            return MelixDesignTokens.StatusColor.success
+        }
+        if readyCount > 0 {
+            return MelixDesignTokens.StatusColor.warning
+        }
+        return MelixDesignTokens.StatusColor.error
+    }
+
+    var helpText: String {
+        let details = capabilities
+            .map { "\($0.shortTitle): \($0.isReady ? "ready" : "unavailable") • \($0.detail)" }
+            .joined(separator: "\n")
+        return details.isEmpty ? "No model capabilities detected" : details
+    }
+}
+
+enum DesktopChatRuntimeSignalMetrics {
+    static let iconSize: CGFloat = 16
+    static let shortTextWidth: CGFloat = 28
+    static let providerSignalWidth: CGFloat = 68
+    static let capabilitySignalWidth: CGFloat = 66
 }
 
 private struct DesktopChatComposerTextView: NSViewRepresentable {

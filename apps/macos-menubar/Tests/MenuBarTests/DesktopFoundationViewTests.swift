@@ -7901,9 +7901,9 @@ struct DesktopFoundationViewTests {
         }
     }
 
-    @Test("chat composer streaming guard and server capsule status cover alternate states")
+    @Test("chat composer streaming guard and provider signals cover alternate states")
     @MainActor
-    func chatComposerStreamingGuardAndServerCapsuleStatusCoverAlternateStates() {
+    func chatComposerStreamingGuardAndProviderSignalsCoverAlternateStates() {
         var submitCount = 0
         var text = "Streaming draft"
         let streamingComposer = DesktopChatComposerSurface(
@@ -7929,7 +7929,7 @@ struct DesktopFoundationViewTests {
         #expect(submitCount == 0)
         #expect(hostView(streamingComposer.primaryActionLabel).fittingSize.width >= 0)
 
-        let emptyCapsule = DesktopChatRuntimeServerCapsule(serverSession: nil)
+        let emptySignal = DesktopChatProviderStatusSignal(serverSession: nil)
         var errorSession = DesktopServerSessionState(
             id: "server-session-error",
             title: "Broken Runtime",
@@ -7938,15 +7938,40 @@ struct DesktopFoundationViewTests {
             powerState: .active,
             lastError: "worker failed"
         )
-        let errorCapsule = DesktopChatRuntimeServerCapsule(serverSession: errorSession)
+        let errorSignal = DesktopChatProviderStatusSignal(serverSession: errorSession)
         errorSession.lifecycle = .starting
-        let startingCapsule = DesktopChatRuntimeServerCapsule(serverSession: errorSession)
+        let startingSignal = DesktopChatProviderStatusSignal(serverSession: errorSession)
 
-        #expect(emptyCapsule.serverTitle == "No Provider")
-        #expect(emptyCapsule.serverDetail == "Choose Provider")
-        #expect(errorCapsule.serverDetail == "Error • melix-dev-text")
-        #expect(errorCapsule.statusColor == MelixDesignTokens.StatusColor.error)
-        #expect(startingCapsule.statusColor == MelixDesignTokens.StatusColor.warning)
+        let capabilitySignal = DesktopChatCapabilityStatusSignal(
+            capabilities: [
+                DesktopChatCapabilityRow(
+                    id: "text",
+                    title: "Interactive Text",
+                    modelID: "melix-dev-text",
+                    detail: "melix-dev-text • Ready",
+                    isReady: true
+                ),
+                DesktopChatCapabilityRow(
+                    id: "vision",
+                    title: "Vision",
+                    modelID: "melix-dev-vision",
+                    detail: "melix-dev-vision • Missing",
+                    isReady: false
+                )
+            ]
+        )
+
+        #expect(emptySignal.serverTitle == "No Provider")
+        #expect(emptySignal.serverDetail == "Choose Provider")
+        #expect(emptySignal.statusShortText == "SET")
+        #expect(errorSignal.serverDetail == "Error • melix-dev-text")
+        #expect(errorSignal.statusShortText == "ERR")
+        #expect(errorSignal.statusColor == MelixDesignTokens.StatusColor.error)
+        #expect(startingSignal.statusColor == MelixDesignTokens.StatusColor.warning)
+        #expect(capabilitySignal.readyCount == 1)
+        #expect(capabilitySignal.statusColor == MelixDesignTokens.StatusColor.warning)
+        #expect(DesktopChatRuntimeSignalMetrics.providerSignalWidth <= 72)
+        #expect(DesktopChatRuntimeSignalMetrics.capabilitySignalWidth <= 68)
     }
 
     @Test("chat transcript auto-scroll snapshot tracks trailing content growth")
@@ -8936,6 +8961,12 @@ struct DesktopFoundationViewTests {
 
         #expect(source.contains("DesktopChatComposerSurface"))
         #expect(source.contains("DesktopChatRuntimeControlStrip"))
+        #expect(source.contains("DesktopChatProviderStatusSignal"))
+        #expect(source.contains("DesktopChatCapabilityStatusSignal"))
+        #expect(source.contains("DesktopChatRuntimeSignalMetrics.providerSignalWidth"))
+        #expect(source.contains("DesktopChatRuntimeSignalMetrics.capabilitySignalWidth"))
+        #expect(source.contains("DesktopChatRuntimeServerCapsule") == false)
+        #expect(source.contains("DesktopChatInlineCapabilityCluster") == false)
         #expect(source.contains("Label(\"Send\", systemImage: \"paperplane.fill\")"))
         #expect(source.contains("Label(\"Stop\", systemImage: \"stop.fill\")"))
         #expect(source.contains("DesktopChatComposerTextView("))
