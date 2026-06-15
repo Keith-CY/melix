@@ -526,6 +526,35 @@ def test_report_evidence_gate_probe_phase_list_rules_reflect_mutation() -> None:
     )
 
 
+def test_report_evidence_gate_probe_phases_preserves_bucket_filtering() -> None:
+    report: dict[str, object] = {
+        "probe_summary": {
+            "baseline": {
+                "slowest_phases": [
+                    {"phase": " runtime_prepare "},
+                    {"phase": ""},
+                    ["not", "a", "dict"],
+                    {"phase": 0},
+                ],
+                "failed_phases": "not-a-list",
+                "skipped_phases": [{"phase": None}],
+            },
+            "candidate": {
+                "fallback_phases": [{"phase": "decode"}],
+                "slowest_phases": [{"name": "missing-phase"}],
+            },
+            "control": {"slowest_phases": [{"phase": "ignored"}]},
+        }
+    }
+
+    assert report_evidence_gate_module._probe_phases(report) == {
+        "runtime_prepare",
+        "0",
+        "None",
+        "decode",
+    }
+
+
 def test_report_evidence_gate_empty_probe_phase_rules_skip_normalization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -510,7 +510,12 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
         if not isinstance(side_summary, dict):
             continue
         for bucket in ("slowest_phases", "failed_phases", "skipped_phases", "fallback_phases"):
-            for row in _dict_list(side_summary.get(bucket)):
+            rows = side_summary.get(bucket)
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
                 phase = str(row.get("phase", "")).strip()
                 if phase:
                     phases.add(phase)
