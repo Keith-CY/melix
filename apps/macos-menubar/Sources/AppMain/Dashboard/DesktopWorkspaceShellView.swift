@@ -1974,6 +1974,18 @@ private struct DesktopServerSessionInspector: View {
                 health: session.lifecycleSummaryText,
                 metrics: "\(session.effectiveBaseURL) • \(session.idlePolicySummaryText)",
                 actions: [
+                    DesktopInspectorActionRow(
+                        title: "Open Detail",
+                        systemImage: "arrow.up.right.square",
+                        routeTarget: .page(
+                            domain: .server,
+                            pageID: "overview",
+                            selectedObject: .init(kind: .provider, objectID: session.id)
+                        )
+                    ) {
+                        viewModel.selectSurface(.server)
+                        viewModel.selectServerSession(id: session.id)
+                    },
                     DesktopInspectorActionRow(title: "Copy URL", systemImage: "doc.on.doc") {
                         copyToPasteboard(session.effectiveBaseURL)
                     },
@@ -2010,7 +2022,20 @@ struct DesktopInspectorActionRow: Identifiable {
     let id = UUID()
     let title: String
     let systemImage: String
+    let routeTarget: DesktopRouteActionTarget?
     let action: @MainActor () -> Void
+
+    init(
+        title: String,
+        systemImage: String,
+        routeTarget: DesktopRouteActionTarget? = nil,
+        action: @escaping @MainActor () -> Void
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.routeTarget = routeTarget
+        self.action = action
+    }
 }
 
 struct DesktopInspectorContractView<ExtraContent: View>: View {

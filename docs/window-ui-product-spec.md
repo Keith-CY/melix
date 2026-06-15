@@ -317,7 +317,7 @@ Selected-object route values use these object-kind prefixes:
 
 | Kind | Route prefix | Example |
 |---|---|---|
-| Provider Profile | `server` | `server:remote-lab` |
+| Provider Profile | `provider` | `provider:remote-lab` |
 | Model Asset | `model` | `model:example-local-text-8b` |
 | Adapter Asset | `adapter` | `adapter:support-v23` |
 | Job | `job` | `job:adapter-train-119` |
@@ -329,7 +329,8 @@ Selected-object route values use these object-kind prefixes:
 Object IDs may contain path-like values and must be URL-encoded in routes.
 Display labels are not stable identifiers.
 
-Legacy selected-object alias behavior is defined by the Routing Model.
+Selected-object route values are intentionally canonical; production should not
+accept legacy object-kind aliases for new Provider Profile route state.
 
 The implementation must not use `Run` as a model-library action. Use explicit
 object-aware actions:
@@ -470,7 +471,7 @@ Production should preserve the route concepts proven by the walkthrough:
 Examples:
 
 ```text
-/providers/overview?selected=server:remote-lab
+/providers/overview?selected=provider:remote-lab
 /jobs/queue?selected=job:adapter-train-119
 /diagnostics/evaluation?selected=diagnostic-report:support-dialogue-v23
 ```
@@ -478,7 +479,7 @@ Examples:
 Canonical selected-object kinds are:
 
 ```text
-server
+provider
 model
 adapter
 job
@@ -488,16 +489,9 @@ diagnostic-report
 api-token
 ```
 
-Legacy aliases may be accepted only as compatibility inputs. They must normalize
-to canonical route state before display, persistence, Inspector rendering, or
-new link generation:
-
-| Legacy input | Canonical selected-object kind |
-|---|---|
-| `eval` | `diagnostic-report` |
-| `token` | `api-token` |
-
-New routes and copied support links must always use canonical kinds.
+New routes and copied support links must always use canonical kinds. The
+selected-object parser should reject legacy object-kind aliases rather than
+silently restoring stale Inspector context.
 
 Route metadata should drive:
 
@@ -539,7 +533,7 @@ Row action routing must be object-aware:
 - If the action produces or repairs a more specific object, select that object
   instead. For example, `remote-lab -> Test` routes to
   `/providers/receipts?selected=receipt:remote-lab-expired`, not
-  `/providers/receipts?selected=server:remote-lab`.
+  `/providers/receipts?selected=provider:remote-lab`.
 - If the destination page cannot display the row object or a more specific
   action object, clear selection to avoid stale Inspector context.
 
@@ -547,7 +541,7 @@ Canonical detail routes:
 
 | Object kind | Preferred detail route |
 |---|---|
-| server | `/providers/overview?selected=server:<id>` |
+| provider | `/providers/overview?selected=provider:<id>` |
 | model | `/models/library?selected=model:<id>` |
 | adapter | `/models/library?selected=adapter:<id>` |
 | job | `/jobs/queue?selected=job:<id>` |
@@ -1017,9 +1011,10 @@ Required implementation rules:
   navigation predictable;
 - encode and decode selected-object route values through structured APIs, not
   string concatenation at call sites;
-- test legacy selected-object aliases as parse-only compatibility paths;
-- keep copied support links canonical even when a legacy alias was accepted as
-  input.
+- test legacy selected-object aliases as rejected inputs when no migration is
+  intentionally kept;
+- keep copied support links canonical and reject legacy selected-object aliases
+  unless a future migration explicitly documents an exception.
 
 ## Implementation Readiness Criteria
 

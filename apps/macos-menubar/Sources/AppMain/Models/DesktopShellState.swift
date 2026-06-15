@@ -358,7 +358,7 @@ public struct DesktopRuntimeEndpointState: Equatable, Sendable {
 public enum DesktopInspectorModule: String, CaseIterable, Identifiable, Codable, Sendable {
     case chatRuntime
     case commandCenter
-    case serverProfile
+    case providerProfile
     case capabilityReceipt
     case modelAsset
     case workflowTemplate
@@ -373,7 +373,25 @@ public enum DesktopInspectorModule: String, CaseIterable, Identifiable, Codable,
 }
 
 public enum DesktopRouteActionTarget: Equatable, Codable, Sendable {
-    case page(domain: DesktopSurface, pageID: String)
+    case page(domain: DesktopSurface, pageID: String, selectedObject: DesktopSelectedObjectRoute? = nil)
+
+    public var routePath: String {
+        switch self {
+        case .page(let domain, let pageID, let selectedObject):
+            let basePath = "/\(domain.routeDomainID)/\(pageID)"
+            guard let selectedObject else {
+                return basePath
+            }
+            return "\(basePath)?selected=\(selectedObject.urlQueryValue)"
+        }
+    }
+
+    public var selectedObject: DesktopSelectedObjectRoute? {
+        switch self {
+        case .page(_, _, let selectedObject):
+            return selectedObject
+        }
+    }
 }
 
 public struct DesktopRouteActionMetadata: Equatable, Codable, Sendable {
@@ -506,7 +524,7 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     label: "Overview",
                     title: "Providers",
                     subtitle: "Manage local and remote providers, health, credentials, and capability receipts.",
-                    inspectorModule: .serverProfile,
+                    inspectorModule: .providerProfile,
                     primaryAction: .init(title: "Create Local Provider", target: .page(domain: .server, pageID: "create-local")),
                     secondaryActions: [
                         .init(title: "Add Remote Provider", target: .page(domain: .server, pageID: "add-remote")),
@@ -518,7 +536,7 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     label: "Local Providers",
                     title: "Local Providers",
                     subtitle: "Start, stop, and inspect local provider profiles.",
-                    inspectorModule: .serverProfile,
+                    inspectorModule: .providerProfile,
                     primaryAction: .init(title: "Create Local Provider", target: .page(domain: .server, pageID: "create-local"))
                 ),
                 .page(
@@ -527,7 +545,7 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     label: "Remote Providers",
                     title: "Remote Providers",
                     subtitle: "Manage outbound provider targets and credential boundaries.",
-                    inspectorModule: .serverProfile,
+                    inspectorModule: .providerProfile,
                     primaryAction: .init(title: "Add Remote Provider", target: .page(domain: .server, pageID: "add-remote"))
                 ),
                 .page(
@@ -536,7 +554,7 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     label: "Create Local Provider",
                     title: "Create Local Provider",
                     subtitle: "Basic setup first, advanced provider fields collapsed for first-run creation.",
-                    inspectorModule: .serverProfile,
+                    inspectorModule: .providerProfile,
                     primaryAction: .init(title: "Create And Start", target: .page(domain: .server, pageID: "local"))
                 ),
                 .page(
@@ -811,7 +829,7 @@ private extension DesktopRoutePageMetadata {
 }
 
 public enum DesktopSelectedObjectKind: String, CaseIterable, Identifiable, Codable, Sendable {
-    case server
+    case provider
     case model
     case adapter
     case job
@@ -824,8 +842,8 @@ public enum DesktopSelectedObjectKind: String, CaseIterable, Identifiable, Codab
 
     public init?(routePrefix: String) {
         switch routePrefix.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "server":
-            self = .server
+        case "provider":
+            self = .provider
         case "model":
             self = .model
         case "adapter":
@@ -836,9 +854,9 @@ public enum DesktopSelectedObjectKind: String, CaseIterable, Identifiable, Codab
             self = .artifact
         case "receipt":
             self = .receipt
-        case "diagnostic-report", "eval":
+        case "diagnostic-report":
             self = .diagnosticReport
-        case "api-token", "token":
+        case "api-token":
             self = .apiToken
         default:
             return nil
@@ -847,7 +865,7 @@ public enum DesktopSelectedObjectKind: String, CaseIterable, Identifiable, Codab
 
     public var defaultRoute: DesktopRouteActionTarget {
         switch self {
-        case .server:
+        case .provider:
             return .page(domain: .server, pageID: "overview")
         case .model, .adapter:
             return .page(domain: .models, pageID: "library")
@@ -873,8 +891,18 @@ public struct DesktopSelectedObjectRoute: RawRepresentable, Equatable, Codable, 
         "\(kind.rawValue):\(objectID)"
     }
 
+    public var urlQueryValue: String {
+        let encodedObjectID = objectID.addingPercentEncoding(
+            withAllowedCharacters: Self.objectIDQueryAllowedCharacters
+        ) ?? objectID
+        return "\(kind.rawValue):\(encodedObjectID)"
+    }
+
     public var defaultRoute: DesktopRouteActionTarget {
-        kind.defaultRoute
+        switch kind.defaultRoute {
+        case .page(let domain, let pageID, _):
+            return .page(domain: domain, pageID: pageID, selectedObject: self)
+        }
     }
 
     public init(kind: DesktopSelectedObjectKind, objectID: String) {
@@ -888,8 +916,9 @@ public struct DesktopSelectedObjectRoute: RawRepresentable, Equatable, Codable, 
             return nil
         }
         let prefix = String(trimmed[..<delimiterIndex])
-        let objectID = String(trimmed[trimmed.index(after: delimiterIndex)...])
+        let encodedObjectID = String(trimmed[trimmed.index(after: delimiterIndex)...])
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let objectID = encodedObjectID.removingPercentEncoding ?? encodedObjectID
         guard objectID.isEmpty == false,
               let kind = DesktopSelectedObjectKind(routePrefix: prefix)
         else {
@@ -897,6 +926,12 @@ public struct DesktopSelectedObjectRoute: RawRepresentable, Equatable, Codable, 
         }
         self.init(kind: kind, objectID: objectID)
     }
+
+    private static let objectIDQueryAllowedCharacters: CharacterSet = {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: ":/?#[]@!$&'()*+,;= ")
+        return allowed
+    }()
 }
 
 extension DesktopSurface {

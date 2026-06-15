@@ -96,15 +96,21 @@ rewrite.
    Status: initial implementation slice landed. The desktop shell now exposes
    the accepted 10 routable domains, treats Jobs as a first-class navigation
    surface, defines typed route metadata for the accepted domain/page map, and
-   normalizes canonical selected-object route values plus legacy `eval` and
-   `token` aliases. Legacy persisted `Tools / Jobs` session state migrates to
-   the routable Jobs surface. Follow-up slices still need to make every header,
-   secondary tab, and Inspector panel consume this metadata directly.
+   normalizes canonical selected-object route values. Legacy persisted `Tools /
+   Jobs` session state migrates to the routable Jobs surface. Follow-up slices
+   still need to make every header, secondary tab, and Inspector panel consume
+   this metadata directly.
 
    Status: titlebar follow-up now keeps only Chat, Providers, Models, and
    Workflows in primary navigation while preserving screenshot coverage and
    route metadata for Command Center, Jobs, Diagnostics, API, Image, and
    Settings.
+
+   Status: selected-object route follow-up now makes `provider:<id>` the
+   Provider Profile route kind, rejects legacy selected-object aliases, and
+   gives route-action targets an optional selected-object payload so detail
+   links and Inspector actions can carry selection through typed metadata
+   instead of string-built URLs.
 
 2. Inspector Contract
    - Implement page-level and selected-object Inspector modes.
