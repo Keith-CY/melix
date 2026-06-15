@@ -7965,6 +7965,41 @@ struct RuntimeViewModelTests {
         #expect(viewModel.lastError == "Local Provider requires a session name.")
     }
 
+    @Test("local provider draft create and start triggers lifecycle start")
+    @MainActor
+    func localProviderDraftCreateAndStartTriggersLifecycleStart() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let modelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: modelID, state: .modelWarm)]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.beginServerCreation()
+        viewModel.newLocalServerTitleDraft = "Qwen Local"
+        viewModel.newLocalServerModelID = modelID
+        viewModel.newLocalServerHostDraft = "127.0.0.1"
+        viewModel.newLocalServerPortDraft = 18080
+
+        viewModel.createAndStartLocalServerFromDraft()
+
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        var actions = await client.recordedActions
+        for _ in 0..<200 where actions.contains("server.start:\(serverSessionID)") == false {
+            try await Task.sleep(for: .milliseconds(10))
+            actions = await client.recordedActions
+        }
+
+        #expect(actions.contains("server.start:\(serverSessionID)"))
+        #expect(actions.contains("gateway.config:\(serverSessionID)"))
+        #expect(actions.contains("serving-defaults.apply:\(serverSessionID)"))
+        #expect(viewModel.isCreatingServerTarget == false)
+        #expect(viewModel.selectedServerSession?.title == "Qwen Local")
+    }
+
     @Test("server target rows expose session model endpoint and runtime summary")
     @MainActor
     func serverTargetRowsExposeSessionModelEndpointAndRuntimeSummary() async throws {

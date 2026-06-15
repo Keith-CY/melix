@@ -780,6 +780,14 @@ top-level pages. The first-run path should land on Basic. Operators entering
 through advanced setup may open Advanced by default, but Review must always be
 available before creating or starting the provider.
 
+The Providers surface exposes Overview, Local Providers, Remote Providers,
+Create Local Provider, Add Remote Provider, and Capability Receipts as visible
+workspace sections. Create Local Provider shows Basic, collapsed Advanced, and
+Review inside one page. Add Remote Provider shows Endpoint, Authentication,
+Capabilities Test, and Review inside the remote setup page. Capability Receipts
+may show an explicit empty state until provider capability probe evidence is
+captured; it must not fabricate receipt rows.
+
 ### Models
 
 Models owns asset management:

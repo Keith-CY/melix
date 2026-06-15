@@ -146,6 +146,15 @@ rewrite.
    - Expose provider profiles, capability receipts, job queue, job history, and
      artifact lineage.
 
+   Status: Providers surface follow-up now exposes Overview, Local Providers,
+   Remote Providers, Create Local Provider, Add Remote Provider, and Capability
+   Receipts as visible workspace sections. Create Local Provider contains Basic,
+   collapsed Advanced, and Review sections in one page, with Create And Start
+   routed through view-model behavior. Add Remote Provider contains the strict
+   Endpoint, Authentication, Capabilities Test, and Review sections. Capability
+   Receipts intentionally renders an empty evidence state until provider
+   capability probe data is available.
+
 5. Domain Polish
    - Apply the visual signatures and domain layouts from the product spec.
    - Update screenshot capture coverage for the new shell.

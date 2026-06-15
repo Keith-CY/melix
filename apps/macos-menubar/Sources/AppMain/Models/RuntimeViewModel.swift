@@ -5721,6 +5721,19 @@ public final class RuntimeViewModel {
         )
     }
 
+    public func createAndStartLocalServerFromDraft() {
+        let draftTitle = newLocalServerTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        createLocalServerFromDraft()
+        guard commandWorkflowRunner == nil,
+              isCreatingServerTarget == false,
+              let createdSession = selectedServerSession,
+              draftTitle.isEmpty || createdSession.title == draftTitle
+        else {
+            return
+        }
+        Task { await startServerSession(id: createdSession.id) }
+    }
+
     public func createServerSession(
         title titleOverride: String = "",
         modelID modelIDOverride: String = "",

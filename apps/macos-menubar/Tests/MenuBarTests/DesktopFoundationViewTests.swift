@@ -773,9 +773,9 @@ struct DesktopFoundationViewTests {
         #expect(remoteViewModel.selectedSurface == .server)
     }
 
-    @Test("server creation editor renders local input fields with ready models")
+    @Test("server creation editor renders local basic fields with ready models")
     @MainActor
-    func serverCreationEditorRendersLocalInputFieldsWithReadyModels() async throws {
+    func serverCreationEditorRendersLocalBasicFieldsWithReadyModels() async throws {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
@@ -796,9 +796,9 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.isCreatingServerTarget)
         #expect(viewModel.selectedServerCreationKind == .localServer)
         #expect(viewModel.serverModelOptions.isEmpty == false)
+        #expect(renderedTexts.contains("Provider 2"))
         #expect(renderedTexts.contains(where: { $0.contains(desktopTestReadyModelID) }))
-        #expect(renderedTexts.contains("127.0.0.1"))
-        #expect(renderedTexts.contains("12,436") || renderedTexts.contains("12436"))
+        #expect(renderedTexts.contains("HTTP port") == false)
     }
 
     @Test("command center view renders global operator summaries")
@@ -1664,13 +1664,26 @@ struct DesktopFoundationViewTests {
         #expect(shellSource.contains("LoRA Adapter"))
         #expect(shellSource.contains("Color.accentColor") == false)
         #expect(shellSource.contains("selectedServerCreationKind"))
-        #expect(shellSource.contains("\"Session Name\""))
-        #expect(shellSource.contains("Button(\"Add Local Provider\", action:"))
-        #expect(shellSource.contains("Button(\"Add Remote Provider\", action:"))
+        #expect(shellSource.contains("\"Provider Name\""))
+        #expect(shellSource.contains("DesktopProviderSurfaceNavigationRow"))
+        #expect(shellSource.contains("case localProviders"))
+        #expect(shellSource.contains("case remoteProviders"))
+        #expect(shellSource.contains("case createLocalProvider"))
+        #expect(shellSource.contains("case addRemoteProvider"))
+        #expect(shellSource.contains("case capabilityReceipts"))
+        #expect(shellSource.contains("Button(\"Create Local Provider\")"))
+        #expect(shellSource.contains("Button(\"Add Remote Provider\")"))
         #expect(shellSource.contains("DesktopServerCreationStepperHeader"))
-        #expect(shellSource.contains("\"Local Provider Setup\""))
-        #expect(shellSource.contains("\"Remote Provider Setup\""))
-        #expect(shellSource.contains("MelixSectionCard(\"Provider\")"))
+        #expect(shellSource.contains("\"Create Local Provider\""))
+        #expect(shellSource.contains("steps: [\"Basic\", \"Advanced\", \"Review\"]"))
+        #expect(shellSource.contains("\"Add Remote Provider\""))
+        #expect(shellSource.contains("steps: [\"Endpoint\", \"Authentication\", \"Capabilities Test\", \"Review\"]"))
+        #expect(shellSource.contains("DesktopProviderFormSection(\"Endpoint\")"))
+        #expect(shellSource.contains("DesktopProviderFormSection(\"Authentication\")"))
+        #expect(shellSource.contains("DesktopProviderFormSection(\"Capabilities Test\")"))
+        #expect(shellSource.contains("DesktopProviderFormSection(\"Review\")"))
+        #expect(shellSource.contains("\"Memory Profile: default local interactive profile\""))
+        #expect(shellSource.contains("Button(\"Create And Start\")"))
         #expect(shellSource.contains("\"Server Type\"") == false)
         #expect(shellSource.contains("Button(\"Create Local Server\")") == false)
         #expect(shellSource.contains("Text(\"Servers\")") == false)
@@ -1726,7 +1739,8 @@ struct DesktopFoundationViewTests {
         )
         let shellSource = try String(contentsOf: shellSourceURL, encoding: .utf8)
 
-        #expect(shellSource.contains(".buttonStyle(.plain)\n                            .focusable(false)"))
+        #expect(shellSource.contains("private struct DesktopProviderTargetSidebarRow: View"))
+        #expect(shellSource.contains(".buttonStyle(.plain)\n        .focusable(false)"))
     }
 
     @Test("models tab renders Hugging Face hub ingress state")
