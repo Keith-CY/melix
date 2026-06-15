@@ -6,7 +6,7 @@ import Testing
 
 @Suite("App Screenshot Capture", .serialized)
 struct AppScreenshotCaptureTests {
-    @Test("default cases cover all workspace surfaces, tool sections, and command center")
+    @Test("default cases cover all workspace surfaces, chat composer states, tool sections, and command center")
     func defaultCasesCoverAllAppSurfaces() {
         let cases = AppScreenshotCaptureCase.defaultCases
         let workspaceSurfaces = cases.compactMap { captureCase -> String? in
@@ -21,6 +21,12 @@ struct AppScreenshotCaptureTests {
             }
             return section.rawValue
         }
+        let chatComposerStates = cases.compactMap { captureCase -> String? in
+            guard case .chatComposer(let state) = captureCase else {
+                return nil
+            }
+            return state.id
+        }
         let commandCenterCount = cases.filter {
             if case .commandCenter = $0 {
                 return true
@@ -30,6 +36,7 @@ struct AppScreenshotCaptureTests {
 
         #expect(workspaceSurfaces.sorted() == DesktopSurface.routableWorkspaceCases.map(\.rawValue).sorted())
         #expect(toolSections.sorted() == DesktopToolSection.allCases.map(\.rawValue).sorted())
+        #expect(chatComposerStates.sorted() == AppScreenshotChatComposerState.allCases.map(\.id).sorted())
         #expect(commandCenterCount == 1)
     }
 
@@ -86,7 +93,7 @@ struct AppScreenshotCaptureTests {
                 width: 640,
                 height: 420
             ),
-            cases: [.workspace(.models), .toolSection(.downloads), .commandCenter]
+            cases: [.workspace(.models), .toolSection(.downloads), .chatComposer(.offlineProvider), .commandCenter]
         )
 
         let manifest = try await runner.run()
@@ -106,6 +113,7 @@ struct AppScreenshotCaptureTests {
         #expect(manifest.screenshots.map(\.id) == [
             "workspace-models",
             "workspace-models-downloads",
+            "chat-composer-offline-provider",
             "command-center",
         ])
         #expect(firstScreenshot.surface == "Models")
@@ -148,7 +156,7 @@ struct AppScreenshotCaptureTests {
         #expect(handshake.protocolVersion == "melix.controlplane.v1")
         #expect(handshake.daemonInstanceID == "screenshot-daemon")
         #expect(firstEvent == nil)
-        #expect(snapshot.models.map(\.modelID) == ["melix-dev-text", "melix-dev-image"])
+        #expect(snapshot.models.map(\.modelID) == ["melix-dev-text", "melix-dev-image", "melix-dev-vision"])
         #expect(fallbackModel.modelID == "melix-dev-text")
         #expect(unloadedModel.modelID == "melix-dev-text")
         #expect(updatedModel.modelID == "melix-dev-text")

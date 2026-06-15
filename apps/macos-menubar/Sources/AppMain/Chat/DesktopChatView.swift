@@ -355,6 +355,20 @@ struct DesktopChatSessionWorkspace: View {
         || viewModel.selectedChatServerSession?.isInteractiveReady != true
     }
 
+    private var selectedChatModelNeedsAttachment: Bool {
+        guard let serverSession = viewModel.selectedChatServerSession else {
+            return false
+        }
+        let modelID = serverSession.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard modelID.isEmpty == false else {
+            return true
+        }
+        guard let model = viewModel.models.first(where: { $0.modelID == modelID }) else {
+            return true
+        }
+        return model.runtimeCacheMissing
+    }
+
     private func submitChatPrompt() {
         Task { await viewModel.submitChatPrompt() }
     }
@@ -391,6 +405,14 @@ struct DesktopChatSessionWorkspace: View {
             }
             await viewModel.wakeServerSession(id: serverSessionID)
         }
+    }
+
+    func openModelsSurface() {
+        viewModel.selectSurface(.models)
+    }
+
+    func openDiagnosticsSurface() {
+        viewModel.selectToolSection(.diagnostics)
     }
 
     private var chatTranscriptScrollSnapshot: DesktopChatTranscriptAutoScroll.Snapshot {
@@ -478,6 +500,7 @@ struct DesktopChatSessionWorkspace: View {
                 usageText: viewModel.lastChatUsageText,
                 serverSession: viewModel.selectedChatServerSession,
                 capabilities: viewModel.chatCapabilities,
+                isModelMissing: selectedChatModelNeedsAttachment,
                 onCommandSubmit: { draft in
                     viewModel.chatComposerText = draft
                     submitChatPrompt()
@@ -485,6 +508,8 @@ struct DesktopChatSessionWorkspace: View {
                 onSubmit: submitChatPrompt,
                 onClear: viewModel.clearChatTranscript,
                 onOpenServer: openServerSurface,
+                onOpenModels: openModelsSurface,
+                onRunCapabilitiesTest: openDiagnosticsSurface,
                 onStartServer: startSelectedChatServerSession,
                 onResumeServer: resumeSelectedChatServerSession,
                 onWakeServer: wakeSelectedChatServerSession
@@ -870,13 +895,24 @@ struct DesktopChatComposerSurface: View {
     let usageText: String
     let serverSession: DesktopServerSessionState?
     let capabilities: [DesktopChatCapabilityRow]
+    let isModelMissing: Bool
     let onCommandSubmit: (String) -> Void
     let onSubmit: () -> Void
     let onClear: () -> Void
     let onOpenServer: () -> Void
+    let onOpenModels: () -> Void
+    let onRunCapabilitiesTest: () -> Void
     let onStartServer: () -> Void
     let onResumeServer: () -> Void
     let onWakeServer: () -> Void
+
+    var composerGate: DesktopChatComposerGate {
+        DesktopChatComposerGate(
+            serverSession: serverSession,
+            capabilities: capabilities,
+            isModelMissing: isModelMissing
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -889,34 +925,47 @@ struct DesktopChatComposerSurface: View {
                 onWakeServer: onWakeServer
             )
 
-            HStack(alignment: .bottom, spacing: 10) {
-                DesktopChatComposerTextView(
-                    text: $text,
-                    isSubmitAvailable: isSubmitAvailable,
-                    onCommandSubmit: onCommandSubmit
+            if let repairState = composerGate.repairState {
+                DesktopChatComposerRepairPanel(
+                    state: repairState,
+                    onPrimaryAction: { performRepairAction(repairState.primaryActionKind) },
+                    onOpenServer: onOpenServer,
+                    onOpenModels: onOpenModels,
+                    onRunCapabilitiesTest: onRunCapabilitiesTest
                 )
-                .frame(height: DesktopChatLayoutMetrics.composerMinHeight)
+            } else {
+                HStack(alignment: .bottom, spacing: 10) {
+                    DesktopChatComposerTextView(
+                        text: $text,
+                        isSubmitAvailable: isSubmitAvailable,
+                        onCommandSubmit: onCommandSubmit
+                    )
+                    .frame(height: DesktopChatLayoutMetrics.composerMinHeight)
 
-                VStack(spacing: 6) {
-                    Button(action: primaryAction) {
-                        primaryActionLabel
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-                    .disabled(isStreaming || isSendDisabled)
-                    .help(isStreaming ? "Streaming cancellation is not available yet" : "Send")
-                    .accessibilityLabel(isStreaming ? "Stop" : "Send")
+                    VStack(spacing: 6) {
+                        primaryActionButton
 
-                    Button(action: onClear) {
-                        Image(systemName: "trash")
+                        if composerGate.isDegraded, isStreaming == false {
+                            Button(action: onOpenServer) {
+                                Image(systemName: "wrench.and.screwdriver")
+                            }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Open Providers")
+                            .accessibilityLabel("Open Providers")
+                        }
+
+                        Button(action: onClear) {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Clear Chat")
+                        .accessibilityLabel("Clear Chat")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Clear Chat")
-                    .accessibilityLabel("Clear Chat")
+                    .fixedSize(horizontal: true, vertical: false)
                 }
-                .fixedSize(horizontal: true, vertical: false)
             }
 
             HStack(spacing: 10) {
@@ -954,12 +1003,255 @@ struct DesktopChatComposerSurface: View {
         onSubmit()
     }
 
+    func performRepairAction(_ kind: DesktopChatComposerRepairActionKind) {
+        switch kind {
+        case .chooseProvider:
+            onOpenServer()
+        case .attachModel:
+            onOpenModels()
+        case .startProvider:
+            onStartServer()
+        case .resumeProvider:
+            onResumeServer()
+        case .wakeProvider:
+            onWakeServer()
+        case .openProviders:
+            onOpenServer()
+        case .runCapabilitiesTest:
+            onRunCapabilitiesTest()
+        }
+    }
+
+    var primaryActionHelpText: String {
+        if isStreaming {
+            return "Streaming cancellation is not available yet"
+        }
+        return composerGate.isDegraded ? "Send Anyway" : "Send"
+    }
+
+    var primaryActionAccessibilityLabel: String {
+        if isStreaming {
+            return "Stop"
+        }
+        return composerGate.isDegraded ? "Send Anyway" : "Send"
+    }
+
+    @ViewBuilder
+    var primaryActionButton: some View {
+        if composerGate.isDegraded, isStreaming == false {
+            Button("Send Anyway", action: primaryAction)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .disabled(isSendDisabled)
+                .help(primaryActionHelpText)
+                .accessibilityLabel(primaryActionAccessibilityLabel)
+        } else {
+            Button(action: primaryAction) {
+                primaryActionLabel
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .disabled(isStreaming || isSendDisabled)
+            .help(primaryActionHelpText)
+            .accessibilityLabel(primaryActionAccessibilityLabel)
+        }
+    }
+
     @ViewBuilder
     var primaryActionLabel: some View {
         if isStreaming {
             Label("Stop", systemImage: "stop.fill")
+        } else if composerGate.isDegraded {
+            Label("Send Anyway", systemImage: "paperplane.fill")
         } else {
             Label("Send", systemImage: "paperplane.fill")
+        }
+    }
+}
+
+enum DesktopChatComposerRepairActionKind: Equatable {
+    case chooseProvider
+    case attachModel
+    case startProvider
+    case resumeProvider
+    case wakeProvider
+    case openProviders
+    case runCapabilitiesTest
+}
+
+struct DesktopChatComposerRepairState: Equatable {
+    let title: String
+    let detail: String
+    let primaryActionTitle: String
+    let primaryActionKind: DesktopChatComposerRepairActionKind
+    let secondaryActionTitles: [String]
+    let systemImageName: String
+}
+
+struct DesktopChatComposerGate: Equatable {
+    let serverSession: DesktopServerSessionState?
+    let capabilities: [DesktopChatCapabilityRow]
+    let isModelMissing: Bool
+
+    var repairState: DesktopChatComposerRepairState? {
+        guard let serverSession else {
+            return DesktopChatComposerRepairState(
+                title: "Select a provider before sending.",
+                detail: "Bind this chat to a local or remote provider.",
+                primaryActionTitle: "Choose Provider",
+                primaryActionKind: .chooseProvider,
+                secondaryActionTitles: [],
+                systemImageName: "server.rack"
+            )
+        }
+
+        if isModelMissing {
+            return DesktopChatComposerRepairState(
+                title: "Provider is missing a model.",
+                detail: "Attach a model before this chat can send requests.",
+                primaryActionTitle: "Attach Model",
+                primaryActionKind: .attachModel,
+                secondaryActionTitles: ["Open Providers"],
+                systemImageName: "cube.box"
+            )
+        }
+
+        switch serverSession.lifecycle {
+        case .draft, .stopped, .unavailable:
+            return DesktopChatComposerRepairState(
+                title: "Provider is offline.",
+                detail: "Start the bound provider before sending.",
+                primaryActionTitle: "Start Provider",
+                primaryActionKind: .startProvider,
+                secondaryActionTitles: ["Open Providers"],
+                systemImageName: "power"
+            )
+        case .paused:
+            return DesktopChatComposerRepairState(
+                title: "Provider is paused.",
+                detail: "Resume this provider before sending.",
+                primaryActionTitle: "Resume Provider",
+                primaryActionKind: .resumeProvider,
+                secondaryActionTitles: ["Open Providers"],
+                systemImageName: "pause.circle"
+            )
+        case .starting:
+            return DesktopChatComposerRepairState(
+                title: "Provider is starting.",
+                detail: "Sending is blocked until startup completes.",
+                primaryActionTitle: "Open Providers",
+                primaryActionKind: .openProviders,
+                secondaryActionTitles: [],
+                systemImageName: "arrow.clockwise.circle"
+            )
+        case .stopping:
+            return DesktopChatComposerRepairState(
+                title: "Provider is stopping.",
+                detail: "Wait for shutdown to finish, then start it again.",
+                primaryActionTitle: "Start Provider",
+                primaryActionKind: .startProvider,
+                secondaryActionTitles: ["Open Providers"],
+                systemImageName: "pause.circle"
+            )
+        case .error:
+            return DesktopChatComposerRepairState(
+                title: "Provider failed.",
+                detail: serverSession.lastError.isEmpty ? "Recover the failed provider before sending." : serverSession.lastError,
+                primaryActionTitle: "Open Providers",
+                primaryActionKind: .openProviders,
+                secondaryActionTitles: ["Open Diagnostics"],
+                systemImageName: "exclamationmark.triangle"
+            )
+        case .sleeping, .running:
+            break
+        }
+
+        if hasInvalidCapabilityReceipt {
+            return DesktopChatComposerRepairState(
+                title: "Capability receipt is invalid.",
+                detail: "Run a capability test before sending with this model.",
+                primaryActionTitle: "Run Capabilities Test",
+                primaryActionKind: .runCapabilitiesTest,
+                secondaryActionTitles: ["Open Providers"],
+                systemImageName: "checklist"
+            )
+        }
+
+        return nil
+    }
+
+    var isDegraded: Bool {
+        guard repairState == nil, serverSession != nil else {
+            return false
+        }
+        return capabilities.contains { $0.isReady == false }
+    }
+
+    private var hasInvalidCapabilityReceipt: Bool {
+        capabilities.contains { capability in
+            capability.id == "text" && capability.isReady == false
+        }
+    }
+}
+
+struct DesktopChatComposerRepairPanel: View {
+    let state: DesktopChatComposerRepairState
+    let onPrimaryAction: () -> Void
+    let onOpenServer: () -> Void
+    let onOpenModels: () -> Void
+    let onRunCapabilitiesTest: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: state.systemImageName)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+                .frame(width: 22, height: 22)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(state.title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(state.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 6) {
+                ForEach(state.secondaryActionTitles, id: \.self) { title in
+                    Button(title) {
+                        performSecondaryAction(title)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                Button(state.primaryActionTitle, action: onPrimaryAction)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .frame(minHeight: DesktopChatLayoutMetrics.composerMinHeight, alignment: .center)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(state.title) \(state.primaryActionTitle)")
+    }
+
+    func performSecondaryAction(_ title: String) {
+        switch title {
+        case "Open Providers":
+            onOpenServer()
+        case "Open Models":
+            onOpenModels()
+        case "Open Diagnostics":
+            onRunCapabilitiesTest()
+        default:
+            break
         }
     }
 }

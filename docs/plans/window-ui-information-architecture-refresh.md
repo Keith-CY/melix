@@ -131,6 +131,15 @@ rewrite.
    model-capability readiness as fixed-width colored icon plus short-code
    signals. Visible strip text stays compact; full provider, model, and runtime
    detail moves to help text, accessibility labels, and selected-object detail.
+   The compact strip is intentionally a space-saving status-light treatment,
+   not a place for expanded metric readouts.
+
+   Status: composer repair follow-up now replaces the text input for blocking
+   provider states with one primary repair action: Choose Provider, Attach
+   Model, Start Provider, Resume Provider, Open Providers, or Run Capabilities
+   Test. Degraded providers keep the text input and expose `Send Anyway` plus a
+   compact Providers repair entry. Screenshot capture now includes no-provider,
+   missing-model, offline-provider, and degraded-provider Chat composer states.
 
 4. Providers And Jobs Domains
    - Split Create Local Provider and Add Remote Provider.

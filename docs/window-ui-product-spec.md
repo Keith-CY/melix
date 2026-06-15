@@ -663,25 +663,38 @@ selected. Required composer states:
 Production composer state is driven by runtime state, not by a user-facing
 manual segmented control.
 
-The composer provider strip should remain compact and glanceable. It should
-render provider health and model-capability readiness as fixed-width status
-lamps or colored icon plus short-code signals. Full provider names, model IDs,
-and runtime details belong in help text, accessibility labels, selected-object
-Inspector context, or provider detail views, not in the visible strip.
+The composer provider strip should remain compact and glanceable. Its status
+lamps or colored icon plus short-code signals exist to reduce occupied space and
+make state recognizable at a glance. They must not become a dense metric strip.
+Full provider names, model IDs, numeric queue/cache details, and runtime details
+belong in help text, accessibility labels, selected-object Inspector context, or
+provider detail views, not in the visible strip.
 
 Chat should expose runtime failure locally before forcing the operator into
 Command Center:
 
 ```text
 Select a provider before sending.
-[Choose Local Provider] [Connect Remote Provider]
+[Choose Provider]
 
-Primary Provider is running, but active model is cold.
-[Warm Model] [Switch Provider]
+Provider is missing a model.
+[Attach Model] [Open Providers]
 
-Primary Provider is offline.
-[Start Provider] [Switch Provider] [Open Logs]
+Provider is offline.
+[Start Provider] [Open Providers]
+
+Capability receipt is invalid.
+[Run Capabilities Test] [Open Providers]
+
+Provider is degraded, but text generation is available.
+[Send Anyway] [Open Providers]
 ```
+
+Blocking states replace the text input with a compact repair panel so Command
+Return, prompt suggestions, and the primary send action are unavailable until
+the blocking repair has been taken. Degraded states keep the text input mounted,
+rename the primary send action to `Send Anyway`, and provide a repair/evidence
+entry into Providers.
 
 ### Command Center
 

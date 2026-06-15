@@ -7804,6 +7804,7 @@ struct DesktopFoundationViewTests {
                 powerState: .active
             ),
             capabilities: [],
+            isModelMissing: false,
             onCommandSubmit: { draft in
                 commandDraft = draft
             },
@@ -7814,6 +7815,8 @@ struct DesktopFoundationViewTests {
                 clearCount += 1
             },
             onOpenServer: {},
+            onOpenModels: {},
+            onRunCapabilitiesTest: {},
             onStartServer: {},
             onResumeServer: {},
             onWakeServer: {}
@@ -7825,6 +7828,113 @@ struct DesktopFoundationViewTests {
         #expect(submitCount == 1)
         #expect(clearCount == 1)
         #expect(commandDraft.isEmpty)
+    }
+
+    @Test("chat composer gate maps blocked provider states to canonical repair actions")
+    @MainActor
+    func chatComposerGateMapsBlockedProviderStatesToCanonicalRepairActions() {
+        let readySession = DesktopServerSessionState(
+            id: "server-session-ready",
+            title: "Ready Provider",
+            modelID: "melix-dev-text",
+            lifecycle: .running,
+            powerState: .active
+        )
+        let readyTextCapability = DesktopChatCapabilityRow(
+            id: "text",
+            title: "Interactive Text",
+            modelID: "melix-dev-text",
+            detail: "melix-dev-text • Ready",
+            isReady: true
+        )
+        let invalidTextCapability = DesktopChatCapabilityRow(
+            id: "text",
+            title: "Interactive Text",
+            modelID: "melix-dev-text",
+            detail: "melix-dev-text • Unsupported",
+            isReady: false
+        )
+        let degradedVisionCapability = DesktopChatCapabilityRow(
+            id: "vlm",
+            title: "Vision Analysis",
+            modelID: "melix-dev-vision",
+            detail: "melix-dev-vision • Missing",
+            isReady: false
+        )
+
+        let noProviderGate = DesktopChatComposerGate(
+            serverSession: nil,
+            capabilities: [],
+            isModelMissing: false
+        )
+        let missingModelGate = DesktopChatComposerGate(
+            serverSession: readySession,
+            capabilities: [readyTextCapability],
+            isModelMissing: true
+        )
+
+        var offlineSession = readySession
+        offlineSession.lifecycle = .stopped
+        offlineSession.powerState = .stopped
+        let offlineGate = DesktopChatComposerGate(
+            serverSession: offlineSession,
+            capabilities: [readyTextCapability],
+            isModelMissing: false
+        )
+        let invalidCapabilityGate = DesktopChatComposerGate(
+            serverSession: readySession,
+            capabilities: [invalidTextCapability],
+            isModelMissing: false
+        )
+        let degradedGate = DesktopChatComposerGate(
+            serverSession: readySession,
+            capabilities: [readyTextCapability, degradedVisionCapability],
+            isModelMissing: false
+        )
+
+        #expect(noProviderGate.repairState?.primaryActionTitle == "Choose Provider")
+        #expect(noProviderGate.repairState?.secondaryActionTitles.isEmpty == true)
+        #expect(missingModelGate.repairState?.primaryActionTitle == "Attach Model")
+        #expect(offlineGate.repairState?.primaryActionTitle == "Start Provider")
+        #expect(invalidCapabilityGate.repairState?.primaryActionTitle == "Run Capabilities Test")
+        #expect(invalidCapabilityGate.repairState?.secondaryActionTitles == ["Open Providers"])
+        #expect(degradedGate.repairState == nil)
+        #expect(degradedGate.isDegraded)
+    }
+
+    @Test("chat composer repair panel routes provider model and diagnostics actions")
+    @MainActor
+    func chatComposerRepairPanelRoutesProviderModelAndDiagnosticsActions() {
+        var openedProviderCount = 0
+        var openedModelCount = 0
+        var diagnosticsCount = 0
+        var primaryCount = 0
+
+        let repairPanel = DesktopChatComposerRepairPanel(
+            state: DesktopChatComposerRepairState(
+                title: "Provider is missing a model.",
+                detail: "Attach a model before this chat can send requests.",
+                primaryActionTitle: "Attach Model",
+                primaryActionKind: .attachModel,
+                secondaryActionTitles: ["Open Providers", "Open Models", "Open Diagnostics"],
+                systemImageName: "cube.box"
+            ),
+            onPrimaryAction: { primaryCount += 1 },
+            onOpenServer: { openedProviderCount += 1 },
+            onOpenModels: { openedModelCount += 1 },
+            onRunCapabilitiesTest: { diagnosticsCount += 1 }
+        )
+
+        repairPanel.performSecondaryAction("Open Providers")
+        repairPanel.performSecondaryAction("Open Models")
+        repairPanel.performSecondaryAction("Open Diagnostics")
+        repairPanel.onPrimaryAction()
+
+        #expect(hostView(repairPanel).subviews.isEmpty == false)
+        #expect(openedProviderCount == 1)
+        #expect(openedModelCount == 1)
+        #expect(diagnosticsCount == 1)
+        #expect(primaryCount == 1)
     }
 
     @Test("chat workspace preview and recovery helpers update shell state")
@@ -7915,12 +8025,15 @@ struct DesktopFoundationViewTests {
             usageText: "",
             serverSession: nil,
             capabilities: [],
+            isModelMissing: false,
             onCommandSubmit: { _ in },
             onSubmit: {
                 submitCount += 1
             },
             onClear: {},
             onOpenServer: {},
+            onOpenModels: {},
+            onRunCapabilitiesTest: {},
             onStartServer: {},
             onResumeServer: {},
             onWakeServer: {}
@@ -8965,6 +9078,12 @@ struct DesktopFoundationViewTests {
         #expect(source.contains("DesktopChatCapabilityStatusSignal"))
         #expect(source.contains("DesktopChatRuntimeSignalMetrics.providerSignalWidth"))
         #expect(source.contains("DesktopChatRuntimeSignalMetrics.capabilitySignalWidth"))
+        #expect(source.contains("DesktopChatComposerRepairPanel"))
+        #expect(source.contains("selectedChatModelNeedsAttachment"))
+        #expect(source.contains("Button(\"Send Anyway\", action: primaryAction)"))
+        #expect(source.contains(".accessibilityLabel(\"Open Providers\")"))
+        #expect(source.contains("primaryActionTitle: \"Attach Model\""))
+        #expect(source.contains("primaryActionTitle: \"Run Capabilities Test\""))
         #expect(source.contains("DesktopChatRuntimeServerCapsule") == false)
         #expect(source.contains("DesktopChatInlineCapabilityCluster") == false)
         #expect(source.contains("Label(\"Send\", systemImage: \"paperplane.fill\")"))
