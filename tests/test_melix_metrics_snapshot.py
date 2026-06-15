@@ -188,6 +188,34 @@ def test_runtime_dir_discovery_uses_single_scandir_without_path_glob(
     assert scanned_paths == [str(tmp_path)]
 
 
+def test_runtime_dir_discovery_materializes_only_final_latest_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    for index in range(25):
+        candidate = tmp_path / f"control-plane-metrics-{index:04d}.json"
+        write_metrics(candidate, updated_at_unix_ms=index, values={"value": index})
+        os.utime(candidate, (index, index))
+    expected = tmp_path / "control-plane-metrics-latest.json"
+    write_metrics(expected, updated_at_unix_ms=100, values={"value": 100})
+    os.utime(expected, (100, 100))
+
+    original_path = snapshot_cli.Path
+    path_constructor_args: list[tuple[object, ...]] = []
+
+    class CountingPath:
+        def __new__(cls, *args: object, **kwargs: object):
+            path_constructor_args.append(args)
+            return original_path(*args, **kwargs)
+
+    monkeypatch.setattr(snapshot_cli, "Path", CountingPath)
+
+    latest = snapshot_cli.discover_latest_metrics_path(tmp_path, "control_plane")
+
+    assert latest == expected
+    assert path_constructor_args == [(str(expected),)]
+
+
 def test_runtime_dir_discovery_preserves_exact_and_multi_wildcard_patterns(
     tmp_path: Path,
     monkeypatch,

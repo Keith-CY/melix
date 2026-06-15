@@ -91,7 +91,7 @@ def discover_latest_metrics_path(runtime_dir: Path | None, source_name: str) -> 
     else:
         exact_name = prefix = suffix = None
     try:
-        latest_path: Path | None = None
+        latest_path: str | None = None
         latest_mtime: float | None = None
         with os.scandir(os.fspath(runtime_dir.expanduser())) as entries:
             for entry in entries:
@@ -108,9 +108,9 @@ def discover_latest_metrics_path(runtime_dir: Path | None, source_name: str) -> 
                     continue
                 mtime = entry.stat().st_mtime
                 if latest_mtime is None or mtime > latest_mtime:
-                    latest_path = Path(entry.path)
+                    latest_path = entry.path
                     latest_mtime = mtime
-        return latest_path
+        return Path(latest_path) if latest_path is not None else None
     except OSError:
         return None
 
