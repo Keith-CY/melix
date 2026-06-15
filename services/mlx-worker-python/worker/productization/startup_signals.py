@@ -354,6 +354,24 @@ def classify_startup_failure(
 
 
 def _contains_any(value: str, patterns: tuple[str, ...]) -> bool:
+    if not value:
+        return False
+    if patterns is PORT_CONFLICT_PATTERNS:
+        return (
+            "address already in use" in value
+            or "eaddrinuse" in value
+            or "bind() failed" in value
+            or "port is already in use" in value
+        )
+    if patterns is CRASH_PATTERNS:
+        return (
+            "fatal error" in value
+            or "traceback" in value
+            or "uncaught" in value
+            or "assertion failed" in value
+            or "terminated" in value
+            or "abort trap" in value
+        )
     for pattern in patterns:
         if pattern in value:
             return True
