@@ -306,12 +306,13 @@ def project_retrieval_lookup_result(lookup_result: Any) -> RetrievalLookupResult
             lookup_message=None,
         )
 
-    store_projection = project_retrieval_store_records(lookup_result.get("records"))
-    prompt_user_payload = _copy_payload(store_projection.user_payload)
-    untrusted_context_receipts = _copy_receipts(
-        store_projection.untrusted_context_receipts
-    )
-    refusal_receipts = _copy_receipts(store_projection.refusal_receipts)
+    project_store_records = project_retrieval_store_records
+    copy_payload = _copy_payload
+    copy_receipts = _copy_receipts
+    store_projection = project_store_records(lookup_result.get("records"))
+    prompt_user_payload = copy_payload(store_projection.user_payload)
+    untrusted_context_receipts = copy_receipts(store_projection.untrusted_context_receipts)
+    refusal_receipts = copy_receipts(store_projection.refusal_receipts)
     lookup_message: dict[str, Any] | None = None
     if prompt_user_payload:
         lookup_message = {
