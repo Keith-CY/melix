@@ -40,6 +40,8 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     missing_selection_error_samples: list[float] = []
     selector_planning_elapsed_samples: list[float] = []
     selector_selected_schema_bytes_samples: list[float] = []
+    current_capacity_planning_elapsed_samples: list[float] = []
+    current_capacity_selected_schema_bytes_samples: list[float] = []
     always_only_planning_elapsed_samples: list[float] = []
     always_only_selected_schema_bytes_samples: list[float] = []
     checksum = 0
@@ -130,6 +132,26 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         )
         checksum += selector_schema_bytes
 
+        current_capacity_schema_bytes = 0
+        current_capacity_started = time.perf_counter()
+        for _index in range(selector_iterations):
+            selection_result = select_agentic_tools_for_turn(
+                ToolSelectionInput(
+                    current_user_turn="Search the local text evidence.",
+                    recent_user_turns=("Visit fixture://docs/provider-contract.",),
+                    vector_available=False,
+                    max_selected_tools=2,
+                )
+            )
+            current_capacity_schema_bytes += int(selection_result.receipt["selected_schema_bytes"])
+        current_capacity_planning_elapsed_samples.append(
+            (time.perf_counter() - current_capacity_started) * 1000.0
+        )
+        current_capacity_selected_schema_bytes_samples.append(
+            float(current_capacity_schema_bytes / selector_iterations)
+        )
+        checksum += current_capacity_schema_bytes
+
         always_only_schema_bytes = 0
         always_only_started = time.perf_counter()
         for _index in range(selector_iterations):
@@ -169,6 +191,12 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         "selector_planning_elapsed_ms_mean": statistics.fmean(selector_planning_elapsed_samples),
         "selector_selected_schema_bytes_mean": statistics.fmean(
             selector_selected_schema_bytes_samples
+        ),
+        "current_capacity_planning_elapsed_ms_mean": statistics.fmean(
+            current_capacity_planning_elapsed_samples
+        ),
+        "current_capacity_selected_schema_bytes_mean": statistics.fmean(
+            current_capacity_selected_schema_bytes_samples
         ),
         "always_only_planning_elapsed_ms_mean": statistics.fmean(
             always_only_planning_elapsed_samples
