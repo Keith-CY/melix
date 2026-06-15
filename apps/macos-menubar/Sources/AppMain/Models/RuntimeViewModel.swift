@@ -6136,6 +6136,7 @@ public final class RuntimeViewModel {
         return String(data: data, encoding: .utf8)
     }
 
+    @MainActor
     public func refreshCompanionStatus() async {
         guard companionStatus.phase != .loading else {
             return
@@ -14039,13 +14040,14 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    @MainActor
     private func failCompanionStatusRefresh(_ message: String) async {
         companionStatusRefreshFailures += 1
         companionStatus = CompanionStatusState.failed(message)
         recordLocalError(message)
         await metrics.record(
             name: "companion.status_refresh_failures",
-            valueMs: companionStatusRefreshFailures
+            valueMs: 1.0
         )
         notifyStateChanged()
     }

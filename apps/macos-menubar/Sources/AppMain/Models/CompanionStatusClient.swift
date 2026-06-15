@@ -244,7 +244,7 @@ private struct CompanionStatusResponsePayload: Decodable {
         let workerID: String
         let progressStage: String
         let updatedAtUnixMS: Int64
-        let failureCode: String
+        let failureCode: String?
         let redaction: EntryRedaction
 
         enum CodingKeys: String, CodingKey {
@@ -276,19 +276,19 @@ private struct CompanionStatusResponsePayload: Decodable {
                 workerID: workerID,
                 progressStage: progressStage,
                 updatedAtUnixMS: updatedAtUnixMS,
-                failureCode: failureCode,
+                failureCode: failureCode ?? "",
                 redactionSummary: redaction.summary
             )
         }
     }
 
     struct EntryRedaction: Decodable {
-        let rawLogLine: String
-        let rawPrompt: String
-        let requestBody: String
-        let artifactURIs: String
-        let localPaths: String
-        let errorMessage: String
+        let rawLogLine: String?
+        let rawPrompt: String?
+        let requestBody: String?
+        let artifactURIs: String?
+        let localPaths: String?
+        let errorMessage: String?
 
         enum CodingKeys: String, CodingKey {
             case rawLogLine = "raw_log_line"
@@ -301,13 +301,13 @@ private struct CompanionStatusResponsePayload: Decodable {
 
         var summary: String {
             [
-                "raw log line \(rawLogLine)",
-                "raw prompt \(rawPrompt)",
-                "request body \(requestBody)",
-                "artifact URIs \(artifactURIs)",
-                "local paths \(localPaths)",
-                "error message \(errorMessage)",
-            ].joined(separator: "; ")
+                rawLogLine.map { "raw log line \($0)" },
+                rawPrompt.map { "raw prompt \($0)" },
+                requestBody.map { "request body \($0)" },
+                artifactURIs.map { "artifact URIs \($0)" },
+                localPaths.map { "local paths \($0)" },
+                errorMessage.map { "error message \($0)" },
+            ].compactMap { $0 }.joined(separator: "; ")
         }
     }
 
