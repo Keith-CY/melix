@@ -4681,6 +4681,17 @@
         "direction": "informational"
       },
       {
+        "key": "current_capacity_planning_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "current_capacity_selected_schema_bytes_mean",
+        "unit": "bytes",
+        "direction": "informational"
+      },
+      {
         "key": "always_only_planning_elapsed_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",

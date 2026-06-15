@@ -769,6 +769,36 @@ def test_agentic_tool_selection_skips_empty_context_keyword_scan(
     assert scanned_texts == ["Open fixture://docs/provider-contract and summarize the page."]
 
 
+def test_agentic_tool_selection_skips_context_scan_when_current_fills_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scanned_texts: list[str] = []
+    real_keyword_tool_matches = tool_registry_module._keyword_tool_matches
+
+    def record_keyword_tool_matches(text: str) -> tuple[str, ...]:
+        scanned_texts.append(text)
+        return real_keyword_tool_matches(text)
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "_keyword_tool_matches",
+        record_keyword_tool_matches,
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search the local text evidence.",
+            vector_available=False,
+            recent_user_turns=("Visit fixture://docs/provider-contract.",),
+            max_selected_tools=2,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selection_mode"] == "keyword"
+    assert scanned_texts == ["Search the local text evidence."]
+
+
 def test_agentic_tool_selection_reuses_single_recent_context_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
