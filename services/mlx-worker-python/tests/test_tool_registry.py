@@ -971,6 +971,37 @@ def test_agentic_tool_selection_records_fallback_when_no_keyword_matches() -> No
     ]
 
 
+def test_tool_selection_receipt_reuses_bound_metric_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = tool_registry_module.agentic_tool_catalog_registry()
+    original_metrics = ToolRegistry.metrics
+    metrics_call_count = 0
+
+    def counted_metrics(self: ToolRegistry) -> object:
+        nonlocal metrics_call_count
+        metrics_call_count += 1
+        return original_metrics(self)
+
+    monkeypatch.setattr(ToolRegistry, "metrics", counted_metrics)
+
+    result = tool_registry_module._build_tool_selection_result(
+        registry,
+        ["local_compute", "text_search"],
+        {"local_compute": "always", "text_search": "keyword"},
+        ToolSelectionInput(
+            current_user_turn="Search local evidence.",
+            vector_available=False,
+            max_selected_tools=4,
+        ),
+        "keyword",
+        "vector_unavailable",
+    )
+
+    assert result.receipt["full_schema_bytes"] >= result.receipt["selected_schema_bytes"]
+    assert metrics_call_count == 2
+
+
 def test_agentic_tool_selection_records_fallback_for_whitespace_only_turn() -> None:
     result = select_agentic_tools_for_turn(
         ToolSelectionInput(
