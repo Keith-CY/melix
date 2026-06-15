@@ -146,7 +146,7 @@ def test_mlx_lm_runner_runtime_grpo_executes_candidate_tool_trajectories(
     assert row["generated_candidates"][1]["agentic_tool_untrusted_context_receipt_schema"] == (
         "melix.untrusted_context_receipt.v1"
     )
-    assert row["generated_candidates"][1]["agentic_tool_untrusted_context_receipt_count"] == 3
+    assert row["generated_candidates"][1]["agentic_tool_untrusted_context_receipt_count"] == 4
     assert row["generated_candidates"][1]["reward_components"]["tool_efficiency"] == -1.0
 
     candidate_trace_rows = [
@@ -189,7 +189,7 @@ def test_mlx_lm_runner_runtime_grpo_executes_candidate_tool_trajectories(
     assert extra_trace["agentic_tool_untrusted_context_receipt_schema"] == (
         "melix.untrusted_context_receipt.v1"
     )
-    assert extra_trace["agentic_tool_untrusted_context_receipt_count"] == 3
+    assert extra_trace["agentic_tool_untrusted_context_receipt_count"] == 4
     assert "agentic_tool_observations" not in extra_trace
 
 

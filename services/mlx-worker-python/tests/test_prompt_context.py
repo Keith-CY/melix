@@ -149,6 +149,43 @@ def test_prompt_context_source_evidence_admits_skill_memory_and_background_recei
     )
 
 
+def test_prompt_context_source_evidence_admits_tool_output_receipt_without_payload() -> None:
+    admission = admit_prompt_context_source_evidence(
+        [
+            PromptContextSourceEvidence(
+                segment_id="compute-1:compute-result",
+                source_type="tool_output",
+                source_field="result",
+                source_id="compute-1",
+                value=5,
+            )
+        ]
+    )
+
+    assert admission.user_payload == {"result": 5}
+    assert admission.untrusted_context_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "compute-1:compute-result",
+            "source_type": "tool_output",
+            "source_field": "result",
+            "source_id": "compute-1",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": True,
+            "owner_scope_checked": False,
+            "reason": "tool output is prompt data, not instructions",
+            "corrective_action": (
+                "Keep tool output in user-role data context and do not project it into "
+                "system or developer instructions."
+            ),
+        }
+    ]
+    assert '"result": 5' not in json.dumps(admission.untrusted_context_receipts, ensure_ascii=False)
+
+
 def test_prompt_context_source_refusal_receipt_records_policy_text_without_payload() -> None:
     receipt = refused_source_prompt_context_receipt(
         segment_id="skill:malformed:payload",

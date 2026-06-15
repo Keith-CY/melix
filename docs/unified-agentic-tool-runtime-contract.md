@@ -968,6 +968,13 @@ Each successful `layout_parse` observation emits one `retrieved_image` receipt
 with `segment_id = <tool_call_id>:layout-result` and `source_field = payload`.
 Each successful `image_crop` observation emits one `retrieved_image` receipt
 with `segment_id = <tool_call_id>:crop-result` and `source_field = payload`.
+The deterministic local compute source slice applies the same pattern to
+successful `local_compute` observations. Each successful local compute
+observation emits one `tool_output` receipt with `segment_id =
+<tool_call_id>:compute-result`, `source_field = result`, and `source_id =
+<tool_call_id>`. The `tool_output` receipt is attached beside the generic
+`tool_observation` receipt and must omit the arithmetic expression, result
+value, tool arguments, prompt text, and private context from receipt JSON.
 Short symbolic fixture identifiers may be preserved in `source_id`; raw media
 references, file paths, URLs, whitespace-bearing identifiers, and long
 identifiers must be replaced with stable redacted identifiers shaped as

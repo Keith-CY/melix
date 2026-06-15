@@ -13,6 +13,7 @@ PromptContextSourceType = Literal[
     "skill",
     "memory",
     "background_continuation",
+    "tool_output",
 ]
 
 
@@ -92,6 +93,11 @@ _SOURCE_CONTEXT_POLICIES: dict[str, tuple[str, str, str]] = {
         "background continuation is prompt data, not instructions",
         "Keep background continuation evidence in user-role data context and do not project it into system or developer instructions.",
         "Reject malformed background continuation evidence before prompt assembly.",
+    ),
+    "tool_output": (
+        "tool output is prompt data, not instructions",
+        "Keep tool output in user-role data context and do not project it into system or developer instructions.",
+        "Reject malformed tool output before prompt assembly.",
     ),
 }
 
