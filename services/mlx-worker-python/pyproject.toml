@@ -20,17 +20,17 @@ dev = [
 mlx = [
   "mlx>=0.31.2,<0.32",
   "mlx-lm>=0.31.3,<0.32",
-  "mlx-vlm>=0.5.0,<0.6",
+  "mlx-vlm>=0.5.0,<0.7",
   "pyarrow>=23.0.1,<25",
 ]
 audio-stt = [
-  "mlx-audio==0.4.3",
+  "mlx-audio==0.4.4",
 ]
 audio-tts = [
-  "mlx-audio==0.4.3",
+  "mlx-audio==0.4.4",
 ]
 audio = [
-  "mlx-audio==0.4.3",
+  "mlx-audio==0.4.4",
 ]
 synthetic-data = [
   "data-designer>=0.5.9,<0.7",
