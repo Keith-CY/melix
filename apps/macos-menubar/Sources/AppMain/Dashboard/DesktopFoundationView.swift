@@ -17,10 +17,6 @@ public struct DesktopFoundationRootView: View {
                 ToolbarItem(placement: .principal) {
                     DesktopWorkspaceTitleBarTabsView(viewModel: viewModel)
                 }
-
-                ToolbarItem(placement: .primaryAction) {
-                    DesktopWorkspaceTitleBarActionsView(viewModel: viewModel)
-                }
             }
     }
 }

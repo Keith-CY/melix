@@ -31,7 +31,7 @@ patterns.
 This document intentionally closes the IA expansion phase. Subsequent design
 and engineering work should refine route behavior, object state, Inspector
 behavior, security boundaries, and visual treatment without adding new
-top-level domains.
+routable domains.
 
 ## Normative Language
 
@@ -54,7 +54,7 @@ updating one of the documents before implementation continues.
 
 This specification governs:
 
-- top-level desktop navigation;
+- desktop domain navigation;
 - product object terminology;
 - status, execution, and review-state vocabulary;
 - route and selected-object behavior;
@@ -88,7 +88,9 @@ This specification does not define:
 A desktop implementation conforms to this specification only when these
 conditions are true:
 
-- the top-level IA is exactly the 10 domains defined in this document;
+- the routable IA is exactly the 10 domains defined in this document;
+- the titlebar primary navigation exposes only Chat, Providers, Models, and
+  Workflows;
 - page labels, header actions, secondary tabs, selected-object state, and
   Inspector modules are driven from typed route metadata or an equivalent
   single source of truth;
@@ -118,7 +120,7 @@ conditions are true:
 5. Providers owns runtime profiles, lifecycle, credentials, active runtime
    switching, and capability receipts.
 6. Models owns model and adapter assets, not running endpoints.
-7. Jobs is top-level because durable operation state crosses product domains.
+7. Jobs is first-class because durable operation state crosses product domains.
 8. The Inspector must become selected-object driven whenever an object is
    selected.
 9. Inbound Melix API auth and outbound remote-provider credentials must never be
@@ -134,7 +136,7 @@ conditions are true:
 
 ## Top-Level Information Architecture
 
-The production desktop window uses these top-level domains:
+The production desktop window uses these routable domains:
 
 ```text
 Chat
@@ -149,14 +151,28 @@ Image
 Settings
 ```
 
-Do not add another top-level domain in the first implementation phase. In
-particular, do not add a top-level Artifacts domain yet. Artifact lineage should
+Do not add another routable domain in the first implementation phase. In
+particular, do not add a routable Artifacts domain yet. Artifact lineage should
 be visible through Jobs, owner domains, Inspector evidence links, and command
 palette or search results first.
 
+The titlebar primary navigation is intentionally smaller than the routable IA:
+
+```text
+Chat
+Providers
+Models
+Workflows
+```
+
+Command Center, Jobs, Diagnostics, API, Image, and Settings remain routable
+workspace domains, but they should be reached through contextual actions,
+Inspector links, command/search entry points, menus, or owner-domain workflows
+rather than occupying titlebar navigation space.
+
 ### Secondary Pages
 
-Each top-level domain owns secondary pages inside the shared desktop shell:
+Each routable domain owns secondary pages inside the shared desktop shell:
 
 | Domain | Secondary pages |
 |---|---|
@@ -180,7 +196,7 @@ Every route page must define these product-facing fields:
 
 | Field | Contract |
 |---|---|
-| Domain label | Top-level product domain shown in primary navigation and breadcrumbs. |
+| Domain label | Product domain shown in route metadata, breadcrumbs, and eligible navigation. |
 | Page label | Secondary navigation or tab label. It may be concise. |
 | Title | Main heading for the current workspace. It must be meaningful without reading the breadcrumb. |
 | Subtitle | One-sentence page purpose, runtime boundary, or current operator contract. |
@@ -784,7 +800,7 @@ are evidence and measurement artifacts.
 
 ### Jobs
 
-Jobs is top-level because durable operation state crosses Workflows, Models,
+Jobs is first-class because durable operation state crosses Workflows, Models,
 Diagnostics, Image, Providers, and API.
 
 Jobs must expose:
@@ -797,12 +813,12 @@ Jobs must expose:
 - global visibility from Command Center and any domain that starts long-running
   work.
 
-Artifact lineage must be visible here even though Artifacts is not top-level in
-this phase.
+Artifact lineage must be visible here even though Artifacts is not a routable
+domain in this phase.
 
 Melix may later need an Artifact Browser when artifact volume makes owner-domain
 surfacing insufficient. Until then, artifact search and command-palette results
-may expose artifacts without adding another top-level sidebar item.
+may expose artifacts without adding another routable domain or titlebar item.
 
 ### Diagnostics
 
@@ -1020,7 +1036,7 @@ Before production SwiftUI implementation begins:
 
 Recommended implementation slice order:
 
-1. Route metadata and top-level IA.
+1. Route metadata and routable IA.
 2. Header primary and secondary actions from route metadata.
 3. Selected-object route state and Inspector switching.
 4. Provider creation split and Chat runtime binding states.
@@ -1040,8 +1056,10 @@ window implementation slice governed by this specification.
 
 ### IA And Route Metadata
 
-- The visible primary sidebar contains only Chat, Command Center, Providers,
-  Models, Workflows, Jobs, Diagnostics, API, Image, and Settings.
+- The visible titlebar primary navigation contains only Chat, Providers, Models,
+  and Workflows.
+- Command Center, Jobs, Diagnostics, API, Image, and Settings remain routable
+  domains even when hidden from the titlebar.
 - Secondary pages use canonical route IDs from this document.
 - Legacy route aliases, when supported, are parse-only compatibility paths and
   are not emitted in new copied links.

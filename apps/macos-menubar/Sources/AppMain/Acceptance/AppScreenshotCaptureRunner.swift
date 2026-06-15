@@ -74,7 +74,7 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
     case commandCenter
 
     public static var defaultCases: [AppScreenshotCaptureCase] {
-        DesktopSurface.visibleNavigationCases.map(AppScreenshotCaptureCase.workspace)
+        DesktopSurface.routableWorkspaceCases.map(AppScreenshotCaptureCase.workspace)
             + DesktopToolSection.allCases.map(AppScreenshotCaptureCase.toolSection)
             + [.commandCenter]
     }

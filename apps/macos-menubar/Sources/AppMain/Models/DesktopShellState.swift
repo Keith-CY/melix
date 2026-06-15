@@ -47,6 +47,10 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
     }
 
     public static var visibleNavigationCases: [DesktopSurface] {
+        [.chat, .server, .models, .workflows]
+    }
+
+    public static var routableWorkspaceCases: [DesktopSurface] {
         [.chat, .commandCenter, .server, .models, .workflows, .jobs, .diagnostics, .api, .image, .settings]
     }
 

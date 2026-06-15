@@ -28,7 +28,7 @@ struct AppScreenshotCaptureTests {
             return false
         }.count
 
-        #expect(workspaceSurfaces.sorted() == DesktopSurface.visibleNavigationCases.map(\.rawValue).sorted())
+        #expect(workspaceSurfaces.sorted() == DesktopSurface.routableWorkspaceCases.map(\.rawValue).sorted())
         #expect(toolSections.sorted() == DesktopToolSection.allCases.map(\.rawValue).sorted())
         #expect(commandCenterCount == 1)
     }

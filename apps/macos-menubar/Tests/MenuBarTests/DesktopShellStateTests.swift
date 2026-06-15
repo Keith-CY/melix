@@ -9,6 +9,18 @@ struct DesktopShellStateTests {
     func desktopRouteMetadataEncodesAcceptedProductIA() throws {
         #expect(DesktopSurface.visibleNavigationCases == [
             .chat,
+            .server,
+            .models,
+            .workflows,
+        ])
+        #expect(DesktopSurface.visibleNavigationCases.map(\.rawValue) == [
+            "Chat",
+            "Providers",
+            "Models",
+            "Workflows",
+        ])
+        #expect(DesktopSurface.routableWorkspaceCases == [
+            .chat,
             .commandCenter,
             .server,
             .models,
@@ -19,7 +31,7 @@ struct DesktopShellStateTests {
             .image,
             .settings,
         ])
-        #expect(DesktopSurface.visibleNavigationCases.map(\.rawValue) == [
+        #expect(DesktopSurface.routableWorkspaceCases.map(\.rawValue) == [
             "Chat",
             "Command Center",
             "Providers",

@@ -13,7 +13,7 @@ conflict with the product spec, the product spec wins.
 Refresh the Melix desktop window UI so it reads as a local-first AI runtime
 operator console while keeping Chat as the default first surface.
 
-The accepted direction is:
+The accepted routable IA is:
 
 ```text
 Chat
@@ -26,6 +26,15 @@ Diagnostics
 API
 Image
 Settings
+```
+
+The titlebar primary navigation is intentionally limited to:
+
+```text
+Chat
+Providers
+Models
+Workflows
 ```
 
 ## Governing Spec
@@ -59,7 +68,7 @@ The latest reviewed artifact path was:
 The walkthrough established these durable decisions:
 
 - Chat remains the default first surface.
-- Command Center is a top-level cockpit, not the home page.
+- Command Center is a routable cockpit, not the home page.
 - Providers and Jobs are first-class domains.
 - Create Local Provider and Add Remote Provider are separate pages.
 - Add Remote Provider is a strict Endpoint, Authentication, Capabilities Test,
@@ -79,18 +88,23 @@ The implementation should proceed in small slices rather than a broad UI
 rewrite.
 
 1. Route Metadata And Shell Navigation
-   - Define route metadata for the 10 top-level domains and secondary pages.
+   - Define route metadata for the 10 routable domains and secondary pages.
    - Drive sidebar, tabs, title, subtitle, primary action, and Inspector module
      from metadata.
    - Add route state for selected objects.
 
    Status: initial implementation slice landed. The desktop shell now exposes
-   the accepted 10 top-level domains, treats Jobs as a first-class navigation
+   the accepted 10 routable domains, treats Jobs as a first-class navigation
    surface, defines typed route metadata for the accepted domain/page map, and
    normalizes canonical selected-object route values plus legacy `eval` and
    `token` aliases. Legacy persisted `Tools / Jobs` session state migrates to
-   the top-level Jobs surface. Follow-up slices still need to make every header,
+   the routable Jobs surface. Follow-up slices still need to make every header,
    secondary tab, and Inspector panel consume this metadata directly.
+
+   Status: titlebar follow-up now keeps only Chat, Providers, Models, and
+   Workflows in primary navigation while preserving screenshot coverage and
+   route metadata for Command Center, Jobs, Diagnostics, API, Image, and
+   Settings.
 
 2. Inspector Contract
    - Implement page-level and selected-object Inspector modes.

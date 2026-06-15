@@ -266,26 +266,28 @@ struct DesktopFoundationViewTests {
         #expect(commandCenter.wasOpened)
     }
 
-    @Test("titlebar exposes pane toggles and command center entry")
+    @Test("titlebar exposes only primary navigation entries")
     @MainActor
-    func titlebarExposesPaneTogglesAndCommandCenterEntry() async throws {
+    func titlebarExposesOnlyPrimaryNavigationEntries() async throws {
         let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
-        let commandCenter = CommandCenterOpenRecorder()
-        viewModel.openCommandCenterAction = { commandCenter.open() }
         await viewModel.start()
 
-        #expect(viewModel.isDesktopPaneVisible(.sidebar, for: .chat))
-        #expect(viewModel.isDesktopPaneVisible(.inspector, for: .chat))
-        #expect(DesktopWorkspaceTitleBarCommandCenterButton.symbolName == "command.circle")
+        let hosted = hostView(DesktopWorkspaceTitleBarTabsView(viewModel: viewModel))
+        let root = try repositoryRootForDesktopFoundationTests()
+        let rootSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift"
+        )
+        let chromeSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopShellChromeView.swift"
+        )
+        let rootSource = try String(contentsOf: rootSourceURL, encoding: .utf8)
+        let chromeSource = try String(contentsOf: chromeSourceURL, encoding: .utf8)
 
-        let hosted = hostView(DesktopWorkspaceTitleBarActionsView(viewModel: viewModel))
         #expect(hosted.subviews.isEmpty == false)
-
-        viewModel.toggleDesktopPane(.inspector)
-        #expect(viewModel.isDesktopPaneVisible(.inspector, for: .chat) == false)
-
-        viewModel.openCommandCenter()
-        #expect(commandCenter.wasOpened)
+        #expect(DesktopSurface.visibleNavigationCases.map(\.rawValue) == ["Chat", "Providers", "Models", "Workflows"])
+        #expect(chromeSource.contains("ForEach(DesktopSurface.visibleNavigationCases)"))
+        #expect(rootSource.contains("ToolbarItem(placement: .principal)"))
+        #expect(rootSource.contains("ToolbarItem(placement: .primaryAction)") == false)
     }
 
     @Test("titlebar pane toggles use the shared pane animation contract")
@@ -1693,8 +1695,8 @@ struct DesktopFoundationViewTests {
         #expect(registrySource.contains("Run Suitability"))
     }
 
-    @Test("desktop workspace reserves titlebar chrome space")
-    func desktopWorkspaceReservesTitlebarChromeSpace() throws {
+    @Test("desktop workspace keeps titlebar chrome compact")
+    func desktopWorkspaceKeepsTitlebarChromeCompact() throws {
         let root = try repositoryRootForDesktopFoundationTests()
         let chromeSourceURL = root.appendingPathComponent(
             "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopShellChromeView.swift"
@@ -1709,7 +1711,7 @@ struct DesktopFoundationViewTests {
         #expect(shellSource.contains(".padding(.top, DesktopShellChromeMetrics.workspaceTitleBarContentTopInset)"))
         #expect(
             DesktopShellChromeMetrics.workspaceTitleBarContentTopInset
-            >= DesktopShellChromeMetrics.titleBarTabHeightBudget + 24
+            == DesktopShellChromeMetrics.titleBarTabHeightBudget + 14
         )
     }
 

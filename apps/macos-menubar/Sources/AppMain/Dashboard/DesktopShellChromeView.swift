@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum DesktopShellChromeMetrics {
-    static let workspaceTitleBarContentTopInset: CGFloat = 72
+    static let workspaceTitleBarContentTopInset: CGFloat = 44
     static let titleBarTabHeightBudget: CGFloat = 30
     static let titleBarTabHorizontalPadding: CGFloat = 9
     static let titleBarTabVerticalPadding: CGFloat = 4
@@ -111,54 +111,6 @@ struct DesktopWorkspaceTitleBarTabsView: View {
             selectedSurface: viewModel.selectedSurface,
             selectSurface: viewModel.selectSurface
         )
-    }
-}
-
-struct DesktopWorkspaceTitleBarCommandCenterButton: View {
-    static let symbolName = "command.circle"
-
-    let openCommandCenter: () -> Void
-
-    var body: some View {
-        Button(action: openCommandCenter) {
-            Image(systemName: Self.symbolName)
-                .font(.title3.weight(.semibold))
-                .frame(width: 28, height: 28)
-                .contentShape(RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.md, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help("Open Command Center")
-        .accessibilityLabel("Open Command Center")
-        .keyboardShortcut("k", modifiers: .command)
-        .focusable(false)
-        .fixedSize(horizontal: true, vertical: false)
-    }
-}
-
-struct DesktopWorkspaceTitleBarActionsView: View {
-    let viewModel: RuntimeViewModel
-
-    var body: some View {
-        HStack(spacing: 4) {
-            DesktopPaneToggleButton(
-                role: .sidebar,
-                isVisible: viewModel.isDesktopPaneVisible(.sidebar)
-            ) {
-                withAnimation(DesktopWorkspacePaneAnimation.animation) {
-                    viewModel.toggleDesktopPane(.sidebar)
-                }
-            }
-            DesktopPaneToggleButton(
-                role: .inspector,
-                isVisible: viewModel.isDesktopPaneVisible(.inspector)
-            ) {
-                withAnimation(DesktopWorkspacePaneAnimation.animation) {
-                    viewModel.toggleDesktopPane(.inspector)
-                }
-            }
-            DesktopWorkspaceTitleBarCommandCenterButton(openCommandCenter: viewModel.openCommandCenter)
-        }
-        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
