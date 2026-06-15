@@ -348,15 +348,17 @@ def project_retrieval_lookup_result(
     project_store_records = project_retrieval_store_records
     copy_payload = _copy_payload
     copy_receipts = _copy_receipts
-    store_projection = project_store_records(lookup_result.get("records"))
+    lookup_records = lookup_result.get("records")
+    has_records = "records" in lookup_result
+    store_projection = project_store_records(lookup_records)
     prompt_user_payload = copy_payload(store_projection.user_payload)
     untrusted_context_receipts = copy_receipts(store_projection.untrusted_context_receipts)
     refusal_receipts = copy_receipts(store_projection.refusal_receipts)
     if (
         has_lookup_metadata
         and (
-            "records" not in lookup_result
-            or not isinstance(lookup_result.get("records"), list)
+            not has_records
+            or not isinstance(lookup_records, list)
         )
         and len(refusal_receipts) == 1
         and not prompt_user_payload
