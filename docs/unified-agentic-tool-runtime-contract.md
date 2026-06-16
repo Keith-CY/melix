@@ -403,8 +403,17 @@ stable `melix.untrusted_context_receipt.v1` dictionary for both admitted and
 refused untrusted user-message segments. Existing agentic judge prompt
 snapshots use this helper, and later retrieved-document, skill, memory,
 tool-output, and background-continuation admission points must use the same
-helper or preserve its exact receipt shape, including the optional `source_id`
-field for retrieved segments, when they record prompt-boundary evidence.
+helper or preserve its exact receipt shape when they record prompt-boundary
+evidence.
+
+Python worker receipt `source_id` values are receipt metadata only. Short public
+source IDs may contain ASCII letters, digits, `.`, `_`, `-`, and `:` and must be
+96 UTF-8 bytes or shorter. Path-like, URL-like, non-ASCII, or long source IDs
+are replaced with `source:<sha256-prefix>` in receipt JSON. When a receipt
+`segment_id` is derived from the same raw source ID prefix, the helper replaces
+that prefix with the same redacted source token before serializing the receipt.
+Receipts must continue to omit `source_id` entirely when callers provide no
+source ID.
 
 The shared Python worker prompt-context admission primitive is
 `worker.runtime.prompt_context`. A `PromptContextSegment` represents one
