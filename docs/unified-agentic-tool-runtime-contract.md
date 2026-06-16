@@ -1016,6 +1016,13 @@ observation emits one `tool_output` receipt with `segment_id =
 <tool_call_id>`. The `tool_output` receipt is attached beside the generic
 `tool_observation` receipt and must omit the arithmetic expression, result
 value, tool arguments, prompt text, and private context from receipt JSON.
+Native deterministic `local_compute` timeouts are also tool output. Each native
+timeout observation emits one `tool_output` receipt with `segment_id =
+<tool_call_id>:compute-timeout`, `source_field = timeout`, and `source_id =
+<tool_call_id>`. The receipt is metadata only and must omit timeout text,
+tool arguments, prompt text, and private context from receipt JSON while
+preserving the existing timeout payload, replay hash, byte metrics, and timeout
+counter behavior.
 
 Fixture-driven deterministic status overrides also represent tool output once
 they become timeout, failed, or cancelled observations. Each status override
