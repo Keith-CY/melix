@@ -1149,9 +1149,9 @@ struct DesktopChatComposerGate: Equatable {
             return DesktopChatComposerRepairState(
                 title: "Provider is stopping.",
                 detail: "Wait for shutdown to finish, then start it again.",
-                primaryActionTitle: "Start Provider",
-                primaryActionKind: .startProvider,
-                secondaryActionTitles: ["Open Providers"],
+                primaryActionTitle: "Open Providers",
+                primaryActionKind: .openProviders,
+                secondaryActionTitles: [],
                 systemImageName: "pause.circle"
             )
         case .error:
@@ -1189,6 +1189,7 @@ struct DesktopChatComposerGate: Equatable {
     }
 
     private var hasInvalidCapabilityReceipt: Bool {
+        // Chat send is gated by text readiness; non-text failures are surfaced as degraded provider signals.
         capabilities.contains { capability in
             capability.id == "text" && capability.isReady == false
         }

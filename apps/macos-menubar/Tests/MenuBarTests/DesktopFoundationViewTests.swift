@@ -7908,6 +7908,13 @@ struct DesktopFoundationViewTests {
             capabilities: [readyTextCapability],
             isModelMissing: false
         )
+        var stoppingSession = readySession
+        stoppingSession.lifecycle = .stopping
+        let stoppingGate = DesktopChatComposerGate(
+            serverSession: stoppingSession,
+            capabilities: [readyTextCapability],
+            isModelMissing: false
+        )
         let invalidCapabilityGate = DesktopChatComposerGate(
             serverSession: readySession,
             capabilities: [invalidTextCapability],
@@ -7923,6 +7930,9 @@ struct DesktopFoundationViewTests {
         #expect(noProviderGate.repairState?.secondaryActionTitles.isEmpty == true)
         #expect(missingModelGate.repairState?.primaryActionTitle == "Attach Model")
         #expect(offlineGate.repairState?.primaryActionTitle == "Start Provider")
+        #expect(stoppingGate.repairState?.primaryActionTitle == "Open Providers")
+        #expect(stoppingGate.repairState?.primaryActionKind == .openProviders)
+        #expect(stoppingGate.repairState?.secondaryActionTitles.isEmpty == true)
         #expect(invalidCapabilityGate.repairState?.primaryActionTitle == "Run Capabilities Test")
         #expect(invalidCapabilityGate.repairState?.secondaryActionTitles == ["Open Providers"])
         #expect(degradedGate.repairState == nil)
