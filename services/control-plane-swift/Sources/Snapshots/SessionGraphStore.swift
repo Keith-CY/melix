@@ -4,6 +4,7 @@ import MelixControlPlaneProtocol
 public enum SessionGraphStoreError: Error, Equatable {
     case unknownSessionID
     case unknownBranchID
+    case ownerScopeMismatch
 }
 
 public actor SessionGraphStore {
@@ -121,7 +122,12 @@ public actor SessionGraphStore {
         branchID: String,
         toolCallID: String
     ) async throws -> Melix_Controlplane_V1_SessionState {
-        try await mutateSession(sessionID: sessionID, preferredBranchID: branchID) { session, branch, timestamp in
+        return try await mutateSession(sessionID: sessionID, preferredBranchID: branchID) { session, branch, timestamp in
+            try validateToolResultOwnerScope(
+                sessionID: sessionID,
+                branchID: branch.branchID,
+                toolCallID: toolCallID
+            )
             session.activeBranchID = branch.branchID
             session.updatedAtUnixMs = timestamp
             session.latestToolCallID = toolCallID
@@ -135,7 +141,12 @@ public actor SessionGraphStore {
         branchID: String,
         snapshotID: String
     ) async throws -> Melix_Controlplane_V1_SessionState {
-        try await mutateSession(sessionID: sessionID, preferredBranchID: branchID) { session, branch, timestamp in
+        return try await mutateSession(sessionID: sessionID, preferredBranchID: branchID) { session, branch, timestamp in
+            try validateSnapshotOwnerScope(
+                sessionID: sessionID,
+                branchID: branch.branchID,
+                snapshotID: snapshotID
+            )
             session.activeBranchID = branch.branchID
             session.updatedAtUnixMs = timestamp
             session.latestSnapshotID = snapshotID
@@ -281,6 +292,48 @@ public actor SessionGraphStore {
         return session.branches.endIndex - 1
     }
 
+    private func validateToolResultOwnerScope(
+        sessionID: String,
+        branchID: String,
+        toolCallID: String
+    ) throws {
+        guard !toolCallID.isEmpty else {
+            return
+        }
+
+        for session in sessions.values {
+            for branch in session.branches where branch.lastToolCallID == toolCallID {
+                if session.sessionID != sessionID || branch.branchID != branchID {
+                    throw SessionGraphStoreError.ownerScopeMismatch
+                }
+            }
+        }
+    }
+
+    private func validateSnapshotOwnerScope(
+        sessionID: String,
+        branchID: String,
+        snapshotID: String
+    ) throws {
+        guard !snapshotID.isEmpty else {
+            return
+        }
+
+        for session in sessions.values {
+            for snapshot in session.availableSnapshots
+            where snapshot.snapshotID == snapshotID && !snapshot.sessionID.isEmpty && !snapshot.branchID.isEmpty {
+                if snapshot.sessionID != sessionID || snapshot.branchID != branchID {
+                    throw SessionGraphStoreError.ownerScopeMismatch
+                }
+            }
+            for branch in session.branches where branch.resumeSnapshotID == snapshotID {
+                if session.sessionID != sessionID || branch.branchID != branchID {
+                    throw SessionGraphStoreError.ownerScopeMismatch
+                }
+            }
+        }
+    }
+
     private func mutateSession(
         sessionID: String,
         preferredBranchID: String,
@@ -288,7 +341,7 @@ public actor SessionGraphStore {
             inout Melix_Controlplane_V1_SessionState,
             inout Melix_Controlplane_V1_BranchState,
             Int64
-        ) -> Void
+        ) throws -> Void
     ) async throws -> Melix_Controlplane_V1_SessionState {
         var session = try requireSession(sessionID)
         let timestamp = nowUnixMs()
@@ -299,7 +352,7 @@ public actor SessionGraphStore {
         }
 
         var branch = session.branches[branchIndex]
-        update(&session, &branch, timestamp)
+        try update(&session, &branch, timestamp)
         session.branches[branchIndex] = branch
         sessions[sessionID] = session
         await refreshMetrics()
