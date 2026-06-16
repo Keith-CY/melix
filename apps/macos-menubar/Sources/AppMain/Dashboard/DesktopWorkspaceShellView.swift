@@ -10309,7 +10309,12 @@ struct DesktopAPICompanionPairingPanel: View {
                 }
                 .buttonStyle(.bordered)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(
+                minWidth: 0,
+                idealWidth: DesktopAPICompanionPairingLayout.compactContentWidth,
+                maxWidth: .infinity,
+                alignment: .leading
+            )
         }
     }
 
@@ -10342,6 +10347,10 @@ struct DesktopAPICompanionPairingPanel: View {
         .disabled(presentation.revokeDisabled)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
+
+private enum DesktopAPICompanionPairingLayout {
+    static let compactContentWidth: CGFloat = 320
 }
 
 struct DesktopAPICompanionPairingPresentation: Equatable {

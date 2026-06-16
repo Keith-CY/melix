@@ -4673,7 +4673,7 @@ struct DesktopFoundationViewTests {
             size: CGSize(width: 360, height: 420)
         )
         #expect(narrowHosted.subviews.isEmpty == false)
-        #expect(narrowHosted.fittingSize.width <= 400)
+        #expect(narrowHosted.fittingSize.width <= 360)
 
         var noExpiryState = activeViewModel.companionPairing
         noExpiryState.expiresAtUnixMS = 0
