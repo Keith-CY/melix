@@ -37,6 +37,39 @@ TRAJECTORY_PROVENANCE_CSV_FIELDS = TRAJECTORY_PROVENANCE_FIELDS
 
 _JSON_IMMUTABLE_TYPES = (str, int, float, bool, type(None))
 _JSON_IMMUTABLE_TYPE_SET = frozenset(_JSON_IMMUTABLE_TYPES)
+
+
+def _copy_json_list(value: list[Any]) -> list[Any]:
+    immutable_types = _JSON_IMMUTABLE_TYPE_SET
+    value_len = len(value)
+    if value_len == 0:
+        return []
+    if value_len == 1 and type(value[0]) in immutable_types:
+        return value.copy()
+    if (
+        value_len == 2
+        and type(value[0]) in immutable_types
+        and type(value[1]) in immutable_types
+    ):
+        return value.copy()
+    if (
+        value_len == 3
+        and type(value[0]) in immutable_types
+        and type(value[1]) in immutable_types
+        and type(value[2]) in immutable_types
+    ):
+        return value.copy()
+    if (
+        value_len == 4
+        and type(value[0]) in immutable_types
+        and type(value[1]) in immutable_types
+        and type(value[2]) in immutable_types
+        and type(value[3]) in immutable_types
+    ):
+        return value.copy()
+    return [_copy_trajectory_provenance_value(item) for item in value]
+
+
 def _copy_trajectory_provenance_value(value: Any) -> Any:
     value_type = type(value)
     if value_type in _JSON_IMMUTABLE_TYPE_SET:
@@ -44,7 +77,7 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
     if value_type is dict:
         return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
     if value_type is list:
-        return [_copy_trajectory_provenance_value(item) for item in value]
+        return _copy_json_list(value)
     if value_type is tuple:
         return tuple(_copy_trajectory_provenance_value(item) for item in value)
     if isinstance(value, dict):
