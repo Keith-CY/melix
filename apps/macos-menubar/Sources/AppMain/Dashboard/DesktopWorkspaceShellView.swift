@@ -10264,11 +10264,14 @@ struct DesktopAPICompanionPairingPanel: View {
                         Text(presentation.statusDetail)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(2)
                     }
                     Spacer()
                     Text(presentation.scopeText)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
 
                 if let statusURL = presentation.statusURL {
@@ -10278,8 +10281,12 @@ struct DesktopAPICompanionPairingPanel: View {
                             .foregroundStyle(.secondary)
                         Text(statusURL)
                             .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                             .textSelection(.enabled)
+                            .help(statusURL)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 if let allowedRoutesText = presentation.allowedRoutesText {
@@ -10287,6 +10294,7 @@ struct DesktopAPICompanionPairingPanel: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
+                        .truncationMode(.middle)
                 }
 
                 if let errorText = presentation.errorText {
@@ -10295,13 +10303,8 @@ struct DesktopAPICompanionPairingPanel: View {
                         .foregroundStyle(MelixDesignTokens.StatusColor.error)
                 }
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) {
-                        companionPairingButtons(presentation)
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        companionPairingButtons(presentation)
-                    }
+                VStack(alignment: .leading, spacing: 8) {
+                    companionPairingButtons(presentation)
                 }
                 .buttonStyle(.bordered)
             }
@@ -10311,22 +10314,32 @@ struct DesktopAPICompanionPairingPanel: View {
 
     @ViewBuilder
     private func companionPairingButtons(_ presentation: DesktopAPICompanionPairingPresentation) -> some View {
-        Button("Issue Read-Only Token") {
+        Button("Issue Token") {
             Task { await viewModel.issueCompanionPairing() }
         }
+        .help("Issue a read-only companion token")
         .disabled(presentation.issueDisabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
 
-        Button("Copy Pairing Bundle") {
-            if let bundleText = viewModel.companionPairingBundleText() {
-                copyToPasteboard(bundleText)
-            }
+        Button("Copy Bundle") {
+            CompanionPairingClipboard.copy(viewModel.companionPairingBundleText())
         }
+        .help("Copy the read-only companion pairing bundle")
         .disabled(presentation.copyDisabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Button("Copy Code") {
+            CompanionPairingClipboard.copy(viewModel.companionPairingCodeText())
+        }
+        .help("Copy the read-only companion pairing code")
+        .disabled(presentation.copyCodeDisabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
 
         Button("Revoke Token") {
             Task { await viewModel.revokeCompanionPairing() }
         }
         .disabled(presentation.revokeDisabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -10339,6 +10352,7 @@ struct DesktopAPICompanionPairingPresentation: Equatable {
     let errorText: String?
     let issueDisabled: Bool
     let copyDisabled: Bool
+    let copyCodeDisabled: Bool
     let revokeDisabled: Bool
 
     init(pairing: CompanionPairingState) {
@@ -10352,6 +10366,7 @@ struct DesktopAPICompanionPairingPresentation: Equatable {
         errorText = (pairing.lastError?.isEmpty == false) ? pairing.lastError : nil
         issueDisabled = pairing.phase == .issuing || pairing.phase == .revoking
         copyDisabled = pairing.copyBundleAvailable == false
+        copyCodeDisabled = pairing.copyBundleAvailable == false
         revokeDisabled = pairing.copyBundleAvailable == false || pairing.phase == .revoking
     }
 
@@ -10379,9 +10394,9 @@ struct DesktopAPICompanionPairingPresentation: Equatable {
         case .active:
             if pairing.expiresAtUnixMS > 0 {
                 let expiresAt = Date(timeIntervalSince1970: Double(pairing.expiresAtUnixMS) / 1_000)
-                return "Session \(pairing.sessionID) expires at \(expiresAt.formatted(date: .abbreviated, time: .shortened))."
+                return "Read-only token expires at \(expiresAt.formatted(date: .abbreviated, time: .shortened))."
             }
-            return "Session \(pairing.sessionID) is active."
+            return "Read-only token is active."
         case .revoking:
             return "Revocation uses the current companion session token once."
         case .failed:
@@ -11426,6 +11441,21 @@ func desktopAPIAuthenticationReferenceText(selectedExport: AgentIntegrationExpor
 enum RuntimeDiagnosticsArtifactClipboard {
     @discardableResult
     static func copy(_ value: String, to pasteboard: any RuntimePasteboardWriting = NSPasteboard.general) -> Bool {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedValue.isEmpty == false else {
+            return false
+        }
+        pasteboard.clearContents()
+        return pasteboard.setString(trimmedValue, forType: .string)
+    }
+}
+
+enum CompanionPairingClipboard {
+    @discardableResult
+    static func copy(_ value: String?, to pasteboard: any RuntimePasteboardWriting = NSPasteboard.general) -> Bool {
+        guard let value else {
+            return false
+        }
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedValue.isEmpty == false else {
             return false
