@@ -203,6 +203,8 @@ class BenchmarkLoadedModelResolution:
 
 def _split_capability_values(raw_value: str) -> list[str]:
     if "," not in raw_value:
+        if raw_value and not raw_value[0].isspace() and not raw_value[-1].isspace():
+            return [raw_value]
         stripped = raw_value.strip()
         return [stripped] if stripped else []
     return [
