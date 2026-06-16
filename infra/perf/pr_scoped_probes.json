@@ -3503,6 +3503,17 @@
         "key": "comparison_total",
         "unit": "count",
         "direction": "informational"
+      },
+      {
+        "key": "update_result_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "update_result_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "informational"
       }
     ]
   },

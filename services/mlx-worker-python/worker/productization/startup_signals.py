@@ -5,7 +5,7 @@ import re
 import socket
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, NamedTuple
 
 
 PORT_CONFLICT_PATTERNS = (
@@ -26,8 +26,7 @@ _BYTE_WHITESPACE = bytes(value for value in range(256) if chr(value).isspace())
 _ORD = ord
 
 
-@dataclass(frozen=True, slots=True)
-class UpdateCheckResult:
+class UpdateCheckResult(NamedTuple):
     checked: bool
     update_available: bool
     installed_version: str
