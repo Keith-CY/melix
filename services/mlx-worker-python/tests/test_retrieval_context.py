@@ -758,6 +758,90 @@ def test_project_retrieval_store_records_projects_records_without_entry_reentry(
     )
 
 
+def test_project_retrieval_store_records_fast_paths_complete_dict_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_admission_reentry(_entry: object) -> None:  # pragma: no cover - regression guard
+        raise AssertionError("complete store records should project without admission objects")
+
+    monkeypatch.setattr(retrieval_context_module, "_admit_entry", fail_admission_reentry)
+
+    projection = project_retrieval_store_records(
+        [
+            {
+                "context_kind": "retrieved_document",
+                "source_id": " doc:fast-1 ",
+                "payload": {"title": "Fast note"},
+                "owner_scope_checked": True,
+                "segment_id": " doc:fast-1:retrieved-document-context ",
+                "source_field": " retrieved_document_fast ",
+                "reason": " retrieved document evidence is prompt data ",
+                "corrective_action": " keep retrieved document evidence in user data ",
+            },
+            {
+                "context_kind": "retrieved_image",
+                "source_id": "image:fast-2",
+                "payload": {"caption": "Fast image"},
+                "owner_scope_checked": False,
+                "segment_id": "image:fast-2:retrieved-image-context",
+                "source_field": "retrieved_image_fast",
+                "reason": "retrieved image evidence is prompt data",
+                "corrective_action": "keep retrieved image evidence in user data",
+            },
+        ]
+    )
+
+    assert projection.user_payload == {
+        "retrieved_document_fast": {"title": "Fast note"},
+        "retrieved_image_fast": {"caption": "Fast image"},
+    }
+    assert projection.refusal_receipts == []
+    assert [
+        receipt["source_id"] for receipt in projection.untrusted_context_receipts
+    ] == ["doc:fast-1", "image:fast-2"]
+    assert projection.untrusted_context_receipts[0]["source_field"] == (
+        "retrieved_document_fast"
+    )
+    assert projection.untrusted_context_receipts[0]["included"] is True
+    assert projection.untrusted_context_receipts[0]["owner_scope_checked"] is True
+    assert projection.untrusted_context_receipts[0]["reason"] == (
+        "retrieved document evidence is prompt data"
+    )
+
+    duplicate_projection = project_retrieval_store_records(
+        [
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "doc:first-fast",
+                "payload": {"title": "first"},
+                "owner_scope_checked": True,
+                "segment_id": "doc:first-fast:retrieved-document-context",
+                "source_field": "retrieved_document_fast",
+                "reason": "retrieved document evidence is prompt data",
+                "corrective_action": "keep retrieved document evidence in user data",
+            },
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "doc:second-fast",
+                "payload": {"title": "second"},
+                "owner_scope_checked": True,
+                "segment_id": "doc:second-fast:retrieved-document-context",
+                "source_field": "retrieved_document_fast",
+                "reason": "retrieved document evidence is prompt data",
+                "corrective_action": "keep retrieved document evidence in user data",
+            },
+        ]
+    )
+
+    assert duplicate_projection.user_payload == {
+        "retrieved_document_fast": {"title": "first"}
+    }
+    assert duplicate_projection.refusal_receipts[0]["source_id"] == "doc:second-fast"
+    assert duplicate_projection.refusal_receipts[0]["reason"] == (
+        "duplicate_retrieved_document_context_field"
+    )
+
+
 def test_project_retrieval_contexts_isolates_refusals_without_dropping_valid_entries() -> None:
     _assert_retrieval_lookup_result_preserves_refusals_and_valid_siblings()
 
