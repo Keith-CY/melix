@@ -905,6 +905,15 @@ the sanitized payload. This keeps payload redaction, truncation, replay hashes,
 and byte metrics focused on the emitted tool output while still making the
 prompt boundary visible to downstream prompt assemblers.
 
+`melix.agentic_tool_observation.v1` records this receipt list as a
+normalization-time audit snapshot. The worker builds the generic
+`tool_observation` receipt and appends any normalized source-specific receipts
+while creating the observation record; later property reads or trace
+serialization copy that snapshot rather than re-running prompt-context
+admission. Tool-output payload text, including prompt-injection phrases such as
+requests to ignore earlier instructions, may remain in sanitized payload data
+but must not be copied into receipt JSON.
+
 Benchmark request rows derived from agentic tool turns must preserve that
 boundary evidence without promoting untrusted payload text into scalar CSV
 fields. Each `tool_turn` request row keeps the full observation, including
