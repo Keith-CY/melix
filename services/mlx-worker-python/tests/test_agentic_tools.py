@@ -42,10 +42,13 @@ def _source_refusal_receipts(observation: dict[str, object]) -> list[dict[str, o
 
 
 def _expected_receipt_source_id(source_id: str) -> str:
+    if not source_id:
+        return ""
     normalized = source_id.strip()
+    if not normalized:
+        return ""
     if (
-        normalized
-        and len(normalized.encode("utf-8")) <= 96
+        len(normalized.encode("utf-8")) <= 96
         and all(character in _PUBLIC_SOURCE_ID_CHARS for character in normalized)
     ):
         return normalized
@@ -631,6 +634,8 @@ def test_agentic_tool_runtime_visual_source_receipts_redact_raw_media_refs() -> 
 
 def test_agentic_tool_runtime_visual_source_id_redaction_preserves_empty_ids_for_admission_refusal() -> None:
     assert agentic_tools_module._redacted_visual_source_id("   ") == ""
+    assert _expected_receipt_source_id("") == ""
+    assert _expected_receipt_source_id("   ") == ""
 
 
 def test_agentic_tool_runtime_projects_search_results_through_retrieval_lookup_result(

@@ -322,6 +322,17 @@ def test_prompt_context_receipts_handle_empty_exact_and_long_source_ids() -> Non
     assert padded_source_receipt["source_id"] == "doc:padded"
     assert padded_source_receipt["segment_id"] == "doc:padded:payload"
 
+    padded_raw_segment_receipt = refused_prompt_context_receipt(
+        segment_id=" doc:padded :payload",
+        source_type="retrieved_document",
+        source_field="payload",
+        source_id=" doc:padded ",
+        reason="invalid_retrieved_document_context_field",
+        corrective_action="Reject malformed retrieved document context before prompt assembly.",
+    )
+    assert padded_raw_segment_receipt["source_id"] == "doc:padded"
+    assert padded_raw_segment_receipt["segment_id"] == "doc:padded:payload"
+
     padded_private_source_id = " file:///Users/testuser/private/padded.md "
     padded_private_receipt = refused_prompt_context_receipt(
         segment_id=padded_private_source_id,

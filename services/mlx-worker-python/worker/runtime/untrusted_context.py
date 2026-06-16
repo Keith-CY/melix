@@ -65,7 +65,7 @@ def _redacted_segment_id(
     redacted_source_id: str,
 ) -> str:
     normalized_source_id = source_id.strip()
-    if not redacted_source_id or redacted_source_id == normalized_source_id:
+    if not redacted_source_id or redacted_source_id == source_id:
         return segment_id
     if segment_id == source_id or segment_id == normalized_source_id:
         return redacted_source_id

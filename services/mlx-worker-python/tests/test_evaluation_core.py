@@ -23,7 +23,11 @@ from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
 
 
 def _expected_hashed_receipt_source_id(source_id: str) -> str:
+    if not source_id:
+        return ""
     normalized = source_id.strip()
+    if not normalized:
+        return ""
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
     return f"source:{digest}"
 
@@ -1083,6 +1087,8 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     }
     crop_source_receipt = receipt_by_segment["crop-1:crop-result"]
     crop_source_id = _expected_hashed_receipt_source_id("img-1#sign")
+    assert _expected_hashed_receipt_source_id("") == ""
+    assert _expected_hashed_receipt_source_id("   ") == ""
     assert crop_source_receipt == {
         "schema_version": "melix.untrusted_context_receipt.v1",
         "segment_id": "crop-1:crop-result",
