@@ -67,25 +67,6 @@ def _copy_json_list(value: list[Any]) -> list[Any]:
         and type(value[3]) in immutable_types
     ):
         return value.copy()
-    if (
-        value_len == 5
-        and type(value[0]) in immutable_types
-        and type(value[1]) in immutable_types
-        and type(value[2]) in immutable_types
-        and type(value[3]) in immutable_types
-        and type(value[4]) in immutable_types
-    ):
-        return value.copy()
-    if (
-        value_len == 6
-        and type(value[0]) in immutable_types
-        and type(value[1]) in immutable_types
-        and type(value[2]) in immutable_types
-        and type(value[3]) in immutable_types
-        and type(value[4]) in immutable_types
-        and type(value[5]) in immutable_types
-    ):
-        return value.copy()
     return [_copy_trajectory_provenance_value(item) for item in value]
 
 

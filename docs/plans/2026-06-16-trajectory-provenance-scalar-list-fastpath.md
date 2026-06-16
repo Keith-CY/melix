@@ -22,13 +22,3 @@ The probe measures `normalize_trajectory_provenance` on synthetic trajectory qua
 2. Add regression coverage proving scalar-only lists are copied without recursive helper calls and mixed lists still deep-copy nested mutable values.
 3. Run focused tests, changed-scope coverage, and the registered probe locally on Linux.
 4. Use GitHub Actions PR-scoped performance as the merge gate.
-
-## 2026-06-16 slice update
-
-This slice extends `_copy_json_list(...)` so common exact lists of five or six
-JSON-immutable scalar values return a shallow list copy instead of recursively
-dispatching each scalar through `_copy_trajectory_provenance_value(...)`.
-The registered `trajectory-provenance-copy-elision` probe remains the governing
-performance gate, and its focused test and coverage commands include the new
-long-scalar-list regression case. The probe fixture now uses longer scalar label
-lists so the registered metrics exercise this slice directly.
