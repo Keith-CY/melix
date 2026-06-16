@@ -1629,6 +1629,7 @@ def test_project_retrieval_lookup_result_preserves_valid_tuple_records_with_meta
 
 def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drift() -> None:
     nested_value = {"rank": 1}
+    three_item_nested_value = {"rank": 3}
     lookup_result = {
         "records": [
             {
@@ -1676,7 +1677,7 @@ def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drif
                 {
                     "context_kind": "retrieved_document",
                     "source_id": "doc:long-tuple",
-                    "payload": {"metadata": ("a", {"rank": 3}, "c")},
+                    "payload": {"metadata": ("a", three_item_nested_value, "c")},
                     "owner_scope_checked": True,
                     "source_field": "long_tuple",
                 },
@@ -1689,6 +1690,7 @@ def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drif
     assert single_metadata == ({"rank": 2},)
     long_metadata = varied_projection.prompt_user_payload["long_tuple"]["metadata"]
     assert long_metadata == ("a", {"rank": 3}, "c")
+    assert long_metadata[1] is not three_item_nested_value
 
 
 def test_project_retrieval_lookup_result_metadata_refusal_skips_store_projection(

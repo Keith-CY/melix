@@ -89,6 +89,7 @@ def _build_lookup_payload(count: int) -> dict[str, Any]:
                 "labels": (
                     "retrieved",
                     {"kind": "document" if index % 2 == 0 else "image"},
+                    {"bucket": index % 3},
                 ),
             },
         }
