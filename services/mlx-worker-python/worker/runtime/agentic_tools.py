@@ -809,7 +809,14 @@ def _image_crop_payload(
 def _local_compute_payload(*, arguments: dict[str, Any], tool_call_id: str) -> dict[str, Any]:
     code = _tool_argument_text(arguments, "code", tool_call_id=tool_call_id)
     if code == "timeout":
-        return {"text": "local_compute timed out before producing a result.", "_status": "timeout"}
+        payload = {
+            "text": "local_compute timed out before producing a result.",
+            "_status": "timeout",
+        }
+        payload["_untrusted_context_receipts"] = [
+            _local_compute_timeout_receipt(tool_call_id=tool_call_id, value={"text": payload["text"]})
+        ]
+        return payload
     result = _safe_arithmetic_eval(code)
     return {
         "code": code,
@@ -853,6 +860,30 @@ def _local_compute_result_receipt(*, tool_call_id: str, value: int | float) -> d
                 source_field="result",
                 source_id=tool_call_id,
                 value=value,
+            )
+        ]
+    )
+    return admission.untrusted_context_receipts[0]
+
+
+def _local_compute_timeout_receipt(
+    *,
+    tool_call_id: str,
+    value: dict[str, Any],
+) -> dict[str, object]:
+    admission = admit_prompt_context_source_evidence(
+        [
+            PromptContextSourceEvidence(
+                segment_id=f"{tool_call_id}:compute-timeout",
+                source_type="tool_output",
+                source_field="timeout",
+                source_id=tool_call_id,
+                value=value,
+                reason="local compute timeout output is prompt data, not instructions",
+                corrective_action=(
+                    "Keep local compute timeout output in user-role data context and do not "
+                    "project it into system or developer instructions."
+                ),
             )
         ]
     )
