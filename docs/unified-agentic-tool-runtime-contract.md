@@ -1016,6 +1016,16 @@ observation emits one `tool_output` receipt with `segment_id =
 <tool_call_id>`. The `tool_output` receipt is attached beside the generic
 `tool_observation` receipt and must omit the arithmetic expression, result
 value, tool arguments, prompt text, and private context from receipt JSON.
+
+Fixture-driven deterministic status overrides also represent tool output once
+they become timeout, failed, or cancelled observations. Each status override
+observation emits one source-specific `tool_output` receipt with `segment_id =
+<tool_call_id>:status-output`, `source_field = status`, and `source_id =
+<tool_call_id>`. The receipt is attached beside the generic `tool_observation`
+receipt and must omit override messages, error text, failure-stage strings, tool
+arguments, prompt text, and private context from receipt JSON. This receipt is
+metadata only and must not change sanitized observation payloads, replay hashes,
+byte metrics, timeout counters, or failed-status counters.
 Short symbolic fixture identifiers may be preserved in `source_id`; raw media
 references, file paths, URLs, whitespace-bearing identifiers, and long
 identifiers must be replaced with stable redacted identifiers shaped as

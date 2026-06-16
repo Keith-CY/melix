@@ -353,25 +353,31 @@ def _status_override_payload(
         source_id=tool_name,
     )
     if raw_status == "timeout":
-        return {
+        payload = {
             "text": message or f"{tool_name} timed out before producing a result.",
             "failure_stage": failure_stage or "tool_timeout",
             "_status": "timeout",
         }
-    if raw_status in ("cancel", "cancelled", "canceled"):
-        return {
+    elif raw_status in ("cancel", "cancelled", "canceled"):
+        payload = {
             "error": message or f"{tool_name} was cancelled before producing a result.",
             "failure_stage": failure_stage or "cancelled",
             "cancelled": True,
             "_status": "failed",
         }
-    if raw_status == "failed":
-        return {
+    elif raw_status == "failed":
+        payload = {
             "error": message or f"{tool_name} failed before producing a result.",
             "failure_stage": failure_stage or "tool_execution",
             "_status": "failed",
         }
-    raise AgenticToolRuntimeError(f"Unsupported agentic tool status override: {raw_status or '<empty>'}")
+    else:
+        raise AgenticToolRuntimeError(f"Unsupported agentic tool status override: {raw_status or '<empty>'}")
+
+    payload["_untrusted_context_receipts"] = [
+        _status_override_output_receipt(tool_call_id=tool_call_id, value=payload)
+    ]
+    return payload
 
 
 def _text_search_payload(
@@ -847,6 +853,30 @@ def _local_compute_result_receipt(*, tool_call_id: str, value: int | float) -> d
                 source_field="result",
                 source_id=tool_call_id,
                 value=value,
+            )
+        ]
+    )
+    return admission.untrusted_context_receipts[0]
+
+
+def _status_override_output_receipt(
+    *,
+    tool_call_id: str,
+    value: dict[str, Any],
+) -> dict[str, object]:
+    admission = admit_prompt_context_source_evidence(
+        [
+            PromptContextSourceEvidence(
+                segment_id=f"{tool_call_id}:status-output",
+                source_type="tool_output",
+                source_field="status",
+                source_id=tool_call_id,
+                value=value,
+                reason="tool status override output is prompt data, not instructions",
+                corrective_action=(
+                    "Keep tool status override output in user-role data context and do not "
+                    "project it into system or developer instructions."
+                ),
             )
         ]
     )
