@@ -971,6 +971,21 @@ selected-result receipt through `worker.runtime.prompt_context` by admitting one
 `PromptContextSegment` for the sanitized selected result value while preserving
 the same emitted receipt fields and observation payload.
 
+The tool-observation normalizer is also an aggregation boundary for
+source-specific receipts. When callers attach a well-formed
+`melix.untrusted_context_receipt.v1` source receipt to an observation, the
+normalizer must re-emit that receipt through the shared Python worker
+`untrusted_context_receipt` helper before serialization. This preserves public
+symbolic IDs, redacts path-like, URL-like, non-ASCII, whitespace-bearing, or
+long private `source_id` values, and rewrites `segment_id` prefixes derived
+from the same raw source ID. Non-receipt diagnostic mappings may be copied as
+diagnostics, but they must not be treated as v1 untrusted-context receipts.
+Malformed mappings that claim the v1 schema but do not contain enough typed
+metadata to be safely re-emitted must become redacted `included = false`
+receipt-metadata refusal receipts instead of being copied through unchanged.
+This normalization must not change sanitized payload content, replay hashes, or
+tool-observation byte metrics.
+
 Deterministic adapter failures that reject a concrete untrusted source must also
 attach one source-specific refusal receipt beside the generic failed
 tool-observation receipt. The failed observation payload remains backward
