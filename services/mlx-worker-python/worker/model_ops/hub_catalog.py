@@ -334,12 +334,12 @@ def _next_cursor_from_link(link_header: str) -> str:
         relation_start = link_header.find(marker, search_start)
         if relation_start < 0:
             return ""
-        url_end = link_header.rfind(">", 0, relation_start)
-        if url_end < 0:
+        url_start = link_header.rfind("<", 0, relation_start)
+        if url_start < 0:
             search_start = relation_start + marker_len
             continue
-        url_start = link_header.rfind("<", 0, url_end)
-        if url_start < 0:
+        url_end = link_header.find(">", url_start + 1, relation_start)
+        if url_end < 0:
             search_start = relation_start + marker_len
             continue
         query_start = link_header.rfind("?", url_start + 1, url_end)
