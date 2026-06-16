@@ -1519,6 +1519,33 @@ def test_project_retrieval_lookup_result_reads_records_once_for_metadata_refusal
     assert projection.refusal_receipts[0]["source_field"] == "live_rag_records"
 
 
+def test_lookup_result_metadata_refusal_skips_default_normalization_for_valid_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_default_normalization(  # pragma: no cover - regression guard
+        *args: object,
+        **kwargs: object,
+    ) -> str:
+        raise AssertionError(
+            "valid lookup metadata should not allocate default-normalized strings"
+        )
+
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "_lookup_metadata_text_or_default",
+        fail_default_normalization,
+    )
+
+    assert (
+        retrieval_context_module._lookup_result_metadata_refusal(
+            lookup_source_id="live-rag:search-8",
+            lookup_segment_id="live-rag:search-8:lookup",
+            lookup_source_field="live_rag_records",
+        )
+        is None
+    )
+
+
 def test_project_retrieval_lookup_result_preserves_valid_tuple_records_with_metadata() -> None:
     projection = project_retrieval_lookup_result(
         {
