@@ -240,6 +240,116 @@ def test_prompt_context_source_refusal_receipt_accepts_corrective_action_overrid
     }
 
 
+def test_prompt_context_receipts_redact_non_public_source_ids() -> None:
+    admission = admit_prompt_context_source_evidence(
+        [
+            PromptContextSourceEvidence(
+                segment_id="doc:public-7:retrieved-document-context",
+                source_type="retrieved_document",
+                source_field="public_document",
+                source_id="doc:public-7",
+                value={"title": "Public symbolic document"},
+            ),
+            PromptContextSourceEvidence(
+                segment_id="file:///Users/testuser/private/rag.md:retrieved-document-context",
+                source_type="retrieved_document",
+                source_field="private_document",
+                source_id="file:///Users/testuser/private/rag.md",
+                value={"title": "Private document"},
+            ),
+        ]
+    )
+
+    public_receipt, private_receipt = admission.untrusted_context_receipts
+    assert public_receipt["source_id"] == "doc:public-7"
+    assert public_receipt["segment_id"] == "doc:public-7:retrieved-document-context"
+
+    private_source_id = private_receipt["source_id"]
+    assert isinstance(private_source_id, str)
+    assert private_source_id.startswith("source:")
+    assert private_source_id != "file:///Users/testuser/private/rag.md"
+    assert private_receipt["segment_id"] == (
+        f"{private_source_id}:retrieved-document-context"
+    )
+    receipt_json = json.dumps(admission.untrusted_context_receipts, ensure_ascii=False)
+    assert "file:///Users/testuser/private/rag.md" not in receipt_json
+    assert "/Users/testuser/private" not in receipt_json
+
+
+def test_prompt_context_receipts_handle_empty_exact_and_long_source_ids() -> None:
+    no_source_receipt = refused_prompt_context_receipt(
+        segment_id="anonymous:payload",
+        source_type="tool_output",
+        source_field="payload",
+        reason="invalid_tool_output",
+        corrective_action="Reject malformed tool output before prompt assembly.",
+    )
+    assert "source_id" not in no_source_receipt
+    assert no_source_receipt["segment_id"] == "anonymous:payload"
+
+    exact_segment_receipt = refused_prompt_context_receipt(
+        segment_id="file:///Users/testuser/private/rag.md",
+        source_type="retrieved_document",
+        source_field="payload",
+        source_id="file:///Users/testuser/private/rag.md",
+        reason="invalid_retrieved_document_context_field",
+        corrective_action="Reject malformed retrieved document context before prompt assembly.",
+    )
+    assert exact_segment_receipt["segment_id"] == exact_segment_receipt["source_id"]
+    assert str(exact_segment_receipt["source_id"]).startswith("source:")
+
+    long_source_id = f"doc:{'a' * 97}"
+    long_receipt = refused_prompt_context_receipt(
+        segment_id=f"{long_source_id}:payload",
+        source_type="retrieved_document",
+        source_field="payload",
+        source_id=long_source_id,
+        reason="invalid_retrieved_document_context_field",
+        corrective_action="Reject malformed retrieved document context before prompt assembly.",
+    )
+    assert str(long_receipt["source_id"]).startswith("source:")
+    assert long_receipt["source_id"] != long_source_id
+    assert long_receipt["segment_id"] == f"{long_receipt['source_id']}:payload"
+
+    padded_source_receipt = refused_prompt_context_receipt(
+        segment_id="doc:padded:payload",
+        source_type="retrieved_document",
+        source_field="payload",
+        source_id=" doc:padded ",
+        reason="invalid_retrieved_document_context_field",
+        corrective_action="Reject malformed retrieved document context before prompt assembly.",
+    )
+    assert padded_source_receipt["source_id"] == "doc:padded"
+    assert padded_source_receipt["segment_id"] == "doc:padded:payload"
+
+    padded_raw_segment_receipt = refused_prompt_context_receipt(
+        segment_id=" doc:padded :payload",
+        source_type="retrieved_document",
+        source_field="payload",
+        source_id=" doc:padded ",
+        reason="invalid_retrieved_document_context_field",
+        corrective_action="Reject malformed retrieved document context before prompt assembly.",
+    )
+    assert padded_raw_segment_receipt["source_id"] == "doc:padded"
+    assert padded_raw_segment_receipt["segment_id"] == "doc:padded:payload"
+
+    padded_private_source_id = " file:///Users/testuser/private/padded.md "
+    padded_private_receipt = refused_prompt_context_receipt(
+        segment_id=padded_private_source_id,
+        source_type="retrieved_document",
+        source_field="payload",
+        source_id=padded_private_source_id,
+        reason="invalid_retrieved_document_context_field",
+        corrective_action="Reject malformed retrieved document context before prompt assembly.",
+    )
+    assert padded_private_receipt["segment_id"] == padded_private_receipt["source_id"]
+    assert str(padded_private_receipt["source_id"]).startswith("source:")
+    assert "file:///Users/testuser/private/padded.md" not in json.dumps(
+        padded_private_receipt,
+        ensure_ascii=False,
+    )
+
+
 def test_prompt_context_source_evidence_rejects_unsupported_source_type() -> None:
     with pytest.raises(
         PromptContextBoundaryError,
