@@ -256,8 +256,15 @@ def main() -> int:
     args = parser.parse_args()
 
     repo_root = Path.cwd()
-    coverage_payload = json.loads(Path(args.coverage_json).read_text(encoding="utf-8"))
     paths = _filter_coverage_paths(args.paths, _coverage_path_allowlist(os.environ))
+    if not paths:
+        print("aggregate_measurable_changed_lines=0")
+        print("aggregate_covered_changed_lines=0")
+        print("aggregate_missed_changed_lines=0")
+        print("TOTAL 0 0 100%")
+        return 0
+
+    coverage_payload = json.loads(Path(args.coverage_json).read_text(encoding="utf-8"))
     changed_lines_by_path = _changed_lines_by_path(repo_root, paths)
 
     total_measurable = 0
