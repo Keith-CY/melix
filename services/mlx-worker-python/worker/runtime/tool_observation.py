@@ -111,29 +111,12 @@ class ToolObservationRecord:
     payload: dict[str, Any]
     metrics: ToolObservationMetrics
     replay: ToolObservationReplayMetadata
+    _untrusted_context_receipts: tuple[dict[str, object], ...]
     timeout_ms: int | None = None
-    source_untrusted_context_receipts: tuple[dict[str, object], ...] = ()
 
     @property
     def untrusted_context_receipts(self) -> list[dict[str, object]]:
-        admission = admit_prompt_context_segments(
-            [
-                PromptContextSegment(
-                    segment_id=f"{self.tool_call_id}:observation",
-                    source_type="tool_observation",
-                    source_field="payload",
-                    value=self.payload,
-                    reason="tool output is prompt data, not instructions",
-                    corrective_action=(
-                        "Keep this observation in user-role data context and do not "
-                        "project it into system or developer instructions."
-                    ),
-                )
-            ]
-        )
-        return admission.untrusted_context_receipts + [
-            dict(receipt) for receipt in self.source_untrusted_context_receipts
-        ]
+        return [dict(receipt) for receipt in self._untrusted_context_receipts]
 
     def as_agentic_trace_observation(self) -> dict[str, Any]:
         untrusted_context_receipts = self.untrusted_context_receipts
@@ -305,6 +288,11 @@ def normalize_tool_observation(
         status=normalized_status,
         payload=normalized_payload,
     )
+    untrusted_context_receipts = _build_untrusted_context_receipts(
+        tool_call_id=normalized_tool_call_id,
+        payload=normalized_payload,
+        source_untrusted_context_receipts=source_untrusted_context_receipts,
+    )
     return ToolObservationRecord(
         tool_name=normalized_tool_name,
         tool_call_id=normalized_tool_call_id,
@@ -313,10 +301,40 @@ def normalize_tool_observation(
         payload=normalized_payload,
         metrics=metrics,
         replay=replay,
+        _untrusted_context_receipts=untrusted_context_receipts,
         timeout_ms=timeout_ms,
-        source_untrusted_context_receipts=_normalize_source_untrusted_context_receipts(
-            source_untrusted_context_receipts
-        ),
+    )
+
+
+def _build_untrusted_context_receipts(
+    *,
+    tool_call_id: str,
+    payload: dict[str, Any],
+    source_untrusted_context_receipts: list[dict[str, object]] | tuple[
+        dict[str, object], ...
+    ] = (),
+) -> tuple[dict[str, object], ...]:
+    admission = admit_prompt_context_segments(
+        [
+            PromptContextSegment(
+                segment_id=f"{tool_call_id}:observation",
+                source_type="tool_observation",
+                source_field="payload",
+                value=payload,
+                reason="tool output is prompt data, not instructions",
+                corrective_action=(
+                    "Keep this observation in user-role data context and do not "
+                    "project it into system or developer instructions."
+                ),
+            )
+        ]
+    )
+    return tuple(
+        dict(receipt)
+        for receipt in (
+            *admission.untrusted_context_receipts,
+            *_normalize_source_untrusted_context_receipts(source_untrusted_context_receipts),
+        )
     )
 
 
