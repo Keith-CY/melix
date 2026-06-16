@@ -4577,8 +4577,10 @@ struct DesktopFoundationViewTests {
 
         #expect(shellSource.contains("DesktopAPICompanionPairingPanel"))
         #expect(shellSource.contains("Companion Pairing"))
-        #expect(shellSource.contains("Issue Read-Only Token"))
-        #expect(shellSource.contains("Copy Pairing Bundle"))
+        #expect(shellSource.contains("Issue Token"))
+        #expect(shellSource.contains("Copy Bundle"))
+        #expect(shellSource.contains("Copy Code"))
+        #expect(shellSource.contains("Issue a read-only companion token"))
         #expect(shellSource.contains("Revoke Token"))
     }
 
@@ -4659,6 +4661,24 @@ struct DesktopFoundationViewTests {
         #expect(activePresentation.allowedRoutesText == "Allowed routes: GET /v1/melix/companion/status")
         #expect(activePresentation.copyDisabled == false)
         #expect(activePresentation.revokeDisabled == false)
+        let expectedPairingCode = try #require(activeViewModel.companionPairingCodeText())
+        let pasteboard = RecordingPasteboard()
+        #expect(CompanionPairingClipboard.copy(expectedPairingCode, to: pasteboard))
+        #expect(pasteboard.string == expectedPairingCode)
+        #expect(pasteboard.clearCount == 1)
+        #expect(CompanionPairingClipboard.copy("   ", to: pasteboard) == false)
+        #expect(CompanionPairingClipboard.copy(nil, to: pasteboard) == false)
+        let narrowHosted = hostView(
+            DesktopAPICompanionPairingPanel(viewModel: activeViewModel),
+            size: CGSize(width: 360, height: 420)
+        )
+        #expect(narrowHosted.subviews.isEmpty == false)
+        #expect(narrowHosted.fittingSize.width <= 360)
+
+        var noExpiryState = activeViewModel.companionPairing
+        noExpiryState.expiresAtUnixMS = 0
+        let noExpiryPresentation = DesktopAPICompanionPairingPresentation(pairing: noExpiryState)
+        #expect(noExpiryPresentation.statusDetail == "Read-only token is active.")
 
         let failureViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
         await failureViewModel.start()

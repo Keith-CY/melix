@@ -95,20 +95,24 @@ then renders the safe pairing descriptor returned by the gateway.
 
 Operator actions:
 
-- `Issue Read-Only Token` calls `POST /v1/melix/auth/session` with
-  `remember_me = true` and `scope = companion_read_only`.
-- `Copy Pairing Bundle` copies a one-time JSON bundle containing the descriptor
-  and the raw companion token for the operator to transfer to a companion
-  client.
-- `Revoke Token` calls `DELETE /v1/melix/auth/session` with the active
-  companion token through `X-Melix-Session`.
+- `Issue Token` calls `POST /v1/melix/auth/session` with `remember_me = true`
+  and `scope = companion_read_only`.
+- `Copy Bundle` copies a one-time JSON bundle containing the descriptor and the
+  raw companion token for the operator to transfer to a companion client.
+- `Copy Code` copies a compact `melix-companion:` pairing code. The code is a
+  URL-safe-base64 encoding of the same transient JSON bundle and is intended for
+  future QR/code transfer surfaces.
+- `Revoke Token` calls `DELETE /v1/melix/auth/session` with the active companion
+  token through `X-Melix-Session`.
 
 The desktop view model keeps the raw companion token only in transient process
 memory so the current operator session can copy or revoke it. The token is not
 written into operator session state, server-session configuration, logs,
 metrics, or the safe descriptor displayed in the panel. Closing the desktop
 process drops the transient token reference; create a new companion token if the
-current token can no longer be copied or revoked from the panel.
+current token can no longer be copied or revoked from the panel. Treat copied
+pairing bundles and `melix-companion:` pairing codes as secret bearer material
+because both include the raw companion token inside the transferred payload.
 
 ### Desktop Companion Status Refresh
 
