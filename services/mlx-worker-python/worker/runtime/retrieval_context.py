@@ -427,7 +427,7 @@ def _copy_payload_value(value: Any) -> Any:
 
 def _copy_receipts(receipts: list[dict[str, object]]) -> list[dict[str, object]]:
     # Receipt schemas are flat JSON metadata; payload-bearing values are never copied here.
-    return [dict(receipt) for receipt in receipts]
+    return [receipt.copy() for receipt in receipts]
 
 
 def _admit_entry(entry: RetrievalContextEntry) -> PromptContextAdmission:
