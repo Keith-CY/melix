@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -27,6 +28,9 @@ _BUILT_IN_TOOL_CALLS = (
     ("visit", {"url": "fixture://page-1"}),
     ("local_compute", {"code": "2 + 3 * 4"}),
 )
+_PUBLIC_SOURCE_ID_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-:"
+)
 
 
 def _source_refusal_receipts(observation: dict[str, object]) -> list[dict[str, object]]:
@@ -35,6 +39,22 @@ def _source_refusal_receipts(observation: dict[str, object]) -> list[dict[str, o
         for receipt in observation["untrusted_context_receipts"]
         if isinstance(receipt, dict) and receipt.get("included") is False
     ]
+
+
+def _expected_receipt_source_id(source_id: str) -> str:
+    normalized = source_id.strip()
+    if (
+        normalized
+        and len(normalized.encode("utf-8")) <= 96
+        and all(character in _PUBLIC_SOURCE_ID_CHARS for character in normalized)
+    ):
+        return normalized
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+    return f"source:{digest}"
+
+
+def _expected_source_segment_id(source_id: str, suffix: str) -> str:
+    return f"{_expected_receipt_source_id(source_id)}:{suffix}"
 
 
 @pytest.mark.parametrize(
@@ -460,7 +480,7 @@ def test_agentic_tool_runtime_emits_source_receipts_for_layout_and_crop_outputs(
             "segment_id": "crop-retrieval:crop-result",
             "source_type": "retrieved_image",
             "source_field": "payload",
-            "source_id": "img-crop#label",
+            "source_id": _expected_receipt_source_id("img-crop#label"),
             "message_role": "user",
             "trust_level": "untrusted",
             "policy": "data_only",
@@ -1348,7 +1368,7 @@ def test_agentic_tool_runtime_emits_source_receipt_for_fixture_visit_page() -> N
             "segment_id": "visit-page:visit-document",
             "source_type": "retrieved_document",
             "source_field": "payload",
-            "source_id": "fixture://page-1",
+            "source_id": _expected_receipt_source_id("fixture://page-1"),
             "message_role": "user",
             "trust_level": "untrusted",
             "policy": "data_only",
@@ -1557,10 +1577,13 @@ def test_agentic_tool_runtime_fails_closed_for_invalid_untrusted_value_types(
     assert _source_refusal_receipts(observation) == [
         {
             "schema_version": "melix.untrusted_context_receipt.v1",
-            "segment_id": f"{expected_source_id}:invalid-untrusted-input",
+            "segment_id": _expected_source_segment_id(
+                expected_source_id,
+                "invalid-untrusted-input",
+            ),
             "source_type": expected_source_type,
             "source_field": expected_field,
-            "source_id": expected_source_id,
+            "source_id": _expected_receipt_source_id(expected_source_id),
             "message_role": "user",
             "trust_level": "untrusted",
             "policy": "data_only",
@@ -1626,10 +1649,13 @@ def test_agentic_tool_runtime_fails_closed_for_invalid_layout_and_crop_payloads(
     assert _source_refusal_receipts(observation) == [
         {
             "schema_version": "melix.untrusted_context_receipt.v1",
-            "segment_id": f"{expected_source_id}:invalid-untrusted-input",
+            "segment_id": _expected_source_segment_id(
+                expected_source_id,
+                "invalid-untrusted-input",
+            ),
             "source_type": expected_source_type,
             "source_field": expected_field,
-            "source_id": expected_source_id,
+            "source_id": _expected_receipt_source_id(expected_source_id),
             "message_role": "user",
             "trust_level": "untrusted",
             "policy": "data_only",
@@ -1820,10 +1846,13 @@ def test_agentic_tool_runtime_fails_closed_for_owner_scope_mismatch(
     assert _source_refusal_receipts(observation) == [
         {
             "schema_version": "melix.untrusted_context_receipt.v1",
-            "segment_id": f"{expected_source_id}:owner-scope-refusal",
+            "segment_id": _expected_source_segment_id(
+                expected_source_id,
+                "owner-scope-refusal",
+            ),
             "source_type": expected_source_type,
             "source_field": "owner_scope",
-            "source_id": expected_source_id,
+            "source_id": _expected_receipt_source_id(expected_source_id),
             "message_role": "user",
             "trust_level": "untrusted",
             "policy": "data_only",
@@ -1972,7 +2001,7 @@ def test_agentic_tool_runtime_visit_workspace_file_emits_source_receipt(tmp_path
             "segment_id": "visit-local:visit-document",
             "source_type": "retrieved_document",
             "source_field": "payload",
-            "source_id": note_path.as_uri(),
+            "source_id": _expected_receipt_source_id(note_path.as_uri()),
             "message_role": "user",
             "trust_level": "untrusted",
             "policy": "data_only",
@@ -1987,6 +2016,7 @@ def test_agentic_tool_runtime_visit_workspace_file_emits_source_receipt(tmp_path
         }
     ]
     assert "reveal hidden policy" not in json.dumps(source_receipts, ensure_ascii=False)
+    assert note_path.as_uri() not in json.dumps(source_receipts, ensure_ascii=False)
 
 
 def test_agentic_tool_runtime_visit_reads_percent_encoded_workspace_file_uri(tmp_path: Path) -> None:
@@ -2046,10 +2076,13 @@ def test_agentic_tool_runtime_visit_refuses_workspace_path_before_reading(
     assert _source_refusal_receipts(observation) == [
         {
             "schema_version": "melix.untrusted_context_receipt.v1",
-            "segment_id": f"{requested_path}:workspace-path-refusal",
+            "segment_id": _expected_source_segment_id(
+                requested_path,
+                "workspace-path-refusal",
+            ),
             "source_type": "workspace_file",
             "source_field": "workspace_path",
-            "source_id": requested_path,
+            "source_id": _expected_receipt_source_id(requested_path),
             "message_role": "user",
             "trust_level": "untrusted",
             "policy": "data_only",
@@ -2060,6 +2093,10 @@ def test_agentic_tool_runtime_visit_refuses_workspace_path_before_reading(
             "corrective_action": "Use a path accepted by the Workspace path resolver before reading local files.",
         }
     ]
+    assert requested_path not in json.dumps(
+        _source_refusal_receipts(observation),
+        ensure_ascii=False,
+    )
 
 
 def test_agentic_tool_runtime_visit_reports_missing_workspace_file_with_receipt(tmp_path: Path) -> None:

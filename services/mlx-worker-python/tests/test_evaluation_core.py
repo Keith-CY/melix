@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import random
@@ -19,6 +20,12 @@ from worker.registry import WorkerRegistry
 from worker.productization.event_extraction import EventExtractionClientResult, default_event_extraction_prompt_spec
 from worker.productization.evaluation_schemas import EvaluationCompareJob, build_evaluation_sample_record
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
+
+
+def _expected_hashed_receipt_source_id(source_id: str) -> str:
+    normalized = source_id.strip()
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+    return f"source:{digest}"
 
 
 class ScriptedEvaluationBackend:
@@ -1075,12 +1082,13 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
         ),
     }
     crop_source_receipt = receipt_by_segment["crop-1:crop-result"]
+    crop_source_id = _expected_hashed_receipt_source_id("img-1#sign")
     assert crop_source_receipt == {
         "schema_version": "melix.untrusted_context_receipt.v1",
         "segment_id": "crop-1:crop-result",
         "source_type": "retrieved_image",
         "source_field": "payload",
-        "source_id": "img-1#sign",
+        "source_id": crop_source_id,
         "message_role": "user",
         "trust_level": "untrusted",
         "policy": "data_only",
@@ -1095,6 +1103,7 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     }
     assert "media/sign.ppm" not in json.dumps(crop_source_receipt, ensure_ascii=False)
     assert "region" not in json.dumps(crop_source_receipt, ensure_ascii=False)
+    assert "img-1#sign" not in json.dumps(crop_source_receipt, ensure_ascii=False)
 
     assert audit["schema_version"] == "melix.agentic_judge_audit.v1"
     assert audit["judge_status"] == "pending"
@@ -1135,7 +1144,7 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert any(
         receipt["segment_id"] == "crop-1:crop-result"
         and receipt["source_type"] == "retrieved_image"
-        and receipt["source_id"] == "img-1#sign"
+        and receipt["source_id"] == crop_source_id
         for receipt in tuple_snapshot["untrusted_context_receipts"]
     )
     ordered_receipts = EvaluationCore._agentic_judge_untrusted_context_receipts(
