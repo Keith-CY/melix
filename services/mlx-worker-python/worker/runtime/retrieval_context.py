@@ -352,6 +352,21 @@ def project_retrieval_lookup_result(
     copy_receipts = _copy_receipts
     lookup_records = lookup_result.get("records", _MISSING_LOOKUP_RECORDS)
     has_records = lookup_records is not _MISSING_LOOKUP_RECORDS
+    records_type = type(lookup_records)
+    records_container_is_valid = records_type is list or records_type is tuple
+    if has_lookup_metadata and (not has_records or not records_container_is_valid):
+        return RetrievalLookupResultProjection(
+            prompt_user_payload={},
+            untrusted_context_receipts=[],
+            refusal_receipts=[
+                _lookup_result_refusal(
+                    source_id=normalized_lookup_source_id,
+                    segment_id=normalized_lookup_segment_id,
+                    source_field=normalized_lookup_source_field,
+                )
+            ],
+            lookup_message=None,
+        )
     store_projection = project_store_records(lookup_records if has_records else None)
     prompt_user_payload = copy_payload(store_projection.user_payload)
     untrusted_context_receipts = copy_receipts(store_projection.untrusted_context_receipts)

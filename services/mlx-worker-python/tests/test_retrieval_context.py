@@ -1435,6 +1435,62 @@ def test_project_retrieval_lookup_result_reads_records_once_for_metadata_refusal
     assert projection.refusal_receipts[0]["source_field"] == "live_rag_records"
 
 
+def test_project_retrieval_lookup_result_preserves_valid_tuple_records_with_metadata() -> None:
+    projection = project_retrieval_lookup_result(
+        {
+            "records": (
+                {
+                    "context_kind": "retrieved_document",
+                    "source_id": "doc:valid-tuple",
+                    "payload": {"title": "Tuple record"},
+                    "owner_scope_checked": True,
+                    "source_field": "retrieved_document_tuple",
+                },
+            )
+        },
+        lookup_source_id="live-rag:tuple",
+        lookup_segment_id="live-rag:tuple:lookup",
+        lookup_source_field="live_rag_tuple_records",
+    )
+
+    assert projection.prompt_user_payload == {
+        "retrieved_document_tuple": {"title": "Tuple record"}
+    }
+    assert projection.lookup_message == {
+        "role": "user",
+        "content": {"retrieved_document_tuple": {"title": "Tuple record"}},
+        "untrusted_context_receipts": projection.untrusted_context_receipts,
+    }
+    assert projection.refusal_receipts == []
+
+
+def test_project_retrieval_lookup_result_metadata_refusal_skips_store_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_store_projection(records: object) -> object:
+        raise AssertionError(  # pragma: no cover - failure guard
+            f"metadata refusal should not project invalid records: {records!r}"
+        )
+
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "project_retrieval_store_records",
+        fail_store_projection,
+    )
+
+    projection = project_retrieval_lookup_result(
+        {"records": None},
+        lookup_source_id="live-rag:search-8",
+        lookup_segment_id="live-rag:search-8:lookup",
+        lookup_source_field="live_rag_records",
+    )
+
+    assert projection.prompt_user_payload == {}
+    assert projection.untrusted_context_receipts == []
+    assert projection.lookup_message is None
+    assert projection.refusal_receipts[0]["source_field"] == "live_rag_records"
+
+
 @pytest.mark.parametrize(
     ("kwargs", "expected_field"),
     (
