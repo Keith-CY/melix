@@ -40,7 +40,10 @@ def test_check_for_updates_reports_newer_available_version(tmp_path: Path) -> No
     assert result.update_available is True
     assert result.latest_version == "0.2.0"
     assert result.summary == "Update available: 0.2.0"
+    assert result[2] == "0.1.0"
     assert not hasattr(result, "__dict__")
+    with pytest.raises(AttributeError):
+        result.latest_version = "0.3.0"  # type: ignore[misc]
 
 
 def test_check_for_updates_reports_up_to_date_version(tmp_path: Path) -> None:
