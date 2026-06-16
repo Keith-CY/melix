@@ -358,32 +358,26 @@ def _status_override_payload(
             "failure_stage": failure_stage or "tool_timeout",
             "_status": "timeout",
         }
-        payload["_untrusted_context_receipts"] = [
-            _status_override_output_receipt(tool_call_id=tool_call_id, value=payload)
-        ]
-        return payload
-    if raw_status in ("cancel", "cancelled", "canceled"):
+    elif raw_status in ("cancel", "cancelled", "canceled"):
         payload = {
             "error": message or f"{tool_name} was cancelled before producing a result.",
             "failure_stage": failure_stage or "cancelled",
             "cancelled": True,
             "_status": "failed",
         }
-        payload["_untrusted_context_receipts"] = [
-            _status_override_output_receipt(tool_call_id=tool_call_id, value=payload)
-        ]
-        return payload
-    if raw_status == "failed":
+    elif raw_status == "failed":
         payload = {
             "error": message or f"{tool_name} failed before producing a result.",
             "failure_stage": failure_stage or "tool_execution",
             "_status": "failed",
         }
-        payload["_untrusted_context_receipts"] = [
-            _status_override_output_receipt(tool_call_id=tool_call_id, value=payload)
-        ]
-        return payload
-    raise AgenticToolRuntimeError(f"Unsupported agentic tool status override: {raw_status or '<empty>'}")
+    else:
+        raise AgenticToolRuntimeError(f"Unsupported agentic tool status override: {raw_status or '<empty>'}")
+
+    payload["_untrusted_context_receipts"] = [
+        _status_override_output_receipt(tool_call_id=tool_call_id, value=payload)
+    ]
+    return payload
 
 
 def _text_search_payload(
