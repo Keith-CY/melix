@@ -377,25 +377,29 @@ def main() -> int:
     def fake_admit_entry(entry: rc.RetrievalContextEntry) -> PromptContextAdmission:
         return admissions[entry.source_id]
 
+    # Measure direct entry projection with the real admission path so complete
+    # RetrievalContextEntry optimizations are not hidden by the store/lookup
+    # prebuilt-admission isolation shim below.
+    _measure(_baseline_project_retrieval_contexts, entries, 1)
+    _measure(rc.project_retrieval_contexts, entries, 1)
+    baseline = [
+        _measure(_baseline_project_retrieval_contexts, entries, iteration_count)
+        for _ in range(sample_count)
+    ]
+    optimized = [
+        _measure(rc.project_retrieval_contexts, entries, iteration_count)
+        for _ in range(sample_count)
+    ]
+
     rc._admit_entry = fake_admit_entry  # type: ignore[attr-defined]
     try:
-        # Warm both variants once before sampling.
-        _measure(_baseline_project_retrieval_contexts, entries, 1)
-        _measure(rc.project_retrieval_contexts, entries, 1)
+        # Warm store/lookup variants once before sampling.
         _measure_store(_baseline_project_retrieval_store_records, records, 1)
         _measure_store(rc.project_retrieval_store_records, records, 1)
         _measure_lookup_copy(_baseline_copy_lookup_payload, lookup_payload, 1)
         _measure_lookup_copy(rc._copy_payload, lookup_payload, 1)  # type: ignore[attr-defined]
         _measure_lookup_records_gets(_baseline_lookup_adapter, 1)
         _measure_lookup_records_gets(rc.project_retrieval_lookup_result, 1)
-        baseline = [
-            _measure(_baseline_project_retrieval_contexts, entries, iteration_count)
-            for _ in range(sample_count)
-        ]
-        optimized = [
-            _measure(rc.project_retrieval_contexts, entries, iteration_count)
-            for _ in range(sample_count)
-        ]
         store_baseline = [
             _measure_store(_baseline_project_retrieval_store_records, records, iteration_count)
             for _ in range(sample_count)
