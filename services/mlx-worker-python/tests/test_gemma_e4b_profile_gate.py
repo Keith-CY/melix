@@ -41,6 +41,20 @@ def test_gemma_e4b_profile_gate_preserves_input_and_returned_section_isolation()
     assert evidence["benchmark"]["threshold_status"]["status"] == "ok"
 
 
+def test_gemma_e4b_profile_gate_copy_fallback_preserves_non_json_values() -> None:
+    class CopyTracked:
+        pass
+
+    evidence = default_passing_evidence()
+    marker = CopyTracked()
+    evidence["selected_profile"]["copy_marker"] = marker
+
+    report = evaluate_gemma_e4b_profile_gate_evidence(evidence)
+
+    assert isinstance(report["selected_profile"]["copy_marker"], CopyTracked)
+    assert report["selected_profile"]["copy_marker"] is not marker
+
+
 def test_gemma_e4b_profile_gate_fails_when_profile_receipt_is_unverified() -> None:
     evidence = default_passing_evidence()
     evidence["selected_profile"]["profile_receipt"] = {

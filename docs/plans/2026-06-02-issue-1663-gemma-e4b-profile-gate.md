@@ -115,6 +115,9 @@ The persisted gate input is JSON with schema
 - The PR-scoped probe emits numeric gate metrics and fails on regressions in
   gate behavior. It also reports `elapsed_ms_mean` over repeated deterministic
   evaluations so evaluation-copy changes have a registered timing signal.
+- Returned evidence sections use a JSON-shaped copy fast path while preserving
+  caller/result isolation for selected profile, unsupported routes, and
+  benchmark payloads.
 
 ## Verification
 
