@@ -4660,7 +4660,6 @@ struct DesktopFoundationViewTests {
         #expect(activePresentation.statusURL == "http://127.0.0.1:12436/v1/melix/companion/status")
         #expect(activePresentation.allowedRoutesText == "Allowed routes: GET /v1/melix/companion/status")
         #expect(activePresentation.copyDisabled == false)
-        #expect(activePresentation.copyCodeDisabled == false)
         #expect(activePresentation.revokeDisabled == false)
         let expectedPairingCode = try #require(activeViewModel.companionPairingCodeText())
         let pasteboard = RecordingPasteboard()

@@ -10295,6 +10295,7 @@ struct DesktopAPICompanionPairingPanel: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
                         .truncationMode(.middle)
+                        .help(allowedRoutesText)
                 }
 
                 if let errorText = presentation.errorText {
@@ -10332,7 +10333,7 @@ struct DesktopAPICompanionPairingPanel: View {
             CompanionPairingClipboard.copy(viewModel.companionPairingCodeText())
         }
         .help("Copy the read-only companion pairing code")
-        .disabled(presentation.copyCodeDisabled)
+        .disabled(presentation.copyDisabled)
         .frame(maxWidth: .infinity, alignment: .leading)
 
         Button("Revoke Token") {
@@ -10352,7 +10353,6 @@ struct DesktopAPICompanionPairingPresentation: Equatable {
     let errorText: String?
     let issueDisabled: Bool
     let copyDisabled: Bool
-    let copyCodeDisabled: Bool
     let revokeDisabled: Bool
 
     init(pairing: CompanionPairingState) {
@@ -10366,7 +10366,6 @@ struct DesktopAPICompanionPairingPresentation: Equatable {
         errorText = (pairing.lastError?.isEmpty == false) ? pairing.lastError : nil
         issueDisabled = pairing.phase == .issuing || pairing.phase == .revoking
         copyDisabled = pairing.copyBundleAvailable == false
-        copyCodeDisabled = pairing.copyBundleAvailable == false
         revokeDisabled = pairing.copyBundleAvailable == false || pairing.phase == .revoking
     }
 
