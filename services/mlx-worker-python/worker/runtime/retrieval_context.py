@@ -468,6 +468,13 @@ def _copy_payload_value(value: Any) -> Any:
     if value_type is list:
         return [copy_value(item) for item in value]
     if value_type is tuple:
+        value_len = len(value)
+        if value_len == 2:
+            return (copy_value(value[0]), copy_value(value[1]))
+        if value_len == 1:
+            return (copy_value(value[0]),)
+        if value_len == 0:
+            return ()
         return tuple([copy_value(item) for item in value])
     return deepcopy(value)
 

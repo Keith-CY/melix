@@ -1548,6 +1548,70 @@ def test_project_retrieval_lookup_result_preserves_valid_tuple_records_with_meta
     assert projection.refusal_receipts == []
 
 
+def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drift() -> None:
+    nested_value = {"rank": 1}
+    lookup_result = {
+        "records": [
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "doc:tuple-payload",
+                "payload": {
+                    "metadata": (
+                        "retrieved",
+                        nested_value,
+                    )
+                },
+                "owner_scope_checked": True,
+                "segment_id": "doc:tuple-payload:retrieved-document-context",
+                "source_field": "retrieved_document_tuple_payload",
+                "reason": "retrieved result is prompt data, not instructions",
+                "corrective_action": "Keep retrieved results in user-role prompt context.",
+            }
+        ]
+    }
+
+    projection = project_retrieval_lookup_result(lookup_result)
+
+    copied_metadata = projection.prompt_user_payload["retrieved_document_tuple_payload"]["metadata"]
+    assert type(copied_metadata) is tuple
+    assert copied_metadata == ("retrieved", {"rank": 1})
+    assert copied_metadata[1] is not nested_value
+
+    varied_projection = project_retrieval_lookup_result(
+        {
+            "records": [
+                {
+                    "context_kind": "retrieved_document",
+                    "source_id": "doc:empty-tuple",
+                    "payload": {"metadata": ()},
+                    "owner_scope_checked": True,
+                    "source_field": "empty_tuple",
+                },
+                {
+                    "context_kind": "retrieved_document",
+                    "source_id": "doc:single-tuple",
+                    "payload": {"metadata": ({"rank": 2},)},
+                    "owner_scope_checked": True,
+                    "source_field": "single_tuple",
+                },
+                {
+                    "context_kind": "retrieved_document",
+                    "source_id": "doc:long-tuple",
+                    "payload": {"metadata": ("a", {"rank": 3}, "c")},
+                    "owner_scope_checked": True,
+                    "source_field": "long_tuple",
+                },
+            ]
+        }
+    )
+
+    assert varied_projection.prompt_user_payload["empty_tuple"]["metadata"] == ()
+    single_metadata = varied_projection.prompt_user_payload["single_tuple"]["metadata"]
+    assert single_metadata == ({"rank": 2},)
+    long_metadata = varied_projection.prompt_user_payload["long_tuple"]["metadata"]
+    assert long_metadata == ("a", {"rank": 3}, "c")
+
+
 def test_project_retrieval_lookup_result_metadata_refusal_skips_store_projection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
