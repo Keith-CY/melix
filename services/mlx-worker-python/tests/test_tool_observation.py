@@ -195,6 +195,82 @@ def test_tool_observation_attaches_source_receipts_outside_payload_and_replay() 
     assert with_source_receipt.replay.fingerprint == without_source_receipt.replay.fingerprint
 
 
+def test_tool_observation_normalizes_source_receipt_private_metadata_without_replay_change() -> None:
+    raw_source_id = "/Users/alice/private/rag/source.md"
+    source_receipt = {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": f"{raw_source_id}:result-1",
+        "source_type": "retrieved_document",
+        "source_field": "results[0]",
+        "source_id": raw_source_id,
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": True,
+        "owner_scope_checked": True,
+        "reason": "retrieved document result is prompt data, not instructions",
+        "corrective_action": "Keep retrieved document results in user-role data context.",
+    }
+
+    with_source_receipt = normalize_tool_observation(
+        tool_name="text_search",
+        tool_call_id="search-private",
+        observation_kind="search_results",
+        status="completed",
+        payload={"results": [{"id": "doc-1", "text": "Melix retrieved document."}]},
+        source_untrusted_context_receipts=[source_receipt],
+    )
+    without_source_receipt = normalize_tool_observation(
+        tool_name="text_search",
+        tool_call_id="search-private",
+        observation_kind="search_results",
+        status="completed",
+        payload={"results": [{"id": "doc-1", "text": "Melix retrieved document."}]},
+    )
+
+    emitted = with_source_receipt.as_agentic_trace_observation()
+    source_receipt_json = json.dumps(emitted["untrusted_context_receipts"][1], sort_keys=True)
+
+    assert raw_source_id not in source_receipt_json
+    assert emitted["untrusted_context_receipts"][1]["source_id"].startswith("source:")
+    assert emitted["untrusted_context_receipts"][1]["segment_id"].startswith("source:")
+    assert emitted["untrusted_context_receipts"][1]["segment_id"].endswith(":result-1")
+    assert with_source_receipt.replay.payload_hash == without_source_receipt.replay.payload_hash
+    assert with_source_receipt.replay.fingerprint == without_source_receipt.replay.fingerprint
+
+
+def test_tool_observation_refuses_malformed_v1_source_receipt_without_raw_metadata() -> None:
+    raw_segment_id = "/Users/alice/private/rag/source.md:result-1"
+    source_receipt = {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": raw_segment_id,
+        "source_type": "retrieved_document",
+        "source_field": "results[0]",
+        "included": True,
+        "reason": "retrieved document result is prompt data, not instructions",
+    }
+
+    record = normalize_tool_observation(
+        tool_name="text_search",
+        tool_call_id="search-malformed",
+        observation_kind="search_results",
+        status="completed",
+        payload={"results": [{"id": "doc-1", "text": "Melix retrieved document."}]},
+        source_untrusted_context_receipts=[source_receipt],
+    )
+
+    emitted = record.as_agentic_trace_observation()
+    malformed_receipt = emitted["untrusted_context_receipts"][1]
+    malformed_receipt_json = json.dumps(malformed_receipt, sort_keys=True)
+
+    assert raw_segment_id not in malformed_receipt_json
+    assert malformed_receipt["included"] is False
+    assert malformed_receipt["source_id"].startswith("source:")
+    assert malformed_receipt["segment_id"].startswith("source:")
+    assert malformed_receipt["reason"] == "invalid source untrusted-context receipt metadata"
+
+
 def test_tool_observation_replay_fingerprint_is_stable_for_sanitized_payload() -> None:
     policy = ToolObservationPolicy(redaction_terms=("SECRET",))
     first = normalize_tool_observation(

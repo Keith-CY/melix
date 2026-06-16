@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from worker.runtime.prompt_context import PromptContextSegment, admit_prompt_context_segments
+from worker.runtime.untrusted_context import (
+    UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
+    untrusted_context_receipt,
+)
 
 
 TOOL_OBSERVATION_SCHEMA_VERSION = "melix.agentic_tool_observation.v1"
@@ -150,6 +154,98 @@ class ToolObservationRecord:
         return observation
 
 
+def _normalize_source_untrusted_context_receipts(
+    receipts: list[dict[str, object]] | tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    return tuple(_normalize_source_untrusted_context_receipt(receipt) for receipt in receipts)
+
+
+def _normalize_source_untrusted_context_receipt(receipt: dict[str, object]) -> dict[str, object]:
+    copied = dict(receipt)
+    if copied.get("schema_version") != UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION:
+        return copied
+
+    segment_id = _receipt_text(copied.get("segment_id"))
+    source_type = _receipt_text(copied.get("source_type"))
+    source_field = _receipt_text(copied.get("source_field"))
+    included = copied.get("included")
+    reason = _receipt_text(copied.get("reason"))
+    corrective_action = _receipt_text(copied.get("corrective_action"))
+    source_id = _receipt_text(copied.get("source_id"))
+    message_role = _receipt_text(copied.get("message_role")) or "user"
+    owner_scope_checked = copied.get("owner_scope_checked", False)
+
+    if (
+        not segment_id
+        or not source_type
+        or not source_field
+        or not isinstance(included, bool)
+        or not reason
+        or not corrective_action
+        or not isinstance(owner_scope_checked, bool)
+    ):
+        return _invalid_source_untrusted_context_receipt(
+            segment_id=segment_id,
+            source_type=source_type,
+            source_field=source_field,
+            source_id=source_id,
+            owner_scope_checked=owner_scope_checked if isinstance(owner_scope_checked, bool) else False,
+        )
+
+    return untrusted_context_receipt(
+        segment_id=segment_id,
+        source_type=source_type,
+        source_field=source_field,
+        source_id=source_id,
+        message_role=message_role,
+        owner_scope_checked=owner_scope_checked,
+        included=included,
+        reason=reason,
+        corrective_action=corrective_action,
+    )
+
+
+def _invalid_source_untrusted_context_receipt(
+    *,
+    segment_id: str,
+    source_type: str,
+    source_field: str,
+    source_id: str,
+    owner_scope_checked: bool,
+) -> dict[str, object]:
+    redaction_source_id = source_id or _private_segment_source_id(segment_id)
+    return untrusted_context_receipt(
+        segment_id=segment_id or redaction_source_id or "source-receipt:invalid",
+        source_type=source_type or "tool_output",
+        source_field=source_field or "receipt",
+        source_id=redaction_source_id,
+        owner_scope_checked=owner_scope_checked,
+        included=False,
+        reason="invalid source untrusted-context receipt metadata",
+        corrective_action=(
+            "Regenerate source receipts through worker.runtime.untrusted_context."
+            "untrusted_context_receipt before attaching them to tool observations."
+        ),
+    )
+
+
+def _private_segment_source_id(segment_id: str) -> str:
+    if (
+        "://" in segment_id
+        or "/" in segment_id
+        or "\\" in segment_id
+        or any(character.isspace() for character in segment_id)
+        or len(segment_id.encode("utf-8")) > 96
+        or not segment_id.isascii()
+    ):
+        return segment_id
+    return ""
+
+
+def _receipt_text(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
 @dataclass(frozen=True)
 class _SanitizedPayload:
     value: Any
@@ -208,7 +304,9 @@ def normalize_tool_observation(
         metrics=metrics,
         replay=replay,
         timeout_ms=timeout_ms,
-        source_untrusted_context_receipts=tuple(dict(receipt) for receipt in source_untrusted_context_receipts),
+        source_untrusted_context_receipts=_normalize_source_untrusted_context_receipts(
+            source_untrusted_context_receipts
+        ),
     )
 
 
