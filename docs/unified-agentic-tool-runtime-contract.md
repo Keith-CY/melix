@@ -1034,6 +1034,17 @@ receipt and must omit override messages, error text, failure-stage strings, tool
 arguments, prompt text, and private context from receipt JSON. This receipt is
 metadata only and must not change sanitized observation payloads, replay hashes,
 byte metrics, timeout counters, or failed-status counters.
+
+Control-plane session tool results are also owner-scoped tool-output
+boundaries. `session.register_tool_result`, `session.resume_after_tool`, and
+worker stream hydration must reject a known tool-call or resume-snapshot ID when
+the ID is already attached to a different session or branch. The refusal returns
+or records `owner_scope_mismatch`, must not update `latestToolCallID`,
+`lastToolCallID`, `latestSnapshotID`, branch resume metadata, or publish a
+session mutation event, and must not copy tool result JSON, prompt text, or
+private context into the error payload. First-time IDs keep the existing
+session/branch registration behavior.
+
 Short symbolic fixture identifiers may be preserved in `source_id`; raw media
 references, file paths, URLs, whitespace-bearing identifiers, and long
 identifiers must be replaced with stable redacted identifiers shaped as

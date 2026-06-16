@@ -294,6 +294,12 @@ Used for:
 - registering tool results
 - resuming after a tool boundary
 
+Known tool-result and resume-snapshot identifiers are scoped to their recorded
+session and branch. `session.register_tool_result` and
+`session.resume_after_tool` must return `owner_scope_mismatch` instead of
+mutating state when a caller replays one of those identifiers across a different
+session or branch.
+
 ### OpsCommand
 
 Used for:

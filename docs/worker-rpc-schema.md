@@ -666,6 +666,11 @@ Right:
 - whether tool results resume against the correct boundary
 - whether checkpoints belong to a session or a branch
 
+The control plane must treat a previously known tool-call or resume-snapshot ID
+as scoped to its recorded session and branch. Replaying that ID against a
+different session or branch is an `owner_scope_mismatch` refusal and must not
+mutate session graph state.
+
 Recommended intent:
 
 - `session_id` identifies one conversation or agent run
