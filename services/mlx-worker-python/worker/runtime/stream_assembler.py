@@ -616,12 +616,13 @@ class RequestStreamAssembler:
     def _token_byte_delta(self, token_bytes: bytes | None) -> str | None:
         if token_bytes is None:
             return None
-        had_pending = bool(self._pending_token_bytes)
-        if not had_pending:
+        if not self._pending_token_bytes:
             try:
                 return token_bytes.decode()
             except UnicodeDecodeError:
-                pass
+                had_pending = False
+        else:
+            had_pending = True
         self._pending_token_bytes += token_bytes
         decoder = _UTF8_INCREMENTAL_DECODER()
         try:
