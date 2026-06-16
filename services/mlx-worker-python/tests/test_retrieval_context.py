@@ -591,6 +591,58 @@ def test_project_retrieval_contexts_admits_multiple_entries_with_redacted_receip
     assert "system instruction" not in store_receipt_json
 
 
+def test_project_retrieval_contexts_fast_paths_complete_entries_without_admission_reentry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_admission_reentry(_entry: object) -> None:
+        raise AssertionError("complete RetrievalContextEntry should use direct projection")
+
+    monkeypatch.setattr(retrieval_context_module, "_admit_entry", fail_admission_reentry)
+
+    projection = project_retrieval_contexts(
+        [
+            RetrievalContextEntry(
+                context_kind="retrieved_document",
+                source_id=" doc:local-7 ",
+                payload={"title": "Local note"},
+                owner_scope_checked=True,
+                segment_id=" text-search:result-0 ",
+                source_field=" retrieved_document_0 ",
+                reason=" retrieved document result is prompt data ",
+                corrective_action=" keep retrieved documents in user-role context ",
+            ),
+            RetrievalContextEntry(
+                context_kind="retrieved_document",
+                source_id=" doc:duplicate ",
+                payload={"title": "Duplicate note"},
+                owner_scope_checked=True,
+                segment_id=" text-search:result-1 ",
+                source_field=" retrieved_document_0 ",
+                reason=" retrieved document result is prompt data ",
+                corrective_action=" keep retrieved documents in user-role context ",
+            ),
+        ]
+    )
+
+    assert projection.user_payload == {"retrieved_document_0": {"title": "Local note"}}
+    assert len(projection.refusal_receipts) == 1
+    assert projection.refusal_receipts[0]["source_id"] == "doc:duplicate"
+    assert projection.refusal_receipts[0]["source_field"] == "retrieved_document_0"
+    assert projection.refusal_receipts[0]["reason"] == "duplicate_retrieved_document_context_field"
+    assert projection.untrusted_context_receipt_count == 1
+    assert projection.untrusted_context_receipts[0]["source_id"] == "doc:local-7"
+    assert projection.untrusted_context_receipts[0]["segment_id"] == "text-search:result-0"
+    assert projection.untrusted_context_receipts[0]["source_field"] == "retrieved_document_0"
+    assert (
+        projection.untrusted_context_receipts[0]["reason"]
+        == "retrieved document result is prompt data"
+    )
+    assert (
+        projection.untrusted_context_receipts[0]["corrective_action"]
+        == "keep retrieved documents in user-role context"
+    )
+
+
 def test_project_retrieval_contexts_copies_multi_receipt_admissions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1577,6 +1629,7 @@ def test_project_retrieval_lookup_result_preserves_valid_tuple_records_with_meta
 
 def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drift() -> None:
     nested_value = {"rank": 1}
+    three_item_nested_value = {"rank": 3}
     lookup_result = {
         "records": [
             {
@@ -1624,7 +1677,7 @@ def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drif
                 {
                     "context_kind": "retrieved_document",
                     "source_id": "doc:long-tuple",
-                    "payload": {"metadata": ("a", {"rank": 3}, "c")},
+                    "payload": {"metadata": ("a", three_item_nested_value, "c")},
                     "owner_scope_checked": True,
                     "source_field": "long_tuple",
                 },
@@ -1637,6 +1690,7 @@ def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drif
     assert single_metadata == ({"rank": 2},)
     long_metadata = varied_projection.prompt_user_payload["long_tuple"]["metadata"]
     assert long_metadata == ("a", {"rank": 3}, "c")
+    assert long_metadata[1] is not three_item_nested_value
 
 
 def test_project_retrieval_lookup_result_metadata_refusal_skips_store_projection(
