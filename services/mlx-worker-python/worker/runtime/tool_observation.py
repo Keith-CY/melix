@@ -155,9 +155,19 @@ class ToolObservationRecord:
 
 
 def _normalize_source_untrusted_context_receipts(
-    receipts: list[dict[str, object]] | tuple[dict[str, object], ...],
+    receipts: list[dict[str, object]] | tuple[dict[str, object], ...] | None,
 ) -> tuple[dict[str, object], ...]:
-    return tuple(_normalize_source_untrusted_context_receipt(receipt) for receipt in receipts)
+    if not receipts:
+        return ()
+    try:
+        iterator = iter(receipts)
+    except TypeError:
+        return ()
+    return tuple(
+        _normalize_source_untrusted_context_receipt(receipt)
+        for receipt in iterator
+        if isinstance(receipt, dict)
+    )
 
 
 def _normalize_source_untrusted_context_receipt(receipt: dict[str, object]) -> dict[str, object]:
@@ -231,11 +241,11 @@ def _invalid_source_untrusted_context_receipt(
 
 def _private_segment_source_id(segment_id: str) -> str:
     if (
-        "://" in segment_id
+        len(segment_id) > 96
+        or "://" in segment_id
         or "/" in segment_id
         or "\\" in segment_id
         or any(character.isspace() for character in segment_id)
-        or len(segment_id.encode("utf-8")) > 96
         or not segment_id.isascii()
     ):
         return segment_id

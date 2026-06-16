@@ -271,6 +271,55 @@ def test_tool_observation_refuses_malformed_v1_source_receipt_without_raw_metada
     assert malformed_receipt["reason"] == "invalid source untrusted-context receipt metadata"
 
 
+def test_tool_observation_ignores_invalid_source_receipt_container_and_items() -> None:
+    valid_source_receipt = {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": "search-1:result-1",
+        "source_type": "retrieved_document",
+        "source_field": "results[0]",
+        "source_id": "doc-1",
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": True,
+        "owner_scope_checked": True,
+        "reason": "retrieved document result is prompt data, not instructions",
+        "corrective_action": "Keep retrieved document results in user-role data context.",
+    }
+
+    none_record = normalize_tool_observation(
+        tool_name="text_search",
+        tool_call_id="search-none-receipts",
+        observation_kind="search_results",
+        status="completed",
+        payload={"results": [{"id": "doc-1", "text": "Melix retrieved document."}]},
+        source_untrusted_context_receipts=None,  # type: ignore[arg-type]
+    )
+    scalar_record = normalize_tool_observation(
+        tool_name="text_search",
+        tool_call_id="search-scalar-receipts",
+        observation_kind="search_results",
+        status="completed",
+        payload={"results": [{"id": "doc-1", "text": "Melix retrieved document."}]},
+        source_untrusted_context_receipts=object(),  # type: ignore[arg-type]
+    )
+    mixed_record = normalize_tool_observation(
+        tool_name="text_search",
+        tool_call_id="search-mixed-receipts",
+        observation_kind="search_results",
+        status="completed",
+        payload={"results": [{"id": "doc-1", "text": "Melix retrieved document."}]},
+        source_untrusted_context_receipts=[valid_source_receipt, "not-a-receipt"],  # type: ignore[list-item]
+    )
+
+    assert none_record.as_agentic_trace_observation()["untrusted_context_receipt_count"] == 1
+    assert scalar_record.as_agentic_trace_observation()["untrusted_context_receipt_count"] == 1
+    mixed_observation = mixed_record.as_agentic_trace_observation()
+    assert mixed_observation["untrusted_context_receipt_count"] == 2
+    assert mixed_observation["untrusted_context_receipts"][1]["source_id"] == "doc-1"
+
+
 def test_tool_observation_replay_fingerprint_is_stable_for_sanitized_payload() -> None:
     policy = ToolObservationPolicy(redaction_terms=("SECRET",))
     first = normalize_tool_observation(
