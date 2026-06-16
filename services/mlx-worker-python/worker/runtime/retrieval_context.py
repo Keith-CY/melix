@@ -11,6 +11,7 @@ from worker.runtime.prompt_context import (
     refused_prompt_context_receipt,
     refused_source_prompt_context_receipt,
 )
+from worker.runtime.untrusted_context import untrusted_context_receipt
 
 
 RetrievalContextKind = Literal["retrieved_document", "retrieved_image"]
@@ -234,6 +235,52 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                 )
             )
             continue
+
+        if type(record) is dict:
+            source_id = record_get("source_id")
+            payload = record_get("payload")
+            owner_scope_checked = record_get("owner_scope_checked")
+            segment_id = record_get("segment_id", "")
+            source_field = record_get("source_field", "")
+            reason = record_get("reason", "")
+            corrective_action = record_get("corrective_action", "")
+            if (
+                isinstance(source_id, str)
+                and source_id.strip()
+                and isinstance(payload, dict)
+                and isinstance(owner_scope_checked, bool)
+                and isinstance(segment_id, str)
+                and segment_id.strip()
+                and isinstance(source_field, str)
+                and source_field.strip()
+                and isinstance(reason, str)
+                and reason.strip()
+                and isinstance(corrective_action, str)
+                and corrective_action.strip()
+            ):
+                normalized_source_field = source_field.strip()
+                receipt = untrusted_context_receipt(
+                    segment_id=segment_id.strip(),
+                    source_type=context_kind,
+                    source_field=normalized_source_field,
+                    source_id=source_id.strip(),
+                    message_role="user",
+                    owner_scope_checked=owner_scope_checked,
+                    included=True,
+                    reason=reason.strip(),
+                    corrective_action=corrective_action.strip(),
+                )
+                if normalized_source_field in user_payload:
+                    projection_refusal_receipts_append(
+                        duplicate_projection_receipt(
+                            receipt,
+                            duplicate_fields=[normalized_source_field],
+                        )
+                    )
+                    continue
+                user_payload[normalized_source_field] = payload
+                receipts_append(receipt)
+                continue
 
         try:
             admission = admit_entry(
