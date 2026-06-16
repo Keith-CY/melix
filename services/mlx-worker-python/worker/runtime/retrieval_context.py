@@ -17,6 +17,7 @@ from worker.runtime.untrusted_context import untrusted_context_receipt
 RetrievalContextKind = Literal["retrieved_document", "retrieved_image"]
 
 _MISSING_LOOKUP_RECORDS = object()
+_JSON_SCALAR_TYPES = {str, int, float, bool}
 
 
 class RetrievalContextAdmissionError(ValueError):
@@ -460,7 +461,7 @@ def _copy_payload_value(value: Any) -> Any:
     if value is None:
         return value
     value_type = type(value)
-    if value_type is str or value_type is int or value_type is float or value_type is bool:
+    if value_type in _JSON_SCALAR_TYPES:
         return value
     copy_value = _copy_payload_value
     if value_type is dict:
