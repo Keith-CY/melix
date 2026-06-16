@@ -620,30 +620,32 @@ def _lookup_result_metadata_refusal(
     lookup_segment_id: Any,
     lookup_source_field: Any,
 ) -> dict[str, object] | None:
-    fallback_source_id = "unknown-retrieval-lookup"
-    fallback_segment_id = f"{fallback_source_id}:lookup-result"
     if not _valid_lookup_metadata_text(lookup_source_id):
+        fallback_source_id = "unknown-retrieval-lookup"
         return _lookup_result_refusal(
             source_id=fallback_source_id,
-            segment_id=fallback_segment_id,
+            segment_id=f"{fallback_source_id}:lookup-result",
             source_field="lookup_source_id",
         )
-    normalized_source_id = _lookup_metadata_text_or_default(
-        lookup_source_id,
-        default=fallback_source_id,
-    )
-    normalized_segment_id = f"{normalized_source_id}:lookup-result"
     if not _valid_lookup_metadata_text(lookup_segment_id):
+        normalized_source_id = _lookup_metadata_text_or_default(
+            lookup_source_id,
+            default="unknown-retrieval-lookup",
+        )
         return _lookup_result_refusal(
             source_id=normalized_source_id,
-            segment_id=normalized_segment_id,
+            segment_id=f"{normalized_source_id}:lookup-result",
             source_field="lookup_segment_id",
         )
-    normalized_segment_id = _lookup_metadata_text_or_default(
-        lookup_segment_id,
-        default=normalized_segment_id,
-    )
     if not _valid_lookup_metadata_text(lookup_source_field):
+        normalized_source_id = _lookup_metadata_text_or_default(
+            lookup_source_id,
+            default="unknown-retrieval-lookup",
+        )
+        normalized_segment_id = _lookup_metadata_text_or_default(
+            lookup_segment_id,
+            default=f"{normalized_source_id}:lookup-result",
+        )
         return _lookup_result_refusal(
             source_id=normalized_source_id,
             segment_id=normalized_segment_id,
