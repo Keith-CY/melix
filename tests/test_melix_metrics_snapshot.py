@@ -216,6 +216,45 @@ def test_runtime_dir_discovery_materializes_only_final_latest_path(
     assert path_constructor_args == [(str(expected),)]
 
 
+def test_resolve_source_paths_discovers_runtime_sources_with_one_scandir(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    older_control = tmp_path / "control-plane-metrics-old.json"
+    newer_control = tmp_path / "control-plane-metrics-new.json"
+    swift_worker_path = tmp_path / "swift-text-worker-metrics.json"
+    python_worker_env_path = tmp_path / "env-python-worker-metrics.json"
+    write_metrics(older_control, updated_at_unix_ms=1_000, values={"old": 1})
+    write_metrics(newer_control, updated_at_unix_ms=2_000, values={"new": 2})
+    write_metrics(swift_worker_path, updated_at_unix_ms=3_000, values={"swift": 3})
+    write_metrics(python_worker_env_path, updated_at_unix_ms=4_000, values={"python": 4})
+    os.utime(older_control, (1, 1))
+    os.utime(newer_control, (2, 2))
+    os.utime(swift_worker_path, (3, 3))
+
+    original_scandir = snapshot_cli.os.scandir
+    scanned_paths: list[str] = []
+
+    def counting_scandir(path: str):
+        scanned_paths.append(path)
+        return original_scandir(path)
+
+    monkeypatch.setattr(snapshot_cli.os, "scandir", counting_scandir)
+
+    resolved = snapshot_cli.resolve_source_paths(
+        runtime_dir=tmp_path,
+        environment={"MELIX_PYTHON_WORKER_METRICS_PATH": str(python_worker_env_path)},
+    )
+
+    assert scanned_paths == [str(tmp_path)]
+    assert resolved["control_plane"].path == newer_control
+    assert resolved["control_plane"].configured_by == "runtime_dir"
+    assert resolved["swift_text_worker"].path == swift_worker_path
+    assert resolved["swift_text_worker"].configured_by == "runtime_dir"
+    assert resolved["python_worker"].path == python_worker_env_path
+    assert resolved["python_worker"].configured_by == "environment"
+
+
 def test_runtime_dir_discovery_preserves_exact_and_multi_wildcard_patterns(
     tmp_path: Path,
     monkeypatch,
@@ -244,6 +283,56 @@ def test_runtime_dir_discovery_preserves_exact_and_multi_wildcard_patterns(
 
     assert snapshot_cli.discover_latest_metrics_path(tmp_path, "exact_probe") == exact_match
     assert snapshot_cli.discover_latest_metrics_path(tmp_path, "multi_probe") == multi_match
+
+
+def test_batched_runtime_discovery_preserves_overlapping_source_matches(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    shared_prefix = tmp_path / "shared-metrics-latest.json"
+    wildcard_match = tmp_path / "shared-metrics-extra-latest.json"
+    write_metrics(shared_prefix, updated_at_unix_ms=1_000, values={"shared": 1})
+    write_metrics(wildcard_match, updated_at_unix_ms=2_000, values={"wildcard": 2})
+    os.utime(shared_prefix, (1, 1))
+    os.utime(wildcard_match, (2, 2))
+
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "shared_prefix_a",
+        {"runtime_pattern": "shared-metrics*.json"},
+    )
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "shared_prefix_b",
+        {"runtime_pattern": "shared-metrics*.json"},
+    )
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "shared_wildcard_a",
+        {"runtime_pattern": "shared*latest*.json"},
+    )
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "shared_wildcard_b",
+        {"runtime_pattern": "shared*latest*.json"},
+    )
+
+    discovered = snapshot_cli.discover_latest_metrics_paths(
+        tmp_path,
+        (
+            "shared_prefix_a",
+            "shared_prefix_b",
+            "shared_wildcard_a",
+            "shared_wildcard_b",
+        ),
+    )
+
+    assert discovered == {
+        "shared_prefix_a": wildcard_match,
+        "shared_prefix_b": wildcard_match,
+        "shared_wildcard_a": wildcard_match,
+        "shared_wildcard_b": wildcard_match,
+    }
 
 
 def test_env_and_not_configured_sources_are_resolved(tmp_path: Path) -> None:

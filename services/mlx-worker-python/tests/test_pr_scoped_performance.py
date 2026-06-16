@@ -5787,6 +5787,8 @@ def test_melix_metrics_snapshot_discovery_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 9.0
     assert metrics["file_count"] == 4000.0
+    assert metrics["noise_count"] == 200.0
+    assert metrics["source_count"] == 3.0
     assert metrics["elapsed_ms_mean"] >= 0.0
 
 
