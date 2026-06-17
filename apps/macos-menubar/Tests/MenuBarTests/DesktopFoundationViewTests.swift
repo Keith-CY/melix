@@ -4581,6 +4581,7 @@ struct DesktopFoundationViewTests {
         #expect(shellSource.contains("Copy Bundle"))
         #expect(shellSource.contains("Copy Code"))
         #expect(shellSource.contains("Pairing QR"))
+        #expect(shellSource.contains("CompanionPairingQRView"))
         #expect(shellSource.contains("CompanionPairingQRCode.image"))
         #expect(shellSource.contains("Issue a read-only companion token"))
         #expect(shellSource.contains("Revoke Token"))
@@ -4590,11 +4591,34 @@ struct DesktopFoundationViewTests {
     func companionPairingQRCodeGeneratesOnlyForActiveCodes() throws {
         let code = "melix-companion:eyJzY2hlbWFfdmVyc2lvbiI6Im1lbGl4LmNvbXBhbmlvbi5wYWlyaW5nLmJ1bmRsZS52MSJ9"
         let image = try #require(CompanionPairingQRCode.image(for: code))
+        let renderedData = try #require(image.tiffRepresentation)
+        let renderedBitmap = try #require(NSBitmapImageRep(data: renderedData))
 
         #expect(image.size.width == DesktopAPICompanionPairingLayout.qrImageSize)
         #expect(image.size.height == DesktopAPICompanionPairingLayout.qrImageSize)
+        #expect(renderedBitmap.pixelsWide == Int(DesktopAPICompanionPairingLayout.qrImageSize))
+        #expect(renderedBitmap.pixelsHigh == Int(DesktopAPICompanionPairingLayout.qrImageSize))
         #expect(CompanionPairingQRCode.image(for: "   ") == nil)
         #expect(CompanionPairingQRCode.image(for: "\n\t") == nil)
+    }
+
+    @Test("companion pairing QR view renders generated image")
+    @MainActor
+    func companionPairingQRViewRendersGeneratedImage() throws {
+        let code = "melix-companion:eyJzY2hlbWFfdmVyc2lvbiI6Im1lbGl4LmNvbXBhbmlvbi5wYWlyaW5nLmJ1bmRsZS52MSJ9"
+        let qrImage = try #require(CompanionPairingQRCode.image(for: code))
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-companion-qr-view-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        try MelixSwiftUIScreenshotRenderer().render(
+            CompanionPairingQRView(pairingCode: code, initialImage: qrImage),
+            to: outputURL,
+            size: CGSize(width: 180, height: 180)
+        )
+        let pngData = try Data(contentsOf: outputURL)
+
+        #expect(Array(pngData.prefix(8)) == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     }
 
     @Test("api authentication surface includes companion status log tail panel")

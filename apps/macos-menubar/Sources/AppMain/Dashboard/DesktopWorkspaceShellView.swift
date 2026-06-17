@@ -10299,24 +10299,8 @@ struct DesktopAPICompanionPairingPanel: View {
                         .help(allowedRoutesText)
                 }
 
-                if let pairingCode = viewModel.companionPairingCodeText(),
-                   let qrImage = CompanionPairingQRCode.image(for: pairingCode)
-                {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Pairing QR")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Image(nsImage: qrImage)
-                            .interpolation(.none)
-                            .resizable()
-                            .frame(
-                                width: DesktopAPICompanionPairingLayout.qrImageSize,
-                                height: DesktopAPICompanionPairingLayout.qrImageSize
-                            )
-                            .accessibilityLabel("Pairing QR")
-                            .help("Contains the read-only companion bearer token. Share only with a trusted local device.")
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let pairingCode = viewModel.companionPairingCodeText() {
+                    CompanionPairingQRView(pairingCode: pairingCode)
                 }
 
                 if let errorText = presentation.errorText {
@@ -10388,17 +10372,63 @@ enum CompanionPairingQRCode {
 
         guard let outputImage = filter.outputImage else { return nil }
 
-        let targetSize = DesktopAPICompanionPairingLayout.qrImageSize
         let extent = outputImage.extent.integral
         guard extent.width > 0, extent.height > 0 else { return nil }
 
-        let scale = targetSize / max(extent.width, extent.height)
-        let scaledImage = outputImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        guard let cgImage = context.createCGImage(scaledImage, from: scaledImage.extent.integral) else {
+        guard let cgImage = context.createCGImage(outputImage, from: extent) else {
             return nil
         }
 
-        return NSImage(cgImage: cgImage, size: NSSize(width: targetSize, height: targetSize))
+        let targetSize = DesktopAPICompanionPairingLayout.qrImageSize
+        return NSImage(size: NSSize(width: targetSize, height: targetSize), flipped: false) { rect in
+            guard let nsContext = NSGraphicsContext.current else { return false }
+            nsContext.imageInterpolation = .none
+            nsContext.cgContext.draw(cgImage, in: rect)
+            return true
+        }
+    }
+}
+
+struct CompanionPairingQRView: View {
+    let pairingCode: String
+    @State private var qrImage: NSImage?
+
+    init(pairingCode: String, initialImage: NSImage? = nil) {
+        self.pairingCode = pairingCode
+        _qrImage = State(initialValue: initialImage)
+    }
+
+    var body: some View {
+        Group {
+            if let qrImage {
+                CompanionPairingQRImageView(qrImage: qrImage)
+            }
+        }
+        .task(id: pairingCode) {
+            qrImage = CompanionPairingQRCode.image(for: pairingCode)
+        }
+    }
+}
+
+struct CompanionPairingQRImageView: View {
+    let qrImage: NSImage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Pairing QR")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Image(nsImage: qrImage)
+                .interpolation(.none)
+                .resizable()
+                .frame(
+                    width: DesktopAPICompanionPairingLayout.qrImageSize,
+                    height: DesktopAPICompanionPairingLayout.qrImageSize
+                )
+                .accessibilityLabel("Pairing QR")
+                .help("Contains the read-only companion bearer token. Share only with a trusted local device.")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
