@@ -1630,6 +1630,8 @@ def test_project_retrieval_lookup_result_preserves_valid_tuple_records_with_meta
 def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drift() -> None:
     nested_value = {"rank": 1}
     three_item_nested_value = {"rank": 3}
+    two_item_list_value = {"rank": 20}
+    three_item_list_value = {"rank": 30}
     lookup_result = {
         "records": [
             {
@@ -1681,6 +1683,34 @@ def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drif
                     "owner_scope_checked": True,
                     "source_field": "long_tuple",
                 },
+                {
+                    "context_kind": "retrieved_document",
+                    "source_id": "doc:empty-list",
+                    "payload": {"metadata": []},
+                    "owner_scope_checked": True,
+                    "source_field": "empty_list",
+                },
+                {
+                    "context_kind": "retrieved_document",
+                    "source_id": "doc:single-list",
+                    "payload": {"metadata": [{"rank": 10}]},
+                    "owner_scope_checked": True,
+                    "source_field": "single_list",
+                },
+                {
+                    "context_kind": "retrieved_document",
+                    "source_id": "doc:two-list",
+                    "payload": {"metadata": ["a", two_item_list_value]},
+                    "owner_scope_checked": True,
+                    "source_field": "two_list",
+                },
+                {
+                    "context_kind": "retrieved_document",
+                    "source_id": "doc:three-list",
+                    "payload": {"metadata": ["a", three_item_list_value, "c"]},
+                    "owner_scope_checked": True,
+                    "source_field": "three_list",
+                },
             ]
         }
     )
@@ -1691,6 +1721,17 @@ def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drif
     long_metadata = varied_projection.prompt_user_payload["long_tuple"]["metadata"]
     assert long_metadata == ("a", {"rank": 3}, "c")
     assert long_metadata[1] is not three_item_nested_value
+    empty_list_metadata = varied_projection.prompt_user_payload["empty_list"]["metadata"]
+    assert type(empty_list_metadata) is list
+    assert empty_list_metadata == []
+    single_list_metadata = varied_projection.prompt_user_payload["single_list"]["metadata"]
+    assert single_list_metadata == [{"rank": 10}]
+    two_list_metadata = varied_projection.prompt_user_payload["two_list"]["metadata"]
+    assert two_list_metadata == ["a", {"rank": 20}]
+    assert two_list_metadata[1] is not two_item_list_value
+    three_list_metadata = varied_projection.prompt_user_payload["three_list"]["metadata"]
+    assert three_list_metadata == ["a", {"rank": 30}, "c"]
+    assert three_list_metadata[1] is not three_item_list_value
 
 
 def test_project_retrieval_lookup_result_metadata_refusal_skips_store_projection(
