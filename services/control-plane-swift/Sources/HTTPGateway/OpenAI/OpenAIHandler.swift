@@ -4483,9 +4483,10 @@ button.primary:active {
         switch error {
         case .typeMismatch(_, let context),
              .valueNotFound(_, let context),
-             .keyNotFound(_, let context),
              .dataCorrupted(let context):
             codingPath = context.codingPath
+        case .keyNotFound(let key, let context):
+            codingPath = context.codingPath + [key]
         @unknown default:
             codingPath = []
         }

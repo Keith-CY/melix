@@ -49,9 +49,11 @@ This PR does not add real remote-provider proxy calls, backend token-logprob sup
   - Include `phase` in backend unavailable errors.
   - Include `field` and `phase` alongside prompt-budget metadata.
   - Reject explicitly unsupported OpenAI chat fields before worker dispatch.
+- [x] Incorporate PR review feedback for decode error field extraction.
+  - Cover `DecodingError.keyNotFound` so missing required keys name the missing key, not the parent container.
 - [x] Verify focused tests and changed-line coverage before full local gate.
   - `OpenAIConformanceMatrixTests`, `OpenAIHandlerTests`, and `TextEndpointContractTests` pass locally.
-  - Swift changed-line coverage for the touched scope is `97.32%` (`254/261`).
+  - Swift changed-line coverage for the touched scope is `97.67%` (`294/301`).
 - [x] Verify full local gate and PR-scoped performance before opening the PR.
   - `make swift-test` passes locally.
   - `make py-test` passes locally (`4066 passed, 14 skipped`).
