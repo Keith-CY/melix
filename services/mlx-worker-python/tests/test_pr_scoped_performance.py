@@ -5338,7 +5338,7 @@ def test_lora_reward_summary_probe_script_emits_metrics() -> None:
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["sorted_calls_mean"] == 2.0
+    assert metrics["sorted_calls_mean"] == 0.0
     assert metrics["sample_count"] == 5000.0
     assert metrics["candidate_count"] == 32.0
     assert metrics["checksum"] > 0
@@ -5356,7 +5356,7 @@ def test_lora_reward_summary_probe_script_main_covers_checked_in_file(
     assert module.main() == 0
     payload = json.loads(capsys.readouterr().out.strip())
 
-    assert payload["sorted_calls_mean"] == 2.0
+    assert payload["sorted_calls_mean"] == 0.0
     assert payload["sample_count"] == 5000.0
     assert payload["candidate_count"] == 32.0
 
