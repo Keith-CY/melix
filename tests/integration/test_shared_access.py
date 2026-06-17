@@ -56,6 +56,7 @@ def test_shared_access_accepts_known_api_keys_and_rejects_unknown_keys() -> None
         assert unknown_payload["error"]["code"] == "invalid_api_key"
         assert accepted_status == 200
         assert accepted_payload["object"] == "list"
+        assert len(accepted_payload["data"]) > 0
         assert all(item["id"] != "melix-dev-text" for item in accepted_payload["data"])
         assert values["gateway.accepted_api_key_count"] == 2
         assert values["shared_access.enabled"] == 1
@@ -108,6 +109,7 @@ def test_shared_access_disabled_rejects_api_keys_but_keeps_local_trust() -> None
         assert rejected_payload["error"]["code"] == "shared_access_disabled"
         assert local_status == 200
         assert local_payload["object"] == "list"
+        assert len(local_payload["data"]) > 0
         assert all(item["id"] != "melix-dev-text" for item in local_payload["data"])
         assert values["gateway.accepted_api_key_count"] == 2
         assert values["shared_access.enabled"] == 0

@@ -168,7 +168,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.actionTitle = actionTitle
         self.maxContext = maxContext
         self.alias = alias
-        self.visibility = visibility
+        self.visibility = visibility.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         self.typeOverrideText = typeOverrideText
         self.memoryPolicyText = memoryPolicyText
         self.diskStreamingModeText = diskStreamingModeText
@@ -3350,6 +3350,8 @@ public final class RuntimeViewModel {
     private static let startNewDiagnosticsProviderTargetID = "start-new-provider"
     private static let remoteBenchmarkUnsupportedMessage = "Remote Provider benchmark is not supported yet; select a local running provider."
     private static let remoteEvaluationUnsupportedMessage = "Remote Provider evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running provider."
+    // Catalog visibility is the primary hiding signal; keep explicit IDs as a
+    // fallback for snapshots from older control-plane builds.
     private static let hiddenPlaceholderModelIDs: Set<String> = [
         "melix-dev-text",
         "melix-dev-embed",
@@ -16784,13 +16786,9 @@ public final class RuntimeViewModel {
     }
 
     private static func isHiddenPlaceholderModel(_ model: RuntimeModelRow) -> Bool {
-        normalizedVisibility(model.visibility) == "internal"
+        model.visibility == "internal"
             || isHiddenPlaceholderModelID(model.modelID)
             || isHiddenPlaceholderModelAlias(model.alias)
-    }
-
-    private static func normalizedVisibility(_ visibility: String) -> String {
-        visibility.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private static func isHiddenPlaceholderModelID(_ modelID: String) -> Bool {

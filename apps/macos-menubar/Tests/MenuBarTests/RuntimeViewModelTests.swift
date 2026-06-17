@@ -4485,6 +4485,12 @@ struct RuntimeViewModelTests {
                         features: ["rerank"]
                     ),
                     makeCapabilityModelSummary(
+                        modelID: "melix-dev-model-ops",
+                        kind: "model_ops",
+                        state: .modelDiscovered,
+                        features: ["quantize", "download", "upload"]
+                    ),
+                    makeCapabilityModelSummary(
                         modelID: "melix-dev-ocr",
                         kind: "ocr",
                         state: .modelPinned,
@@ -8261,6 +8267,7 @@ struct RuntimeViewModelTests {
             "melix-dev-text",
             "melix-dev-embed",
             "melix-dev-rerank",
+            "melix-dev-model-ops",
             "melix-dev-ocr",
             "melix-dev-vlm",
             "melix-dev-transcribe",

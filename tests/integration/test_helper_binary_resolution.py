@@ -294,7 +294,14 @@ def test_wait_for_http_model_states_reads_capabilities_models(
 
     def fake_urlopen(request, timeout: float) -> FakeResponse:
         observed_requests.append(
-            (request.full_url, request.get_method(), dict(request.header_items()).get("X-test"))
+            (
+                request.full_url,
+                request.get_method(),
+                next(
+                    (value for key, value in request.header_items() if key.lower() == "x-test"),
+                    None,
+                ),
+            )
         )
         return FakeResponse()
 
