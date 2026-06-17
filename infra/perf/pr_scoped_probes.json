@@ -4414,6 +4414,12 @@
         "warn_abs": 2e-05
       },
       {
+        "key": "mode_parse_none_call_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_abs": 2e-05
+      },
+      {
         "key": "mode_parse_valid_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
