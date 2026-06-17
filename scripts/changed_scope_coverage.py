@@ -143,6 +143,8 @@ def _changed_lines_by_path(repo_root: Path, rel_paths: list[str]) -> dict[str, s
 def _coverage_path_allowlist_from_raw(raw_value: str) -> frozenset[str] | None:
     if not raw_value:
         return None
+    if raw_value == "[]":
+        return frozenset()
     if (
         len(raw_value) >= 2
         and raw_value[0] == '"'
