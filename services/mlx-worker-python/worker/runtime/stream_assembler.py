@@ -614,14 +614,13 @@ class RequestStreamAssembler:
         if fragment.parser_observation:
             deltas = self._annotate_deltas(deltas, fragment.parser_observation)
         if token_ids and token_logprobs:
-            return self._attach_direct_token_metadata(deltas, fragment, delta)
+            return self._attach_direct_token_metadata(deltas, fragment)
         return deltas
 
     @staticmethod
     def _attach_direct_token_metadata(
         deltas: list[AssemblyDelta],
         fragment: StreamFragment,
-        emitted_delta: str,
     ) -> list[AssemblyDelta]:
         if (
             len(deltas) != 1
@@ -629,7 +628,7 @@ class RequestStreamAssembler:
             or not fragment.token_ids
             or not fragment.token_logprobs
             or len(fragment.token_ids) != len(fragment.token_logprobs)
-            or emitted_delta not in (fragment.text, fragment.raw_text)
+            or deltas[0].content_text not in (fragment.text, fragment.raw_text)
         ):
             return deltas
         return [

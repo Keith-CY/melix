@@ -772,11 +772,11 @@ class EngineCore:
                         phase=common_pb2.EXECUTION_DECODING,
                         admission_state=common_pb2.ADMISSION_ADMITTED,
                         token_delta=inference_pb2.TokenDelta(
-                            text=runtime_event.text,
+                            text=runtime_event.text or "",
                             raw_text=runtime_event.raw_text or "",
-                            parser_observation=runtime_event.parser_observation,
-                            token_ids=runtime_event.token_ids,
-                            token_logprobs=runtime_event.token_logprobs,
+                            parser_observation=runtime_event.parser_observation or "",
+                            token_ids=runtime_event.token_ids or (),
+                            token_logprobs=runtime_event.token_logprobs or (),
                         ),
                     )
 

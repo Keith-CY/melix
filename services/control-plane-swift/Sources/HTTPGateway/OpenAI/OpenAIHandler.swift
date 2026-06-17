@@ -4022,10 +4022,14 @@ button.primary:active {
             switch event.payload {
             case .tokenDelta(let delta):
                 tokenText += delta.text
-                if delta.tokenIds.isEmpty && delta.tokenLogprobs.isEmpty {
+                if delta.text.isEmpty {
+                    if delta.tokenIds.isEmpty && delta.tokenLogprobs.isEmpty {
+                        continue
+                    }
+                    aggregate.hasIncompleteLogprobEvidence = true
                     continue
                 }
-                if delta.tokenIds.count == 1, delta.tokenLogprobs.count == 1, !delta.text.isEmpty {
+                if delta.tokenIds.count == 1, delta.tokenLogprobs.count == 1 {
                     aggregate.tokenLogprobs.append(
                         NonStreamChatCompletionAggregate.TokenLogprob(
                             token: delta.text,
