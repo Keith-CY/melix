@@ -23,7 +23,7 @@ struct SSEStreamWriterTests {
             writer.encode(stream: stream, requestID: "req-1", modelID: "melix-dev-text")
         )
 
-        #expect(payload.contains("event: message"))
+        #expect(payload.contains("event: message") == false)
         #expect(payload.contains("\"content\":\"A\""))
         #expect(payload.contains("event: heartbeat"))
         #expect(payload.contains("\"unix_ms\":99"))
@@ -33,10 +33,137 @@ struct SSEStreamWriterTests {
         #expect(orderedRanges(in: payload, needles: [
             "\"content\":\"A\"",
             "\"unix_ms\":99",
-            "\"prompt_tokens\":3",
             "\"finish_reason\":\"stop\"",
+            "\"prompt_tokens\":3",
             "data: [DONE]",
         ]))
+    }
+
+    @Test("chat completion data frames stay unnamed and pure under data-only parsing")
+    func chatCompletionDataFramesStayUnnamedAndPure() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) }, keepaliveInterval: nil)
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makeTokenEvent(requestID: "req-pure", seq: 1, text: "A"))
+            continuation.yield(makeToolCallEvent(
+                requestID: "req-pure",
+                seq: 2,
+                callID: "tool-1",
+                toolName: "search",
+                argumentsJSONFragment: "{\"q\":\"melix\"}",
+                fragmentIndex: 1
+            ))
+            continuation.yield(makeUsageEvent(requestID: "req-pure", seq: 3, promptTokens: 3, completionTokens: 2))
+            continuation.yield(makeCompletedEvent(requestID: "req-pure", seq: 4, finishReason: "tool_calls", assistantText: ""))
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(stream: stream, requestID: "req-pure", modelID: "melix-dev-text")
+        )
+
+        let unnamedRecords = parseSSERecords(payload).filter { $0.event == nil }
+        #expect(unnamedRecords.count >= 4)
+        for record in unnamedRecords {
+            if record.data == "[DONE]" {
+                continue
+            }
+            let object = try JSONSerialization.jsonObject(with: Data(record.data.utf8))
+            let json = try #require(object as? [String: Any])
+            #expect(json["object"] as? String == "chat.completion.chunk")
+        }
+        let usageIndex = try #require(unnamedRecords.firstIndex { $0.data.contains("\"prompt_tokens\":3") })
+        let finishIndex = try #require(unnamedRecords.firstIndex { $0.data.contains("\"finish_reason\":\"tool_calls\"") })
+        let doneIndex = try #require(unnamedRecords.firstIndex { $0.data == "[DONE]" })
+        #expect(finishIndex < usageIndex)
+        #expect(usageIndex < doneIndex)
+    }
+
+    @Test("chat completion streams drop prefill events by default")
+    func dropsPrefillEventsByDefault() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) }, keepaliveInterval: nil)
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makePrefillStartedEvent(requestID: "req-warmup-off", seq: 1, inputTokens: 9))
+            continuation.yield(makePrefillProgressEvent(requestID: "req-warmup-off", seq: 2, processedTokens: 4, totalTokens: 9))
+            continuation.yield(makeTokenEvent(requestID: "req-warmup-off", seq: 3, text: "A"))
+            continuation.yield(makeCompletedEvent(requestID: "req-warmup-off", seq: 4, finishReason: "stop", assistantText: "A"))
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(stream: stream, requestID: "req-warmup-off", modelID: "melix-dev-text")
+        )
+
+        #expect(payload.contains("prefill") == false)
+        #expect(payload.contains("\"event_seq\"") == false)
+        #expect(payload.contains("\"content\":\"A\""))
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("chat completion streams emit named prefill progress events when opted in")
+    func emitsNamedPrefillProgressWhenOptedIn() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) }, keepaliveInterval: nil)
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makePrefillStartedEvent(requestID: "req-prefill-on", seq: 1, inputTokens: 9))
+            continuation.yield(makePrefillProgressEvent(requestID: "req-prefill-on", seq: 2, processedTokens: 4, totalTokens: 9))
+            continuation.yield(makeTokenEvent(requestID: "req-prefill-on", seq: 3, text: "A"))
+            continuation.yield(makeCompletedEvent(requestID: "req-prefill-on", seq: 4, finishReason: "stop", assistantText: "A"))
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "req-prefill-on",
+                modelID: "melix-dev-text",
+                options: .init(includeUsage: true, includePrefillProgress: true)
+            )
+        )
+
+        #expect(payload.contains("event: prefill_progress"))
+        #expect(payload.contains("\"phase\":\"started\""))
+        #expect(payload.contains("\"input_tokens\":9"))
+        #expect(payload.contains("\"phase\":\"progress\""))
+        #expect(payload.contains("\"processed_tokens\":4"))
+        #expect(payload.contains("\"total_tokens\":9"))
+
+        let unnamedRecords = parseSSERecords(payload).filter { $0.event == nil }
+        for record in unnamedRecords {
+            if record.data == "[DONE]" {
+                continue
+            }
+            let object = try JSONSerialization.jsonObject(with: Data(record.data.utf8))
+            let json = try #require(object as? [String: Any])
+            #expect(json["object"] as? String == "chat.completion.chunk")
+        }
+    }
+
+    @Test("completions streams drop prefill events by default")
+    func completionsShapeDropsPrefillEventsByDefault() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) }, keepaliveInterval: nil)
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makePrefillStartedEvent(requestID: "cmp-warmup-off", seq: 1, inputTokens: 5))
+            continuation.yield(makeTokenEvent(requestID: "cmp-warmup-off", seq: 2, text: "A"))
+            continuation.yield(makeCompletedEvent(requestID: "cmp-warmup-off", seq: 3, finishReason: "stop", assistantText: "A"))
+            continuation.finish()
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "cmp-warmup-off",
+                modelID: "melix-dev-text",
+                shape: .completions
+            )
+        )
+
+        #expect(payload.contains("prefill") == false)
+        #expect(payload.contains("event: message") == false)
+        #expect(payload.contains("\"text\":\"A\""))
+        #expect(payload.contains("data: [DONE]"))
     }
 
     @Test("SSE suppresses usage frames when includeUsage is disabled")
@@ -275,8 +402,8 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
-    @Test("chat completion streams emit fallback frames for untyped events")
-    func emitsChatFallbackFrames() async throws {
+    @Test("chat completion streams drop untyped events instead of framing them")
+    func dropsChatFallbackFrames() async throws {
         let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
 
         let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
@@ -292,9 +419,10 @@ struct SSEStreamWriterTests {
             writer.encode(stream: stream, requestID: "req-fallback", modelID: "melix-dev-text")
         )
 
-        #expect(payload.contains("event: message"))
-        #expect(payload.contains("\"request_id\":\"req-fallback\""))
-        #expect(payload.contains("\"event_seq\":9"))
+        #expect(payload.contains("event: message") == false)
+        #expect(payload.contains("\"event_seq\"") == false)
+        #expect(payload.contains("\"id\":\"req-fallback\""))
+        #expect(payload.contains("\"finish_reason\":\"stop\""))
         #expect(payload.contains("data: [DONE]"))
     }
 
@@ -392,10 +520,16 @@ struct SSEStreamWriterTests {
 
         #expect(payload.contains("\"object\":\"text_completion\""))
         #expect(payload.contains("\"text\":\"A\""))
-        #expect(payload.contains("event: usage"))
+        #expect(payload.contains("event: usage") == false)
         #expect(payload.contains("\"prompt_tokens\":4"))
+        #expect(payload.contains("\"total_tokens\":5"))
         #expect(payload.contains("\"finish_reason\":\"stop\""))
         #expect(payload.contains("data: [DONE]"))
+        #expect(orderedRanges(in: payload, needles: [
+            "\"finish_reason\":\"stop\"",
+            "\"prompt_tokens\":4",
+            "data: [DONE]",
+        ]))
     }
 
     @Test("messages streams emit delta heartbeat completion fallback and done frames")
@@ -439,7 +573,7 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
-    @Test("completions streams emit heartbeat error fallback and done frames")
+    @Test("completions streams emit heartbeat and error frames while dropping fallback events")
     func emitsCompletionsHeartbeatErrorAndFallbackFrames() async throws {
         let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
 
@@ -468,8 +602,8 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("\"unix_ms\":654"))
         #expect(payload.contains("event: error"))
         #expect(payload.contains("\"code\":\"runtime_error\""))
-        #expect(payload.contains("event: message"))
-        #expect(payload.contains("\"event_seq\":3"))
+        #expect(payload.contains("event: message") == false)
+        #expect(payload.contains("\"event_seq\"") == false)
         #expect(payload.contains("data: [DONE]"))
     }
 
@@ -569,11 +703,11 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("\"parser_mode\":\"qwen\""))
         #expect(payload.contains("\"parser_namespaces\":[\"tools.search\"]"))
         #expect(payload.contains("\"parser_fallback_mode\":\"xml\""))
+        #expect(payload.contains("event: message") == false)
         #expect(orderedRanges(in: payload, needles: [
             "event: reasoning",
-            "event: message",
             "\"tool_calls\"",
-            "event: message",
+            "\"finish_reason\":\"stop\"",
             "data: [DONE]",
         ]))
     }

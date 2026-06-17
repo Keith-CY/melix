@@ -3595,7 +3595,8 @@ public struct OpenAIHandler: Sendable {
             shape: shape,
             toolParser: ToolParserSelection(executionExt: translated.workerRequest.execution.ext),
             options: SSEStreamWriter.StreamOptions(
-                includeUsage: translated.workerRequest.execution.ext["melix.stream.include_usage"] == "true"
+                includeUsage: translated.workerRequest.execution.ext["melix.stream.include_usage"] == "true",
+                includePrefillProgress: translated.workerRequest.execution.ext["melix.stream.include_prefill_progress"] == "true"
             ),
             onComplete: { [modelCatalog] in
                 await modelCatalog.finishRequest(modelID: translated.modelID)

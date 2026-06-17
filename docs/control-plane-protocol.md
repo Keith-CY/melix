@@ -542,6 +542,34 @@ to endpoint-specific SSE frames, and the control plane may use tool-result
 non-stream assistant text remains derived from public token deltas and completed
 assistant text only.
 
+### OpenAI SSE Framing And Prefill Progress
+
+The strict OpenAI-compatible stream shapes — Chat Completions and Completions —
+emit every OpenAI payload as an unnamed `data:` chunk. The gateway must not
+prefix these chunks with an `event:` name and must not inject non-OpenAI fields
+into the unnamed data channel, so SDK clients that parse only `data:` lines see
+a pure OpenAI stream. The Responses and Messages shapes keep their own
+protocol-specific named events because those protocols define them.
+
+Usage, on the strict shapes, is emitted as a trailing OpenAI chunk with an empty
+`choices` array and a `usage` object, after the finish chunk and before the
+terminal `data: [DONE]`. It is suppressed entirely unless the request opts in
+through `stream_options.include_usage`.
+
+Non-OpenAI telemetry never rides the unnamed `data:` channel. Reasoning,
+heartbeat, annotation, tool-result, and error frames use named SSE events, and
+worker events that have no OpenAI representation (queue, admission, cache, and
+prefill lifecycle payloads) are dropped from strict shapes by default.
+
+Prefill progress is opt-in. A client enables it with
+`stream_options.include_prefill_progress`, which the request layer records as the
+`melix.stream.include_prefill_progress` execution receipt. When enabled, the
+gateway emits prefill lifecycle as a named `event: prefill_progress` frame whose
+data carries `object: melix.prefill_progress`, a `phase` of `started` or
+`progress`, and the token counts. Because it is a named event, it stays invisible
+to strict OpenAI `data:`-only parsing; when the option is absent, prefill events
+produce no frame at all.
+
 Malformed or truncated tool fragments are recoverable parser observations. They should increment parser metrics and be skipped rather than fail the request. Display cleanup is not structural parsing; cleanup must not collapse meaningful leading or trailing content whitespace and must not re-emit generation-prefix control tokens.
 
 JSON-only structured-output requests without explicit tools suppress generic model-default tool parsing. The worker must not validate or output reasoning preambles as JSON content; any reasoning prefix is stripped before structured-output validation.

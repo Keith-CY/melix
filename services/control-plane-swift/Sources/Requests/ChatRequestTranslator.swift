@@ -402,13 +402,19 @@ public struct TranslatedChatRequest: Sendable {
 
 public struct OpenAIStreamOptions: Codable, Sendable, Equatable {
     public let includeUsage: Bool?
+    public let includePrefillProgress: Bool?
 
     enum CodingKeys: String, CodingKey {
         case includeUsage = "include_usage"
+        case includePrefillProgress = "include_prefill_progress"
     }
 
-    public init(includeUsage: Bool? = nil) {
+    public init(
+        includeUsage: Bool? = nil,
+        includePrefillProgress: Bool? = nil
+    ) {
         self.includeUsage = includeUsage
+        self.includePrefillProgress = includePrefillProgress
     }
 }
 
@@ -958,6 +964,9 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         if let topLogprobs {
             receipts["melix.openai.top_logprobs.requested"] = String(topLogprobs)
             receipts["melix.openai.logprobs.effective"] = "unsupported"
+        }
+        if streamOptions?.includePrefillProgress == true {
+            receipts["melix.stream.include_prefill_progress"] = "true"
         }
         return receipts
     }
