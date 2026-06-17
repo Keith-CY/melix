@@ -237,6 +237,10 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["metric_prefix_elapsed_ms_mean"] >= 0.0
     assert metrics["target_field_elapsed_ms_mean"] >= 0.0
     assert metrics["matrix_roles_elapsed_ms_mean"] >= 0.0
+    assert metrics["dict_list_elapsed_ms_mean"] >= 0.0
+    assert metrics["dict_list_identity_hits"] == (
+        max(1.0, metrics["iterations"] / 50.0) * metrics["sample_count"]
+    )
     assert metrics["run_kind_count"] == 65.0
     assert metrics["metric_prefix_count"] == 65.0
     assert metrics["target_field_count"] == 65.0

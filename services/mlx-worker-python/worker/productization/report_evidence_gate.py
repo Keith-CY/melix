@@ -4,7 +4,7 @@ import heapq
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import AbstractSet, Any, Iterator
+from typing import AbstractSet, Any, Iterator, cast
 
 from worker.productization.benchmark_evaluation_report import validate_report_payload
 
@@ -532,4 +532,7 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
 def _dict_list(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
-    return [item for item in value if isinstance(item, dict)]
+    for item in value:
+        if not isinstance(item, dict):
+            return [item for item in value if isinstance(item, dict)]
+    return cast(list[dict[str, object]], value)
