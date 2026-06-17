@@ -10499,26 +10499,21 @@ struct DesktopAPICompanionStatusPanel: View {
 
         MelixSectionCard("Companion Status") {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(presentation.statusTitle)
-                            .font(.headline)
-                        Text(presentation.statusDetail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                ViewThatFits(in: .horizontal) {
+                    companionStatusHeader(presentation)
+                        .fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .leading, spacing: 8) {
+                        companionStatusTitle(presentation)
+                        companionStatusRefreshButton(presentation)
                     }
-                    Spacer()
-                    Button("Refresh Status") {
-                        Task { await viewModel.refreshCompanionStatus() }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(presentation.refreshDisabled)
                 }
 
                 if let errorText = presentation.errorText {
                     Text(errorText)
                         .font(.caption)
                         .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                        .lineLimit(3)
+                        .truncationMode(.tail)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -10532,20 +10527,38 @@ struct DesktopAPICompanionStatusPanel: View {
                     } else {
                         ForEach(presentation.logRows) { row in
                             VStack(alignment: .leading, spacing: 4) {
-                                HStack(alignment: .firstTextBaseline) {
-                                    Text(row.title)
-                                        .font(.caption.weight(.semibold))
-                                    Spacer()
-                                    Text(row.timeText)
-                                        .font(.caption.monospacedDigit())
-                                        .foregroundStyle(.secondary)
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(row.title)
+                                            .font(.caption.weight(.semibold))
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Spacer()
+                                        Text(row.timeText)
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(row.title)
+                                            .font(.caption.weight(.semibold))
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Text(row.timeText)
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                                 Text(row.detail)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .truncationMode(.tail)
                                 Text(row.redactionText)
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
+                                    .lineLimit(3)
+                                    .truncationMode(.tail)
                             }
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -10558,11 +10571,50 @@ struct DesktopAPICompanionStatusPanel: View {
                     Text("Logs: \(redactionText)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .truncationMode(.tail)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(
+                minWidth: 0,
+                idealWidth: DesktopAPICompanionStatusLayout.compactContentWidth,
+                maxWidth: .infinity,
+                alignment: .leading
+            )
         }
     }
+
+    private func companionStatusHeader(_ presentation: DesktopAPICompanionStatusPresentation) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            companionStatusTitle(presentation)
+            Spacer()
+            companionStatusRefreshButton(presentation)
+        }
+    }
+
+    private func companionStatusTitle(_ presentation: DesktopAPICompanionStatusPresentation) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(presentation.statusTitle)
+                .font(.headline)
+            Text(presentation.statusDetail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .truncationMode(.tail)
+        }
+    }
+
+    private func companionStatusRefreshButton(_ presentation: DesktopAPICompanionStatusPresentation) -> some View {
+        Button("Refresh Status") {
+            Task { await viewModel.refreshCompanionStatus() }
+        }
+        .buttonStyle(.bordered)
+        .disabled(presentation.refreshDisabled)
+    }
+}
+
+enum DesktopAPICompanionStatusLayout {
+    static let compactContentWidth: CGFloat = 320
 }
 
 struct DesktopAPICompanionStatusPresentation: Equatable {
