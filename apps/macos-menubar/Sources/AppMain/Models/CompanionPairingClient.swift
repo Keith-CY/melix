@@ -13,6 +13,7 @@ public enum CompanionPairingPhase: String, Codable, Equatable, Sendable {
 
 public struct CompanionPairingDescriptor: Codable, Equatable, Sendable {
     public let schemaVersion: String
+    public let mobileURL: String
     public let statusURL: String
     public let resumeHeader: String
     public let tokenTransport: String
@@ -22,6 +23,7 @@ public struct CompanionPairingDescriptor: Codable, Equatable, Sendable {
 
     public init(
         schemaVersion: String,
+        mobileURL: String = "",
         statusURL: String,
         resumeHeader: String,
         tokenTransport: String,
@@ -30,6 +32,7 @@ public struct CompanionPairingDescriptor: Codable, Equatable, Sendable {
         expiresAtUnixMS: Int64
     ) {
         self.schemaVersion = schemaVersion
+        self.mobileURL = mobileURL
         self.statusURL = statusURL
         self.resumeHeader = resumeHeader
         self.tokenTransport = tokenTransport
@@ -71,6 +74,7 @@ public struct CompanionPairingState: Equatable, Sendable, CustomStringConvertibl
     public var phase: CompanionPairingPhase
     public var sessionID: String
     public var scope: String
+    public var mobileURL: String
     public var statusURL: String
     public var resumeHeader: String
     public var tokenTransport: String
@@ -83,6 +87,7 @@ public struct CompanionPairingState: Equatable, Sendable, CustomStringConvertibl
         phase: CompanionPairingPhase = .idle,
         sessionID: String = "",
         scope: String = "",
+        mobileURL: String = "",
         statusURL: String = "",
         resumeHeader: String = "",
         tokenTransport: String = "",
@@ -94,6 +99,7 @@ public struct CompanionPairingState: Equatable, Sendable, CustomStringConvertibl
         self.phase = phase
         self.sessionID = sessionID
         self.scope = scope
+        self.mobileURL = mobileURL
         self.statusURL = statusURL
         self.resumeHeader = resumeHeader
         self.tokenTransport = tokenTransport
@@ -108,7 +114,7 @@ public struct CompanionPairingState: Equatable, Sendable, CustomStringConvertibl
     }
 
     public var description: String {
-        "CompanionPairingState(phase: \(phase.rawValue), sessionID: \(sessionID), scope: \(scope), statusURL: \(statusURL), resumeHeader: \(resumeHeader), tokenTransport: \(tokenTransport), allowedRoutes: \(allowedRoutes), forbiddenCapabilities: \(forbiddenCapabilities), expiresAtUnixMS: \(expiresAtUnixMS), lastError: \(String(describing: lastError)))"
+        "CompanionPairingState(phase: \(phase.rawValue), sessionID: \(sessionID), scope: \(scope), mobileURL: \(mobileURL), statusURL: \(statusURL), resumeHeader: \(resumeHeader), tokenTransport: \(tokenTransport), allowedRoutes: \(allowedRoutes), forbiddenCapabilities: \(forbiddenCapabilities), expiresAtUnixMS: \(expiresAtUnixMS), lastError: \(String(describing: lastError)))"
     }
 
     static func active(from result: CompanionPairingIssueResult) -> CompanionPairingState {
@@ -116,6 +122,7 @@ public struct CompanionPairingState: Equatable, Sendable, CustomStringConvertibl
             phase: .active,
             sessionID: result.sessionID,
             scope: result.scope,
+            mobileURL: result.pairing.mobileURL,
             statusURL: result.pairing.statusURL,
             resumeHeader: result.resumeHeader,
             tokenTransport: result.pairing.tokenTransport,
@@ -254,6 +261,7 @@ private struct CompanionPairingIssueResponse: Decodable {
 
     struct Pairing: Decodable {
         let schemaVersion: String
+        let mobileURL: String
         let statusURL: String
         let resumeHeader: String
         let tokenTransport: String
@@ -261,8 +269,21 @@ private struct CompanionPairingIssueResponse: Decodable {
         let forbiddenCapabilities: [String]
         let expiresAtUnixMS: Int64
 
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            schemaVersion = try container.decode(String.self, forKey: .schemaVersion)
+            mobileURL = try container.decodeIfPresent(String.self, forKey: .mobileURL) ?? ""
+            statusURL = try container.decode(String.self, forKey: .statusURL)
+            resumeHeader = try container.decode(String.self, forKey: .resumeHeader)
+            tokenTransport = try container.decode(String.self, forKey: .tokenTransport)
+            allowedRoutes = try container.decode([Route].self, forKey: .allowedRoutes)
+            forbiddenCapabilities = try container.decode([String].self, forKey: .forbiddenCapabilities)
+            expiresAtUnixMS = try container.decode(Int64.self, forKey: .expiresAtUnixMS)
+        }
+
         enum CodingKeys: String, CodingKey {
             case schemaVersion = "schema_version"
+            case mobileURL = "mobile_url"
             case statusURL = "status_url"
             case resumeHeader = "resume_header"
             case tokenTransport = "token_transport"
@@ -291,6 +312,7 @@ private struct CompanionPairingIssueResponse: Decodable {
         func descriptor() -> CompanionPairingDescriptor {
             CompanionPairingDescriptor(
                 schemaVersion: schemaVersion,
+                mobileURL: mobileURL,
                 statusURL: statusURL,
                 resumeHeader: resumeHeader,
                 tokenTransport: tokenTransport,

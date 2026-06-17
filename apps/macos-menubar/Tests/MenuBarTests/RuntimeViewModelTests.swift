@@ -1582,10 +1582,14 @@ struct RuntimeViewModelTests {
                 resumeToken: "melix_companion_secret",
                 pairing: CompanionPairingDescriptor(
                     schemaVersion: "melix.companion.pairing.v1",
+                    mobileURL: "http://127.0.0.1:18081/v1/melix/companion",
                     statusURL: "http://127.0.0.1:18081/v1/melix/companion/status",
                     resumeHeader: "x-melix-session",
                     tokenTransport: "resume_header",
-                    allowedRoutes: ["/v1/melix/companion/status"],
+                    allowedRoutes: [
+                        "GET /v1/melix/companion",
+                        "GET /v1/melix/companion/status",
+                    ],
                     forbiddenCapabilities: ["run_inference", "mutate_runtime", "read_private_prompts"],
                     expiresAtUnixMS: 1_718_000_000_000
                 )
@@ -1617,14 +1621,19 @@ struct RuntimeViewModelTests {
         #expect(request.apiKey == "melix_primary_desktop")
         #expect(viewModel.companionPairing.phase == .active)
         #expect(viewModel.companionPairing.sessionID == "companion-session-1")
+        #expect(viewModel.companionPairing.mobileURL == "http://127.0.0.1:18081/v1/melix/companion")
         #expect(viewModel.companionPairing.statusURL == "http://127.0.0.1:18081/v1/melix/companion/status")
         #expect(viewModel.companionPairing.resumeHeader == "x-melix-session")
-        #expect(viewModel.companionPairing.allowedRoutes == ["/v1/melix/companion/status"])
+        #expect(viewModel.companionPairing.allowedRoutes == [
+            "GET /v1/melix/companion",
+            "GET /v1/melix/companion/status",
+        ])
         #expect(viewModel.companionPairing.copyBundleAvailable)
         #expect(String(describing: viewModel.companionPairing).contains("melix_companion_secret") == false)
         let copyBundle = try #require(viewModel.companionPairingBundleText())
         #expect(copyBundle.contains("melix_companion_secret"))
         #expect(copyBundle.contains("melix.companion.pairing.bundle.v1"))
+        #expect(copyBundle.contains("\"mobile_url\" : \"http://127.0.0.1:18081/v1/melix/companion\""))
         #expect(copyBundle.contains("http://127.0.0.1:18081/v1/melix/companion/status"))
         let pairingCode = try #require(viewModel.companionPairingCodeText())
         #expect(pairingCode.hasPrefix("melix-companion:"))
@@ -1862,10 +1871,12 @@ struct RuntimeViewModelTests {
             "scope": "companion_read_only",
             "token_transport": "resume_header",
             "resume_header": "x-melix-session",
+            "mobile_url": "http://127.0.0.1:12436/v1/melix/companion",
             "status_url": "http://127.0.0.1:12436/v1/melix/companion/status",
             "expires_at_unix_ms": 1718000000000,
             "allowed_origins": [],
             "allowed_routes": [
+              {"method": "GET", "path": "/v1/melix/companion"},
               {"method": "GET", "path": "/v1/melix/companion/status"},
               {"method": "delete", "path": "/v1/melix/auth/session"}
             ],
@@ -1887,8 +1898,10 @@ struct RuntimeViewModelTests {
         #expect(result.resumeHeader == "x-melix-session")
         #expect(result.resumeToken == "melix_live_secret")
         #expect(result.pairing.schemaVersion == "melix.companion.pairing.v1")
+        #expect(result.pairing.mobileURL == "http://127.0.0.1:12436/v1/melix/companion")
         #expect(result.pairing.statusURL == "http://127.0.0.1:12436/v1/melix/companion/status")
         #expect(result.pairing.allowedRoutes == [
+            "GET /v1/melix/companion",
             "GET /v1/melix/companion/status",
             "DELETE /v1/melix/auth/session",
         ])

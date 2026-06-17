@@ -74,6 +74,7 @@ Expected response:
 - `resume.header = "x-melix-session"`
 - `resume.token` present
 - `pairing.schema_version = "melix.companion.pairing.v1"`
+- `pairing.mobile_url` points at `/v1/melix/companion`
 - `pairing.status_url` points at `/v1/melix/companion/status`
 - `pairing.allowed_routes` lists the read-only companion routes and
   self-revocation route
@@ -98,10 +99,12 @@ Operator actions:
 - `Issue Token` calls `POST /v1/melix/auth/session` with `remember_me = true`
   and `scope = companion_read_only`.
 - `Copy Bundle` copies a one-time JSON bundle containing the descriptor and the
-  raw companion token for the operator to transfer to a companion client.
+  raw companion token for the operator to transfer to a companion client. The
+  bundle includes `mobile_url` so a trusted local browser can open the companion
+  status page directly.
 - `Copy Code` copies a compact `melix-companion:` pairing code. The code is a
   URL-safe-base64 encoding of the same transient JSON bundle and is intended for
-  future QR/code transfer surfaces.
+  QR/code transfer surfaces.
 - `Pairing QR` renders the same compact `melix-companion:` pairing code as a
   local QR preview for trusted companion-device import.
 - `Revoke Token` calls `DELETE /v1/melix/auth/session` with the active companion
@@ -141,6 +144,31 @@ The deterministic desktop smoke also renders the loaded `Companion Status`
 panel at a phone-like `360x640` viewport. That smoke verifies the read-only
 status title, redacted log-tail rows, redaction summary, and generated PNG
 capture without requiring a real companion device or desktop window.
+
+### Browser Companion Status Page
+
+The gateway serves a dependency-free browser status shell at
+`pairing.mobile_url`, which resolves to `GET /v1/melix/companion`. Open this URL
+from a trusted local browser or local companion device that can reach the
+gateway host and port. The page is read-only and fetches live data through
+`pairing.status_url`.
+
+Operator actions:
+
+- Paste the active companion token from the transient desktop bundle or pairing
+  code into the `Device Token` field.
+- `Save Device Token` stores that token in browser `localStorage` on the
+  current device only.
+- `Refresh Status` calls `/v1/melix/companion/status` with the
+  `x-melix-session` header and renders runtime, model, queue, recent job, and
+  redacted log-tail summaries.
+- `Clear Device Token` removes the browser-local token copy from
+  `localStorage`.
+
+The page does not issue tokens, revoke tokens, expose mutating routes, or render
+raw logs. Treat a browser with a saved device token as bearer-authenticated
+until the token is cleared locally or revoked through the desktop controls or
+`DELETE /v1/melix/auth/session`.
 
 ### Reuse The Session
 
@@ -254,3 +282,4 @@ touched scope:
 - `persistent_session.retention_ttl_seconds`
 - `companion.status_refresh_ms`
 - `companion.status_refresh_failures`
+- `companion.mobile_page_served_count`

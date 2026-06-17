@@ -972,8 +972,12 @@ struct OpenAIHandlerTests {
         #expect(pairing["resume_header"] as? String == "x-melix-session")
         #expect(pairing["token_transport"] as? String == "resume_header")
         #expect(pairing["status_url"] as? String == "http://127.0.0.1:12499/v1/melix/companion/status")
+        #expect(pairing["mobile_url"] as? String == "http://127.0.0.1:12499/v1/melix/companion")
         #expect(pairing["expires_at_unix_ms"] as? Int == 3_601_000)
         #expect(pairing["allowed_origins"] as? [String] == ["http://127.0.0.1:52499"])
+        #expect(allowedRoutes.contains { route in
+            route["method"] as? String == "GET" && route["path"] as? String == "/v1/melix/companion"
+        })
         #expect(allowedRoutes.contains { route in
             route["method"] as? String == "GET" && route["path"] as? String == "/v1/melix/companion/status"
         })
@@ -989,15 +993,116 @@ struct OpenAIHandlerTests {
 
         let loopbackResult = try await createPairingDescriptor(host: "127.0.0.1", port: 12_500)
         #expect(loopbackResult.pairing["status_url"] as? String == "http://127.0.0.1:12500/v1/melix/companion/status")
+        #expect(loopbackResult.pairing["mobile_url"] as? String == "http://127.0.0.1:12500/v1/melix/companion")
 
         let emptyHostResult = try await createPairingDescriptor(host: "   \n", port: 12_501)
         #expect(emptyHostResult.pairing["status_url"] as? String == "http://127.0.0.1:12501/v1/melix/companion/status")
+        #expect(emptyHostResult.pairing["mobile_url"] as? String == "http://127.0.0.1:12501/v1/melix/companion")
 
         let ipv6Result = try await createPairingDescriptor(host: "fd00::1", port: 12_502)
         #expect(ipv6Result.pairing["status_url"] as? String == "http://[fd00::1]:12502/v1/melix/companion/status")
+        #expect(ipv6Result.pairing["mobile_url"] as? String == "http://[fd00::1]:12502/v1/melix/companion")
 
         let bracketedIPv6Result = try await createPairingDescriptor(host: "[fd00::2]", port: 12_503)
         #expect(bracketedIPv6Result.pairing["status_url"] as? String == "http://[fd00::2]:12503/v1/melix/companion/status")
+        #expect(bracketedIPv6Result.pairing["mobile_url"] as? String == "http://[fd00::2]:12503/v1/melix/companion")
+    }
+
+    @Test("companion mobile status page serves read-only shell for companion tokens")
+    func companionMobileStatusPageServesReadOnlyShellForCompanionTokens() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-companion-mobile-page-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(
+                host: "0.0.0.0",
+                port: 12_499,
+                allowedOrigins: ["http://127.0.0.1:52499"]
+            ),
+            persistentAuthSessionStore: PersistentAuthSessionStore(
+                storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                metricsStore: metricsStore,
+                retentionTTLSeconds: 3_600,
+                nowUnixMs: { 1_000 }
+            )
+        )
+
+        let createResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("""
+                {
+                  "remember_me": true,
+                  "scope": "companion_read_only"
+                }
+                """.data(using: .utf8))
+            )
+        )
+        let createPayload = try await jsonPayload(from: createResponse.body)
+        let resume = try #require(createPayload["resume"] as? [String: Any])
+        let token = try #require(resume["token"] as? String)
+        let pairing = try #require(createPayload["pairing"] as? [String: Any])
+
+        let companionPage = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion",
+                headers: ["X-Melix-Session": token],
+                body: Data()
+            )
+        )
+        let pageBody = try await collectBody(companionPage.body)
+
+        let companionMutation = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: [
+                    "content-type": "application/json",
+                    "X-Melix-Session": token,
+                ],
+                body: Data("{\"model\":\"melix-dev-text\",\"messages\":[]}".utf8)
+            )
+        )
+
+        #expect(createResponse.statusCode == 200)
+        #expect(pairing["mobile_url"] as? String == "http://127.0.0.1:12499/v1/melix/companion")
+        #expect(companionPage.statusCode == 200)
+        #expect(companionPage.headers["content-type"] == "text/html; charset=utf-8")
+        #expect(pageBody.contains("<meta name=\"viewport\""))
+        #expect(pageBody.contains("Melix Companion"))
+        #expect(pageBody.contains("/v1/melix/companion/status"))
+        #expect(pageBody.contains("x-melix-session"))
+        #expect(pageBody.contains("companion_read_only"))
+        #expect(pageBody.contains("Redacted Log Tail"))
+        #expect(pageBody.contains("localStorage"))
+        #expect(pageBody.contains("POST /v1/chat/completions") == false)
+        #expect(pageBody.contains("/v1/images/generations") == false)
+        #expect(pageBody.contains("Issue Token") == false)
+        #expect(pageBody.contains(token) == false)
+        #expect(companionMutation.statusCode == 403)
+        #expect(await metricsStore.value(forKey: "companion.mobile_page_served_count") == 1)
     }
 
     @Test("companion status endpoint returns redacted runtime queue job and session summary")
