@@ -88,7 +88,7 @@ class VisionProbeSnapshot:
     text_batch_generator_speculative_cache_ops_ms_total: float = 0.0
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class VisionCacheEntry:
     cache_identity: str
     scope_id: str
