@@ -13,6 +13,8 @@ _STR = str
 
 def _strip_manifest_text(value: Any) -> str:
     if type(value) is str:
+        if value and not value[0].isspace() and not value[-1].isspace():
+            return value
         return value.strip()
     return _STR(value).strip()
 
@@ -150,9 +152,11 @@ def _trajectory_provenance_from_snapshot_manifest(
 ) -> dict[str, Any]:
     manifest_get = manifest.get
     strip_text = _strip_manifest_text
-    if (
-        strip_text(manifest_get("format", "")) != "agentic_tool_trace"
-        and not strip_text(manifest_get("trajectory_trace_digest", ""))
+    format_value = manifest_get("format", "")
+    trace_digest_value = manifest_get("trajectory_trace_digest", "")
+    if format_value != "agentic_tool_trace" and (
+        strip_text(format_value) != "agentic_tool_trace"
+        and not strip_text(trace_digest_value)
     ):
         return {}
 
@@ -173,7 +177,7 @@ def _trajectory_provenance_from_snapshot_manifest(
     split = strip_text(manifest_get("trajectory_split") or "train")
     if split:
         provenance["trajectory_split"] = split
-    trace_digest = strip_text(manifest_get("trajectory_trace_digest") or "")
+    trace_digest = strip_text(trace_digest_value or "")
     if trace_digest:
         provenance["trajectory_trace_digest"] = trace_digest
     if snapshot_manifest_path is not None:
