@@ -4580,8 +4580,21 @@ struct DesktopFoundationViewTests {
         #expect(shellSource.contains("Issue Token"))
         #expect(shellSource.contains("Copy Bundle"))
         #expect(shellSource.contains("Copy Code"))
+        #expect(shellSource.contains("Pairing QR"))
+        #expect(shellSource.contains("CompanionPairingQRCode.image"))
         #expect(shellSource.contains("Issue a read-only companion token"))
         #expect(shellSource.contains("Revoke Token"))
+    }
+
+    @Test("companion pairing QR code generates only for active codes")
+    func companionPairingQRCodeGeneratesOnlyForActiveCodes() throws {
+        let code = "melix-companion:eyJzY2hlbWFfdmVyc2lvbiI6Im1lbGl4LmNvbXBhbmlvbi5wYWlyaW5nLmJ1bmRsZS52MSJ9"
+        let image = try #require(CompanionPairingQRCode.image(for: code))
+
+        #expect(image.size.width == DesktopAPICompanionPairingLayout.qrImageSize)
+        #expect(image.size.height == DesktopAPICompanionPairingLayout.qrImageSize)
+        #expect(CompanionPairingQRCode.image(for: "   ") == nil)
+        #expect(CompanionPairingQRCode.image(for: "\n\t") == nil)
     }
 
     @Test("api authentication surface includes companion status log tail panel")

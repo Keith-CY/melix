@@ -1,5 +1,6 @@
 import AppKit
 import Charts
+import CoreImage.CIFilterBuiltins
 import MelixCLICore
 import MelixControlPlaneCore
 import SwiftUI
@@ -10298,6 +10299,26 @@ struct DesktopAPICompanionPairingPanel: View {
                         .help(allowedRoutesText)
                 }
 
+                if let pairingCode = viewModel.companionPairingCodeText(),
+                   let qrImage = CompanionPairingQRCode.image(for: pairingCode)
+                {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Pairing QR")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Image(nsImage: qrImage)
+                            .interpolation(.none)
+                            .resizable()
+                            .frame(
+                                width: DesktopAPICompanionPairingLayout.qrImageSize,
+                                height: DesktopAPICompanionPairingLayout.qrImageSize
+                            )
+                            .accessibilityLabel("Pairing QR")
+                            .help("Contains the read-only companion bearer token. Share only with a trusted local device.")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 if let errorText = presentation.errorText {
                     Text(errorText)
                         .font(.caption)
@@ -10349,8 +10370,36 @@ struct DesktopAPICompanionPairingPanel: View {
     }
 }
 
-private enum DesktopAPICompanionPairingLayout {
+enum DesktopAPICompanionPairingLayout {
     static let compactContentWidth: CGFloat = 320
+    static let qrImageSize: CGFloat = 120
+}
+
+enum CompanionPairingQRCode {
+    private static let context = CIContext()
+
+    static func image(for code: String) -> NSImage? {
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedCode.isEmpty == false else { return nil }
+
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(trimmedCode.utf8)
+        filter.correctionLevel = "M"
+
+        guard let outputImage = filter.outputImage else { return nil }
+
+        let targetSize = DesktopAPICompanionPairingLayout.qrImageSize
+        let extent = outputImage.extent.integral
+        guard extent.width > 0, extent.height > 0 else { return nil }
+
+        let scale = targetSize / max(extent.width, extent.height)
+        let scaledImage = outputImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        guard let cgImage = context.createCGImage(scaledImage, from: scaledImage.extent.integral) else {
+            return nil
+        }
+
+        return NSImage(cgImage: cgImage, size: NSSize(width: targetSize, height: targetSize))
+    }
 }
 
 struct DesktopAPICompanionPairingPresentation: Equatable {
