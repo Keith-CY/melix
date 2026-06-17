@@ -163,6 +163,7 @@ struct OpenAIHandlerTests {
         #expect(response.headers["access-control-allow-origin"] == "http://localhost:5173")
         #expect(response.headers["access-control-allow-methods"] == "GET, POST, DELETE, OPTIONS")
         #expect(response.headers["access-control-allow-headers"]?.contains("x-api-key") == true)
+        #expect(response.headers["access-control-allow-headers"]?.contains("x-melix-session") == true)
         #expect(response.headers["vary"] == "Origin")
         #expect(response.headers.values.contains("*") == false)
         #expect(await metricsStore.value(forKey: "local_server_security.accepted_origin_count") == 1)
@@ -741,6 +742,7 @@ struct OpenAIHandlerTests {
         let sessionState = try #require(error["session_state"] as? [String: Any])
 
         #expect(createResponse.statusCode == 200)
+        #expect(createPayload["pairing"] == nil)
         #expect(modelsResponse.statusCode == 200)
         #expect(inspectResponse.statusCode == 200)
         #expect(signOutResponse.statusCode == 200)
@@ -750,6 +752,953 @@ struct OpenAIHandlerTests {
         #expect(error["code"] as? String == "revoked_session")
         #expect(sessionState["state"] as? String == "revoked")
         #expect(await metricsStore.value(forKey: "persistent_session.active_session_count") == 0)
+    }
+
+    @Test("companion auth sessions can read status and revoke themselves but cannot mutate runtime")
+    func companionAuthSessionsCanReadStatusAndRevokeThemselvesButCannotMutateRuntime() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-companion-auth-session-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            persistentAuthSessionStore: PersistentAuthSessionStore(
+                storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                metricsStore: metricsStore,
+                retentionTTLSeconds: 3600,
+                nowUnixMs: { 1_000 }
+            )
+        )
+
+        let createResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("""
+                {
+                  "remember_me": true,
+                  "scope": "companion_read_only"
+                }
+                """.data(using: .utf8))
+            )
+        )
+        let createPayload = try await jsonPayload(from: createResponse.body)
+        let createSession = try #require(createPayload["session"] as? [String: Any])
+        let sessionToken = try #require((createPayload["resume"] as? [String: Any])?["token"] as? String)
+
+        let modelsResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let diagnosticsResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/health",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let inspectResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/auth/session",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let inspectPayload = try await jsonPayload(from: inspectResponse.body)
+        let inspectSession = try #require(inspectPayload["session"] as? [String: Any])
+
+        let privatePrompt = "PRIVATE PROMPT: do not expose this companion secret"
+        let mutationResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: [
+                    "content-type": "application/json",
+                    "X-Melix-Session": sessionToken,
+                ],
+                body: Data("""
+                {
+                  "model": "melix-dev-text",
+                  "messages": [
+                    { "role": "user", "content": "\(privatePrompt)" }
+                  ]
+                }
+                """.utf8)
+            )
+        )
+        let mutationBody = try await collectBody(mutationResponse.body)
+        let mutationPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(mutationBody.utf8)) as? [String: Any]
+        )
+        let mutationError = try #require(mutationPayload["error"] as? [String: Any])
+
+        let signOutResponse = try await handler.handle(
+            HTTPRequest(
+                method: .delete,
+                path: "/v1/melix/auth/session",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let revokedModelsResponse = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let revokedPayload = try await jsonPayload(from: revokedModelsResponse.body)
+        let revokedError = try #require(revokedPayload["error"] as? [String: Any])
+
+        #expect(createResponse.statusCode == 200)
+        #expect(createSession["scope"] as? String == "companion_read_only")
+        #expect(modelsResponse.statusCode == 200)
+        #expect(diagnosticsResponse.statusCode == 200)
+        #expect(inspectResponse.statusCode == 200)
+        #expect(inspectSession["scope"] as? String == "companion_read_only")
+        #expect(mutationResponse.statusCode == 403)
+        #expect(mutationError["code"] as? String == "companion_read_only_scope_violation")
+        #expect(mutationBody.contains(privatePrompt) == false)
+        #expect(signOutResponse.statusCode == 200)
+        #expect(revokedModelsResponse.statusCode == 401)
+        #expect(revokedError["code"] as? String == "revoked_session")
+        #expect(await metricsStore.value(forKey: "companion_auth.rejected_request_count") == 1)
+    }
+
+    @Test("companion auth session creation returns pairing descriptor")
+    func companionAuthSessionCreationReturnsPairingDescriptor() async throws {
+        func createPairingDescriptor(
+            host: String,
+            port: UInt32 = 12_499
+        ) async throws -> (
+            response: HTTPResponse,
+            session: [String: Any],
+            resume: [String: Any],
+            pairing: [String: Any],
+            body: String
+        ) {
+            let metricsStore = MetricsStore()
+            let temporaryRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-companion-pairing-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+            let handler = OpenAIHandler(
+                modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+                requestCoordinator: RequestCoordinator(
+                    workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                    abortRegistry: AbortRegistry()
+                ),
+                metricsStore: metricsStore,
+                gatewayAccessPolicy: GatewayAccessPolicy(
+                    mode: .apiKeys,
+                    sharedAccessEnabled: true,
+                    keys: [
+                        .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                    ]
+                ),
+                gatewayRuntimeBinding: GatewayRuntimeBinding(
+                    host: host,
+                    port: port,
+                    allowedOrigins: ["http://127.0.0.1:52499"]
+                ),
+                persistentAuthSessionStore: PersistentAuthSessionStore(
+                    storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                    metricsStore: metricsStore,
+                    retentionTTLSeconds: 3_600,
+                    nowUnixMs: { 1_000 }
+                )
+            )
+
+            let createResponse = try await handler.handle(
+                HTTPRequest(
+                    method: .post,
+                    path: "/v1/melix/auth/session",
+                    headers: [
+                        "content-type": "application/json",
+                        "x-api-key": "sk-codex",
+                    ],
+                    body: try #require("""
+                    {
+                      "remember_me": true,
+                      "scope": "companion_read_only"
+                    }
+                    """.data(using: .utf8))
+                )
+            )
+            let payload = try await jsonPayload(from: createResponse.body)
+            let session = try #require(payload["session"] as? [String: Any])
+            let resume = try #require(payload["resume"] as? [String: Any])
+            let pairing = try #require(payload["pairing"] as? [String: Any])
+            let body = try await collectBody(createResponse.body)
+            return (createResponse, session, resume, pairing, body)
+        }
+
+        let result = try await createPairingDescriptor(host: "0.0.0.0")
+        let session = result.session
+        let resume = result.resume
+        let pairing = result.pairing
+        let allowedRoutes = try #require(pairing["allowed_routes"] as? [[String: Any]])
+        let forbiddenCapabilities = try #require(pairing["forbidden_capabilities"] as? [String])
+        let token = try #require(resume["token"] as? String)
+
+        #expect(result.response.statusCode == 200)
+        #expect(session["scope"] as? String == "companion_read_only")
+        #expect(pairing["schema_version"] as? String == "melix.companion.pairing.v1")
+        #expect(pairing["scope"] as? String == "companion_read_only")
+        #expect(pairing["resume_header"] as? String == "x-melix-session")
+        #expect(pairing["token_transport"] as? String == "resume_header")
+        #expect(pairing["status_url"] as? String == "http://127.0.0.1:12499/v1/melix/companion/status")
+        #expect(pairing["mobile_url"] as? String == "http://127.0.0.1:12499/v1/melix/companion")
+        #expect(pairing["expires_at_unix_ms"] as? Int == 3_601_000)
+        #expect(pairing["allowed_origins"] as? [String] == ["http://127.0.0.1:52499"])
+        #expect(allowedRoutes.contains { route in
+            route["method"] as? String == "GET" && route["path"] as? String == "/v1/melix/companion/status"
+        })
+        #expect(allowedRoutes.contains { route in
+            route["method"] as? String == "DELETE" && route["path"] as? String == "/v1/melix/auth/session"
+        })
+        #expect(forbiddenCapabilities.contains("mutate_runtime"))
+        #expect(forbiddenCapabilities.contains("run_inference"))
+        #expect(forbiddenCapabilities.contains("read_private_prompts"))
+        #expect((pairing["token"] as? String) == nil)
+        #expect(result.body.contains("\"pairing\""))
+        #expect(result.body.components(separatedBy: token).count == 2)
+
+        let loopbackResult = try await createPairingDescriptor(host: "127.0.0.1", port: 12_500)
+        #expect(loopbackResult.pairing["status_url"] as? String == "http://127.0.0.1:12500/v1/melix/companion/status")
+        #expect(loopbackResult.pairing["mobile_url"] as? String == "http://127.0.0.1:12500/v1/melix/companion")
+
+        let emptyHostResult = try await createPairingDescriptor(host: "   \n", port: 12_501)
+        #expect(emptyHostResult.pairing["status_url"] as? String == "http://127.0.0.1:12501/v1/melix/companion/status")
+        #expect(emptyHostResult.pairing["mobile_url"] as? String == "http://127.0.0.1:12501/v1/melix/companion")
+
+        let ipv6Result = try await createPairingDescriptor(host: "fd00::1", port: 12_502)
+        #expect(ipv6Result.pairing["status_url"] as? String == "http://[fd00::1]:12502/v1/melix/companion/status")
+        #expect(ipv6Result.pairing["mobile_url"] as? String == "http://[fd00::1]:12502/v1/melix/companion")
+
+        let bracketedIPv6Result = try await createPairingDescriptor(host: "[fd00::2]", port: 12_503)
+        #expect(bracketedIPv6Result.pairing["status_url"] as? String == "http://[fd00::2]:12503/v1/melix/companion/status")
+        #expect(bracketedIPv6Result.pairing["mobile_url"] as? String == "http://[fd00::2]:12503/v1/melix/companion")
+    }
+
+    @Test("companion mobile status page serves read-only shell for companion tokens")
+    func companionMobileStatusPageServesReadOnlyShellForCompanionTokens() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-companion-mobile-page-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(
+                host: "0.0.0.0",
+                port: 12_499,
+                allowedOrigins: ["http://127.0.0.1:52499"]
+            ),
+            persistentAuthSessionStore: PersistentAuthSessionStore(
+                storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                metricsStore: metricsStore,
+                retentionTTLSeconds: 3_600,
+                nowUnixMs: { 1_000 }
+            )
+        )
+
+        let createResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("""
+                {
+                  "remember_me": true,
+                  "scope": "companion_read_only"
+                }
+                """.data(using: .utf8))
+            )
+        )
+        let createPayload = try await jsonPayload(from: createResponse.body)
+        let resume = try #require(createPayload["resume"] as? [String: Any])
+        let token = try #require(resume["token"] as? String)
+        let pairing = try #require(createPayload["pairing"] as? [String: Any])
+
+        let publicCompanionPage = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let pageBody = try await collectBody(publicCompanionPage.body)
+
+        let unauthenticatedStatus = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: [:],
+                body: Data()
+            )
+        )
+
+        let companionMutation = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: [
+                    "content-type": "application/json",
+                    "X-Melix-Session": token,
+                ],
+                body: Data("{\"model\":\"melix-dev-text\",\"messages\":[]}".utf8)
+            )
+        )
+
+        #expect(createResponse.statusCode == 200)
+        #expect(pairing["mobile_url"] as? String == "http://127.0.0.1:12499/v1/melix/companion")
+        #expect(publicCompanionPage.statusCode == 200)
+        #expect(publicCompanionPage.headers["content-type"] == "text/html; charset=utf-8")
+        #expect(publicCompanionPage.headers["x-frame-options"] == "deny")
+        let contentSecurityPolicy = try #require(publicCompanionPage.headers["content-security-policy"])
+        #expect(contentSecurityPolicy.contains("default-src 'none'"))
+        #expect(contentSecurityPolicy.contains("connect-src 'self'"))
+        #expect(contentSecurityPolicy.contains("script-src 'unsafe-inline'"))
+        #expect(contentSecurityPolicy.contains("style-src 'unsafe-inline'"))
+        #expect(contentSecurityPolicy.contains("frame-ancestors 'none'"))
+        #expect(pageBody.contains("<meta name=\"viewport\""))
+        #expect(pageBody.contains("Melix Companion"))
+        #expect(pageBody.contains("/v1/melix/companion/status"))
+        #expect(pageBody.contains("x-melix-session"))
+        #expect(pageBody.contains("companion_read_only"))
+        #expect(pageBody.contains("Redacted Log Tail"))
+        #expect(pageBody.contains("localStorage"))
+        #expect(pageBody.contains("Pairing code or JSON bundle"))
+        #expect(pageBody.contains("melix-companion:"))
+        #expect(pageBody.contains("decodePairingCode"))
+        #expect(pageBody.contains("new TextDecoder().decode"))
+        #expect(pageBody.contains("melix.companion.pairing.bundle.v1"))
+        #expect(pageBody.contains("importPairingBundle"))
+        #expect(pageBody.contains("Paste a pairing code or JSON bundle first."))
+        #expect(pageBody.contains("pairingImport.value = ''"))
+        #expect(pageBody.contains("refreshStatus();"))
+        #expect(pageBody.contains("sameOriginStatusPath"))
+        #expect(pageBody.contains("new URL(bundle.status_url, window.location.href)"))
+        #expect(pageBody.contains("typeof data !== 'object'"))
+        #expect(pageBody.contains("POST /v1/chat/completions") == false)
+        #expect(pageBody.contains("/v1/images/generations") == false)
+        #expect(pageBody.contains("Issue Token") == false)
+        #expect(pageBody.contains(token) == false)
+        #expect(unauthenticatedStatus.statusCode == 401)
+        #expect(companionMutation.statusCode == 403)
+        #expect(await metricsStore.value(forKey: "companion.mobile_page_served_count") == 1)
+    }
+
+    @Test("companion status endpoint returns redacted runtime queue job and session summary")
+    func companionStatusEndpointReturnsRedactedRuntimeQueueJobAndSessionSummary() async throws {
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let imageJobReadModel = ImageJobReadModel(now: { Date(timeIntervalSince1970: 1_700) })
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-companion-status-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        var snapshot = CacheMetadataStore.emptySnapshot()
+        snapshot.summary.l1Bytes = 2048
+        snapshot.summary.l2Bytes = 4096
+        snapshot.summary.activeMode = .rotating
+
+        let privatePrompt = "PRIVATE COMPANION STATUS PROMPT"
+        let privateNegativePrompt = "PRIVATE NEGATIVE PROMPT"
+        let privateArtifactURI = "file:///Users/chenyu/private/status-image.png"
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = privatePrompt
+        recipe.negativePrompt = privateNegativePrompt
+        recipe.sourceImageUri = privateArtifactURI
+
+        await schedulerReadModel.recordQueued(
+            requestID: "req-companion-status",
+            laneHint: "multimodal.vision.background",
+            priority: 30,
+            queuePosition: 2,
+            workerID: "vision-worker"
+        )
+        await imageJobReadModel.recordQueued(
+            requestID: "req-companion-status",
+            jobID: "img-companion-status",
+            modelID: "melix-dev-image",
+            operation: "image.generation",
+            lane: "multimodal.vision.background",
+            promptDigest: "sha256:prompt-digest",
+            recipe: recipe,
+            sourceArtifactID: "artifact-private-source",
+            promptDelta: privatePrompt,
+            editMode: .iterate
+        )
+        await imageJobReadModel.recordRunning(
+            jobID: "img-companion-status",
+            workerID: "vision-worker",
+            stage: "sampling",
+            pct: 0.5,
+            completedSteps: 2,
+            totalSteps: 4
+        )
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [publicWarmModel(), publicWarmEmbeddingModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                embeddingClient: ScriptedWorkerClient(events: [])
+            ),
+            metricsStore: metricsStore,
+            schedulerReadModel: schedulerReadModel,
+            imageJobReadModel: imageJobReadModel,
+            cacheMetadataStore: CacheMetadataStore(snapshot: snapshot),
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            persistentAuthSessionStore: PersistentAuthSessionStore(
+                storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                metricsStore: metricsStore,
+                retentionTTLSeconds: 3600,
+                nowUnixMs: { 1_000 }
+            )
+        )
+
+        let createResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: Data("""
+                {
+                  "remember_me": true,
+                  "scope": "companion_read_only"
+                }
+                """.utf8)
+            )
+        )
+        let createPayload = try await jsonPayload(from: createResponse.body)
+        let sessionToken = try #require((createPayload["resume"] as? [String: Any])?["token"] as? String)
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let body = try await collectBody(response.body)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        let authorization = try #require(payload["authorization"] as? [String: Any])
+        let runtime = try #require(payload["runtime"] as? [String: Any])
+        let models = try #require(payload["models"] as? [String: Any])
+        let cache = try #require(payload["cache"] as? [String: Any])
+        let queue = try #require(payload["queue"] as? [String: Any])
+        let imageJobs = try #require(payload["image_jobs"] as? [String: Any])
+        let jobs = try #require(imageJobs["jobs"] as? [[String: Any]])
+        let firstJob = try #require(jobs.first)
+        let redaction = try #require(payload["redaction"] as? [String: Any])
+
+        #expect(response.statusCode == 200)
+        #expect(payload["schema_version"] as? String == "melix.companion.status.v1")
+        #expect(payload["read_only"] as? Bool == true)
+        #expect(authorization["scope"] as? String == "companion_read_only")
+        #expect(authorization["state"] as? String == "active")
+        #expect(runtime["status"] as? String == "degraded")
+        #expect((runtime["routes"] as? [String: Any])?["swift_text"] as? Bool == true)
+        #expect(models["ready"] as? Int == 2)
+        #expect(models["total"] as? Int == 2)
+        #expect(cache["l1_bytes"] as? Int == 2048)
+        #expect(cache["l2_bytes"] as? Int == 4096)
+        #expect(cache["active_cache_mode"] as? String == "rotating")
+        #expect(queue["queued_requests"] as? Int == 1)
+        #expect(firstJob["job_id"] as? String == "img-companion-status")
+        #expect(firstJob["state"] as? String == "running")
+        #expect(firstJob["prompt_digest"] as? String == "sha256:prompt-digest")
+        #expect(redaction["raw_prompts"] as? String == "omitted")
+        #expect(redaction["logs"] as? String == "redacted_tail")
+        #expect(body.contains(privatePrompt) == false)
+        #expect(body.contains(privateNegativePrompt) == false)
+        #expect(body.contains(privateArtifactURI) == false)
+        #expect(body.contains("source_image_uri") == false)
+        #expect(await metricsStore.value(forKey: "companion.status_latency_ms") >= 0)
+    }
+
+    @Test("companion status endpoint supports local trusted empty stores and deterministic job ordering")
+    func companionStatusEndpointSupportsLocalTrustedEmptyStoresAndDeterministicJobOrdering() async throws {
+        let imageJobReadModel = ImageJobReadModel(now: { Date(timeIntervalSince1970: 1_800) })
+        await imageJobReadModel.recordQueued(
+            requestID: "req-z",
+            jobID: "job-z",
+            modelID: "melix-dev-image",
+            operation: "image.generation",
+            lane: "multimodal.vision.background"
+        )
+        await imageJobReadModel.recordQueued(
+            requestID: "req-a",
+            jobID: "job-a",
+            modelID: "melix-dev-image",
+            operation: "image.generation",
+            lane: "multimodal.vision.background"
+        )
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let authorization = try #require(payload["authorization"] as? [String: Any])
+        let cache = try #require(payload["cache"] as? [String: Any])
+        let queue = try #require(payload["queue"] as? [String: Any])
+        let imageJobs = try #require(payload["image_jobs"] as? [String: Any])
+        let jobs = try #require(imageJobs["jobs"] as? [[String: Any]])
+
+        #expect(response.statusCode == 200)
+        #expect(authorization["mode"] as? String == "local_trusted")
+        #expect(authorization["scope"] as? String == "operator_control")
+        #expect(cache["active_cache_mode"] as? String == "tiered")
+        #expect(queue["queued_requests"] as? Int == 0)
+        #expect(imageJobs["active"] as? Int == 2)
+        #expect(jobs.map { $0["job_id"] as? String } == ["job-a", "job-z"])
+    }
+
+    @Test("companion status endpoint returns empty logs without image job read model")
+    func companionStatusEndpointReturnsEmptyLogsWithoutImageJobReadModel() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let logs = try #require(payload["logs"] as? [String: Any])
+        let entries = try #require(logs["entries"] as? [[String: Any]])
+
+        #expect(response.statusCode == 200)
+        #expect(logs["source"] as? String == "image_jobs")
+        #expect(logs["total"] as? Int == 0)
+        #expect(logs["visible"] as? Int == 0)
+        #expect(entries.isEmpty)
+    }
+
+    @Test("companion status endpoint supports credential auth and newest job ordering")
+    func companionStatusEndpointSupportsCredentialAuthAndNewestJobOrdering() async throws {
+        final class Clock: @unchecked Sendable {
+            private var lockedDate: Date
+            private let lock = NSLock()
+
+            var date: Date {
+                get {
+                    lock.withLock { lockedDate }
+                }
+                set {
+                    lock.withLock {
+                        lockedDate = newValue
+                    }
+                }
+            }
+
+            init(date: Date) {
+                self.lockedDate = date
+            }
+        }
+
+        let clock = Clock(date: Date(timeIntervalSince1970: 1_900))
+        let imageJobReadModel = ImageJobReadModel(now: { clock.date })
+        await imageJobReadModel.recordQueued(
+            requestID: "req-older",
+            jobID: "job-older",
+            modelID: "melix-dev-image",
+            operation: "image.generation",
+            lane: "multimodal.vision.background"
+        )
+        clock.date = Date(timeIntervalSince1970: 1_901)
+        await imageJobReadModel.recordQueued(
+            requestID: "req-newer",
+            jobID: "job-newer",
+            modelID: "melix-dev-image",
+            operation: "image.generation",
+            lane: "multimodal.vision.background"
+        )
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            imageJobReadModel: imageJobReadModel,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "browser-client", label: "Browser Client", tokenHint: "browser-client", token: "sk-browser"),
+                ]
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: ["x-api-key": "sk-browser"],
+                body: Data()
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let authorization = try #require(payload["authorization"] as? [String: Any])
+        let imageJobs = try #require(payload["image_jobs"] as? [String: Any])
+        let jobs = try #require(imageJobs["jobs"] as? [[String: Any]])
+
+        #expect(response.statusCode == 200)
+        #expect(authorization["mode"] as? String == "credential")
+        #expect(authorization["key_id"] as? String == "browser-client")
+        #expect(jobs.map { $0["job_id"] as? String } == ["job-newer", "job-older"])
+    }
+
+    @Test("companion status endpoint returns redacted recent receipt summaries")
+    func companionStatusEndpointReturnsRedactedRecentReceiptSummaries() async throws {
+        final class Clock: @unchecked Sendable {
+            private var lockedDate: Date
+            private let lock = NSLock()
+
+            var date: Date {
+                get {
+                    lock.withLock { lockedDate }
+                }
+                set {
+                    lock.withLock {
+                        lockedDate = newValue
+                    }
+                }
+            }
+
+            init(date: Date) {
+                self.lockedDate = date
+            }
+        }
+
+        let clock = Clock(date: Date(timeIntervalSince1970: 2_000))
+        let imageJobReadModel = ImageJobReadModel(now: { clock.date })
+
+        let privatePrompt = "PRIVATE RECENT RECEIPT PROMPT"
+        let privatePromptDelta = "PRIVATE RECENT RECEIPT DELTA"
+        let privateNegativePrompt = "PRIVATE RECENT RECEIPT NEGATIVE"
+        let privateSourceURI = "file:///Users/chenyu/private/recent-source.png"
+        let privateStorageURI = "file:///Users/chenyu/private/recent-output.png"
+        let privateErrorMessage = "PRIVATE RECENT RECEIPT ERROR"
+        let privateSourceArtifactID = "private-source-artifact"
+
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = privatePrompt
+        recipe.negativePrompt = privateNegativePrompt
+        recipe.sourceImageUri = privateSourceURI
+        recipe.maskUri = privateStorageURI
+
+        await imageJobReadModel.recordQueued(
+            requestID: "req-receipt-old",
+            jobID: "job-receipt-old",
+            modelID: "melix-dev-image",
+            operation: "image.generation",
+            lane: "multimodal.vision.background",
+            promptDigest: "sha256:old",
+            recipe: recipe,
+            sourceArtifactID: privateSourceArtifactID,
+            promptDelta: privatePromptDelta
+        )
+
+        var artifact = Melix_Controlplane_V1_ImageArtifactRef()
+        artifact.artifactID = "private-output-artifact"
+        artifact.jobID = "job-receipt-old"
+        artifact.role = .imageArtifactGenerated
+        artifact.mimeType = "image/png"
+        artifact.format = "png"
+        artifact.width = 1024
+        artifact.height = 1024
+        artifact.byteLength = 4096
+        artifact.storageUri = privateStorageURI
+        artifact.variantIndex = 0
+        await imageJobReadModel.recordCompleted(jobID: "job-receipt-old", artifacts: [artifact])
+
+        clock.date = Date(timeIntervalSince1970: 2_001)
+        await imageJobReadModel.recordQueued(
+            requestID: "req-receipt-new",
+            jobID: "job-receipt-new",
+            modelID: "melix-dev-image",
+            operation: "image.edit",
+            lane: "multimodal.vision.background",
+            promptDigest: "sha256:new",
+            recipe: recipe,
+            sourceArtifactID: privateSourceArtifactID,
+            promptDelta: privatePromptDelta,
+            editMode: .iterate
+        )
+        var error = Melix_Controlplane_V1_ErrorStatus()
+        error.code = "worker_failed"
+        error.message = privateErrorMessage
+        await imageJobReadModel.recordFailed(jobID: "job-receipt-new", error: error)
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let body = try await collectBody(response.body)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        let recentReceipts = try #require(payload["recent_receipts"] as? [String: Any])
+        let items = try #require(recentReceipts["items"] as? [[String: Any]])
+        let first = try #require(items.first)
+        let firstRedaction = try #require(first["redaction"] as? [String: Any])
+        let redaction = try #require(payload["redaction"] as? [String: Any])
+
+        #expect(response.statusCode == 200)
+        #expect(recentReceipts["total"] as? Int == 2)
+        #expect(recentReceipts["visible"] as? Int == 2)
+        #expect(recentReceipts["source"] as? String == "image_jobs")
+        #expect(items.map { $0["job_id"] as? String } == ["job-receipt-new", "job-receipt-old"])
+        #expect(first["receipt_type"] as? String == "image_job")
+        #expect(first["source"] as? String == "image_jobs")
+        #expect(first["request_id"] as? String == "req-receipt-new")
+        #expect(first["state"] as? String == "failed")
+        #expect(first["prompt_digest"] as? String == "sha256:new")
+        #expect(first["artifact_count"] as? Int == 0)
+        #expect(first["failure_code"] as? String == "worker_failed")
+        #expect(firstRedaction["raw_prompt"] as? String == "omitted")
+        #expect(firstRedaction["prompt_delta"] as? String == "omitted")
+        #expect(firstRedaction["artifact_uris"] as? String == "omitted")
+        #expect(firstRedaction["local_paths"] as? String == "omitted")
+        #expect(firstRedaction["error_message"] as? String == "omitted")
+        #expect(redaction["recent_receipts"] as? String == "redacted_summary")
+        #expect(redaction["logs"] as? String == "redacted_tail")
+        #expect(body.contains(privatePrompt) == false)
+        #expect(body.contains(privatePromptDelta) == false)
+        #expect(body.contains(privateNegativePrompt) == false)
+        #expect(body.contains(privateSourceURI) == false)
+        #expect(body.contains(privateStorageURI) == false)
+        #expect(body.contains(privateSourceArtifactID) == false)
+        #expect(body.contains(privateErrorMessage) == false)
+        #expect(body.contains("storage_uri") == false)
+        #expect(body.contains("source_artifact_id") == false)
+    }
+
+    @Test("companion status endpoint returns redacted log tail")
+    func companionStatusEndpointReturnsRedactedLogTail() async throws {
+        final class Clock: @unchecked Sendable {
+            private var lockedDate: Date
+            private let lock = NSLock()
+
+            var date: Date {
+                get {
+                    lock.withLock { lockedDate }
+                }
+                set {
+                    lock.withLock {
+                        lockedDate = newValue
+                    }
+                }
+            }
+
+            init(date: Date) {
+                self.lockedDate = date
+            }
+        }
+
+        let clock = Clock(date: Date(timeIntervalSince1970: 2_100))
+        let imageJobReadModel = ImageJobReadModel(now: { clock.date })
+
+        let privatePrompt = "PRIVATE LOG TAIL PROMPT"
+        let privatePromptDelta = "PRIVATE LOG TAIL DELTA"
+        let privateNegativePrompt = "PRIVATE LOG TAIL NEGATIVE"
+        let privateSourceURI = "file:///Users/chenyu/private/log-source.png"
+        let privateStorageURI = "file:///Users/chenyu/private/log-output.png"
+        let privateErrorMessage = "PRIVATE LOG TAIL ERROR"
+
+        var recipe = Melix_Controlplane_V1_ImageJobRecipeSummary()
+        recipe.prompt = privatePrompt
+        recipe.negativePrompt = privateNegativePrompt
+        recipe.sourceImageUri = privateSourceURI
+
+        await imageJobReadModel.recordQueued(
+            requestID: "req-log-tail",
+            jobID: "job-log-tail",
+            modelID: "melix-dev-image",
+            operation: "image.generation",
+            lane: "multimodal.vision.background",
+            promptDigest: "sha256:log-tail",
+            recipe: recipe,
+            sourceArtifactID: "private-log-source-artifact",
+            promptDelta: privatePromptDelta
+        )
+        await imageJobReadModel.recordRunning(
+            jobID: "job-log-tail",
+            workerID: "vision-worker",
+            stage: "sampling",
+            pct: 0.5,
+            completedSteps: 1,
+            totalSteps: 2
+        )
+        var error = Melix_Controlplane_V1_ErrorStatus()
+        error.code = "worker_failed"
+        error.message = privateErrorMessage
+        clock.date = Date(timeIntervalSince1970: 2_101)
+        await imageJobReadModel.recordFailed(jobID: "job-log-tail", error: error)
+        for index in 0..<55 {
+            clock.date = Date(timeIntervalSince1970: 2_102 + TimeInterval(index))
+            await imageJobReadModel.recordQueued(
+                requestID: "req-log-tail-\(index)",
+                jobID: "job-log-tail-\(String(format: "%02d", index))",
+                modelID: "melix-dev-image",
+                operation: "image.generation",
+                lane: "multimodal.vision.background",
+                promptDigest: "sha256:log-tail-\(index)",
+                recipe: recipe
+            )
+        }
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            imageJobReadModel: imageJobReadModel
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let body = try await collectBody(response.body)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        let logs = try #require(payload["logs"] as? [String: Any])
+        let entries = try #require(logs["entries"] as? [[String: Any]])
+        let first = try #require(entries.first)
+        let firstRedaction = try #require(first["redaction"] as? [String: Any])
+        let redaction = try #require(payload["redaction"] as? [String: Any])
+
+        #expect(response.statusCode == 200)
+        #expect(logs["source"] as? String == "image_jobs")
+        #expect(logs["total"] as? Int == 50)
+        #expect(logs["visible"] as? Int == 20)
+        #expect(entries.count == 20)
+        #expect(entries.map { $0["state"] as? String } == Array(repeating: "queued", count: 20))
+        #expect(first["event_type"] as? String == "image.job.state_changed")
+        #expect(first["job_id"] as? String == "job-log-tail-54")
+        #expect(first["request_id"] as? String == "req-log-tail-54")
+        #expect(first["model_id"] as? String == "melix-dev-image")
+        #expect(first["operation"] as? String == "image.generation")
+        #expect(first["lane"] as? String == "multimodal.vision.background")
+        #expect(first["worker_id"] as? String == "")
+        #expect(first["progress_stage"] as? String == "queued")
+        #expect(first["failure_code"] as? String == "")
+        #expect(firstRedaction["raw_log_line"] as? String == "omitted")
+        #expect(firstRedaction["raw_prompt"] as? String == "omitted")
+        #expect(firstRedaction["request_body"] as? String == "omitted")
+        #expect(firstRedaction["artifact_uris"] as? String == "omitted")
+        #expect(firstRedaction["local_paths"] as? String == "omitted")
+        #expect(firstRedaction["error_message"] as? String == "omitted")
+        #expect(redaction["logs"] as? String == "redacted_tail")
+        #expect(body.contains(privatePrompt) == false)
+        #expect(body.contains(privatePromptDelta) == false)
+        #expect(body.contains(privateNegativePrompt) == false)
+        #expect(body.contains(privateSourceURI) == false)
+        #expect(body.contains(privateStorageURI) == false)
+        #expect(body.contains(privateErrorMessage) == false)
+        #expect(body.contains("private-log-source-artifact") == false)
+        #expect(body.contains("storage_uri") == false)
+        #expect(body.contains("source_artifact_id") == false)
     }
 
     @Test("gateway auth session responses sanitize rich output in encoded and manual json payloads")
@@ -12327,6 +13276,14 @@ struct OpenAIHandlerTests {
         var model = warmModel()
         model.modelID = "mlx-community/Qwen3.5-9B-MLX-8bit"
         model.settings.alias = "Qwen 3.5 9B"
+        model.settings.ext.removeValue(forKey: "melix.visibility")
+        return model
+    }
+
+    private func publicWarmEmbeddingModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = warmEmbeddingModel()
+        model.modelID = "BAAI/bge-small-en-v1.5-MLX"
+        model.settings.alias = "BGE Small"
         model.settings.ext.removeValue(forKey: "melix.visibility")
         return model
     }

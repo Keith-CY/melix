@@ -63,15 +63,21 @@ class DeterministicEmbeddingRuntime:
         vectors: list[list[float]] = []
         append_vector = vectors.append
         embed_text = family.embed_text
+        input_count = len(inputs)
         cycle_length = _repeated_input_cycle_length(inputs)
         if cycle_length:
+            if cycle_length == 1:
+                vector = embed_text(backend, inputs[0], dimensions)
+                append_vector(vector)
+                for _ in range(input_count - 1):
+                    append_vector(vector.copy())
+                return vectors
             for text in inputs[:cycle_length]:
                 vector = embed_text(backend, text, dimensions)
                 append_vector(vector)
             cycle_vectors = tuple(vectors)
             for _ in range(len(inputs) // cycle_length - 1):
-                for vector in cycle_vectors:
-                    append_vector(vector.copy())
+                vectors.extend(vector.copy() for vector in cycle_vectors)
             return vectors
 
         vector_cache: dict[str, list[float]] = {}

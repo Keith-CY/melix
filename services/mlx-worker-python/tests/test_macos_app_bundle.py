@@ -738,6 +738,135 @@ def test_prune_python_package_baggage_tolerates_scan_and_delete_errors(
     assert docs.is_dir()
 
 
+def test_prune_python_runtime_baggage_uses_scandir_without_os_walk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "python-runtime"
+    nested = runtime / "lib/python3.12"
+    pycache = nested / "__pycache__"
+    retained = nested / "runtime.py"
+    archive = runtime / "libpython3.12.a"
+    pycache.mkdir(parents=True)
+    (pycache / "module.pyc").write_bytes(b"cache")
+    retained.write_text("VALUE = 1\n", encoding="utf-8")
+    archive.write_text("archive\n", encoding="utf-8")
+
+    def fail_os_walk(*args: object, **kwargs: object):  # pragma: no cover - regression guard
+        raise AssertionError("_prune_python_runtime_baggage() should stream os.scandir entries")
+
+    monkeypatch.setattr(macos_app_bundle_module.os, "walk", fail_os_walk)
+
+    result = _prune_python_runtime_baggage(runtime)
+
+    assert result["directories_pruned"] == 1
+    assert result["files_pruned"] == 1
+    assert result["bytes_saved"] > 0
+    assert pycache.exists() is False
+    assert archive.exists() is False
+    assert retained.is_file()
+
+
+def test_prune_python_runtime_baggage_tolerates_scan_and_metadata_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "python-runtime"
+    nested = runtime / "lib/python3.12"
+    pycache = nested / "__pycache__"
+    unreadable = nested / "unreadable"
+    archive = nested / "libpython3.12.a"
+    retained = nested / "runtime.py"
+    pycache.mkdir(parents=True)
+    unreadable.mkdir()
+    archive.write_text("archive\n", encoding="utf-8")
+    retained.write_text("VALUE = 1\n", encoding="utf-8")
+
+    original_scandir = macos_app_bundle_module.os.scandir
+    original_rmtree = macos_app_bundle_module.shutil.rmtree
+
+    class BrokenEntry:
+        name = "broken"
+        path = str(nested / "broken")
+
+        def is_dir(self, *, follow_symlinks: bool) -> bool:
+            assert follow_symlinks is False
+            raise OSError("synthetic runtime metadata failure")
+
+    class FakeScandir:
+        def __init__(self, entries: list[object]) -> None:
+            self._entries = entries
+
+        def __enter__(self) -> "FakeScandir":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(self._entries)
+
+    def fake_scandir(path: Path | str):
+        path = Path(path)
+        if path == nested:
+            real_entries = list(original_scandir(path))
+            return FakeScandir([BrokenEntry(), *real_entries])
+        if path == unreadable:
+            raise OSError("synthetic runtime scandir failure")
+        return original_scandir(path)
+
+    def flaky_rmtree(path: Path) -> None:
+        if path == pycache:
+            raise OSError("synthetic runtime delete failure")
+        original_rmtree(path)
+
+    monkeypatch.setattr(macos_app_bundle_module.os, "scandir", fake_scandir)
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "rmtree", flaky_rmtree)
+
+    result = _prune_python_runtime_baggage(runtime)
+
+    assert result["directories_pruned"] == 0
+    assert result["files_pruned"] == 1
+    assert result["bytes_saved"] > 0
+    assert pycache.is_dir()
+    assert archive.exists() is False
+    assert retained.is_file()
+
+
+def test_prune_python_runtime_baggage_tolerates_file_unlink_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "python-runtime"
+    nested = runtime / "lib/python3.12"
+    nested.mkdir(parents=True)
+    non_directory_pycache = nested / "__pycache__"
+    archive = nested / "libpython3.12.a"
+    bytecode = nested / "module.pyc"
+    non_directory_pycache.write_text("not a directory\n", encoding="utf-8")
+    archive.write_text("archive\n", encoding="utf-8")
+    bytecode.write_bytes(b"cache")
+    expected_bytes_saved = archive.stat().st_size + bytecode.stat().st_size
+
+    original_unlink = macos_app_bundle_module.os.unlink
+
+    def flaky_unlink(path: str) -> None:
+        if Path(path) == archive:
+            raise OSError("synthetic runtime file unlink failure")
+        original_unlink(path)
+
+    monkeypatch.setattr(macos_app_bundle_module.os, "unlink", flaky_unlink)
+
+    result = _prune_python_runtime_baggage(runtime)
+
+    assert result["directories_pruned"] == 0
+    assert result["files_pruned"] == 1
+    assert result["bytes_saved"] == expected_bytes_saved
+    assert non_directory_pycache.is_file()
+    assert archive.is_file()
+    assert bytecode.exists() is False
+
+
 def test_iter_python_native_binary_candidates_tolerates_scandir_metadata_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -990,14 +1119,11 @@ def test_prune_python_runtime_baggage_tolerates_file_delete_errors(
     runtime.mkdir()
     archive = runtime / "libpython3.12.a"
     archive.write_text("archive\n", encoding="utf-8")
-    original_unlink = Path.unlink
+    def fail_unlink(path: str) -> None:
+        assert Path(path) == archive
+        raise OSError("synthetic delete failure")
 
-    def fail_unlink(self: Path, *args: object, **kwargs: object) -> None:
-        if self == archive:
-            raise OSError("synthetic delete failure")
-        original_unlink(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "unlink", fail_unlink)
+    monkeypatch.setattr(macos_app_bundle_module.os, "unlink", fail_unlink)
 
     result = _prune_python_runtime_baggage(runtime)
 

@@ -47,3 +47,13 @@ lookups in duplicate-heavy deterministic embedding requests.
 - Changed-scope coverage for touched Python/tests with at least 95% automated coverage
 - Local registered probe run through `scripts/pr_scoped_performance_run.py`
 - `git diff --check`
+
+## 2026-06-12 Cycle Copy Extension Slice
+
+This follow-up keeps the same registered probe and narrows only the repeated-cycle
+materialization path in `DeterministicEmbeddingRuntime.embed_inputs()`. Once the
+first cycle's vectors are embedded, each repeated cycle is now extended from a
+generator of `vector.copy()` results instead of appending one copied vector at a
+time in Python. The slice preserves per-position list independence and duplicate
+embedding-call elision while reducing hot-loop append overhead on cycle-shaped
+duplicate requests.

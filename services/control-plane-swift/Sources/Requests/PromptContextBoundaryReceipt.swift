@@ -29,8 +29,14 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
                     "reason": .string(policy.reason),
                     "corrective_action": .string(policy.correctiveAction),
                 ]
-                if let sourceID = message.name {
-                    receipt["source_id"] = .string(sourceID)
+                if let sourceID = message.name ?? Self.sourceID(fromHarmonyMetadata: message.harmonyMetadata) {
+                    receipt["source_id"] = .string(
+                        PromptContextSourceIDRedactor.redactedSourceID(
+                            sourceID,
+                            prefix: "prompt-source",
+                            allowColon: true
+                        )
+                    )
                 }
                 receipts.append(receipt)
             }
@@ -58,7 +64,8 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
 
     private static func sourceType(for message: NormalizedTextMessage) -> String {
         let normalizedRole = message.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalizedRole == "tool" {
+        if isToolOutputRole(normalizedRole)
+            || isToolOutputRecipient(message.harmonyMetadata?.recipient) {
             return "tool_output"
         }
 
@@ -91,6 +98,31 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
             return "model_final_answer"
         }
         return "chat_prompt_message"
+    }
+
+    private static func isToolOutputRole(_ normalizedRole: String) -> Bool {
+        normalizedRole == "tool"
+            || normalizedRole == "function"
+            || normalizedRole.hasPrefix("functions.")
+    }
+
+    private static func isToolOutputRecipient(_ recipient: String?) -> Bool {
+        normalizeForComparison(recipient)?.hasPrefix("functions.") == true
+    }
+
+    private static func sourceID(fromHarmonyMetadata metadata: HarmonyMessageMetadata?) -> String? {
+        guard let recipient = metadata?.recipient, isToolOutputRecipient(recipient) else {
+            return nil
+        }
+        return recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func normalizeForComparison(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ? nil : normalized
     }
 
     private static func sourcePolicy(for sourceType: String) -> (reason: String, correctiveAction: String) {

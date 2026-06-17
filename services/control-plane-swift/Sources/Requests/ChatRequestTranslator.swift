@@ -1307,9 +1307,60 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         }
     }
 
+    public enum InputItem: Sendable, Codable, Equatable {
+        case message(Message)
+        case functionCallOutput(callID: String, output: String)
+
+        private enum CodingKeys: String, CodingKey {
+            case type
+            case callID = "call_id"
+            case output
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if let type = try container.decodeIfPresent(String.self, forKey: .type),
+               type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "function_call_output" {
+                self = .functionCallOutput(
+                    callID: try container.decode(String.self, forKey: .callID),
+                    output: try container.decode(String.self, forKey: .output)
+                )
+                return
+            }
+            self = .message(try Message(from: decoder))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            switch self {
+            case .message(let message):
+                try message.encode(to: encoder)
+            case .functionCallOutput(let callID, let output):
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode("function_call_output", forKey: .type)
+                try container.encode(callID, forKey: .callID)
+                try container.encode(output, forKey: .output)
+            }
+        }
+
+        var normalizedMessage: NormalizedTextMessage {
+            switch self {
+            case .message(let message):
+                return NormalizedTextMessage(
+                    role: message.role,
+                    name: message.name,
+                    content: message.content,
+                    harmonyMetadata: message.harmonyMetadata
+                )
+            case .functionCallOutput(let callID, let output):
+                return NormalizedTextMessage(role: "tool", name: callID, content: output)
+            }
+        }
+    }
+
     public enum Input: Sendable, Codable, Equatable {
         case text(String)
         case messages([Message])
+        case items([InputItem])
 
         public init(from decoder: Decoder) throws {
             let singleValue = try decoder.singleValueContainer()
@@ -1317,7 +1368,20 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
                 self = .text(text)
                 return
             }
-            self = .messages(try singleValue.decode([Message].self))
+            if let messages = try? singleValue.decode([Message].self) {
+                self = .messages(messages)
+                return
+            }
+            let inputItems = try singleValue.decode([InputItem].self)
+            var messages: [Message] = []
+            for item in inputItems {
+                guard case .message(let message) = item else {
+                    self = .items(inputItems)
+                    return
+                }
+                messages.append(message)
+            }
+            self = .messages(messages)
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -1327,6 +1391,8 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
                 try singleValue.encode(text)
             case let .messages(messages):
                 try singleValue.encode(messages)
+            case let .items(items):
+                try singleValue.encode(items)
             }
         }
     }
@@ -2207,6 +2273,8 @@ public struct ChatRequestTranslator: Sendable {
                     )
                 }
             )
+        case let .items(inputItems):
+            messages.append(contentsOf: inputItems.map(\.normalizedMessage))
         }
 
         return makeNormalizedRequest(

@@ -75,6 +75,8 @@ The metrics snapshot CLI may be called during benchmark harness setup where the
 runtime directory contains many historical metrics snapshots. Runtime-dir source
 resolution should therefore avoid materializing a `Path.glob()` candidate list and
 avoid a second `Path.stat()` pass. The lookup now scans the runtime directory
-once with `os.scandir()`, filters names with the source runtime glob pattern, and
-tracks the highest file mtime while preserving the existing missing-directory and
-OSError fallback to `None`.
+once with `os.scandir()`, filters names with a single-wildcard prefix/suffix
+matcher for the fixed source runtime patterns, and tracks the highest file mtime
+while preserving the existing missing-directory and OSError fallback to `None`.
+The matcher falls back to `fnmatch.fnmatchcase()` only if a future source pattern
+uses multiple wildcards.

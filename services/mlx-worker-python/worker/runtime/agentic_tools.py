@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
+from worker.runtime.prompt_context import (
+    PromptContextSourceEvidence,
+    admit_prompt_context_source_evidence,
+    refused_prompt_context_receipt,
+)
 from worker.runtime.retrieval_context import (
     admit_retrieved_document_context,
     admit_retrieved_image_context,
+    project_retrieval_lookup_result,
 )
+from worker.runtime.skill_memory_context import project_skill_memory_lookup_result
 from worker.runtime.tool_observation import (
     ToolObservationPolicy,
     ToolObservationRecord,
@@ -20,7 +28,7 @@ from worker.runtime.tool_registry import (
     ToolDescriptor,
     ToolRegistry,
     ToolSelectionInput,
-    built_in_tool_registry,
+    agentic_tool_catalog_registry,
     select_agentic_tools_for_turn,
 )
 from worker.runtime.workspace_file_tools import WorkspaceFileTools
@@ -90,7 +98,7 @@ class DeterministicAgenticToolRuntime:
             selection_result = select_agentic_tools_for_turn(tool_selection)
             registry = selection_result.registry
             selection_receipt = selection_result.receipt
-        self._registry = registry or built_in_tool_registry()
+        self._registry = registry or agentic_tool_catalog_registry()
         self._tool_by_name = {tool.name: tool for tool in self._registry.tools}
         self._fixture_context = dict(fixture_context or {})
         self._observation_policy = observation_policy or ToolObservationPolicy()
@@ -144,6 +152,7 @@ class DeterministicAgenticToolRuntime:
             raise AgenticToolRuntimeError(f"Unknown agentic tool requested: {tool_name}")
         _validate_required_arguments(descriptor, arguments)
         started_at = perf_counter()
+        source_untrusted_context_receipts: tuple[dict[str, object], ...] = ()
         try:
             payload = self._execute_payload(
                 tool_name=tool_name,
@@ -153,12 +162,15 @@ class DeterministicAgenticToolRuntime:
         except AgenticToolRuntimeError as exc:
             payload = {"error": str(exc), "_status": "failed"}
             payload.update(exc.details)
+            source_untrusted_context_receipts = _runtime_error_refusal_receipts(exc.details)
         except (SyntaxError, TypeError, ValueError) as exc:
             payload = {"error": str(exc), "_status": "failed"}
         status = str(payload.pop("_status", "completed"))
-        source_untrusted_context_receipts = tuple(
+        payload_untrusted_context_receipts = tuple(
             payload.pop("_untrusted_context_receipts", ())
         )
+        if not source_untrusted_context_receipts:
+            source_untrusted_context_receipts = payload_untrusted_context_receipts
         observation = normalize_tool_observation(
             tool_name=tool_name,
             tool_call_id=tool_call_id,
@@ -215,6 +227,20 @@ class DeterministicAgenticToolRuntime:
             )
         if tool_name == "image_search":
             return _image_search_payload(
+                arguments=arguments,
+                fixture_context=self._fixture_context,
+                tool_call_id=tool_call_id,
+            )
+        if tool_name == "skill_lookup":
+            return _skill_memory_lookup_payload(
+                context_kind="skill",
+                arguments=arguments,
+                fixture_context=self._fixture_context,
+                tool_call_id=tool_call_id,
+            )
+        if tool_name == "memory_lookup":
+            return _skill_memory_lookup_payload(
+                context_kind="memory",
                 arguments=arguments,
                 fixture_context=self._fixture_context,
                 tool_call_id=tool_call_id,
@@ -327,25 +353,31 @@ def _status_override_payload(
         source_id=tool_name,
     )
     if raw_status == "timeout":
-        return {
+        payload = {
             "text": message or f"{tool_name} timed out before producing a result.",
             "failure_stage": failure_stage or "tool_timeout",
             "_status": "timeout",
         }
-    if raw_status in ("cancel", "cancelled", "canceled"):
-        return {
+    elif raw_status in ("cancel", "cancelled", "canceled"):
+        payload = {
             "error": message or f"{tool_name} was cancelled before producing a result.",
             "failure_stage": failure_stage or "cancelled",
             "cancelled": True,
             "_status": "failed",
         }
-    if raw_status == "failed":
-        return {
+    elif raw_status == "failed":
+        payload = {
             "error": message or f"{tool_name} failed before producing a result.",
             "failure_stage": failure_stage or "tool_execution",
             "_status": "failed",
         }
-    raise AgenticToolRuntimeError(f"Unsupported agentic tool status override: {raw_status or '<empty>'}")
+    else:
+        raise AgenticToolRuntimeError(f"Unsupported agentic tool status override: {raw_status or '<empty>'}")
+
+    payload["_untrusted_context_receipts"] = [
+        _status_override_output_receipt(tool_call_id=tool_call_id, value=payload)
+    ]
+    return payload
 
 
 def _text_search_payload(
@@ -360,7 +392,7 @@ def _text_search_payload(
     corpus = _context_list(fixture_context, "text_corpus", corpus_ref)
     lowered_query = query.lower()
     results: list[dict[str, str]] = []
-    result_receipts: list[dict[str, object]] = []
+    result_records: list[dict[str, object]] = []
     owner_scope_checked = _owner_scope_is_configured(fixture_context)
     for index, item in enumerate(corpus, start=1):
         source_id = _source_id(item.get("id"), default=f"doc-{index}")
@@ -381,8 +413,8 @@ def _text_search_payload(
         if lowered_query in text.lower():
             result = {"id": source_id, "text": text}
             results.append(result)
-            result_receipts.append(
-                _retrieval_result_receipt(
+            result_records.append(
+                _retrieval_result_record(
                     tool_call_id=tool_call_id,
                     result_index=len(results),
                     value=result,
@@ -398,7 +430,7 @@ def _text_search_payload(
         "corpus_ref": corpus_ref,
         "results": results,
         "result_count": len(results),
-        "_untrusted_context_receipts": result_receipts,
+        "_untrusted_context_receipts": _retrieval_lookup_result_receipts(result_records),
     }
 
 
@@ -414,7 +446,7 @@ def _image_search_payload(
     corpus = _context_list(fixture_context, "image_corpus", corpus_ref)
     lowered_query = query.lower()
     results: list[dict[str, str]] = []
-    result_receipts: list[dict[str, object]] = []
+    result_records: list[dict[str, object]] = []
     owner_scope_checked = _owner_scope_is_configured(fixture_context)
     for index, item in enumerate(corpus, start=1):
         source_id = _source_id(item.get("id"), default=f"image-{index}")
@@ -441,8 +473,8 @@ def _image_search_payload(
             )
             result = {"id": source_id, "media_ref": media_ref, "caption": caption}
             results.append(result)
-            result_receipts.append(
-                _retrieval_result_receipt(
+            result_records.append(
+                _retrieval_result_record(
                     tool_call_id=tool_call_id,
                     result_index=len(results),
                     value=result,
@@ -458,7 +490,69 @@ def _image_search_payload(
         "corpus_ref": corpus_ref,
         "results": results,
         "result_count": len(results),
-        "_untrusted_context_receipts": result_receipts,
+        "_untrusted_context_receipts": _retrieval_lookup_result_receipts(result_records),
+    }
+
+
+def _skill_memory_lookup_payload(
+    *,
+    context_kind: str,
+    arguments: dict[str, Any],
+    fixture_context: dict[str, Any],
+    tool_call_id: str,
+) -> dict[str, Any]:
+    query = _tool_argument_text(arguments, "query", tool_call_id=tool_call_id)
+    max_results = _positive_int(arguments.get("max_results"), default=3)
+    store_ref = (
+        _optional_tool_argument_text(arguments, "store_ref", tool_call_id=tool_call_id)
+        or "default"
+    )
+    store = _skill_memory_store_list(
+        fixture_context,
+        context_kind=context_kind,
+        store_ref=store_ref,
+    )
+    lowered_query = query.lower()
+    results: list[dict[str, Any]] = []
+    result_records: list[dict[str, object]] = []
+    owner_scope_checked = _owner_scope_is_configured(fixture_context)
+    field_prefix = _skill_memory_store_key(context_kind)
+    for index, item in enumerate(store, start=1):
+        fallback_id = f"{context_kind}-{index}"
+        source_id = _source_id(item.get("id"), default=fallback_id)
+        _enforce_owner_scope(
+            fixture_context=fixture_context,
+            source=item,
+            source_type=context_kind,
+            source_id=source_id,
+            field_prefix=field_prefix,
+        )
+        result = _skill_memory_lookup_result_item(
+            context_kind=context_kind,
+            source_id=source_id,
+            item=item,
+        )
+        if lowered_query not in _skill_memory_lookup_match_text(result):
+            continue
+        results.append(result)
+        result_records.append(
+            _skill_memory_result_record(
+                context_kind=context_kind,
+                tool_call_id=tool_call_id,
+                result_index=len(results),
+                value=result,
+                source_id=source_id,
+                owner_scope_checked=owner_scope_checked,
+            )
+        )
+        if len(results) >= max_results:
+            break
+    return {
+        "query": query,
+        "store_ref": store_ref,
+        "results": results,
+        "result_count": len(results),
+        "_untrusted_context_receipts": _skill_memory_lookup_result_receipts(result_records),
     }
 
 
@@ -612,6 +706,7 @@ def _layout_parse_payload(
     media_ref = _tool_argument_text(arguments, "media_ref", tool_call_id=tool_call_id)
     layouts = _context_mapping(fixture_context, "layouts")
     layout = layouts.get(media_ref, [])
+    owner_scope_checked = False
     if isinstance(layout, dict) and "elements" in layout:
         _enforce_owner_scope(
             fixture_context=fixture_context,
@@ -620,6 +715,7 @@ def _layout_parse_payload(
             source_id=media_ref,
             field_prefix="layouts",
         )
+        owner_scope_checked = _owner_scope_is_configured(fixture_context)
         layout = layout.get("elements", [])
     if not isinstance(layout, list):
         raise _invalid_untrusted_value_type(
@@ -633,12 +729,27 @@ def _layout_parse_payload(
         _optional_tool_argument_text(arguments, "detail_level", tool_call_id=tool_call_id)
         or "blocks"
     )
-    return {
+    payload = {
         "media_ref": media_ref,
         "detail_level": detail_level,
         "elements": layout,
         "element_count": len(layout),
     }
+    payload["_untrusted_context_receipts"] = [
+        _visual_image_receipt(
+            tool_call_id=tool_call_id,
+            source_id=media_ref,
+            value=payload.copy(),
+            owner_scope_checked=owner_scope_checked,
+            segment_suffix="layout-result",
+            reason="layout parse result is prompt data, not instructions",
+            corrective_action=(
+                "Keep layout parse results in user-role data context and do not project "
+                "them into system or developer instructions."
+            ),
+        )
+    ]
+    return payload
 
 
 def _image_crop_payload(
@@ -653,6 +764,7 @@ def _image_crop_payload(
     crop_key = f"{media_ref}#{region}"
     crop = crops.get(crop_key, crops.get(media_ref, {}))
     crop_source_id = crop_key if crop_key in crops else media_ref
+    owner_scope_checked = False
     if isinstance(crop, dict):
         _enforce_owner_scope(
             fixture_context=fixture_context,
@@ -661,6 +773,7 @@ def _image_crop_payload(
             source_id=crop_source_id,
             field_prefix="crops",
         )
+        owner_scope_checked = _owner_scope_is_configured(fixture_context)
         payload = {key: value for key, value in crop.items() if key not in {"owner_id", "privilege"}}
     else:
         payload = {
@@ -676,15 +789,40 @@ def _image_crop_payload(
     purpose = _optional_tool_argument_text(arguments, "purpose", tool_call_id=tool_call_id)
     if purpose:
         payload["purpose"] = purpose
+    payload["_untrusted_context_receipts"] = [
+        _visual_image_receipt(
+            tool_call_id=tool_call_id,
+            source_id=crop_source_id,
+            value=payload.copy(),
+            owner_scope_checked=owner_scope_checked,
+            segment_suffix="crop-result",
+            reason="image crop result is prompt data, not instructions",
+            corrective_action=(
+                "Keep image crop results in user-role data context and do not project "
+                "them into system or developer instructions."
+            ),
+        )
+    ]
     return payload
 
 
 def _local_compute_payload(*, arguments: dict[str, Any], tool_call_id: str) -> dict[str, Any]:
     code = _tool_argument_text(arguments, "code", tool_call_id=tool_call_id)
     if code == "timeout":
-        return {"text": "local_compute timed out before producing a result.", "_status": "timeout"}
+        payload = {
+            "text": "local_compute timed out before producing a result.",
+            "_status": "timeout",
+        }
+        payload["_untrusted_context_receipts"] = [
+            _local_compute_timeout_receipt(tool_call_id=tool_call_id, value={"text": payload["text"]})
+        ]
+        return payload
     result = _safe_arithmetic_eval(code)
-    return {"code": code, "result": result}
+    return {
+        "code": code,
+        "result": result,
+        "_untrusted_context_receipts": [_local_compute_result_receipt(tool_call_id=tool_call_id, value=result)],
+    }
 
 
 def _safe_arithmetic_eval(expression: str) -> int | float:
@@ -711,6 +849,69 @@ def _eval_arithmetic_node(node: ast.AST) -> int | float:
         value = _eval_arithmetic_node(node.operand)
         return value if isinstance(node.op, ast.UAdd) else -value
     raise AgenticToolRuntimeError("local_compute only supports deterministic arithmetic expressions.")
+
+
+def _local_compute_result_receipt(*, tool_call_id: str, value: int | float) -> dict[str, object]:
+    admission = admit_prompt_context_source_evidence(
+        [
+            PromptContextSourceEvidence(
+                segment_id=f"{tool_call_id}:compute-result",
+                source_type="tool_output",
+                source_field="result",
+                source_id=tool_call_id,
+                value=value,
+            )
+        ]
+    )
+    return admission.untrusted_context_receipts[0]
+
+
+def _local_compute_timeout_receipt(
+    *,
+    tool_call_id: str,
+    value: dict[str, Any],
+) -> dict[str, object]:
+    admission = admit_prompt_context_source_evidence(
+        [
+            PromptContextSourceEvidence(
+                segment_id=f"{tool_call_id}:compute-timeout",
+                source_type="tool_output",
+                source_field="timeout",
+                source_id=tool_call_id,
+                value=value,
+                reason="local compute timeout output is prompt data, not instructions",
+                corrective_action=(
+                    "Keep local compute timeout output in user-role data context and do not "
+                    "project it into system or developer instructions."
+                ),
+            )
+        ]
+    )
+    return admission.untrusted_context_receipts[0]
+
+
+def _status_override_output_receipt(
+    *,
+    tool_call_id: str,
+    value: dict[str, Any],
+) -> dict[str, object]:
+    admission = admit_prompt_context_source_evidence(
+        [
+            PromptContextSourceEvidence(
+                segment_id=f"{tool_call_id}:status-output",
+                source_type="tool_output",
+                source_field="status",
+                source_id=tool_call_id,
+                value=value,
+                reason="tool status override output is prompt data, not instructions",
+                corrective_action=(
+                    "Keep tool status override output in user-role data context and do not "
+                    "project it into system or developer instructions."
+                ),
+            )
+        ]
+    )
+    return admission.untrusted_context_receipts[0]
 
 
 def _context_mapping(fixture_context: dict[str, Any], key: str) -> dict[str, Any]:
@@ -747,6 +948,47 @@ def _context_list(fixture_context: dict[str, Any], key: str, corpus_ref: str) ->
                 field=f"{key}.item",
                 source_type=item_source_type,
                 source_id=f"{item_source_id_prefix}-{index}",
+                expected_type="object",
+                actual_type=type(item).__name__,
+            )
+        context_items.append(item)
+    return context_items
+
+
+def _skill_memory_store_key(context_kind: str) -> str:
+    if context_kind == "skill":
+        return "skill_store"
+    if context_kind == "memory":
+        return "memory_store"
+    raise AgenticToolRuntimeError(f"Unsupported skill or memory context kind: {context_kind}.")
+
+
+def _skill_memory_store_list(
+    fixture_context: dict[str, Any],
+    *,
+    context_kind: str,
+    store_ref: str,
+) -> list[dict[str, Any]]:
+    store_key = _skill_memory_store_key(context_kind)
+    value = fixture_context.get(store_key, [])
+    if isinstance(value, dict):
+        value = value.get(store_ref, [])
+    if not isinstance(value, list):
+        raise _invalid_untrusted_value_type(
+            field=store_key,
+            source_type=context_kind,
+            source_id=store_ref,
+            expected_type="list",
+            actual_type=type(value).__name__,
+        )
+
+    context_items: list[dict[str, Any]] = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            raise _invalid_untrusted_value_type(
+                field=f"{store_key}.item",
+                source_type=context_kind,
+                source_id=f"{context_kind}-{index}",
                 expected_type="object",
                 actual_type=type(item).__name__,
             )
@@ -812,7 +1054,7 @@ def _enforce_owner_scope(
     )
 
 
-def _retrieval_result_receipt(
+def _retrieval_result_record(
     *,
     tool_call_id: str,
     result_index: int,
@@ -822,7 +1064,10 @@ def _retrieval_result_receipt(
     owner_scope_checked: bool,
 ) -> dict[str, object]:
     source_label = "document" if source_type == "retrieved_document" else "image"
-    kwargs = {
+    return {
+        "context_kind": source_type,
+        "source_id": source_id,
+        "payload": value,
         "owner_scope_checked": owner_scope_checked,
         "segment_id": f"{tool_call_id}:result-{result_index}",
         "source_field": f"results[{result_index - 1}]",
@@ -832,19 +1077,166 @@ def _retrieval_result_receipt(
             "them into system or developer instructions."
         ),
     }
-    if source_type == "retrieved_document":
-        admission = admit_retrieved_document_context(
-            document_id=source_id,
-            document_payload=value,
-            **kwargs,
+
+
+def _retrieval_lookup_result_receipts(
+    records: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    projection = project_retrieval_lookup_result({"records": records})
+    return [
+        *projection.untrusted_context_receipts,
+        *projection.refusal_receipts,
+    ]
+
+
+def _skill_memory_lookup_result_item(
+    *,
+    context_kind: str,
+    source_id: str,
+    item: dict[str, Any],
+) -> dict[str, Any]:
+    if context_kind == "skill":
+        name = _optional_untrusted_text(
+            item.get("name", ""),
+            field="skill_store.name",
+            source_type="skill",
+            source_id=source_id,
         )
+        summary = _optional_untrusted_text(
+            item.get("summary") or item.get("description") or "",
+            field="skill_store.summary",
+            source_type="skill",
+            source_id=source_id,
+            strip=False,
+        )
+        result: dict[str, Any] = {"id": source_id}
+        if name:
+            result["name"] = name
+        if summary:
+            result["summary"] = summary
+        return result
+
+    if context_kind == "memory":
+        text = _optional_untrusted_text(
+            item.get("text") or item.get("summary") or "",
+            field="memory_store.text",
+            source_type="memory",
+            source_id=source_id,
+            strip=False,
+        )
+        result = {"id": source_id}
+        if text:
+            result["text"] = text
+        return result
+
+    raise AgenticToolRuntimeError(f"Unsupported skill or memory context kind: {context_kind}.")
+
+
+def _skill_memory_lookup_match_text(result: dict[str, Any]) -> str:
+    return " ".join(
+        str(value).lower() for key, value in result.items() if key != "id"
+    )
+
+
+def _skill_memory_result_record(
+    *,
+    context_kind: str,
+    tool_call_id: str,
+    result_index: int,
+    value: dict[str, Any],
+    source_id: str,
+    owner_scope_checked: bool,
+) -> dict[str, object]:
+    return {
+        "context_kind": context_kind,
+        "source_id": source_id,
+        "payload": value,
+        "owner_scope_checked": owner_scope_checked,
+        "segment_id": f"{tool_call_id}:result-{result_index}",
+        "source_field": f"results[{result_index - 1}]",
+        "reason": f"selected {context_kind} lookup result is prompt data, not instructions",
+        "corrective_action": (
+            f"Keep selected {context_kind} lookup results in user-role data context and do not project "
+            "them into system or developer instructions."
+        ),
+    }
+
+
+def _skill_memory_lookup_result_receipts(
+    records: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    projection = project_skill_memory_lookup_result({"records": records})
+    return [
+        *projection.untrusted_context_receipts,
+        *projection.refusal_receipts,
+    ]
+
+
+def _runtime_error_refusal_receipts(details: dict[str, Any]) -> tuple[dict[str, object], ...]:
+    reason = details.get("reason")
+    if reason == "invalid_untrusted_input_type":
+        receipt = _invalid_untrusted_type_refusal_receipt(details)
+    elif reason == "owner_scope_mismatch":
+        receipt = _owner_scope_refusal_receipt(details)
+    elif reason == "workspace_path_refused":
+        receipt = _workspace_path_refusal_receipt(details)
     else:
-        admission = admit_retrieved_image_context(
-            image_id=source_id,
-            image_payload=value,
-            **kwargs,
-        )
-    return admission.untrusted_context_receipts[0]
+        return ()
+    return (receipt,) if receipt is not None else ()
+
+
+def _invalid_untrusted_type_refusal_receipt(details: dict[str, Any]) -> dict[str, object] | None:
+    source_id = _receipt_text(details.get("source_id"))
+    source_type = _receipt_text(details.get("source_type"))
+    source_field = _receipt_text(details.get("field"))
+    corrective_action = _receipt_text(details.get("corrective_action"))
+    if not source_id or not source_type or not source_field or not corrective_action:
+        return None
+    return refused_prompt_context_receipt(
+        segment_id=f"{source_id}:invalid-untrusted-input",
+        source_type=source_type,
+        source_field=source_field,
+        source_id=source_id,
+        reason="invalid_untrusted_input_type",
+        corrective_action=corrective_action,
+    )
+
+
+def _owner_scope_refusal_receipt(details: dict[str, Any]) -> dict[str, object] | None:
+    source_id = _receipt_text(details.get("source_id"))
+    source_type = _receipt_text(details.get("source_type"))
+    corrective_action = _receipt_text(details.get("corrective_action"))
+    if not source_id or not source_type or not corrective_action:
+        return None
+    return refused_prompt_context_receipt(
+        segment_id=f"{source_id}:owner-scope-refusal",
+        source_type=source_type,
+        source_field="owner_scope",
+        source_id=source_id,
+        owner_scope_checked=True,
+        reason="owner_scope_mismatch",
+        corrective_action=corrective_action,
+    )
+
+
+def _workspace_path_refusal_receipt(details: dict[str, Any]) -> dict[str, object] | None:
+    source_id = _receipt_text(details.get("source_id"))
+    source_type = _receipt_text(details.get("source_type"))
+    corrective_action = _receipt_text(details.get("corrective_action"))
+    if not source_id or not source_type or not corrective_action:
+        return None
+    return refused_prompt_context_receipt(
+        segment_id=f"{source_id}:workspace-path-refusal",
+        source_type=source_type,
+        source_field="workspace_path",
+        source_id=source_id,
+        reason="workspace_path_refused",
+        corrective_action=corrective_action,
+    )
+
+
+def _receipt_text(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _visit_document_receipt(
@@ -867,6 +1259,46 @@ def _visit_document_receipt(
         ),
     )
     return admission.untrusted_context_receipts[0]
+
+
+def _visual_image_receipt(
+    *,
+    tool_call_id: str,
+    source_id: str,
+    value: dict[str, Any],
+    owner_scope_checked: bool,
+    segment_suffix: str,
+    reason: str,
+    corrective_action: str,
+) -> dict[str, object]:
+    admission = admit_retrieved_image_context(
+        image_id=_redacted_visual_source_id(source_id),
+        image_payload=value,
+        owner_scope_checked=owner_scope_checked,
+        segment_id=f"{tool_call_id}:{segment_suffix}",
+        source_field="payload",
+        reason=reason,
+        corrective_action=corrective_action,
+    )
+    return admission.untrusted_context_receipts[0]
+
+
+_VISUAL_SOURCE_ID_SAFE_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:#-"
+)
+
+
+def _redacted_visual_source_id(source_id: str) -> str:
+    normalized = source_id.strip()
+    if not normalized:
+        return normalized
+    if (
+        len(normalized) <= 128
+        and all(char in _VISUAL_SOURCE_ID_SAFE_CHARS for char in normalized)
+    ):
+        return normalized
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+    return f"image-ref:{digest}"
 
 
 def _tool_argument_text(arguments: dict[str, Any], name: str, *, tool_call_id: str) -> str:

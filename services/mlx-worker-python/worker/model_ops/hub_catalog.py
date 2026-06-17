@@ -776,29 +776,20 @@ def _size_hint_bytes(payload: dict[str, Any], *, card_data: dict[str, Any] | Non
     readme_text = _string(payload.get("readme"))
     card_description_text = _string(card_data.get("description"))
     if not readme_text and not card_description_text:
-        return (
-            _size_hint_from_text(description_text, allow_bare=False)
-            if description_text and _may_contain_model_marker(description_text)
-            else 0
-        )
+        return _size_hint_from_marked_text(description_text) if description_text else 0
     if not description_text and not card_description_text:
-        return (
-            _size_hint_from_text(readme_text, allow_bare=False)
-            if readme_text and _may_contain_model_marker(readme_text)
-            else 0
-        )
+        return _size_hint_from_marked_text(readme_text) if readme_text else 0
     if not description_text and not readme_text:
-        return (
-            _size_hint_from_text(card_description_text, allow_bare=False)
-            if card_description_text and _may_contain_model_marker(card_description_text)
-            else 0
-        )
+        return _size_hint_from_marked_text(card_description_text) if card_description_text else 0
 
     found_model_marker = False
     for text in (description_text, readme_text, card_description_text):
         if not text or not _may_contain_model_marker(text):
             continue
         found_model_marker = True
+        direct_hint = _direct_explicit_size_hint_from_text(text)
+        if direct_hint > 0:
+            return direct_hint
         hint = _size_hint_from_text(text, allow_bare=False)
         if hint > 0:
             return hint
@@ -809,6 +800,15 @@ def _size_hint_bytes(payload: dict[str, Any], *, card_data: dict[str, Any] | Non
         for text in (description_text, readme_text, card_description_text)
         if text
     )
+    return _size_hint_from_text(text, allow_bare=False)
+
+
+def _size_hint_from_marked_text(text: str) -> int:
+    if not _may_contain_model_marker(text):
+        return 0
+    direct_hint = _direct_explicit_size_hint_from_text(text)
+    if direct_hint > 0:
+        return direct_hint
     return _size_hint_from_text(text, allow_bare=False)
 
 
@@ -854,6 +854,33 @@ def _direct_card_size_hint_from_text(text: str) -> int:
     if stripped_text:
         return _direct_size_hint_from_text(stripped_text)
     return _direct_size_hint_from_text(text)
+
+
+def _direct_explicit_size_hint_from_text(text: str) -> int:
+    marker_index = text.find("Model size")
+    if marker_index < 0:
+        marker_index = text.find("MODEL SIZE")
+    if marker_index < 0:
+        marker_index = text.find("model size")
+    if marker_index < 0:
+        return 0
+
+    value_start = marker_index + 10
+    text_length = len(text)
+    while value_start < text_length and text[value_start].isspace():
+        value_start += 1
+    if value_start < text_length and (text[value_start] == ":" or text[value_start] == "|"):
+        value_start += 1
+    while value_start < text_length and text[value_start].isspace():
+        value_start += 1
+
+    value_end = value_start
+    while (
+        value_end < text_length
+        and text[value_end] not in "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+    ):
+        value_end += 1
+    return _direct_size_hint_from_text(text[value_start:value_end])
 
 
 def _strip_model_size_label(text: str) -> str:

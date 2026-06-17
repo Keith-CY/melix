@@ -60,6 +60,18 @@ selected-registry cache so repeated ad hoc selections retain the hot cache
 benefit without unbounded growth. Selection order, whitespace normalization,
 deduplication, and unknown-name errors remain unchanged.
 
+## Slice update: always-only routing cap fast path
+
+This incremental slice keeps the same `tool-registry-select-name-index-cache`
+registered probe and narrows the optimization to agentic tool routing requests
+where the always-available tool set already fills `max_selected_tools`. In that
+case, optional vector iteration and keyword/context scans cannot add another
+tool, so `select_agentic_tools_for_turn()` now returns the always-only selection
+immediately while preserving the fallback receipt shape. The shared receipt
+builder is kept as a module-level helper so the existing vector/keyword paths do
+not pay a per-call nested-function allocation cost. The probe records a separate
+`always_only_planning_elapsed_ms_mean` metric for this bounded-cap routing path.
+
 ## Acceptance Criteria
 
 - Focused behavior tests pass locally on Linux.

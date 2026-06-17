@@ -314,8 +314,14 @@ class ModelOpsJobRegistry:
         manifest_paths,
         pct: float,
     ) -> None:
+        read_manifest_dict = self._read_manifest_dict
+        resolved_job_id = self._resolved_job_id
+        resolved_output_dir_for_restore = self._resolved_output_dir_for_restore
+        jobs = self._jobs
+        job_type = ModelOpsJob
+        write_manifest_stage = ("write_manifest", pct)
         for manifest_path in manifest_paths:
-            payload = self._read_manifest_dict(manifest_path)
+            payload = read_manifest_dict(manifest_path)
             if payload:
                 raw_operation = payload.get("operation", "")
                 if raw_operation != operation and str(raw_operation).strip() != operation:
@@ -323,17 +329,17 @@ class ModelOpsJobRegistry:
             else:
                 continue
 
-            job_id = self._resolved_job_id(manifest_path, payload)
-            if not job_id or job_id in self._jobs:
+            job_id = resolved_job_id(manifest_path, payload)
+            if not job_id or job_id in jobs:
                 continue
 
-            output_dir = self._resolved_output_dir_for_restore(operation, manifest_path)
-            self._jobs[job_id] = ModelOpsJob(
+            output_dir = resolved_output_dir_for_restore(operation, manifest_path)
+            jobs[job_id] = job_type(
                 job_id=job_id,
                 operation=operation,
                 source_model=str(payload.get("source_model", "")),
                 output_dir=str(output_dir),
-                stage_history=[("write_manifest", pct)],
+                stage_history=[write_manifest_stage],
                 manifest=payload,
                 manifest_cached=True,
                 output_path=str(manifest_path),

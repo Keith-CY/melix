@@ -237,6 +237,10 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["metric_prefix_elapsed_ms_mean"] >= 0.0
     assert metrics["target_field_elapsed_ms_mean"] >= 0.0
     assert metrics["matrix_roles_elapsed_ms_mean"] >= 0.0
+    assert metrics["dict_list_elapsed_ms_mean"] >= 0.0
+    assert metrics["dict_list_identity_hits"] == (
+        max(1.0, metrics["iterations"] / 50.0) * metrics["sample_count"]
+    )
     assert metrics["run_kind_count"] == 65.0
     assert metrics["metric_prefix_count"] == 65.0
     assert metrics["target_field_count"] == 65.0
@@ -321,6 +325,32 @@ def test_retrieval_context_projection_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["iteration_count"] == 2.0
     assert metrics["speedup"] >= 0.0
+    assert metrics["lookup_copy_baseline_elapsed_ms_mean"] >= 0.0
+    assert metrics["lookup_copy_optimized_elapsed_ms_mean"] >= 0.0
+    assert metrics["lookup_copy_speedup"] >= 0.0
+
+
+def test_retrieval_context_projection_probe_covers_lookup_wrapper_metadata() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "retrieval-context-projection-fastpath"
+    )
+    focused_tests = (
+        "services/mlx-worker-python/tests/test_retrieval_context.py::"
+        "test_project_retrieval_lookup_result_uses_wrapper_metadata_for_refusals",
+        "services/mlx-worker-python/tests/test_retrieval_context.py::"
+        "test_project_retrieval_lookup_result_uses_wrapper_metadata_for_malformed_records",
+        "services/mlx-worker-python/tests/test_retrieval_context.py::"
+        "test_project_retrieval_lookup_result_refuses_malformed_wrapper_metadata",
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py::"
+        "test_retrieval_context_projection_probe_covers_lookup_wrapper_metadata",
+    )
+    coverage_pytest_selection = probe.coverage_command.split("&&", 1)[0]
+
+    for focused_test in focused_tests:
+        assert focused_test in probe.test_command
+        assert focused_test in coverage_pytest_selection
 
 
 def test_local_job_followup_scan_probe_script_emits_metrics(
@@ -329,6 +359,7 @@ def test_local_job_followup_scan_probe_script_emits_metrics(
 ) -> None:
     monkeypatch.setenv("MELIX_LOCAL_JOB_SCAN_RECORDS", "5")
     monkeypatch.setenv("MELIX_LOCAL_JOB_SCAN_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_LOCAL_JOB_PROJECTION_RECORDS", "3")
     probe_script = runpy.run_path(str(REPO_ROOT / "scripts/local_job_followup_scan_probe.py"))
 
     assert probe_script["main"]() == 0
@@ -339,6 +370,11 @@ def test_local_job_followup_scan_probe_script_emits_metrics(
     assert metrics["receipt_count_mean"] == 5.0
     assert metrics["scandir_calls_mean"] == 1.0
     assert metrics["path_glob_calls_mean"] == 0.0
+    assert metrics["path_exists_calls_mean"] == 0.0
+    assert metrics["projection_elapsed_ms_mean"] >= 0.0
+    assert metrics["projection_count_mean"] == 3.0
+    assert metrics["projection_followup_message_count_mean"] == 3.0
+    assert metrics["projection_receipt_count_mean"] == 6.0
 
 
 
@@ -596,6 +632,8 @@ def test_tool_registry_select_probe_script_emits_metrics(
     assert metrics["missing_selection_errors_mean"] == 4.0
     assert metrics["selector_planning_elapsed_ms_mean"] >= 0.0
     assert metrics["selector_selected_schema_bytes_mean"] > 0.0
+    assert metrics["always_only_planning_elapsed_ms_mean"] >= 0.0
+    assert metrics["always_only_selected_schema_bytes_mean"] > 0.0
 
 
 def test_tool_registry_names_probe_script_emits_metrics(
@@ -1534,13 +1572,14 @@ def test_scope_report_selects_macos_app_bundle_probes() -> None:
         changed_files=["services/mlx-worker-python/worker/productization/macos_app_bundle.py"],
     )
 
-    assert scope["selected_count"] == 5
+    assert scope["selected_count"] == 6
     assert _selected_probe_ids(scope) == [
         "macos-app-resource-bundle-scandir",
         "macos-app-native-binary-scandir",
         "macos-app-path-size-scandir",
         "macos-app-signing-targets-scandir",
         "macos-app-package-prune-scandir",
+        "macos-app-runtime-prune-scandir",
     ]
 
 
@@ -1564,6 +1603,20 @@ def test_macos_app_package_prune_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["package_count"] == 400.0
     assert metrics["pruned_count"] == 2400.0
+    assert metrics["bytes_saved"] > 0.0
+    assert metrics["elapsed_ms_mean"] > 0.0
+    assert metrics["sample_count"] == 9.0
+
+
+def test_macos_app_runtime_prune_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runpy.run_path(str(REPO_ROOT / "scripts/macos_app_runtime_prune_probe.py"), run_name="__main__")
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["runtime_package_count"] == 180.0
+    assert metrics["directories_pruned"] == 361.0
+    assert metrics["files_pruned"] == 120.0
     assert metrics["bytes_saved"] > 0.0
     assert metrics["elapsed_ms_mean"] > 0.0
     assert metrics["sample_count"] == 9.0
@@ -2492,8 +2545,11 @@ def test_event_extraction_response_json_probe_script_emits_metrics(
     assert metrics["iterations_per_sample"] == 3.0
     assert metrics["sample_count"] == 1.0
     assert metrics["checksum"] == 12.0
+    assert metrics["direct_checksum"] == 12.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["direct_elapsed_ms_mean"] >= 0
+    assert metrics["direct_peak_bytes_mean"] > 0
 
 
 def test_hub_catalog_tag_normalization_probe_script_emits_metrics(
@@ -2528,7 +2584,7 @@ def test_hub_catalog_size_hint_probe_script_emits_metrics(
     assert exc_info.value.code == 0
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 1.0
-    assert metrics["size_hint_calls_mean"] == 3.0
+    assert metrics["size_hint_calls_mean"] == 0.0
     assert metrics["matched_hint_count"] == 5.0
     assert metrics["payload_compatibility_calls_mean"] == 8.0
     assert metrics["payload_compatibility_matched_count"] == 7.0
@@ -3368,6 +3424,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "macos-app-path-size-scandir",
         "macos-app-signing-targets-scandir",
         "macos-app-package-prune-scandir",
+        "macos-app-runtime-prune-scandir",
         "package-macos-resolve-fallback-scandir",
         "melix-metrics-snapshot-runtime-scandir",
         "pr-scoped-performance-scope-json-read-bytes",
@@ -4529,6 +4586,9 @@ def test_startup_signals_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert payload["direct_control_crash_elapsed_ms_mean"] > 0
     assert payload["direct_control_crash_log_path_exists_checks_mean"] == 0.0
     assert payload["direct_control_crash_log_reads_mean"] == 0.0
+    assert payload["empty_hang_elapsed_ms_mean"] > 0
+    assert payload["empty_hang_log_path_exists_checks_mean"] == 0.0
+    assert payload["empty_hang_log_reads_mean"] == 0.0
     assert payload["worker_crash_elapsed_ms_mean"] > 0
     assert payload["worker_crash_log_path_exists_checks_mean"] == 0.0
     assert payload["worker_crash_log_reads_mean"] == 1.0
@@ -4633,6 +4693,8 @@ def test_real_model_support_hf_cache_probe_script_emits_metrics(
     assert payload["sample_count"] == 7.0
     assert payload["snapshot_count"] == 6000.0
     assert payload["selected_latest_snapshot"] == 5999.0
+    assert payload["hf_cache_elapsed_ms_mean"] > 0
+    assert payload["hf_cache_peak_bytes_mean"] > 0
     assert payload["weight_scan_elapsed_ms_mean"] > 0
     assert payload["weight_file_count"] == 20_000.0
 
@@ -5118,6 +5180,7 @@ def test_command_summary_keeps_ci_heartbeats_compact() -> None:
     assert _summarize_command("python3 - <<'PY'\nprint('x')\nPY") == "python3 - <<'PY' ..."
     assert _summarize_command(" \n  python3 - <<'PY'  \nprint('x')") == "python3 - <<'PY' ..."
     assert _summarize_command(" \n ") == "<empty command>"
+    assert _summarize_command("python3 -m pytest\n \t\n") == "python3 -m pytest"
 
     long_summary = _summarize_command("python3 -c " + "x" * 300, max_length=80)
     assert len(long_summary) <= 80
@@ -5245,6 +5308,21 @@ def test_mlx_audio_local_uri_probe_script_emits_metrics() -> None:
     assert metrics["sample_count"] == 5.0
 
 
+def test_mlx_audio_local_uri_probe_covers_audio_catalog_metadata_assertions() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-audio-local-uri-zero-copy-preprocess"
+    )
+    selector = (
+        "services/mlx-worker-python/tests/test_audio_runtime.py"
+        "::test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries"
+    )
+
+    assert selector in probe.test_command
+    assert selector in probe.coverage_command
+
+
 def test_mlx_audio_local_uri_probe_script_main_covers_checked_in_file(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -5275,7 +5353,7 @@ def test_lora_reward_summary_probe_script_emits_metrics() -> None:
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["sorted_calls_mean"] == 2.0
+    assert metrics["sorted_calls_mean"] == 0.0
     assert metrics["sample_count"] == 5000.0
     assert metrics["candidate_count"] == 32.0
     assert metrics["checksum"] > 0
@@ -5293,7 +5371,7 @@ def test_lora_reward_summary_probe_script_main_covers_checked_in_file(
     assert module.main() == 0
     payload = json.loads(capsys.readouterr().out.strip())
 
-    assert payload["sorted_calls_mean"] == 2.0
+    assert payload["sorted_calls_mean"] == 0.0
     assert payload["sample_count"] == 5000.0
     assert payload["candidate_count"] == 32.0
 
@@ -5728,6 +5806,8 @@ def test_melix_metrics_snapshot_discovery_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 9.0
     assert metrics["file_count"] == 4000.0
+    assert metrics["noise_count"] == 200.0
+    assert metrics["source_count"] == 3.0
     assert metrics["elapsed_ms_mean"] >= 0.0
 
 

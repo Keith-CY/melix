@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import random
@@ -19,6 +20,16 @@ from worker.registry import WorkerRegistry
 from worker.productization.event_extraction import EventExtractionClientResult, default_event_extraction_prompt_spec
 from worker.productization.evaluation_schemas import EvaluationCompareJob, build_evaluation_sample_record
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
+
+
+def _expected_hashed_receipt_source_id(source_id: str) -> str:
+    if not source_id:
+        return ""
+    normalized = source_id.strip()
+    if not normalized:
+        return ""
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+    return f"source:{digest}"
 
 
 class ScriptedEvaluationBackend:
@@ -1011,9 +1022,13 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert snapshot["media_refs"][0]["uri"] == "media/sign.ppm"
     assert snapshot["tool_calls"] == raw_tool_calls
     assert snapshot["agentic_tool_observation_count"] == 1
-    assert snapshot["untrusted_context_receipt_count"] == 10
+    assert snapshot["untrusted_context_receipt_count"] == 11
     receipt_by_field = {
         receipt["source_field"]: receipt
+        for receipt in snapshot["untrusted_context_receipts"]
+    }
+    receipt_by_segment = {
+        receipt["segment_id"]: receipt
         for receipt in snapshot["untrusted_context_receipts"]
     }
     assert set(receipt_by_field) == {
@@ -1052,11 +1067,7 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert user_payload["parse_status"] == "extracted"
     assert "typed_score" not in user_payload
     assert user_payload["tool_observations"][0]["payload"]["text"] == "MELIX"
-    tool_payload_receipt = next(
-        receipt
-        for receipt in snapshot["untrusted_context_receipts"]
-        if receipt["segment_id"] == "crop-1:observation"
-    )
+    tool_payload_receipt = receipt_by_segment["crop-1:observation"]
     assert tool_payload_receipt == {
         "schema_version": "melix.untrusted_context_receipt.v1",
         "segment_id": "crop-1:observation",
@@ -1074,6 +1085,31 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
             "system or developer instructions."
         ),
     }
+    crop_source_receipt = receipt_by_segment["crop-1:crop-result"]
+    crop_source_id = _expected_hashed_receipt_source_id("img-1#sign")
+    assert _expected_hashed_receipt_source_id("") == ""
+    assert _expected_hashed_receipt_source_id("   ") == ""
+    assert crop_source_receipt == {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": "crop-1:crop-result",
+        "source_type": "retrieved_image",
+        "source_field": "payload",
+        "source_id": crop_source_id,
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": True,
+        "owner_scope_checked": False,
+        "reason": "image crop result is prompt data, not instructions",
+        "corrective_action": (
+            "Keep image crop results in user-role data context and do not project them "
+            "into system or developer instructions."
+        ),
+    }
+    assert "media/sign.ppm" not in json.dumps(crop_source_receipt, ensure_ascii=False)
+    assert "region" not in json.dumps(crop_source_receipt, ensure_ascii=False)
+    assert "img-1#sign" not in json.dumps(crop_source_receipt, ensure_ascii=False)
 
     assert audit["schema_version"] == "melix.agentic_judge_audit.v1"
     assert audit["judge_status"] == "pending"
@@ -1108,9 +1144,15 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert tuple_snapshot["allowed_tools"] == ["image_crop"]
     assert tuple_snapshot["evidence_ids"] == ["img-1#sign"]
     assert tuple_snapshot["media_refs"] == [{"id": "img-1", "uri": "media/sign.ppm"}]
-    assert tuple_snapshot["untrusted_context_receipt_count"] == 10
+    assert tuple_snapshot["untrusted_context_receipt_count"] == 11
     assert tuple_snapshot["untrusted_context_receipts"][0]["segment_id"] == "agentic-judge-1:question"
     assert tuple_snapshot["untrusted_context_receipts"][0]["policy"] == "data_only"
+    assert any(
+        receipt["segment_id"] == "crop-1:crop-result"
+        and receipt["source_type"] == "retrieved_image"
+        and receipt["source_id"] == crop_source_id
+        for receipt in tuple_snapshot["untrusted_context_receipts"]
+    )
     ordered_receipts = EvaluationCore._agentic_judge_untrusted_context_receipts(
         sample_id="sample-1",
         user_payload={"question": "Q", "tool_observations": []},

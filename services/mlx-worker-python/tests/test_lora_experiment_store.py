@@ -85,12 +85,19 @@ def _write_manifest(
 def test_iter_lora_run_dirs_sorts_names_without_reading_entry_paths(tmp_path: Path, monkeypatch) -> None:
     train_root = tmp_path / "train_lora"
     path_reads = 0
+    name_reads = 0
 
     class FakeEntry:
         def __init__(self, name: str, *, is_dir: bool = True, raises: bool = False) -> None:
-            self.name = name
+            self._name = name
             self._is_dir = is_dir
             self._raises = raises
+
+        @property
+        def name(self) -> str:
+            nonlocal name_reads
+            name_reads += 1
+            return self._name
 
         @property
         def path(self) -> str:  # pragma: no cover - executed only if the regression returns
@@ -125,6 +132,7 @@ def test_iter_lora_run_dirs_sorts_names_without_reading_entry_paths(tmp_path: Pa
         train_root / "model-ops-0002",
     )
     assert path_reads == 0
+    assert name_reads == 5
 
 
 def test_rebuild_index_prefers_runs_with_reported_loss_for_best_run(tmp_path: Path) -> None:

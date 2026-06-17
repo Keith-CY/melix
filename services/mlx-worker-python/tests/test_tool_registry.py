@@ -33,6 +33,26 @@ def test_built_in_agentic_tool_registry_exports_stable_contracts() -> None:
     assert {schema["type"] for schema in schemas} == {"function"}
     assert schemas[0]["x-melix-tool-kind"] == "vision.image_crop"
     assert schemas[0]["x-melix-observation-kind"] == "image_region"
+    assert "skill_lookup" not in registry.names()
+    assert "memory_lookup" not in registry.names()
+
+
+def test_agentic_tool_catalog_exposes_opt_in_skill_and_memory_lookup_tools() -> None:
+    catalog = tool_registry_module.agentic_tool_catalog_registry()
+
+    assert catalog.names() == tool_registry_module.SELECTABLE_AGENTIC_TOOL_NAMES
+    assert catalog.metrics().tool_count == 8
+    assert "skill_lookup" in catalog.names()
+    assert "memory_lookup" in catalog.names()
+
+    selected = catalog.select(("skill_lookup", "memory_lookup"))
+
+    assert selected.names() == ("skill_lookup", "memory_lookup")
+    assert [tool.tool_kind for tool in selected.tools] == ["skill.lookup", "memory.lookup"]
+
+    config = built_in_tool_config(("skill_lookup", "memory_lookup"))
+
+    assert [tool.name for tool in config.tools] == ["skill_lookup", "memory_lookup"]
 
 
 def test_built_in_tool_registry_reuses_singleton_snapshot() -> None:
@@ -588,11 +608,16 @@ def test_agentic_tool_selection_preserves_always_available_tools_with_vector_hit
             {"tool_id": "local_compute", "source": "always"},
             {"tool_id": "text_search", "source": "vector"},
         ],
-        "dropped_tool_count": 4,
-        "full_schema_bytes": built_in_tool_registry().metrics().schema_bytes,
+        "dropped_tool_count": 6,
+        "full_schema_bytes": tool_registry_module.agentic_tool_catalog_registry()
+        .metrics()
+        .schema_bytes,
         "selected_schema_bytes": result.registry.metrics().schema_bytes,
     }
-    assert result.registry.metrics().schema_bytes < built_in_tool_registry().metrics().schema_bytes
+    assert (
+        result.registry.metrics().schema_bytes
+        < tool_registry_module.agentic_tool_catalog_registry().metrics().schema_bytes
+    )
 
 
 def test_agentic_tool_selection_uses_builtin_name_set_for_membership() -> None:
@@ -606,7 +631,7 @@ def test_agentic_tool_selection_uses_builtin_name_set_for_membership() -> None:
     )
 
     assert tool_registry_module._BUILTIN_AGENTIC_TOOL_NAME_SET == frozenset(
-        BUILTIN_AGENTIC_TOOL_NAMES
+        tool_registry_module.SELECTABLE_AGENTIC_TOOL_NAMES
     )
     assert result.registry.names() == ("local_compute", "text_search")
     assert result.receipt["selected_tools"] == [
@@ -618,7 +643,7 @@ def test_agentic_tool_selection_uses_builtin_name_set_for_membership() -> None:
 def test_agentic_tool_selection_keyword_matchable_names_omit_always_available_tool() -> None:
     assert tool_registry_module._KEYWORD_MATCHABLE_TOOL_NAMES == tuple(
         tool_name
-        for tool_name in BUILTIN_AGENTIC_TOOL_NAMES
+        for tool_name in tool_registry_module.SELECTABLE_AGENTIC_TOOL_NAMES
         if tool_name not in tool_registry_module.ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES
     )
 
@@ -632,6 +657,68 @@ def test_agentic_tool_selection_keyword_matchable_names_omit_always_available_to
 
     assert result.registry.names() == ("local_compute",)
     assert result.receipt["selection_mode"] == "fallback"
+
+
+def test_agentic_tool_selection_compiles_keyword_hint_rules_once_per_hint() -> None:
+    compiled_rules = tool_registry_module._compile_keyword_hint_rules(
+        {
+            "visit": ("fixture://docs", "Visit", ""),
+            "text_search": ("local evidence",),
+        }
+    )
+
+    assert compiled_rules == {
+        "visit": (("fixture://docs", True), (" visit ", False)),
+        "text_search": ((" local evidence ", False),),
+    }
+    assert tool_registry_module._keyword_hint_matches(
+        "Open fixture://docs/provider-contract.",
+        compiled_rules["visit"][0][0],
+        literal=compiled_rules["visit"][0][1],
+    )
+    assert tool_registry_module._keyword_hint_matches(
+        "Please VISIT the cited page.",
+        compiled_rules["visit"][1][0],
+        literal=compiled_rules["visit"][1][1],
+    )
+
+
+def test_agentic_tool_selection_max_always_only_skips_optional_routing_scans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_keyword_tool_matches(text: str) -> tuple[str, ...]:  # pragma: no cover
+        raise AssertionError("always-only selection should skip keyword scans")
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "_keyword_tool_matches",
+        fail_keyword_tool_matches,
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search the local text evidence and visit fixture://docs/provider-contract.",
+            recent_user_turns=("Crop the image region.",),
+            vector_selected_tool_ids=("text_search", "visit"),
+            vector_available=True,
+            max_selected_tools=1,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt == {
+        "schema_version": "melix.agentic_tool_selection.v1",
+        "toolset_version": "melix.agentic_tools.builtin.v1",
+        "selection_mode": "fallback",
+        "vector_available": True,
+        "fallback_reason": "no_keyword_match",
+        "selected_tools": [{"tool_id": "local_compute", "source": "always"}],
+        "dropped_tool_count": 7,
+        "full_schema_bytes": tool_registry_module.agentic_tool_catalog_registry()
+        .metrics()
+        .schema_bytes,
+        "selected_schema_bytes": result.registry.metrics().schema_bytes,
+    }
 
 
 def test_agentic_tool_selection_uses_keyword_fallback_when_vector_unavailable() -> None:
@@ -680,6 +767,36 @@ def test_agentic_tool_selection_skips_empty_context_keyword_scan(
 
     assert result.registry.names() == ("local_compute", "visit")
     assert scanned_texts == ["Open fixture://docs/provider-contract and summarize the page."]
+
+
+def test_agentic_tool_selection_skips_context_scan_when_current_fills_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scanned_texts: list[str] = []
+    real_keyword_tool_matches = tool_registry_module._keyword_tool_matches
+
+    def record_keyword_tool_matches(text: str) -> tuple[str, ...]:
+        scanned_texts.append(text)
+        return real_keyword_tool_matches(text)
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "_keyword_tool_matches",
+        record_keyword_tool_matches,
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search the local text evidence.",
+            vector_available=False,
+            recent_user_turns=("Visit fixture://docs/provider-contract.",),
+            max_selected_tools=2,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selection_mode"] == "keyword"
+    assert scanned_texts == ["Search the local text evidence."]
 
 
 def test_agentic_tool_selection_reuses_single_recent_context_text(
@@ -769,6 +886,33 @@ def test_agentic_tool_selection_keyword_fallback_keeps_multiple_punctuated_tools
     assert result.receipt["selection_mode"] == "keyword"
 
 
+@pytest.mark.parametrize(
+    ("current_user_turn", "expected_tool"),
+    [
+        ("Find the best repo skill for this task.", "skill_lookup"),
+        ("Look up pinned memory for this operator preference.", "memory_lookup"),
+    ],
+)
+def test_agentic_tool_selection_keyword_fallback_selects_skill_and_memory_lookup(
+    current_user_turn: str,
+    expected_tool: str,
+) -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn=current_user_turn,
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", expected_tool)
+    assert result.receipt["selection_mode"] == "keyword"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": expected_tool, "source": "keyword"},
+    ]
+
+
 def test_agentic_tool_selection_keyword_matcher_ignores_empty_hints() -> None:
     assert tool_registry_module._keyword_hint_matches("search local evidence", "") is False
 
@@ -855,6 +999,37 @@ def test_agentic_tool_selection_records_fallback_when_no_keyword_matches() -> No
     assert result.receipt["selected_tools"] == [
         {"tool_id": "local_compute", "source": "always"}
     ]
+
+
+def test_tool_selection_receipt_reuses_bound_metric_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = tool_registry_module.agentic_tool_catalog_registry()
+    original_metrics = ToolRegistry.metrics
+    metrics_call_count = 0
+
+    def counted_metrics(self: ToolRegistry) -> object:
+        nonlocal metrics_call_count
+        metrics_call_count += 1
+        return original_metrics(self)
+
+    monkeypatch.setattr(ToolRegistry, "metrics", counted_metrics)
+
+    result = tool_registry_module._build_tool_selection_result(
+        registry,
+        ["local_compute", "text_search"],
+        {"local_compute": "always", "text_search": "keyword"},
+        ToolSelectionInput(
+            current_user_turn="Search local evidence.",
+            vector_available=False,
+            max_selected_tools=4,
+        ),
+        "keyword",
+        "vector_unavailable",
+    )
+
+    assert result.receipt["full_schema_bytes"] >= result.receipt["selected_schema_bytes"]
+    assert metrics_call_count == 2
 
 
 def test_agentic_tool_selection_records_fallback_for_whitespace_only_turn() -> None:

@@ -216,14 +216,14 @@ struct DesktopPolishSmokeTests {
         #expect(persistedQueue.count == 1)
         #expect(restoredViewModel.downloadQueue.count == 1)
         #expect(restoredSelectedToolSection == .downloads)
-        #expect(surfaceGroundingCount == DesktopSurface.visibleNavigationCases.count)
+        #expect(surfaceGroundingCount == DesktopSurface.routableWorkspaceCases.count)
         #expect(toolSectionGroundingCount == DesktopToolSection.allCases.count)
     }
 }
 
 @MainActor
 private func groundedSurfaceCount(for viewModel: RuntimeViewModel) -> Int {
-    DesktopSurface.visibleNavigationCases.reduce(into: 0) { count, surface in
+    DesktopSurface.routableWorkspaceCases.reduce(into: 0) { count, surface in
         viewModel.selectSurface(surface)
         if hostedDesktopPolishViewHasSubviews(DesktopWorkspaceShellView(viewModel: viewModel)) {
             count += 1

@@ -360,6 +360,34 @@ def test_repo_id_mlx_substring_match_preserves_ascii_case_insensitivity() -> Non
     ) is True
 
 
+def test_size_hint_single_readme_uses_direct_explicit_marker_before_regex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parser = Mock(return_value=0)
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", parser)
+
+    assert (
+        hub_catalog_module._size_hint_bytes(
+            {
+                "cardData": {},
+                "readme": "README\nMODEL SIZE | 130 kb\nother metadata",
+            }
+        )
+        == 130 * KB
+    )
+    parser.assert_not_called()
+
+
+def test_size_hint_single_readme_falls_back_to_regex_when_direct_parse_misses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parser = Mock(return_value=5 * MB)
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", parser)
+
+    assert hub_catalog_module._size_hint_bytes({"cardData": {}, "readme": "Model size:"}) == 5 * MB
+    parser.assert_called_once_with("Model size:", allow_bare=False)
+
+
 def test_direct_size_hint_rejects_extra_tokens_without_full_split() -> None:
     assert _direct_size_hint_from_text("12 GB extra") == 0
     assert _direct_size_hint_from_text("12 GB") == 12 * 1024 * 1024 * 1024
@@ -415,9 +443,26 @@ def test_size_hint_scans_multiple_text_fields_before_joining(monkeypatch: pytest
         )
         == 12 * GB
     )
-    assert scanned_texts == [
-        "README\nModel size: 12 GB\nother metadata",
-    ]
+    assert scanned_texts == []
+
+
+def test_direct_explicit_size_hint_handles_common_readme_lines() -> None:
+    assert (
+        hub_catalog_module._direct_explicit_size_hint_from_text(
+            "README\nModel size: 12 GB\nother metadata"
+        )
+        == 12 * GB
+    )
+    assert (
+        hub_catalog_module._direct_explicit_size_hint_from_text(
+            "README\nMODEL SIZE | 7 kb\nother metadata"
+        )
+        == 7 * KB
+    )
+    assert hub_catalog_module._direct_explicit_size_hint_from_text("model size 1.5 MB") == int(
+        1.5 * MB
+    )
+    assert hub_catalog_module._direct_explicit_size_hint_from_text("mOdel size: 12 GB") == 0
 
 
 def test_weight_or_config_file_preserves_case_insensitive_matches() -> None:
@@ -1230,7 +1275,7 @@ def test_size_hint_bytes_skips_explicit_parser_when_model_marker_absent(
     parser.assert_not_called()
 
 
-def test_size_hint_bytes_skips_direct_hint_parser_when_card_model_size_missing(
+def test_size_hint_bytes_uses_direct_marker_parser_when_card_model_size_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, bool]] = []
@@ -1244,8 +1289,8 @@ def test_size_hint_bytes_skips_direct_hint_parser_when_card_model_size_missing(
     assert hub_catalog_module._size_hint_bytes({"cardData": {}}) == 0
     assert calls == []
 
-    assert hub_catalog_module._size_hint_bytes({"cardData": {}, "readme": "Model size: 7 MB"}) == 0
-    assert calls == [("Model size: 7 MB", False)]
+    assert hub_catalog_module._size_hint_bytes({"cardData": {}, "readme": "Model size: 7 MB"}) == 7 * MB
+    assert calls == []
 
 
 def test_size_hint_bytes_reuses_marker_checks_before_hint_parsing(
@@ -1377,16 +1422,12 @@ def test_size_hint_bytes_uses_single_payload_text_without_join(
     payload: dict[str, object],
     expected_text: str,
 ) -> None:
-    calls: list[tuple[str, bool]] = []
+    parser = Mock(return_value=1)
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", parser)
 
-    def tracked(text: str, *, allow_bare: bool) -> int:
-        calls.append((text, allow_bare))
-        return 1
-
-    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", tracked)
-
-    assert hub_catalog_module._size_hint_bytes(payload) == 1
-    assert calls == [(expected_text, False)]
+    expected_value = 6 * MB if expected_text == "Model size: 6 MB" else 8 * MB
+    assert hub_catalog_module._size_hint_bytes(payload) == expected_value
+    parser.assert_not_called()
 
 
 def test_search_models_ignores_sibling_sizes_without_weight_or_config_filenames() -> None:

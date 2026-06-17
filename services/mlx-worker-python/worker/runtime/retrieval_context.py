@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping, NoReturn
 
@@ -7,11 +8,15 @@ from worker.runtime.prompt_context import (
     PromptContextAdmission,
     PromptContextSourceEvidence,
     admit_prompt_context_source_evidence,
+    refused_prompt_context_receipt,
     refused_source_prompt_context_receipt,
 )
+from worker.runtime.untrusted_context import untrusted_context_receipt
 
 
 RetrievalContextKind = Literal["retrieved_document", "retrieved_image"]
+
+_MISSING_LOOKUP_RECORDS = object()
 
 
 class RetrievalContextAdmissionError(ValueError):
@@ -41,6 +46,14 @@ class RetrievalContextProjection:
     @property
     def untrusted_context_receipt_count(self) -> int:
         return len(self.untrusted_context_receipts)
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalLookupResultProjection:
+    prompt_user_payload: dict[str, Any]
+    untrusted_context_receipts: list[dict[str, object]]
+    refusal_receipts: list[dict[str, object]]
+    lookup_message: dict[str, Any] | None
 
 
 def admit_retrieved_document_context(
@@ -111,16 +124,71 @@ def project_retrieval_contexts(
     admit_entry = _admit_entry
     duplicate_projection_receipt = _duplicate_projection_receipt
     refusal_receipts_extend = refusal_receipts.extend
-    receipts_extend = receipts.extend
+    refusal_receipts_append = refusal_receipts.append
     receipts_append = receipts.append
     user_payload_update = user_payload.update
-    copy_receipt = dict
+    entry_type = RetrievalContextEntry
 
     for entry in entries:
+        if type(entry) is entry_type:
+            context_kind = entry.context_kind
+            source_id = entry.source_id
+            payload = entry.payload
+            owner_scope_checked = entry.owner_scope_checked
+            segment_id = entry.segment_id
+            source_field = entry.source_field
+            reason = entry.reason
+            corrective_action = entry.corrective_action
+            if (
+                context_kind in ("retrieved_document", "retrieved_image")
+                and isinstance(source_id, str)
+                and isinstance(payload, dict)
+                and isinstance(owner_scope_checked, bool)
+                and isinstance(segment_id, str)
+                and isinstance(source_field, str)
+                and isinstance(reason, str)
+                and isinstance(corrective_action, str)
+            ):
+                normalized_source_id = source_id.strip()
+                normalized_segment_id = segment_id.strip()
+                normalized_source_field = source_field.strip()
+                normalized_reason = reason.strip()
+                normalized_corrective_action = corrective_action.strip()
+                if (
+                    normalized_source_id
+                    and normalized_segment_id
+                    and normalized_source_field
+                    and normalized_reason
+                    and normalized_corrective_action
+                ):
+                    receipt = untrusted_context_receipt(
+                        segment_id=normalized_segment_id,
+                        source_type=context_kind,
+                        source_field=normalized_source_field,
+                        source_id=normalized_source_id,
+                        message_role="user",
+                        owner_scope_checked=owner_scope_checked,
+                        included=True,
+                        reason=normalized_reason,
+                        corrective_action=normalized_corrective_action,
+                    )
+                    if normalized_source_field in user_payload:
+                        refusal_receipts_append(
+                            duplicate_projection_receipt(
+                                receipt,
+                                duplicate_fields=[normalized_source_field],
+                            )
+                        )
+                        continue
+                    user_payload[normalized_source_field] = payload
+                    receipts_append(receipt)
+                    continue
+
         try:
             admission = admit_entry(entry)
         except RetrievalContextAdmissionError as exc:
-            refusal_receipts_extend(copy_receipt(receipt) for receipt in exc.refusal_receipts)
+            for receipt in exc.refusal_receipts:
+                refusal_receipts_append(receipt.copy())
             continue
 
         admission_payload = admission.user_payload
@@ -153,8 +221,12 @@ def project_retrieval_contexts(
                 )
                 continue
             user_payload_update(admission_payload)
-        for receipt in admission.untrusted_context_receipts:
-            receipts_append(copy_receipt(receipt))
+        admission_receipts = admission.untrusted_context_receipts
+        if len(admission_receipts) == 1:
+            receipts_append(admission_receipts[0].copy())
+        else:
+            for receipt in admission_receipts:
+                receipts_append(receipt.copy())
 
     return RetrievalContextProjection(
         user_payload=user_payload,
@@ -178,13 +250,26 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             ],
         )
 
-    entries: list[RetrievalContextEntry] = []
-    refusal_receipts: list[dict[str, object]] = []
+    user_payload: dict[str, Any] = {}
+    receipts: list[dict[str, object]] = []
+    store_refusal_receipts: list[dict[str, object]] = []
+    projection_refusal_receipts: list[dict[str, object]] = []
+    store_refusal_receipts_append = store_refusal_receipts.append
+    projection_refusal_receipts_append = projection_refusal_receipts.append
+    store_record_refusal = _store_record_refusal
+    store_record_source_id = _store_record_source_id
+    store_record_refusal_context_kind = _store_record_refusal_context_kind
+    admit_entry = _admit_entry
+    entry_type = RetrievalContextEntry
+    duplicate_projection_receipt = _duplicate_projection_receipt
+    projection_refusal_receipts_extend = projection_refusal_receipts.extend
+    receipts_append = receipts.append
+    user_payload_update = user_payload.update
 
     for record in records:
-        if not isinstance(record, Mapping):
-            refusal_receipts.append(
-                _store_record_refusal(
+        if type(record) is not dict and not isinstance(record, Mapping):
+            store_refusal_receipts_append(
+                store_record_refusal(
                     source_field="record",
                     source_id="unknown-retrieved-document",
                     context_kind="retrieved_document",
@@ -192,12 +277,13 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             )
             continue
 
-        context_kind = record.get("context_kind")
+        record_get: Any = record.get
+        context_kind = record_get("context_kind")
         if context_kind not in ("retrieved_document", "retrieved_image"):
-            source_id = _store_record_source_id(record)
-            refusal_context_kind = _store_record_refusal_context_kind(source_id)
-            refusal_receipts.append(
-                _store_record_refusal(
+            source_id = store_record_source_id(record)
+            refusal_context_kind = store_record_refusal_context_kind(source_id)
+            store_refusal_receipts_append(
+                store_record_refusal(
                     source_field="context_kind",
                     source_id=source_id,
                     context_kind=refusal_context_kind,
@@ -205,28 +291,263 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             )
             continue
 
-        entries.append(
-            RetrievalContextEntry(
-                context_kind=context_kind,
-                source_id=record.get("source_id"),
-                payload=record.get("payload"),
-                owner_scope_checked=record.get("owner_scope_checked"),
-                segment_id=record.get("segment_id", ""),
-                source_field=record.get("source_field", ""),
-                reason=record.get("reason", ""),
-                corrective_action=record.get("corrective_action", ""),
+        if type(record) is dict:
+            source_id = record_get("source_id")
+            payload = record_get("payload")
+            owner_scope_checked = record_get("owner_scope_checked")
+            segment_id = record_get("segment_id", "")
+            source_field = record_get("source_field", "")
+            reason = record_get("reason", "")
+            corrective_action = record_get("corrective_action", "")
+            if (
+                isinstance(source_id, str)
+                and source_id.strip()
+                and isinstance(payload, dict)
+                and isinstance(owner_scope_checked, bool)
+                and isinstance(segment_id, str)
+                and segment_id.strip()
+                and isinstance(source_field, str)
+                and source_field.strip()
+                and isinstance(reason, str)
+                and reason.strip()
+                and isinstance(corrective_action, str)
+                and corrective_action.strip()
+            ):
+                normalized_source_field = source_field.strip()
+                receipt = untrusted_context_receipt(
+                    segment_id=segment_id.strip(),
+                    source_type=context_kind,
+                    source_field=normalized_source_field,
+                    source_id=source_id.strip(),
+                    message_role="user",
+                    owner_scope_checked=owner_scope_checked,
+                    included=True,
+                    reason=reason.strip(),
+                    corrective_action=corrective_action.strip(),
+                )
+                if normalized_source_field in user_payload:
+                    projection_refusal_receipts_append(
+                        duplicate_projection_receipt(
+                            receipt,
+                            duplicate_fields=[normalized_source_field],
+                        )
+                    )
+                    continue
+                user_payload[normalized_source_field] = payload
+                receipts_append(receipt)
+                continue
+
+        try:
+            admission = admit_entry(
+                entry_type(
+                    context_kind=context_kind,
+                    source_id=record_get("source_id"),
+                    payload=record_get("payload"),
+                    owner_scope_checked=record_get("owner_scope_checked"),
+                    segment_id=record_get("segment_id", ""),
+                    source_field=record_get("source_field", ""),
+                    reason=record_get("reason", ""),
+                    corrective_action=record_get("corrective_action", ""),
+                )
             )
+        except RetrievalContextAdmissionError as exc:
+            for receipt in exc.refusal_receipts:
+                projection_refusal_receipts_append(receipt.copy())
+            continue
+
+        admission_payload = admission.user_payload
+        if len(admission_payload) == 1:
+            source_field = next(iter(admission_payload))
+            if source_field in user_payload:
+                projection_refusal_receipts_extend(
+                    duplicate_projection_receipt(
+                        receipt,
+                        duplicate_fields=[source_field],
+                    )
+                    for receipt in admission.untrusted_context_receipts
+                )
+                continue
+            user_payload[source_field] = admission_payload[source_field]
+        else:
+            duplicate_fields: list[str] | None = None
+            for source_field in admission_payload:
+                if source_field in user_payload:
+                    if duplicate_fields is None:
+                        duplicate_fields = []
+                    duplicate_fields.append(source_field)
+            if duplicate_fields is not None:
+                projection_refusal_receipts_extend(
+                    duplicate_projection_receipt(
+                        receipt,
+                        duplicate_fields=duplicate_fields,
+                    )
+                    for receipt in admission.untrusted_context_receipts
+                )
+                continue
+            user_payload_update(admission_payload)
+        admission_receipts = admission.untrusted_context_receipts
+        if len(admission_receipts) == 1:
+            receipts_append(admission_receipts[0].copy())
+        else:
+            for receipt in admission_receipts:
+                receipts_append(receipt.copy())
+
+    if projection_refusal_receipts:
+        store_refusal_receipts.extend(projection_refusal_receipts)
+    return RetrievalContextProjection(
+        user_payload=user_payload,
+        untrusted_context_receipts=receipts,
+        refusal_receipts=store_refusal_receipts,
+    )
+
+
+def project_retrieval_lookup_result(
+    lookup_result: Any,
+    *,
+    lookup_source_id: Any = "",
+    lookup_segment_id: Any = "",
+    lookup_source_field: Any = "",
+) -> RetrievalLookupResultProjection:
+    wrapper_metadata_refusal = _lookup_result_metadata_refusal(
+        lookup_source_id=lookup_source_id,
+        lookup_segment_id=lookup_segment_id,
+        lookup_source_field=lookup_source_field,
+    )
+    if wrapper_metadata_refusal is not None:
+        return RetrievalLookupResultProjection(
+            prompt_user_payload={},
+            untrusted_context_receipts=[],
+            refusal_receipts=[wrapper_metadata_refusal],
+            lookup_message=None,
+        )
+    normalized_lookup_source_id = _lookup_metadata_text_or_default(
+        lookup_source_id,
+        default="unknown-retrieval-lookup",
+    )
+    normalized_lookup_segment_id = _lookup_metadata_text_or_default(
+        lookup_segment_id,
+        default=f"{normalized_lookup_source_id}:lookup-result",
+    )
+    normalized_lookup_source_field = _lookup_metadata_text_or_default(
+        lookup_source_field,
+        default="lookup_result",
+    )
+    has_lookup_metadata = (
+        lookup_source_id != "" or lookup_segment_id != "" or lookup_source_field != ""
+    )
+    if not isinstance(lookup_result, Mapping):
+        return RetrievalLookupResultProjection(
+            prompt_user_payload={},
+            untrusted_context_receipts=[],
+            refusal_receipts=[
+                _lookup_result_refusal(
+                    source_id=normalized_lookup_source_id,
+                    segment_id=normalized_lookup_segment_id,
+                    source_field=normalized_lookup_source_field,
+                )
+            ],
+            lookup_message=None,
         )
 
-    projection = project_retrieval_contexts(entries)
-    return RetrievalContextProjection(
-        user_payload=projection.user_payload,
-        untrusted_context_receipts=projection.untrusted_context_receipts,
-        refusal_receipts=[
-            *(dict(receipt) for receipt in refusal_receipts),
-            *(dict(receipt) for receipt in projection.refusal_receipts),
-        ],
+    project_store_records = project_retrieval_store_records
+    copy_payload = _copy_payload
+    copy_receipts = _copy_receipts
+    lookup_records = lookup_result.get("records", _MISSING_LOOKUP_RECORDS)
+    has_records = lookup_records is not _MISSING_LOOKUP_RECORDS
+    records_type = type(lookup_records)
+    records_container_is_valid = records_type is list or records_type is tuple
+    if has_lookup_metadata and (not has_records or not records_container_is_valid):
+        return RetrievalLookupResultProjection(
+            prompt_user_payload={},
+            untrusted_context_receipts=[],
+            refusal_receipts=[
+                _lookup_result_refusal(
+                    source_id=normalized_lookup_source_id,
+                    segment_id=normalized_lookup_segment_id,
+                    source_field=normalized_lookup_source_field,
+                )
+            ],
+            lookup_message=None,
+        )
+    store_projection = project_store_records(lookup_records if has_records else None)
+    prompt_user_payload = copy_payload(store_projection.user_payload)
+    untrusted_context_receipts = copy_receipts(store_projection.untrusted_context_receipts)
+    refusal_receipts = copy_receipts(store_projection.refusal_receipts)
+    if (
+        has_lookup_metadata
+        and (
+            not has_records
+            or not isinstance(lookup_records, list)
+        )
+        and len(refusal_receipts) == 1
+        and not prompt_user_payload
+        and not untrusted_context_receipts
+    ):
+        refusal_receipts = [
+            _lookup_result_refusal(
+                source_id=normalized_lookup_source_id,
+                segment_id=normalized_lookup_segment_id,
+                source_field=normalized_lookup_source_field,
+            )
+        ]
+    lookup_message: dict[str, Any] | None = None
+    if prompt_user_payload:
+        lookup_message = {
+            "role": "user",
+            "content": prompt_user_payload,
+            "untrusted_context_receipts": untrusted_context_receipts,
+        }
+
+    return RetrievalLookupResultProjection(
+        prompt_user_payload=prompt_user_payload,
+        untrusted_context_receipts=untrusted_context_receipts,
+        refusal_receipts=refusal_receipts,
+        lookup_message=lookup_message,
     )
+
+
+def _copy_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    copy_value = _copy_payload_value
+    return {key: copy_value(value) for key, value in payload.items()}
+
+
+def _copy_payload_value(value: Any) -> Any:
+    if value is None:
+        return value
+    value_type = type(value)
+    if value_type is str or value_type is int or value_type is float or value_type is bool:
+        return value
+    copy_value = _copy_payload_value
+    if value_type is dict:
+        return {key: copy_value(item) for key, item in value.items()}
+    if value_type is list:
+        value_len = len(value)
+        if value_len == 3:
+            return [copy_value(value[0]), copy_value(value[1]), copy_value(value[2])]
+        if value_len == 2:
+            return [copy_value(value[0]), copy_value(value[1])]
+        if value_len == 1:
+            return [copy_value(value[0])]
+        if value_len == 0:
+            return []
+        return [copy_value(item) for item in value]
+    if value_type is tuple:
+        value_len = len(value)
+        if value_len == 2:
+            return (copy_value(value[0]), copy_value(value[1]))
+        if value_len == 3:
+            return (copy_value(value[0]), copy_value(value[1]), copy_value(value[2]))
+        if value_len == 1:
+            return (copy_value(value[0]),)
+        if value_len == 0:
+            return ()
+        return tuple([copy_value(item) for item in value])
+    return deepcopy(value)
+
+
+def _copy_receipts(receipts: list[dict[str, object]]) -> list[dict[str, object]]:
+    # Receipt schemas are flat JSON metadata; payload-bearing values are never copied here.
+    return [receipt.copy() for receipt in receipts]
 
 
 def _admit_entry(entry: RetrievalContextEntry) -> PromptContextAdmission:
@@ -341,6 +662,72 @@ def _store_record_refusal(
             f"Reject malformed {context_kind.replace('_', ' ')} evidence before prompt assembly."
         ),
     )
+
+
+def _lookup_result_refusal(
+    *,
+    source_id: str = "unknown-retrieval-lookup",
+    segment_id: str = "unknown-retrieval-lookup:lookup-result",
+    source_field: str = "lookup_result",
+) -> dict[str, object]:
+    return refused_prompt_context_receipt(
+        segment_id=segment_id,
+        source_type="retrieval_lookup",
+        source_field=source_field,
+        source_id=source_id,
+        reason="invalid_retrieval_lookup_result",
+        corrective_action="Reject malformed retrieval lookup result before prompt assembly.",
+    )
+
+
+def _lookup_result_metadata_refusal(
+    *,
+    lookup_source_id: Any,
+    lookup_segment_id: Any,
+    lookup_source_field: Any,
+) -> dict[str, object] | None:
+    if not _valid_lookup_metadata_text(lookup_source_id):
+        fallback_source_id = "unknown-retrieval-lookup"
+        return _lookup_result_refusal(
+            source_id=fallback_source_id,
+            segment_id=f"{fallback_source_id}:lookup-result",
+            source_field="lookup_source_id",
+        )
+    if not _valid_lookup_metadata_text(lookup_segment_id):
+        normalized_source_id = _lookup_metadata_text_or_default(
+            lookup_source_id,
+            default="unknown-retrieval-lookup",
+        )
+        return _lookup_result_refusal(
+            source_id=normalized_source_id,
+            segment_id=f"{normalized_source_id}:lookup-result",
+            source_field="lookup_segment_id",
+        )
+    if not _valid_lookup_metadata_text(lookup_source_field):
+        normalized_source_id = _lookup_metadata_text_or_default(
+            lookup_source_id,
+            default="unknown-retrieval-lookup",
+        )
+        normalized_segment_id = _lookup_metadata_text_or_default(
+            lookup_segment_id,
+            default=f"{normalized_source_id}:lookup-result",
+        )
+        return _lookup_result_refusal(
+            source_id=normalized_source_id,
+            segment_id=normalized_segment_id,
+            source_field="lookup_source_field",
+        )
+    return None
+
+
+def _valid_lookup_metadata_text(value: Any) -> bool:
+    return value == "" or (isinstance(value, str) and bool(value.strip()))
+
+
+def _lookup_metadata_text_or_default(value: Any, *, default: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return default
 
 
 def _admit_context(
@@ -520,8 +907,10 @@ __all__ = [
     "RetrievalContextAdmissionError",
     "RetrievalContextEntry",
     "RetrievalContextProjection",
+    "RetrievalLookupResultProjection",
     "admit_retrieved_document_context",
     "admit_retrieved_image_context",
     "project_retrieval_contexts",
+    "project_retrieval_lookup_result",
     "project_retrieval_store_records",
 ]

@@ -5,6 +5,7 @@ import os
 import re
 from collections.abc import Mapping
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from errno import EPERM
 from pathlib import Path
@@ -163,6 +164,15 @@ class LocalJobSessionFollowupProjection:
     prompt_user_payload: dict[str, Any]
     untrusted_context_receipts: list[dict[str, object]]
     followup_message: dict[str, Any] | None
+
+
+@dataclass(frozen=True, slots=True)
+class LocalJobSessionFollowupProjectionBatch:
+    claim_batch: LocalJobContinuationFollowupClaimBatch
+    projections: tuple[LocalJobSessionFollowupProjection, ...]
+    followup_messages: tuple[dict[str, Any], ...]
+    receipts: tuple[dict[str, Any], ...]
+    refusal_receipts: tuple[dict[str, Any], ...]
 
 
 class LocalJobContinuationStore:
@@ -344,32 +354,34 @@ class LocalJobContinuationStore:
     ) -> LocalJobContinuationFollowupScan:
         candidates: list[LocalJobContinuationFollowupCandidate] = []
         receipts: list[dict[str, Any]] = []
-        if not self.root.exists():
-            return LocalJobContinuationFollowupScan(candidates=(), receipts=())
-
-        live_evidence_by_job_id = live_evidence_by_job_id or {}
+        live_evidence_get = (
+            live_evidence_by_job_id.get
+            if live_evidence_by_job_id is not None
+            else _missing_live_evidence
+        )
         root = self.root
         try:
-            record_names = sorted(
-                entry.name
+            record_job_ids = sorted(
+                _record_job_id_from_filename(entry.name)
                 for entry in os.scandir(os.fspath(root))
-                if entry.name.endswith(".json") and entry.is_file()
+                if entry.name.endswith(".json") and entry.is_file(follow_symlinks=False)
             )
         except FileNotFoundError:
             return LocalJobContinuationFollowupScan(candidates=(), receipts=())
-        for record_name in record_names:
-            path = root / record_name
-            job_id = path.stem
+        reconcile_record = self.reconcile_record
+        receipts_append = receipts.append
+        candidates_append = candidates.append
+        for job_id in record_job_ids:
             try:
-                reconciliation = self.reconcile_record(
+                reconciliation = reconcile_record(
                     job_id,
-                    live_evidence=live_evidence_by_job_id.get(job_id),
+                    live_evidence=live_evidence_get(job_id),
                 )
             except LocalJobContinuationStoreError as exc:
-                receipts.append(exc.receipt)
+                receipts_append(exc.receipt)
                 continue
             except (json.JSONDecodeError, OSError, ValueError):
-                receipts.append(_unreadable_record_scan_receipt(job_id=job_id))
+                receipts_append(_unreadable_record_scan_receipt(job_id=job_id))
                 continue
             if reconciliation is None:
                 continue
@@ -377,19 +389,19 @@ class LocalJobContinuationStore:
             # Scan-level follow-up state wins for ready or already-claimed records.
             # Otherwise surface reconciliation changes before the generic scan result.
             if receipt["reason"] == "followup_candidate_ready":
-                receipts.append(receipt)
-                candidates.append(
+                receipts_append(receipt)
+                candidates_append(
                     LocalJobContinuationFollowupCandidate(
                         record=reconciliation.record,
                         receipt=receipt,
                     )
                 )
             elif receipt["reason"] == "followup_already_claimed":
-                receipts.append(receipt)
+                receipts_append(receipt)
             elif reconciliation.receipt.get("reason") != "record_state_preserved":
-                receipts.append(reconciliation.receipt)
+                receipts_append(reconciliation.receipt)
             else:
-                receipts.append(receipt)
+                receipts_append(receipt)
 
         return LocalJobContinuationFollowupScan(
             candidates=tuple(candidates),
@@ -406,21 +418,21 @@ class LocalJobContinuationStore:
     ) -> LocalJobContinuationFollowupClaimBatch:
         live_evidence_by_job_id = live_evidence_by_job_id or {}
         (
-            followup_session_ids_by_job_id,
+            followup_session_ids,
             followup_session_ids_input_error,
         ) = _claim_input_mapping_or_error(
             followup_session_ids_by_job_id,
             "followup_session_ids_by_job_id",
         )
         (
-            completion_summaries_by_job_id,
+            completion_summaries,
             completion_summaries_input_error,
         ) = _claim_input_mapping_or_error(
             completion_summaries_by_job_id,
             "completion_summaries_by_job_id",
         )
         (
-            owner_scope_checked_by_job_id,
+            owner_scope_checked,
             owner_scope_checked_input_error,
         ) = _claim_input_mapping_or_error(
             owner_scope_checked_by_job_id,
@@ -449,15 +461,13 @@ class LocalJobContinuationStore:
                 )
                 continue
             try:
-                missing_fields = [
-                    field_name
-                    for field_name, values in (
-                        ("followup_session_id", followup_session_ids_by_job_id),
-                        ("completion_summary", completion_summaries_by_job_id),
-                        ("owner_scope_checked", owner_scope_checked_by_job_id),
-                    )
-                    if job_id not in values
-                ]
+                missing_fields: list[str] = []
+                if job_id not in followup_session_ids:
+                    missing_fields.append("followup_session_id")
+                if job_id not in completion_summaries:
+                    missing_fields.append("completion_summary")
+                if job_id not in owner_scope_checked:
+                    missing_fields.append("owner_scope_checked")
             except (LookupError, TypeError, ValueError) as exc:
                 receipts.append(
                     _followup_claim_input_invalid_receipt(
@@ -480,15 +490,15 @@ class LocalJobContinuationStore:
                 claim = self.claim_followup_prompt_context(
                     job_id,
                     followup_session_id=_claim_input_value(
-                        followup_session_ids_by_job_id,
+                        followup_session_ids,
                         job_id,
                     ),
                     completion_summary=_claim_input_value(
-                        completion_summaries_by_job_id,
+                        completion_summaries,
                         job_id,
                     ),
                     owner_scope_checked=_claim_input_value(
-                        owner_scope_checked_by_job_id,
+                        owner_scope_checked,
                         job_id,
                     ),
                     live_evidence=live_evidence_by_job_id.get(job_id),
@@ -859,8 +869,46 @@ def project_local_job_session_followup(
     if claim is None:
         return None
 
-    prompt_user_payload = dict(claim.prompt_context.user_payload)
-    receipts = [dict(receipt) for receipt in claim.prompt_context.untrusted_context_receipts]
+    return _project_local_job_session_followup_claim(claim)
+
+
+def project_local_job_session_followups(
+    store: LocalJobContinuationStore,
+    *,
+    followup_session_ids_by_job_id: dict[str, str] | None,
+    completion_summaries_by_job_id: dict[str, dict[str, Any]] | None,
+    owner_scope_checked_by_job_id: dict[str, bool] | None,
+    live_evidence_by_job_id: dict[str, LocalJobLiveEvidence] | None = None,
+) -> LocalJobSessionFollowupProjectionBatch:
+    claim_batch = store.claim_scanned_followup_prompt_contexts(
+        followup_session_ids_by_job_id=followup_session_ids_by_job_id,
+        completion_summaries_by_job_id=completion_summaries_by_job_id,
+        owner_scope_checked_by_job_id=owner_scope_checked_by_job_id,
+        live_evidence_by_job_id=live_evidence_by_job_id,
+    )
+    projections: list[LocalJobSessionFollowupProjection] = []
+    followup_messages: list[dict[str, Any]] = []
+
+    for claim in claim_batch.claims:
+        projection = _project_local_job_session_followup_claim(claim)
+        projections.append(projection)
+        if projection.followup_message is not None:
+            followup_messages.append(projection.followup_message)
+
+    return LocalJobSessionFollowupProjectionBatch(
+        claim_batch=claim_batch,
+        projections=tuple(projections),
+        followup_messages=tuple(followup_messages),
+        receipts=deepcopy(claim_batch.receipts),
+        refusal_receipts=deepcopy(claim_batch.refusal_receipts),
+    )
+
+
+def _project_local_job_session_followup_claim(
+    claim: LocalJobContinuationFollowupClaim,
+) -> LocalJobSessionFollowupProjection:
+    prompt_user_payload = deepcopy(claim.prompt_context.user_payload)
+    receipts = deepcopy(claim.prompt_context.untrusted_context_receipts)
     followup_message: dict[str, Any] | None = None
     if prompt_user_payload:
         followup_message = {
@@ -870,7 +918,7 @@ def project_local_job_session_followup(
         }
     return LocalJobSessionFollowupProjection(
         claim=claim,
-        claim_receipt=dict(claim.reconciliation.receipt),
+        claim_receipt=deepcopy(claim.reconciliation.receipt),
         prompt_user_payload=prompt_user_payload,
         untrusted_context_receipts=receipts,
         followup_message=followup_message,
@@ -1231,6 +1279,18 @@ def _optional_int(value: Any, field_name: str) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{field_name} must be an integer or null")
     return value
+
+
+def _missing_live_evidence(job_id: str) -> None:
+    return None
+
+
+def _record_job_id_from_filename(record_name: str) -> str:
+    # scan_followup_candidates has already filtered this to a .json file name.
+    # Avoid constructing a Path only to read .stem in large follow-up stores.
+    if record_name == ".json":
+        return ".json"
+    return record_name[:-5]
 
 
 def _safe_job_id(job_id: str) -> str:

@@ -61,7 +61,7 @@ class ParsedImageReference:
     format: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PreparedVisionRequest:
     prompt_text: str
     images: list[PreparedImageInput]

@@ -423,6 +423,29 @@ def test_embed_runtime_replays_repeated_cycles_without_shared_vectors() -> None:
     assert vectors[len(cycle) * 2] == [1.0, 1.0]
 
 
+def test_embed_runtime_replays_single_input_cycles_without_generator_reentry() -> None:
+    runtime = DeterministicEmbeddingRuntime()
+    backend = CountingEmbeddingBackend()
+    family = CountingEmbeddingFamilyAdapter()
+
+    vectors = runtime.embed_inputs(
+        {
+            "model_id": "melix-dev-embed-counting-single-cycle",
+            "dimensions": 2,
+            "embedding_backend": backend,
+            "embedding_family_adapter": family,
+        },
+        ["same-document"] * 2048,
+    )
+
+    assert backend.calls == [("same-document", 2)]
+    assert len(vectors) == 2048
+    assert vectors[0] == vectors[-1] == [1.0, 1.0]
+    assert vectors[0] is not vectors[-1]
+    vectors[0][0] = 99.0
+    assert vectors[-1] == [1.0, 1.0]
+
+
 def test_load_model_rejects_unsupported_embedding_backend() -> None:
     runtime = DeterministicEmbeddingRuntime()
     model = WorkerModelCatalog.dev_embedding_model(

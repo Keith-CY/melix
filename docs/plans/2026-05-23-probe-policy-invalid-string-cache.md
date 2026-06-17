@@ -17,3 +17,12 @@ This slice is limited to `worker.productization.probe_policy` and the existing r
 ## Verification
 
 Run the registered focused test command, changed-scope coverage command, and `probe-policy-noop-overhead` probe locally on Linux. CI remains the source of truth for the registered PR-scoped performance report.
+
+## 2026-06-13 follow-up: None fast path
+
+`ProbePolicy.from_value(None)` is part of the same fallback contract as empty
+probe-mode values. Add a direct `None` branch before the generic non-string
+normalization so repeated absent-value parsing returns the cached default policy
+without allocating and normalizing `str(None or "")`. The registered probe now
+also reports `mode_parse_none_call_ms_mean` alongside the existing empty, valid,
+and invalid parse metrics.

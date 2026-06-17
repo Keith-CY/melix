@@ -53,16 +53,27 @@ _GENERATION_CONFIG_TOP_P_KEY = "melix.generation_config.top_p"
 _GENERATION_CONFIG_MAX_TOKENS_KEY = "melix.generation_config.max_tokens"
 _GENERATION_CONFIG_DO_SAMPLE_KEY = "melix.generation_config.do_sample"
 _REGISTRY_SCAN_PRUNED_DIR_NAMES = frozenset({"blobs", ".git", "__pycache__"})
+_HF_CACHE_REPO_PREFIX = "models--"
+_HF_CACHE_REPO_PREFIX_LEN = len(_HF_CACHE_REPO_PREFIX)
 _HF_CACHE_PRUNED_SUBTREE_NAMES = frozenset({"snapshots", "refs"})
 _MODEL_WEIGHT_FILE_SUFFIXES = (".safetensors", ".npz")
 _GEMMA4_QAT_AUTOMATIC_ORG = "mlx-community"
 _GEMMA4_QAT_AUTOMATIC_SCOPE = "mlx-community-gemma4-q4"
+_GEMMA4_QAT_BASE_MODEL_MARKER = "base_model:"
+_GEMMA4_QAT_BASE_MODEL_MARKER_LEN = len(_GEMMA4_QAT_BASE_MODEL_MARKER)
+_GEMMA4_QAT_BASE_MODEL_STRIP_CHARS = " \t\r\n'\"[]"
+_GEMMA4_QAT_SIZE_NAMES = {
+    "e2b": "E2B",
+    "e4b": "E4B",
+    "12b": "12B",
+    "26b-a4b": "26B-A4B",
+}
 _GEMMA4_QAT_DRAFT_COMPANION_RECOVERY_HINT = (
     "Download or select a compatible Gemma 4 QAT draft companion."
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RegistryRootSnapshot:
     root_id: str
     root_path: str
@@ -73,7 +84,7 @@ class RegistryRootSnapshot:
     discovered_model_ids: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RegistrySnapshot:
     roots: tuple[RegistryRootSnapshot, ...]
     models: tuple[common_pb2.ModelSpec, ...]
@@ -543,12 +554,17 @@ def _has_mlx_signal(
 
 def _hf_cache_repo_id(cache_repo_dir: Path) -> str | None:
     name = cache_repo_dir.name
-    if not name.startswith("models--"):
+    if not name.startswith(_HF_CACHE_REPO_PREFIX):
         return None
-    parts = name.removeprefix("models--").split("--", maxsplit=1)
-    if len(parts) != 2 or not parts[0] or not parts[1]:
+    separator_index = name.find("--", _HF_CACHE_REPO_PREFIX_LEN)
+    suffix_index = separator_index + 2
+    if (
+        separator_index == -1
+        or separator_index == _HF_CACHE_REPO_PREFIX_LEN
+        or suffix_index == len(name)
+    ):
         return None
-    return f"{parts[0]}/{parts[1]}"
+    return f"{name[_HF_CACHE_REPO_PREFIX_LEN:separator_index]}/{name[suffix_index:]}"
 
 
 def _sorted_child_directories(root: Path, *, name_prefix: str | None = None) -> tuple[Path, ...]:
@@ -647,7 +663,7 @@ def _is_hf_cache_pruned_subtree(root: Path, current: Path) -> bool:
         relative_parts = current.relative_to(root).parts
     except ValueError:
         return False
-    if len(relative_parts) < 2 or relative_parts[1] not in {"snapshots", "refs"}:
+    if len(relative_parts) < 2 or relative_parts[1] not in _HF_CACHE_PRUNED_SUBTREE_NAMES:
         return False
     return _hf_cache_repo_id(root / relative_parts[0]) is not None
 
@@ -1457,9 +1473,11 @@ def _gemma4_qat_source_model(
     model_size: str,
     companion: bool,
 ) -> str:
+    marker = _GEMMA4_QAT_BASE_MODEL_MARKER
+    marker_len = _GEMMA4_QAT_BASE_MODEL_MARKER_LEN
     search_start = 0
     while True:
-        marker_index = readme_text.find("base_model:", search_start)
+        marker_index = readme_text.find(marker, search_start)
         if marker_index < 0:
             break
         line_start = readme_text.rfind("\n", 0, marker_index) + 1
@@ -1469,17 +1487,12 @@ def _gemma4_qat_source_model(
         line_end = readme_text.find("\n", marker_index)
         if line_end < 0:
             line_end = len(readme_text)
-        value = readme_text[marker_index + len("base_model:") : line_end].strip().strip("'\"[] ")
+        value = readme_text[marker_index + marker_len : line_end].strip(_GEMMA4_QAT_BASE_MODEL_STRIP_CHARS)
         if value:
             return value
         search_start = marker_index + 1
 
-    size_name = {
-        "e2b": "E2B",
-        "e4b": "E4B",
-        "12b": "12B",
-        "26b-a4b": "26B-A4B",
-    }.get(model_size)
+    size_name = _GEMMA4_QAT_SIZE_NAMES.get(model_size)
     if not size_name:
         return ""
     suffix = "-assistant" if companion else ""
@@ -2003,6 +2016,14 @@ def _audio_metadata(
         _AUDIO_DEFAULT_LOCALE_KEY: default_locale,
         _AUDIO_PACKAGED_DEFAULT_LOCALE_KEY: packaged_default_locale,
         _AUDIO_LOCALE_POLICY_KEY: locale_policy,
+    }
+
+
+def _audio_setup_metadata(*, capability: str, role: str, priority: int) -> dict[str, str]:
+    return {
+        "melix.audio.capability": capability,
+        "melix.audio.setup_role": role,
+        "melix.audio.setup_priority": str(priority),
     }
 
 
@@ -3023,6 +3044,7 @@ class WorkerModelCatalog:
                     install_profile="audio-stt",
                     languages=("auto",),
                 ),
+                **_audio_setup_metadata(capability="stt", role="recommended", priority=0),
             },
         )
 
@@ -3052,6 +3074,7 @@ class WorkerModelCatalog:
                     install_profile="audio-stt",
                     languages=("auto",),
                 ),
+                **_audio_setup_metadata(capability="stt", role="optional", priority=20),
             },
         )
 
@@ -3089,6 +3112,7 @@ class WorkerModelCatalog:
                     packaged_default_locale="en",
                     locale_policy="request>model_default>packaged_default",
                 ),
+                **_audio_setup_metadata(capability="tts", role="recommended", priority=0),
             },
         )
 
@@ -3129,6 +3153,7 @@ class WorkerModelCatalog:
                     packaged_default_locale="zh",
                     locale_policy="request>model_default>packaged_default",
                 ),
+                **_audio_setup_metadata(capability="tts", role="optional", priority=20),
             },
         )
 

@@ -87,6 +87,7 @@ _EVALUATION_SAMPLE_PROBE_KEYS = (
     "raw_response_chars",
     "extracted_result_chars",
 )
+_EVALUATION_SAMPLE_PROBE_KEY_SET = frozenset(_EVALUATION_SAMPLE_PROBE_KEYS)
 _AGENTIC_TOOL_METRIC_KEYS = (
     "agentic_tool.call_count",
     "agentic_tool.observation_count",
@@ -2666,10 +2667,9 @@ def _collect_evaluation_sample_probe_metrics(
     failure_stage_counts: dict[tuple[str, str], int] = {}
     for row in _dict_rows(rows):
         suite_id = str(row.get("suite_id", "")).strip() or "suite"
-        for key in _EVALUATION_SAMPLE_PROBE_KEYS:
-            if key not in row:
+        for key, raw_value in row.items():
+            if key not in _EVALUATION_SAMPLE_PROBE_KEY_SET:
                 continue
-            raw_value = row[key]
             raw_value_type = type(raw_value)
             if raw_value_type is float:
                 value = raw_value

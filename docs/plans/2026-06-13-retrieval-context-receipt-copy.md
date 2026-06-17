@@ -1,0 +1,27 @@
+# Retrieval context receipt copy fast path
+
+This Python-only performance slice is limited to `worker.runtime.retrieval_context.project_retrieval_contexts`.
+
+## Slice
+
+The projection loop already specializes the common one-field admission path. This follow-up narrows only the flat receipt-copy hot path by calling each receipt dict's bound `copy()` method directly and replacing the refusal generator copy path with an explicit append loop. Behavior remains unchanged: projected payloads and receipts are still copied into independent containers before returning.
+
+## Registered probe
+
+The affected path is covered by the registered PR-scoped performance probe `retrieval-context-projection-fastpath` in `infra/perf/pr_scoped_probes.json`.
+
+The probe has focused `test_command`, `coverage_command`, and `probe_command` entries. Its `optimized_elapsed_ms_mean`, `delta_ms`, and `speedup` metrics repeatedly call `project_retrieval_contexts` on a multi-entry projection payload, so it directly measures the receipt-copy loop touched by this slice.
+
+No probe registry change is required for this slice.
+
+## Verification plan
+
+Run the registered focused test command, coverage command, and probe command locally on Linux:
+
+```bash
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_admits_multiple_entries_with_redacted_receipts services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_isolates_refusals_without_dropping_valid_entries services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_refuses_malformed_entry_objects_without_dropping_valid_entries services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_refuses_duplicate_payload_fields_before_overwrite services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_preserves_multi_field_admission_duplicate_scan services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_refuses_duplicate_with_defensive_receipt_fallbacks services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_copies_multi_receipt_admissions services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_retrieval_context_projection_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_retrieval_context_projection_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_admits_multiple_entries_with_redacted_receipts services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_isolates_refusals_without_dropping_valid_entries services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_refuses_malformed_entry_objects_without_dropping_valid_entries services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_refuses_duplicate_payload_fields_before_overwrite services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_preserves_multi_field_admission_duplicate_scan services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_refuses_duplicate_with_defensive_receipt_fallbacks services/mlx-worker-python/tests/test_retrieval_context.py::test_project_retrieval_contexts_copies_multi_receipt_admissions services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_retrieval_context_projection_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_retrieval_context_projection_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/retrieval_context.py services/mlx-worker-python/tests/test_retrieval_context.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/retrieval_context_projection_probe.py
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" MELIX_RETRIEVAL_CONTEXT_PROJECTION_REPO_ROOT="$PWD" uv run --project services/mlx-worker-python bash -c 'SCRIPT="scripts/retrieval_context_projection_probe.py"; if [ -f "$SCRIPT" ]; then python3 "$SCRIPT"; else for CANDIDATE in "../head/$SCRIPT" "${GITHUB_WORKSPACE:-}/head/$SCRIPT"; do if [ -f "$CANDIDATE" ]; then MELIX_RETRIEVAL_CONTEXT_PROJECTION_REPO_ROOT="$PWD" python3 "$CANDIDATE"; exit $?; fi; done; echo "missing probe script fallback for $SCRIPT" >&2; exit 2; fi'
+```
+
+CI remains the merge gate for the registered PR-scoped performance report before merge.

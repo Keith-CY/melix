@@ -2181,17 +2181,30 @@ _MISSING = object()
 
 
 def _metric_value(values: dict[str, Any], dotted_key: str) -> Any:
-    if dotted_key in values:
-        return values[dotted_key]
+    missing = _MISSING
+    value = values.get(dotted_key, missing)
+    if value is not missing:
+        return value
     first_dot = dotted_key.find(".")
-    if first_dot != -1 and dotted_key[:first_dot] not in values:
-        return _MISSING
+    if first_dot == -1:
+        return missing
+    if dotted_key[:first_dot] not in values:
+        return missing
+
     current: Any = values
-    for segment in dotted_key.split("."):
+    start = 0
+    while True:
+        dot_index = dotted_key.find(".", start)
+        if dot_index == -1:
+            segment = dotted_key[start:]
+            if not isinstance(current, dict) or segment not in current:
+                return missing
+            return current[segment]
+        segment = dotted_key[start:dot_index]
         if not isinstance(current, dict) or segment not in current:
-            return _MISSING
+            return missing
         current = current[segment]
-    return current
+        start = dot_index + 1
 
 
 def _evaluate_section_metrics(

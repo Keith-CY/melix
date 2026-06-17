@@ -6,10 +6,14 @@ struct MCPPromptContextBoundaryReceipts: Sendable, Equatable {
     init(requestID: String, sourceIDs: [String]) {
         var receipts: [[String: MCPPromptContextReceiptValue]] = []
         for (sourceIndex, sourceID) in sourceIDs.enumerated() {
-            let redactedSourceID = sourceID.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !redactedSourceID.isEmpty else {
+            let normalizedSourceID = sourceID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedSourceID.isEmpty else {
                 continue
             }
+            let redactedSourceID = PromptContextSourceIDRedactor.redactedSourceID(
+                normalizedSourceID,
+                prefix: "mcp-source"
+            )
             receipts.append([
                 "schema_version": .string(PromptContextBoundaryReceipts.schemaVersion),
                 "segment_id": .string("\(requestID):mcp-source-\(sourceIndex)"),
@@ -47,6 +51,7 @@ struct MCPPromptContextBoundaryReceipts: Sendable, Equatable {
         }
         return String(data: data, encoding: .utf8) ?? "[]"
     }
+
 }
 
 private enum MCPPromptContextReceiptValue: Sendable, Equatable {

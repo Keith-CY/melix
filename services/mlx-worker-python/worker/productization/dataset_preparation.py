@@ -496,8 +496,7 @@ def list_dataset_versions(
                 "dataset_version_path": manifest_path,
             }
         )
-    as_str = str
-    versions.sort(key=lambda item: (as_str(item["created_at"]), as_str(item["version_id"])))
+    versions.sort(key=_dataset_version_list_sort_key)
     return {
         "schema_version": DATASET_VERSION_LIST_SCHEMA_VERSION,
         "workspace_manifest_path": manifest_path_string,
@@ -508,6 +507,15 @@ def list_dataset_versions(
             "dataset_version_count": len(versions),
         },
     }
+
+
+def _dataset_version_list_sort_key(item: dict[str, Any]) -> tuple[str, str]:
+    created_at = item["created_at"]
+    version_id = item["version_id"]
+    return (
+        created_at if type(created_at) is str else str(created_at),
+        version_id if type(version_id) is str else str(version_id),
+    )
 
 
 def _iter_dataset_version_manifest_paths(versions_root: Path) -> Iterable[str]:
@@ -588,7 +596,7 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
         except OSError:
             continue
     file_paths.sort()
-    return [path_cls(file_path) for file_path in file_paths]
+    return [path_cls(path) for path in file_paths]
 
 
 def _classify_source_kind_name(name: str) -> str | None:
