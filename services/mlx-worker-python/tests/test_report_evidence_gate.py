@@ -846,6 +846,9 @@ def test_report_evidence_gate_covers_invalid_payload_and_edge_summaries(tmp_path
     assert gate["reports"][0]["slowest_probe_phases"] == []
     assert report_evidence_gate_module._probe_phases({"probe_summary": []}) == set()
     assert report_evidence_gate_module._dict_list({"not": "a list"}) == []
+    dict_rows = [{"phase": "setup"}, {"phase": "probe"}]
+    assert report_evidence_gate_module._dict_list(dict_rows) is dict_rows
+    assert report_evidence_gate_module._dict_list([dict_rows[0], "skip", dict_rows[1]]) == dict_rows
 
     markdown = render_pr_evidence_markdown(
         {
