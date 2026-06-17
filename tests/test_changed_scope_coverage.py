@@ -258,6 +258,19 @@ def test_coverage_path_allowlist_parses_simple_string_without_json_decoder(monke
     ) == {"pkg/direct.py"}
 
 
+def test_coverage_path_allowlist_parses_empty_array_without_json_decoder(monkeypatch) -> None:
+    changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
+
+    def fail_loads(*args: object, **kwargs: object) -> object:  # pragma: no cover
+        raise AssertionError("empty allowlists should avoid json.loads")
+
+    monkeypatch.setattr(changed_scope_coverage.json, "loads", fail_loads)
+
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": "[]"}
+    ) == frozenset()
+
+
 def test_coverage_path_allowlist_reuses_cached_raw_payload_parse(monkeypatch) -> None:
     changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
     calls = 0
