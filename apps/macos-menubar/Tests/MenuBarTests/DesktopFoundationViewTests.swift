@@ -4851,6 +4851,104 @@ struct DesktopFoundationViewTests {
         #expect(failurePresentation.errorText == "Companion status refresh failed: gateway offline")
     }
 
+    @Test("companion status panel keeps redacted log tail usable in a narrow viewport")
+    @MainActor
+    func companionStatusPanelKeepsRedactedLogTailUsableInNarrowViewport() async throws {
+        let pairingClient = FakeCompanionPairingClient()
+        let statusClient = FakeCompanionStatusClient()
+        let temporaryRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "melix-menubar-companion-mobile-status-\(UUID().uuidString)"
+        )
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        await statusClient.configureRefreshResult(
+            CompanionStatusSnapshot(
+                status: "ok",
+                readOnly: true,
+                authorizationScope: "companion_read_only",
+                logTail: CompanionStatusLogTailState(
+                    source: "image_jobs",
+                    visible: 2,
+                    total: 2,
+                    entries: [
+                        CompanionStatusLogEntryState(
+                            eventType: "state_update",
+                            source: "image_jobs",
+                            jobID: "image-job-mobile-1",
+                            requestID: "request-mobile-1",
+                            modelID: "melix-dev-image",
+                            operation: "image_generate",
+                            state: "running",
+                            lane: "interactive",
+                            workerID: "image-worker-mobile",
+                            progressStage: "sampling",
+                            updatedAtUnixMS: 1_718_000_020_000,
+                            failureCode: "",
+                            redactionSummary: "raw prompt omitted; request body omitted; local paths omitted"
+                        ),
+                        CompanionStatusLogEntryState(
+                            eventType: "state_update",
+                            source: "image_jobs",
+                            jobID: "image-job-mobile-2",
+                            requestID: "request-mobile-2",
+                            modelID: "melix-dev-image",
+                            operation: "image_edit",
+                            state: "failed",
+                            lane: "background",
+                            workerID: "image-worker-mobile",
+                            progressStage: "failed",
+                            updatedAtUnixMS: 1_718_000_030_000,
+                            failureCode: "image_worker_failed",
+                            redactionSummary: "raw log line omitted; raw prompt omitted; artifact URIs omitted; error message omitted"
+                        ),
+                    ]
+                ),
+                redactionLogs: "raw log lines and private prompts omitted"
+            )
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            serverSessionAPIKeyStore: apiKeyStore,
+            companionPairingClient: pairingClient,
+            companionStatusClient: statusClient
+        )
+
+        await viewModel.start()
+        try apiKeyStore.savePrimaryKey(
+            serverSessionID: try #require(viewModel.selectedServerSession?.id),
+            primaryKey: "melix_primary_desktop",
+            keyID: "primary"
+        )
+        await viewModel.issueCompanionPairing()
+        await viewModel.refreshCompanionStatus()
+        let presentation = DesktopAPICompanionStatusPresentation(status: viewModel.companionStatus)
+        let hosted = hostView(
+            DesktopAPICompanionStatusPanel(viewModel: viewModel),
+            size: CGSize(width: 360, height: 640)
+        )
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-companion-mobile-status-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        try MelixSwiftUIScreenshotRenderer().render(
+            DesktopAPICompanionStatusPanel(viewModel: viewModel),
+            to: outputURL,
+            size: CGSize(width: 360, height: 640)
+        )
+        let pngData = try Data(contentsOf: outputURL)
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(hosted.fittingSize.width <= 360)
+        #expect(presentation.statusTitle == "Companion status ok")
+        #expect(presentation.statusDetail == "Read-only companion status, 2 of 2 redacted log entries visible.")
+        #expect(presentation.logRows.map(\.title) == ["image-job-mobile-1 • running", "image-job-mobile-2 • failed"])
+        #expect(presentation.logRows.first?.redactionText.contains("raw prompt omitted") == true)
+        #expect(presentation.logRows.last?.detail.contains("image_worker_failed") == true)
+        #expect(presentation.redactionText == "raw log lines and private prompts omitted")
+        #expect(Array(pngData.prefix(8)) == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    }
+
     @Test("api reference tab projects typed onboarding surfaces and endpoints")
     @MainActor
     func apiReferenceTabProjectsTypedOnboardingSurfacesAndEndpoints() throws {

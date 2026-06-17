@@ -137,6 +137,11 @@ response `logs.entries` collection and must keep raw log lines, private prompts,
 request bodies, artifact URIs, local paths, and raw error text omitted according
 to the response `redaction` labels.
 
+The deterministic desktop smoke also renders the loaded `Companion Status`
+panel at a phone-like `360x640` viewport. That smoke verifies the read-only
+status title, redacted log-tail rows, redaction summary, and generated PNG
+capture without requiring a real companion device or desktop window.
+
 ### Reuse The Session
 
 ```bash
