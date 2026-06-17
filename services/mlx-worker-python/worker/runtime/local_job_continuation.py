@@ -364,7 +364,7 @@ class LocalJobContinuationStore:
             record_job_ids = sorted(
                 _record_job_id_from_filename(entry.name)
                 for entry in os.scandir(os.fspath(root))
-                if entry.name.endswith(".json") and entry.is_file()
+                if entry.name.endswith(".json") and entry.is_file(follow_symlinks=False)
             )
         except FileNotFoundError:
             return LocalJobContinuationFollowupScan(candidates=(), receipts=())
