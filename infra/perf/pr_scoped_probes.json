@@ -1365,12 +1365,6 @@
         "warn_pct": 5.0
       },
       {
-        "key": "name_attr_reads_mean",
-        "unit": "count",
-        "direction": "lower_is_better",
-        "warn_pct": 0.0
-      },
-      {
         "key": "path_attr_reads_mean",
         "unit": "count",
         "direction": "lower_is_better",

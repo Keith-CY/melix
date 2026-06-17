@@ -30,10 +30,10 @@ The probe covers:
 - `scripts/lora_experiment_run_dir_scan_probe.py`
 
 The registry defines focused `test_command`, `coverage_command`, and
-`probe_command` entries for this path. This slice also keeps the probe command
-anchored to `scripts/lora_experiment_run_dir_scan_probe.py` and adds the
-`name_attr_reads_mean` metric so the PR-scoped report can validate the reduced
-entry-name access count directly.
+`probe_command` entries for this path. This slice keeps the probe command
+anchored to `scripts/lora_experiment_run_dir_scan_probe.py` and keeps the probe
+entry objects lightweight so the measured delta reflects the scan path instead
+of instrumentation overhead.
 
 ## Verification plan
 

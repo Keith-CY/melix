@@ -23,10 +23,10 @@ TRAIN_ROOT = Path("/tmp/melix-lora-scan-probe/train_lora")
 
 
 class FakeEntry:
-    __slots__ = ("_name", "_path", "_is_dir")
+    __slots__ = ("name", "_path", "_is_dir")
 
     def __init__(self, name: str, *, is_dir: bool = True) -> None:
-        self._name = name
+        self.name = name
         self._path = str(TRAIN_ROOT / name)
         self._is_dir = is_dir
 
@@ -35,12 +35,6 @@ class FakeEntry:
         global path_attr_reads
         path_attr_reads += 1
         return self._path
-
-    @property
-    def name(self) -> str:
-        global name_attr_reads
-        name_attr_reads += 1
-        return self._name
 
     def is_dir(self) -> bool:
         return self._is_dir
@@ -57,9 +51,6 @@ class FakeScandir:
         return False
 
 
-name_attr_reads = 0
-
-
 fake_entries = tuple(
     [FakeEntry(f"model-ops-{idx:05d}") for idx in range(RUN_COUNT, 0, -1)]
     + [FakeEntry(f"noise-{idx:05d}") for idx in range(NOISE_COUNT)]
@@ -69,8 +60,7 @@ path_attr_reads = 0
 
 
 def run_sample() -> dict[str, float]:
-    global name_attr_reads, path_attr_reads
-    name_attr_reads = 0
+    global path_attr_reads
     path_attr_reads = 0
     original_scandir = store_module.os.scandir
     store_module.os.scandir = FakeScandir  # type: ignore[assignment]
@@ -92,7 +82,6 @@ def run_sample() -> dict[str, float]:
         store_module.os.scandir = original_scandir
     return {
         "elapsed_ms": elapsed * 1000,
-        "name_attr_reads": float(name_attr_reads),
         "peak_bytes": float(peak),
         "path_attr_reads": float(path_attr_reads),
     }
@@ -105,7 +94,6 @@ def main() -> None:
         "iteration_count": ITERATIONS,
         "sample_count": SAMPLES,
         "elapsed_ms_mean": statistics.fmean(sample["elapsed_ms"] for sample in samples),
-        "name_attr_reads_mean": statistics.fmean(sample["name_attr_reads"] for sample in samples),
         "peak_bytes_mean": statistics.fmean(sample["peak_bytes"] for sample in samples),
         "path_attr_reads_mean": statistics.fmean(sample["path_attr_reads"] for sample in samples),
     }

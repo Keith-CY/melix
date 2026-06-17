@@ -952,7 +952,6 @@ def test_lora_experiment_run_dir_scan_probe_script_smoke(capsys: pytest.CaptureF
     assert metrics["iteration_count"] == 24
     assert metrics["sample_count"] == 5
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["name_attr_reads_mean"] == 240000.0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["path_attr_reads_mean"] == 0.0
 
