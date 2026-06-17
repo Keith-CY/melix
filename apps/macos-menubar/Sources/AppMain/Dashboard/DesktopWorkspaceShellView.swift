@@ -1,5 +1,6 @@
 import AppKit
 import Charts
+import CoreImage.CIFilterBuiltins
 import MelixCLICore
 import MelixControlPlaneCore
 import SwiftUI
@@ -10298,6 +10299,10 @@ struct DesktopAPICompanionPairingPanel: View {
                         .help(allowedRoutesText)
                 }
 
+                if let pairingCode = viewModel.companionPairingCodeText() {
+                    CompanionPairingQRView(pairingCode: pairingCode)
+                }
+
                 if let errorText = presentation.errorText {
                     Text(errorText)
                         .font(.caption)
@@ -10349,8 +10354,81 @@ struct DesktopAPICompanionPairingPanel: View {
     }
 }
 
-private enum DesktopAPICompanionPairingLayout {
+enum DesktopAPICompanionPairingLayout {
     static let compactContentWidth: CGFloat = 320
+    static let qrImageSize: CGFloat = 120
+}
+
+enum CompanionPairingQRCode {
+    static func image(for code: String) -> NSImage? {
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedCode.isEmpty == false else { return nil }
+
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(trimmedCode.utf8)
+        filter.correctionLevel = "M"
+
+        guard let outputImage = filter.outputImage else { return nil }
+
+        let extent = outputImage.extent.integral
+        guard extent.width > 0, extent.height > 0 else { return nil }
+
+        let context = CIContext()
+        guard let cgImage = context.createCGImage(outputImage, from: extent) else {
+            return nil
+        }
+
+        let targetSize = DesktopAPICompanionPairingLayout.qrImageSize
+        return NSImage(size: NSSize(width: targetSize, height: targetSize), flipped: false) { rect in
+            guard let nsContext = NSGraphicsContext.current else { return false }
+            nsContext.imageInterpolation = .none
+            nsContext.cgContext.draw(cgImage, in: rect)
+            return true
+        }
+    }
+}
+
+struct CompanionPairingQRView: View {
+    let pairingCode: String
+    @State private var qrImage: NSImage?
+
+    init(pairingCode: String, initialImage: NSImage? = nil) {
+        self.pairingCode = pairingCode
+        _qrImage = State(initialValue: initialImage)
+    }
+
+    var body: some View {
+        Group {
+            if let qrImage {
+                CompanionPairingQRImageView(qrImage: qrImage)
+            }
+        }
+        .task(id: pairingCode) {
+            qrImage = CompanionPairingQRCode.image(for: pairingCode)
+        }
+    }
+}
+
+struct CompanionPairingQRImageView: View {
+    let qrImage: NSImage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Pairing QR")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Image(nsImage: qrImage)
+                .interpolation(.none)
+                .resizable()
+                .frame(
+                    width: DesktopAPICompanionPairingLayout.qrImageSize,
+                    height: DesktopAPICompanionPairingLayout.qrImageSize
+                )
+                .accessibilityLabel("Pairing QR")
+                .help("Contains the read-only companion bearer token. Share only with a trusted local device.")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 struct DesktopAPICompanionPairingPresentation: Equatable {
