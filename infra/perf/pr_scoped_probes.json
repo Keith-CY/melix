@@ -558,6 +558,24 @@
         "unit": "calls",
         "direction": "lower_is_better",
         "warn_pct": 0.0
+      },
+      {
+        "key": "single_cycle_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "single_cycle_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "single_cycle_embed_text_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
       }
     ]
   },
