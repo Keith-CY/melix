@@ -142,41 +142,47 @@ def project_retrieval_contexts(
             if (
                 context_kind in ("retrieved_document", "retrieved_image")
                 and isinstance(source_id, str)
-                and source_id.strip()
                 and isinstance(payload, dict)
                 and isinstance(owner_scope_checked, bool)
                 and isinstance(segment_id, str)
-                and segment_id.strip()
                 and isinstance(source_field, str)
-                and source_field.strip()
                 and isinstance(reason, str)
-                and reason.strip()
                 and isinstance(corrective_action, str)
-                and corrective_action.strip()
             ):
+                normalized_source_id = source_id.strip()
+                normalized_segment_id = segment_id.strip()
                 normalized_source_field = source_field.strip()
-                receipt = untrusted_context_receipt(
-                    segment_id=segment_id.strip(),
-                    source_type=context_kind,
-                    source_field=normalized_source_field,
-                    source_id=source_id.strip(),
-                    message_role="user",
-                    owner_scope_checked=owner_scope_checked,
-                    included=True,
-                    reason=reason.strip(),
-                    corrective_action=corrective_action.strip(),
-                )
-                if normalized_source_field in user_payload:
-                    refusal_receipts_append(
-                        duplicate_projection_receipt(
-                            receipt,
-                            duplicate_fields=[normalized_source_field],
-                        )
+                normalized_reason = reason.strip()
+                normalized_corrective_action = corrective_action.strip()
+                if (
+                    normalized_source_id
+                    and normalized_segment_id
+                    and normalized_source_field
+                    and normalized_reason
+                    and normalized_corrective_action
+                ):
+                    receipt = untrusted_context_receipt(
+                        segment_id=normalized_segment_id,
+                        source_type=context_kind,
+                        source_field=normalized_source_field,
+                        source_id=normalized_source_id,
+                        message_role="user",
+                        owner_scope_checked=owner_scope_checked,
+                        included=True,
+                        reason=normalized_reason,
+                        corrective_action=normalized_corrective_action,
                     )
+                    if normalized_source_field in user_payload:
+                        refusal_receipts_append(
+                            duplicate_projection_receipt(
+                                receipt,
+                                duplicate_fields=[normalized_source_field],
+                            )
+                        )
+                        continue
+                    user_payload[normalized_source_field] = payload
+                    receipts_append(receipt)
                     continue
-                user_payload[normalized_source_field] = payload
-                receipts_append(receipt)
-                continue
 
         try:
             admission = admit_entry(entry)
