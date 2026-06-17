@@ -127,6 +127,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     public let minP: Double?
     public let repeatPenalty: Double?
     public let presencePenalty: Double?
+    public let frequencyPenalty: Double?
     public let seed: UInt32?
     public let sessionID: String?
     public let branchID: String?
@@ -166,6 +167,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         minP: Double? = nil,
         repeatPenalty: Double? = nil,
         presencePenalty: Double? = nil,
+        frequencyPenalty: Double? = nil,
         seed: UInt32? = nil,
         sessionID: String?,
         branchID: String?,
@@ -204,6 +206,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         self.minP = minP
         self.repeatPenalty = repeatPenalty
         self.presencePenalty = presencePenalty
+        self.frequencyPenalty = frequencyPenalty
         self.seed = seed
         self.sessionID = sessionID
         self.branchID = branchID
@@ -252,6 +255,7 @@ public extension NormalizedTextRequest {
             minP: minP,
             repeatPenalty: repeatPenalty,
             presencePenalty: presencePenalty,
+            frequencyPenalty: frequencyPenalty,
             seed: seed,
             sessionID: sessionID,
             branchID: branchID,
@@ -315,6 +319,7 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let minP: Double?
     public let repeatPenalty: Double?
     public let presencePenalty: Double?
+    public let frequencyPenalty: Double?
     public let seed: UInt32?
     public let streamIntervalTokens: UInt32
     public let maxConcurrentRequests: UInt32
@@ -665,6 +670,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public let minP: Double?
     public let repeatPenalty: Double?
     public let presencePenalty: Double?
+    public let frequencyPenalty: Double?
     public let seed: UInt32?
     public let resumeRequestID: String?
     public let stopSequences: [String]?
@@ -706,6 +712,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         case minP = "min_p"
         case repeatPenalty = "repeat_penalty"
         case presencePenalty = "presence_penalty"
+        case frequencyPenalty = "frequency_penalty"
         case seed
         case resumeRequestID = "resume_request_id"
         case stop
@@ -749,6 +756,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         minP: Double? = nil,
         repeatPenalty: Double? = nil,
         presencePenalty: Double? = nil,
+        frequencyPenalty: Double? = nil,
         seed: UInt32? = nil,
         resumeRequestID: String? = nil,
         stopSequences: [String]? = nil,
@@ -789,6 +797,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.minP = minP
         self.repeatPenalty = repeatPenalty
         self.presencePenalty = presencePenalty
+        self.frequencyPenalty = frequencyPenalty
         self.seed = seed
         self.resumeRequestID = resumeRequestID
         self.stopSequences = stopSequences
@@ -832,6 +841,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.minP = try container.decodeIfPresent(Double.self, forKey: .minP)
         self.repeatPenalty = try container.decodeIfPresent(Double.self, forKey: .repeatPenalty)
         self.presencePenalty = try container.decodeIfPresent(Double.self, forKey: .presencePenalty)
+        self.frequencyPenalty = try container.decodeIfPresent(Double.self, forKey: .frequencyPenalty)
         self.seed = try container.decodeIfPresent(UInt32.self, forKey: .seed)
         self.resumeRequestID = try container.decodeIfPresent(String.self, forKey: .resumeRequestID)
         self.stopSequences = try Self.decodeStopSequences(from: container)
@@ -881,6 +891,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         try container.encodeIfPresent(minP, forKey: .minP)
         try container.encodeIfPresent(repeatPenalty, forKey: .repeatPenalty)
         try container.encodeIfPresent(presencePenalty, forKey: .presencePenalty)
+        try container.encodeIfPresent(frequencyPenalty, forKey: .frequencyPenalty)
         try container.encodeIfPresent(seed, forKey: .seed)
         try container.encodeIfPresent(resumeRequestID, forKey: .resumeRequestID)
         try encodeStopSequences(into: &container)
@@ -1037,6 +1048,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
     public let minP: Double?
     public let repeatPenalty: Double?
     public let presencePenalty: Double?
+    public let frequencyPenalty: Double?
     public let seed: UInt32?
     public let stopSequences: [String]?
     public let sessionID: String?
@@ -1067,6 +1079,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         case minP = "min_p"
         case repeatPenalty = "repeat_penalty"
         case presencePenalty = "presence_penalty"
+        case frequencyPenalty = "frequency_penalty"
         case seed
         case stop
         case stopSequences = "stop_sequences"
@@ -1099,6 +1112,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         minP: Double? = nil,
         repeatPenalty: Double? = nil,
         presencePenalty: Double? = nil,
+        frequencyPenalty: Double? = nil,
         seed: UInt32? = nil,
         stopSequences: [String]? = nil,
         sessionID: String? = nil,
@@ -1128,6 +1142,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         self.minP = minP
         self.repeatPenalty = repeatPenalty
         self.presencePenalty = presencePenalty
+        self.frequencyPenalty = frequencyPenalty
         self.seed = seed
         self.stopSequences = stopSequences
         self.sessionID = sessionID
@@ -1160,6 +1175,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         self.minP = try container.decodeIfPresent(Double.self, forKey: .minP)
         self.repeatPenalty = try container.decodeIfPresent(Double.self, forKey: .repeatPenalty)
         self.presencePenalty = try container.decodeIfPresent(Double.self, forKey: .presencePenalty)
+        self.frequencyPenalty = try container.decodeIfPresent(Double.self, forKey: .frequencyPenalty)
         self.seed = try container.decodeIfPresent(UInt32.self, forKey: .seed)
         self.stopSequences = try Self.decodeStopSequences(from: container)
         self.sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
@@ -1192,6 +1208,7 @@ public struct OpenAICompletionsRequest: Codable, Sendable {
         try container.encodeIfPresent(minP, forKey: .minP)
         try container.encodeIfPresent(repeatPenalty, forKey: .repeatPenalty)
         try container.encodeIfPresent(presencePenalty, forKey: .presencePenalty)
+        try container.encodeIfPresent(frequencyPenalty, forKey: .frequencyPenalty)
         try container.encodeIfPresent(seed, forKey: .seed)
         try Self.encodeStopSequences(stopSequences, into: &container)
         try container.encodeIfPresent(sessionID, forKey: .sessionID)
@@ -1412,6 +1429,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
     public let minP: Double?
     public let repeatPenalty: Double?
     public let presencePenalty: Double?
+    public let frequencyPenalty: Double?
     public let seed: UInt32?
     public let stopSequences: [String]?
     public let sessionID: String?
@@ -1443,6 +1461,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         case minP = "min_p"
         case repeatPenalty = "repeat_penalty"
         case presencePenalty = "presence_penalty"
+        case frequencyPenalty = "frequency_penalty"
         case seed
         case stop
         case stopSequences = "stop_sequences"
@@ -1476,6 +1495,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         minP: Double? = nil,
         repeatPenalty: Double? = nil,
         presencePenalty: Double? = nil,
+        frequencyPenalty: Double? = nil,
         seed: UInt32? = nil,
         stopSequences: [String]? = nil,
         sessionID: String? = nil,
@@ -1506,6 +1526,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         self.minP = minP
         self.repeatPenalty = repeatPenalty
         self.presencePenalty = presencePenalty
+        self.frequencyPenalty = frequencyPenalty
         self.seed = seed
         self.stopSequences = stopSequences
         self.sessionID = sessionID
@@ -1539,6 +1560,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         self.minP = try container.decodeIfPresent(Double.self, forKey: .minP)
         self.repeatPenalty = try container.decodeIfPresent(Double.self, forKey: .repeatPenalty)
         self.presencePenalty = try container.decodeIfPresent(Double.self, forKey: .presencePenalty)
+        self.frequencyPenalty = try container.decodeIfPresent(Double.self, forKey: .frequencyPenalty)
         self.seed = try container.decodeIfPresent(UInt32.self, forKey: .seed)
         self.stopSequences = try Self.decodeStopSequences(from: container)
         self.sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
@@ -1572,6 +1594,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         try container.encodeIfPresent(minP, forKey: .minP)
         try container.encodeIfPresent(repeatPenalty, forKey: .repeatPenalty)
         try container.encodeIfPresent(presencePenalty, forKey: .presencePenalty)
+        try container.encodeIfPresent(frequencyPenalty, forKey: .frequencyPenalty)
         try container.encodeIfPresent(seed, forKey: .seed)
         try Self.encodeStopSequences(stopSequences, into: &container)
         try container.encodeIfPresent(sessionID, forKey: .sessionID)
@@ -1822,6 +1845,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
     public let minP: Double?
     public let repeatPenalty: Double?
     public let presencePenalty: Double?
+    public let frequencyPenalty: Double?
     public let seed: UInt32?
     public let stopSequences: [String]?
     public let metadata: MelixMessagesMetadata?
@@ -1855,6 +1879,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         case minP = "min_p"
         case repeatPenalty = "repeat_penalty"
         case presencePenalty = "presence_penalty"
+        case frequencyPenalty = "frequency_penalty"
         case seed
         case stopSequences = "stop_sequences"
         case metadata
@@ -1890,6 +1915,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         minP: Double? = nil,
         repeatPenalty: Double? = nil,
         presencePenalty: Double? = nil,
+        frequencyPenalty: Double? = nil,
         seed: UInt32? = nil,
         stopSequences: [String]? = nil,
         metadata: MelixMessagesMetadata? = nil,
@@ -1928,6 +1954,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         self.minP = minP
         self.repeatPenalty = repeatPenalty
         self.presencePenalty = presencePenalty
+        self.frequencyPenalty = frequencyPenalty
         self.seed = seed
         self.stopSequences = stopSequences
         self.metadata = metadata
@@ -1963,6 +1990,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         self.minP = try container.decodeIfPresent(Double.self, forKey: .minP)
         self.repeatPenalty = try container.decodeIfPresent(Double.self, forKey: .repeatPenalty)
         self.presencePenalty = try container.decodeIfPresent(Double.self, forKey: .presencePenalty)
+        self.frequencyPenalty = try container.decodeIfPresent(Double.self, forKey: .frequencyPenalty)
         self.seed = try container.decodeIfPresent(UInt32.self, forKey: .seed)
         self.stopSequences = try container.decodeIfPresent([String].self, forKey: .stopSequences)
         self.metadata = try container.decodeIfPresent(MelixMessagesMetadata.self, forKey: .metadata)
@@ -1998,6 +2026,7 @@ public struct MelixMessagesRequest: Codable, Sendable {
         try container.encodeIfPresent(minP, forKey: .minP)
         try container.encodeIfPresent(repeatPenalty, forKey: .repeatPenalty)
         try container.encodeIfPresent(presencePenalty, forKey: .presencePenalty)
+        try container.encodeIfPresent(frequencyPenalty, forKey: .frequencyPenalty)
         try container.encodeIfPresent(seed, forKey: .seed)
         try container.encodeIfPresent(stopSequences, forKey: .stopSequences)
         try container.encodeIfPresent(metadata, forKey: .metadata)
@@ -2126,6 +2155,7 @@ public struct ChatRequestTranslator: Sendable {
             minP: request.minP,
             repeatPenalty: request.repeatPenalty,
             presencePenalty: request.presencePenalty,
+            frequencyPenalty: request.frequencyPenalty,
             seed: request.seed,
             sessionID: request.sessionID,
             branchID: request.branchID,
@@ -2188,6 +2218,7 @@ public struct ChatRequestTranslator: Sendable {
             minP: request.minP,
             repeatPenalty: request.repeatPenalty,
             presencePenalty: request.presencePenalty,
+            frequencyPenalty: request.frequencyPenalty,
             seed: request.seed,
             sessionID: request.sessionID,
             branchID: request.branchID,
@@ -2233,6 +2264,7 @@ public struct ChatRequestTranslator: Sendable {
             minP: request.minP,
             repeatPenalty: request.repeatPenalty,
             presencePenalty: request.presencePenalty,
+            frequencyPenalty: request.frequencyPenalty,
             seed: request.seed,
             sessionID: request.sessionID,
             branchID: request.branchID,
@@ -2291,6 +2323,7 @@ public struct ChatRequestTranslator: Sendable {
             minP: request.minP,
             repeatPenalty: request.repeatPenalty,
             presencePenalty: request.presencePenalty,
+            frequencyPenalty: request.frequencyPenalty,
             seed: request.seed,
             sessionID: request.sessionID,
             branchID: request.branchID,
@@ -2345,6 +2378,7 @@ public struct ChatRequestTranslator: Sendable {
             minP: request.minP,
             repeatPenalty: request.repeatPenalty,
             presencePenalty: request.presencePenalty,
+            frequencyPenalty: request.frequencyPenalty,
             seed: request.seed,
             sessionID: request.sessionID,
             branchID: request.branchID,
@@ -2380,6 +2414,7 @@ public struct ChatRequestTranslator: Sendable {
         minP: Double? = nil,
         repeatPenalty: Double? = nil,
         presencePenalty: Double? = nil,
+        frequencyPenalty: Double? = nil,
         seed: UInt32? = nil,
         sessionID: String?,
         branchID: String?,
@@ -2423,6 +2458,7 @@ public struct ChatRequestTranslator: Sendable {
             minP: minP,
             repeatPenalty: repeatPenalty,
             presencePenalty: presencePenalty,
+            frequencyPenalty: frequencyPenalty,
             seed: seed,
             sessionID: sessionID,
             branchID: branchID,
@@ -2796,6 +2832,9 @@ public struct ChatRequestTranslator: Sendable {
         if let presencePenalty = shapedRequest.presencePenalty {
             generateRequest.sampling.presencePenalty = Float(presencePenalty)
         }
+        if let frequencyPenalty = shapedRequest.frequencyPenalty {
+            generateRequest.sampling.frequencyPenalty = Float(frequencyPenalty)
+        }
         if let seed = shapedRequest.seed {
             generateRequest.sampling.seed = seed
         }
@@ -2914,6 +2953,7 @@ public struct ChatRequestTranslator: Sendable {
         request.execution.ext["\(extPrefix)min_p"] = stringValue(shapedRequest.minP)
         request.execution.ext["\(extPrefix)repeat_penalty"] = stringValue(shapedRequest.repeatPenalty)
         request.execution.ext["\(extPrefix)presence_penalty"] = stringValue(shapedRequest.presencePenalty)
+        request.execution.ext["\(extPrefix)frequency_penalty"] = stringValue(shapedRequest.frequencyPenalty)
         request.execution.ext["\(extPrefix)seed"] = stringValue(shapedRequest.seed)
     }
 

@@ -12,7 +12,27 @@ struct OpenAIConformanceMatrixTests {
         let route: String
         let expectedBehavior: String
         let requestBody: String
+        let workerCanDispatch: Bool
+        let model: Melix_Controlplane_V1_ModelSummary?
         let assertion: @Sendable (HTTPResponse, Melix_Worker_V1_GenerateRequest?) async throws -> OpenAIConformanceObservedStatus
+
+        init(
+            field: String,
+            route: String,
+            expectedBehavior: String,
+            requestBody: String,
+            workerCanDispatch: Bool = true,
+            model: Melix_Controlplane_V1_ModelSummary? = nil,
+            assertion: @escaping @Sendable (HTTPResponse, Melix_Worker_V1_GenerateRequest?) async throws -> OpenAIConformanceObservedStatus
+        ) {
+            self.field = field
+            self.route = route
+            self.expectedBehavior = expectedBehavior
+            self.requestBody = requestBody
+            self.workerCanDispatch = workerCanDispatch
+            self.model = model
+            self.assertion = assertion
+        }
     }
 
     @Test("chat compatibility rows normalize or reject at the OpenAI boundary")
@@ -36,11 +56,91 @@ struct OpenAIConformanceMatrixTests {
                 expectedBehavior: "conflicting max token fields return HTTP 400 and do not dispatch to the worker.",
                 requestBody: Self.body(extra: #""max_tokens": 16, "max_completion_tokens": 37"#)
             ) { response, request in
-                let payload = try await collectConformanceBody(response.body)
+                let error = try await conformanceErrorPayload(from: response.body)
                 #expect(response.statusCode == 400)
-                #expect(payload.contains("\"code\":\"invalid_generation_bounds\""))
-                #expect(payload.contains("max_tokens"))
-                #expect(payload.contains("max_completion_tokens"))
+                #expect(error["code"] as? String == "invalid_generation_bounds")
+                #expect(error["field"] as? String == "max_tokens,max_completion_tokens")
+                #expect(error["phase"] as? String == "generation_bounds")
+                #expect(error["bounds_rejection_reason"] as? String == "output_cap_conflict")
+                #expect(request == nil)
+                return .pass
+            },
+            MatrixRow(
+                field: "best_of",
+                route: "/v1/chat/completions -> typed unsupported-field rejection",
+                expectedBehavior: "unsupported OpenAI fields return a typed payload naming the field and boundary phase.",
+                requestBody: Self.body(extra: #""best_of": 2"#)
+            ) { response, request in
+                let error = try await conformanceErrorPayload(from: response.body)
+                #expect(response.statusCode == 400)
+                #expect(error["code"] as? String == "unsupported_request_field")
+                #expect(error["field"] as? String == "best_of")
+                #expect(error["phase"] as? String == "openai_request_validation")
+                #expect(request == nil)
+                return .pass
+            },
+            MatrixRow(
+                field: "messages",
+                route: "/v1/chat/completions -> typed schema rejection",
+                expectedBehavior: "invalid schema payloads return a typed error naming the incompatible field and decode phase.",
+                requestBody: """
+                {
+                  "model": "melix-dev-text",
+                  "messages": "not-an-array"
+                }
+                """
+            ) { response, request in
+                let error = try await conformanceErrorPayload(from: response.body)
+                #expect(response.statusCode == 400)
+                #expect(error["code"] as? String == "invalid_request_schema")
+                #expect(error["field"] as? String == "messages")
+                #expect(error["phase"] as? String == "decode")
+                #expect(request == nil)
+                return .pass
+            },
+            MatrixRow(
+                field: "backend_unavailable",
+                route: "/v1/chat/completions -> typed backend-unavailable rejection",
+                expectedBehavior: "worker unavailability returns a typed payload naming the dispatch phase before generation.",
+                requestBody: Self.body(extra: #""max_completion_tokens": 8"#),
+                workerCanDispatch: false
+            ) { response, request in
+                let error = try await conformanceErrorPayload(from: response.body)
+                #expect(response.statusCode == 503)
+                #expect(error["code"] as? String == "worker_unavailable")
+                #expect(error["field"] as? String == "worker")
+                #expect(error["phase"] as? String == "backend_dispatch")
+                #expect(request == nil)
+                return .pass
+            },
+            MatrixRow(
+                field: "context_overflow",
+                route: "/v1/chat/completions -> prompt-budget admission",
+                expectedBehavior: "context overflow returns a typed prompt-budget payload with context metadata and no worker dispatch.",
+                requestBody: """
+                {
+                  "model": "melix-dev-text",
+                  "max_tokens": 4,
+                  "messages": [
+                    { "role": "user", "content": "one two three four five six seven eight nine ten eleven twelve" }
+                  ]
+                }
+                """,
+                model: {
+                    var model = warmConformanceModel(id: "melix-dev-text")
+                    model.maxContext = 8
+                    return model
+                }()
+            ) { response, request in
+                let error = try await conformanceErrorPayload(from: response.body)
+                let metadata = try #require(error["prompt_token_metadata"] as? [String: Any])
+                #expect(response.statusCode == 400)
+                #expect(error["code"] as? String == "prompt_budget_exceeded")
+                #expect(error["field"] as? String == "messages")
+                #expect(error["phase"] as? String == "prompt_budget")
+                #expect(metadata["context_window_tokens"] as? Int == 8)
+                #expect(metadata["admission_phase"] as? String == "prompt_budget")
+                #expect(metadata["prefill_started"] as? Bool == false)
                 #expect(request == nil)
                 return .pass
             },
@@ -110,6 +210,20 @@ struct OpenAIConformanceMatrixTests {
                 return .pass
             },
             MatrixRow(
+                field: "seed,frequency_penalty",
+                route: "/v1/chat/completions -> sampling passthrough",
+                expectedBehavior: "seed and frequency_penalty forward into worker sampling and generation receipts.",
+                requestBody: Self.body(extra: #""seed": 123, "frequency_penalty": 0.35"#)
+            ) { response, request in
+                #expect(response.statusCode == 200)
+                let generated = try #require(request)
+                #expect(generated.sampling.seed == 123)
+                #expect(generated.sampling.frequencyPenalty == Float(0.35))
+                #expect(generated.execution.ext["melix.generation.seed"] == "123")
+                #expect(generated.execution.ext["melix.generation.frequency_penalty"] == "0.35")
+                return .pass
+            },
+            MatrixRow(
                 field: "logprobs,top_logprobs",
                 route: "/v1/chat/completions -> execution.ext effective receipt",
                 expectedBehavior: "logprobs requests are visible as unsupported-effective receipts until workers emit token distributions.",
@@ -126,8 +240,11 @@ struct OpenAIConformanceMatrixTests {
 
         var reportRows: [OpenAIConformanceRow] = []
         for row in rows {
-            let worker = RecordingConformanceWorker(requestID: "req-\(row.field)")
-            let handler = Self.handler(worker: worker)
+            let worker = RecordingConformanceWorker(
+                requestID: "req-\(row.field)",
+                canDispatchRequests: row.workerCanDispatch
+            )
+            let handler = Self.handler(worker: worker, model: row.model)
             let response = try await handler.handle(
                 HTTPRequest(
                     method: .post,
@@ -600,8 +717,11 @@ struct OpenAIConformanceMatrixTests {
         #expect(!stats.hasStats)
     }
 
-    private static func handler(worker: RecordingConformanceWorker) -> OpenAIHandler {
-        let catalog = ModelCatalog(seedModels: [warmConformanceModel(id: "melix-dev-text")])
+    private static func handler(
+        worker: RecordingConformanceWorker,
+        model: Melix_Controlplane_V1_ModelSummary? = nil
+    ) -> OpenAIHandler {
+        let catalog = ModelCatalog(seedModels: [model ?? warmConformanceModel(id: "melix-dev-text")])
         let registry = WorkerRegistry(defaultTextClient: worker, modelCatalog: catalog)
         return OpenAIHandler(
             modelCatalog: catalog,
@@ -670,6 +790,13 @@ private func collectConformanceBody(_ body: HTTPBody) async throws -> String {
     }
 }
 
+private func conformanceErrorPayload(from body: HTTPBody) async throws -> [String: Any] {
+    let payload = try await collectConformanceBody(body)
+    let data = try #require(payload.data(using: .utf8))
+    let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    return try #require(object["error"] as? [String: Any])
+}
+
 private func collectConformanceEvents(
     _ stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
 ) async throws -> [Melix_Worker_V1_ExecuteEvent] {
@@ -699,22 +826,25 @@ private actor RecordingConformanceWorker:
     let requestID: String
     private let events: [Melix_Worker_V1_ExecuteEvent]
     private let loadModelHandle: String
+    private let dispatchAvailable: Bool
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
 
     init(
         requestID: String,
         events: [Melix_Worker_V1_ExecuteEvent]? = nil,
-        loadModelHandle: String = "melix-dev-text::swift"
+        loadModelHandle: String = "melix-dev-text::swift",
+        canDispatchRequests: Bool = true
     ) {
         self.requestID = requestID
         self.events = events ?? [
             makeCompletedEvent(requestID: requestID, seq: 1, finishReason: "stop", assistantText: "ok"),
         ]
         self.loadModelHandle = loadModelHandle
+        self.dispatchAvailable = canDispatchRequests
     }
 
     func canDispatchRequests() async -> Bool {
-        true
+        dispatchAvailable
     }
 
     func generate(

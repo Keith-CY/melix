@@ -5987,8 +5987,8 @@ struct OpenAIHandlerTests {
         #expect(await workerClient.lastGenerateRequest == nil)
     }
 
-    @Test("POST /v1/chat/completions returns invalid argument for non-string multimodal part types")
-    func postChatCompletionsReturnsInvalidArgumentForNonStringMultimodalPartTypes() async throws {
+    @Test("POST /v1/chat/completions returns typed schema errors for non-string multimodal part types")
+    func postChatCompletionsReturnsTypedSchemaErrorsForNonStringMultimodalPartTypes() async throws {
         let workerClient = ScriptedWorkerClient(events: [])
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
@@ -6024,11 +6024,55 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let payload = try await collectBody(response.body)
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
 
         #expect(response.statusCode == 400)
-        #expect(payload.contains("\"code\":\"invalid_argument\""))
-        #expect(payload.contains("Malformed multimodal chat payload."))
+        #expect(error["code"] as? String == "invalid_request_schema")
+        #expect(error["field"] as? String == "type")
+        #expect(error["phase"] as? String == "decode")
+        #expect(error["message"] as? String == "Malformed multimodal chat payload.")
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions names missing required keys in schema error fields")
+    func postChatCompletionsReturnsMissingRequiredKeyInSchemaErrorField() async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-missing-schema-key" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "invalid_request_schema")
+        #expect(error["field"] as? String == "messages")
+        #expect(error["phase"] as? String == "decode")
+        #expect(error["message"] as? String == "Malformed multimodal chat payload.")
         #expect(await workerClient.lastLoadModelRequest == nil)
         #expect(await workerClient.lastGenerateRequest == nil)
     }
