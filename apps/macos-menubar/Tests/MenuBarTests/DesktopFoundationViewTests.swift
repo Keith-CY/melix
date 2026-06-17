@@ -4611,9 +4611,48 @@ struct DesktopFoundationViewTests {
 
         #expect(shellSource.contains("DesktopAPICompanionPairingPanel"))
         #expect(shellSource.contains("Companion Pairing"))
-        #expect(shellSource.contains("Issue Read-Only Token"))
-        #expect(shellSource.contains("Copy Pairing Bundle"))
+        #expect(shellSource.contains("Issue Token"))
+        #expect(shellSource.contains("Copy Bundle"))
+        #expect(shellSource.contains("Copy Code"))
+        #expect(shellSource.contains("Pairing QR"))
+        #expect(shellSource.contains("CompanionPairingQRView"))
+        #expect(shellSource.contains("CompanionPairingQRCode.image"))
+        #expect(shellSource.contains("Issue a read-only companion token"))
         #expect(shellSource.contains("Revoke Token"))
+    }
+
+    @Test("companion pairing QR code generates only for active codes")
+    func companionPairingQRCodeGeneratesOnlyForActiveCodes() throws {
+        let code = "melix-companion:eyJzY2hlbWFfdmVyc2lvbiI6Im1lbGl4LmNvbXBhbmlvbi5wYWlyaW5nLmJ1bmRsZS52MSJ9"
+        let image = try #require(CompanionPairingQRCode.image(for: code))
+        let renderedData = try #require(image.tiffRepresentation)
+        let renderedBitmap = try #require(NSBitmapImageRep(data: renderedData))
+
+        #expect(image.size.width == DesktopAPICompanionPairingLayout.qrImageSize)
+        #expect(image.size.height == DesktopAPICompanionPairingLayout.qrImageSize)
+        #expect(renderedBitmap.pixelsWide == Int(DesktopAPICompanionPairingLayout.qrImageSize))
+        #expect(renderedBitmap.pixelsHigh == Int(DesktopAPICompanionPairingLayout.qrImageSize))
+        #expect(CompanionPairingQRCode.image(for: "   ") == nil)
+        #expect(CompanionPairingQRCode.image(for: "\n\t") == nil)
+    }
+
+    @Test("companion pairing QR view renders generated image")
+    @MainActor
+    func companionPairingQRViewRendersGeneratedImage() throws {
+        let code = "melix-companion:eyJzY2hlbWFfdmVyc2lvbiI6Im1lbGl4LmNvbXBhbmlvbi5wYWlyaW5nLmJ1bmRsZS52MSJ9"
+        let qrImage = try #require(CompanionPairingQRCode.image(for: code))
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-companion-qr-view-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        try MelixSwiftUIScreenshotRenderer().render(
+            CompanionPairingQRView(pairingCode: code, initialImage: qrImage),
+            to: outputURL,
+            size: CGSize(width: 180, height: 180)
+        )
+        let pngData = try Data(contentsOf: outputURL)
+
+        #expect(Array(pngData.prefix(8)) == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     }
 
     @Test("api authentication surface includes companion status log tail panel")
@@ -4693,6 +4732,24 @@ struct DesktopFoundationViewTests {
         #expect(activePresentation.allowedRoutesText == "Allowed routes: GET /v1/melix/companion/status")
         #expect(activePresentation.copyDisabled == false)
         #expect(activePresentation.revokeDisabled == false)
+        let expectedPairingCode = try #require(activeViewModel.companionPairingCodeText())
+        let pasteboard = RecordingPasteboard()
+        #expect(CompanionPairingClipboard.copy(expectedPairingCode, to: pasteboard))
+        #expect(pasteboard.string == expectedPairingCode)
+        #expect(pasteboard.clearCount == 1)
+        #expect(CompanionPairingClipboard.copy("   ", to: pasteboard) == false)
+        #expect(CompanionPairingClipboard.copy(nil, to: pasteboard) == false)
+        let narrowHosted = hostView(
+            DesktopAPICompanionPairingPanel(viewModel: activeViewModel),
+            size: CGSize(width: 360, height: 420)
+        )
+        #expect(narrowHosted.subviews.isEmpty == false)
+        #expect(narrowHosted.fittingSize.width <= 360)
+
+        var noExpiryState = activeViewModel.companionPairing
+        noExpiryState.expiresAtUnixMS = 0
+        let noExpiryPresentation = DesktopAPICompanionPairingPresentation(pairing: noExpiryState)
+        #expect(noExpiryPresentation.statusDetail == "Read-only token is active.")
 
         let failureViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
         await failureViewModel.start()

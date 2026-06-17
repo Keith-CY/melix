@@ -143,6 +143,8 @@ def _changed_lines_by_path(repo_root: Path, rel_paths: list[str]) -> dict[str, s
 def _coverage_path_allowlist_from_raw(raw_value: str) -> frozenset[str] | None:
     if not raw_value:
         return None
+    if raw_value == "[]":
+        return frozenset()
     if (
         len(raw_value) >= 2
         and raw_value[0] == '"'
@@ -256,8 +258,15 @@ def main() -> int:
     args = parser.parse_args()
 
     repo_root = Path.cwd()
-    coverage_payload = json.loads(Path(args.coverage_json).read_text(encoding="utf-8"))
     paths = _filter_coverage_paths(args.paths, _coverage_path_allowlist(os.environ))
+    if not paths:
+        print("aggregate_measurable_changed_lines=0")
+        print("aggregate_covered_changed_lines=0")
+        print("aggregate_missed_changed_lines=0")
+        print("TOTAL 0 0 100%")
+        return 0
+
+    coverage_payload = json.loads(Path(args.coverage_json).read_text(encoding="utf-8"))
     changed_lines_by_path = _changed_lines_by_path(repo_root, paths)
 
     total_measurable = 0

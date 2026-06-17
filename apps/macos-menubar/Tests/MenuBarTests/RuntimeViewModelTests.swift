@@ -1626,6 +1626,11 @@ struct RuntimeViewModelTests {
         #expect(copyBundle.contains("melix_companion_secret"))
         #expect(copyBundle.contains("melix.companion.pairing.bundle.v1"))
         #expect(copyBundle.contains("http://127.0.0.1:18081/v1/melix/companion/status"))
+        let pairingCode = try #require(viewModel.companionPairingCodeText())
+        #expect(pairingCode.hasPrefix("melix-companion:"))
+        #expect(pairingCode.contains(" ") == false)
+        #expect(pairingCode.contains("\n") == false)
+        #expect(pairingCode.contains("melix_companion_secret") == false)
         #expect(await metrics.snapshot()["companion.pairing_issue_ms"] != nil)
     }
 
@@ -1674,6 +1679,7 @@ struct RuntimeViewModelTests {
         #expect(viewModel.companionPairing.phase == .idle)
         #expect(viewModel.companionPairing.sessionID.isEmpty)
         #expect(viewModel.companionPairing.copyBundleAvailable == false)
+        #expect(viewModel.companionPairingCodeText() == nil)
         #expect(await metrics.snapshot()["companion.pairing_revoke_ms"] != nil)
     }
 

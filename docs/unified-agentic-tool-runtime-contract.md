@@ -905,6 +905,15 @@ the sanitized payload. This keeps payload redaction, truncation, replay hashes,
 and byte metrics focused on the emitted tool output while still making the
 prompt boundary visible to downstream prompt assemblers.
 
+`melix.agentic_tool_observation.v1` records this receipt list as a
+normalization-time audit snapshot. The worker builds the generic
+`tool_observation` receipt and appends any normalized source-specific receipts
+while creating the observation record; later property reads or trace
+serialization copy that snapshot rather than re-running prompt-context
+admission. Tool-output payload text, including prompt-injection phrases such as
+requests to ignore earlier instructions, may remain in sanitized payload data
+but must not be copied into receipt JSON.
+
 Benchmark request rows derived from agentic tool turns must preserve that
 boundary evidence without promoting untrusted payload text into scalar CSV
 fields. Each `tool_turn` request row keeps the full observation, including
@@ -971,6 +980,21 @@ selected-result receipt through `worker.runtime.prompt_context` by admitting one
 `PromptContextSegment` for the sanitized selected result value while preserving
 the same emitted receipt fields and observation payload.
 
+The tool-observation normalizer is also an aggregation boundary for
+source-specific receipts. When callers attach a well-formed
+`melix.untrusted_context_receipt.v1` source receipt to an observation, the
+normalizer must re-emit that receipt through the shared Python worker
+`untrusted_context_receipt` helper before serialization. This preserves public
+symbolic IDs, redacts path-like, URL-like, non-ASCII, whitespace-bearing, or
+long private `source_id` values, and rewrites `segment_id` prefixes derived
+from the same raw source ID. Non-receipt diagnostic mappings may be copied as
+diagnostics, but they must not be treated as v1 untrusted-context receipts.
+Malformed mappings that claim the v1 schema but do not contain enough typed
+metadata to be safely re-emitted must become redacted `included = false`
+receipt-metadata refusal receipts instead of being copied through unchanged.
+This normalization must not change sanitized payload content, replay hashes, or
+tool-observation byte metrics.
+
 Deterministic adapter failures that reject a concrete untrusted source must also
 attach one source-specific refusal receipt beside the generic failed
 tool-observation receipt. The failed observation payload remains backward
@@ -1001,6 +1025,35 @@ observation emits one `tool_output` receipt with `segment_id =
 <tool_call_id>`. The `tool_output` receipt is attached beside the generic
 `tool_observation` receipt and must omit the arithmetic expression, result
 value, tool arguments, prompt text, and private context from receipt JSON.
+
+Native deterministic `local_compute` timeouts are also tool output. Each native
+timeout observation emits one `tool_output` receipt with `segment_id =
+<tool_call_id>:compute-timeout`, `source_field = timeout`, and `source_id =
+<tool_call_id>`. The receipt is metadata only and must omit timeout text,
+tool arguments, prompt text, and private context from receipt JSON while
+preserving the existing timeout payload, replay hash, byte metrics, and timeout
+counter behavior.
+
+Fixture-driven deterministic status overrides also represent tool output once
+they become timeout, failed, or cancelled observations. Each status override
+observation emits one source-specific `tool_output` receipt with `segment_id =
+<tool_call_id>:status-output`, `source_field = status`, and `source_id =
+<tool_call_id>`. The receipt is attached beside the generic `tool_observation`
+receipt and must omit override messages, error text, failure-stage strings, tool
+arguments, prompt text, and private context from receipt JSON. This receipt is
+metadata only and must not change sanitized observation payloads, replay hashes,
+byte metrics, timeout counters, or failed-status counters.
+
+Control-plane session tool results are also owner-scoped tool-output
+boundaries. `session.register_tool_result`, `session.resume_after_tool`, and
+worker stream hydration must reject a known tool-call or resume-snapshot ID when
+the ID is already attached to a different session or branch. The refusal returns
+or records `owner_scope_mismatch`, must not update `latestToolCallID`,
+`lastToolCallID`, `latestSnapshotID`, branch resume metadata, or publish a
+session mutation event, and must not copy tool result JSON, prompt text, or
+private context into the error payload. First-time IDs keep the existing
+session/branch registration behavior.
+
 Short symbolic fixture identifiers may be preserved in `source_id`; raw media
 references, file paths, URLs, whitespace-bearing identifiers, and long
 identifiers must be replaced with stable redacted identifiers shaped as

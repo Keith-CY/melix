@@ -137,9 +137,9 @@ def evaluate_gemma_e4b_profile_gate_evidence(evidence: dict[str, Any]) -> dict[s
         "status": "passed" if not failures else "failed",
         "artifact_status": str(evidence.get("artifact_status") or "present"),
         "model_id": str(evidence.get("model_id") or ""),
-        "selected_profile": copy.deepcopy(_as_dict(evidence.get("selected_profile"))),
-        "unsupported_routes": copy.deepcopy(_as_list(evidence.get("unsupported_routes"))),
-        "benchmark": copy.deepcopy(_as_dict(evidence.get("benchmark"))),
+        "selected_profile": _copy_json_like(_as_dict(evidence.get("selected_profile"))),
+        "unsupported_routes": _copy_json_like(_as_list(evidence.get("unsupported_routes"))),
+        "benchmark": _copy_json_like(_as_dict(evidence.get("benchmark"))),
         "metrics": metrics,
         "failures": failures,
     }
@@ -350,6 +350,16 @@ def _as_dict(value: Any) -> dict[str, Any]:
 
 def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _copy_json_like(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _copy_json_like(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return [_copy_json_like(child) for child in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return copy.deepcopy(value)
 
 
 def _text(value: Any) -> str:

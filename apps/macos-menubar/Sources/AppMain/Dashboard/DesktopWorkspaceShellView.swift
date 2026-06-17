@@ -1,5 +1,6 @@
 import AppKit
 import Charts
+import CoreImage.CIFilterBuiltins
 import MelixCLICore
 import MelixControlPlaneCore
 import SwiftUI
@@ -10853,11 +10854,14 @@ struct DesktopAPICompanionPairingPanel: View {
                         Text(presentation.statusDetail)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(2)
                     }
                     Spacer()
                     Text(presentation.scopeText)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
 
                 if let statusURL = presentation.statusURL {
@@ -10867,8 +10871,12 @@ struct DesktopAPICompanionPairingPanel: View {
                             .foregroundStyle(.secondary)
                         Text(statusURL)
                             .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                             .textSelection(.enabled)
+                            .help(statusURL)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 if let allowedRoutesText = presentation.allowedRoutesText {
@@ -10876,6 +10884,12 @@ struct DesktopAPICompanionPairingPanel: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
+                        .truncationMode(.middle)
+                        .help(allowedRoutesText)
+                }
+
+                if let pairingCode = viewModel.companionPairingCodeText() {
+                    CompanionPairingQRView(pairingCode: pairingCode)
                 }
 
                 if let errorText = presentation.errorText {
@@ -10884,38 +10898,125 @@ struct DesktopAPICompanionPairingPanel: View {
                         .foregroundStyle(MelixDesignTokens.StatusColor.error)
                 }
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) {
-                        companionPairingButtons(presentation)
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        companionPairingButtons(presentation)
-                    }
+                VStack(alignment: .leading, spacing: 8) {
+                    companionPairingButtons(presentation)
                 }
                 .buttonStyle(.bordered)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(
+                minWidth: 0,
+                idealWidth: DesktopAPICompanionPairingLayout.compactContentWidth,
+                maxWidth: .infinity,
+                alignment: .leading
+            )
         }
     }
 
     @ViewBuilder
     private func companionPairingButtons(_ presentation: DesktopAPICompanionPairingPresentation) -> some View {
-        Button("Issue Read-Only Token") {
+        Button("Issue Token") {
             Task { await viewModel.issueCompanionPairing() }
         }
+        .help("Issue a read-only companion token")
         .disabled(presentation.issueDisabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
 
-        Button("Copy Pairing Bundle") {
-            if let bundleText = viewModel.companionPairingBundleText() {
-                copyToPasteboard(bundleText)
-            }
+        Button("Copy Bundle") {
+            CompanionPairingClipboard.copy(viewModel.companionPairingBundleText())
         }
+        .help("Copy the read-only companion pairing bundle")
         .disabled(presentation.copyDisabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Button("Copy Code") {
+            CompanionPairingClipboard.copy(viewModel.companionPairingCodeText())
+        }
+        .help("Copy the read-only companion pairing code")
+        .disabled(presentation.copyDisabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
 
         Button("Revoke Token") {
             Task { await viewModel.revokeCompanionPairing() }
         }
         .disabled(presentation.revokeDisabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+enum DesktopAPICompanionPairingLayout {
+    static let compactContentWidth: CGFloat = 320
+    static let qrImageSize: CGFloat = 120
+}
+
+enum CompanionPairingQRCode {
+    static func image(for code: String) -> NSImage? {
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedCode.isEmpty == false else { return nil }
+
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(trimmedCode.utf8)
+        filter.correctionLevel = "M"
+
+        guard let outputImage = filter.outputImage else { return nil }
+
+        let extent = outputImage.extent.integral
+        guard extent.width > 0, extent.height > 0 else { return nil }
+
+        let context = CIContext()
+        guard let cgImage = context.createCGImage(outputImage, from: extent) else {
+            return nil
+        }
+
+        let targetSize = DesktopAPICompanionPairingLayout.qrImageSize
+        return NSImage(size: NSSize(width: targetSize, height: targetSize), flipped: false) { rect in
+            guard let nsContext = NSGraphicsContext.current else { return false }
+            nsContext.imageInterpolation = .none
+            nsContext.cgContext.draw(cgImage, in: rect)
+            return true
+        }
+    }
+}
+
+struct CompanionPairingQRView: View {
+    let pairingCode: String
+    @State private var qrImage: NSImage?
+
+    init(pairingCode: String, initialImage: NSImage? = nil) {
+        self.pairingCode = pairingCode
+        _qrImage = State(initialValue: initialImage)
+    }
+
+    var body: some View {
+        Group {
+            if let qrImage {
+                CompanionPairingQRImageView(qrImage: qrImage)
+            }
+        }
+        .task(id: pairingCode) {
+            qrImage = CompanionPairingQRCode.image(for: pairingCode)
+        }
+    }
+}
+
+struct CompanionPairingQRImageView: View {
+    let qrImage: NSImage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Pairing QR")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Image(nsImage: qrImage)
+                .interpolation(.none)
+                .resizable()
+                .frame(
+                    width: DesktopAPICompanionPairingLayout.qrImageSize,
+                    height: DesktopAPICompanionPairingLayout.qrImageSize
+                )
+                .accessibilityLabel("Pairing QR")
+                .help("Contains the read-only companion bearer token. Share only with a trusted local device.")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -10968,9 +11069,9 @@ struct DesktopAPICompanionPairingPresentation: Equatable {
         case .active:
             if pairing.expiresAtUnixMS > 0 {
                 let expiresAt = Date(timeIntervalSince1970: Double(pairing.expiresAtUnixMS) / 1_000)
-                return "Session \(pairing.sessionID) expires at \(expiresAt.formatted(date: .abbreviated, time: .shortened))."
+                return "Read-only token expires at \(expiresAt.formatted(date: .abbreviated, time: .shortened))."
             }
-            return "Session \(pairing.sessionID) is active."
+            return "Read-only token is active."
         case .revoking:
             return "Revocation uses the current companion session token once."
         case .failed:
@@ -12015,6 +12116,21 @@ func desktopAPIAuthenticationReferenceText(selectedExport: AgentIntegrationExpor
 enum RuntimeDiagnosticsArtifactClipboard {
     @discardableResult
     static func copy(_ value: String, to pasteboard: any RuntimePasteboardWriting = NSPasteboard.general) -> Bool {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedValue.isEmpty == false else {
+            return false
+        }
+        pasteboard.clearContents()
+        return pasteboard.setString(trimmedValue, forType: .string)
+    }
+}
+
+enum CompanionPairingClipboard {
+    @discardableResult
+    static func copy(_ value: String?, to pasteboard: any RuntimePasteboardWriting = NSPasteboard.general) -> Bool {
+        guard let value else {
+            return false
+        }
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedValue.isEmpty == false else {
             return false

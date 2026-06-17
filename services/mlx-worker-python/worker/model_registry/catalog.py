@@ -53,6 +53,8 @@ _GENERATION_CONFIG_TOP_P_KEY = "melix.generation_config.top_p"
 _GENERATION_CONFIG_MAX_TOKENS_KEY = "melix.generation_config.max_tokens"
 _GENERATION_CONFIG_DO_SAMPLE_KEY = "melix.generation_config.do_sample"
 _REGISTRY_SCAN_PRUNED_DIR_NAMES = frozenset({"blobs", ".git", "__pycache__"})
+_HF_CACHE_REPO_PREFIX = "models--"
+_HF_CACHE_REPO_PREFIX_LEN = len(_HF_CACHE_REPO_PREFIX)
 _HF_CACHE_PRUNED_SUBTREE_NAMES = frozenset({"snapshots", "refs"})
 _MODEL_WEIGHT_FILE_SUFFIXES = (".safetensors", ".npz")
 _GEMMA4_QAT_AUTOMATIC_ORG = "mlx-community"
@@ -552,12 +554,17 @@ def _has_mlx_signal(
 
 def _hf_cache_repo_id(cache_repo_dir: Path) -> str | None:
     name = cache_repo_dir.name
-    if not name.startswith("models--"):
+    if not name.startswith(_HF_CACHE_REPO_PREFIX):
         return None
-    parts = name.removeprefix("models--").split("--", maxsplit=1)
-    if len(parts) != 2 or not parts[0] or not parts[1]:
+    separator_index = name.find("--", _HF_CACHE_REPO_PREFIX_LEN)
+    suffix_index = separator_index + 2
+    if (
+        separator_index == -1
+        or separator_index == _HF_CACHE_REPO_PREFIX_LEN
+        or suffix_index == len(name)
+    ):
         return None
-    return f"{parts[0]}/{parts[1]}"
+    return f"{name[_HF_CACHE_REPO_PREFIX_LEN:separator_index]}/{name[suffix_index:]}"
 
 
 def _sorted_child_directories(root: Path, *, name_prefix: str | None = None) -> tuple[Path, ...]:
@@ -656,7 +663,7 @@ def _is_hf_cache_pruned_subtree(root: Path, current: Path) -> bool:
         relative_parts = current.relative_to(root).parts
     except ValueError:
         return False
-    if len(relative_parts) < 2 or relative_parts[1] not in {"snapshots", "refs"}:
+    if len(relative_parts) < 2 or relative_parts[1] not in _HF_CACHE_PRUNED_SUBTREE_NAMES:
         return False
     return _hf_cache_repo_id(root / relative_parts[0]) is not None
 

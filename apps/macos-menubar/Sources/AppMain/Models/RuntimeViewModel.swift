@@ -6214,6 +6214,18 @@ public final class RuntimeViewModel {
         return String(data: data, encoding: .utf8)
     }
 
+    public func companionPairingCodeText() -> String? {
+        guard let bundleText = companionPairingBundleText() else {
+            return nil
+        }
+        let bundleData = Data(bundleText.utf8)
+        let encoded = bundleData.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return "melix-companion:\(encoded)"
+    }
+
     @MainActor
     public func refreshCompanionStatus() async {
         guard companionStatus.phase != .loading else {
