@@ -1664,6 +1664,9 @@ button.primary:active {
             if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
                 return invalidGenerationBoundsResponse(boundsFailure)
             }
+            if let unsupportedField = unsupportedChatCompletionsField(in: request.body) {
+                return unsupportedRequestFieldResponse(field: unsupportedField)
+            }
             let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
             if let resumeRequestID = chatRequest.resumeRequestID?.trimmingCharacters(in: .whitespacesAndNewlines),
                !resumeRequestID.isEmpty {
@@ -1699,8 +1702,11 @@ button.primary:active {
                 return invalidArgumentResponse(message: error.operatorMessage)
             }
             return mediaNormalizationErrorResponse(error)
-        } catch is DecodingError {
-            return invalidArgumentResponse(message: "Malformed multimodal chat payload.")
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                field: decodingErrorField(error),
+                message: "Malformed multimodal chat payload."
+            )
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
@@ -3760,6 +3766,8 @@ button.primary:active {
             payload: [
                 "error": [
                     "code": "prompt_budget_exceeded",
+                    "field": "messages",
+                    "phase": "prompt_budget",
                     "status": "invalid_request_error",
                     "message": "Prompt token estimate exceeds the local prompt budget for this request.",
                     "prompt_token_metadata": metadata,
@@ -4424,7 +4432,14 @@ button.primary:active {
     private func workerUnavailableResponse() -> HTTPResponse {
         jsonResponse(
             statusCode: 503,
-            payload: ["error": ["code": "worker_unavailable", "message": "The worker cannot accept requests."]]
+            payload: [
+                "error": [
+                    "code": "worker_unavailable",
+                    "field": "worker",
+                    "phase": "backend_dispatch",
+                    "message": "The worker cannot accept requests.",
+                ],
+            ]
         )
     }
 
@@ -4435,17 +4450,73 @@ button.primary:active {
         )
     }
 
+    private func unsupportedRequestFieldResponse(field: String) -> HTTPResponse {
+        jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "unsupported_request_field",
+                    "field": field,
+                    "phase": "openai_request_validation",
+                    "message": "\(field) is not supported by this OpenAI-compatible endpoint.",
+                ],
+            ]
+        )
+    }
+
+    private func invalidRequestSchemaResponse(field: String, message: String) -> HTTPResponse {
+        jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "invalid_request_schema",
+                    "field": field,
+                    "phase": "decode",
+                    "message": message,
+                ],
+            ]
+        )
+    }
+
+    private func decodingErrorField(_ error: DecodingError) -> String {
+        let codingPath: [CodingKey]
+        switch error {
+        case .typeMismatch(_, let context),
+             .valueNotFound(_, let context),
+             .keyNotFound(_, let context),
+             .dataCorrupted(let context):
+            codingPath = context.codingPath
+        @unknown default:
+            codingPath = []
+        }
+        return codingPath.last?.stringValue ?? "body"
+    }
+
     private func invalidGenerationBoundsResponse(_ failure: GenerationBoundsValidationFailure) -> HTTPResponse {
         jsonResponse(
             statusCode: 400,
             payload: [
                 "error": [
                     "code": "invalid_generation_bounds",
+                    "field": failure.field,
+                    "phase": "generation_bounds",
                     "message": failure.message,
                     "bounds_rejection_reason": failure.reason,
                 ],
             ]
         )
+    }
+
+    private func unsupportedChatCompletionsField(in body: Data) -> String? {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        else {
+            return nil
+        }
+        for field in ["best_of"] where object[field] != nil {
+            return field
+        }
+        return nil
     }
 
     private func generationBoundsValidationFailure(in body: Data) -> GenerationBoundsValidationFailure? {
@@ -4466,6 +4537,7 @@ button.primary:active {
            let maxCompletionTokens = maxCompletionTokens.value,
            maxTokens != maxCompletionTokens {
             return GenerationBoundsValidationFailure(
+                field: "max_tokens,max_completion_tokens",
                 reason: "output_cap_conflict",
                 message: "max_tokens and max_completion_tokens must match when both are provided."
             )
@@ -4489,6 +4561,7 @@ button.primary:active {
            let maxCompletionTokens = maxCompletionTokens.value,
            maxTokens != maxCompletionTokens {
             return GenerationBoundsValidationFailure(
+                field: "max_tokens,max_completion_tokens",
                 reason: "output_cap_conflict",
                 message: "max_tokens and max_completion_tokens must match when both are provided."
             )
@@ -4505,18 +4578,21 @@ button.primary:active {
         }
         guard let doubleValue = Double(token) else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(fieldName)_malformed",
                 message: "\(fieldName) must be a finite positive integer."
             ))
         }
         guard doubleValue.isFinite else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(fieldName)_non_finite",
                 message: "\(fieldName) must be finite."
             ))
         }
         guard doubleValue > 0 else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(fieldName)_non_positive",
                 message: "\(fieldName) must be greater than zero."
             ))
@@ -4525,6 +4601,7 @@ button.primary:active {
               doubleValue <= Double(UInt32.max)
         else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(fieldName)_malformed",
                 message: "\(fieldName) must be a positive integer no greater than \(UInt32.max)."
             ))
@@ -4631,6 +4708,7 @@ button.primary:active {
               CFGetTypeID(number) != CFBooleanGetTypeID()
         else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(reasonPrefix)_malformed",
                 message: "\(fieldName) must be a finite positive integer."
             ))
@@ -4638,12 +4716,14 @@ button.primary:active {
         let doubleValue = number.doubleValue
         guard doubleValue.isFinite else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(reasonPrefix)_non_finite",
                 message: "\(fieldName) must be finite."
             ))
         }
         guard doubleValue > 0 else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(reasonPrefix)_non_positive",
                 message: "\(fieldName) must be greater than zero."
             ))
@@ -4652,6 +4732,7 @@ button.primary:active {
               doubleValue <= Double(UInt32.max)
         else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(reasonPrefix)_malformed",
                 message: "\(fieldName) must be a positive integer no greater than \(UInt32.max)."
             ))
@@ -5901,6 +5982,7 @@ private enum HTTPRequestHandlingError: Error {
 }
 
 private struct GenerationBoundsValidationFailure {
+    let field: String
     let reason: String
     let message: String
 }
@@ -7338,6 +7420,10 @@ private extension RequestCoordinatorError {
             "code": errorCode,
             "message": errorMessage,
         ]
+        if case .workerUnavailable = self {
+            error["field"] = "worker"
+            error["phase"] = "backend_dispatch"
+        }
         if case .unsupportedAcceleration(let reason, _, let recoveryHint) = self {
             error["unsupported_reason"] = ModelCapabilityReceipts.unsupportedReasonIdentifier(reason)
             error["recovery_hint"] = recoveryHint

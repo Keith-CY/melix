@@ -344,6 +344,7 @@ public struct TextRequestShaper: Sendable {
             minP: request.minP,
             repeatPenalty: request.repeatPenalty,
             presencePenalty: request.presencePenalty,
+            frequencyPenalty: request.frequencyPenalty,
             seed: request.seed,
             streamIntervalTokens: streamIntervalTokens,
             maxConcurrentRequests: maxConcurrentRequests,
