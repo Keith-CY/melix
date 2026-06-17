@@ -43,33 +43,10 @@ _JSON_IMMUTABLE_TYPE_SET = frozenset(_JSON_IMMUTABLE_TYPES)
 
 def _copy_json_list(value: list[Any]) -> list[Any]:
     immutable_types = _JSON_IMMUTABLE_TYPE_SET
-    value_len = len(value)
-    if value_len == 0:
-        return []
-    if value_len == 1 and type(value[0]) in immutable_types:
-        return value.copy()
-    if (
-        value_len == 2
-        and type(value[0]) in immutable_types
-        and type(value[1]) in immutable_types
-    ):
-        return value.copy()
-    if (
-        value_len == 3
-        and type(value[0]) in immutable_types
-        and type(value[1]) in immutable_types
-        and type(value[2]) in immutable_types
-    ):
-        return value.copy()
-    if (
-        value_len == 4
-        and type(value[0]) in immutable_types
-        and type(value[1]) in immutable_types
-        and type(value[2]) in immutable_types
-        and type(value[3]) in immutable_types
-    ):
-        return value.copy()
-    return [_copy_trajectory_provenance_value(item) for item in value]
+    for item in value:
+        if type(item) not in immutable_types:
+            return [_copy_trajectory_provenance_value(item) for item in value]
+    return value.copy()
 
 
 def _copy_trajectory_provenance_value(value: Any) -> Any:

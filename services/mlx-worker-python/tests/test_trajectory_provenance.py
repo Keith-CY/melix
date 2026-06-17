@@ -499,6 +499,7 @@ def test_normalize_trajectory_provenance_keeps_scalars_and_skips_empty_values() 
         ["agentic", "trajectory"],
         ["agentic", "trajectory", 3],
         ["agentic", "trajectory", 3, True],
+        ["agentic", "trajectory", "quality", 3, True, None, 0.75],
     ],
 )
 def test_copy_json_list_copies_short_scalar_lists_without_recursive_calls(
