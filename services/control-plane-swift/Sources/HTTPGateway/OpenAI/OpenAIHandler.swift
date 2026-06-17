@@ -860,7 +860,9 @@ button.primary:active {
     const compact = trimmed.slice(prefix.length).replace(/\s+/g, '');
     const base64 = compact.replace(/-/g, '+').replace(/_/g, '/');
     const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
-    return decodeURIComponent(escape(atob(padded)));
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
   }
 
   function sameOriginStatusPath(bundle) {
@@ -875,8 +877,14 @@ button.primary:active {
   }
 
   function importPairingBundle() {
+    const rawValue = pairingImport.value.trim();
+    if (!rawValue) {
+      message.textContent = 'Paste a pairing code or JSON bundle first.';
+      message.className = 'hint error';
+      return;
+    }
     try {
-      const decoded = decodePairingCode(pairingImport.value);
+      const decoded = decodePairingCode(rawValue);
       const bundle = JSON.parse(decoded);
       if (!bundle || typeof bundle !== 'object') {
         throw new Error('pairing bundle must be a JSON object');
@@ -890,9 +898,11 @@ button.primary:active {
       }
       statusPath = sameOriginStatusPath(bundle);
       tokenInput.value = token;
+      pairingImport.value = '';
       localStorage.setItem(storageKey, token);
       message.textContent = 'Pairing imported. Device token saved.';
       message.className = 'hint';
+      refreshStatus();
     } catch (error) {
       message.textContent = `Unable to import pairing bundle: ${error.message}`;
       message.className = 'hint error';
