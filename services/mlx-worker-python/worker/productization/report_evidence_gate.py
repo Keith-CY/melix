@@ -4,7 +4,7 @@ import heapq
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import AbstractSet, Any, Iterator
+from typing import AbstractSet, Any, Iterator, cast
 
 from worker.productization.benchmark_evaluation_report import validate_report_payload
 
@@ -302,7 +302,7 @@ def _report_matrix_roles(
         if _run_kind_only_rule(rule):
             if run_kind_values is None:
                 run_kind_values = _report_run_kind_values(runs)
-            if not _string_frozenset(rule.get("run_kinds", ())).isdisjoint(run_kind_values):
+            if _run_kind_rule_matches(rule.get("run_kinds", ()), run_kind_values):
                 roles.append(role)
             continue
         if rule.get("probe_phases") and probe_phases is None:
@@ -324,6 +324,18 @@ def _run_kind_only_rule(rule: dict[str, object]) -> bool:
         or rule.get("target_fields")
         or rule.get("probe_phases")
     )
+
+
+def _run_kind_rule_matches(run_kinds: object, run_kind_values: frozenset[str]) -> bool:
+    if isinstance(run_kinds, tuple):
+        for run_kind in run_kinds:
+            if type(run_kind) is str:
+                if run_kind in run_kind_values:
+                    return True
+            elif str(run_kind) in run_kind_values:
+                return True
+        return False
+    return not _string_frozenset(run_kinds).isdisjoint(run_kind_values)
 
 
 def _report_run_kind_values(runs: list[dict[str, object]]) -> frozenset[str]:
@@ -520,4 +532,7 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
 def _dict_list(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
-    return [item for item in value if isinstance(item, dict)]
+    for item in value:
+        if not isinstance(item, dict):
+            return [item for item in value if isinstance(item, dict)]
+    return cast(list[dict[str, object]], value)
