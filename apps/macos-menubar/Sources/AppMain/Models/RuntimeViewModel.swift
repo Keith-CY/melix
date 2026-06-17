@@ -6120,6 +6120,7 @@ public final class RuntimeViewModel {
             schemaVersion: "melix.companion.pairing.bundle.v1",
             sessionID: companionPairing.sessionID,
             scope: companionPairing.scope,
+            mobileURL: companionPairing.mobileURL,
             statusURL: companionPairing.statusURL,
             resumeHeader: companionPairing.resumeHeader,
             token: activeCompanionSessionToken,
@@ -18368,6 +18369,7 @@ private struct CompanionPairingClipboardBundle: Encodable {
     let schemaVersion: String
     let sessionID: String
     let scope: String
+    let mobileURL: String
     let statusURL: String
     let resumeHeader: String
     let token: String
@@ -18380,6 +18382,7 @@ private struct CompanionPairingClipboardBundle: Encodable {
         case schemaVersion = "schema_version"
         case sessionID = "session_id"
         case scope
+        case mobileURL = "mobile_url"
         case statusURL = "status_url"
         case resumeHeader = "resume_header"
         case token

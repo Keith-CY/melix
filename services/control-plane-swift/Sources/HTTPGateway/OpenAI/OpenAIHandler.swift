@@ -454,6 +454,7 @@ private enum GatewayAuthorizationContext: Sendable {
 }
 
 private enum GatewayAuthorizationRoute {
+    case publicAsset
     case health
     case standard
     case companionReadOnly
@@ -582,6 +583,364 @@ public struct OpenAIHandler: Sendable {
     private static let maxSpeechStreamIntervalMs: UInt32 = 1_000
     private static let modelIdleSweepDebounceSeconds: TimeInterval = 30
     private static let logger = Logger(subsystem: "Melix.ControlPlane", category: "OpenAIHandler")
+    private static let companionMobileStatusPageHTML = #"""
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Melix Companion</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f7f7f2;
+  --panel: #ffffff;
+  --text: #16211c;
+  --muted: #5d665f;
+  --line: #d8dbd1;
+  --accent: #126b5a;
+  --accent-pressed: #0d5749;
+  --danger: #8a1f17;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+}
+main {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  padding: 20px 16px 32px;
+  display: grid;
+  gap: 14px;
+}
+header {
+  padding: 18px 0 6px;
+}
+.eyebrow {
+  margin: 0 0 6px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+h1,
+h2 {
+  margin: 0;
+  letter-spacing: 0;
+}
+h1 {
+  font-size: clamp(30px, 8vw, 42px);
+  line-height: 1.04;
+}
+h2 {
+  font-size: 18px;
+  line-height: 1.2;
+}
+p {
+  margin: 8px 0 0;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+}
+.stack {
+  display: grid;
+  gap: 12px;
+}
+label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--text);
+  font: inherit;
+}
+input:focus,
+button:focus-visible {
+  outline: 3px solid rgba(18, 107, 90, 0.24);
+  outline-offset: 2px;
+}
+.actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+  gap: 8px;
+}
+button {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fdfdf9;
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+}
+button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+}
+button:active {
+  transform: translateY(1px);
+}
+button.primary:active {
+  background: var(--accent-pressed);
+}
+.hint,
+.meta {
+  color: var(--muted);
+  font-size: 13px;
+}
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+.metric {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  min-height: 74px;
+}
+.metric span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.metric strong {
+  display: block;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+  font-size: 20px;
+}
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.log-entry {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+}
+.log-title {
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.empty {
+  color: var(--muted);
+  font-size: 14px;
+}
+.error {
+  color: var(--danger);
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">companion_read_only</p>
+    <h1>Melix Companion</h1>
+    <p class="hint">Read-only local status for a paired Melix runtime.</p>
+  </header>
+
+  <section class="panel stack" aria-labelledby="token-title">
+    <h2 id="token-title">Device Token</h2>
+    <div>
+      <label for="token">Companion token</label>
+      <input id="token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Paste companion token">
+    </div>
+    <div class="actions">
+      <button id="save-token" class="primary" type="button">Save Device Token</button>
+      <button id="clear-token" type="button">Clear Device Token</button>
+      <button id="refresh" type="button">Refresh Status</button>
+    </div>
+    <p class="hint">This page sends the token as x-melix-session and stores it in localStorage on this device only.</p>
+    <p id="message" class="hint" role="status"></p>
+  </section>
+
+  <section class="panel stack" aria-labelledby="runtime-title">
+    <h2 id="runtime-title">Runtime</h2>
+    <div class="status-grid" aria-live="polite">
+      <div class="metric"><span>Gateway</span><strong id="gateway-status">Not loaded</strong></div>
+      <div class="metric"><span>Models</span><strong id="model-status">Not loaded</strong></div>
+      <div class="metric"><span>Queue</span><strong id="queue-status">Not loaded</strong></div>
+      <div class="metric"><span>Image Jobs</span><strong id="image-job-status">Not loaded</strong></div>
+      <div class="metric"><span>Session</span><strong id="session-status">companion_read_only</strong></div>
+      <div class="metric"><span>Endpoint</span><strong>/v1/melix/companion/status</strong></div>
+    </div>
+  </section>
+
+  <section class="panel stack" aria-labelledby="logs-title">
+    <h2 id="logs-title">Redacted Log Tail</h2>
+    <ul id="logs" class="log-list" aria-live="polite">
+      <li class="empty">No log entries loaded.</li>
+    </ul>
+  </section>
+</main>
+
+<script>
+(() => {
+  const sessionHeader = 'x-melix-session';
+  const statusPath = '/v1/melix/companion/status';
+  const storageKey = 'melix.companion.sessionToken';
+  const tokenInput = document.getElementById('token');
+  const message = document.getElementById('message');
+  const logs = document.getElementById('logs');
+
+  function text(id, value) {
+    document.getElementById(id).textContent = value;
+  }
+
+  function valueOrDash(value) {
+    if (value === undefined || value === null || value === '') {
+      return '-';
+    }
+    return String(value);
+  }
+
+  function countLabel(ready, total) {
+    if (ready === undefined && total === undefined) {
+      return 'Not reported';
+    }
+    return `${valueOrDash(ready)} / ${valueOrDash(total)}`;
+  }
+
+  function pick(value, keys) {
+    for (const key of keys) {
+      if (value && value[key] !== undefined && value[key] !== null) {
+        return value[key];
+      }
+    }
+    return undefined;
+  }
+
+  function renderLogs(entries) {
+    logs.replaceChildren();
+    if (!Array.isArray(entries) || entries.length === 0) {
+      const item = document.createElement('li');
+      item.className = 'empty';
+      item.textContent = 'No redacted log entries reported.';
+      logs.appendChild(item);
+      return;
+    }
+    for (const entry of entries.slice(0, 20)) {
+      const item = document.createElement('li');
+      item.className = 'log-entry';
+      const title = document.createElement('p');
+      title.className = 'log-title';
+      const job = pick(entry, ['job_id', 'jobID', 'id']);
+      const state = pick(entry, ['state', 'status']);
+      const stage = pick(entry, ['progress_stage', 'progressStage', 'stage']);
+      title.textContent = [job, state, stage].filter(Boolean).join(' / ') || 'redacted entry';
+      const meta = document.createElement('p');
+      meta.className = 'meta';
+      const redaction = entry.redaction || {};
+      meta.textContent = pick(redaction, ['summary', 'reason', 'policy']) || pick(entry, ['redaction_summary']) || 'raw content hidden';
+      item.append(title, meta);
+      logs.appendChild(item);
+    }
+  }
+
+  function render(data) {
+    if (!data || typeof data !== 'object') {
+      message.textContent = 'Status payload was not an object.';
+      message.className = 'hint error';
+      return;
+    }
+    const models = data.models || {};
+    const queueSummary = (data.queue && data.queue.summary) || data.queue || {};
+    const imageJobs = (data.image_jobs && data.image_jobs.jobs) || (data.imageJobs && data.imageJobs.jobs) ||
+      (data.recent_receipts && data.recent_receipts.jobs) || (data.recentReceipts && data.recentReceipts.jobs) || [];
+    const authorization = data.authorization || {};
+    text('gateway-status', valueOrDash((data.runtime && data.runtime.status) || data.status));
+    text('model-status', countLabel(models.ready, models.total));
+    text('queue-status', countLabel(pick(queueSummary, ['active', 'running']), pick(queueSummary, ['queued', 'pending', 'total'])));
+    text('image-job-status', Array.isArray(imageJobs) ? `${imageJobs.length} visible` : 'Not reported');
+    text('session-status', valueOrDash(authorization.scope || authorization.session_scope || 'companion_read_only'));
+    const logEntries = (data.logs && data.logs.entries) || [];
+    renderLogs(logEntries);
+  }
+
+  async function refreshStatus() {
+    const token = tokenInput.value.trim() || localStorage.getItem(storageKey) || '';
+    if (!token) {
+      message.textContent = 'Paste or save a companion token first.';
+      message.className = 'hint error';
+      return;
+    }
+    message.textContent = 'Refreshing status...';
+    message.className = 'hint';
+    try {
+      const response = await fetch(statusPath, {
+        cache: 'no-store',
+        headers: { [sessionHeader]: token }
+      });
+      if (!response.ok) {
+        throw new Error(`status ${response.status}`);
+      }
+      render(await response.json());
+      message.textContent = `Updated ${new Date().toLocaleTimeString()}.`;
+      message.className = 'hint';
+    } catch (error) {
+      message.textContent = `Unable to load status: ${error.message}`;
+      message.className = 'hint error';
+    }
+  }
+
+  document.getElementById('save-token').addEventListener('click', () => {
+    const token = tokenInput.value.trim();
+    if (!token) {
+      message.textContent = 'Paste a companion token before saving.';
+      message.className = 'hint error';
+      return;
+    }
+    localStorage.setItem(storageKey, token);
+    message.textContent = 'Device token saved.';
+    message.className = 'hint';
+  });
+
+  document.getElementById('clear-token').addEventListener('click', () => {
+    localStorage.removeItem(storageKey);
+    tokenInput.value = '';
+    message.textContent = 'Device token cleared.';
+    message.className = 'hint';
+  });
+
+  document.getElementById('refresh').addEventListener('click', refreshStatus);
+
+  const storedToken = localStorage.getItem(storageKey);
+  if (storedToken) {
+    tokenInput.value = storedToken;
+    refreshStatus();
+  }
+})();
+</script>
+</body>
+</html>
+"""#
+    private static let companionMobileStatusPageHTMLData = Data(companionMobileStatusPageHTML.utf8)
 
     private let modelCatalog: ModelCatalog
     private let requestCoordinator: RequestCoordinator
@@ -733,6 +1092,8 @@ public struct OpenAIHandler: Sendable {
                 response = try await handleHealthDiagnostics()
             case (.get, "/v1/cache/stats"):
                 response = try await handleCacheStats()
+            case (.get, "/v1/melix/companion"):
+                response = await handleCompanionMobileStatusPage()
             case (.get, "/v1/melix/companion/status"):
                 response = try await handleCompanionStatus(authorization: authorizationContext)
             case (.post, "/v1/melix/auth/session"):
@@ -798,6 +1159,9 @@ public struct OpenAIHandler: Sendable {
         for request: HTTPRequest
     ) async -> GatewayAuthorizationResolution {
         let route = authorizationRoute(for: request)
+        guard route != .publicAsset else {
+            return .success(.localTrusted)
+        }
         guard route != .health else {
             return .success(.localTrusted)
         }
@@ -965,6 +1329,31 @@ public struct OpenAIHandler: Sendable {
             forKey: "operator.health_diagnostics_latency_ms"
         )
         return try encodedJSONResponse(response)
+    }
+
+    private func handleCompanionMobileStatusPage() async -> HTTPResponse {
+        await metricsStore.increment("companion.mobile_page_served_count")
+        return HTTPResponse(
+            statusCode: 200,
+            headers: [
+                "content-type": "text/html; charset=utf-8",
+                "cache-control": "no-store",
+                "referrer-policy": "no-referrer",
+                "x-content-type-options": "nosniff",
+                "x-frame-options": "deny",
+                "content-security-policy": [
+                    "default-src 'none'",
+                    "connect-src 'self'",
+                    "script-src 'unsafe-inline'",
+                    "style-src 'unsafe-inline'",
+                    "img-src 'none'",
+                    "frame-ancestors 'none'",
+                    "base-uri 'none'",
+                    "form-action 'none'",
+                ].joined(separator: "; "),
+            ],
+            body: .data(Self.companionMobileStatusPageHTMLData)
+        )
     }
 
     private func handleCompanionStatus(
@@ -4540,6 +4929,8 @@ public struct OpenAIHandler: Sendable {
 
     private func authorizationRoute(for request: HTTPRequest) -> GatewayAuthorizationRoute {
         switch (request.method, request.path) {
+        case (.get, "/v1/melix/companion"):
+            return .publicAsset
         case (.get, "/health"):
             return .health
         case (.get, "/.well-known/melix.json"),
@@ -4569,7 +4960,7 @@ public struct OpenAIHandler: Sendable {
             return nil
         }
         switch route {
-        case .health, .companionReadOnly, .currentSession:
+        case .publicAsset, .health, .companionReadOnly, .currentSession:
             return nil
         case .standard, .createSession:
             await metricsStore.increment("companion_auth.rejected_request_count")
@@ -6114,6 +6505,7 @@ private struct OpenAICompanionPairingPayload: Codable {
     let scope: PersistentAuthSessionScope
     let tokenTransport: String
     let resumeHeader: String
+    let mobileURL: String
     let statusURL: String
     let expiresAtUnixMs: Int64
     let allowedOrigins: [String]
@@ -6132,7 +6524,8 @@ private struct OpenAICompanionPairingPayload: Codable {
         tokenTransport = "resume_header"
         resumeHeader = PersistentAuthSessionStore.sessionHeaderName
         let displayHost = Self.displayHost(for: gatewayRuntimeBinding.host)
-        statusURL = "http://\(Self.urlHost(displayHost)):\(gatewayRuntimeBinding.port)/v1/melix/companion/status"
+        mobileURL = "http://\(Self.urlHost(displayHost)):\(gatewayRuntimeBinding.port)/v1/melix/companion"
+        statusURL = "\(mobileURL)/status"
         expiresAtUnixMs = metadata.expiresAtUnixMs
         allowedOrigins = gatewayRuntimeBinding.allowedOrigins
         allowedRoutes = Self.defaultAllowedRoutes
@@ -6189,6 +6582,7 @@ private struct OpenAICompanionPairingPayload: Codable {
         case scope
         case tokenTransport = "token_transport"
         case resumeHeader = "resume_header"
+        case mobileURL = "mobile_url"
         case statusURL = "status_url"
         case expiresAtUnixMs = "expires_at_unix_ms"
         case allowedOrigins = "allowed_origins"
