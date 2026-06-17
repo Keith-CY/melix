@@ -102,6 +102,8 @@ Operator actions:
 - `Copy Code` copies a compact `melix-companion:` pairing code. The code is a
   URL-safe-base64 encoding of the same transient JSON bundle and is intended for
   future QR/code transfer surfaces.
+- `Pairing QR` renders the same compact `melix-companion:` pairing code as a
+  local QR preview for trusted companion-device import.
 - `Revoke Token` calls `DELETE /v1/melix/auth/session` with the active companion
   token through `X-Melix-Session`.
 
@@ -111,8 +113,9 @@ written into operator session state, server-session configuration, logs,
 metrics, or the safe descriptor displayed in the panel. Closing the desktop
 process drops the transient token reference; create a new companion token if the
 current token can no longer be copied or revoked from the panel. Treat copied
-pairing bundles and `melix-companion:` pairing codes as secret bearer material
-because both include the raw companion token inside the transferred payload.
+pairing bundles, `melix-companion:` pairing codes, and pairing QR screenshots as
+secret bearer material because each includes the raw companion token inside the
+transferred payload.
 
 ### Desktop Companion Status Refresh
 

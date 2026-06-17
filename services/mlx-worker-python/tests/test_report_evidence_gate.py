@@ -282,6 +282,7 @@ def test_report_evidence_gate_matrix_roles_keep_non_string_run_kind_match() -> N
 
 
 def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> None:
+    report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
     roles = report_evidence_gate_module._report_matrix_roles(
         {"runs": [{"run_kind": "serving_benchmark"}, {"run_kind": "evaluation"}]},
         {
@@ -292,6 +293,16 @@ def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> N
     )
 
     assert roles == ["serving", "evaluation"]
+    assert report_evidence_gate_module._string_frozenset_from_tuple.cache_info().misses == 0
+
+    mutable_roles = report_evidence_gate_module._report_matrix_roles(
+        {"runs": [{"run_kind": "dynamic"}, {"run_kind": "99"}]},
+        {
+            "dynamic": {"run_kinds": {"dynamic"}},
+            "numeric_rule": {"run_kinds": (99,)},
+        },
+    )
+    assert mutable_roles == ["dynamic", "numeric_rule"]
 
 
 def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple() -> None:
