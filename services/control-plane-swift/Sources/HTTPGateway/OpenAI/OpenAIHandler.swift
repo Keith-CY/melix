@@ -454,6 +454,7 @@ private enum GatewayAuthorizationContext: Sendable {
 }
 
 private enum GatewayAuthorizationRoute {
+    case publicAsset
     case health
     case standard
     case companionReadOnly
@@ -863,6 +864,11 @@ button.primary:active {
   }
 
   function render(data) {
+    if (!data || typeof data !== 'object') {
+      message.textContent = 'Status payload was not an object.';
+      message.className = 'hint error';
+      return;
+    }
     const models = data.models || {};
     const queueSummary = (data.queue && data.queue.summary) || data.queue || {};
     const imageJobs = (data.image_jobs && data.image_jobs.jobs) || (data.imageJobs && data.imageJobs.jobs) ||
@@ -934,6 +940,7 @@ button.primary:active {
 </body>
 </html>
 """#
+    private static let companionMobileStatusPageHTMLData = Data(companionMobileStatusPageHTML.utf8)
 
     private let modelCatalog: ModelCatalog
     private let requestCoordinator: RequestCoordinator
@@ -1152,6 +1159,9 @@ button.primary:active {
         for request: HTTPRequest
     ) async -> GatewayAuthorizationResolution {
         let route = authorizationRoute(for: request)
+        guard route != .publicAsset else {
+            return .success(.localTrusted)
+        }
         guard route != .health else {
             return .success(.localTrusted)
         }
@@ -1330,8 +1340,19 @@ button.primary:active {
                 "cache-control": "no-store",
                 "referrer-policy": "no-referrer",
                 "x-content-type-options": "nosniff",
+                "x-frame-options": "deny",
+                "content-security-policy": [
+                    "default-src 'none'",
+                    "connect-src 'self'",
+                    "script-src 'unsafe-inline'",
+                    "style-src 'unsafe-inline'",
+                    "img-src 'none'",
+                    "frame-ancestors 'none'",
+                    "base-uri 'none'",
+                    "form-action 'none'",
+                ].joined(separator: "; "),
             ],
-            body: .data(Data(Self.companionMobileStatusPageHTML.utf8))
+            body: .data(Self.companionMobileStatusPageHTMLData)
         )
     }
 
@@ -4908,6 +4929,8 @@ button.primary:active {
 
     private func authorizationRoute(for request: HTTPRequest) -> GatewayAuthorizationRoute {
         switch (request.method, request.path) {
+        case (.get, "/v1/melix/companion"):
+            return .publicAsset
         case (.get, "/health"):
             return .health
         case (.get, "/.well-known/melix.json"),
@@ -4917,7 +4940,6 @@ button.primary:active {
              (.get, "/v1/models"),
              (.get, "/v1/melix/health"),
              (.get, "/v1/cache/stats"),
-             (.get, "/v1/melix/companion"),
              (.get, "/v1/melix/companion/status"):
             return .companionReadOnly
         case (.post, "/v1/melix/auth/session"):
@@ -4938,7 +4960,7 @@ button.primary:active {
             return nil
         }
         switch route {
-        case .health, .companionReadOnly, .currentSession:
+        case .publicAsset, .health, .companionReadOnly, .currentSession:
             return nil
         case .standard, .createSession:
             await metricsStore.increment("companion_auth.rejected_request_count")
@@ -6518,7 +6540,6 @@ private struct OpenAICompanionPairingPayload: Codable {
         OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/models"),
         OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/health"),
         OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/cache/stats"),
-        OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/companion"),
         OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/companion/status"),
         OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/auth/session"),
         OpenAICompanionPairingRoutePayload(method: "DELETE", path: "/v1/melix/auth/session"),

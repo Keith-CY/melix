@@ -1587,7 +1587,6 @@ struct RuntimeViewModelTests {
                     resumeHeader: "x-melix-session",
                     tokenTransport: "resume_header",
                     allowedRoutes: [
-                        "GET /v1/melix/companion",
                         "GET /v1/melix/companion/status",
                     ],
                     forbiddenCapabilities: ["run_inference", "mutate_runtime", "read_private_prompts"],
@@ -1625,7 +1624,6 @@ struct RuntimeViewModelTests {
         #expect(viewModel.companionPairing.statusURL == "http://127.0.0.1:18081/v1/melix/companion/status")
         #expect(viewModel.companionPairing.resumeHeader == "x-melix-session")
         #expect(viewModel.companionPairing.allowedRoutes == [
-            "GET /v1/melix/companion",
             "GET /v1/melix/companion/status",
         ])
         #expect(viewModel.companionPairing.copyBundleAvailable)
@@ -1876,7 +1874,6 @@ struct RuntimeViewModelTests {
             "expires_at_unix_ms": 1718000000000,
             "allowed_origins": [],
             "allowed_routes": [
-              {"method": "GET", "path": "/v1/melix/companion"},
               {"method": "GET", "path": "/v1/melix/companion/status"},
               {"method": "delete", "path": "/v1/melix/auth/session"}
             ],
@@ -1901,7 +1898,6 @@ struct RuntimeViewModelTests {
         #expect(result.pairing.mobileURL == "http://127.0.0.1:12436/v1/melix/companion")
         #expect(result.pairing.statusURL == "http://127.0.0.1:12436/v1/melix/companion/status")
         #expect(result.pairing.allowedRoutes == [
-            "GET /v1/melix/companion",
             "GET /v1/melix/companion/status",
             "DELETE /v1/melix/auth/session",
         ])

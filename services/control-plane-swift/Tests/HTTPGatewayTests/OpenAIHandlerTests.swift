@@ -976,9 +976,6 @@ struct OpenAIHandlerTests {
         #expect(pairing["expires_at_unix_ms"] as? Int == 3_601_000)
         #expect(pairing["allowed_origins"] as? [String] == ["http://127.0.0.1:52499"])
         #expect(allowedRoutes.contains { route in
-            route["method"] as? String == "GET" && route["path"] as? String == "/v1/melix/companion"
-        })
-        #expect(allowedRoutes.contains { route in
             route["method"] as? String == "GET" && route["path"] as? String == "/v1/melix/companion/status"
         })
         #expect(allowedRoutes.contains { route in
@@ -1064,15 +1061,24 @@ struct OpenAIHandlerTests {
         let token = try #require(resume["token"] as? String)
         let pairing = try #require(createPayload["pairing"] as? [String: Any])
 
-        let companionPage = try await handler.handle(
+        let publicCompanionPage = try await handler.handle(
             HTTPRequest(
                 method: .get,
                 path: "/v1/melix/companion",
-                headers: ["X-Melix-Session": token],
+                headers: [:],
                 body: Data()
             )
         )
-        let pageBody = try await collectBody(companionPage.body)
+        let pageBody = try await collectBody(publicCompanionPage.body)
+
+        let unauthenticatedStatus = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: [:],
+                body: Data()
+            )
+        )
 
         let companionMutation = try await handler.handle(
             HTTPRequest(
@@ -1088,8 +1094,15 @@ struct OpenAIHandlerTests {
 
         #expect(createResponse.statusCode == 200)
         #expect(pairing["mobile_url"] as? String == "http://127.0.0.1:12499/v1/melix/companion")
-        #expect(companionPage.statusCode == 200)
-        #expect(companionPage.headers["content-type"] == "text/html; charset=utf-8")
+        #expect(publicCompanionPage.statusCode == 200)
+        #expect(publicCompanionPage.headers["content-type"] == "text/html; charset=utf-8")
+        #expect(publicCompanionPage.headers["x-frame-options"] == "deny")
+        let contentSecurityPolicy = try #require(publicCompanionPage.headers["content-security-policy"])
+        #expect(contentSecurityPolicy.contains("default-src 'none'"))
+        #expect(contentSecurityPolicy.contains("connect-src 'self'"))
+        #expect(contentSecurityPolicy.contains("script-src 'unsafe-inline'"))
+        #expect(contentSecurityPolicy.contains("style-src 'unsafe-inline'"))
+        #expect(contentSecurityPolicy.contains("frame-ancestors 'none'"))
         #expect(pageBody.contains("<meta name=\"viewport\""))
         #expect(pageBody.contains("Melix Companion"))
         #expect(pageBody.contains("/v1/melix/companion/status"))
@@ -1097,10 +1110,12 @@ struct OpenAIHandlerTests {
         #expect(pageBody.contains("companion_read_only"))
         #expect(pageBody.contains("Redacted Log Tail"))
         #expect(pageBody.contains("localStorage"))
+        #expect(pageBody.contains("typeof data !== 'object'"))
         #expect(pageBody.contains("POST /v1/chat/completions") == false)
         #expect(pageBody.contains("/v1/images/generations") == false)
         #expect(pageBody.contains("Issue Token") == false)
         #expect(pageBody.contains(token) == false)
+        #expect(unauthenticatedStatus.statusCode == 401)
         #expect(companionMutation.statusCode == 403)
         #expect(await metricsStore.value(forKey: "companion.mobile_page_served_count") == 1)
     }

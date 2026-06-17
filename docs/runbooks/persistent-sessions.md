@@ -76,7 +76,7 @@ Expected response:
 - `pairing.schema_version = "melix.companion.pairing.v1"`
 - `pairing.mobile_url` points at `/v1/melix/companion`
 - `pairing.status_url` points at `/v1/melix/companion/status`
-- `pairing.allowed_routes` lists the read-only companion routes and
+- `pairing.allowed_routes` lists the companion token-protected status route and
   self-revocation route
 - `pairing.forbidden_capabilities` includes mutating and private-content
   capabilities such as `run_inference`, `mutate_runtime`, and
@@ -150,8 +150,9 @@ capture without requiring a real companion device or desktop window.
 The gateway serves a dependency-free browser status shell at
 `pairing.mobile_url`, which resolves to `GET /v1/melix/companion`. Open this URL
 from a trusted local browser or local companion device that can reach the
-gateway host and port. The page is read-only and fetches live data through
-`pairing.status_url`.
+gateway host and port. The shell itself is public static HTML so a standard
+browser can load it without custom headers; live status data still requires the
+companion token and is fetched through `pairing.status_url`.
 
 Operator actions:
 

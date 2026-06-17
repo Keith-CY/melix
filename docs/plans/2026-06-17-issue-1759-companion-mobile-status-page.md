@@ -11,8 +11,8 @@ scope.
 The gateway remains the source of truth for companion authorization and
 redaction. `POST /v1/melix/auth/session` continues to issue a
 `companion_read_only` session and returns the existing pairing descriptor. This
-slice adds a `mobile_url` field to that descriptor and serves a static
-`GET /v1/melix/companion` HTML shell.
+slice adds a `mobile_url` field to that descriptor and serves a public static
+`GET /v1/melix/companion` HTML shell that contains no sensitive data.
 
 The HTML shell is intentionally small and dependency-free. It stores an
 operator-entered companion session token in browser-local storage on that local
@@ -24,12 +24,13 @@ summaries, and never exposes mutating controls.
 
 Included:
 
-- Add `GET /v1/melix/companion` as a companion-read-only route.
+- Add `GET /v1/melix/companion` as a public static shell.
 - Return a static mobile-first HTML page with no external assets.
 - Add `pairing.mobile_url` pointing to `/v1/melix/companion`.
-- Include the page in pairing `allowed_routes`.
 - Preserve `pairing.mobile_url` in desktop pairing bundles and pairing codes.
-- Prove the page is served to companion tokens and local trusted access.
+- Prove the page is loadable by a standard browser without custom request
+  headers, while `GET /v1/melix/companion/status` remains protected by the
+  companion token.
 - Prove companion tokens still cannot call mutating routes.
 - Document the manual mobile status page flow.
 
@@ -52,22 +53,23 @@ Excluded:
 ## Implementation Plan
 
 1. Add a failing Swift gateway test that creates a companion session, asserts
-   `pairing.mobile_url`, asserts allowed route `GET /v1/melix/companion`, fetches
-   the page with the companion token, and verifies the response is HTML with
-   mobile viewport metadata, `x-melix-session`, `/v1/melix/companion/status`,
-   visible redaction/status labels, and no mutating route strings.
+   `pairing.mobile_url`, asserts allowed route
+   `GET /v1/melix/companion/status`, fetches the page without custom headers,
+   proves unauthenticated status reads are rejected, and verifies the response
+   is HTML with mobile viewport metadata, `x-melix-session`,
+   `/v1/melix/companion/status`, visible redaction/status labels, and no
+   mutating route strings.
 2. Add the route to `OpenAIHandler.handle` and `authorizationRoute(for:)`.
 3. Add a static `CompanionMobileStatusPage.html` response helper with local
    storage, token entry, refresh, sign-out-from-device storage clearing, and
    read-only status rendering.
 4. Add `mobileURL` to `OpenAICompanionPairingPayload` and derive it from the same
    normalized host/port as `statusURL`.
-5. Add `GET /v1/melix/companion` to the pairing allowed routes.
-6. Add `mobileURL` to the desktop companion pairing model so copied bundles and
+5. Add `mobileURL` to the desktop companion pairing model so copied bundles and
    pairing codes can carry the browser entry point to trusted local devices.
-7. Update `docs/runbooks/persistent-sessions.md` with the mobile page URL,
+6. Update `docs/runbooks/persistent-sessions.md` with the mobile page URL,
    token-handling boundary, and manual verification.
-8. Run focused Swift tests, changed-line coverage, a scoped performance report,
+7. Run focused Swift tests, changed-line coverage, a scoped performance report,
    and the full pre-commit gate before opening the PR.
 
 ## Verification
