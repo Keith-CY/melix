@@ -245,6 +245,43 @@ struct OperatorSessionPersistenceSmokeTests {
         #expect(uiPayload["selected_tool_section"] as? String == "batchRuns")
     }
 
+    @Test("app operator session persists confirmed audio setup scope")
+    func appOperatorSessionPersistsConfirmedAudioSetupScope() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-audio-setup-scope-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let appStore = OperatorSessionStore(melixHome: melixHome)
+        let sharedStore = MelixOperatorSessionStore(melixHome: melixHome)
+
+        try appStore.save(
+            OperatorSessionState(
+                selectedSurface: .tools,
+                selectedToolSection: .downloads,
+                selectedServerSessionID: "",
+                serverSessions: [],
+                confirmedAudioSetupModelIDs: [
+                    "melix-whisper-mlx",
+                    "melix-kokoro-mlx",
+                    "melix-whisper-mlx",
+                ]
+            )
+        )
+
+        let restoredAppState = try #require(try appStore.load())
+        let sharedState = try #require(try sharedStore.load())
+        let uiPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.operatorSessionFileURL)) as? [String: Any]
+        )
+
+        let expectedScope = ["melix-kokoro-mlx", "melix-whisper-mlx"]
+        #expect(restoredAppState.confirmedAudioSetupModelIDs == expectedScope)
+        #expect(sharedState.confirmedAudioSetupModelIDs == expectedScope)
+        #expect(uiPayload["confirmed_audio_setup_model_ids"] as? [String] == expectedScope)
+    }
+
     @Test("shared operator session store migrates legacy monolithic state")
     func sharedOperatorSessionStoreMigratesLegacyMonolithicState() throws {
         let temporaryRoot = FileManager.default.temporaryDirectory

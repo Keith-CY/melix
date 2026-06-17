@@ -833,7 +833,10 @@ public actor ModelCatalog {
         voiceLocales: [String] = [],
         defaultLocale: String = "",
         packagedDefaultLocale: String = "",
-        localePolicy: String = ""
+        localePolicy: String = "",
+        setupCapability: String = "",
+        setupRole: String = "",
+        setupPriority: Int? = nil
     ) -> [String: String] {
         var metadata = [
             "melix.audio.backend_id": backendID,
@@ -849,6 +852,15 @@ public actor ModelCatalog {
         metadata["melix.audio.default_locale"] = defaultLocale
         metadata["melix.audio.packaged_default_locale"] = packagedDefaultLocale
         metadata["melix.audio.locale_policy"] = localePolicy
+        if setupCapability.isEmpty == false {
+            metadata["melix.audio.capability"] = setupCapability
+        }
+        if setupRole.isEmpty == false {
+            metadata["melix.audio.setup_role"] = setupRole
+        }
+        if let setupPriority {
+            metadata["melix.audio.setup_priority"] = "\(setupPriority)"
+        }
         return metadata
     }
 
@@ -1583,7 +1595,10 @@ public actor ModelCatalog {
                 backendID: "mlx_audio.stt",
                 familyID: familyID,
                 installProfile: "audio-stt",
-                languages: ["auto"]
+                languages: ["auto"],
+                setupCapability: "stt",
+                setupRole: "recommended",
+                setupPriority: 0
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
@@ -1619,7 +1634,10 @@ public actor ModelCatalog {
                 backendID: "mlx_audio.stt",
                 familyID: familyID,
                 installProfile: "audio-stt",
-                languages: ["auto"]
+                languages: ["auto"],
+                setupCapability: "stt",
+                setupRole: "optional",
+                setupPriority: 20
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
@@ -1663,7 +1681,10 @@ public actor ModelCatalog {
                 voiceLocales: ["en"],
                 defaultLocale: "en",
                 packagedDefaultLocale: "en",
-                localePolicy: "request>model_default>packaged_default"
+                localePolicy: "request>model_default>packaged_default",
+                setupCapability: "tts",
+                setupRole: "recommended",
+                setupPriority: 0
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
@@ -1710,7 +1731,10 @@ public actor ModelCatalog {
                 voiceLocales: ["zh", "en"],
                 defaultLocale: "zh",
                 packagedDefaultLocale: "zh",
-                localePolicy: "request>model_default>packaged_default"
+                localePolicy: "request>model_default>packaged_default",
+                setupCapability: "tts",
+                setupRole: "optional",
+                setupPriority: 20
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
