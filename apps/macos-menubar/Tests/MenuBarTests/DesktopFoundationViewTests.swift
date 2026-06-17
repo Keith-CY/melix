@@ -288,6 +288,9 @@ struct DesktopFoundationViewTests {
         #expect(chromeSource.contains("ForEach(DesktopSurface.titlebarNavigationCases)"))
         #expect(rootSource.contains("ToolbarItem(placement: .principal)"))
         #expect(rootSource.contains("ToolbarItem(placement: .primaryAction)") == false)
+        #expect(rootSource.contains("DesktopCommandCenterShortcutHost(viewModel: viewModel)"))
+        #expect(rootSource.contains(".keyboardShortcut(\"k\", modifiers: .command)"))
+        #expect(rootSource.contains("ToolbarItem(placement: .primaryAction) {\\n                    DesktopCommandCenter") == false)
     }
 
     @Test("titlebar pane toggles use the shared pane animation contract")
@@ -7986,14 +7989,14 @@ struct DesktopFoundationViewTests {
         )
 
         #expect(noProviderGate.repairState?.primaryActionTitle == "Choose Provider")
-        #expect(noProviderGate.repairState?.secondaryActionTitles.isEmpty == true)
+        #expect(noProviderGate.repairState?.secondaryActions.isEmpty == true)
         #expect(missingModelGate.repairState?.primaryActionTitle == "Attach Model")
         #expect(offlineGate.repairState?.primaryActionTitle == "Start Provider")
         #expect(stoppingGate.repairState?.primaryActionTitle == "Open Providers")
         #expect(stoppingGate.repairState?.primaryActionKind == .openProviders)
-        #expect(stoppingGate.repairState?.secondaryActionTitles.isEmpty == true)
+        #expect(stoppingGate.repairState?.secondaryActions.isEmpty == true)
         #expect(invalidCapabilityGate.repairState?.primaryActionTitle == "Run Capabilities Test")
-        #expect(invalidCapabilityGate.repairState?.secondaryActionTitles == ["Open Providers"])
+        #expect(invalidCapabilityGate.repairState?.secondaryActions == [.openProviders])
         #expect(degradedGate.repairState == nil)
         #expect(degradedGate.isDegraded)
     }
@@ -8012,7 +8015,7 @@ struct DesktopFoundationViewTests {
                 detail: "Attach a model before this chat can send requests.",
                 primaryActionTitle: "Attach Model",
                 primaryActionKind: .attachModel,
-                secondaryActionTitles: ["Open Providers", "Open Models", "Open Diagnostics"],
+                secondaryActions: [.openProviders, .openModels, .openDiagnostics],
                 systemImageName: "cube.box"
             ),
             onPrimaryAction: { primaryCount += 1 },
@@ -8021,9 +8024,9 @@ struct DesktopFoundationViewTests {
             onRunCapabilitiesTest: { diagnosticsCount += 1 }
         )
 
-        repairPanel.performSecondaryAction("Open Providers")
-        repairPanel.performSecondaryAction("Open Models")
-        repairPanel.performSecondaryAction("Open Diagnostics")
+        repairPanel.performSecondaryAction(.openProviders)
+        repairPanel.performSecondaryAction(.attachModel)
+        repairPanel.performSecondaryAction(.runCapabilitiesTest)
         repairPanel.onPrimaryAction()
 
         #expect(hostView(repairPanel).subviews.isEmpty == false)

@@ -1080,12 +1080,21 @@ enum DesktopChatComposerRepairActionKind: Equatable {
     case runCapabilitiesTest
 }
 
+struct DesktopChatComposerRepairSecondaryAction: Equatable, Identifiable {
+    let title: String
+    let kind: DesktopChatComposerRepairActionKind
+
+    var id: DesktopChatComposerRepairActionKind {
+        kind
+    }
+}
+
 struct DesktopChatComposerRepairState: Equatable {
     let title: String
     let detail: String
     let primaryActionTitle: String
     let primaryActionKind: DesktopChatComposerRepairActionKind
-    let secondaryActionTitles: [String]
+    let secondaryActions: [DesktopChatComposerRepairSecondaryAction]
     let systemImageName: String
 }
 
@@ -1101,7 +1110,7 @@ struct DesktopChatComposerGate: Equatable {
                 detail: "Bind this chat to a local or remote provider.",
                 primaryActionTitle: "Choose Provider",
                 primaryActionKind: .chooseProvider,
-                secondaryActionTitles: [],
+                secondaryActions: [],
                 systemImageName: "server.rack"
             )
         }
@@ -1112,7 +1121,7 @@ struct DesktopChatComposerGate: Equatable {
                 detail: "Attach a model before this chat can send requests.",
                 primaryActionTitle: "Attach Model",
                 primaryActionKind: .attachModel,
-                secondaryActionTitles: ["Open Providers"],
+                secondaryActions: [.openProviders],
                 systemImageName: "cube.box"
             )
         }
@@ -1124,7 +1133,7 @@ struct DesktopChatComposerGate: Equatable {
                 detail: "Start the bound provider before sending.",
                 primaryActionTitle: "Start Provider",
                 primaryActionKind: .startProvider,
-                secondaryActionTitles: ["Open Providers"],
+                secondaryActions: [.openProviders],
                 systemImageName: "power"
             )
         case .paused:
@@ -1133,7 +1142,7 @@ struct DesktopChatComposerGate: Equatable {
                 detail: "Resume this provider before sending.",
                 primaryActionTitle: "Resume Provider",
                 primaryActionKind: .resumeProvider,
-                secondaryActionTitles: ["Open Providers"],
+                secondaryActions: [.openProviders],
                 systemImageName: "pause.circle"
             )
         case .starting:
@@ -1142,7 +1151,7 @@ struct DesktopChatComposerGate: Equatable {
                 detail: "Sending is blocked until startup completes.",
                 primaryActionTitle: "Open Providers",
                 primaryActionKind: .openProviders,
-                secondaryActionTitles: [],
+                secondaryActions: [],
                 systemImageName: "arrow.clockwise.circle"
             )
         case .stopping:
@@ -1151,7 +1160,7 @@ struct DesktopChatComposerGate: Equatable {
                 detail: "Wait for shutdown to finish, then start it again.",
                 primaryActionTitle: "Open Providers",
                 primaryActionKind: .openProviders,
-                secondaryActionTitles: [],
+                secondaryActions: [],
                 systemImageName: "pause.circle"
             )
         case .error:
@@ -1160,7 +1169,7 @@ struct DesktopChatComposerGate: Equatable {
                 detail: serverSession.lastError.isEmpty ? "Recover the failed provider before sending." : serverSession.lastError,
                 primaryActionTitle: "Open Providers",
                 primaryActionKind: .openProviders,
-                secondaryActionTitles: ["Open Diagnostics"],
+                secondaryActions: [.openDiagnostics],
                 systemImageName: "exclamationmark.triangle"
             )
         case .sleeping, .running:
@@ -1173,7 +1182,7 @@ struct DesktopChatComposerGate: Equatable {
                 detail: "Run a capability test before sending with this model.",
                 primaryActionTitle: "Run Capabilities Test",
                 primaryActionKind: .runCapabilitiesTest,
-                secondaryActionTitles: ["Open Providers"],
+                secondaryActions: [.openProviders],
                 systemImageName: "checklist"
             )
         }
@@ -1223,9 +1232,9 @@ struct DesktopChatComposerRepairPanel: View {
             Spacer(minLength: 8)
 
             HStack(spacing: 6) {
-                ForEach(state.secondaryActionTitles, id: \.self) { title in
-                    Button(title) {
-                        performSecondaryAction(title)
+                ForEach(state.secondaryActions) { action in
+                    Button(action.title) {
+                        performSecondaryAction(action.kind)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -1243,18 +1252,24 @@ struct DesktopChatComposerRepairPanel: View {
         .accessibilityLabel("\(state.title) \(state.primaryActionTitle)")
     }
 
-    func performSecondaryAction(_ title: String) {
-        switch title {
-        case "Open Providers":
+    func performSecondaryAction(_ kind: DesktopChatComposerRepairActionKind) {
+        switch kind {
+        case .openProviders:
             onOpenServer()
-        case "Open Models":
+        case .attachModel:
             onOpenModels()
-        case "Open Diagnostics":
+        case .runCapabilitiesTest:
             onRunCapabilitiesTest()
-        default:
+        case .chooseProvider, .startProvider, .resumeProvider, .wakeProvider:
             break
         }
     }
+}
+
+extension DesktopChatComposerRepairSecondaryAction {
+    static let openProviders = Self(title: "Open Providers", kind: .openProviders)
+    static let openModels = Self(title: "Open Models", kind: .attachModel)
+    static let openDiagnostics = Self(title: "Open Diagnostics", kind: .runCapabilitiesTest)
 }
 
 struct DesktopChatProviderControlStrip: View {

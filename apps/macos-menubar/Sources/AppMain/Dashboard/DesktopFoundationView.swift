@@ -13,11 +13,29 @@ public struct DesktopFoundationRootView: View {
         DesktopWorkspaceShellView(viewModel: viewModel)
             .frame(minWidth: 980, minHeight: 680)
             .tint(MelixDesignTokens.accent)
+            .background {
+                DesktopCommandCenterShortcutHost(viewModel: viewModel)
+            }
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     DesktopWorkspaceTitleBarTabsView(viewModel: viewModel)
                 }
             }
+    }
+}
+
+private struct DesktopCommandCenterShortcutHost: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        Button("Open Command Center") {
+            viewModel.openCommandCenter()
+        }
+        .keyboardShortcut("k", modifiers: .command)
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+        .frame(width: 0, height: 0)
+        .opacity(0)
     }
 }
 
