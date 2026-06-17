@@ -17,7 +17,9 @@ func collectChunks(
 func makeTokenEvent(
     requestID: String,
     seq: UInt64,
-    text: String
+    text: String,
+    tokenIDs: [UInt32] = [],
+    tokenLogprobs: [Double] = []
 ) -> Melix_Worker_V1_ExecuteEvent {
     var event = Melix_Worker_V1_ExecuteEvent()
     event.requestID = requestID
@@ -25,6 +27,8 @@ func makeTokenEvent(
     event.seq = seq
     event.tokenDelta = Melix_Worker_V1_TokenDelta()
     event.tokenDelta.text = text
+    event.tokenDelta.tokenIds = tokenIDs
+    event.tokenDelta.tokenLogprobs = tokenLogprobs
     return event
 }
 

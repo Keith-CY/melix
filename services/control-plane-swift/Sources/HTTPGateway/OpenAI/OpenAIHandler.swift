@@ -3981,7 +3981,8 @@ button.primary:active {
                 execution: execution,
                 aggregate: aggregate,
                 requestStartedAt: requestStartedAt,
-                responseModelID: resolvedRequest.responseModelID
+                responseModelID: resolvedRequest.responseModelID,
+                includeLogprobs: workerRequest.execution.ext["melix.openai.logprobs.requested"] == "true"
             )
             return jsonResponse(statusCode: 200, payload: payload)
         } catch {
@@ -3998,10 +3999,17 @@ button.primary:active {
             let completionTokens: UInt32
         }
 
+        struct TokenLogprob {
+            let token: String
+            let logprob: Double
+        }
+
         var assistantText = ""
         var finishReason = "stop"
         var usage: Usage?
         var error: Melix_Worker_V1_ErrorStatus?
+        var tokenLogprobs: [TokenLogprob] = []
+        var hasIncompleteLogprobEvidence = false
     }
 
     private func aggregateChatCompletion(
@@ -4014,6 +4022,19 @@ button.primary:active {
             switch event.payload {
             case .tokenDelta(let delta):
                 tokenText += delta.text
+                if delta.tokenIds.isEmpty && delta.tokenLogprobs.isEmpty {
+                    continue
+                }
+                if delta.tokenIds.count == 1, delta.tokenLogprobs.count == 1, !delta.text.isEmpty {
+                    aggregate.tokenLogprobs.append(
+                        NonStreamChatCompletionAggregate.TokenLogprob(
+                            token: delta.text,
+                            logprob: delta.tokenLogprobs[0]
+                        )
+                    )
+                } else {
+                    aggregate.hasIncompleteLogprobEvidence = true
+                }
             case .usageDelta(let usage):
                 // Worker usage events report final cumulative counts, so the
                 // latest event is authoritative if a runtime emits more than one.
@@ -4042,22 +4063,37 @@ button.primary:active {
         execution: CoordinatedChatExecution,
         aggregate: NonStreamChatCompletionAggregate,
         requestStartedAt: Date,
-        responseModelID: String
+        responseModelID: String,
+        includeLogprobs: Bool = false
     ) -> [String: Any] {
+        var choice: [String: Any] = [
+            "index": 0,
+            "message": [
+                "role": "assistant",
+                "content": aggregate.assistantText,
+            ],
+            "finish_reason": aggregate.finishReason,
+        ]
+        if includeLogprobs, !aggregate.tokenLogprobs.isEmpty, !aggregate.hasIncompleteLogprobEvidence {
+            choice["logprobs"] = [
+                "content": aggregate.tokenLogprobs.map { tokenLogprob in
+                    [
+                        "token": tokenLogprob.token,
+                        "logprob": tokenLogprob.logprob,
+                        "bytes": NSNull(),
+                        "top_logprobs": [],
+                    ] as [String: Any]
+                },
+                "refusal": NSNull(),
+            ]
+        }
         var payload: [String: Any] = [
             "id": execution.requestID,
             "object": "chat.completion",
             "created": Int(requestStartedAt.timeIntervalSince1970),
             "model": responseModelID,
             "choices": [
-                [
-                    "index": 0,
-                    "message": [
-                        "role": "assistant",
-                        "content": aggregate.assistantText,
-                    ],
-                    "finish_reason": aggregate.finishReason,
-                ],
+                choice,
             ],
         ]
 

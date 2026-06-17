@@ -2222,6 +2222,118 @@ def test_stream_interval_flush_tracks_generated_token_and_logprob_parity() -> No
     assert completed.metrics["token_logprob_mismatch_count"] == 0
 
 
+def test_tool_rescue_fast_path_preserves_direct_token_metadata() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-tool-rescue-direct-token-metadata",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+        tool_parser_fallback_mode="xml",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text="Alpha Beta",
+            token_ids=(301, 302),
+            token_logprobs=(-0.11, -0.22),
+        )
+    )
+
+    visible = next(delta for delta in deltas if delta.content_text)
+    assert visible.content_text == "Alpha Beta"
+    assert visible.token_ids == (301, 302)
+    assert visible.token_logprobs == (-0.11, -0.22)
+
+
+def test_tool_rescue_single_token_fast_path_preserves_direct_metadata() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-tool-rescue-single-token-metadata",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+        tool_parser_fallback_mode="xml",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text="Alpha",
+            token_ids=(301,),
+            token_logprobs=(-0.11,),
+        )
+    )
+
+    assert len(deltas) == 1
+    assert deltas[0].content_text == "Alpha"
+    assert deltas[0].raw_text == "Alpha"
+    assert deltas[0].token_ids == (301,)
+    assert deltas[0].token_logprobs == (-0.11,)
+
+
+def test_tool_rescue_single_token_fast_path_keeps_plain_delta_lightweight() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-tool-rescue-single-token-plain",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+        tool_parser_fallback_mode="xml",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="Alpha"))
+
+    assert deltas == [AssemblyDelta(content_text="Alpha", raw_text="Alpha")]
+    assert deltas[0].token_ids == ()
+    assert deltas[0].token_logprobs == ()
+
+
+def test_parser_observation_single_token_preserves_direct_metadata() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-parser-observation-single-token-metadata",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text="Alpha",
+            token_ids=(401,),
+            token_logprobs=(-0.41,),
+            parser_observation="flush_tokens=1",
+        )
+    )
+
+    assert len(deltas) == 1
+    assert deltas[0].content_text == "Alpha"
+    assert deltas[0].raw_text == "Alpha"
+    assert deltas[0].parser_observation == "flush_tokens=1"
+    assert deltas[0].token_ids == (401,)
+    assert deltas[0].token_logprobs == (-0.41,)
+
+
+def test_parser_observation_preserves_existing_single_token_metadata() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-parser-observation-existing-metadata",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    delta = assembler.accept(
+        StreamFragment(
+            raw_text="Alpha",
+            token_ids=(401,),
+            token_logprobs=(-0.41,),
+        )
+    )[0]
+
+    observed = RequestStreamAssembler._with_parser_observation(delta, "flush_tokens=1")
+
+    assert observed.content_text == "Alpha"
+    assert observed.raw_text == "Alpha"
+    assert observed.parser_observation == "flush_tokens=1"
+    assert observed.token_ids == (401,)
+    assert observed.token_logprobs == (-0.41,)
+
+
 def test_byte_fallback_token_fragments_decode_to_complete_unicode_text() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-byte-fallback",
@@ -2255,6 +2367,22 @@ def test_byte_fallback_token_fragments_decode_to_complete_unicode_text() -> None
     assert completed.metrics["byte_fallback_merge_count"] == 1
     assert completed.metrics["generated_token_count"] == 2
     assert completed.metrics["logprob_entry_count"] == 2
+
+
+def test_token_byte_fast_path_keeps_plain_delta_lightweight() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-token-byte-fast-path",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    deltas = assembler.accept(StreamFragment(token_bytes=b"Alpha "))
+
+    assert deltas == [AssemblyDelta(content_text="Alpha ", raw_text="Alpha ")]
+    assert deltas[0].token_ids == ()
+    assert deltas[0].token_logprobs == ()
+    assert assembler.completed().assistant_text == "Alpha "
 
 
 def test_empty_thinking_block_is_suppressed_as_thinking_off_sentinel() -> None:
