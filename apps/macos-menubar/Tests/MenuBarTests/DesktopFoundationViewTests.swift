@@ -155,7 +155,7 @@ struct DesktopFoundationViewTests {
         #expect(DesktopCommandCenterVisuals.visualDirection == "Digital Broadsheet Command Center")
         #expect(DesktopCommandCenterVisuals.operatorLabel == "Melix Operator")
         #expect(DesktopCommandCenterVisuals.windowTitle == "Command Center")
-        #expect(DesktopCommandCenterVisuals.runtimeSectionTitle == "Runtime")
+        #expect(DesktopCommandCenterVisuals.runtimeSectionTitle == "Providers")
         #expect(DesktopCommandCenterVisuals.pressureSectionTitle == "Resource And Queue Pressure")
         #expect(DesktopCommandCenterVisuals.recoverySectionTitle == "Recovery")
         #expect(DesktopCommandCenterVisuals.workflowSectionTitle == "Workflow")
@@ -266,26 +266,31 @@ struct DesktopFoundationViewTests {
         #expect(commandCenter.wasOpened)
     }
 
-    @Test("titlebar exposes pane toggles and command center entry")
+    @Test("titlebar exposes only primary navigation entries")
     @MainActor
-    func titlebarExposesPaneTogglesAndCommandCenterEntry() async throws {
+    func titlebarExposesOnlyPrimaryNavigationEntries() async throws {
         let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
-        let commandCenter = CommandCenterOpenRecorder()
-        viewModel.openCommandCenterAction = { commandCenter.open() }
         await viewModel.start()
 
-        #expect(viewModel.isDesktopPaneVisible(.sidebar, for: .chat))
-        #expect(viewModel.isDesktopPaneVisible(.inspector, for: .chat))
-        #expect(DesktopWorkspaceTitleBarCommandCenterButton.symbolName == "command.circle")
+        let hosted = hostView(DesktopWorkspaceTitleBarTabsView(viewModel: viewModel))
+        let root = try repositoryRootForDesktopFoundationTests()
+        let rootSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopFoundationView.swift"
+        )
+        let chromeSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopShellChromeView.swift"
+        )
+        let rootSource = try String(contentsOf: rootSourceURL, encoding: .utf8)
+        let chromeSource = try String(contentsOf: chromeSourceURL, encoding: .utf8)
 
-        let hosted = hostView(DesktopWorkspaceTitleBarActionsView(viewModel: viewModel))
         #expect(hosted.subviews.isEmpty == false)
-
-        viewModel.toggleDesktopPane(.inspector)
-        #expect(viewModel.isDesktopPaneVisible(.inspector, for: .chat) == false)
-
-        viewModel.openCommandCenter()
-        #expect(commandCenter.wasOpened)
+        #expect(DesktopSurface.titlebarNavigationCases.map(\.rawValue) == ["Chat", "Providers", "Models", "Workflows"])
+        #expect(chromeSource.contains("ForEach(DesktopSurface.titlebarNavigationCases)"))
+        #expect(rootSource.contains("ToolbarItem(placement: .principal)"))
+        #expect(rootSource.contains("ToolbarItem(placement: .primaryAction)") == false)
+        #expect(rootSource.contains("DesktopCommandCenterShortcutHost(viewModel: viewModel)"))
+        #expect(rootSource.contains(".keyboardShortcut(\"k\", modifiers: .command)"))
+        #expect(rootSource.contains("ToolbarItem(placement: .primaryAction) {\\n                    DesktopCommandCenter") == false)
     }
 
     @Test("titlebar pane toggles use the shared pane animation contract")
@@ -748,11 +753,11 @@ struct DesktopFoundationViewTests {
             DesktopWorkspaceShellView(viewModel: localViewModel),
             size: CGSize(width: 1280, height: 1200)
         )
-        DesktopServerCreationActions.addLocalServer(viewModel: localViewModel)
+        DesktopProviderCreationActions.addLocalProvider(viewModel: localViewModel)
 
         #expect(localView.subviews.isEmpty == false)
-        #expect(localViewModel.isCreatingServerTarget)
-        #expect(localViewModel.selectedServerCreationKind == .localServer)
+        #expect(localViewModel.isCreatingProviderTarget)
+        #expect(localViewModel.selectedProviderCreationKind == .localServer)
         #expect(localViewModel.selectedSurface == .server)
 
         let remoteViewModel = RuntimeViewModel(client: EmptyToolsSnapshotControlPlaneXPCClient())
@@ -763,17 +768,17 @@ struct DesktopFoundationViewTests {
             DesktopWorkspaceShellView(viewModel: remoteViewModel),
             size: CGSize(width: 1280, height: 1200)
         )
-        DesktopServerCreationActions.addRemoteServer(viewModel: remoteViewModel)
+        DesktopProviderCreationActions.addRemoteProvider(viewModel: remoteViewModel)
 
         #expect(remoteView.subviews.isEmpty == false)
-        #expect(remoteViewModel.isCreatingServerTarget)
-        #expect(remoteViewModel.selectedServerCreationKind == .remoteServer)
+        #expect(remoteViewModel.isCreatingProviderTarget)
+        #expect(remoteViewModel.selectedProviderCreationKind == .remoteServer)
         #expect(remoteViewModel.selectedSurface == .server)
     }
 
-    @Test("server creation editor renders local input fields with ready models")
+    @Test("provider creation editor renders local basic fields with ready models")
     @MainActor
-    func serverCreationEditorRendersLocalInputFieldsWithReadyModels() async throws {
+    func providerCreationEditorRendersLocalBasicFieldsWithReadyModels() async throws {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
@@ -782,7 +787,7 @@ struct DesktopFoundationViewTests {
 
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
-        viewModel.beginServerCreation(kind: .localServer)
+        viewModel.beginProviderCreation(kind: .localServer)
 
         let view = hostView(
             DesktopWorkspaceShellView(viewModel: viewModel),
@@ -791,12 +796,12 @@ struct DesktopFoundationViewTests {
         let renderedTexts = renderedTextValues(in: view)
 
         #expect(view.subviews.isEmpty == false)
-        #expect(viewModel.isCreatingServerTarget)
-        #expect(viewModel.selectedServerCreationKind == .localServer)
+        #expect(viewModel.isCreatingProviderTarget)
+        #expect(viewModel.selectedProviderCreationKind == .localServer)
         #expect(viewModel.serverModelOptions.isEmpty == false)
+        #expect(renderedTexts.contains("Provider 2"))
         #expect(renderedTexts.contains(where: { $0.contains(desktopTestReadyModelID) }))
-        #expect(renderedTexts.contains("127.0.0.1"))
-        #expect(renderedTexts.contains("12,436") || renderedTexts.contains("12436"))
+        #expect(renderedTexts.contains("HTTP port") == false)
     }
 
     @Test("command center view renders global operator summaries")
@@ -817,7 +822,7 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
         #expect(DesktopCommandCenterVisuals.operatorLabel == "Melix Operator")
         #expect(DesktopCommandCenterVisuals.windowTitle == "Command Center")
-        #expect(DesktopCommandCenterVisuals.runtimeSectionTitle == "Runtime")
+        #expect(DesktopCommandCenterVisuals.runtimeSectionTitle == "Providers")
         #expect(DesktopCommandCenterVisuals.pressureSectionTitle == "Resource And Queue Pressure")
         #expect(DesktopCommandCenterVisuals.recoverySectionTitle == "Recovery")
         #expect(DesktopCommandCenterVisuals.activitySectionTitle == "Recent Activity")
@@ -1053,7 +1058,7 @@ struct DesktopFoundationViewTests {
         let view = hostView(tab)
         let values = tab.accessibilitySummary
         #expect(view.subviews.isEmpty == false)
-        #expect(values.contains("Runtime Settings"))
+        #expect(values.contains("Provider Settings"))
         #expect(values.contains("model_cache_path"))
         #expect(values.contains("/tmp/melix/models"))
         #expect(values.contains("environment"))
@@ -1428,11 +1433,11 @@ struct DesktopFoundationViewTests {
         #expect(DesktopSettingsTabView(foundation: foundation, viewModel: viewModel).accessibilitySummary.contains("Refresh Discovery"))
         await viewModel.refreshRuntimeDiscovery()
         try await waitForDesktopFoundationCondition("discovery refresh completes") {
-            viewModel.runtimeDiscoveryOperationMessage == "Runtime discovery refreshed."
+            viewModel.runtimeDiscoveryOperationMessage == "Provider discovery refreshed."
         }
         let refreshedTab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
         _ = hostView(refreshedTab)
-        #expect(refreshedTab.accessibilitySummary.contains("Runtime discovery refreshed."))
+        #expect(refreshedTab.accessibilitySummary.contains("Provider discovery refreshed."))
         #expect(refreshedTab.accessibilitySummary.contains("melix.discovery.config_metadata.v1"))
 
         let errorViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
@@ -1460,7 +1465,7 @@ struct DesktopFoundationViewTests {
         settingsViewModel.applyRuntimeDiscovery(viewModel.runtimeDiscoverySnapshot)
         let settingsTab = DesktopSettingsTabView(foundation: foundation, viewModel: settingsViewModel)
         _ = hostView(settingsTab)
-        #expect(settingsTab.accessibilitySummary.contains("Runtime Settings"))
+        #expect(settingsTab.accessibilitySummary.contains("Provider Settings"))
         #expect(settingsTab.accessibilitySummary.contains("Discovery Inspector"))
         #expect(settingsTab.accessibilitySummary.contains("melix.discovery.info.v1"))
     }
@@ -1632,7 +1637,7 @@ struct DesktopFoundationViewTests {
         )
         let serverSidebarSource = try #require(
             shellSource.slice(
-                from: "private struct DesktopServerSessionSidebar: View",
+                from: "private struct DesktopProviderWorkspaceSidebar: View",
                 to: "private struct DesktopRemoteServerEditor: View"
             )
         )
@@ -1654,20 +1659,40 @@ struct DesktopFoundationViewTests {
         #expect(shellSource.contains(".accessibilityLabel(badge)"))
         #expect(shellSource.contains("Benchmark Target") == false)
         #expect(shellSource.contains("Evaluation Target") == false)
-        #expect(shellSource.contains("\"Running Server\""))
-        #expect(shellSource.contains("Text(\"Servers\")"))
+        #expect(shellSource.contains("\"Running Provider\""))
+        #expect(shellSource.contains("Text(\"Providers\")"))
+        #expect(shellSource.contains("routeTarget: DesktopRouteActionTarget?"))
+        #expect(shellSource.contains("title: \"Open Detail\""))
+        #expect(shellSource.contains("selectedObject: .init(kind: .provider, objectID: session.id)"))
         #expect(shellSource.contains("LoRA Adapter"))
         #expect(shellSource.contains("Color.accentColor") == false)
-        #expect(shellSource.contains("selectedServerCreationKind"))
-        #expect(shellSource.contains("\"Session Name\""))
-        #expect(shellSource.contains("Button(\"Add Local Server\", action:"))
-        #expect(shellSource.contains("Button(\"Add Remote Server\", action:"))
-        #expect(shellSource.contains("DesktopServerCreationStepperHeader"))
-        #expect(shellSource.contains("\"Local Server Setup\""))
-        #expect(shellSource.contains("\"Remote Server Setup\""))
-        #expect(shellSource.contains("MelixSectionCard(\"Runtime\")"))
+        #expect(shellSource.contains("selectedProviderCreationKind"))
+        #expect(shellSource.contains("\"Provider Name\""))
+        #expect(shellSource.contains("DesktopProviderSurfaceNavigationRow"))
+        #expect(shellSource.contains("case localProviders"))
+        #expect(shellSource.contains("case remoteProviders"))
+        #expect(shellSource.contains("case createLocalProvider"))
+        #expect(shellSource.contains("case addRemoteProvider"))
+        #expect(shellSource.contains("case capabilityReceipts"))
+        #expect(shellSource.contains("case .capabilityReceipts:\n            return nil"))
+        #expect(shellSource.contains("Button(\"Create Local Provider\")"))
+        #expect(shellSource.contains("Button(\"Add Remote Provider\")"))
+        #expect(shellSource.contains("DesktopProviderCreationStepperHeader"))
+        #expect(shellSource.contains(".onChange(of: viewModel.selectedProviderTarget?.id)"))
+        #expect(shellSource.contains("\"Create Local Provider\""))
+        #expect(shellSource.contains("steps: [\"Basic\", \"Advanced\", \"Review\"]"))
+        #expect(shellSource.contains("\"Add Remote Provider\""))
+        #expect(shellSource.contains("steps: [\"Endpoint\", \"Authentication\", \"Capabilities Test\", \"Review\"]"))
+        #expect(shellSource.contains("DesktopProviderFormSection(\"Endpoint\")"))
+        #expect(shellSource.contains("DesktopProviderFormSection(\"Authentication\")"))
+        #expect(shellSource.contains("DesktopProviderFormSection(\"Capabilities Test\")"))
+        #expect(shellSource.contains("DesktopProviderFormSection(\"Review\")"))
+        #expect(shellSource.contains("\"Memory Profile: default local interactive profile\""))
+        #expect(shellSource.contains("Button(\"Create And Start\")"))
         #expect(shellSource.contains("\"Server Type\"") == false)
         #expect(shellSource.contains("Button(\"Create Local Server\")") == false)
+        #expect(shellSource.contains("Text(\"Servers\")") == false)
+        #expect(shellSource.contains("\"Running Server\"") == false)
         #expect(shellSource.contains(".disabled(viewModel.canCreateLocalServerFromDraft == false)"))
         #expect(shellSource.contains(".disabled(viewModel.canSaveRemoteServerDraft == false)"))
         #expect(shellSource.contains("Scanning Ready to Run Models"))
@@ -1683,16 +1708,19 @@ struct DesktopFoundationViewTests {
         #expect(modelsSource.contains("MelixSectionCard(\"Registry Roots\")") == false)
         #expect(modelsTabSource.contains("DesktopRegistryBroadsheetSection(\"Model Registry\")"))
         #expect(modelsTabSource.contains("DesktopRegistryBroadsheetSection(\"Model Settings\")"))
+        #expect(modelsTabSource.contains("Local Provider Target"))
+        #expect(modelsTabSource.contains("modelHubProviderTargets"))
         #expect(registrySource.contains("registryGroup(.readyToRun, title: \"Ready to Run\")"))
         #expect(registrySource.contains("registryGroup(.discoverAndDownload, title: \"Discover & Download\")"))
         #expect(registrySource.contains("DesktopRegistryInspectorPane(\"Model Card\")"))
         #expect(modelsSource.contains("DesktopRegistryBroadsheetSection(\"Registry Roots\")"))
         #expect(registrySource.contains("DesktopRegistryRowBackground"))
         #expect(registrySource.contains("Run Suitability"))
+        #expect(registrySource.contains("Target \\(entry.targetText)"))
     }
 
-    @Test("desktop workspace reserves titlebar chrome space")
-    func desktopWorkspaceReservesTitlebarChromeSpace() throws {
+    @Test("desktop workspace keeps titlebar chrome compact")
+    func desktopWorkspaceKeepsTitlebarChromeCompact() throws {
         let root = try repositoryRootForDesktopFoundationTests()
         let chromeSourceURL = root.appendingPathComponent(
             "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopShellChromeView.swift"
@@ -1707,7 +1735,7 @@ struct DesktopFoundationViewTests {
         #expect(shellSource.contains(".padding(.top, DesktopShellChromeMetrics.workspaceTitleBarContentTopInset)"))
         #expect(
             DesktopShellChromeMetrics.workspaceTitleBarContentTopInset
-            >= DesktopShellChromeMetrics.titleBarTabHeightBudget + 24
+            == DesktopShellChromeMetrics.titleBarTabHeightBudget + 14
         )
     }
 
@@ -1719,13 +1747,20 @@ struct DesktopFoundationViewTests {
         )
         let shellSource = try String(contentsOf: shellSourceURL, encoding: .utf8)
 
-        #expect(shellSource.contains(".buttonStyle(.plain)\n                            .focusable(false)"))
+        #expect(shellSource.contains("private struct DesktopProviderTargetSidebarRow: View"))
+        #expect(shellSource.contains(".buttonStyle(.plain)\n        .focusable(false)"))
     }
 
     @Test("models tab renders Hugging Face hub ingress state")
     @MainActor
     func modelsTabRendersHuggingFaceHubIngressState() async throws {
         let client = FakeControlPlaneXPCClient()
+        let localModelID = "melix-local-target"
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarModelSummary(modelID: localModelID, state: .modelWarm)]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
         var searchResult = Melix_Controlplane_V1_HubSearchResult()
         var model = Melix_Controlplane_V1_HubModelSummary()
         model.repoID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
@@ -1760,9 +1795,13 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
         #expect(renderedTexts.contains("qwen3.5"))
         #expect(renderedTexts.contains("main"))
-        #expect(registryView.entries.contains(where: {
-            $0.repoID == model.repoID && $0.runSuitabilityText == "Good"
-        }))
+        #expect(viewModel.modelHubProviderTargets.map(\.modelID) == [localModelID])
+        let hasLocalProviderHubEntry = registryView.entries.contains(where: {
+            $0.repoID == model.repoID
+                && $0.runSuitabilityText == "Good"
+                && $0.targetText == "Local Provider"
+        })
+        #expect(hasLocalProviderHubEntry)
         #expect(viewModel.modelHubSearchResults.count == 1)
     }
 
@@ -4255,7 +4294,7 @@ struct DesktopFoundationViewTests {
         await viewModel.start()
         await viewModel.refreshModelOpsProductState()
         viewModel.prepareSelectedLoraTrainingJobFollowUp(RuntimeLoraTrainingJobFollowUpAction.activation)
-        let disabledReason = "Fused activation is disabled for fake_relora: non_mergeable_adapter. Use Adapter-backed Runtime instead."
+        let disabledReason = "Fused activation is disabled for fake_relora: non_mergeable_adapter. Use Adapter-backed Serving instead."
         #expect(viewModel.loraFusedActivationUnavailableText == disabledReason)
 
         let view = hostView(
@@ -5291,7 +5330,7 @@ struct DesktopFoundationViewTests {
 
         #expect(
             desktopAPIAuthenticationReferenceText(selectedSession: nil, selectedExport: nil)
-                == "Select a server session to render auth guidance."
+                == "Select a provider to render auth guidance."
         )
         #expect(
             desktopAPIAuthenticationReferenceText(selectedSession: bearerSession, selectedExport: nil)
@@ -6091,7 +6130,7 @@ struct DesktopFoundationViewTests {
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
         let renderedTexts = renderedTextValues(in: view)
         let selectedRunIndex = try #require(renderedTexts.firstIndex(where: { $0.contains("Selected run ") }))
-        let configIndex = try #require(renderedTexts.firstIndex(of: "Start New Server..."))
+        let configIndex = try #require(renderedTexts.firstIndex(of: "Start New Provider..."))
 
         #expect(view.subviews.isEmpty == false)
         #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .benchmark)
@@ -6191,7 +6230,7 @@ struct DesktopFoundationViewTests {
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
         let renderedTexts = renderedTextValues(in: view)
         let selectedRunIndex = try #require(renderedTexts.firstIndex(where: { $0.contains("Selected matrix run ") }))
-        let configIndex = try #require(renderedTexts.firstIndex(of: "Start New Server..."))
+        let configIndex = try #require(renderedTexts.firstIndex(of: "Start New Provider..."))
 
         #expect(view.subviews.isEmpty == false)
         #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .matrix)
@@ -6605,7 +6644,7 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Benchmark"))
         #expect(renderedTexts.contains("Matrix"))
         #expect(renderedTexts.contains("Evaluation"))
-        #expect(renderedTexts.contains("Primary Server"))
+        #expect(renderedTexts.contains("Primary Provider"))
         #expect(renderedTexts.contains("Catalog Model") == false)
         #expect(renderedTexts.contains("Hugging Face Repo") == false)
         #expect(renderedTexts.contains("3"))
@@ -6799,7 +6838,7 @@ struct DesktopFoundationViewTests {
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
         let renderedTexts = renderedTextValues(in: view)
         let selectedEvalIndex = try #require(renderedTexts.firstIndex(where: { $0.contains("Selected eval ") }))
-        let configIndex = try #require(renderedTexts.firstIndex(of: "Start New Server..."))
+        let configIndex = try #require(renderedTexts.firstIndex(of: "Start New Provider..."))
 
         #expect(view.subviews.isEmpty == false)
         #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .evaluation)
@@ -7833,7 +7872,7 @@ struct DesktopFoundationViewTests {
             isReady: true
         )
 
-        let chooseStrip = DesktopChatRuntimeControlStrip(
+        let chooseStrip = DesktopChatProviderControlStrip(
             serverSession: nil,
             capabilities: [],
             onOpenServer: { openedServerCount += 1 },
@@ -7841,7 +7880,7 @@ struct DesktopFoundationViewTests {
             onResumeServer: { resumeCount += 1 },
             onWakeServer: { wakeCount += 1 }
         )
-        #expect(chooseStrip.recoveryAction?.title == "Choose Server")
+        #expect(chooseStrip.recoveryAction?.title == "Choose Provider")
         if let action = chooseStrip.recoveryAction {
             chooseStrip.perform(action)
         }
@@ -7850,7 +7889,7 @@ struct DesktopFoundationViewTests {
         var stoppedSession = baseSession
         stoppedSession.lifecycle = .stopped
         stoppedSession.powerState = .stopped
-        let stoppedStrip = DesktopChatRuntimeControlStrip(
+        let stoppedStrip = DesktopChatProviderControlStrip(
             serverSession: stoppedSession,
             capabilities: [capability],
             onOpenServer: { openedServerCount += 1 },
@@ -7858,7 +7897,7 @@ struct DesktopFoundationViewTests {
             onResumeServer: { resumeCount += 1 },
             onWakeServer: { wakeCount += 1 }
         )
-        #expect(stoppedStrip.recoveryAction?.title == "Start Server")
+        #expect(stoppedStrip.recoveryAction?.title == "Start Provider")
         #expect(stoppedStrip.recoveryAction?.isProminent == true)
         if let action = stoppedStrip.recoveryAction {
             stoppedStrip.perform(action)
@@ -7866,7 +7905,7 @@ struct DesktopFoundationViewTests {
 
         var pausedSession = baseSession
         pausedSession.lifecycle = .paused
-        let pausedStrip = DesktopChatRuntimeControlStrip(
+        let pausedStrip = DesktopChatProviderControlStrip(
             serverSession: pausedSession,
             capabilities: [capability],
             onOpenServer: { openedServerCount += 1 },
@@ -7874,7 +7913,7 @@ struct DesktopFoundationViewTests {
             onResumeServer: { resumeCount += 1 },
             onWakeServer: { wakeCount += 1 }
         )
-        #expect(pausedStrip.recoveryAction?.title == "Resume Server")
+        #expect(pausedStrip.recoveryAction?.title == "Resume Provider")
         if let action = pausedStrip.recoveryAction {
             pausedStrip.perform(action)
         }
@@ -7882,7 +7921,7 @@ struct DesktopFoundationViewTests {
         var sleepingSession = baseSession
         sleepingSession.lifecycle = .sleeping
         sleepingSession.powerState = .deepSleep
-        let sleepingStrip = DesktopChatRuntimeControlStrip(
+        let sleepingStrip = DesktopChatProviderControlStrip(
             serverSession: sleepingSession,
             capabilities: [capability],
             onOpenServer: { openedServerCount += 1 },
@@ -7899,7 +7938,7 @@ struct DesktopFoundationViewTests {
         var errorSession = baseSession
         errorSession.lifecycle = .error
         errorSession.lastError = "worker failed"
-        let errorStrip = DesktopChatRuntimeControlStrip(
+        let errorStrip = DesktopChatProviderControlStrip(
             serverSession: errorSession,
             capabilities: [capability],
             onOpenServer: { openedServerCount += 1 },
@@ -7907,13 +7946,13 @@ struct DesktopFoundationViewTests {
             onResumeServer: { resumeCount += 1 },
             onWakeServer: { wakeCount += 1 }
         )
-        #expect(errorStrip.recoveryAction?.title == "Open Server")
+        #expect(errorStrip.recoveryAction?.title == "Open Providers")
         #expect(errorStrip.recoveryAction?.isProminent == true)
         if let action = errorStrip.recoveryAction {
             errorStrip.perform(action)
         }
 
-        let runningStrip = DesktopChatRuntimeControlStrip(
+        let runningStrip = DesktopChatProviderControlStrip(
             serverSession: baseSession,
             capabilities: [capability],
             onOpenServer: { openedServerCount += 1 },
@@ -7952,6 +7991,7 @@ struct DesktopFoundationViewTests {
                 powerState: .active
             ),
             capabilities: [],
+            isModelMissing: false,
             onCommandSubmit: { draft in
                 commandDraft = draft
             },
@@ -7962,6 +8002,8 @@ struct DesktopFoundationViewTests {
                 clearCount += 1
             },
             onOpenServer: {},
+            onOpenModels: {},
+            onRunCapabilitiesTest: {},
             onStartServer: {},
             onResumeServer: {},
             onWakeServer: {}
@@ -7973,6 +8015,123 @@ struct DesktopFoundationViewTests {
         #expect(submitCount == 1)
         #expect(clearCount == 1)
         #expect(commandDraft.isEmpty)
+    }
+
+    @Test("chat composer gate maps blocked provider states to canonical repair actions")
+    @MainActor
+    func chatComposerGateMapsBlockedProviderStatesToCanonicalRepairActions() {
+        let readySession = DesktopServerSessionState(
+            id: "server-session-ready",
+            title: "Ready Provider",
+            modelID: "melix-dev-text",
+            lifecycle: .running,
+            powerState: .active
+        )
+        let readyTextCapability = DesktopChatCapabilityRow(
+            id: "text",
+            title: "Interactive Text",
+            modelID: "melix-dev-text",
+            detail: "melix-dev-text • Ready",
+            isReady: true
+        )
+        let invalidTextCapability = DesktopChatCapabilityRow(
+            id: "text",
+            title: "Interactive Text",
+            modelID: "melix-dev-text",
+            detail: "melix-dev-text • Unsupported",
+            isReady: false
+        )
+        let degradedVisionCapability = DesktopChatCapabilityRow(
+            id: "vlm",
+            title: "Vision Analysis",
+            modelID: "melix-dev-vision",
+            detail: "melix-dev-vision • Missing",
+            isReady: false
+        )
+
+        let noProviderGate = DesktopChatComposerGate(
+            serverSession: nil,
+            capabilities: [],
+            isModelMissing: false
+        )
+        let missingModelGate = DesktopChatComposerGate(
+            serverSession: readySession,
+            capabilities: [readyTextCapability],
+            isModelMissing: true
+        )
+
+        var offlineSession = readySession
+        offlineSession.lifecycle = .stopped
+        offlineSession.powerState = .stopped
+        let offlineGate = DesktopChatComposerGate(
+            serverSession: offlineSession,
+            capabilities: [readyTextCapability],
+            isModelMissing: false
+        )
+        var stoppingSession = readySession
+        stoppingSession.lifecycle = .stopping
+        let stoppingGate = DesktopChatComposerGate(
+            serverSession: stoppingSession,
+            capabilities: [readyTextCapability],
+            isModelMissing: false
+        )
+        let invalidCapabilityGate = DesktopChatComposerGate(
+            serverSession: readySession,
+            capabilities: [invalidTextCapability],
+            isModelMissing: false
+        )
+        let degradedGate = DesktopChatComposerGate(
+            serverSession: readySession,
+            capabilities: [readyTextCapability, degradedVisionCapability],
+            isModelMissing: false
+        )
+
+        #expect(noProviderGate.repairState?.primaryActionTitle == "Choose Provider")
+        #expect(noProviderGate.repairState?.secondaryActions.isEmpty == true)
+        #expect(missingModelGate.repairState?.primaryActionTitle == "Attach Model")
+        #expect(offlineGate.repairState?.primaryActionTitle == "Start Provider")
+        #expect(stoppingGate.repairState?.primaryActionTitle == "Open Providers")
+        #expect(stoppingGate.repairState?.primaryActionKind == .openProviders)
+        #expect(stoppingGate.repairState?.secondaryActions.isEmpty == true)
+        #expect(invalidCapabilityGate.repairState?.primaryActionTitle == "Run Capabilities Test")
+        #expect(invalidCapabilityGate.repairState?.secondaryActions == [.openProviders])
+        #expect(degradedGate.repairState == nil)
+        #expect(degradedGate.isDegraded)
+    }
+
+    @Test("chat composer repair panel routes provider model and diagnostics actions")
+    @MainActor
+    func chatComposerRepairPanelRoutesProviderModelAndDiagnosticsActions() {
+        var openedProviderCount = 0
+        var openedModelCount = 0
+        var diagnosticsCount = 0
+        var primaryCount = 0
+
+        let repairPanel = DesktopChatComposerRepairPanel(
+            state: DesktopChatComposerRepairState(
+                title: "Provider is missing a model.",
+                detail: "Attach a model before this chat can send requests.",
+                primaryActionTitle: "Attach Model",
+                primaryActionKind: .attachModel,
+                secondaryActions: [.openProviders, .openModels, .openDiagnostics],
+                systemImageName: "cube.box"
+            ),
+            onPrimaryAction: { primaryCount += 1 },
+            onOpenServer: { openedProviderCount += 1 },
+            onOpenModels: { openedModelCount += 1 },
+            onRunCapabilitiesTest: { diagnosticsCount += 1 }
+        )
+
+        repairPanel.performSecondaryAction(.openProviders)
+        repairPanel.performSecondaryAction(.attachModel)
+        repairPanel.performSecondaryAction(.runCapabilitiesTest)
+        repairPanel.onPrimaryAction()
+
+        #expect(hostView(repairPanel).subviews.isEmpty == false)
+        #expect(openedProviderCount == 1)
+        #expect(openedModelCount == 1)
+        #expect(diagnosticsCount == 1)
+        #expect(primaryCount == 1)
     }
 
     @Test("chat workspace preview and recovery helpers update shell state")
@@ -8049,9 +8208,9 @@ struct DesktopFoundationViewTests {
         }
     }
 
-    @Test("chat composer streaming guard and server capsule status cover alternate states")
+    @Test("chat composer streaming guard and provider signals cover alternate states")
     @MainActor
-    func chatComposerStreamingGuardAndServerCapsuleStatusCoverAlternateStates() {
+    func chatComposerStreamingGuardAndProviderSignalsCoverAlternateStates() {
         var submitCount = 0
         var text = "Streaming draft"
         let streamingComposer = DesktopChatComposerSurface(
@@ -8063,12 +8222,15 @@ struct DesktopFoundationViewTests {
             usageText: "",
             serverSession: nil,
             capabilities: [],
+            isModelMissing: false,
             onCommandSubmit: { _ in },
             onSubmit: {
                 submitCount += 1
             },
             onClear: {},
             onOpenServer: {},
+            onOpenModels: {},
+            onRunCapabilitiesTest: {},
             onStartServer: {},
             onResumeServer: {},
             onWakeServer: {}
@@ -8077,7 +8239,7 @@ struct DesktopFoundationViewTests {
         #expect(submitCount == 0)
         #expect(hostView(streamingComposer.primaryActionLabel).fittingSize.width >= 0)
 
-        let emptyCapsule = DesktopChatRuntimeServerCapsule(serverSession: nil)
+        let emptySignal = DesktopChatProviderStatusSignal(serverSession: nil)
         var errorSession = DesktopServerSessionState(
             id: "server-session-error",
             title: "Broken Runtime",
@@ -8086,15 +8248,43 @@ struct DesktopFoundationViewTests {
             powerState: .active,
             lastError: "worker failed"
         )
-        let errorCapsule = DesktopChatRuntimeServerCapsule(serverSession: errorSession)
+        let errorSignal = DesktopChatProviderStatusSignal(serverSession: errorSession)
         errorSession.lifecycle = .starting
-        let startingCapsule = DesktopChatRuntimeServerCapsule(serverSession: errorSession)
+        let startingSignal = DesktopChatProviderStatusSignal(serverSession: errorSession)
 
-        #expect(emptyCapsule.serverTitle == "No Server")
-        #expect(emptyCapsule.serverDetail == "Choose Server")
-        #expect(errorCapsule.serverDetail == "Error • melix-dev-text")
-        #expect(errorCapsule.statusColor == MelixDesignTokens.StatusColor.error)
-        #expect(startingCapsule.statusColor == MelixDesignTokens.StatusColor.warning)
+        let capabilitySignal = DesktopChatCapabilityStatusSignal(
+            capabilities: [
+                DesktopChatCapabilityRow(
+                    id: "text",
+                    title: "Interactive Text",
+                    modelID: "melix-dev-text",
+                    detail: "melix-dev-text • Ready",
+                    isReady: true
+                ),
+                DesktopChatCapabilityRow(
+                    id: "vision",
+                    title: "Vision",
+                    modelID: "melix-dev-vision",
+                    detail: "melix-dev-vision • Missing",
+                    isReady: false
+                )
+            ]
+        )
+        let emptyCapabilitySignal = DesktopChatCapabilityStatusSignal(capabilities: [])
+
+        #expect(emptySignal.serverTitle == "No Provider")
+        #expect(emptySignal.serverDetail == "Choose Provider")
+        #expect(emptySignal.statusShortText == "SET")
+        #expect(errorSignal.serverDetail == "Error • melix-dev-text")
+        #expect(errorSignal.statusShortText == "ERR")
+        #expect(errorSignal.statusColor == MelixDesignTokens.StatusColor.error)
+        #expect(startingSignal.statusColor == MelixDesignTokens.StatusColor.warning)
+        #expect(capabilitySignal.readyCount == 1)
+        #expect(capabilitySignal.statusColor == MelixDesignTokens.StatusColor.warning)
+        #expect(emptyCapabilitySignal.statusColor == Color.secondary)
+        #expect(emptyCapabilitySignal.helpText == "No model capabilities detected")
+        #expect(DesktopChatProviderSignalMetrics.providerSignalWidth <= 72)
+        #expect(DesktopChatProviderSignalMetrics.capabilitySignalWidth <= 68)
     }
 
     @Test("chat transcript auto-scroll snapshot tracks trailing content growth")
@@ -8895,7 +9085,7 @@ struct DesktopFoundationViewTests {
         #expect(initialView.subviews.isEmpty == false)
         #expect(viewModel.chatSessions.count == 1)
         #expect(viewModel.selectedSurface == .chat)
-        #expect(viewModel.selectedChatSession?.statusText == "Choose Server")
+        #expect(viewModel.selectedChatSession?.statusText == "Choose Provider")
 
         let serverView = hostView(sidebar)
         sidebar.openServerAction()
@@ -9073,9 +9263,9 @@ struct DesktopFoundationViewTests {
         #expect(source.contains("MelixSectionCard(\"Analysis Routes\")") == false)
     }
 
-    @Test("chat composer owns runtime control strip inside the input surface")
+    @Test("chat composer owns compact provider status strip inside the input surface")
     @MainActor
-    func chatComposerOwnsRuntimeControlStripInsideTheInputSurface() throws {
+    func chatComposerOwnsCompactProviderStatusStripInsideTheInputSurface() throws {
         let source = try String(
             contentsOf: repositoryRootForDesktopFoundationTests()
                 .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
@@ -9083,7 +9273,20 @@ struct DesktopFoundationViewTests {
         )
 
         #expect(source.contains("DesktopChatComposerSurface"))
-        #expect(source.contains("DesktopChatRuntimeControlStrip"))
+        #expect(source.contains("DesktopChatProviderControlStrip"))
+        #expect(source.contains("DesktopChatProviderStatusSignal"))
+        #expect(source.contains("DesktopChatCapabilityStatusSignal"))
+        #expect(source.contains("DesktopChatProviderSignalMetrics.providerSignalWidth"))
+        #expect(source.contains("DesktopChatProviderSignalMetrics.capabilitySignalWidth"))
+        #expect(source.contains("DesktopChatComposerRepairPanel"))
+        #expect(source.contains("selectedChatModelNeedsAttachment"))
+        #expect(source.contains("Button(\"Send Anyway\", action: primaryAction)"))
+        #expect(source.contains(".accessibilityLabel(\"Open Providers\")"))
+        #expect(source.contains("primaryActionTitle: \"Attach Model\""))
+        #expect(source.contains("primaryActionTitle: \"Run Capabilities Test\""))
+        #expect(source.contains("DesktopChatRuntimeControlStrip") == false)
+        #expect(source.contains("DesktopChatRuntimeServerCapsule") == false)
+        #expect(source.contains("DesktopChatInlineCapabilityCluster") == false)
         #expect(source.contains("Label(\"Send\", systemImage: \"paperplane.fill\")"))
         #expect(source.contains("Label(\"Stop\", systemImage: \"stop.fill\")"))
         #expect(source.contains("DesktopChatComposerTextView("))

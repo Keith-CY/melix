@@ -8,7 +8,7 @@ import MelixControlPlaneProtocol
 
 @Suite("Status Menu", .serialized)
 struct StatusMenuTests {
-    @Test("install renders server and model state through the renderer")
+    @Test("install renders provider and model state through the renderer")
     @MainActor
     func installRendersCurrentState() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -29,7 +29,7 @@ struct StatusMenuTests {
         #expect(content.title == "Melix Ready")
         #expect(
             content.items == [
-                .info("Server: Ready"),
+                .info("Provider: Ready"),
                 .info("melix-dev-text: Discovered"),
                 .action("Load", .loadPrimaryModel),
                 .action("Open Command Center", .openCommandCenter),
@@ -89,7 +89,7 @@ struct StatusMenuTests {
         #expect(content.items.contains(.info("Update available: 0.2.0")))
     }
 
-    @Test("install surfaces runtime banner titles before model actions")
+    @Test("install surfaces provider banner titles before model actions")
     @MainActor
     func installSurfacesRuntimeBannerTitles() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -100,12 +100,12 @@ struct StatusMenuTests {
         await viewModel.start()
         menu.install()
         await client.sendServerStateChanged(state: .serverDraining)
-        try await eventually("status menu should refresh with the runtime warning banner", timeout: .seconds(2)) {
-            renderer.lastContent?.items.contains(.info("Runtime Needs Monitoring")) == true
+        try await eventually("status menu should refresh with the provider warning banner", timeout: .seconds(2)) {
+            renderer.lastContent?.items.contains(.info("Provider Needs Monitoring")) == true
         }
 
         let content = try #require(renderer.lastContent)
-        #expect(content.items.contains(.info("Runtime Needs Monitoring")))
+        #expect(content.items.contains(.info("Provider Needs Monitoring")))
     }
 
     @Test("install surfaces missing model cache in the status menu")
@@ -369,7 +369,7 @@ struct StatusMenuTests {
         let content = StatusMenuContent(
             title: "Melix Ready",
             items: [
-                .info("Server: Ready"),
+                .info("Provider: Ready"),
                 .action("Load", .loadPrimaryModel),
                 .error("boom"),
                 .separator,
@@ -384,7 +384,7 @@ struct StatusMenuTests {
         )
 
         #expect(menu.items.count == 5)
-        #expect(menu.items[0].title == "Server: Ready")
+        #expect(menu.items[0].title == "Provider: Ready")
         #expect(menu.items[0].isEnabled == false)
         #expect(menu.items[1].title == "Load")
         #expect(menu.items[1].representedObject as? String == StatusMenuAction.loadPrimaryModel.rawValue)
@@ -422,7 +422,7 @@ struct StatusMenuTests {
         let content = StatusMenuContent(
             title: "Melix Ready",
             items: [
-                .info("Server: Ready"),
+                .info("Provider: Ready"),
                 .action("Quit Melix", .quit),
             ]
         )
@@ -452,7 +452,7 @@ struct StatusMenuTests {
         let content = StatusMenuContent(
             title: "Melix Ready",
             items: [
-                .info("Server: Ready"),
+                .info("Provider: Ready"),
             ]
         )
 
@@ -480,7 +480,7 @@ struct StatusMenuTests {
         let content = StatusMenuContent(
             title: "Melix Ready",
             items: [
-                .info("Server: Ready"),
+                .info("Provider: Ready"),
             ]
         )
 

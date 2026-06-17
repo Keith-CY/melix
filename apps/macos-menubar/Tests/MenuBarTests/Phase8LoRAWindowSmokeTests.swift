@@ -127,8 +127,8 @@ struct Phase8LoRAWindowSmokeTests {
 
         viewModel.selectToolSection(.diagnostics)
         viewModel.updateSelectedServerSessionModelID(baseModelID)
-        if let localTarget = viewModel.diagnosticsServerTargets.first(where: { $0.kind == .localServer }) {
-            viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+        if let localTarget = viewModel.diagnosticsProviderTargets.first(where: { $0.kind == .localServer }) {
+            viewModel.selectDiagnosticsProviderTarget(id: localTarget.id)
         }
         viewModel.selectedEvaluationModelID = baseModelID
         viewModel.selectedEvaluationMode = .compare
@@ -263,7 +263,7 @@ struct Phase8LoRAWindowSmokeTests {
         print("PHASE8_LORA_WINDOW_SMOKE=\(String(decoding: data, as: UTF8.self))")
 
         #expect(trainingTexts.contains("QLoRA"))
-        #expect(trainingTexts.contains("Adapter-backed Runtime"))
+        #expect(trainingTexts.contains("Adapter-backed Serving"))
         #expect(diagnosticsTexts.contains("Compare"))
         #expect(await directClient.recordedModelOperationRequests.isEmpty)
         #expect(await directClient.recordedEvaluationRequests.isEmpty)

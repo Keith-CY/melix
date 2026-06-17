@@ -466,7 +466,12 @@ struct AppMainBootstrapTests {
         #expect(outputJSON["app_path"] as? String == "/tmp/Melix.app")
         #expect(outputJSON["width"] as? Int == 360)
         #expect(outputJSON["height"] as? Int == 240)
-        #expect(screenshots.count == DesktopSurface.visibleNavigationCases.count + DesktopToolSection.allCases.count + 1)
+        #expect(
+            screenshots.count == DesktopSurface.routableWorkspaceCases.count
+                + DesktopToolSection.allCases.count
+                + AppScreenshotChatComposerState.allCases.count
+                + 1
+        )
         #expect(fileManager.fileExists(atPath: tempRoot.appendingPathComponent("screenshot_manifest.json").path))
         #expect(fileManager.fileExists(atPath: tempRoot.appendingPathComponent("screenshots/command-center.png").path))
     }
@@ -1176,7 +1181,7 @@ struct AppMainBootstrapTests {
             let hfTokenStore = HuggingFaceTokenStore(melixHome: melixHome)
             let serverSession = DesktopServerSessionState(
                 id: "server-session-1",
-                title: "Primary Server",
+                title: "Primary Provider",
                 modelID: "melix-dev-text"
             )
 

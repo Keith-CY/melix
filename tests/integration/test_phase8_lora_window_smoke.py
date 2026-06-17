@@ -34,7 +34,7 @@ def test_phase8_lora_window_smoke_exercises_positive_and_negative_acceptance_pat
 
     assert set(payload["rendered_controls"]) >= {
         "QLoRA",
-        "Adapter-backed Runtime",
+        "Adapter-backed Serving",
         "Run Comparison",
         "Remove Derived Model",
     }
