@@ -10360,8 +10360,6 @@ enum DesktopAPICompanionPairingLayout {
 }
 
 enum CompanionPairingQRCode {
-    private static let context = CIContext()
-
     static func image(for code: String) -> NSImage? {
         let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedCode.isEmpty == false else { return nil }
@@ -10375,6 +10373,7 @@ enum CompanionPairingQRCode {
         let extent = outputImage.extent.integral
         guard extent.width > 0, extent.height > 0 else { return nil }
 
+        let context = CIContext()
         guard let cgImage = context.createCGImage(outputImage, from: extent) else {
             return nil
         }
