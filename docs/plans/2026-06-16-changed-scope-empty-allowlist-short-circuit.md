@@ -21,6 +21,10 @@ tests.
 This slice extends the existing probe to include the command-level empty
 allowlist path and to count whether the coverage JSON file is read.
 
+The 2026-06-17 follow-up slice keeps the same behavior but recognizes the
+literal empty JSON array (`[]`) before invoking the JSON decoder, which is the
+common no-paths-remaining value used by probe-scoped coverage checks.
+
 ## Verification plan
 
 1. Run the registered focused tests locally on Linux.
