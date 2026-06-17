@@ -664,7 +664,8 @@ label {
   font-size: 13px;
   font-weight: 600;
 }
-input {
+input,
+textarea {
   width: 100%;
   min-height: 44px;
   border: 1px solid var(--line);
@@ -673,7 +674,12 @@ input {
   color: var(--text);
   font: inherit;
 }
+textarea {
+  min-height: 92px;
+  resize: vertical;
+}
 input:focus,
+textarea:focus,
 button:focus-visible {
   outline: 3px solid rgba(18, 107, 90, 0.24);
   outline-offset: 2px;
@@ -768,10 +774,16 @@ button.primary:active {
   <section class="panel stack" aria-labelledby="token-title">
     <h2 id="token-title">Device Token</h2>
     <div>
+      <label for="pairing-import">Pairing code or JSON bundle</label>
+      <textarea id="pairing-import" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Paste melix-companion: code or JSON bundle"></textarea>
+      <p class="hint">Import a desktop Copy Code, Pairing QR decoded text, or Copy Bundle payload.</p>
+    </div>
+    <div>
       <label for="token">Companion token</label>
       <input id="token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Paste companion token">
     </div>
     <div class="actions">
+      <button id="import-pairing" class="primary" type="button">Import Pairing</button>
       <button id="save-token" class="primary" type="button">Save Device Token</button>
       <button id="clear-token" type="button">Clear Device Token</button>
       <button id="refresh" type="button">Refresh Status</button>
@@ -803,8 +815,11 @@ button.primary:active {
 <script>
 (() => {
   const sessionHeader = 'x-melix-session';
-  const statusPath = '/v1/melix/companion/status';
+  const defaultStatusPath = '/v1/melix/companion/status';
+  let statusPath = defaultStatusPath;
   const storageKey = 'melix.companion.sessionToken';
+  const pairingSchemaVersion = 'melix.companion.pairing.bundle.v1';
+  const pairingImport = document.getElementById('pairing-import');
   const tokenInput = document.getElementById('token');
   const message = document.getElementById('message');
   const logs = document.getElementById('logs');
@@ -834,6 +849,54 @@ button.primary:active {
       }
     }
     return undefined;
+  }
+
+  function decodePairingCode(value) {
+    const trimmed = value.trim();
+    const prefix = 'melix-companion:';
+    if (!trimmed.startsWith(prefix)) {
+      return trimmed;
+    }
+    const compact = trimmed.slice(prefix.length).replace(/\s+/g, '');
+    const base64 = compact.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    return decodeURIComponent(escape(atob(padded)));
+  }
+
+  function sameOriginStatusPath(bundle) {
+    if (!bundle.status_url) {
+      return defaultStatusPath;
+    }
+    const url = new URL(bundle.status_url, window.location.href);
+    if (url.origin !== window.location.origin) {
+      return defaultStatusPath;
+    }
+    return `${url.pathname}${url.search}`;
+  }
+
+  function importPairingBundle() {
+    try {
+      const decoded = decodePairingCode(pairingImport.value);
+      const bundle = JSON.parse(decoded);
+      if (!bundle || typeof bundle !== 'object') {
+        throw new Error('pairing bundle must be a JSON object');
+      }
+      if (bundle.schema_version !== pairingSchemaVersion) {
+        throw new Error('pairing bundle schema is not supported');
+      }
+      const token = String(bundle.token || '').trim();
+      if (!token) {
+        throw new Error('pairing bundle is missing a token');
+      }
+      statusPath = sameOriginStatusPath(bundle);
+      tokenInput.value = token;
+      localStorage.setItem(storageKey, token);
+      message.textContent = 'Pairing imported. Device token saved.';
+      message.className = 'hint';
+    } catch (error) {
+      message.textContent = `Unable to import pairing bundle: ${error.message}`;
+      message.className = 'hint error';
+    }
   }
 
   function renderLogs(entries) {
@@ -921,8 +984,11 @@ button.primary:active {
     message.className = 'hint';
   });
 
+  document.getElementById('import-pairing').addEventListener('click', importPairingBundle);
+
   document.getElementById('clear-token').addEventListener('click', () => {
     localStorage.removeItem(storageKey);
+    statusPath = defaultStatusPath;
     tokenInput.value = '';
     message.textContent = 'Device token cleared.';
     message.className = 'hint';

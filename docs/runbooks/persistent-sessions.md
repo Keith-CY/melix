@@ -156,19 +156,24 @@ companion token and is fetched through `pairing.status_url`.
 
 Operator actions:
 
-- Paste the active companion token from the transient desktop bundle or pairing
-  code into the `Device Token` field.
-- `Save Device Token` stores that token in browser `localStorage` on the
-  current device only.
+- Paste the desktop `Copy Code` value, decoded `Pairing QR` text, or
+  `Copy Bundle` JSON into `Pairing code or JSON bundle`.
+- `Import Pairing` validates the
+  `melix.companion.pairing.bundle.v1` payload, stores the bearer token in
+  browser `localStorage` on the current device only, and uses the bundle
+  `status_url` only when it resolves to the same origin as the loaded page.
+- `Save Device Token` remains available for manually entered companion tokens
+  and stores that token in browser `localStorage` on the current device only.
 - `Refresh Status` calls `/v1/melix/companion/status` with the
   `x-melix-session` header and renders runtime, model, queue, recent job, and
   redacted log-tail summaries.
 - `Clear Device Token` removes the browser-local token copy from
   `localStorage`.
 
-The page does not issue tokens, revoke tokens, expose mutating routes, or render
-raw logs. Treat a browser with a saved device token as bearer-authenticated
-until the token is cleared locally or revoked through the desktop controls or
+The page does not issue tokens, revoke tokens, expose mutating routes, scan
+camera QR codes, or render raw logs. Treat pasted pairing codes, copied bundles,
+and a browser with a saved device token as bearer-authenticated until the token
+is cleared locally or revoked through the desktop controls or
 `DELETE /v1/melix/auth/session`.
 
 ### Reuse The Session
