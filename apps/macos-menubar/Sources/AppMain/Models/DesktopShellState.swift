@@ -46,8 +46,12 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
         }
     }
 
-    public static var visibleNavigationCases: [DesktopSurface] {
+    public static var titlebarNavigationCases: [DesktopSurface] {
         [.chat, .server, .models, .workflows]
+    }
+
+    public static var visibleNavigationCases: [DesktopSurface] {
+        routableWorkspaceCases
     }
 
     public static var routableWorkspaceCases: [DesktopSurface] {
@@ -79,6 +83,16 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
         case .tools:
             return "tools"
         }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self = DesktopSurface(paneVisibilityID: try container.decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 }
 
@@ -370,6 +384,28 @@ public enum DesktopInspectorModule: String, CaseIterable, Identifiable, Codable,
     case runtimeStorage
 
     public var id: String { rawValue }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "serverProfile":
+            self = .providerProfile
+        default:
+            guard let value = Self(rawValue: rawValue) else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Unknown desktop inspector module: \(rawValue)"
+                )
+            }
+            self = value
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 public enum DesktopRouteActionTarget: Equatable, Codable, Sendable {
@@ -842,7 +878,7 @@ public enum DesktopSelectedObjectKind: String, CaseIterable, Identifiable, Codab
 
     public init?(routePrefix: String) {
         switch routePrefix.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "provider":
+        case "provider", "server":
             self = .provider
         case "model":
             self = .model
@@ -861,6 +897,23 @@ public enum DesktopSelectedObjectKind: String, CaseIterable, Identifiable, Codab
         default:
             return nil
         }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        guard let value = Self(routePrefix: rawValue) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unknown desktop selected object kind: \(rawValue)"
+            )
+        }
+        self = value
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 
     public var defaultRoute: DesktopRouteActionTarget {

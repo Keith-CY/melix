@@ -149,31 +149,36 @@ struct AppScreenshotCaptureTests {
         let firstEvent = await iterator.next()
         let snapshot = try await client.serverSnapshot()
         let fallbackModel = try await client.loadModel(modelID: "missing-model")
-        let unloadedModel = try await client.unloadModel(modelID: "melix-dev-text")
-        let updatedModel = try await client.updateModelSettings(modelID: "melix-dev-text", values: ["alias": "Text"])
-        let modelInfo = try await client.modelInfo(modelID: "melix-dev-text")
+        let unloadedModel = try await client.unloadModel(modelID: "melix-screenshot-text")
+        let updatedModel = try await client.updateModelSettings(modelID: "melix-screenshot-text", values: ["alias": "Text"])
+        let modelInfo = try await client.modelInfo(modelID: "melix-screenshot-text")
 
         #expect(handshake.protocolVersion == "melix.controlplane.v1")
         #expect(handshake.daemonInstanceID == "screenshot-daemon")
         #expect(firstEvent == nil)
-        #expect(snapshot.models.map(\.modelID) == ["melix-dev-text", "melix-dev-image", "melix-dev-vision"])
-        #expect(fallbackModel.modelID == "melix-dev-text")
-        #expect(unloadedModel.modelID == "melix-dev-text")
-        #expect(updatedModel.modelID == "melix-dev-text")
+        #expect(snapshot.models.map(\.modelID) == [
+            "melix-screenshot-text",
+            "melix-screenshot-image",
+            "melix-screenshot-vision",
+        ])
+        #expect(snapshot.models.allSatisfy { !$0.modelID.hasPrefix("melix-dev-") })
+        #expect(fallbackModel.modelID == "melix-screenshot-text")
+        #expect(unloadedModel.modelID == "melix-screenshot-text")
+        #expect(updatedModel.modelID == "melix-screenshot-text")
         #expect(modelInfo.ok)
         #expect(modelInfo.supportedModalities == ["text"])
 
         await #expect(throws: ControlPlaneXPCClientError.self) {
             try await client.startChat(
                 ControlPlaneChatRequest(
-                    modelID: "melix-dev-text",
+                    modelID: "melix-screenshot-text",
                     messages: [.init(role: "user", content: "hello")]
                 )
             )
         }
         await #expect(throws: ControlPlaneXPCClientError.self) {
             try await client.runModelOperation(
-                modelID: "melix-dev-text",
+                modelID: "melix-screenshot-text",
                 operation: "quantize",
                 outputDir: "/tmp/model",
                 quantProfileID: "q4",

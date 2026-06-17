@@ -3245,7 +3245,7 @@ public final class RuntimeViewModel {
     private var gatewayApplyTask: Task<Void, Never>?
     private var benchmarkExportBundle: ControlPlaneBenchmarkExportBundle?
 
-    private static let startNewDiagnosticsProviderTargetID = "start-new-server"
+    private static let startNewDiagnosticsProviderTargetID = "start-new-provider"
     private static let remoteBenchmarkUnsupportedMessage = "Remote Provider benchmark is not supported yet; select a local running provider."
     private static let remoteEvaluationUnsupportedMessage = "Remote Provider evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running provider."
     private static let hiddenPlaceholderModelIDs: Set<String> = [

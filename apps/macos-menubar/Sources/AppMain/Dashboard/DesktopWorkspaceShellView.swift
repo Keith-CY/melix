@@ -1063,6 +1063,9 @@ private struct DesktopProviderWorkspaceView: View {
                 DesktopServerSessionInspector(viewModel: viewModel)
             }
         }
+        .onChange(of: viewModel.selectedProviderTarget?.id) { _, _ in
+            selectedProviderPage = Self.defaultProviderSurfacePage(for: viewModel.selectedProviderTarget)
+        }
     }
 
     private static func defaultProviderSurfacePage(
@@ -1251,7 +1254,7 @@ private struct DesktopProviderWorkspaceSidebar: View {
         case .remoteProviders:
             return "\(remoteTargets.count)"
         case .capabilityReceipts:
-            return "0"
+            return nil
         default:
             return nil
         }

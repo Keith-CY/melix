@@ -194,7 +194,7 @@ struct DesktopShellTabStripView: View {
 
     var body: some View {
         HStack(spacing: 3) {
-            ForEach(DesktopSurface.visibleNavigationCases) { surface in
+            ForEach(DesktopSurface.titlebarNavigationCases) { surface in
                 Button {
                     selectSurface(surface)
                 } label: {

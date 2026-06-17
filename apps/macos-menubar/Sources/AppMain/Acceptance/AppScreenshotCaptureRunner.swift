@@ -166,6 +166,10 @@ public enum AppScreenshotChatComposerState: String, CaseIterable, Equatable, Sen
     }
 }
 
+private let appScreenshotTextModelID = "melix-screenshot-text"
+private let appScreenshotImageModelID = "melix-screenshot-image"
+private let appScreenshotVisionModelID = "melix-screenshot-vision"
+
 public struct AppScreenshotCaptureEntry: Codable, Equatable, Sendable {
     public let id: String
     public let kind: String
@@ -297,11 +301,11 @@ public final class AppScreenshotCaptureRunner {
             viewModel.updateSelectedServerSessionModelID("melix-dev-missing")
         case .offlineProvider:
             ensureSelectedChatSessionIsBoundToPrimaryProvider()
-            viewModel.updateSelectedServerSessionModelID("melix-dev-text")
+            viewModel.updateSelectedServerSessionModelID(appScreenshotTextModelID)
             await viewModel.stopSelectedServerSession()
         case .degradedProvider:
             ensureSelectedChatSessionIsBoundToPrimaryProvider()
-            viewModel.updateSelectedServerSessionModelID("melix-dev-text")
+            viewModel.updateSelectedServerSessionModelID(appScreenshotTextModelID)
             await viewModel.startSelectedServerSession()
         }
     }
@@ -440,7 +444,7 @@ actor AppScreenshotCaptureControlPlaneClient: ControlPlaneXPCClient {
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
         _ = modelID
         return snapshot.models.first(where: { $0.modelID == modelID }) ?? Self.makeModelSummary(
-            modelID: "melix-dev-text",
+            modelID: appScreenshotTextModelID,
             kind: "text",
             features: ["chat"],
             state: .modelWarm
@@ -520,19 +524,19 @@ actor AppScreenshotCaptureControlPlaneClient: ControlPlaneXPCClient {
         snapshot.serverState = .serverReady
         snapshot.models = [
             makeModelSummary(
-                modelID: "melix-dev-text",
+                modelID: appScreenshotTextModelID,
                 kind: "text",
                 features: ["chat", "responses", "evaluation"],
                 state: .modelWarm
             ),
             makeModelSummary(
-                modelID: "melix-dev-image",
+                modelID: appScreenshotImageModelID,
                 kind: "image",
                 features: ["image-generation", "image-edit"],
                 state: .modelDiscovered
             ),
             makeModelSummary(
-                modelID: "melix-dev-vision",
+                modelID: appScreenshotVisionModelID,
                 kind: "vlm",
                 features: ["vlm", "vision"],
                 state: .modelDiscovered
@@ -553,12 +557,12 @@ actor AppScreenshotCaptureControlPlaneClient: ControlPlaneXPCClient {
     ) -> Melix_Controlplane_V1_ModelSummary {
         var settings = Melix_Controlplane_V1_ModelSettings()
         switch modelID {
-        case "melix-dev-text":
-            settings.alias = "Melix Text"
-        case "melix-dev-vision":
-            settings.alias = "Melix Vision"
+        case appScreenshotTextModelID:
+            settings.alias = "Screenshot Text"
+        case appScreenshotVisionModelID:
+            settings.alias = "Screenshot Vision"
         default:
-            settings.alias = "Melix Image"
+            settings.alias = "Screenshot Image"
         }
         settings.memoryPolicy = .memoryResidencyEvictable
         settings.defaultAccelerationMode = .baseline

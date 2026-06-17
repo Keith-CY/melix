@@ -7,18 +7,19 @@ import Testing
 struct DesktopShellStateTests {
     @Test("desktop route metadata encodes accepted product IA")
     func desktopRouteMetadataEncodesAcceptedProductIA() throws {
-        #expect(DesktopSurface.visibleNavigationCases == [
+        #expect(DesktopSurface.titlebarNavigationCases == [
             .chat,
             .server,
             .models,
             .workflows,
         ])
-        #expect(DesktopSurface.visibleNavigationCases.map(\.rawValue) == [
+        #expect(DesktopSurface.titlebarNavigationCases.map(\.rawValue) == [
             "Chat",
             "Providers",
             "Models",
             "Workflows",
         ])
+        #expect(DesktopSurface.visibleNavigationCases == DesktopSurface.routableWorkspaceCases)
         #expect(DesktopSurface.routableWorkspaceCases == [
             .chat,
             .commandCenter,
@@ -122,12 +123,39 @@ struct DesktopShellStateTests {
         #expect(apiToken.rawValue == "api-token:lan-shared-client")
         #expect(apiToken.defaultRoute == .page(domain: .api, pageID: "inbound-auth", selectedObject: apiToken))
 
+        let legacyServer = try #require(DesktopSelectedObjectRoute(rawValue: "server:remote-lab"))
+        #expect(legacyServer.kind == .provider)
+        #expect(legacyServer.objectID == "remote-lab")
+        #expect(legacyServer.rawValue == "provider:remote-lab")
+
         #expect(DesktopSelectedObjectRoute(rawValue: "workflow:template-1") == nil)
-        #expect(DesktopSelectedObjectRoute(rawValue: "server:remote-lab") == nil)
         #expect(DesktopSelectedObjectRoute(rawValue: "eval:support-dialogue-v23") == nil)
         #expect(DesktopSelectedObjectRoute(rawValue: "token:lan-shared-client") == nil)
         #expect(DesktopSelectedObjectRoute(rawValue: "job:") == nil)
         #expect(DesktopSelectedObjectRoute(rawValue: "missing-delimiter") == nil)
+    }
+
+    @Test("desktop state decodes provider terminology legacy aliases")
+    func desktopStateDecodesProviderTerminologyLegacyAliases() throws {
+        let decoder = JSONDecoder()
+
+        let serverSurface = try decoder.decode(DesktopSurface.self, from: #""Servers""#.data(using: .utf8)!)
+        let providerSurface = try decoder.decode(DesktopSurface.self, from: #""Providers""#.data(using: .utf8)!)
+        let serverInspector = try decoder.decode(DesktopInspectorModule.self, from: #""serverProfile""#.data(using: .utf8)!)
+        let providerKind = try decoder.decode(DesktopSelectedObjectKind.self, from: #""server""#.data(using: .utf8)!)
+
+        #expect(serverSurface == .server)
+        #expect(providerSurface == .server)
+        #expect(serverInspector == .providerProfile)
+        #expect(providerKind == .provider)
+
+        let encodedSurface = try JSONEncoder().encode(DesktopSurface.server)
+        let encodedInspector = try JSONEncoder().encode(DesktopInspectorModule.providerProfile)
+        let encodedKind = try JSONEncoder().encode(DesktopSelectedObjectKind.provider)
+
+        #expect(String(decoding: encodedSurface, as: UTF8.self) == #""Providers""#)
+        #expect(String(decoding: encodedInspector, as: UTF8.self) == #""providerProfile""#)
+        #expect(String(decoding: encodedKind, as: UTF8.self) == #""provider""#)
     }
 
     @Test("legacy tools jobs session restores to top-level jobs")

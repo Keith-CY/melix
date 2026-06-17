@@ -284,8 +284,8 @@ struct DesktopFoundationViewTests {
         let chromeSource = try String(contentsOf: chromeSourceURL, encoding: .utf8)
 
         #expect(hosted.subviews.isEmpty == false)
-        #expect(DesktopSurface.visibleNavigationCases.map(\.rawValue) == ["Chat", "Providers", "Models", "Workflows"])
-        #expect(chromeSource.contains("ForEach(DesktopSurface.visibleNavigationCases)"))
+        #expect(DesktopSurface.titlebarNavigationCases.map(\.rawValue) == ["Chat", "Providers", "Models", "Workflows"])
+        #expect(chromeSource.contains("ForEach(DesktopSurface.titlebarNavigationCases)"))
         #expect(rootSource.contains("ToolbarItem(placement: .principal)"))
         #expect(rootSource.contains("ToolbarItem(placement: .primaryAction)") == false)
     }
@@ -1671,9 +1671,11 @@ struct DesktopFoundationViewTests {
         #expect(shellSource.contains("case createLocalProvider"))
         #expect(shellSource.contains("case addRemoteProvider"))
         #expect(shellSource.contains("case capabilityReceipts"))
+        #expect(shellSource.contains("case .capabilityReceipts:\n            return nil"))
         #expect(shellSource.contains("Button(\"Create Local Provider\")"))
         #expect(shellSource.contains("Button(\"Add Remote Provider\")"))
         #expect(shellSource.contains("DesktopProviderCreationStepperHeader"))
+        #expect(shellSource.contains(".onChange(of: viewModel.selectedProviderTarget?.id)"))
         #expect(shellSource.contains("\"Create Local Provider\""))
         #expect(shellSource.contains("steps: [\"Basic\", \"Advanced\", \"Review\"]"))
         #expect(shellSource.contains("\"Add Remote Provider\""))
