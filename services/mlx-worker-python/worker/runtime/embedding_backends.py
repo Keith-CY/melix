@@ -51,10 +51,10 @@ class DeterministicEmbeddingBackend:
             for raw in _UNPACK_DIGEST_UINT32(_SHA256(seed_text.encode("utf-8")).digest())
         ]
         if dimensions == 8:
-            try:
-                inverse_l2_norm = 1.0 / math.sqrt(sum(value * value for value in base_values))
-            except ZeroDivisionError:
+            l2_norm = math.sqrt(sum(value * value for value in base_values))
+            if l2_norm == 0.0:
                 return [0.0] * 8
+            inverse_l2_norm = 1.0 / l2_norm
             return [round(value * inverse_l2_norm, 6) for value in base_values]
         return self._project_digest_expanded(base_values, dimensions)
 
