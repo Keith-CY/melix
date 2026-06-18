@@ -11,7 +11,8 @@ The affected path is already covered by the registered `pr-scoped-performance-sc
 ## Implementation plan
 
 - Preserve the existing compact single-line summary semantics.
-- Use a single whole-command `strip()` before first-line selection so trailing blank heredoc lines are eliminated without allocating and scanning the remaining payload separately.
+- Keep the existing single whole-command `strip()` before first-line selection so trailing blank heredoc lines are eliminated.
+- Replace tuple-producing `partition("\n")` with a direct newline index lookup so the summary path does not allocate the unused remaining payload.
 - Keep the behavior tests under `test_command_summary_keeps_ci_heartbeats_compact` as the regression guard.
 
 ## Verification plan
