@@ -80,6 +80,8 @@ def _code_block_content_start(text: str, start: int) -> int:
     elif _starts_with_python_tag_ignore_case(text, start):
         start += _PYTHON_CODE_BLOCK_TAG_LENGTH
     text_length = len(text)
+    if start < text_length and text[start] == "\n":
+        start += 1
     while start < text_length and text[start].isspace():
         start += 1
     return start
