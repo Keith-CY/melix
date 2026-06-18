@@ -5751,6 +5751,27 @@ def test_glob_matching_exact_path_skips_regex_compile(monkeypatch: pytest.Monkey
     ) is False
 
 
+def test_matches_any_glob_exact_hit_skips_helper_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_glob_matches_path(path: str, glob: str):  # pragma: no cover - sentinel
+        raise AssertionError(
+            f"exact _matches_any_glob hit should not dispatch helper for {path!r} against {glob!r}"
+        )
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_glob_matches_path",
+        fail_glob_matches_path,
+    )
+
+    assert pr_scoped_performance_module._matches_any_glob(
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+        (
+            "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+            "services/mlx-worker-python/**/*.py",
+        ),
+    ) is True
+
+
 def test_compiled_glob_matching_preserves_prefix_short_circuit() -> None:
     matchers = (
         (
