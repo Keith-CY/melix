@@ -320,6 +320,306 @@ struct OpenAIConformanceHarnessTests {
         #expect(report.summary.failed > 0)
         #expect(report.summary.passed == 0)
     }
+
+    @Test("proxy parity harness emits existing report schema for local and remote targets")
+    func proxyParityHarnessEmitsExistingReportSchemaForLocalAndRemoteTargets() async throws {
+        let localTransport = RecordingConformanceTransport(responses: [
+            .json(statusCode: 200, body: chatCompletionBody()),
+            .sse(statusCode: 200, body: streamingToolCallBody()),
+            .json(statusCode: 400, body: errorBody(field: "best_of", phase: "openai_request_validation")),
+        ])
+        let remoteTransport = RecordingConformanceTransport(responses: [
+            .json(statusCode: 200, body: chatCompletionBody()),
+            .sse(statusCode: 200, body: streamingToolCallBody()),
+            .json(statusCode: 400, body: errorBody(field: "best_of", phase: "openai_request_validation")),
+        ])
+        let harness = OpenAIProxyParityHarness(
+            target: OpenAIProxyParityTarget(
+                localBaseURL: "https://local.example/v1",
+                localModelID: "local-model",
+                localAPIKey: "local-secret",
+                remoteBaseURL: "https://remote.example/openai/v1/",
+                remoteModelID: "remote-model",
+                remoteAPIKey: "remote-secret",
+                timeoutSeconds: 9
+            ),
+            localTransport: localTransport,
+            remoteTransport: remoteTransport
+        )
+
+        let report = try await harness.run()
+        let localRequests = await localTransport.requests
+        let remoteRequests = await remoteTransport.requests
+
+        #expect(report.schemaVersion == OpenAIConformanceReport.currentSchemaVersion)
+        #expect(report.summary.total == 3)
+        #expect(report.summary.passed == 3)
+        #expect(report.summary.failed == 0)
+        #expect(report.rows.map(\.field) == [
+            "proxy_parity.chat.completions.response_shape",
+            "proxy_parity.chat.completions.streaming_tool_call_shape",
+            "proxy_parity.chat.completions.error_shape",
+        ])
+        #expect(report.rows.allSatisfy {
+            $0.observedReason == "request_receipt=equivalent response_shape=equivalent"
+        })
+        #expect(localRequests.count == 3)
+        #expect(remoteRequests.count == 3)
+        #expect(localRequests.allSatisfy { $0.timeoutInterval == 9 })
+        #expect(remoteRequests.allSatisfy { $0.timeoutInterval == 9 })
+        #expect(localRequests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer local-secret" })
+        #expect(remoteRequests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer remote-secret" })
+        #expect(remoteRequests.allSatisfy { $0.url?.path == "/openai/v1/chat/completions" })
+        #expect(try localRequests.allSatisfy { try requestBodyModel($0) == "local-model" })
+        #expect(try remoteRequests.allSatisfy { try requestBodyModel($0) == "remote-model" })
+    }
+
+    @Test("proxy parity request receipt mismatches are named without leaking model IDs")
+    func proxyParityRequestReceiptMismatchesAreNamedWithoutLeakingModelIDs() async throws {
+        let localTransport = RecordingConformanceTransport(responses: [
+            .json(statusCode: 200, body: chatCompletionBody()),
+            .sse(statusCode: 200, body: streamingToolCallBody()),
+            .json(statusCode: 400, body: errorBody(field: "best_of", phase: "openai_request_validation")),
+        ])
+        let remoteTransport = RecordingConformanceTransport(responses: [
+            .json(statusCode: 200, body: chatCompletionBody()),
+            .sse(statusCode: 200, body: streamingToolCallBody()),
+            .json(statusCode: 400, body: errorBody(field: "best_of", phase: "openai_request_validation")),
+        ])
+        let harness = OpenAIProxyParityHarness(
+            target: OpenAIProxyParityTarget(
+                localBaseURL: "https://local.example/v1",
+                localModelID: "local-model",
+                localAPIKey: "",
+                remoteBaseURL: "https://remote.example/v1",
+                remoteModelID: "",
+                remoteAPIKey: "",
+                timeoutSeconds: 30
+            ),
+            localTransport: localTransport,
+            remoteTransport: remoteTransport
+        )
+
+        let report = try await harness.run()
+        let firstRow = try #require(report.rows.first)
+
+        #expect(report.summary.failed == 3)
+        #expect(firstRow.observedReason == "request_receipt.model_present local=true remote=false")
+        #expect(firstRow.observedReason.contains("local-model") == false)
+    }
+
+    @Test("proxy parity response shape mismatches are named by side")
+    func proxyParityResponseShapeMismatchesAreNamedBySide() async throws {
+        let localTransport = RecordingConformanceTransport(responses: [
+            .json(statusCode: 200, body: chatCompletionBody()),
+            .sse(statusCode: 200, body: streamingToolCallBody()),
+            .json(statusCode: 400, body: errorBody(field: "best_of", phase: "openai_request_validation")),
+        ])
+        let remoteTransport = RecordingConformanceTransport(responses: [
+            .json(statusCode: 200, body: chatCompletionBody()),
+            .sse(statusCode: 200, body: "data: [DONE]\n"),
+            .json(statusCode: 400, body: errorBody(field: "best_of", phase: "openai_request_validation")),
+        ])
+        let harness = OpenAIProxyParityHarness(
+            target: OpenAIProxyParityTarget(
+                localBaseURL: "https://local.example/v1",
+                localModelID: "melix-dev-text",
+                localAPIKey: "",
+                remoteBaseURL: "https://remote.example/v1",
+                remoteModelID: "remote-model",
+                remoteAPIKey: "",
+                timeoutSeconds: 30
+            ),
+            localTransport: localTransport,
+            remoteTransport: remoteTransport
+        )
+
+        let report = try await harness.run()
+        let streamingRow = try #require(
+            report.rows.first { $0.field == "proxy_parity.chat.completions.streaming_tool_call_shape" }
+        )
+
+        #expect(report.summary.failed == 1)
+        #expect(streamingRow.observedReason == "remote_response=status=200 missing=tool_call_chunk")
+    }
+
+    @Test("proxy parity names local response and response-shape reason divergences")
+    func proxyParityNamesLocalResponseAndResponseShapeReasonDivergences() async throws {
+        let localFailure = try await OpenAIProxyParityHarness(
+            target: proxyParityTestTarget(),
+            localTransport: RecordingConformanceTransport(responses: [
+                .json(statusCode: 503, body: "{}"),
+                .sse(statusCode: 200, body: streamingToolCallBody()),
+                .json(statusCode: 400, body: errorBody(field: "best_of", phase: "openai_request_validation")),
+            ]),
+            remoteTransport: RecordingConformanceTransport(responses: [
+                .json(statusCode: 200, body: chatCompletionBody()),
+                .sse(statusCode: 200, body: streamingToolCallBody()),
+                .json(statusCode: 400, body: errorBody(field: "best_of", phase: "openai_request_validation")),
+            ])
+        ).run()
+        #expect(
+            row("proxy_parity.chat.completions.response_shape", in: localFailure)?.observedReason == "local_response=status=503"
+        )
+
+        let reasonDivergence = try await OpenAIProxyParityHarness(
+            target: proxyParityTestTarget(),
+            localTransport: RecordingConformanceTransport(responses: [
+                .json(statusCode: 200, body: chatCompletionBody()),
+                .sse(statusCode: 200, body: streamingToolCallBody()),
+                .json(statusCode: 400, body: errorBody(field: "best_of", phase: "openai_request_validation")),
+            ]),
+            remoteTransport: RecordingConformanceTransport(responses: [
+                .json(statusCode: 200, body: chatCompletionBody()),
+                .sse(statusCode: 200, body: streamingToolCallBody()),
+                .json(statusCode: 422, body: errorBody(field: "best_of", phase: "openai_request_validation")),
+            ])
+        ).run()
+        #expect(
+            row("proxy_parity.chat.completions.error_shape", in: reasonDivergence)?.observedReason ==
+                "response_shape local=status=400 field=best_of phase=openai_request_validation remote=status=422 field=best_of phase=openai_request_validation"
+        )
+    }
+
+    @Test("proxy parity records transport failures and rethrows cancellation")
+    func proxyParityRecordsTransportFailuresAndRethrowsCancellation() async throws {
+        let transportFailure = try await OpenAIProxyParityHarness(
+            target: proxyParityTestTarget(),
+            localTransport: ThrowingConformanceTransport(error: TestTransportError.networkLost),
+            remoteTransport: RecordingConformanceTransport(responses: [
+                .json(statusCode: 200, body: chatCompletionBody()),
+                .sse(statusCode: 200, body: streamingToolCallBody()),
+                .json(statusCode: 400, body: errorBody(field: "best_of", phase: "openai_request_validation")),
+            ])
+        ).run()
+        #expect(
+            row("proxy_parity.chat.completions.response_shape", in: transportFailure)?.observedReason ==
+                "local_response=transport_failed=networkLost"
+        )
+
+        let cancellingHarness = OpenAIProxyParityHarness(
+            target: proxyParityTestTarget(),
+            localTransport: ThrowingConformanceTransport(error: URLError(.cancelled)),
+            remoteTransport: RecordingConformanceTransport(responses: [
+                .json(statusCode: 200, body: chatCompletionBody()),
+            ])
+        )
+        await #expect(throws: URLError(.cancelled)) {
+            _ = try await cancellingHarness.run()
+        }
+
+        let cancellationErrorHarness = OpenAIProxyParityHarness(
+            target: proxyParityTestTarget(),
+            localTransport: ThrowingConformanceTransport(error: CancellationError()),
+            remoteTransport: RecordingConformanceTransport(responses: [
+                .json(statusCode: 200, body: chatCompletionBody()),
+            ])
+        )
+        do {
+            _ = try await cancellationErrorHarness.run()
+            Issue.record("expected cancellation to be rethrown")
+        } catch is CancellationError {
+        }
+    }
+
+    @Test("CLI parser covers proxy parity mode and named missing fields")
+    func cliParserCoversProxyParityModeAndNamedMissingFields() throws {
+        let cli = try OpenAIConformanceHarnessCLI.parse(arguments: [
+            "--mode", "proxy-parity",
+            "--local-base-url", "https://local.example/v1",
+            "--local-model", "local-model",
+            "--remote-base-url", "https://remote.example/v1",
+            "--remote-model", "remote-model",
+            "--remote-api-key", "remote-secret",
+            "--timeout-seconds", "11",
+            "--output", "parity-report.json",
+        ])
+
+        #expect(cli.proxyParityTarget == OpenAIProxyParityTarget(
+            localBaseURL: "https://local.example/v1",
+            localModelID: "local-model",
+            localAPIKey: "",
+            remoteBaseURL: "https://remote.example/v1",
+            remoteModelID: "remote-model",
+            remoteAPIKey: "remote-secret",
+            timeoutSeconds: 11
+        ))
+        #expect(throws: OpenAIConformanceHarnessCLIError.missingValue("--local-base-url")) {
+            try OpenAIConformanceHarnessCLI.parse(arguments: [
+                "--mode", "proxy-parity",
+                "--local-model", "local-model",
+                "--remote-base-url", "https://remote.example/v1",
+                "--remote-model", "remote-model",
+                "--output", "parity-report.json",
+            ])
+        }
+        #expect(throws: OpenAIConformanceHarnessCLIError.missingValue("--remote-model")) {
+            try OpenAIConformanceHarnessCLI.parse(arguments: [
+                "--mode", "proxy-parity",
+                "--local-base-url", "https://local.example/v1",
+                "--local-model", "local-model",
+                "--remote-base-url", "https://remote.example/v1",
+                "--output", "parity-report.json",
+            ])
+        }
+        #expect(throws: OpenAIConformanceHarnessCLIError.missingValue("--local-model")) {
+            try OpenAIConformanceHarnessCLI.parse(arguments: [
+                "--mode", "proxy-parity",
+                "--local-base-url", "https://local.example/v1",
+                "--remote-base-url", "https://remote.example/v1",
+                "--remote-model", "remote-model",
+                "--output", "parity-report.json",
+            ])
+        }
+        #expect(throws: OpenAIConformanceHarnessCLIError.missingValue("--remote-base-url")) {
+            try OpenAIConformanceHarnessCLI.parse(arguments: [
+                "--mode", "proxy-parity",
+                "--local-base-url", "https://local.example/v1",
+                "--local-model", "local-model",
+                "--remote-model", "remote-model",
+                "--output", "parity-report.json",
+            ])
+        }
+        #expect(throws: OpenAIConformanceHarnessCLIError.unknownOption("--remote-base-url")) {
+            try OpenAIConformanceHarnessCLI.parse(arguments: [
+                "--mode", "mock-backend-ci",
+                "--remote-base-url", "https://remote.example/v1",
+                "--output", "report.json",
+            ])
+        }
+        #expect(throws: OpenAIConformanceHarnessCLIError.unknownOption("--base-url")) {
+            try OpenAIConformanceHarnessCLI.parse(arguments: [
+                "--mode", "proxy-parity",
+                "--base-url", "https://local.example/v1",
+                "--model", "local-model",
+                "--local-base-url", "https://local.example/v1",
+                "--local-model", "local-model",
+                "--remote-base-url", "https://remote.example/v1",
+                "--remote-model", "remote-model",
+                "--output", "parity-report.json",
+            ])
+        }
+    }
+
+    @Test("proxy parity CLI run writes report using injected transport")
+    func proxyParityCLIRunWritesReportUsingInjectedTransport() async throws {
+        let output = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-openai-proxy-parity-\(UUID().uuidString)")
+            .appendingPathComponent("parity-report.json")
+        let cli = OpenAIConformanceHarnessCLI(
+            proxyParityTarget: proxyParityTestTarget(),
+            outputURL: output
+        )
+
+        let report = try await cli.run(transport: MockOpenAIConformanceTransport())
+        let decoded = try JSONDecoder().decode(
+            OpenAIConformanceReport.self,
+            from: try Data(contentsOf: output)
+        )
+
+        #expect(report.summary.passed == 3)
+        #expect(decoded == report)
+    }
 }
 
 private actor RecordingConformanceTransport: RemoteProviderHTTPTransport {
@@ -402,6 +702,18 @@ private func row(
     in report: OpenAIConformanceReport
 ) -> OpenAIConformanceRow? {
     report.rows.first { $0.field == field }
+}
+
+private func proxyParityTestTarget() -> OpenAIProxyParityTarget {
+    OpenAIProxyParityTarget(
+        localBaseURL: "https://local.example/v1",
+        localModelID: "local-model",
+        localAPIKey: "",
+        remoteBaseURL: "https://remote.example/v1",
+        remoteModelID: "remote-model",
+        remoteAPIKey: "",
+        timeoutSeconds: 30
+    )
 }
 
 private func requestBodyModel(_ request: URLRequest) throws -> String? {
