@@ -50,28 +50,27 @@ class CodeEvaluationResult:
 
 
 def extract_candidate_code(raw_response: str) -> tuple[str, str]:
-    normalized = raw_response.strip()
-    if not normalized:
+    if not raw_response or raw_response.isspace():
         return "", "empty_prediction"
 
     fence = "```"
-    closing = normalized.rfind(fence)
+    closing = raw_response.rfind(fence)
     if closing >= 0:
-        opening = normalized.rfind(fence, 0, closing)
+        opening = raw_response.rfind(fence, 0, closing)
         if opening >= 0:
-            content_start = _code_block_content_start(normalized, opening + 3)
-            candidate = normalized[content_start:closing].strip()
+            content_start = _code_block_content_start(raw_response, opening + 3)
+            candidate = raw_response[content_start:closing].strip()
             if candidate:
                 return candidate, "parsed_code_block"
-            if normalized.count(fence) % 2 == 0:
+            if raw_response.count(fence) % 2 == 0:
                 return candidate, "parsed_code_block"
             closing = opening
-            opening = normalized.rfind(fence, 0, closing)
+            opening = raw_response.rfind(fence, 0, closing)
             if opening >= 0:
-                content_start = _code_block_content_start(normalized, opening + 3)
-                return normalized[content_start:closing].strip(), "parsed_code_block"
+                content_start = _code_block_content_start(raw_response, opening + 3)
+                return raw_response[content_start:closing].strip(), "parsed_code_block"
 
-    return normalized, "parsed_code"
+    return raw_response.strip(), "parsed_code"
 
 
 def _code_block_content_start(text: str, start: int) -> int:
