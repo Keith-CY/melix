@@ -2,6 +2,15 @@
   "originHash" : "a057986cd7a853446db24cfecb590983f5e4c3318c9a359270513e60ce87fac0",
   "pins" : [
     {
+      "identity" : "async-http-client",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swift-server/async-http-client",
+      "state" : {
+        "revision" : "2fc4652fb4689eb24af10e55cabaa61d8ba774fd",
+        "version" : "1.32.0"
+      }
+    },
+    {
       "identity" : "eventsource",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/mattt/EventSource.git",
