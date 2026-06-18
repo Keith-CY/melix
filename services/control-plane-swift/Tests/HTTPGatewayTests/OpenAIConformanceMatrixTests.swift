@@ -693,7 +693,7 @@ struct OpenAIConformanceMatrixTests {
 
         #expect(response.statusCode == 200)
         #expect(request.execution.toolConfig.toolChoice.contains("get_weather"))
-        #expect(payload.contains("event: message"))
+        #expect(payload.contains("event: message") == false)
         #expect(payload.contains("\"tool_calls\""))
         #expect(payload.contains("\"name\":\"get_weather\""))
         #expect(payload.contains("\"arguments\":\"{\\\"city\\\":\\\"Tokyo\\\"}\""))
@@ -739,10 +739,111 @@ struct OpenAIConformanceMatrixTests {
         #expect(payload.contains("\"total_tokens\":12"))
         #expect(orderedConformanceRanges(in: payload, needles: [
             "\"content\":\"done\"",
-            "\"usage\"",
             "\"finish_reason\":\"stop\"",
+            "\"usage\"",
             "data: [DONE]",
         ]))
+    }
+
+    @Test("streaming prefill progress stays invisible unless opted in")
+    func streamingPrefillProgressStaysInvisibleUnlessOptedIn() async throws {
+        func prefillEvents(requestID: String) -> [Melix_Worker_V1_ExecuteEvent] {
+            [
+                makePrefillStartedEvent(requestID: requestID, seq: 1, inputTokens: 6),
+                makePrefillProgressEvent(requestID: requestID, seq: 2, processedTokens: 3, totalTokens: 6),
+                makeTokenEvent(requestID: requestID, seq: 3, text: "hi"),
+                makeUsageEvent(requestID: requestID, seq: 4, promptTokens: 6, completionTokens: 1),
+                makeCompletedEvent(requestID: requestID, seq: 5, finishReason: "stop", assistantText: "hi"),
+            ]
+        }
+        func chunkOrder(_ payload: String) -> String {
+            parseSSERecords(payload).map { $0.event ?? "data" }.joined(separator: ",")
+        }
+        func expectStrictDataPurity(_ payload: String) throws {
+            for record in parseSSERecords(payload) where record.event == nil {
+                if record.data == "[DONE]" {
+                    continue
+                }
+                let object = try JSONSerialization.jsonObject(with: Data(record.data.utf8))
+                let json = try #require(object as? [String: Any])
+                #expect(json["object"] as? String == "chat.completion.chunk")
+            }
+        }
+
+        let defaultWorker = RecordingConformanceWorker(
+            requestID: "req-stream-pf-default",
+            events: prefillEvents(requestID: "req-stream-pf-default")
+        )
+        let defaultResponse = try await Self.handler(worker: defaultWorker).handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    Self.body(extra: #""stream": true, "stream_options": { "include_usage": true }"#).utf8
+                )
+            )
+        )
+        let defaultPayload = try await collectConformanceBody(defaultResponse.body)
+
+        #expect(defaultResponse.statusCode == 200)
+        #expect(defaultPayload.contains("prefill_progress") == false)
+        #expect(defaultPayload.contains("\"processed_tokens\"") == false)
+        try expectStrictDataPurity(defaultPayload)
+        let defaultOrder = chunkOrder(defaultPayload)
+        #expect(defaultOrder == "data,data,data,data")
+
+        let optInWorker = RecordingConformanceWorker(
+            requestID: "req-stream-pf-opt-in",
+            events: prefillEvents(requestID: "req-stream-pf-opt-in")
+        )
+        let optInResponse = try await Self.handler(worker: optInWorker).handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    Self.body(
+                        extra: #""stream": true, "stream_options": { "include_usage": true, "include_prefill_progress": true }"#
+                    ).utf8
+                )
+            )
+        )
+        let optInPayload = try await collectConformanceBody(optInResponse.body)
+        let optInRequest = try #require(await optInWorker.lastGenerateRequest)
+
+        #expect(optInResponse.statusCode == 200)
+        #expect(optInRequest.execution.ext["melix.stream.include_prefill_progress"] == "true")
+        #expect(optInPayload.contains("event: prefill_progress"))
+        #expect(optInPayload.contains("\"phase\":\"started\""))
+        #expect(optInPayload.contains("\"input_tokens\":6"))
+        #expect(optInPayload.contains("\"phase\":\"progress\""))
+        #expect(optInPayload.contains("\"processed_tokens\":3"))
+        try expectStrictDataPurity(optInPayload)
+        let optInOrder = chunkOrder(optInPayload)
+        #expect(optInOrder == "prefill_progress,prefill_progress,data,data,data,data")
+
+        let report = OpenAIConformanceReport(rows: [
+            OpenAIConformanceRow(
+                field: "stream_options.include_prefill_progress=absent",
+                route: "/v1/chat/completions -> SSE chunk order",
+                expectedBehavior: "prefill telemetry is dropped; only OpenAI data chunks reach the stream.",
+                observedStatus: defaultOrder == "data,data,data,data" ? .pass : .fail,
+                observedReason: "chunk_order=\(defaultOrder)"
+            ),
+            OpenAIConformanceRow(
+                field: "stream_options.include_prefill_progress=true",
+                route: "/v1/chat/completions -> SSE chunk order",
+                expectedBehavior: "prefill telemetry uses the named prefill_progress event and stays out of unnamed data chunks.",
+                observedStatus: optInOrder == "prefill_progress,prefill_progress,data,data,data,data" ? .pass : .fail,
+                observedReason: "chunk_order=\(optInOrder)"
+            ),
+        ])
+        #expect(report.summary.passed == 2)
+        #expect(report.summary.failed == 0)
+        let reportJSON = try report.jsonString()
+        #expect(reportJSON.contains("\"chunk_order=data,data,data,data\""))
+        #expect(reportJSON.contains("\"chunk_order=prefill_progress,prefill_progress,data,data,data,data\""))
     }
 
     @Test("orphan tool-call markup is suppressed across streaming and non-streaming chat")

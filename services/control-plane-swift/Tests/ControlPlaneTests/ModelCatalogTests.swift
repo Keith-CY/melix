@@ -7,6 +7,28 @@ import MelixWorkerProtocol
 
 @Suite("Model Catalog")
 struct ModelCatalogTests {
+    @Test("built-in dev seed models are internal on user-facing surfaces")
+    func builtInDevSeedModelsAreInternalOnUserFacingSurfaces() async throws {
+        let seedModels = ModelCatalog.phaseSevenContractSeedModels()
+        let devSeedModels = seedModels.filter { $0.modelID.hasPrefix("melix-dev-") }
+        let visibleDevSeedModelIDs = devSeedModels
+            .filter(ModelCatalogPresentation.isUserVisible)
+            .map(\.modelID)
+
+        #expect(visibleDevSeedModelIDs.isEmpty)
+        #expect(Set(seedModels.map(\.modelID)).isSuperset(of: [
+            "melix-dev-text",
+            "melix-dev-embed",
+            "melix-dev-rerank",
+            "melix-dev-model-ops",
+            "melix-dev-ocr",
+            "melix-dev-vlm",
+            "melix-dev-transcribe",
+            "melix-dev-speech",
+            "melix-dev-image",
+        ]))
+    }
+
     @Test("presentation filters internal models and projects public metadata")
     func presentationFiltersInternalModelsAndProjectsPublicMetadata() async throws {
         var internalByVisibility = ModelCatalog.devTextModel()

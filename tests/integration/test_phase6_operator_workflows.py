@@ -52,7 +52,7 @@ def _chat_completions_tool_call_stream_success(status: int, payload: object) -> 
         return False
     return (
         status == 200
-        and b"event: message" in payload
+        and b"event: message" not in payload
         and b"\"object\":\"chat.completion.chunk\"" in payload
         and b"\"tool_calls\"" in payload
         and b"\"name\":\"tools.vision\"" in payload
@@ -616,7 +616,7 @@ def test_multimodal_chat_suppresses_model_default_parser_selection_for_llava_fam
         )
 
         assert status == 200
-        assert b"event: message" in payload
+        assert b"event: message" not in payload
         assert b"\"object\":\"chat.completion.chunk\"" in payload
         assert b"\"tool_calls\"" not in payload
         assert b"\"parser_mode\":\"qwen\"" not in payload
