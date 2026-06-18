@@ -24,6 +24,7 @@ CRASH_PATTERNS = (
 )
 _BYTE_WHITESPACE = bytes(value for value in range(256) if chr(value).isspace())
 _ORD = ord
+_PRODUCT_VERSION_PATTERN = re.compile(r'^version\s*=\s*"([^"]+)"\s*$', re.MULTILINE)
 
 
 class UpdateCheckResult(NamedTuple):
@@ -62,7 +63,7 @@ def read_product_version(repo_root: str | Path) -> str:
     root = Path(repo_root).expanduser().resolve()
     pyproject_path = root / "pyproject.toml"
     payload = pyproject_path.read_text(encoding="utf-8")
-    match = re.search(r'^version\s*=\s*"([^"]+)"\s*$', payload, re.MULTILINE)
+    match = _PRODUCT_VERSION_PATTERN.search(payload)
     if match is None:
         raise ValueError(f"Unable to read version from {pyproject_path}")
     return match.group(1)

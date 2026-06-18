@@ -1224,6 +1224,9 @@ def test_startup_signals_version_probe_script_emits_metrics(
     assert metrics["update_result_elapsed_ms_mean"] > 0
     assert metrics["update_result_iterations"] == 25000.0
     assert metrics["update_result_available_count"] == 12500.0
+    assert metrics["product_version_elapsed_ms_mean"] > 0
+    assert metrics["product_version_iterations"] == 20000.0
+    assert metrics["product_version_result_length"] == 5.0
 
 
 def test_scope_report_selects_release_gates_probe() -> None:

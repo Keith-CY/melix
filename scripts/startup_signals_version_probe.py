@@ -4,6 +4,7 @@ import json
 import os
 import statistics
 import sys
+import tempfile
 import time
 import tracemalloc
 from pathlib import Path
@@ -48,6 +49,35 @@ def _measure_update_result_allocations(iterations: int, sample_count: int) -> di
     }
 
 
+def _measure_product_version_read(iterations: int, sample_count: int) -> dict[str, float]:
+    elapsed_samples: list[float] = []
+    peak_samples: list[float] = []
+    version = ""
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        repo_root = Path(temporary_directory)
+        (repo_root / "pyproject.toml").write_text(
+            '[project]\nname = "melix"\nversion = "1.2.3"\n',
+            encoding="utf-8",
+        )
+        for _ in range(sample_count):
+            tracemalloc.start()
+            started = time.perf_counter()
+            for _ in range(iterations):
+                version = startup_signals.read_product_version(repo_root)
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+            _, peak = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            peak_samples.append(float(peak))
+
+    return {
+        "product_version_elapsed_ms_mean": statistics.fmean(elapsed_samples),
+        "product_version_iterations": float(iterations),
+        "product_version_peak_bytes_mean": statistics.fmean(peak_samples),
+        "product_version_result_length": float(len(version)),
+    }
+
+
 def _version_pairs(count: int) -> list[tuple[str, str]]:
     versions = [
         f"v{major}.{minor}.{patch}{suffix}+build.{index}"
@@ -70,6 +100,7 @@ def main() -> int:
     pair_count = 12_000
     sample_count = 7
     update_result_iterations = 25_000
+    product_version_iterations = 20_000
     pairs = _version_pairs(pair_count)
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
@@ -94,6 +125,7 @@ def main() -> int:
         "sample_count": float(sample_count),
     }
     metrics.update(_measure_update_result_allocations(update_result_iterations, sample_count))
+    metrics.update(_measure_product_version_read(product_version_iterations, sample_count))
     print(json.dumps(metrics, sort_keys=True))
     return 0
 
