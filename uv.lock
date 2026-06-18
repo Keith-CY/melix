@@ -1338,13 +1338,13 @@ dependencies = [
 
 [package.optional-dependencies]
 audio = [
-    { name = "mlx-audio" },
+    { name = "mlx-audio", version = "0.4.4", source = { registry = "https://pypi.org/simple" } },
 ]
 audio-stt = [
-    { name = "mlx-audio" },
+    { name = "mlx-audio", version = "0.4.4", source = { registry = "https://pypi.org/simple" } },
 ]
 audio-tts = [
-    { name = "mlx-audio" },
+    { name = "mlx-audio", version = "0.4.4", source = { registry = "https://pypi.org/simple" } },
 ]
 mlx = [
     { name = "mlx" },
@@ -1368,11 +1368,11 @@ requires-dist = [
     { name = "data-designer", marker = "extra == 'synthetic-data'", specifier = ">=0.5.9,<0.7" },
     { name = "grpcio", specifier = ">=1.71.0" },
     { name = "mlx", marker = "extra == 'mlx'", specifier = ">=0.31.2,<0.32" },
-    { name = "mlx-audio", marker = "extra == 'audio'", specifier = "==0.4.3" },
-    { name = "mlx-audio", marker = "extra == 'audio-stt'", specifier = "==0.4.3" },
-    { name = "mlx-audio", marker = "extra == 'audio-tts'", specifier = "==0.4.3" },
+    { name = "mlx-audio", marker = "extra == 'audio'", specifier = "==0.4.4" },
+    { name = "mlx-audio", marker = "extra == 'audio-stt'", specifier = "==0.4.4" },
+    { name = "mlx-audio", marker = "extra == 'audio-tts'", specifier = "==0.4.4" },
     { name = "mlx-lm", marker = "extra == 'mlx'", specifier = ">=0.31.3,<0.32" },
-    { name = "mlx-vlm", marker = "extra == 'mlx'", specifier = ">=0.5.0,<0.6" },
+    { name = "mlx-vlm", marker = "extra == 'mlx'", specifier = ">=0.5.0,<0.7" },
     { name = "protobuf", specifier = ">=5.29.0" },
     { name = "pyarrow", marker = "extra == 'mlx'", specifier = ">=23.0.1,<25" },
 ]
@@ -1455,6 +1455,26 @@ wheels = [
 ]
 
 [[package]]
+name = "mlx-audio"
+version = "0.4.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "miniaudio" },
+    { name = "mlx" },
+    { name = "mlx-lm" },
+    { name = "numpy" },
+    { name = "scipy" },
+    { name = "sounddevice" },
+    { name = "tqdm" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/af/1e/f712c9f7997e5051c4da3b658f38162203bb703c750741984c8358c8b897/mlx_audio-0.4.4.tar.gz", hash = "sha256:d751e5f477517e4e7f04de5567318e2fe91b4606af5d7e4b2973603c4777814a", size = 1386491, upload-time = "2026-06-06T15:32:03.504Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/4d/93ac0e0526591c856a1ea2cd00a41f31530d9e021cc95bc9400550926d51/mlx_audio-0.4.4-py3-none-any.whl", hash = "sha256:39fe81b03e2b1354be70de82dc8bf01dd6e75efcb464150afef89f18f734d0d5", size = 1669932, upload-time = "2026-06-06T15:32:01.807Z" },
+]
+
+[[package]]
 name = "mlx-lm"
 version = "0.31.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1492,7 +1512,7 @@ dependencies = [
     { name = "llguidance" },
     { name = "miniaudio" },
     { name = "mlx" },
-    { name = "mlx-audio" },
+    { name = "mlx-audio", version = "0.4.3", source = { registry = "https://pypi.org/simple" } },
     { name = "mlx-lm" },
     { name = "numpy" },
     { name = "opencv-python" },
