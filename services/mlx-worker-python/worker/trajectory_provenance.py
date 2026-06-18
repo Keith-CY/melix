@@ -39,6 +39,31 @@ TRAJECTORY_PROVENANCE_CSV_FIELDS = TRAJECTORY_PROVENANCE_FIELDS
 
 _JSON_IMMUTABLE_TYPES = (str, int, float, bool, type(None))
 _JSON_IMMUTABLE_TYPE_SET = frozenset(_JSON_IMMUTABLE_TYPES)
+_FAST_MANIFEST_REQUIRED_KEYS = (
+    "source_dataset_id",
+    "version",
+    "trajectory_schema_version",
+    "trajectory_split",
+    "trajectory_trace_digest",
+)
+_FAST_MANIFEST_OPTIONAL_FIELD_MAP = (
+    ("trajectory_toolset_version", "trajectory_toolset_version"),
+    ("trajectory_registry_schema_version", "trajectory_registry_schema_version"),
+    ("trajectory_reward_policy_id", "trajectory_reward_policy_id"),
+    ("trajectory_leakage_policy_id", "trajectory_leakage_policy_id"),
+    ("source_package_path", "trajectory_package_path"),
+    ("trajectory_quality_metrics", "trajectory_quality_metrics"),
+    ("agentic_sft_token_metrics", "agentic_sft_token_metrics"),
+)
+
+
+def _is_clean_manifest_text(value: Any) -> bool:
+    return (
+        type(value) is str
+        and bool(value)
+        and not value[0].isspace()
+        and not value[-1].isspace()
+    )
 
 
 def _copy_json_list(value: list[Any]) -> list[Any]:
@@ -121,12 +146,52 @@ def trajectory_provenance_from_snapshot_manifest(
     )
 
 
+def _fast_trajectory_provenance_from_snapshot_manifest(
+    manifest: dict[str, Any],
+    *,
+    snapshot_manifest_path: str | None,
+) -> dict[str, Any] | None:
+    if manifest.get("format") != "agentic_tool_trace":
+        return None
+    for key in _FAST_MANIFEST_REQUIRED_KEYS:
+        if not _is_clean_manifest_text(manifest.get(key)):
+            return None
+    provenance: dict[str, Any] = {
+        "trajectory_dataset_id": manifest["source_dataset_id"],
+        "trajectory_dataset_version": manifest["version"],
+        "trajectory_schema_version": manifest["trajectory_schema_version"],
+        "trajectory_split": manifest["trajectory_split"],
+        "trajectory_trace_digest": manifest["trajectory_trace_digest"],
+    }
+    if snapshot_manifest_path is not None:
+        provenance["trajectory_snapshot_manifest_path"] = snapshot_manifest_path
+    for source_key, target_key in _FAST_MANIFEST_OPTIONAL_FIELD_MAP:
+        value = manifest.get(source_key)
+        if value is not None and value != "":
+            provenance[target_key] = value
+    return provenance
+
+
 def _trajectory_provenance_from_snapshot_manifest(
     manifest: Mapping[str, Any],
     *,
     snapshot_manifest_path: Path | str | None = None,
     copy_nested: bool,
 ) -> dict[str, Any]:
+    if not copy_nested and type(manifest) is dict:
+        snapshot_manifest_path_text = (
+            snapshot_manifest_path
+            if type(snapshot_manifest_path) is str
+            else _STR(snapshot_manifest_path)
+            if snapshot_manifest_path is not None
+            else None
+        )
+        fast_provenance = _fast_trajectory_provenance_from_snapshot_manifest(
+            manifest,
+            snapshot_manifest_path=snapshot_manifest_path_text,
+        )
+        if fast_provenance is not None:
+            return fast_provenance
     manifest_get = manifest.get
     strip_text = _strip_manifest_text
     format_value = manifest_get("format", "")
