@@ -21,8 +21,9 @@ repository design system while preserving the existing control-plane and worker 
 - [ ] Replace in-content pane toggles with titlebar controls for left panel and right panel. Keep
   the original command-style titlebar action for the Command Center; Preferences remains available
   through `Tools > Settings`.
-- [ ] Remove audio setup from ambient desktop banners. Keep audio setup contextual and present it as
-  a sheet before invoking install or download remediation.
+- [ ] Remove audio setup from ambient desktop banners. Keep audio setup contextual to
+  Models > Downloads and present it as a single aggregated setup surface instead of one
+  warning row per audio model.
 - [ ] Derive one runtime endpoint/model projection from the selected server session and use it for
   callable API, Chat, Command Center, and agent integration output.
 - [x] Redesign Command Center as a standalone Apple-style utility window using the uploaded PDF,
@@ -36,6 +37,29 @@ repository design system while preserving the existing control-plane and worker 
   section cards so accessibility exposes one logical copy of each group/control.
 - [ ] Polish Server, Tools, API, Downloads, Diagnostics, and Image so primary actions stay visible
   and lower-frequency actions move behind menus or disclosures.
+- [ ] Replace the repeated Downloads audio setup rows with an aggregated audio setup flow:
+  - expose one `audioSetupState` from `RuntimeViewModel` instead of rendering
+    `ForEach(audioSetupActions)`;
+  - treat setup as a two-stage remediation path: install the shared audio runtime pack first, then
+    choose and download the recommended audio models;
+  - keep the collapsed surface compact, with a single title, summary, primary action, and optional
+    secondary action;
+  - expand inline inside Downloads for model choice, progress details, failed-model retry, and
+    diagnostics; do not use a modal sheet for normal setup;
+  - make `Install Audio Support` a one-step shared-runtime action. After it succeeds, automatically
+    transition to `Audio Models Required` and expand the recommended-model chooser;
+  - default the model chooser to the recommended setup scope, grouped by capability. Recommended
+    models are selected by default; optional models are visible but not selected by default;
+  - drive recommended and optional setup membership from audio catalog metadata, with app-side
+    deterministic fallback if metadata is incomplete;
+  - persist only the operator-confirmed selected audio setup scope, not temporary checkbox edits;
+  - reconcile `Start Downloads` against existing managed-local, active, failed, and resumable
+    download queue state so repeated clicks are idempotent;
+  - show aggregate progress by readiness count, such as `1 of 2 ready`, and keep byte progress in
+    per-model details;
+  - keep Chat and provider surfaces out of the main setup flow. They should only show
+    capability-specific inline prompts, such as missing text-to-speech, with an `Open Downloads`
+    jump.
 - [x] Follow up on the Chat and Dock review pass:
   - enlarge the packaged Dock icon glyph while preserving the Melix mark and use a very light
     neutral icon background;
@@ -80,6 +104,52 @@ repository design system while preserving the existing control-plane and worker 
     projections; gateway config still hydrates requested/effective endpoint fields, but stale
     `served_model_id` values no longer overwrite Chat's selected server model.
 
+## Aggregated Audio Setup Flow
+
+Downloads is the source of truth for audio asset setup. The setup surface explains why audio
+capabilities are unavailable and gives the operator the next concrete remediation step. It should
+not mirror the raw catalog list, because multiple audio models can share the same runtime pack or
+represent alternatives for the same capability.
+
+The app should model audio setup as a single state machine:
+
+- `none`: no setup notice is shown.
+- `runtimeRequired`: the shared audio runtime pack is missing. Show `Audio Setup Required` and a
+  primary `Install Audio Support` action.
+- `runtimeInstalling`: installation is in progress.
+- `runtimeFailed`: installation failed. Prefer `Retry Install`; after two consecutive failures,
+  promote Diagnostics to the primary action and keep retry as secondary.
+- `modelsRequired`: the runtime pack is installed, but the recommended selected scope is not ready.
+  Show `Audio Models Required` and expand the recommended-model chooser.
+- `modelsDownloading`: one or more selected models are active, failed/resumable, or pending.
+  Show aggregate readiness count in the compact row and per-model progress in the expanded details.
+- `partiallyReady`: at least one selected capability is ready and at least one selected capability
+  remains unavailable or failed. Use `Retry Failed` when failures exist.
+- `readyFeedback`: selected audio capabilities became ready during this session. Show short feedback
+  only; do not keep a long-lived success notice.
+- `newRecommendedAvailable`: catalog metadata introduced a new recommended model outside the
+  operator's previously confirmed selected scope. This is a low-priority, dismissible review prompt,
+  not a blocker.
+
+Recommended setup scope is capability-based, not catalog-count-based. The first-run setup should
+aim to make the default audio capabilities usable, such as one speech-to-text model and one
+text-to-speech model. Extra audio models remain optional. For each capability, readiness requires
+at least one selected or recommended model in that capability to be managed-local; it does not
+require every model in the capability group to be installed.
+
+Audio catalog metadata should use audio-specific fields for this slice:
+
+- `melix.audio.capability`: capability key such as `stt` or `tts`.
+- `melix.audio.setup_role`: `recommended` or `optional`.
+- `melix.audio.setup_priority`: stable ordering within a capability; lower values are more
+  preferred.
+
+The app should continue to read existing technical readiness fields, including
+`melix.audio.backend_id`, `melix.audio.runtime_pack_state`, `melix.audio.runtime_pack_id`, and
+`melix.audio.model_state`. If metadata conflicts, the app should choose deterministically by
+priority, alias, then model ID, and emit a non-blocking Diagnostics warning instead of surfacing a
+catalog error in Downloads.
+
 ## Verification
 
 ```bash
@@ -106,6 +176,14 @@ Manual evidence:
 - Rebuild/open the macOS app and review Chat, Server, Tools, Downloads, Image, and API with
   Computer Use.
 - Confirm no top audio banner appears at startup.
+- Confirm Models > Downloads shows at most one audio setup surface when multiple audio models share
+  the same missing runtime pack.
+- Confirm installing the shared runtime pack transitions the surface to an inline recommended-model
+  chooser rather than creating separate rows for each audio model.
+- Confirm optional audio models do not create a blocking setup notice after the selected recommended
+  scope is ready.
+- Confirm Chat and provider surfaces show capability-specific missing-audio prompts only for the
+  requested capability, with an `Open Downloads` jump.
 - Confirm inspector is collapsed by default.
 - Confirm collapsed side panes do not leave restore rails in the content area.
 - Confirm API quick starts and copy controls are no longer duplicated in the accessibility tree.
@@ -140,6 +218,10 @@ Manual evidence:
   `registry.discovered_model_count` remain the control-plane metrics for the added native Chat
   registry sync. The text-route correction reuses existing scheduler/HTTP route metrics and adds no
   new inference hot-path metrics.
+- Aggregated audio setup metrics: runtime hot-path probes N/A for the UI state aggregation itself.
+  Verification should report focused `RuntimeViewModelTests` coverage for setup-state derivation,
+  selected-scope persistence, idempotent download reconciliation, and queue-progress projection,
+  plus SwiftUI smoke coverage for compact and expanded Downloads rendering.
 - UI evidence: focused Swift tests, desktop polish smoke JSON, and Computer Use visual/AX review.
 - Command Center redesign metrics: runtime probes N/A because the change is a SwiftUI layout and
   composition update over existing read models and actions; UI evidence is the focused Swift view

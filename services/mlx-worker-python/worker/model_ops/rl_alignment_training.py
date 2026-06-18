@@ -958,6 +958,7 @@ def _attach_runtime_candidate_tool_evidence(
         return
     candidate["agentic_tool_metrics"] = dict(tool_run.metrics)
     candidate["agentic_tool_observation_count"] = len(tool_run.observations)
+    candidate.update(_agentic_tool_receipt_summary(tool_run))
 
 
 def _runtime_candidate_reward_trace_rows(
@@ -1028,6 +1029,14 @@ def _runtime_candidate_reward_trace_rows(
             row["tool_calls"] = [dict(call) for call in candidate["tool_calls"]]
         if isinstance(candidate.get("agentic_tool_metrics"), dict):
             row["agentic_tool_metrics"] = dict(candidate["agentic_tool_metrics"])
+        if "agentic_tool_untrusted_context_receipt_schema" in candidate:
+            row["agentic_tool_untrusted_context_receipt_schema"] = candidate[
+                "agentic_tool_untrusted_context_receipt_schema"
+            ]
+        if "agentic_tool_untrusted_context_receipt_count" in candidate:
+            row["agentic_tool_untrusted_context_receipt_count"] = candidate[
+                "agentic_tool_untrusted_context_receipt_count"
+            ]
         if reward_scorer is not None:
             row["reward_scoring_backend"] = reward_scorer.runtime_name
             row["reward_model_id"] = reward_scorer.reward_model_id
@@ -1035,6 +1044,29 @@ def _runtime_candidate_reward_trace_rows(
             _attach_agentic_tool_run(row, tool_run)
         rows.append(row)
     return rows
+
+
+def _agentic_tool_receipt_summary(tool_run: Any) -> dict[str, Any]:
+    receipt_schema = ""
+    receipt_count = 0
+    for observation in getattr(tool_run, "observations", ()):
+        if not isinstance(observation, dict):
+            continue
+        receipts = observation.get("untrusted_context_receipts", ())
+        if not isinstance(receipts, (list, tuple)):
+            continue
+        for receipt in receipts:
+            if not isinstance(receipt, dict):
+                continue
+            receipt_count += 1
+            if not receipt_schema:
+                schema_version = receipt.get("schema_version")
+                if isinstance(schema_version, str):
+                    receipt_schema = schema_version
+    return {
+        "agentic_tool_untrusted_context_receipt_schema": receipt_schema,
+        "agentic_tool_untrusted_context_receipt_count": receipt_count,
+    }
 
 
 def _candidate_replay_fingerprint(candidate: dict[str, Any]) -> str:

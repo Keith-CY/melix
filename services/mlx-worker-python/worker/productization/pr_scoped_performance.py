@@ -74,19 +74,13 @@ def _log_progress(message: str) -> None:
 
 
 def _summarize_command(command: str, *, max_length: int = 180) -> str:
-    command = command.lstrip()
+    command = command.strip()
     if not command:
         return "<empty command>"
 
-    line_end = command.find("\n")
-    if line_end == -1:
-        summary = command.rstrip()
-        has_more_lines = False
-    else:
-        summary = command[:line_end].rstrip()
-        has_more_lines = bool(command[line_end + 1 :].lstrip())
-
-    if has_more_lines:
+    first_line, separator, _remaining_lines = command.partition("\n")
+    summary = first_line.rstrip()
+    if separator:
         summary = f"{summary} ..."
     if len(summary) > max_length:
         return f"{summary[: max_length - 4]} ..."

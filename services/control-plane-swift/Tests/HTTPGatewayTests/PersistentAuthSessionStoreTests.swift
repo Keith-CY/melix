@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 
@@ -106,6 +107,105 @@ struct PersistentAuthSessionStoreTests {
         try await store.reconcile(with: unsupportedPolicy)
         #expect(await metricsStore.value(forKey: "persistent_session.active_session_count") == 0)
         #expect(await metricsStore.value(forKey: "persistent_session.remembered_session_count") == 0)
+    }
+
+    @Test("store records companion read-only session scope")
+    func storeRecordsCompanionReadOnlySessionScope() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-persistent-session-scope-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let store = PersistentAuthSessionStore(
+            storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+            metricsStore: metricsStore,
+            retentionTTLSeconds: 3600,
+            nowUnixMs: { 10_000 }
+        )
+
+        let issued = try await store.issueSession(
+            keyID: "desktop-agent",
+            rememberMe: true,
+            scope: .companionReadOnly
+        )
+        let validation = await store.validateSessionToken(
+            issued.token,
+            policy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "desktop-agent", label: "Desktop Agent", tokenHint: "desktop-agent", token: "sk-desktop"),
+                ]
+            )
+        )
+
+        #expect(issued.metadata.scope == .companionReadOnly)
+        #expect(validation == .success(issued.metadata))
+
+        let persistedObject = try persistedSessionDocument(
+            at: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json")
+        )
+        let sessions = try #require(persistedObject["sessions"] as? [[String: Any]])
+        let session = try #require(sessions.first)
+        #expect(session["scope"] as? String == "companion_read_only")
+    }
+
+    @Test("store restores legacy sessions without scope as operator control")
+    func storeRestoresLegacySessionsWithoutScopeAsOperatorControl() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-persistent-session-legacy-scope-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let token = "melix_sess_legacy"
+        let tokenHash = SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
+        let storeURL = temporaryRoot.appendingPathComponent("persistent-auth-sessions.json")
+        try #require("""
+        {
+          "schema_version": 1,
+          "sessions": [
+            {
+              "session_id": "auth-session-legacy",
+              "key_id": "desktop-agent",
+              "remember_me": true,
+              "token_hash": "\(tokenHash)",
+              "created_at_unix_ms": 1000,
+              "expires_at_unix_ms": 20000,
+              "revoked_at_unix_ms": 0,
+              "last_restored_at_unix_ms": 0
+            }
+          ]
+        }
+        """.data(using: .utf8)).write(to: storeURL)
+
+        let metricsStore = MetricsStore()
+        let store = PersistentAuthSessionStore(
+            storeURL: storeURL,
+            metricsStore: metricsStore,
+            retentionTTLSeconds: 3600,
+            nowUnixMs: { 10_000 }
+        )
+        let restoreResult = try await store.restorePersistedSessions()
+        let validation = await store.validateSessionToken(
+            token,
+            policy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "desktop-agent", label: "Desktop Agent", tokenHint: "desktop-agent", token: "sk-desktop"),
+                ]
+            )
+        )
+
+        #expect(restoreResult.restoredSessionCount == 1)
+        #expect(restoreResult.malformedRecordCount == 0)
+        guard case .success(let metadata) = validation else {
+            Issue.record("Expected legacy session validation to succeed.")
+            return
+        }
+        #expect(metadata.scope == .operatorControl)
+        #expect(metadata.lastRestoredAtUnixMs == 10_000)
     }
 
     @Test("store consumes session revocation atomically")

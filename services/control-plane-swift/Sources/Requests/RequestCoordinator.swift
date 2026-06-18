@@ -1458,11 +1458,17 @@ public actor RequestCoordinator {
             return
         }
 
-        _ = try? await sessionGraphStore.registerToolResult(
-            sessionID: requestIdentity.sessionID,
-            branchID: requestIdentity.branchID,
-            toolCallID: toolCallID
-        )
+        do {
+            _ = try await sessionGraphStore.registerToolResult(
+                sessionID: requestIdentity.sessionID,
+                branchID: requestIdentity.branchID,
+                toolCallID: toolCallID
+            )
+        } catch SessionGraphStoreError.ownerScopeMismatch {
+            await metricsStore.increment("session_graph.owner_scope_mismatch_count")
+        } catch {
+            // Stream-side session graph hydration is best-effort for non-scope errors.
+        }
     }
 
     private func preserveReasoningContinuity(
@@ -1560,14 +1566,34 @@ public actor RequestCoordinator {
     private func resolvedRecoveryRequest(
         _ translatedRequest: TranslatedChatRequest
     ) async -> TranslatedChatRequest {
-        guard
-            let sessionGraphStore,
-            !translatedRequest.workerRequest.execution.id.sessionID.isEmpty
-        else {
-            return translatedRequest
+        var workerRequest = translatedRequest.workerRequest
+        let restoreSnapshotID = workerRequest.execution.cacheHints.restoreSnapshotID
+        if !restoreSnapshotID.isEmpty {
+            let receiptExtFields = SessionContextBoundaryReceipts(
+                requestID: workerRequest.execution.id.requestID,
+                restoreSnapshotID: restoreSnapshotID,
+                ownerScopeChecked: false
+            ).extFields
+            // Preserve receipt metadata already attached by an upstream boundary step.
+            workerRequest.execution.ext.merge(
+                receiptExtFields,
+                uniquingKeysWith: { existingValue, _ in existingValue }
+            )
         }
 
-        var workerRequest = translatedRequest.workerRequest
+        guard
+            let sessionGraphStore,
+            !workerRequest.execution.id.sessionID.isEmpty
+        else {
+            return TranslatedChatRequest(
+                requestID: translatedRequest.requestID,
+                modelID: translatedRequest.modelID,
+                responseModelID: translatedRequest.responseModelID,
+                workerRequest: workerRequest,
+                stream: translatedRequest.stream
+            )
+        }
+
         if workerRequest.execution.id.branchID.isEmpty {
             workerRequest.execution.id.branchID = "branch-main"
         }
@@ -1582,6 +1608,13 @@ public actor RequestCoordinator {
                 ?? session.branches.first(where: { $0.branchID == session.activeBranchID })
             if let branch, !branch.resumeSnapshotID.isEmpty {
                 workerRequest.execution.cacheHints.restoreSnapshotID = branch.resumeSnapshotID
+                workerRequest.execution.ext.merge(
+                    SessionContextBoundaryReceipts(
+                        requestID: workerRequest.execution.id.requestID,
+                        restoreSnapshotID: branch.resumeSnapshotID
+                    ).extFields,
+                    uniquingKeysWith: { _, receiptValue in receiptValue }
+                )
             }
         }
 

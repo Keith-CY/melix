@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
@@ -13,10 +14,17 @@ import sys
 
 _DIFF_HEADER_PREFIX = "diff --git a/"
 _DIFF_HEADER_SEPARATOR = " b/"
+_DIFF_HEADER_PREFIX_BYTES = b"diff --git a/"
+_DIFF_HEADER_SEPARATOR_BYTES = b" b/"
 _ASCII_ZERO = ord("0")
 _ASCII_NINE = ord("9")
 _ASCII_COMMA = ord(",")
 _ASCII_SPACE = ord(" ")
+_ASCII_BACKSLASH = ord("\\")
+_ASCII_PLUS = ord("+")
+_ASCII_MINUS = ord("-")
+_ASCII_AT = ord("@")
+_ASCII_LOWER_D = ord("d")
 
 
 def _is_diff_file_marker(line: str) -> bool:
@@ -49,6 +57,22 @@ def _parse_hunk_new_start_from_digit(line: str, digit_index: int) -> int | None:
     return None
 
 
+def _parse_hunk_new_start_from_digit_bytes(line: bytes, digit_index: int) -> int | None:
+    value = 0
+    index = digit_index
+    line_length = len(line)
+    while index < line_length:
+        character_code = line[index]
+        if _ASCII_ZERO <= character_code <= _ASCII_NINE:
+            value = value * 10 + (character_code - _ASCII_ZERO)
+            index += 1
+            continue
+        if character_code == _ASCII_COMMA or character_code == _ASCII_SPACE:
+            return value if index > digit_index else None
+        return None
+    return None
+
+
 def _parse_hunk_new_start(line: str) -> int | None:
     new_range_index = line.find(" +")
     if new_range_index < 0:
@@ -59,29 +83,29 @@ def _parse_hunk_new_start(line: str) -> int | None:
 def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     changed_by_path: dict[str, set[int]] = {}
     changed_by_path_setdefault = changed_by_path.setdefault
-    header_prefix = _DIFF_HEADER_PREFIX
-    header_separator = _DIFF_HEADER_SEPARATOR
+    header_prefix = _DIFF_HEADER_PREFIX_BYTES
+    header_separator = _DIFF_HEADER_SEPARATOR_BYTES
     header_prefix_len = len(header_prefix)
     header_separator_len = len(header_separator)
-    parse_hunk_new_start_from_digit = _parse_hunk_new_start_from_digit
+    parse_hunk_new_start_from_digit = _parse_hunk_new_start_from_digit_bytes
     add_changed_line = None
     new_line: int | None = None
-    for line in diff_text.splitlines():
+    for line in diff_text.encode().split(b"\n"):
         if not line:
             if add_changed_line is not None and new_line is not None:
                 new_line += 1
             continue
         first_char = line[0]
-        if first_char == "d" and line.startswith(header_prefix):
+        if first_char == _ASCII_LOWER_D and line.startswith(header_prefix):
             separator_index = line.find(header_separator, header_prefix_len)
             add_changed_line = None
             if separator_index >= 0:
-                current_path = line[separator_index + header_separator_len :]
+                current_path = line[separator_index + header_separator_len :].decode()
                 add_changed_line = changed_by_path_setdefault(current_path, set()).add
             new_line = None
             continue
-        if first_char == "@" and len(line) > 1 and line[1] == "@":
-            new_range_index = line.find(" +")
+        if first_char == _ASCII_AT and len(line) > 1 and line[1] == _ASCII_AT:
+            new_range_index = line.find(b" +")
             if new_range_index < 0:
                 new_line = None
                 continue
@@ -89,12 +113,12 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
             continue
         if add_changed_line is None or new_line is None:
             continue
-        if first_char == "\\":
+        if first_char == _ASCII_BACKSLASH:
             continue
-        if first_char == "+":
+        if first_char == _ASCII_PLUS:
             add_changed_line(new_line)
             new_line += 1
-        elif first_char == "-":
+        elif first_char == _ASCII_MINUS:
             continue
         else:
             new_line += 1
@@ -115,10 +139,12 @@ def _changed_lines_by_path(repo_root: Path, rel_paths: list[str]) -> dict[str, s
     return {rel_path: changed_by_path.get(rel_path, set()) for rel_path in rel_paths}
 
 
-def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
-    raw_value = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "").strip()
+@lru_cache(maxsize=16)
+def _coverage_path_allowlist_from_raw(raw_value: str) -> frozenset[str] | None:
     if not raw_value:
         return None
+    if raw_value == "[]":
+        return frozenset()
     if (
         len(raw_value) >= 2
         and raw_value[0] == '"'
@@ -138,9 +164,16 @@ def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
     return frozenset(str(path) for path in payload if str(path))
 
 
+def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
+    raw_value = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "").strip()
+    return _coverage_path_allowlist_from_raw(raw_value)
+
+
 def _filter_coverage_paths(paths: list[str], allowlist: frozenset[str] | None) -> list[str]:
     if allowlist is None:
         return paths
+    if not allowlist:
+        return []
     return [path for path in paths if path in allowlist]
 
 
@@ -227,8 +260,15 @@ def main() -> int:
     args = parser.parse_args()
 
     repo_root = Path.cwd()
-    coverage_payload = json.loads(Path(args.coverage_json).read_text(encoding="utf-8"))
     paths = _filter_coverage_paths(args.paths, _coverage_path_allowlist(os.environ))
+    if not paths:
+        print("aggregate_measurable_changed_lines=0")
+        print("aggregate_covered_changed_lines=0")
+        print("aggregate_missed_changed_lines=0")
+        print("TOTAL 0 0 100%")
+        return 0
+
+    coverage_payload = json.loads(Path(args.coverage_json).read_text(encoding="utf-8"))
     changed_lines_by_path = _changed_lines_by_path(repo_root, paths)
 
     total_measurable = 0

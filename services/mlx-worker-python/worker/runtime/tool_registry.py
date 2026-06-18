@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, cast
 
 from packages.protocol.python.worker.v1 import common_pb2
@@ -34,6 +35,16 @@ _OpenAIToolTemplate = tuple[
 
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _SELECTION_CACHE_MAX_SIZE = 32
+_KEYWORD_LITERAL_HINT_CHARACTERS = ":/_"
+_KEYWORD_TOKEN_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")
+_KEYWORD_BOUNDARY_TRANSLATION = str.maketrans(
+    {
+        chr(codepoint): " "
+        for codepoint in range(128)
+        if chr(codepoint) not in _KEYWORD_TOKEN_CHARACTERS
+    }
+)
+_KeywordHintRule = tuple[str, bool]
 
 TOOL_REGISTRY_SCHEMA_VERSION = "melix.agentic_tool_registry.v1"
 BUILTIN_TOOLSET_VERSION = "melix.agentic_tools.builtin.v1"
@@ -46,6 +57,23 @@ BUILTIN_AGENTIC_TOOL_NAMES = (
     "image_search",
     "visit",
     "local_compute",
+)
+SELECTABLE_AGENTIC_TOOL_NAMES = (
+    "image_crop",
+    "layout_parse",
+    "text_search",
+    "image_search",
+    "skill_lookup",
+    "memory_lookup",
+    "visit",
+    "local_compute",
+)
+_BUILTIN_AGENTIC_TOOL_NAME_SET = frozenset(SELECTABLE_AGENTIC_TOOL_NAMES)
+ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES = ("local_compute",)
+_KEYWORD_MATCHABLE_TOOL_NAMES = tuple(
+    tool_name
+    for tool_name in SELECTABLE_AGENTIC_TOOL_NAMES
+    if tool_name not in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES
 )
 
 
@@ -177,6 +205,21 @@ class ToolRegistryMetrics:
     tool_count: int
     schema_bytes: int
     required_argument_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSelectionInput:
+    current_user_turn: str = ""
+    recent_user_turns: tuple[str, ...] = ()
+    vector_selected_tool_ids: tuple[str, ...] = ()
+    vector_available: bool = False
+    max_selected_tools: int = len(SELECTABLE_AGENTIC_TOOL_NAMES)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSelectionResult:
+    registry: ToolRegistry
+    receipt: dict[str, Any]
 
 
 class ToolRegistry:
@@ -392,6 +435,10 @@ def built_in_tool_registry() -> ToolRegistry:
     return _BUILTIN_TOOL_CONFIG_REGISTRY
 
 
+def agentic_tool_catalog_registry() -> ToolRegistry:
+    return _AGENTIC_TOOL_CATALOG_REGISTRY
+
+
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
     copy_tool_config = _copy_tool_config
     if names is None or names == BUILTIN_AGENTIC_TOOL_NAMES:
@@ -409,13 +456,203 @@ def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> co
     cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(requested_names)
     if cached_config is not None:
         return copy_tool_config(cached_config)
-    registry = _BUILTIN_TOOL_CONFIG_REGISTRY.select(requested_names)
+    registry = _AGENTIC_TOOL_CATALOG_REGISTRY.select(requested_names)
     config = registry.as_worker_tool_config()
     normalized_names = registry.names()
     _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES[normalized_names] = config
     if raw_requested_names != normalized_names:
         _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES[raw_requested_names] = config
     return copy_tool_config(config)
+
+
+def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSelectionResult:
+    registry = agentic_tool_catalog_registry()
+    max_selected_tools = max(1, selection_input.max_selected_tools)
+    if max_selected_tools == 1:
+        return _build_tool_selection_result(
+            registry,
+            ["local_compute"],
+            {"local_compute": "always"},
+            selection_input,
+            "fallback",
+            "no_keyword_match",
+        )
+    selected_sources: dict[str, str] = {}
+    selected_names: list[str] = []
+    has_vector_selection = False
+    has_keyword_selection = False
+
+    def add_tool(tool_name: str, source: str) -> None:
+        nonlocal has_keyword_selection, has_vector_selection
+        if len(selected_names) >= max_selected_tools:
+            return
+        normalized_name = tool_name.strip()
+        if not normalized_name or normalized_name in selected_sources:
+            return
+        if normalized_name not in _BUILTIN_AGENTIC_TOOL_NAME_SET:
+            return
+        selected_sources[normalized_name] = source
+        selected_names.append(normalized_name)
+        if source == "vector":
+            has_vector_selection = True
+        elif source == "keyword" or source == "keyword_context":
+            has_keyword_selection = True
+
+    for tool_name in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES:
+        add_tool(tool_name, "always")
+
+    selection_mode = "fallback"
+    fallback_reason = "no_keyword_match"
+    if len(selected_names) >= max_selected_tools:
+        return _build_tool_selection_result(
+            registry,
+            selected_names,
+            selected_sources,
+            selection_input,
+            selection_mode,
+            fallback_reason,
+        )
+
+    if selection_input.vector_available and selection_input.vector_selected_tool_ids:
+        for tool_name in selection_input.vector_selected_tool_ids:
+            add_tool(tool_name, "vector")
+        if has_vector_selection:
+            selection_mode = "vector"
+            fallback_reason = ""
+
+    if selection_mode != "vector":
+        current_matches = _keyword_tool_matches(selection_input.current_user_turn)
+        for tool_name in current_matches:
+            add_tool(tool_name, "keyword")
+        if selection_input.recent_user_turns and len(selected_names) < max_selected_tools:
+            context_matches = _keyword_tool_matches(
+                _recent_user_turns_keyword_context(selection_input.recent_user_turns)
+            )
+            for tool_name in context_matches:
+                add_tool(tool_name, "keyword_context")
+        if has_keyword_selection:
+            selection_mode = "keyword"
+            fallback_reason = "vector_unavailable" if not selection_input.vector_available else "vector_no_match"
+
+    return _build_tool_selection_result(
+        registry,
+        selected_names,
+        selected_sources,
+        selection_input,
+        selection_mode,
+        fallback_reason,
+    )
+
+
+def _build_tool_selection_result(
+    registry: ToolRegistry,
+    selected_names: list[str],
+    selected_sources: dict[str, str],
+    selection_input: ToolSelectionInput,
+    selection_mode: str,
+    fallback_reason: str,
+) -> ToolSelectionResult:
+    selected_registry = registry.select(tuple(selected_names))
+    registry_metrics = registry.metrics()
+    selected_metrics = selected_registry.metrics()
+    selected_tool_count = selected_metrics.tool_count
+    receipt = {
+        "schema_version": "melix.agentic_tool_selection.v1",
+        "toolset_version": BUILTIN_TOOLSET_VERSION,
+        "selection_mode": selection_mode,
+        "vector_available": selection_input.vector_available,
+        "fallback_reason": fallback_reason,
+        "selected_tools": [
+            {"tool_id": tool_name, "source": selected_sources[tool_name]}
+            for tool_name in selected_registry.names()
+        ],
+        "dropped_tool_count": max(0, registry_metrics.tool_count - selected_tool_count),
+        "full_schema_bytes": registry_metrics.schema_bytes,
+        "selected_schema_bytes": selected_metrics.schema_bytes,
+    }
+    return ToolSelectionResult(registry=selected_registry, receipt=receipt)
+
+
+def _recent_user_turns_keyword_context(recent_user_turns: tuple[str, ...]) -> str:
+    if len(recent_user_turns) == 1:
+        return recent_user_turns[0]
+    return " ".join(recent_user_turns)
+
+
+@lru_cache(maxsize=128)
+def _keyword_tool_matches(text: str) -> tuple[str, ...]:
+    if not text:
+        return ()
+    normalized_text = text.casefold()
+    if normalized_text.isspace():
+        return ()
+    boundary_text = ""
+    matches: list[str] = []
+    append_match = matches.append
+    keyword_hint_rules = _BUILTIN_TOOL_KEYWORD_HINT_RULES
+    keyword_boundary_text = _keyword_boundary_text
+    for tool_name in _KEYWORD_MATCHABLE_TOOL_NAMES:
+        rules = keyword_hint_rules.get(tool_name, ())
+        for hint, literal in rules:
+            if literal:
+                if hint in normalized_text:
+                    append_match(tool_name)
+                    break
+                continue
+            if not boundary_text:
+                boundary_text = keyword_boundary_text(normalized_text)
+            if hint in boundary_text:
+                append_match(tool_name)
+                break
+    return tuple(matches)
+
+
+def _keyword_hint_matches(
+    text: str,
+    hint: str,
+    *,
+    literal: bool | None = None,
+    boundary_text: str | None = None,
+) -> bool:
+    if not hint:
+        return False
+    normalized_text = text.casefold()
+    if literal is None:
+        literal = any(character in hint for character in _KEYWORD_LITERAL_HINT_CHARACTERS)
+        if not literal:
+            hint = _keyword_boundary_text(hint.casefold())
+    if literal:
+        return hint.casefold() in normalized_text
+    if boundary_text is None:
+        boundary_text = _keyword_boundary_text(normalized_text)
+    return hint in boundary_text
+
+
+def _keyword_boundary_text(text: str) -> str:
+    return f" {text.translate(_KEYWORD_BOUNDARY_TRANSLATION)} "
+
+
+def _compile_keyword_hint_rules(
+    hints_by_tool: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[_KeywordHintRule, ...]]:
+    literal_hint_characters = _KEYWORD_LITERAL_HINT_CHARACTERS
+    keyword_boundary_text = _keyword_boundary_text
+    compiled_rules: dict[str, tuple[_KeywordHintRule, ...]] = {}
+    for tool_name, hints in hints_by_tool.items():
+        rules: list[_KeywordHintRule] = []
+        append_rule = rules.append
+        for hint in hints:
+            if not hint:
+                continue
+            casefolded_hint = hint.casefold()
+            is_literal = any(character in hint for character in literal_hint_characters)
+            append_rule(
+                (casefolded_hint, True)
+                if is_literal
+                else (keyword_boundary_text(casefolded_hint), False)
+            )
+        compiled_rules[tool_name] = tuple(rules)
+    return compiled_rules
 
 
 def _arg(
@@ -433,7 +670,7 @@ def _arg(
     )
 
 
-_BUILTIN_AGENTIC_TOOLS = (
+_AGENTIC_TOOL_CATALOG_TOOLS = (
     ToolDescriptor(
         name="image_crop",
         description="Crop or inspect a bounded region from a referenced image.",
@@ -478,6 +715,28 @@ _BUILTIN_AGENTIC_TOOLS = (
         ),
     ),
     ToolDescriptor(
+        name="skill_lookup",
+        description="Look up local agent skills from a fixture-backed skill store.",
+        tool_kind="skill.lookup",
+        observation_kind="skill_lookup_results",
+        arguments=(
+            _arg("query", "string", "Skill lookup query."),
+            _arg("store_ref", "string", "Optional local skill store or fixture identifier.", required=False),
+            _arg("max_results", "integer", "Maximum number of skill results to return.", required=False),
+        ),
+    ),
+    ToolDescriptor(
+        name="memory_lookup",
+        description="Look up pinned or retrieved memories from a fixture-backed memory store.",
+        tool_kind="memory.lookup",
+        observation_kind="memory_lookup_results",
+        arguments=(
+            _arg("query", "string", "Memory lookup query."),
+            _arg("store_ref", "string", "Optional local memory store or fixture identifier.", required=False),
+            _arg("max_results", "integer", "Maximum number of memory results to return.", required=False),
+        ),
+    ),
+    ToolDescriptor(
         name="visit",
         description="Visit a local URL or fixture-backed page and return extracted content.",
         tool_kind="browser.visit",
@@ -499,7 +758,71 @@ _BUILTIN_AGENTIC_TOOLS = (
     ),
 )
 
+_BUILTIN_TOOL_KEYWORD_HINTS = {
+    "image_crop": (
+        "crop",
+        "cropped",
+        "crop_",
+        "region",
+        "image region",
+        "inspect image",
+    ),
+    "layout_parse": (
+        "layout",
+        "table",
+        "tables",
+        "ocr",
+        "document layout",
+        "page layout",
+    ),
+    "text_search": (
+        "search",
+        "text evidence",
+        "local corpus",
+        "corpus",
+        "documents",
+        "retrieve",
+        "retrieval",
+    ),
+    "image_search": (
+        "image search",
+        "search images",
+        "visual search",
+        "find images",
+        "image evidence",
+    ),
+    "skill_lookup": (
+        "skill lookup",
+        "repo skill",
+        "agent skill",
+        "skill search",
+        "find skill",
+    ),
+    "memory_lookup": (
+        "memory lookup",
+        "pinned memory",
+        "retrieved memory",
+        "remembered preference",
+        "operator preference",
+    ),
+    "visit": (
+        "visit",
+        "open",
+        "read fixture://",
+        "fixture://",
+        "page",
+        "url",
+        "fetch",
+    ),
+}
+_BUILTIN_TOOL_KEYWORD_HINT_RULES = _compile_keyword_hint_rules(_BUILTIN_TOOL_KEYWORD_HINTS)
 
+
+_BUILTIN_TOOL_NAME_SET = frozenset(BUILTIN_AGENTIC_TOOL_NAMES)
+_BUILTIN_AGENTIC_TOOLS = tuple(
+    tool for tool in _AGENTIC_TOOL_CATALOG_TOOLS if tool.name in _BUILTIN_TOOL_NAME_SET
+)
+_AGENTIC_TOOL_CATALOG_REGISTRY = ToolRegistry(_AGENTIC_TOOL_CATALOG_TOOLS)
 _BUILTIN_TOOL_CONFIG_REGISTRY = ToolRegistry(_BUILTIN_AGENTIC_TOOLS)
 _BUILTIN_TOOL_CONFIG_NAMES_LIST = list(BUILTIN_AGENTIC_TOOL_NAMES)
 _BUILTIN_TOOL_CONFIG_BYTES = (
@@ -512,16 +835,22 @@ _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES: dict[tuple[str, ...], common_pb2.ToolC
 
 
 __all__ = [
+    "ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES",
     "BUILTIN_AGENTIC_TOOL_NAMES",
     "BUILTIN_TOOLSET_VERSION",
     "DEFAULT_TOOL_PARSER",
     "DEFAULT_TOOL_PARSER_CONTRACT_VERSION",
+    "SELECTABLE_AGENTIC_TOOL_NAMES",
     "TOOL_REGISTRY_SCHEMA_VERSION",
     "ToolArgumentDescriptor",
     "ToolDescriptor",
     "ToolRegistry",
     "ToolRegistryError",
     "ToolRegistryMetrics",
+    "ToolSelectionInput",
+    "ToolSelectionResult",
+    "agentic_tool_catalog_registry",
     "built_in_tool_config",
     "built_in_tool_registry",
+    "select_agentic_tools_for_turn",
 ]

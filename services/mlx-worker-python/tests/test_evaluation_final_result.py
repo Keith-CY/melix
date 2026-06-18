@@ -585,6 +585,24 @@ def test_score_final_result_aggregates_wide_json_without_losing_ignored_paths() 
     assert score.typed_score == pytest.approx(0.75)
 
 
+def test_score_final_result_recurses_into_partially_different_json_lists() -> None:
+    score = score_final_result(
+        extracted_result=json.dumps({"scores": [1, 99, 3]}),
+        target=json.dumps({"scores": [1, 2, 3]}),
+        profile=EvaluationProfileDefinition(
+            profile_type="final_result",
+            result_kind="json",
+            extraction_mode="strict_full_response",
+            scoring_mode="json_field_match",
+            threshold=1.0,
+        ),
+    )
+
+    assert score.validation_status == "validated"
+    assert score.failure_reason == ""
+    assert score.typed_score == pytest.approx(0.6667)
+
+
 def test_score_final_result_treats_fully_ignored_json_object_as_match() -> None:
     score = score_final_result(
         extracted_result=json.dumps({"metadata": {"confidence": 0.0}}),

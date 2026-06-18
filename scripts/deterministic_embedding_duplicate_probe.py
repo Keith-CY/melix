@@ -4,6 +4,7 @@ import json
 import statistics
 import sys
 import time
+import tracemalloc
 from pathlib import Path
 
 repo_root = Path.cwd()
@@ -78,15 +79,15 @@ def assert_cycle_detection_contract() -> None:
     assert _repeated_input_cycle_length(valid_cycle) == 512
 
 
-def run_probe() -> dict[str, float]:
-    assert_cycle_detection_contract()
-    dimensions = 32
-    unique_inputs = [f"document-{index % 160}-payload-{index % 13}" for index in range(512)]
-    inputs = [unique_inputs[index % len(unique_inputs)] for index in range(8192)]
-    expected_unique_count = len(set(inputs))
-    sample_count = 5
+def _measure_inputs(
+    inputs: list[str],
+    *,
+    dimensions: int,
+    sample_count: int,
+) -> tuple[float, float, float, float]:
     elapsed_samples: list[float] = []
     call_samples: list[float] = []
+    peak_samples: list[float] = []
     checksum = 0.0
 
     for _ in range(sample_count):
@@ -98,21 +99,74 @@ def run_probe() -> dict[str, float]:
             "embedding_backend": backend,
             "embedding_family_adapter": CountingEmbeddingFamilyAdapter(),
         }
+        tracemalloc.start()
         started = time.perf_counter()
         vectors = runtime.embed_inputs(loaded_model, inputs)
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peak_samples.append(float(peak_bytes))
         call_samples.append(float(backend.calls))
         checksum = sum(vector[0] for vector in vectors)
 
     if len(vectors) != len(inputs):
         raise AssertionError(f"unexpected vector count: {len(vectors)} != {len(inputs)}")
+    return (
+        statistics.fmean(elapsed_samples),
+        statistics.fmean(peak_samples),
+        statistics.fmean(call_samples),
+        checksum,
+    )
+
+
+def run_probe() -> dict[str, float]:
+    assert_cycle_detection_contract()
+    dimensions = 32
+    unique_inputs = [f"document-{index % 160}-payload-{index % 13}" for index in range(512)]
+    inputs = [unique_inputs[index % len(unique_inputs)] for index in range(8192)]
+    single_cycle_inputs = ["document-single-cycle-payload"] * len(inputs)
+    expected_unique_count = len(set(inputs))
+    sample_count = 5
+
+    elapsed_mean, peak_mean, call_mean, checksum = _measure_inputs(
+        inputs,
+        dimensions=dimensions,
+        sample_count=sample_count,
+    )
+    (
+        single_cycle_elapsed_mean,
+        single_cycle_peak_mean,
+        single_cycle_call_mean,
+        single_cycle_checksum,
+    ) = _measure_inputs(
+        single_cycle_inputs,
+        dimensions=dimensions,
+        sample_count=sample_count,
+    )
+
+    runtime = DeterministicEmbeddingRuntime(dimensions=dimensions)
+    backend = CountingEmbeddingBackend()
+    loaded_model = {
+        "model_id": "melix-dev-embed-counting",
+        "dimensions": dimensions,
+        "embedding_backend": backend,
+        "embedding_family_adapter": CountingEmbeddingFamilyAdapter(),
+    }
+    vectors = runtime.embed_inputs(loaded_model, inputs)
     assert vectors[0] is not vectors[len(unique_inputs)]
+    single_cycle_vectors = runtime.embed_inputs(loaded_model, single_cycle_inputs)
+    assert single_cycle_vectors[0] is not single_cycle_vectors[-1]
     return {
-        "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
-        "embed_text_calls_mean": round(statistics.fmean(call_samples), 6),
+        "elapsed_ms_mean": round(elapsed_mean, 6),
+        "peak_bytes_mean": round(peak_mean, 6),
+        "embed_text_calls_mean": round(call_mean, 6),
+        "single_cycle_elapsed_ms_mean": round(single_cycle_elapsed_mean, 6),
+        "single_cycle_peak_bytes_mean": round(single_cycle_peak_mean, 6),
+        "single_cycle_embed_text_calls_mean": round(single_cycle_call_mean, 6),
         "input_count": float(len(inputs)),
         "unique_input_count": float(expected_unique_count),
         "checksum": round(checksum, 6),
+        "single_cycle_checksum": round(single_cycle_checksum, 6),
     }
 
 

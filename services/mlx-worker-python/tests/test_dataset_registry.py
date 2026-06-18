@@ -381,6 +381,25 @@ def test_dataset_catalog_first_preview_scan_defers_path_construction(
     assert constructor_calls == 1
 
 
+def test_dataset_catalog_first_preview_scan_skips_unsupported_files_before_best(
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    (snapshot_dir / "000-sidecar.txt").write_text("ignored\n", encoding="utf-8")
+    (snapshot_dir / "001-sidecar").write_text("ignored\n", encoding="utf-8")
+    winner = data_dir / "train.jsonl"
+    winner.write_text('{"prompt":"first"}\n', encoding="utf-8")
+
+    first_entry = catalog._next_supported_scan_entry(snapshot_dir, after="")
+
+    assert first_entry is not None
+    assert first_entry[0] == "data"
+    assert first_entry[1] == data_dir
+    assert catalog._first_supported_dataset_file(snapshot_dir) == winner
+
+
 def test_dataset_catalog_json_row_reader_limit_uses_incremental_decode(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -739,6 +758,35 @@ def test_dataset_catalog_row_reader_stops_file_scan_after_unsplit_limit(
 
     assert rows == [{"prompt": "first"}]
     assert read_paths == [first_file]
+
+
+def test_dataset_catalog_row_reader_stops_iterator_after_unsplit_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    first_file = data_dir / "part-00000.jsonl"
+    second_file = data_dir / "part-00001.jsonl"
+    third_file = data_dir / "part-00002.jsonl"
+    first_file.write_text('{"prompt":"first"}\n', encoding="utf-8")
+    second_file.write_text('{"prompt":"second"}\n', encoding="utf-8")
+    third_file.write_text('{"prompt":"third"}\n', encoding="utf-8")
+    yielded_paths: list[Path] = []
+
+    def tracking_iter(path: Path):
+        assert path == snapshot_dir
+        for candidate in (first_file, second_file, third_file):
+            yielded_paths.append(candidate)
+            yield candidate
+
+    monkeypatch.setattr(catalog, "_iter_supported_dataset_files", tracking_iter)
+
+    rows = read_hf_dataset_snapshot_rows(snapshot_dir, limit=2)
+
+    assert rows == [{"prompt": "first"}, {"prompt": "second"}]
+    assert yielded_paths == [first_file, second_file]
 
 
 def test_dataset_catalog_limit_one_preview_avoids_full_supported_file_iterator(

@@ -46,8 +46,8 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: package-self-contained-app-${{ github.event_name == 'schedule' && 'schedule-' || '' }}${{ github.ref }}
-  cancel-in-progress: true
+  group: package-self-contained-app-${{ github.event_name == 'schedule' && 'schedule-' || '' }}${{ github.ref }}-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_id || 'shared' }}
+  cancel-in-progress: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
 
 jobs:
   detect-main-update:

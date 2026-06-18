@@ -6,7 +6,7 @@ import Testing
 
 @Suite("App Screenshot Capture", .serialized)
 struct AppScreenshotCaptureTests {
-    @Test("default cases cover all workspace surfaces, tool sections, and command center")
+    @Test("default cases cover all workspace surfaces, chat composer states, tool sections, and command center")
     func defaultCasesCoverAllAppSurfaces() {
         let cases = AppScreenshotCaptureCase.defaultCases
         let workspaceSurfaces = cases.compactMap { captureCase -> String? in
@@ -21,6 +21,12 @@ struct AppScreenshotCaptureTests {
             }
             return section.rawValue
         }
+        let chatComposerStates = cases.compactMap { captureCase -> String? in
+            guard case .chatComposer(let state) = captureCase else {
+                return nil
+            }
+            return state.id
+        }
         let commandCenterCount = cases.filter {
             if case .commandCenter = $0 {
                 return true
@@ -28,8 +34,9 @@ struct AppScreenshotCaptureTests {
             return false
         }.count
 
-        #expect(workspaceSurfaces.sorted() == DesktopSurface.visibleNavigationCases.map(\.rawValue).sorted())
+        #expect(workspaceSurfaces.sorted() == DesktopSurface.routableWorkspaceCases.map(\.rawValue).sorted())
         #expect(toolSections.sorted() == DesktopToolSection.allCases.map(\.rawValue).sorted())
+        #expect(chatComposerStates.sorted() == AppScreenshotChatComposerState.allCases.map(\.id).sorted())
         #expect(commandCenterCount == 1)
     }
 
@@ -86,7 +93,7 @@ struct AppScreenshotCaptureTests {
                 width: 640,
                 height: 420
             ),
-            cases: [.workspace(.models), .toolSection(.downloads), .commandCenter]
+            cases: [.workspace(.models), .toolSection(.downloads), .chatComposer(.offlineProvider), .commandCenter]
         )
 
         let manifest = try await runner.run()
@@ -106,6 +113,7 @@ struct AppScreenshotCaptureTests {
         #expect(manifest.screenshots.map(\.id) == [
             "workspace-models",
             "workspace-models-downloads",
+            "chat-composer-offline-provider",
             "command-center",
         ])
         #expect(firstScreenshot.surface == "Models")
@@ -141,31 +149,36 @@ struct AppScreenshotCaptureTests {
         let firstEvent = await iterator.next()
         let snapshot = try await client.serverSnapshot()
         let fallbackModel = try await client.loadModel(modelID: "missing-model")
-        let unloadedModel = try await client.unloadModel(modelID: "melix-dev-text")
-        let updatedModel = try await client.updateModelSettings(modelID: "melix-dev-text", values: ["alias": "Text"])
-        let modelInfo = try await client.modelInfo(modelID: "melix-dev-text")
+        let unloadedModel = try await client.unloadModel(modelID: "melix-screenshot-text")
+        let updatedModel = try await client.updateModelSettings(modelID: "melix-screenshot-text", values: ["alias": "Text"])
+        let modelInfo = try await client.modelInfo(modelID: "melix-screenshot-text")
 
         #expect(handshake.protocolVersion == "melix.controlplane.v1")
         #expect(handshake.daemonInstanceID == "screenshot-daemon")
         #expect(firstEvent == nil)
-        #expect(snapshot.models.map(\.modelID) == ["melix-dev-text", "melix-dev-image"])
-        #expect(fallbackModel.modelID == "melix-dev-text")
-        #expect(unloadedModel.modelID == "melix-dev-text")
-        #expect(updatedModel.modelID == "melix-dev-text")
+        #expect(snapshot.models.map(\.modelID) == [
+            "melix-screenshot-text",
+            "melix-screenshot-image",
+            "melix-screenshot-vision",
+        ])
+        #expect(snapshot.models.allSatisfy { !$0.modelID.hasPrefix("melix-dev-") })
+        #expect(fallbackModel.modelID == "melix-screenshot-text")
+        #expect(unloadedModel.modelID == "melix-screenshot-text")
+        #expect(updatedModel.modelID == "melix-screenshot-text")
         #expect(modelInfo.ok)
         #expect(modelInfo.supportedModalities == ["text"])
 
         await #expect(throws: ControlPlaneXPCClientError.self) {
             try await client.startChat(
                 ControlPlaneChatRequest(
-                    modelID: "melix-dev-text",
+                    modelID: "melix-screenshot-text",
                     messages: [.init(role: "user", content: "hello")]
                 )
             )
         }
         await #expect(throws: ControlPlaneXPCClientError.self) {
             try await client.runModelOperation(
-                modelID: "melix-dev-text",
+                modelID: "melix-screenshot-text",
                 operation: "quantize",
                 outputDir: "/tmp/model",
                 quantProfileID: "q4",

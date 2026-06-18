@@ -19,10 +19,14 @@ _JSON_DECODE_ERROR = json.JSONDecodeError
 _PYTHON_CODE_BLOCK_TAG = "python"
 _PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
 _PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
-_ASCII_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e"
-_ASCII_NON_LINE_WHITESPACE = " \t\x1f"
+_ASCII_SPLITLINE_BOUNDARIES = frozenset("\n\r\v\f\x1c\x1d\x1e")
+_ASCII_NON_LINE_WHITESPACE = frozenset(" \t\x1f")
 _COUNT_TESTS_SPLITLINES_MAX_CHARS = 500_000
 _ORD_ZERO = ord("0")
+_ORD_QUOTE = ord('"')
+_ORD_COLON = ord(":")
+_ORD_OBJECT_START = ord("{")
+_ORD_OBJECT_END = ord("}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +80,8 @@ def _code_block_content_start(text: str, start: int) -> int:
     elif _starts_with_python_tag_ignore_case(text, start):
         start += _PYTHON_CODE_BLOCK_TAG_LENGTH
     text_length = len(text)
+    if start < text_length and text[start] == "\n":
+        start += 1
     while start < text_length and text[start].isspace():
         start += 1
     return start
@@ -279,8 +285,12 @@ def _count_assert_nodes(
     _type=type,
 ) -> int:
     module_body = getattr(module, "body", ())
-    if module_body and all(_type(node) is _assert_type for node in module_body):
-        return len(module_body)
+    if module_body:
+        for node in module_body:
+            if _type(node) is not _assert_type:
+                break
+        else:
+            return len(module_body)
 
     count = 0
     stack: list[ast.AST] = []
@@ -419,19 +429,21 @@ _JSON_PAYLOAD_WHITESPACE = b" \t\r\n"
 
 def _json_object_payload_bounds(payload_bytes: bytes) -> tuple[int, int] | None:
     payload_length = len(payload_bytes)
-    if payload_length >= 2 and payload_bytes[0] == ord("{") and payload_bytes[-1] == ord("}"):
+    object_start = _ORD_OBJECT_START
+    object_end = _ORD_OBJECT_END
+    if payload_length >= 2 and payload_bytes[0] == object_start and payload_bytes[-1] == object_end:
         return 0, payload_length - 1
 
     start = 0
     while start < payload_length and payload_bytes[start] in _JSON_PAYLOAD_WHITESPACE:
         start += 1
-    if start >= payload_length or payload_bytes[start] != ord("{"):
+    if start >= payload_length or payload_bytes[start] != object_start:
         return None
 
     end = payload_length - 1
     while end > start and payload_bytes[end] in _JSON_PAYLOAD_WHITESPACE:
         end -= 1
-    if payload_bytes[end] != ord("}"):
+    if payload_bytes[end] != object_end:
         return None
     return start, end
 
@@ -504,7 +516,8 @@ def _json_field_value_start_for_token(
     whitespace = _JSON_PAYLOAD_WHITESPACE
     while cursor < payload_length and payload_bytes[cursor] in whitespace:
         cursor += 1
-    if cursor >= payload_length or payload_bytes[cursor] != ord(":"):
+    colon = _ORD_COLON
+    if cursor >= payload_length or payload_bytes[cursor] != colon:
         return None
     cursor += 1
     while cursor < payload_length and payload_bytes[cursor] in whitespace:
@@ -525,7 +538,8 @@ def _extract_json_string_field_with_token(payload_bytes: bytes, key_token: bytes
 
 
 def _extract_json_string_field_at(payload_bytes: bytes, start: int | None) -> str | None:
-    if start is None or payload_bytes[start] != ord('"'):
+    quote = _ORD_QUOTE
+    if start is None or payload_bytes[start] != quote:
         return None
     value_start = start + 1
     value_end = payload_bytes.find(b'"', value_start)

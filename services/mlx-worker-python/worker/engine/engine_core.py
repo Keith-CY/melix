@@ -51,6 +51,11 @@ _DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON = _COMPACT_SORTED_JSON_ENCODER.encod
         "tool_source_ids": [],
     }
 )
+_PROMPT_CONTEXT_RECEIPT_METRIC_KEYS = {
+    "melix.prompt_context.receipt_schema": "prompt_context_receipt_schema",
+    "melix.prompt_context.receipt_count": "prompt_context_receipt_count",
+    "melix.prompt_context.receipts_json": "prompt_context_receipts_json",
+}
 
 
 def _canonical_json_schema_key(schema: str) -> str:
@@ -68,6 +73,21 @@ def _parser_metric_text(value: int | str) -> str:
     if value == 0:
         return _METRIC_ZERO_TEXT
     return str(value)
+
+
+def _apply_prompt_context_receipt_metrics(parser_metrics: dict[str, str], execution_ext: object) -> None:
+    if not execution_ext:
+        return
+    get_value = getattr(execution_ext, "get", None)
+    if not callable(get_value):
+        return
+    for ext_key, metric_key in _PROMPT_CONTEXT_RECEIPT_METRIC_KEYS.items():
+        raw_value = get_value(ext_key, None)
+        if raw_value is None:
+            continue
+        value = str(raw_value)
+        if value:
+            parser_metrics[metric_key] = value
 
 
 def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str, str]:
@@ -429,6 +449,8 @@ class EngineCore:
                                 text=delta.content_text,
                                 raw_text=delta.raw_text,
                                 parser_observation=delta.parser_observation,
+                                token_ids=delta.token_ids,
+                                token_logprobs=delta.token_logprobs,
                             ),
                         )
 
@@ -540,6 +562,7 @@ class EngineCore:
                     token_route_receipt_json = token_route_receipt.to_json()
                 parser_metrics["token_route_receipt_json"] = token_route_receipt_json
                 parser_metrics["allowed_tools_receipt_json"] = allowed_tools_receipt_json
+            _apply_prompt_context_receipt_metrics(parser_metrics, execution_ext)
             finalization_receipt = finalize_text_response(
                 response_id=request_id,
                 created=created,
@@ -748,7 +771,13 @@ class EngineCore:
                         seq=state.allocate_seq(),
                         phase=common_pb2.EXECUTION_DECODING,
                         admission_state=common_pb2.ADMISSION_ADMITTED,
-                        token_delta=inference_pb2.TokenDelta(text=runtime_event.text),
+                        token_delta=inference_pb2.TokenDelta(
+                            text=runtime_event.text or "",
+                            raw_text=runtime_event.raw_text or "",
+                            parser_observation=runtime_event.parser_observation or "",
+                            token_ids=runtime_event.token_ids or (),
+                            token_logprobs=runtime_event.token_logprobs or (),
+                        ),
                     )
 
             if request.return_usage and not state.cancel_event.is_set():
@@ -849,14 +878,20 @@ class EngineCore:
     def _allowed_tools_receipt_json(request: inference_pb2.GenerateRequest) -> str:
         execution = request.execution
         ext = execution.ext
+        ext_get = ext.get
+        tool_choice_resolved = ext_get("melix.compat.tool_choice_resolved", "").strip()
+        tool_config_source = ext_get("melix.tool_config.source", "").strip()
+        raw_tool_count = ext_get("melix.tool_config.tool_count", "").strip()
+        raw_source_ids = ext_get("melix.mcp.source_ids", "")
+        suppressed_reason = ext_get("melix.tool_parser.suppressed_reason", "").strip()
         if (
             not execution.tool_config.tools
             and not execution.tool_config.tool_choice
-            and not ext.get("melix.compat.tool_choice_resolved", "").strip()
-            and not ext.get("melix.tool_config.source", "").strip()
-            and not ext.get("melix.tool_config.tool_count", "").strip()
-            and not ext.get("melix.mcp.source_ids", "").strip()
-            and not ext.get("melix.tool_parser.suppressed_reason", "").strip()
+            and not tool_choice_resolved
+            and not tool_config_source
+            and not raw_tool_count
+            and not raw_source_ids.strip()
+            and not suppressed_reason
         ):
             return _DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
         seen_tools: dict[str, str] = {}
@@ -874,11 +909,10 @@ class EngineCore:
             elif previous_schema != schema and name not in schema_conflicts:
                 schema_conflicts.append(name)
 
-        raw_tool_count = ext.get("melix.tool_config.tool_count", "").strip()
         explicit_empty = (
             not allowed_names
             and execution.HasField("tool_config")
-            and (raw_tool_count == "0" or bool(ext.get("melix.tool_config.source", "").strip()))
+            and (raw_tool_count == "0" or bool(tool_config_source))
         )
         if allowed_names:
             tool_config_state = "declared"
@@ -889,24 +923,24 @@ class EngineCore:
 
         tool_choice_policy = (
             execution.tool_config.tool_choice.strip()
-            or ext.get("melix.compat.tool_choice_resolved", "").strip()
+            or tool_choice_resolved
             or "auto"
         )
-        source_ids = [
-            item.strip()
-            for item in ext.get("melix.mcp.source_ids", "").split(",")
-            if item.strip()
-        ]
+        source_ids: list[str] = []
+        for item in raw_source_ids.split(","):
+            source_id = item.strip()
+            if source_id:
+                source_ids.append(source_id)
         payload = {
             "allowed_tool_names": allowed_names,
             "allowed_tool_count": len(allowed_names),
             "tool_choice_policy": tool_choice_policy,
-            "tool_config_source": ext.get("melix.tool_config.source", "").strip(),
+            "tool_config_source": tool_config_source,
             "tool_source_ids": source_ids,
             "tool_config_state": tool_config_state,
             "schema_conflict_count": len(schema_conflicts),
             "schema_conflicts": schema_conflicts,
-            "suppressed_reason": ext.get("melix.tool_parser.suppressed_reason", "").strip(),
+            "suppressed_reason": suppressed_reason,
         }
         return _COMPACT_SORTED_JSON_ENCODER.encode(payload)
 
@@ -1072,8 +1106,15 @@ class EngineCore:
     ) -> common_pb2.SamplingConfig:
         if not stop_sequences and not sampling.stop:
             return sampling
-        if tuple(sampling.stop) == stop_sequences:
-            return sampling
+        sampling_stop = sampling.stop
+        if len(sampling_stop) == len(stop_sequences):
+            stop_sequences_match = True
+            for index, stop_sequence in enumerate(stop_sequences):
+                if sampling_stop[index] != stop_sequence:
+                    stop_sequences_match = False
+                    break
+            if stop_sequences_match:
+                return sampling
         resolved = common_pb2.SamplingConfig()
         resolved.CopyFrom(sampling)
         del resolved.stop[:]

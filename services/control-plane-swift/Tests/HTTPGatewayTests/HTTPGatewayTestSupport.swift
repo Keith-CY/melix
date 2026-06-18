@@ -17,7 +17,9 @@ func collectChunks(
 func makeTokenEvent(
     requestID: String,
     seq: UInt64,
-    text: String
+    text: String,
+    tokenIDs: [UInt32] = [],
+    tokenLogprobs: [Double] = []
 ) -> Melix_Worker_V1_ExecuteEvent {
     var event = Melix_Worker_V1_ExecuteEvent()
     event.requestID = requestID
@@ -25,6 +27,8 @@ func makeTokenEvent(
     event.seq = seq
     event.tokenDelta = Melix_Worker_V1_TokenDelta()
     event.tokenDelta.text = text
+    event.tokenDelta.tokenIds = tokenIDs
+    event.tokenDelta.tokenLogprobs = tokenLogprobs
     return event
 }
 
@@ -186,4 +190,57 @@ func makeApplyGatewayAccessRequest(
         request.server.applyGatewayAccess.primaryKey = primaryKey
     }
     return request
+}
+
+func makePrefillStartedEvent(
+    requestID: String,
+    seq: UInt64,
+    inputTokens: UInt32
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.executionKind = "generate"
+    event.seq = seq
+    event.prefillStarted = Melix_Worker_V1_PrefillStarted()
+    event.prefillStarted.inputTokens = inputTokens
+    return event
+}
+
+func makePrefillProgressEvent(
+    requestID: String,
+    seq: UInt64,
+    processedTokens: UInt32,
+    totalTokens: UInt32
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.executionKind = "generate"
+    event.seq = seq
+    event.prefillProgress = Melix_Worker_V1_PrefillProgress()
+    event.prefillProgress.processedTokens = processedTokens
+    event.prefillProgress.totalTokens = totalTokens
+    return event
+}
+
+struct SSERecord: Equatable {
+    let event: String?
+    let data: String
+}
+
+func parseSSERecords(_ payload: String) -> [SSERecord] {
+    payload.components(separatedBy: "\n\n").compactMap { block in
+        var eventName: String?
+        var dataLines: [String] = []
+        for line in block.split(separator: "\n", omittingEmptySubsequences: true) {
+            if line.hasPrefix("event: ") {
+                eventName = String(line.dropFirst("event: ".count))
+            } else if line.hasPrefix("data: ") {
+                dataLines.append(String(line.dropFirst("data: ".count)))
+            }
+        }
+        guard !dataLines.isEmpty else {
+            return nil
+        }
+        return SSERecord(event: eventName, data: dataLines.joined(separator: "\n"))
+    }
 }

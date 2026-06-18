@@ -454,8 +454,10 @@ private enum GatewayAuthorizationContext: Sendable {
 }
 
 private enum GatewayAuthorizationRoute {
+    case publicAsset
     case health
     case standard
+    case companionReadOnly
     case createSession
     case currentSession
 }
@@ -581,6 +583,440 @@ public struct OpenAIHandler: Sendable {
     private static let maxSpeechStreamIntervalMs: UInt32 = 1_000
     private static let modelIdleSweepDebounceSeconds: TimeInterval = 30
     private static let logger = Logger(subsystem: "Melix.ControlPlane", category: "OpenAIHandler")
+    private static let companionMobileStatusPageHTML = #"""
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Melix Companion</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f7f7f2;
+  --panel: #ffffff;
+  --text: #16211c;
+  --muted: #5d665f;
+  --line: #d8dbd1;
+  --accent: #126b5a;
+  --accent-pressed: #0d5749;
+  --danger: #8a1f17;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+}
+main {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  padding: 20px 16px 32px;
+  display: grid;
+  gap: 14px;
+}
+header {
+  padding: 18px 0 6px;
+}
+.eyebrow {
+  margin: 0 0 6px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+h1,
+h2 {
+  margin: 0;
+  letter-spacing: 0;
+}
+h1 {
+  font-size: clamp(30px, 8vw, 42px);
+  line-height: 1.04;
+}
+h2 {
+  font-size: 18px;
+  line-height: 1.2;
+}
+p {
+  margin: 8px 0 0;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+}
+.stack {
+  display: grid;
+  gap: 12px;
+}
+label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+input,
+textarea {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--text);
+  font: inherit;
+}
+textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+input:focus,
+textarea:focus,
+button:focus-visible {
+  outline: 3px solid rgba(18, 107, 90, 0.24);
+  outline-offset: 2px;
+}
+.actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+  gap: 8px;
+}
+button {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fdfdf9;
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+}
+button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+}
+button:active {
+  transform: translateY(1px);
+}
+button.primary:active {
+  background: var(--accent-pressed);
+}
+.hint,
+.meta {
+  color: var(--muted);
+  font-size: 13px;
+}
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+.metric {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  min-height: 74px;
+}
+.metric span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.metric strong {
+  display: block;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+  font-size: 20px;
+}
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.log-entry {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+}
+.log-title {
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.empty {
+  color: var(--muted);
+  font-size: 14px;
+}
+.error {
+  color: var(--danger);
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">companion_read_only</p>
+    <h1>Melix Companion</h1>
+    <p class="hint">Read-only local status for a paired Melix runtime.</p>
+  </header>
+
+  <section class="panel stack" aria-labelledby="token-title">
+    <h2 id="token-title">Device Token</h2>
+    <div>
+      <label for="pairing-import">Pairing code or JSON bundle</label>
+      <textarea id="pairing-import" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Paste melix-companion: code or JSON bundle"></textarea>
+      <p class="hint">Import a desktop Copy Code, Pairing QR decoded text, or Copy Bundle payload.</p>
+    </div>
+    <div>
+      <label for="token">Companion token</label>
+      <input id="token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Paste companion token">
+    </div>
+    <div class="actions">
+      <button id="import-pairing" class="primary" type="button">Import Pairing</button>
+      <button id="save-token" class="primary" type="button">Save Device Token</button>
+      <button id="clear-token" type="button">Clear Device Token</button>
+      <button id="refresh" type="button">Refresh Status</button>
+    </div>
+    <p class="hint">This page sends the token as x-melix-session and stores it in localStorage on this device only.</p>
+    <p id="message" class="hint" role="status"></p>
+  </section>
+
+  <section class="panel stack" aria-labelledby="runtime-title">
+    <h2 id="runtime-title">Runtime</h2>
+    <div class="status-grid" aria-live="polite">
+      <div class="metric"><span>Gateway</span><strong id="gateway-status">Not loaded</strong></div>
+      <div class="metric"><span>Models</span><strong id="model-status">Not loaded</strong></div>
+      <div class="metric"><span>Queue</span><strong id="queue-status">Not loaded</strong></div>
+      <div class="metric"><span>Image Jobs</span><strong id="image-job-status">Not loaded</strong></div>
+      <div class="metric"><span>Session</span><strong id="session-status">companion_read_only</strong></div>
+      <div class="metric"><span>Endpoint</span><strong>/v1/melix/companion/status</strong></div>
+    </div>
+  </section>
+
+  <section class="panel stack" aria-labelledby="logs-title">
+    <h2 id="logs-title">Redacted Log Tail</h2>
+    <ul id="logs" class="log-list" aria-live="polite">
+      <li class="empty">No log entries loaded.</li>
+    </ul>
+  </section>
+</main>
+
+<script>
+(() => {
+  const sessionHeader = 'x-melix-session';
+  const defaultStatusPath = '/v1/melix/companion/status';
+  let statusPath = defaultStatusPath;
+  const storageKey = 'melix.companion.sessionToken';
+  const pairingSchemaVersion = 'melix.companion.pairing.bundle.v1';
+  const pairingImport = document.getElementById('pairing-import');
+  const tokenInput = document.getElementById('token');
+  const message = document.getElementById('message');
+  const logs = document.getElementById('logs');
+
+  function text(id, value) {
+    document.getElementById(id).textContent = value;
+  }
+
+  function valueOrDash(value) {
+    if (value === undefined || value === null || value === '') {
+      return '-';
+    }
+    return String(value);
+  }
+
+  function countLabel(ready, total) {
+    if (ready === undefined && total === undefined) {
+      return 'Not reported';
+    }
+    return `${valueOrDash(ready)} / ${valueOrDash(total)}`;
+  }
+
+  function pick(value, keys) {
+    for (const key of keys) {
+      if (value && value[key] !== undefined && value[key] !== null) {
+        return value[key];
+      }
+    }
+    return undefined;
+  }
+
+  function decodePairingCode(value) {
+    const trimmed = value.trim();
+    const prefix = 'melix-companion:';
+    if (!trimmed.startsWith(prefix)) {
+      return trimmed;
+    }
+    const compact = trimmed.slice(prefix.length).replace(/\s+/g, '');
+    const base64 = compact.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  }
+
+  function sameOriginStatusPath(bundle) {
+    if (!bundle.status_url) {
+      return defaultStatusPath;
+    }
+    const url = new URL(bundle.status_url, window.location.href);
+    if (url.origin !== window.location.origin) {
+      return defaultStatusPath;
+    }
+    return `${url.pathname}${url.search}`;
+  }
+
+  function importPairingBundle() {
+    const rawValue = pairingImport.value.trim();
+    if (!rawValue) {
+      message.textContent = 'Paste a pairing code or JSON bundle first.';
+      message.className = 'hint error';
+      return;
+    }
+    try {
+      const decoded = decodePairingCode(rawValue);
+      const bundle = JSON.parse(decoded);
+      if (!bundle || typeof bundle !== 'object') {
+        throw new Error('pairing bundle must be a JSON object');
+      }
+      if (bundle.schema_version !== pairingSchemaVersion) {
+        throw new Error('pairing bundle schema is not supported');
+      }
+      const token = String(bundle.token || '').trim();
+      if (!token) {
+        throw new Error('pairing bundle is missing a token');
+      }
+      statusPath = sameOriginStatusPath(bundle);
+      tokenInput.value = token;
+      pairingImport.value = '';
+      localStorage.setItem(storageKey, token);
+      message.textContent = 'Pairing imported. Device token saved.';
+      message.className = 'hint';
+      refreshStatus();
+    } catch (error) {
+      message.textContent = `Unable to import pairing bundle: ${error.message}`;
+      message.className = 'hint error';
+    }
+  }
+
+  function renderLogs(entries) {
+    logs.replaceChildren();
+    if (!Array.isArray(entries) || entries.length === 0) {
+      const item = document.createElement('li');
+      item.className = 'empty';
+      item.textContent = 'No redacted log entries reported.';
+      logs.appendChild(item);
+      return;
+    }
+    for (const entry of entries.slice(0, 20)) {
+      const item = document.createElement('li');
+      item.className = 'log-entry';
+      const title = document.createElement('p');
+      title.className = 'log-title';
+      const job = pick(entry, ['job_id', 'jobID', 'id']);
+      const state = pick(entry, ['state', 'status']);
+      const stage = pick(entry, ['progress_stage', 'progressStage', 'stage']);
+      title.textContent = [job, state, stage].filter(Boolean).join(' / ') || 'redacted entry';
+      const meta = document.createElement('p');
+      meta.className = 'meta';
+      const redaction = entry.redaction || {};
+      meta.textContent = pick(redaction, ['summary', 'reason', 'policy']) || pick(entry, ['redaction_summary']) || 'raw content hidden';
+      item.append(title, meta);
+      logs.appendChild(item);
+    }
+  }
+
+  function render(data) {
+    if (!data || typeof data !== 'object') {
+      message.textContent = 'Status payload was not an object.';
+      message.className = 'hint error';
+      return;
+    }
+    const models = data.models || {};
+    const queueSummary = (data.queue && data.queue.summary) || data.queue || {};
+    const imageJobs = (data.image_jobs && data.image_jobs.jobs) || (data.imageJobs && data.imageJobs.jobs) ||
+      (data.recent_receipts && data.recent_receipts.jobs) || (data.recentReceipts && data.recentReceipts.jobs) || [];
+    const authorization = data.authorization || {};
+    text('gateway-status', valueOrDash((data.runtime && data.runtime.status) || data.status));
+    text('model-status', countLabel(models.ready, models.total));
+    text('queue-status', countLabel(pick(queueSummary, ['active', 'running']), pick(queueSummary, ['queued', 'pending', 'total'])));
+    text('image-job-status', Array.isArray(imageJobs) ? `${imageJobs.length} visible` : 'Not reported');
+    text('session-status', valueOrDash(authorization.scope || authorization.session_scope || 'companion_read_only'));
+    const logEntries = (data.logs && data.logs.entries) || [];
+    renderLogs(logEntries);
+  }
+
+  async function refreshStatus() {
+    const token = tokenInput.value.trim() || localStorage.getItem(storageKey) || '';
+    if (!token) {
+      message.textContent = 'Paste or save a companion token first.';
+      message.className = 'hint error';
+      return;
+    }
+    message.textContent = 'Refreshing status...';
+    message.className = 'hint';
+    try {
+      const response = await fetch(statusPath, {
+        cache: 'no-store',
+        headers: { [sessionHeader]: token }
+      });
+      if (!response.ok) {
+        throw new Error(`status ${response.status}`);
+      }
+      render(await response.json());
+      message.textContent = `Updated ${new Date().toLocaleTimeString()}.`;
+      message.className = 'hint';
+    } catch (error) {
+      message.textContent = `Unable to load status: ${error.message}`;
+      message.className = 'hint error';
+    }
+  }
+
+  document.getElementById('save-token').addEventListener('click', () => {
+    const token = tokenInput.value.trim();
+    if (!token) {
+      message.textContent = 'Paste a companion token before saving.';
+      message.className = 'hint error';
+      return;
+    }
+    localStorage.setItem(storageKey, token);
+    message.textContent = 'Device token saved.';
+    message.className = 'hint';
+  });
+
+  document.getElementById('import-pairing').addEventListener('click', importPairingBundle);
+
+  document.getElementById('clear-token').addEventListener('click', () => {
+    localStorage.removeItem(storageKey);
+    statusPath = defaultStatusPath;
+    tokenInput.value = '';
+    message.textContent = 'Device token cleared.';
+    message.className = 'hint';
+  });
+
+  document.getElementById('refresh').addEventListener('click', refreshStatus);
+
+  const storedToken = localStorage.getItem(storageKey);
+  if (storedToken) {
+    tokenInput.value = storedToken;
+    refreshStatus();
+  }
+})();
+</script>
+</body>
+</html>
+"""#
+    private static let companionMobileStatusPageHTMLData = Data(companionMobileStatusPageHTML.utf8)
 
     private let modelCatalog: ModelCatalog
     private let requestCoordinator: RequestCoordinator
@@ -732,6 +1168,10 @@ public struct OpenAIHandler: Sendable {
                 response = try await handleHealthDiagnostics()
             case (.get, "/v1/cache/stats"):
                 response = try await handleCacheStats()
+            case (.get, "/v1/melix/companion"):
+                response = await handleCompanionMobileStatusPage()
+            case (.get, "/v1/melix/companion/status"):
+                response = try await handleCompanionStatus(authorization: authorizationContext)
             case (.post, "/v1/melix/auth/session"):
                 response = try await handleCreateAuthSession(request, authorization: authorizationContext)
             case (.get, "/v1/melix/auth/session"):
@@ -783,7 +1223,7 @@ public struct OpenAIHandler: Sendable {
         return HTTPResponse(
             statusCode: 204,
             headers: [
-                "access-control-allow-headers": "authorization, content-type, x-api-key, x-melix-auth-session",
+                "access-control-allow-headers": "authorization, content-type, x-api-key, x-melix-auth-session, x-melix-session",
                 "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
                 "access-control-max-age": "600",
             ],
@@ -795,6 +1235,9 @@ public struct OpenAIHandler: Sendable {
         for request: HTTPRequest
     ) async -> GatewayAuthorizationResolution {
         let route = authorizationRoute(for: request)
+        guard route != .publicAsset else {
+            return .success(.localTrusted)
+        }
         guard route != .health else {
             return .success(.localTrusted)
         }
@@ -807,6 +1250,13 @@ public struct OpenAIHandler: Sendable {
         {
             switch await persistentAuthSessionStore.validateSessionToken(sessionToken, policy: gatewayAccessPolicy) {
             case .success(let metadata):
+                if let failure = await companionScopeFailureResponse(
+                    route: route,
+                    request: request,
+                    metadata: metadata
+                ) {
+                    return .failure(failure)
+                }
                 return .success(.session(token: sessionToken, metadata: metadata))
             case .failure(let failure):
                 return .failure(await authSessionFailureResponse(for: failure))
@@ -957,6 +1407,101 @@ public struct OpenAIHandler: Sendable {
         return try encodedJSONResponse(response)
     }
 
+    private func handleCompanionMobileStatusPage() async -> HTTPResponse {
+        await metricsStore.increment("companion.mobile_page_served_count")
+        return HTTPResponse(
+            statusCode: 200,
+            headers: [
+                "content-type": "text/html; charset=utf-8",
+                "cache-control": "no-store",
+                "referrer-policy": "no-referrer",
+                "x-content-type-options": "nosniff",
+                "x-frame-options": "deny",
+                "content-security-policy": [
+                    "default-src 'none'",
+                    "connect-src 'self'",
+                    "script-src 'unsafe-inline'",
+                    "style-src 'unsafe-inline'",
+                    "img-src 'none'",
+                    "frame-ancestors 'none'",
+                    "base-uri 'none'",
+                    "form-action 'none'",
+                ].joined(separator: "; "),
+            ],
+            body: .data(Self.companionMobileStatusPageHTMLData)
+        )
+    }
+
+    private func handleCompanionStatus(
+        authorization: GatewayAuthorizationContext
+    ) async throws -> HTTPResponse {
+        let startedAt = Date()
+        async let routesTask = healthRoutes()
+        async let modelsTask = modelCatalog.listModels()
+        async let cacheSummaryTask = companionCacheSummary()
+        async let queueSnapshotTask = companionQueueSnapshot()
+        async let imageJobsSnapshotTask = companionImageJobsSnapshot()
+        async let imageJobLogsTask = companionImageJobLogTail()
+
+        let routes = await routesTask
+        let models = await modelsTask
+        let visibleModels = models.filter(ModelCatalogPresentation.isUserVisible)
+        let readyCount = visibleModels.filter { $0.state == .modelWarm || $0.state == .modelPinned }.count
+        let summary = await cacheSummaryTask
+        let queueSnapshot = await queueSnapshotTask
+        let imageJobsSnapshot = await imageJobsSnapshotTask
+        let imageJobLogs = await imageJobLogsTask
+        let status = routes.values.allSatisfy { $0 } ? "ok" : "degraded"
+        let response = CompanionStatusResponse(
+            readOnly: true,
+            status: status,
+            runtime: CompanionRuntimeStatusPayload(
+                status: status,
+                routes: routes
+            ),
+            authorization: CompanionAuthorizationStatusPayload(authorization: authorization),
+            models: CompanionModelStatusPayload(
+                ready: readyCount,
+                total: visibleModels.count,
+                items: visibleModels.map(CompanionModelPayload.init(model:))
+            ),
+            cache: CompanionCacheStatusPayload(summary: summary),
+            queue: CompanionQueueStatusPayload(summary: queueSnapshot),
+            imageJobs: CompanionImageJobStatusPayload(jobs: imageJobsSnapshot),
+            recentReceipts: CompanionRecentReceiptStatusPayload(jobs: imageJobsSnapshot),
+            logs: CompanionLogTailStatusPayload(entries: imageJobLogs.entries, total: imageJobLogs.total),
+            redaction: CompanionRedactionStatusPayload()
+        )
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: "companion.status_latency_ms"
+        )
+        return try encodedJSONResponse(response)
+    }
+
+    private func companionCacheSummary() async -> Melix_Controlplane_V1_CacheSummary {
+        guard let store = cacheMetadataStore else {
+            return CacheMetadataStore.emptySummary()
+        }
+        return await store.cacheSummary()
+    }
+
+    private func companionQueueSnapshot() async -> Melix_Controlplane_V1_QueueSummary? {
+        await schedulerReadModel?.snapshot()
+    }
+
+    private func companionImageJobsSnapshot() async -> [Melix_Controlplane_V1_ImageJobSummary] {
+        await imageJobReadModel?.snapshot() ?? []
+    }
+
+    private func companionImageJobLogTail() async -> (entries: [ImageJobLogEntry], total: Int) {
+        guard let imageJobReadModel else {
+            return ([], 0)
+        }
+        let available = await imageJobReadModel.logTailSnapshot(limit: ImageJobReadModel.logTailRetainedLimit)
+        return (Array(available.prefix(companionLogTailVisibleLimit)), available.count)
+    }
+
     private func handleCacheStats() async throws -> HTTPResponse {
         let startedAt = Date()
         let summary = if let cacheMetadataStore {
@@ -1060,13 +1605,18 @@ public struct OpenAIHandler: Sendable {
         let createRequest = try decoder.decode(OpenAICreateAuthSessionRequest.self, from: request.body)
         let issued = try await persistentAuthSessionStore.issueSession(
             keyID: keyID,
-            rememberMe: createRequest.rememberMe
+            rememberMe: createRequest.rememberMe,
+            scope: createRequest.scope
         )
         let response = OpenAIAuthSessionResponse(
             session: OpenAIAuthSessionPayload(metadata: issued.metadata),
             resume: OpenAIAuthSessionResumePayload(
                 header: PersistentAuthSessionStore.sessionHeaderName,
                 token: issued.token
+            ),
+            pairing: OpenAICompanionPairingPayload(
+                metadata: issued.metadata,
+                gatewayRuntimeBinding: gatewayRuntimeBinding
             )
         )
         return try encodedJSONResponse(response)
@@ -1080,7 +1630,8 @@ public struct OpenAIHandler: Sendable {
         }
         let response = OpenAIAuthSessionResponse(
             session: OpenAIAuthSessionPayload(metadata: metadata),
-            resume: nil
+            resume: nil,
+            pairing: nil
         )
         return try encodedJSONResponse(response)
     }
@@ -1098,7 +1649,8 @@ public struct OpenAIHandler: Sendable {
         case .success(let metadata):
             let response = OpenAIAuthSessionResponse(
                 session: OpenAIAuthSessionPayload(metadata: metadata),
-                resume: nil
+                resume: nil,
+                pairing: nil
             )
             return try encodedJSONResponse(response)
         case .failure(let failure):
@@ -1111,6 +1663,9 @@ public struct OpenAIHandler: Sendable {
         do {
             if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
                 return invalidGenerationBoundsResponse(boundsFailure)
+            }
+            if let unsupportedField = unsupportedChatCompletionsField(in: request.body) {
+                return unsupportedRequestFieldResponse(field: unsupportedField)
             }
             let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
             if let resumeRequestID = chatRequest.resumeRequestID?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1147,8 +1702,11 @@ public struct OpenAIHandler: Sendable {
                 return invalidArgumentResponse(message: error.operatorMessage)
             }
             return mediaNormalizationErrorResponse(error)
-        } catch is DecodingError {
-            return invalidArgumentResponse(message: "Malformed multimodal chat payload.")
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                field: decodingErrorField(error),
+                message: "Malformed multimodal chat payload."
+            )
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
@@ -1395,16 +1953,43 @@ public struct OpenAIHandler: Sendable {
                 Double(rerankRequest.documents.count) / max(elapsedMs / 1000, 0.001),
                 forKey: "rerank.documents_per_second"
             )
+            let receipts = rerankDocumentBoundaryReceipts(documentCount: rerankRequest.documents.count)
+            await metricsStore.set(
+                Double(receipts.count),
+                forKey: "rerank.prompt_context.receipt_count"
+            )
 
             let payload = OpenAIRerankResponse(
                 object: "list",
                 data: response.items.map { OpenAIRerankDatum(index: Int($0.index), score: $0.score) },
                 model: rerankRequest.model,
-                topK: Int(rerankRequest.topK)
+                topK: Int(rerankRequest.topK),
+                untrustedContextReceiptSchema: PromptContextBoundaryReceipts.schemaVersion,
+                untrustedContextReceipts: receipts
             )
             return try encodedJSONResponse(payload)
         } catch {
             return workerUnavailableResponse()
+        }
+    }
+
+    private func rerankDocumentBoundaryReceipts(documentCount: Int) -> [OpenAIUntrustedContextReceipt] {
+        (0..<documentCount).map { index in
+            OpenAIUntrustedContextReceipt(
+                schemaVersion: PromptContextBoundaryReceipts.schemaVersion,
+                segmentID: "rerank.documents[\(index)]",
+                sourceType: "retrieved_document",
+                sourceField: "documents[\(index)]",
+                sourceID: "rerank-document-\(index)",
+                messageRole: "user",
+                trustLevel: "untrusted",
+                policy: "data_only",
+                boundaryChecked: true,
+                included: true,
+                ownerScopeChecked: false,
+                reason: "rerank candidate document is prompt data, not instructions",
+                correctiveAction: "Keep this candidate document in data-only rerank context and do not promote it into system or developer instructions."
+            )
         }
     }
 
@@ -3181,6 +3766,8 @@ public struct OpenAIHandler: Sendable {
             payload: [
                 "error": [
                     "code": "prompt_budget_exceeded",
+                    "field": "messages",
+                    "phase": "prompt_budget",
                     "status": "invalid_request_error",
                     "message": "Prompt token estimate exceeds the local prompt budget for this request.",
                     "prompt_token_metadata": metadata,
@@ -3394,7 +3981,8 @@ public struct OpenAIHandler: Sendable {
                 execution: execution,
                 aggregate: aggregate,
                 requestStartedAt: requestStartedAt,
-                responseModelID: resolvedRequest.responseModelID
+                responseModelID: resolvedRequest.responseModelID,
+                includeLogprobs: workerRequest.execution.ext["melix.openai.logprobs.requested"] == "true"
             )
             return jsonResponse(statusCode: 200, payload: payload)
         } catch {
@@ -3411,10 +3999,17 @@ public struct OpenAIHandler: Sendable {
             let completionTokens: UInt32
         }
 
+        struct TokenLogprob {
+            let token: String
+            let logprob: Double
+        }
+
         var assistantText = ""
         var finishReason = "stop"
         var usage: Usage?
         var error: Melix_Worker_V1_ErrorStatus?
+        var tokenLogprobs: [TokenLogprob] = []
+        var hasIncompleteLogprobEvidence = false
     }
 
     private func aggregateChatCompletion(
@@ -3427,6 +4022,23 @@ public struct OpenAIHandler: Sendable {
             switch event.payload {
             case .tokenDelta(let delta):
                 tokenText += delta.text
+                if delta.text.isEmpty {
+                    if delta.tokenIds.isEmpty && delta.tokenLogprobs.isEmpty {
+                        continue
+                    }
+                    aggregate.hasIncompleteLogprobEvidence = true
+                    continue
+                }
+                if delta.tokenIds.count == 1, delta.tokenLogprobs.count == 1 {
+                    aggregate.tokenLogprobs.append(
+                        NonStreamChatCompletionAggregate.TokenLogprob(
+                            token: delta.text,
+                            logprob: delta.tokenLogprobs[0]
+                        )
+                    )
+                } else {
+                    aggregate.hasIncompleteLogprobEvidence = true
+                }
             case .usageDelta(let usage):
                 // Worker usage events report final cumulative counts, so the
                 // latest event is authoritative if a runtime emits more than one.
@@ -3455,22 +4067,37 @@ public struct OpenAIHandler: Sendable {
         execution: CoordinatedChatExecution,
         aggregate: NonStreamChatCompletionAggregate,
         requestStartedAt: Date,
-        responseModelID: String
+        responseModelID: String,
+        includeLogprobs: Bool = false
     ) -> [String: Any] {
+        var choice: [String: Any] = [
+            "index": 0,
+            "message": [
+                "role": "assistant",
+                "content": aggregate.assistantText,
+            ],
+            "finish_reason": aggregate.finishReason,
+        ]
+        if includeLogprobs, !aggregate.tokenLogprobs.isEmpty, !aggregate.hasIncompleteLogprobEvidence {
+            choice["logprobs"] = [
+                "content": aggregate.tokenLogprobs.map { tokenLogprob in
+                    [
+                        "token": tokenLogprob.token,
+                        "logprob": tokenLogprob.logprob,
+                        "bytes": NSNull(),
+                        "top_logprobs": [],
+                    ] as [String: Any]
+                },
+                "refusal": NSNull(),
+            ]
+        }
         var payload: [String: Any] = [
             "id": execution.requestID,
             "object": "chat.completion",
             "created": Int(requestStartedAt.timeIntervalSince1970),
             "model": responseModelID,
             "choices": [
-                [
-                    "index": 0,
-                    "message": [
-                        "role": "assistant",
-                        "content": aggregate.assistantText,
-                    ],
-                    "finish_reason": aggregate.finishReason,
-                ],
+                choice,
             ],
         ]
 
@@ -3568,7 +4195,8 @@ public struct OpenAIHandler: Sendable {
             shape: shape,
             toolParser: ToolParserSelection(executionExt: translated.workerRequest.execution.ext),
             options: SSEStreamWriter.StreamOptions(
-                includeUsage: translated.workerRequest.execution.ext["melix.stream.include_usage"] == "true"
+                includeUsage: translated.workerRequest.execution.ext["melix.stream.include_usage"] == "true",
+                includePrefillProgress: translated.workerRequest.execution.ext["melix.stream.include_prefill_progress"] == "true"
             ),
             onComplete: { [modelCatalog] in
                 await modelCatalog.finishRequest(modelID: translated.modelID)
@@ -3845,7 +4473,14 @@ public struct OpenAIHandler: Sendable {
     private func workerUnavailableResponse() -> HTTPResponse {
         jsonResponse(
             statusCode: 503,
-            payload: ["error": ["code": "worker_unavailable", "message": "The worker cannot accept requests."]]
+            payload: [
+                "error": [
+                    "code": "worker_unavailable",
+                    "field": "worker",
+                    "phase": "backend_dispatch",
+                    "message": "The worker cannot accept requests.",
+                ],
+            ]
         )
     }
 
@@ -3856,17 +4491,74 @@ public struct OpenAIHandler: Sendable {
         )
     }
 
+    private func unsupportedRequestFieldResponse(field: String) -> HTTPResponse {
+        jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "unsupported_request_field",
+                    "field": field,
+                    "phase": "openai_request_validation",
+                    "message": "\(field) is not supported by this OpenAI-compatible endpoint.",
+                ],
+            ]
+        )
+    }
+
+    private func invalidRequestSchemaResponse(field: String, message: String) -> HTTPResponse {
+        jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "invalid_request_schema",
+                    "field": field,
+                    "phase": "decode",
+                    "message": message,
+                ],
+            ]
+        )
+    }
+
+    private func decodingErrorField(_ error: DecodingError) -> String {
+        let codingPath: [CodingKey]
+        switch error {
+        case .typeMismatch(_, let context),
+             .valueNotFound(_, let context),
+             .dataCorrupted(let context):
+            codingPath = context.codingPath
+        case .keyNotFound(let key, let context):
+            codingPath = context.codingPath + [key]
+        @unknown default:
+            codingPath = []
+        }
+        return codingPath.last?.stringValue ?? "body"
+    }
+
     private func invalidGenerationBoundsResponse(_ failure: GenerationBoundsValidationFailure) -> HTTPResponse {
         jsonResponse(
             statusCode: 400,
             payload: [
                 "error": [
                     "code": "invalid_generation_bounds",
+                    "field": failure.field,
+                    "phase": "generation_bounds",
                     "message": failure.message,
                     "bounds_rejection_reason": failure.reason,
                 ],
             ]
         )
+    }
+
+    private func unsupportedChatCompletionsField(in body: Data) -> String? {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        else {
+            return nil
+        }
+        for field in ["best_of"] where object[field] != nil {
+            return field
+        }
+        return nil
     }
 
     private func generationBoundsValidationFailure(in body: Data) -> GenerationBoundsValidationFailure? {
@@ -3887,6 +4579,7 @@ public struct OpenAIHandler: Sendable {
            let maxCompletionTokens = maxCompletionTokens.value,
            maxTokens != maxCompletionTokens {
             return GenerationBoundsValidationFailure(
+                field: "max_tokens,max_completion_tokens",
                 reason: "output_cap_conflict",
                 message: "max_tokens and max_completion_tokens must match when both are provided."
             )
@@ -3910,6 +4603,7 @@ public struct OpenAIHandler: Sendable {
            let maxCompletionTokens = maxCompletionTokens.value,
            maxTokens != maxCompletionTokens {
             return GenerationBoundsValidationFailure(
+                field: "max_tokens,max_completion_tokens",
                 reason: "output_cap_conflict",
                 message: "max_tokens and max_completion_tokens must match when both are provided."
             )
@@ -3926,18 +4620,21 @@ public struct OpenAIHandler: Sendable {
         }
         guard let doubleValue = Double(token) else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(fieldName)_malformed",
                 message: "\(fieldName) must be a finite positive integer."
             ))
         }
         guard doubleValue.isFinite else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(fieldName)_non_finite",
                 message: "\(fieldName) must be finite."
             ))
         }
         guard doubleValue > 0 else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(fieldName)_non_positive",
                 message: "\(fieldName) must be greater than zero."
             ))
@@ -3946,6 +4643,7 @@ public struct OpenAIHandler: Sendable {
               doubleValue <= Double(UInt32.max)
         else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(fieldName)_malformed",
                 message: "\(fieldName) must be a positive integer no greater than \(UInt32.max)."
             ))
@@ -4052,6 +4750,7 @@ public struct OpenAIHandler: Sendable {
               CFGetTypeID(number) != CFBooleanGetTypeID()
         else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(reasonPrefix)_malformed",
                 message: "\(fieldName) must be a finite positive integer."
             ))
@@ -4059,12 +4758,14 @@ public struct OpenAIHandler: Sendable {
         let doubleValue = number.doubleValue
         guard doubleValue.isFinite else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(reasonPrefix)_non_finite",
                 message: "\(fieldName) must be finite."
             ))
         }
         guard doubleValue > 0 else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(reasonPrefix)_non_positive",
                 message: "\(fieldName) must be greater than zero."
             ))
@@ -4073,6 +4774,7 @@ public struct OpenAIHandler: Sendable {
               doubleValue <= Double(UInt32.max)
         else {
             return (nil, GenerationBoundsValidationFailure(
+                field: fieldName,
                 reason: "\(reasonPrefix)_malformed",
                 message: "\(fieldName) must be a positive integer no greater than \(UInt32.max)."
             ))
@@ -4426,19 +5128,60 @@ public struct OpenAIHandler: Sendable {
 
     private func authorizationRoute(for request: HTTPRequest) -> GatewayAuthorizationRoute {
         switch (request.method, request.path) {
+        case (.get, "/v1/melix/companion"):
+            return .publicAsset
         case (.get, "/health"):
             return .health
         case (.get, "/.well-known/melix.json"),
              (.get, "/api/capabilities"),
              (.get, "/api/instructions"),
-             (.get, "/api/config-metadata"):
-            return .standard
+             (.get, "/api/config-metadata"),
+             (.get, "/v1/models"),
+             (.get, "/v1/melix/health"),
+             (.get, "/v1/cache/stats"),
+             (.get, "/v1/melix/companion/status"):
+            return .companionReadOnly
         case (.post, "/v1/melix/auth/session"):
             return .createSession
         case (.get, "/v1/melix/auth/session"), (.delete, "/v1/melix/auth/session"):
             return .currentSession
         default:
             return .standard
+        }
+    }
+
+    private func companionScopeFailureResponse(
+        route: GatewayAuthorizationRoute,
+        request: HTTPRequest,
+        metadata: PersistentAuthSessionMetadata
+    ) async -> HTTPResponse? {
+        guard metadata.scope == .companionReadOnly else {
+            return nil
+        }
+        switch route {
+        case .publicAsset, .health, .companionReadOnly, .currentSession:
+            return nil
+        case .standard, .createSession:
+            await metricsStore.increment("companion_auth.rejected_request_count")
+            return jsonResponse(
+                statusCode: 403,
+                payload: [
+                    "error": [
+                        "code": "companion_read_only_scope_violation",
+                        "message": "Companion sessions are read-only and cannot call this route.",
+                        "session_state": [
+                            "state": metadata.state,
+                            "session_id": metadata.sessionID,
+                            "key_id": metadata.keyID,
+                            "scope": metadata.scope.rawValue,
+                        ],
+                        "route": [
+                            "method": request.method.rawValue,
+                            "path": request.path,
+                        ],
+                    ]
+                ]
+            )
         }
     }
 
@@ -5281,6 +6024,7 @@ private enum HTTPRequestHandlingError: Error {
 }
 
 private struct GenerationBoundsValidationFailure {
+    let field: String
     let reason: String
     let message: String
 }
@@ -5379,6 +6123,494 @@ private struct HealthDiagnosticsModelResponse: Codable {
     }
 }
 
+private struct CompanionStatusResponse: Encodable {
+    let schemaVersion = "melix.companion.status.v1"
+    let readOnly: Bool
+    let status: String
+    let runtime: CompanionRuntimeStatusPayload
+    let authorization: CompanionAuthorizationStatusPayload
+    let models: CompanionModelStatusPayload
+    let cache: CompanionCacheStatusPayload
+    let queue: CompanionQueueStatusPayload
+    let imageJobs: CompanionImageJobStatusPayload
+    let recentReceipts: CompanionRecentReceiptStatusPayload
+    let logs: CompanionLogTailStatusPayload
+    let redaction: CompanionRedactionStatusPayload
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case readOnly = "read_only"
+        case status
+        case runtime
+        case authorization
+        case models
+        case cache
+        case queue
+        case imageJobs = "image_jobs"
+        case recentReceipts = "recent_receipts"
+        case logs
+        case redaction
+    }
+}
+
+private struct CompanionRuntimeStatusPayload: Codable {
+    let status: String
+    let routes: [String: Bool]
+}
+
+private struct CompanionAuthorizationStatusPayload: Codable {
+    let mode: String
+    let scope: String
+    let state: String
+    let sessionID: String?
+    let keyID: String?
+    let rememberMe: Bool?
+    let expiresAtUnixMs: Int64?
+
+    init(authorization: GatewayAuthorizationContext) {
+        switch authorization {
+        case .localTrusted:
+            mode = "local_trusted"
+            scope = "operator_control"
+            state = "active"
+            sessionID = nil
+            keyID = nil
+            rememberMe = nil
+            expiresAtUnixMs = nil
+        case let .credential(keyID, _):
+            mode = "credential"
+            scope = "operator_control"
+            state = "active"
+            sessionID = nil
+            self.keyID = keyID
+            rememberMe = nil
+            expiresAtUnixMs = nil
+        case let .session(_, metadata):
+            mode = "session"
+            scope = metadata.scope.rawValue
+            state = metadata.state
+            sessionID = metadata.sessionID
+            keyID = metadata.keyID
+            rememberMe = metadata.rememberMe
+            expiresAtUnixMs = metadata.expiresAtUnixMs
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case mode
+        case scope
+        case state
+        case sessionID = "session_id"
+        case keyID = "key_id"
+        case rememberMe = "remember_me"
+        case expiresAtUnixMs = "expires_at_unix_ms"
+    }
+}
+
+private struct CompanionModelStatusPayload: Codable {
+    let ready: Int
+    let total: Int
+    let items: [CompanionModelPayload]
+}
+
+private struct CompanionModelPayload: Codable {
+    let modelID: String
+    let state: String
+    let kind: String
+    let supportedModalities: [String]
+
+    init(model: Melix_Controlplane_V1_ModelSummary) {
+        let receipt = ModelCatalogPresentation.publicMediaRouteReceipt(for: model)
+        modelID = model.modelID
+        state = model.state.melixString
+        kind = model.kind
+        supportedModalities = receipt.effectiveSupportedModalities
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case modelID = "model_id"
+        case state
+        case kind
+        case supportedModalities = "supported_modalities"
+    }
+}
+
+private struct CompanionCacheStatusPayload: Codable {
+    let l1Bytes: UInt64
+    let l2Bytes: UInt64
+    let l1HitRate: Double
+    let l2HitRate: Double
+    let checkpointCount: UInt64
+    let blockCount: UInt64
+    let quantizedBytes: UInt64
+    let compressionRatio: Double
+    let l2RestoreHitRate: Double
+    let activeCacheMode: String
+
+    init(summary: Melix_Controlplane_V1_CacheSummary) {
+        l1Bytes = summary.l1Bytes
+        l2Bytes = summary.l2Bytes
+        l1HitRate = summary.l1HitRate
+        l2HitRate = summary.l2HitRate
+        checkpointCount = summary.checkpointCount
+        blockCount = summary.blockCount
+        quantizedBytes = summary.quantizedBytes
+        compressionRatio = summary.compressionRatio
+        l2RestoreHitRate = summary.l2RestoreHitRate
+        activeCacheMode = cacheModeLabel(summary.activeMode)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case l1Bytes = "l1_bytes"
+        case l2Bytes = "l2_bytes"
+        case l1HitRate = "l1_hit_rate"
+        case l2HitRate = "l2_hit_rate"
+        case checkpointCount = "checkpoint_count"
+        case blockCount = "block_count"
+        case quantizedBytes = "quantized_bytes"
+        case compressionRatio = "compression_ratio"
+        case l2RestoreHitRate = "l2_restore_hit_rate"
+        case activeCacheMode = "active_cache_mode"
+    }
+}
+
+private struct CompanionQueueStatusPayload: Codable {
+    let queuedRequests: UInt32
+    let activeRequests: UInt32
+    let admissionLatencyMs: Double
+    let backpressure: Double
+    let admittedRequests: UInt32
+    let rejectedRequests: UInt32
+    let lanes: [CompanionQueueLanePayload]
+
+    init(summary: Melix_Controlplane_V1_QueueSummary?) {
+        let summary = summary ?? Melix_Controlplane_V1_QueueSummary()
+        queuedRequests = summary.queuedRequests
+        activeRequests = summary.activeRequests
+        admissionLatencyMs = summary.admissionLatencyMs
+        backpressure = summary.backpressure
+        admittedRequests = summary.admittedRequests
+        rejectedRequests = summary.rejectedRequests
+        lanes = summary.lanes.map(CompanionQueueLanePayload.init(lane:))
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case queuedRequests = "queued_requests"
+        case activeRequests = "active_requests"
+        case admissionLatencyMs = "admission_latency_ms"
+        case backpressure
+        case admittedRequests = "admitted_requests"
+        case rejectedRequests = "rejected_requests"
+        case lanes
+    }
+}
+
+private struct CompanionQueueLanePayload: Codable {
+    let laneID: String
+    let laneClass: String
+    let queuedRequests: UInt32
+    let activeRequests: UInt32
+    let queueDelayMsP50: Double
+    let queueDelayMsP95: Double
+    let admissionRate: Double
+    let backpressure: Double
+    let priorityScore: Double
+
+    init(lane: Melix_Controlplane_V1_QueueLaneSummary) {
+        laneID = lane.laneID
+        laneClass = lane.laneClass
+        queuedRequests = lane.queuedRequests
+        activeRequests = lane.activeRequests
+        queueDelayMsP50 = lane.queueDelayMsP50
+        queueDelayMsP95 = lane.queueDelayMsP95
+        admissionRate = lane.admissionRate
+        backpressure = lane.backpressure
+        priorityScore = lane.priorityScore
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case laneID = "lane_id"
+        case laneClass = "lane_class"
+        case queuedRequests = "queued_requests"
+        case activeRequests = "active_requests"
+        case queueDelayMsP50 = "queue_delay_ms_p50"
+        case queueDelayMsP95 = "queue_delay_ms_p95"
+        case admissionRate = "admission_rate"
+        case backpressure
+        case priorityScore = "priority_score"
+    }
+}
+
+private let companionImageJobVisibleLimit = 10
+
+private struct CompanionImageJobStatusPayload: Codable {
+    let active: Int
+    let total: Int
+    let jobs: [CompanionImageJobPayload]
+
+    init(jobs: [Melix_Controlplane_V1_ImageJobSummary]) {
+        let sortedJobs = jobs.sorted { lhs, rhs in
+            if lhs.updatedAtUnixMs == rhs.updatedAtUnixMs {
+                return lhs.jobID < rhs.jobID
+            }
+            return lhs.updatedAtUnixMs > rhs.updatedAtUnixMs
+        }
+        let visibleJobs = Array(sortedJobs.prefix(companionImageJobVisibleLimit))
+        active = jobs.filter { $0.state == .imageJobQueued || $0.state == .imageJobRunning }.count
+        total = jobs.count
+        self.jobs = visibleJobs.map(CompanionImageJobPayload.init(job:))
+    }
+}
+
+private struct CompanionImageJobPayload: Codable {
+    let jobID: String
+    let requestID: String
+    let modelID: String
+    let operation: String
+    let state: String
+    let lane: String
+    let workerID: String
+    let progress: OpenAIImageJobProgressPayload
+    let cancelable: Bool
+    let createdAtUnixMs: Int64
+    let updatedAtUnixMs: Int64
+    let promptDigest: String
+    let editMode: String
+
+    init(job: Melix_Controlplane_V1_ImageJobSummary) {
+        jobID = job.jobID
+        requestID = job.requestID
+        modelID = job.modelID
+        operation = job.operation
+        state = job.state.melixString
+        lane = job.lane
+        workerID = job.workerID
+        progress = OpenAIImageJobProgressPayload(progress: job.progress)
+        cancelable = job.cancelable
+        createdAtUnixMs = job.createdAtUnixMs
+        updatedAtUnixMs = job.updatedAtUnixMs
+        promptDigest = job.promptDigest
+        editMode = job.editMode.melixString
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case jobID = "job_id"
+        case requestID = "request_id"
+        case modelID = "model_id"
+        case operation
+        case state
+        case lane
+        case workerID = "worker_id"
+        case progress
+        case cancelable
+        case createdAtUnixMs = "created_at_unix_ms"
+        case updatedAtUnixMs = "updated_at_unix_ms"
+        case promptDigest = "prompt_digest"
+        case editMode = "edit_mode"
+    }
+}
+
+private let companionRecentReceiptVisibleLimit = 10
+
+private struct CompanionRecentReceiptStatusPayload: Encodable {
+    let source: String
+    let visible: Int
+    let total: Int
+    let items: [CompanionRecentReceiptPayload]
+
+    init(jobs: [Melix_Controlplane_V1_ImageJobSummary]) {
+        let sortedJobs = jobs.sorted { lhs, rhs in
+            if lhs.updatedAtUnixMs == rhs.updatedAtUnixMs {
+                return lhs.jobID < rhs.jobID
+            }
+            return lhs.updatedAtUnixMs > rhs.updatedAtUnixMs
+        }
+        let visibleJobs = Array(sortedJobs.prefix(companionRecentReceiptVisibleLimit))
+        source = "image_jobs"
+        visible = visibleJobs.count
+        total = jobs.count
+        items = visibleJobs.map(CompanionRecentReceiptPayload.init(job:))
+    }
+}
+
+private struct CompanionRecentReceiptPayload: Encodable {
+    let receiptType = "image_job"
+    let source = "image_jobs"
+    let jobID: String
+    let requestID: String
+    let modelID: String
+    let operation: String
+    let state: String
+    let lane: String
+    let workerID: String
+    let progress: OpenAIImageJobProgressPayload
+    let createdAtUnixMs: Int64
+    let updatedAtUnixMs: Int64
+    let promptDigest: String
+    let artifactCount: Int
+    let failureCode: String
+    let redaction: CompanionRecentReceiptRedactionPayload
+
+    init(job: Melix_Controlplane_V1_ImageJobSummary) {
+        jobID = job.jobID
+        requestID = job.requestID
+        modelID = job.modelID
+        operation = job.operation
+        state = job.state.melixString
+        lane = job.lane
+        workerID = job.workerID
+        progress = OpenAIImageJobProgressPayload(progress: job.progress)
+        createdAtUnixMs = job.createdAtUnixMs
+        updatedAtUnixMs = job.updatedAtUnixMs
+        promptDigest = job.promptDigest
+        artifactCount = job.artifacts.count
+        failureCode = job.error.code
+        redaction = CompanionRecentReceiptRedactionPayload()
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case receiptType = "receipt_type"
+        case source
+        case jobID = "job_id"
+        case requestID = "request_id"
+        case modelID = "model_id"
+        case operation
+        case state
+        case lane
+        case workerID = "worker_id"
+        case progress
+        case createdAtUnixMs = "created_at_unix_ms"
+        case updatedAtUnixMs = "updated_at_unix_ms"
+        case promptDigest = "prompt_digest"
+        case artifactCount = "artifact_count"
+        case failureCode = "failure_code"
+        case redaction
+    }
+}
+
+private struct CompanionRecentReceiptRedactionPayload: Encodable {
+    let rawPrompt = "omitted"
+    let promptDelta = "omitted"
+    let requestBody = "omitted"
+    let artifactURIs = "omitted"
+    let localPaths = "omitted"
+    let errorMessage = "omitted"
+    let logs = "omitted"
+
+    enum CodingKeys: String, CodingKey {
+        case rawPrompt = "raw_prompt"
+        case promptDelta = "prompt_delta"
+        case requestBody = "request_body"
+        case artifactURIs = "artifact_uris"
+        case localPaths = "local_paths"
+        case errorMessage = "error_message"
+        case logs
+    }
+}
+
+private let companionLogTailVisibleLimit = 20
+
+private struct CompanionLogTailStatusPayload: Encodable {
+    let source: String
+    let visible: Int
+    let total: Int
+    let entries: [CompanionLogTailEntryPayload]
+
+    init(entries: [ImageJobLogEntry], total: Int) {
+        source = "image_jobs"
+        visible = entries.count
+        self.total = total
+        self.entries = entries.map(CompanionLogTailEntryPayload.init(entry:))
+    }
+}
+
+private struct CompanionLogTailEntryPayload: Encodable {
+    let eventType: String
+    let source: String
+    let jobID: String
+    let requestID: String
+    let modelID: String
+    let operation: String
+    let state: String
+    let lane: String
+    let workerID: String
+    let progressStage: String
+    let createdAtUnixMs: Int64
+    let updatedAtUnixMs: Int64
+    let failureCode: String
+    let redaction: CompanionLogTailRedactionPayload
+
+    init(entry: ImageJobLogEntry) {
+        eventType = entry.eventType
+        source = entry.source
+        jobID = entry.jobID
+        requestID = entry.requestID
+        modelID = entry.modelID
+        operation = entry.operation
+        state = entry.state
+        lane = entry.lane
+        workerID = entry.workerID
+        progressStage = entry.progressStage
+        createdAtUnixMs = entry.createdAtUnixMs
+        updatedAtUnixMs = entry.updatedAtUnixMs
+        failureCode = entry.failureCode
+        redaction = CompanionLogTailRedactionPayload()
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case eventType = "event_type"
+        case source
+        case jobID = "job_id"
+        case requestID = "request_id"
+        case modelID = "model_id"
+        case operation
+        case state
+        case lane
+        case workerID = "worker_id"
+        case progressStage = "progress_stage"
+        case createdAtUnixMs = "created_at_unix_ms"
+        case updatedAtUnixMs = "updated_at_unix_ms"
+        case failureCode = "failure_code"
+        case redaction
+    }
+}
+
+private struct CompanionLogTailRedactionPayload: Encodable {
+    let rawLogLine = "omitted"
+    let rawPrompt = "omitted"
+    let requestBody = "omitted"
+    let artifactURIs = "omitted"
+    let localPaths = "omitted"
+    let errorMessage = "omitted"
+
+    enum CodingKeys: String, CodingKey {
+        case rawLogLine = "raw_log_line"
+        case rawPrompt = "raw_prompt"
+        case requestBody = "request_body"
+        case artifactURIs = "artifact_uris"
+        case localPaths = "local_paths"
+        case errorMessage = "error_message"
+    }
+}
+
+private struct CompanionRedactionStatusPayload: Codable {
+    let rawPrompts = "omitted"
+    let rawRequestBodies = "omitted"
+    let localPaths = "omitted"
+    let artifactURIs = "omitted"
+    let logs = "redacted_tail"
+    let recentReceipts = "redacted_summary"
+
+    enum CodingKeys: String, CodingKey {
+        case rawPrompts = "raw_prompts"
+        case rawRequestBodies = "raw_request_bodies"
+        case localPaths = "local_paths"
+        case artifactURIs = "artifact_uris"
+        case logs
+        case recentReceipts = "recent_receipts"
+    }
+}
+
 private struct CacheStatsResponse: Codable {
     let l1Bytes: UInt64
     let l2Bytes: UInt64
@@ -5405,23 +6637,33 @@ private struct CacheStatsResponse: Codable {
     }
 }
 
-private struct OpenAICreateAuthSessionRequest: Codable {
+private struct OpenAICreateAuthSessionRequest: Decodable {
     let rememberMe: Bool
+    let scope: PersistentAuthSessionScope
 
     enum CodingKeys: String, CodingKey {
         case rememberMe = "remember_me"
+        case scope
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        rememberMe = try container.decode(Bool.self, forKey: .rememberMe)
+        scope = try container.decodeIfPresent(PersistentAuthSessionScope.self, forKey: .scope) ?? .operatorControl
     }
 }
 
 private struct OpenAIAuthSessionResponse: Codable {
     let session: OpenAIAuthSessionPayload
     let resume: OpenAIAuthSessionResumePayload?
+    let pairing: OpenAICompanionPairingPayload?
 }
 
 private struct OpenAIAuthSessionPayload: Codable {
     let sessionID: String
     let keyID: String
     let rememberMe: Bool
+    let scope: PersistentAuthSessionScope
     let createdAtUnixMs: Int64
     let expiresAtUnixMs: Int64
     let revokedAtUnixMs: Int64
@@ -5432,6 +6674,7 @@ private struct OpenAIAuthSessionPayload: Codable {
         sessionID = metadata.sessionID
         keyID = metadata.keyID
         rememberMe = metadata.rememberMe
+        scope = metadata.scope
         createdAtUnixMs = metadata.createdAtUnixMs
         expiresAtUnixMs = metadata.expiresAtUnixMs
         revokedAtUnixMs = metadata.revokedAtUnixMs
@@ -5443,6 +6686,7 @@ private struct OpenAIAuthSessionPayload: Codable {
         case sessionID = "session_id"
         case keyID = "key_id"
         case rememberMe = "remember_me"
+        case scope
         case createdAtUnixMs = "created_at_unix_ms"
         case expiresAtUnixMs = "expires_at_unix_ms"
         case revokedAtUnixMs = "revoked_at_unix_ms"
@@ -5454,6 +6698,102 @@ private struct OpenAIAuthSessionPayload: Codable {
 private struct OpenAIAuthSessionResumePayload: Codable {
     let header: String
     let token: String
+}
+
+private struct OpenAICompanionPairingPayload: Codable {
+    let schemaVersion: String
+    let scope: PersistentAuthSessionScope
+    let tokenTransport: String
+    let resumeHeader: String
+    let mobileURL: String
+    let statusURL: String
+    let expiresAtUnixMs: Int64
+    let allowedOrigins: [String]
+    let allowedRoutes: [OpenAICompanionPairingRoutePayload]
+    let forbiddenCapabilities: [String]
+
+    init?(
+        metadata: PersistentAuthSessionMetadata,
+        gatewayRuntimeBinding: GatewayRuntimeBinding
+    ) {
+        guard metadata.scope == .companionReadOnly else {
+            return nil
+        }
+        schemaVersion = "melix.companion.pairing.v1"
+        scope = metadata.scope
+        tokenTransport = "resume_header"
+        resumeHeader = PersistentAuthSessionStore.sessionHeaderName
+        let displayHost = Self.displayHost(for: gatewayRuntimeBinding.host)
+        mobileURL = "http://\(Self.urlHost(displayHost)):\(gatewayRuntimeBinding.port)/v1/melix/companion"
+        statusURL = "\(mobileURL)/status"
+        expiresAtUnixMs = metadata.expiresAtUnixMs
+        allowedOrigins = gatewayRuntimeBinding.allowedOrigins
+        allowedRoutes = Self.defaultAllowedRoutes
+        forbiddenCapabilities = Self.defaultForbiddenCapabilities
+    }
+
+    private static let defaultAllowedRoutes = [
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/.well-known/melix.json"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/api/capabilities"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/api/instructions"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/api/config-metadata"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/models"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/health"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/cache/stats"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/companion/status"),
+        OpenAICompanionPairingRoutePayload(method: "GET", path: "/v1/melix/auth/session"),
+        OpenAICompanionPairingRoutePayload(method: "DELETE", path: "/v1/melix/auth/session"),
+    ]
+
+    private static let defaultForbiddenCapabilities = [
+        "mutate_runtime",
+        "run_inference",
+        "start_jobs",
+        "read_private_prompts",
+        "read_raw_logs",
+        "read_local_paths",
+    ]
+
+    private static func displayHost(for bindHost: String) -> String {
+        let candidate = bindHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else {
+            return "127.0.0.1"
+        }
+        switch candidate.lowercased() {
+        case "0.0.0.0", "::", "[::]":
+            return "127.0.0.1"
+        default:
+            return candidate
+        }
+    }
+
+    private static func urlHost(_ host: String) -> String {
+        if host.hasPrefix("[") && host.hasSuffix("]") {
+            return host
+        }
+        if host.contains(":") {
+            return "[\(host)]"
+        }
+        return host
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case scope
+        case tokenTransport = "token_transport"
+        case resumeHeader = "resume_header"
+        case mobileURL = "mobile_url"
+        case statusURL = "status_url"
+        case expiresAtUnixMs = "expires_at_unix_ms"
+        case allowedOrigins = "allowed_origins"
+        case allowedRoutes = "allowed_routes"
+        case forbiddenCapabilities = "forbidden_capabilities"
+    }
+}
+
+private struct OpenAICompanionPairingRoutePayload: Codable {
+    let method: String
+    let path: String
 }
 
 private struct OpenAIEmbeddingsRequest: Codable {
@@ -5536,18 +6876,54 @@ private struct OpenAIRerankResponse: Codable {
     let data: [OpenAIRerankDatum]
     let model: String
     let topK: Int
+    let untrustedContextReceiptSchema: String
+    let untrustedContextReceipts: [OpenAIUntrustedContextReceipt]
 
     enum CodingKeys: String, CodingKey {
         case object
         case data
         case model
         case topK = "top_k"
+        case untrustedContextReceiptSchema = "untrusted_context_receipt_schema"
+        case untrustedContextReceipts = "untrusted_context_receipts"
     }
 }
 
 private struct OpenAIRerankDatum: Codable {
     let index: Int
     let score: Float
+}
+
+private struct OpenAIUntrustedContextReceipt: Codable {
+    let schemaVersion: String
+    let segmentID: String
+    let sourceType: String
+    let sourceField: String
+    let sourceID: String
+    let messageRole: String
+    let trustLevel: String
+    let policy: String
+    let boundaryChecked: Bool
+    let included: Bool
+    let ownerScopeChecked: Bool
+    let reason: String
+    let correctiveAction: String
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case segmentID = "segment_id"
+        case sourceType = "source_type"
+        case sourceField = "source_field"
+        case sourceID = "source_id"
+        case messageRole = "message_role"
+        case trustLevel = "trust_level"
+        case policy
+        case boundaryChecked = "boundary_checked"
+        case included
+        case ownerScopeChecked = "owner_scope_checked"
+        case reason
+        case correctiveAction = "corrective_action"
+    }
 }
 
 private struct OpenAIAudioTranscriptionsRequest: Codable {
@@ -6086,6 +7462,10 @@ private extension RequestCoordinatorError {
             "code": errorCode,
             "message": errorMessage,
         ]
+        if case .workerUnavailable = self {
+            error["field"] = "worker"
+            error["phase"] = "backend_dispatch"
+        }
         if case .unsupportedAcceleration(let reason, _, let recoveryHint) = self {
             error["unsupported_reason"] = ModelCapabilityReceipts.unsupportedReasonIdentifier(reason)
             error["recovery_hint"] = recoveryHint

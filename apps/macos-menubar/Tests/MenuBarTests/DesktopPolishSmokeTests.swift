@@ -46,7 +46,7 @@ struct DesktopPolishSmokeTests {
         let client = FakeControlPlaneXPCClient()
         await client.configureSnapshot(
             makeDesktopPolishSnapshot(
-                models: [ModelCatalog.devTextModel()],
+                models: [makeDesktopPolishTextModel()],
                 runtimeSessions: [makeDesktopPolishRuntimeSession()]
             )
         )
@@ -216,14 +216,14 @@ struct DesktopPolishSmokeTests {
         #expect(persistedQueue.count == 1)
         #expect(restoredViewModel.downloadQueue.count == 1)
         #expect(restoredSelectedToolSection == .downloads)
-        #expect(surfaceGroundingCount == DesktopSurface.visibleNavigationCases.count)
+        #expect(surfaceGroundingCount == DesktopSurface.routableWorkspaceCases.count)
         #expect(toolSectionGroundingCount == DesktopToolSection.allCases.count)
     }
 }
 
 @MainActor
 private func groundedSurfaceCount(for viewModel: RuntimeViewModel) -> Int {
-    DesktopSurface.visibleNavigationCases.reduce(into: 0) { count, surface in
+    DesktopSurface.routableWorkspaceCases.reduce(into: 0) { count, surface in
         viewModel.selectSurface(surface)
         if hostedDesktopPolishViewHasSubviews(DesktopWorkspaceShellView(viewModel: viewModel)) {
             count += 1
@@ -323,6 +323,18 @@ private func makeDesktopPolishRuntimeSession() -> Melix_Controlplane_V1_ServerSe
     runtimeSession.wakeReason = .initialBoot
     runtimeSession.updatedAtUnixMs = 1_717_171_717
     return runtimeSession
+}
+
+private func makeDesktopPolishTextModel() -> Melix_Controlplane_V1_ModelSummary {
+    var model = Melix_Controlplane_V1_ModelSummary()
+    model.modelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    model.kind = "text"
+    model.state = .modelWarm
+    model.features = ["chat"]
+    model.maxContext = 8192
+    model.settings.alias = "Qwen3.5-0.8B-OptiQ-4bit"
+    model.settings.defaultAccelerationMode = .baseline
+    return model
 }
 
 private func makeDesktopPolishSnapshot(

@@ -4,7 +4,7 @@ import heapq
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import AbstractSet, Any
+from typing import AbstractSet, Any, Iterator, cast
 
 from worker.productization.benchmark_evaluation_report import validate_report_payload
 
@@ -242,8 +242,8 @@ def _release_matrix_rows(
     matrix: dict[str, dict[str, object]],
 ) -> list[dict[str, object]]:
     evidence_by_role: dict[str, set[str]] = {}
-    matrix_roles = set(matrix)
     to_string = str
+    evidence_by_role_get = evidence_by_role.get
     for report in reports:
         roles = report.get("release_matrix_roles")
         source_evidence_ids = report.get("source_evidence_ids", [])
@@ -255,26 +255,33 @@ def _release_matrix_rows(
             continue
         if len(roles) == 1:
             role = roles[0]
-            if role in matrix_roles:
-                evidence_ids_for_role = evidence_by_role.setdefault(role, set())
+            if role in matrix:
+                evidence_ids_for_role = evidence_by_role_get(role)
+                if evidence_ids_for_role is None:
+                    evidence_ids_for_role = set()
+                    evidence_by_role[role] = evidence_ids_for_role
                 for evidence_id in source_evidence_ids:
                     evidence_ids_for_role.add(to_string(evidence_id))
             continue
         evidence_ids = tuple(to_string(item) for item in source_evidence_ids)
         for role in roles:
-            if role not in matrix_roles:
+            if role not in matrix:
                 continue
-            evidence_by_role.setdefault(role, set()).update(evidence_ids)
+            evidence_ids_for_role = evidence_by_role_get(role)
+            if evidence_ids_for_role is None:
+                evidence_ids_for_role = set()
+                evidence_by_role[role] = evidence_ids_for_role
+            evidence_ids_for_role.update(evidence_ids)
 
     rows: list[dict[str, object]] = []
     for role, rule in matrix.items():
-        evidence_ids = evidence_by_role.get(role, set())
+        evidence_ids = evidence_by_role_get(role)
         rows.append(
             {
                 "role": role,
                 "required": bool(rule.get("required", True)),
                 "present": bool(evidence_ids),
-                "evidence_ids": sorted(evidence_ids),
+                "evidence_ids": sorted(evidence_ids) if evidence_ids else [],
                 "description": str(rule.get("description", "")),
             }
         )
@@ -295,7 +302,7 @@ def _report_matrix_roles(
         if _run_kind_only_rule(rule):
             if run_kind_values is None:
                 run_kind_values = _report_run_kind_values(runs)
-            if _string_frozenset(rule.get("run_kinds", ())) & run_kind_values:
+            if _run_kind_rule_matches(rule.get("run_kinds", ()), run_kind_values):
                 roles.append(role)
             continue
         if rule.get("probe_phases") and probe_phases is None:
@@ -319,9 +326,30 @@ def _run_kind_only_rule(rule: dict[str, object]) -> bool:
     )
 
 
+def _run_kind_rule_matches(run_kinds: object, run_kind_values: frozenset[str]) -> bool:
+    if isinstance(run_kinds, tuple):
+        for run_kind in run_kinds:
+            if type(run_kind) is str:
+                if run_kind in run_kind_values:
+                    return True
+            elif str(run_kind) in run_kind_values:
+                return True
+        return False
+    return not _string_frozenset(run_kinds).isdisjoint(run_kind_values)
+
+
 def _report_run_kind_values(runs: list[dict[str, object]]) -> frozenset[str]:
     run_kind_key = "run_kind"
-    return frozenset(str(run.get(run_kind_key, "")) for run in runs)
+    values: set[str] = set()
+    values_add = values.add
+    to_string = str
+    for run in runs:
+        run_kind = run.get(run_kind_key, "")
+        if type(run_kind) is str:
+            values_add(run_kind)
+        else:
+            values_add(to_string(run_kind))
+    return frozenset(values)
 
 
 def _rule_matches_report(
@@ -453,33 +481,34 @@ def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:
     probe_summary = report.get("probe_summary")
     if not isinstance(probe_summary, dict):
         return []
-    rows: list[tuple[float, int, str, dict[str, object]]] = []
-    row_index = 0
-    rows_append = rows.append
-    for side in ("baseline", "candidate"):
-        side_summary = probe_summary.get(side)
-        if not isinstance(side_summary, dict):
-            continue
-        slowest_phases = side_summary.get("slowest_phases")
-        if not isinstance(slowest_phases, list):
-            continue
-        for row in slowest_phases:
-            if not isinstance(row, dict):
+
+    def iter_rows() -> Iterator[tuple[float, int, str, dict[str, object]]]:
+        row_index = 0
+        for side in ("baseline", "candidate"):
+            side_summary = probe_summary.get(side)
+            if not isinstance(side_summary, dict):
                 continue
-            duration = row.get("duration_ms")
-            if type(duration) is float:
-                duration_ms = duration
-            elif type(duration) is int:
-                duration_ms = float(duration)
-            elif isinstance(duration, str):
-                duration_ms = float(duration or 0.0)
-            else:
-                duration_ms = 0.0
-            rows_append((duration_ms, -row_index, side, row))
-            row_index += 1
+            slowest_phases = side_summary.get("slowest_phases")
+            if not isinstance(slowest_phases, list):
+                continue
+            for row in slowest_phases:
+                if not isinstance(row, dict):
+                    continue
+                duration = row.get("duration_ms")
+                if type(duration) is float:
+                    duration_ms = duration
+                elif type(duration) is int:
+                    duration_ms = float(duration)
+                elif type(duration) is str:
+                    duration_ms = float(duration or 0.0)
+                else:
+                    duration_ms = 0.0
+                yield (duration_ms, -row_index, side, row)
+                row_index += 1
+
     return [
         {"side": side, **row}
-        for _duration_ms, _row_order, side, row in heapq.nlargest(5, rows)
+        for _duration_ms, _row_order, side, row in heapq.nlargest(5, iter_rows())
     ]
 
 
@@ -503,4 +532,7 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
 def _dict_list(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
-    return [item for item in value if isinstance(item, dict)]
+    for item in value:
+        if not isinstance(item, dict):
+            return [item for item in value if isinstance(item, dict)]
+    return cast(list[dict[str, object]], value)

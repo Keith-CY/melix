@@ -79,6 +79,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let actionTitle: String
     public let maxContext: UInt32
     public let alias: String
+    public let visibility: String
     public let typeOverrideText: String
     public let memoryPolicyText: String
     public let diskStreamingModeText: String
@@ -127,6 +128,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         actionTitle: String,
         maxContext: UInt32,
         alias: String,
+        visibility: String = "",
         typeOverrideText: String = "",
         memoryPolicyText: String,
         diskStreamingModeText: String,
@@ -166,6 +168,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.actionTitle = actionTitle
         self.maxContext = maxContext
         self.alias = alias
+        self.visibility = visibility.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         self.typeOverrideText = typeOverrideText
         self.memoryPolicyText = memoryPolicyText
         self.diskStreamingModeText = diskStreamingModeText
@@ -602,6 +605,7 @@ public struct RuntimeRegistryEntryState: Identifiable, Equatable, Sendable {
     public let runSuitabilityText: String
     public let sizeText: String
     public let taskText: String
+    public let targetText: String
     public let repoID: String
     public let canInspect: Bool
     public let canDownload: Bool
@@ -616,6 +620,7 @@ public struct RuntimeRegistryEntryState: Identifiable, Equatable, Sendable {
         runSuitabilityText: String,
         sizeText: String,
         taskText: String,
+        targetText: String = "",
         repoID: String = "",
         canInspect: Bool = false,
         canDownload: Bool = false
@@ -629,6 +634,7 @@ public struct RuntimeRegistryEntryState: Identifiable, Equatable, Sendable {
         self.runSuitabilityText = runSuitabilityText
         self.sizeText = sizeText
         self.taskText = taskText
+        self.targetText = targetText
         self.repoID = repoID
         self.canInspect = canInspect
         self.canDownload = canDownload
@@ -812,18 +818,49 @@ public enum RuntimeAudioSetupActionKind: String, Equatable, Sendable {
 
 public struct RuntimeAudioSetupActionState: Identifiable, Equatable, Sendable {
     public let modelID: String
+    public let modelIDs: [String]
     public let alias: String
     public let detail: String
     public let actionTitle: String
     public let kind: RuntimeAudioSetupActionKind
 
     public var id: String {
-        "\(modelID):\(kind.rawValue)"
+        "\(modelIDs.joined(separator: ",")):\(kind.rawValue)"
+    }
+
+    public init(
+        modelID: String,
+        alias: String,
+        detail: String,
+        actionTitle: String,
+        kind: RuntimeAudioSetupActionKind,
+        modelIDs: [String]? = nil
+    ) {
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedModelIDs = Self.normalizedModelIDs(modelIDs ?? [normalizedModelID])
+        self.modelID = normalizedModelIDs.first ?? normalizedModelID
+        self.modelIDs = normalizedModelIDs
+        self.alias = alias
+        self.detail = detail
+        self.actionTitle = actionTitle
+        self.kind = kind
+    }
+
+    static func normalizedModelIDs(_ modelIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        return modelIDs.compactMap { rawID in
+            let modelID = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard modelID.isEmpty == false, seen.insert(modelID).inserted else {
+                return nil
+            }
+            return modelID
+        }
     }
 }
 
 public struct RuntimeAudioSetupPromptState: Identifiable, Equatable, Sendable {
     public let modelID: String
+    public let modelIDs: [String]
     public let alias: String
     public let detail: String
     public let primaryActionTitle: String
@@ -843,16 +880,83 @@ public struct RuntimeAudioSetupPromptState: Identifiable, Equatable, Sendable {
             alias: alias,
             detail: detail,
             actionTitle: primaryActionTitle,
-            kind: kind
+            kind: kind,
+            modelIDs: modelIDs
         )
     }
 
     public init(action: RuntimeAudioSetupActionState) {
         self.modelID = action.modelID
+        self.modelIDs = action.modelIDs
         self.alias = action.alias
         self.detail = action.detail
         self.primaryActionTitle = action.actionTitle
         self.kind = action.kind
+    }
+}
+
+public enum RuntimeAudioSetupPhase: String, Equatable, Sendable {
+    case runtimeRequired = "runtime_required"
+    case modelsRequired = "models_required"
+    case modelsDownloading = "models_downloading"
+    case partiallyReady = "partially_ready"
+}
+
+public struct RuntimeAudioSetupModelChoiceState: Identifiable, Equatable, Sendable {
+    public let modelID: String
+    public let alias: String
+    public let capabilityKey: String
+    public let capabilityTitle: String
+    public let setupRole: String
+    public let setupPriority: Int
+    public let isRecommended: Bool
+    public let isSelected: Bool
+    public let isReady: Bool
+    public let isActive: Bool
+    public let isResumeReady: Bool
+    public let progressText: String
+
+    public var id: String {
+        modelID
+    }
+
+    public var statusText: String {
+        if isReady {
+            return "Ready"
+        }
+        if isActive {
+            return progressText.isEmpty ? "Downloading" : progressText
+        }
+        if isResumeReady {
+            return "Resume available"
+        }
+        return "Required"
+    }
+}
+
+public struct RuntimeAudioSetupCapabilityGroupState: Identifiable, Equatable, Sendable {
+    public let key: String
+    public let title: String
+    public let models: [RuntimeAudioSetupModelChoiceState]
+
+    public var id: String {
+        key
+    }
+}
+
+public struct RuntimeAudioSetupState: Identifiable, Equatable, Sendable {
+    public let phase: RuntimeAudioSetupPhase
+    public let title: String
+    public let summary: String
+    public let detail: String
+    public let primaryAction: RuntimeAudioSetupActionState?
+    public let capabilityGroups: [RuntimeAudioSetupCapabilityGroupState]
+    public let recommendedModelIDs: [String]
+    public let selectedModelIDs: [String]
+    public let readySelectedModelIDs: [String]
+
+    public var id: String {
+        phase.rawValue
     }
 }
 
@@ -883,7 +987,7 @@ public struct RuntimeDoctorReportState: Equatable, Sendable {
     }
 }
 
-public enum RuntimeDiagnosticsServerTargetKind: String, Identifiable, Sendable {
+public enum RuntimeDiagnosticsProviderTargetKind: String, Identifiable, Sendable {
     case localServer = "local_server"
     case remoteServer = "remote_server"
     case startNewServer = "start_new_server"
@@ -893,9 +997,9 @@ public enum RuntimeDiagnosticsServerTargetKind: String, Identifiable, Sendable {
     }
 }
 
-public struct RuntimeDiagnosticsServerTargetState: Identifiable, Equatable, Sendable {
+public struct RuntimeDiagnosticsProviderTargetState: Identifiable, Equatable, Sendable {
     public let id: String
-    public let kind: RuntimeDiagnosticsServerTargetKind
+    public let kind: RuntimeDiagnosticsProviderTargetKind
     public let title: String
     public let detailText: String
     public let profileSummaryText: String
@@ -904,7 +1008,7 @@ public struct RuntimeDiagnosticsServerTargetState: Identifiable, Equatable, Send
 
     public init(
         id: String,
-        kind: RuntimeDiagnosticsServerTargetKind,
+        kind: RuntimeDiagnosticsProviderTargetKind,
         title: String,
         detailText: String,
         profileSummaryText: String = "",
@@ -921,7 +1025,7 @@ public struct RuntimeDiagnosticsServerTargetState: Identifiable, Equatable, Send
     }
 }
 
-public enum RuntimeServerTargetKind: String, Identifiable, Sendable {
+public enum RuntimeProviderTargetKind: String, Identifiable, Sendable {
     case localServer = "local_server"
     case remoteServer = "remote_server"
 
@@ -939,7 +1043,7 @@ public enum RuntimeServerTargetKind: String, Identifiable, Sendable {
     }
 }
 
-public enum RuntimeServerCreationKind: String, CaseIterable, Identifiable, Sendable {
+public enum RuntimeProviderCreationKind: String, CaseIterable, Identifiable, Sendable {
     case localServer = "local_server"
     case remoteServer = "remote_server"
 
@@ -957,9 +1061,9 @@ public enum RuntimeServerCreationKind: String, CaseIterable, Identifiable, Senda
     }
 }
 
-public struct RuntimeServerTargetState: Identifiable, Equatable, Sendable {
+public struct RuntimeProviderTargetState: Identifiable, Equatable, Sendable {
     public let id: String
-    public let kind: RuntimeServerTargetKind
+    public let kind: RuntimeProviderTargetKind
     public let title: String
     public let detailText: String
     public let badgeText: String
@@ -975,7 +1079,7 @@ public struct RuntimeServerTargetState: Identifiable, Equatable, Sendable {
 
     public init(
         id: String,
-        kind: RuntimeServerTargetKind,
+        kind: RuntimeProviderTargetKind,
         title: String,
         detailText: String,
         badgeText: String,
@@ -1003,6 +1107,28 @@ public struct RuntimeServerTargetState: Identifiable, Equatable, Sendable {
         self.accelerationModeText = accelerationModeText
         self.contextText = contextText
         self.isRunning = isRunning
+    }
+}
+
+public struct RuntimeModelHubProviderTargetState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let detailText: String
+    public let providerID: String
+    public let modelID: String
+
+    public init(
+        id: String,
+        title: String,
+        detailText: String,
+        providerID: String,
+        modelID: String
+    ) {
+        self.id = id
+        self.title = title
+        self.detailText = detailText
+        self.providerID = providerID
+        self.modelID = modelID
     }
 }
 
@@ -1304,7 +1430,7 @@ public enum RuntimeLoraActivationMode: String, CaseIterable, Identifiable, Senda
         case .fusedDerivedModel:
             return "Fused Derived Model"
         case .adapterBackedRuntime:
-            return "Adapter-backed Runtime"
+            return "Adapter-backed Serving"
         }
     }
 }
@@ -1740,7 +1866,7 @@ public struct RuntimeAdapterCapabilityReceiptState: Equatable, Sendable {
         let reason = unsupportedReason.isEmpty
             ? "non_mergeable_adapter"
             : unsupportedReason
-        return "Fused activation is disabled for \(adapterFamilyText): \(reason). Use Adapter-backed Runtime instead."
+        return "Fused activation is disabled for \(adapterFamilyText): \(reason). Use Adapter-backed Serving instead."
     }
 
     private func supportText(_ value: Bool?) -> String {
@@ -2478,6 +2604,8 @@ public final class RuntimeViewModel {
     public private(set) var serverSessions: [DesktopServerSessionState] = []
     public private(set) var remoteServers: [RemoteServer] = []
     public private(set) var chatSessions: [DesktopChatSessionState] = []
+    public private(set) var companionPairing = CompanionPairingState()
+    public private(set) var companionStatus = CompanionStatusState()
     public private(set) var lastError: String?
     public private(set) var lastCLIWorkflowFailure: RuntimeCLIWorkflowFailureState?
     public private(set) var productUpdateSummary: String?
@@ -2548,6 +2676,7 @@ public final class RuntimeViewModel {
     public private(set) var chatCapabilities: [DesktopChatCapabilityRow] = []
     public private(set) var agentIntegrationExports: [AgentIntegrationExport] = []
     public private(set) var pendingAudioSetupPrompt: RuntimeAudioSetupPromptState?
+    public private(set) var confirmedAudioSetupModelIDs: [String] = []
     public private(set) var chatStatusText = "Idle"
     public private(set) var lastChatUsageText = ""
     public private(set) var isChatStreaming = false
@@ -2562,9 +2691,10 @@ public final class RuntimeViewModel {
     }
     public private(set) var selectedAgentIntegrationTarget: AgentIntegrationExportTarget = .openAICompatible
     public var selectedRemoteServerID = ""
-    public var selectedServerTargetID = ""
-    public private(set) var isCreatingServerTarget = false
-    public var selectedServerCreationKind: RuntimeServerCreationKind = .localServer
+    public var selectedProviderTargetID = ""
+    public private(set) var selectedModelHubProviderTargetID = ""
+    public private(set) var isCreatingProviderTarget = false
+    public var selectedProviderCreationKind: RuntimeProviderCreationKind = .localServer
     public var newLocalServerTitleDraft = ""
     public var newLocalServerModelID = ""
     public var newLocalServerHostDraft = MelixGatewayDefaults.host
@@ -2586,6 +2716,7 @@ public final class RuntimeViewModel {
     public var remoteServerAPIKeyDraft = ""
     public var remoteServerTimeoutSecondsDraft: UInt32 = 120
     public var remoteServerRateLimitPerMinuteDraft: UInt32 = 0
+    public var remoteServerToolSupportModeDraft: RemoteServerToolSupportMode = .auto
     public private(set) var isRefreshingServerModelOptions = false
     public var chatComposerText = ""
     public var selectedChatModelID = "melix-dev-text"
@@ -2625,7 +2756,7 @@ public final class RuntimeViewModel {
     public var selectedBenchmarkModelID = "melix-dev-text"
     public var selectedBenchmarkPresentationMode: RuntimeBenchmarkPresentationMode = .standard
     public var preferredDiagnosticsStage: RuntimeDiagnosticsStagePreference?
-    public var selectedDiagnosticsServerTargetID = ""
+    public var selectedDiagnosticsProviderTargetID = ""
     public var selectedBenchmarkSuiteIDs: Set<String> = ["smoke"]
     public var benchmarkPreflightFitCheck = false
     public var benchmarkAllowMemoryRisk = false
@@ -2784,21 +2915,21 @@ public final class RuntimeViewModel {
             && remoteServerDefaultModelIDDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
-    public var serverTargets: [RuntimeServerTargetState] {
+    public var providerTargets: [RuntimeProviderTargetState] {
         let localTargets = serverSessions.filter { session in
             Self.isHiddenPlaceholderModelID(session.modelID) == false
         }.map { session in
-            let modelName = serverTargetModelName(for: session.modelID)
+            let modelName = providerTargetModelName(for: session.modelID)
             let endpoint = session.effectiveListenerLabel
-            let loraActive = serverTargetLoRAStatusText(for: session.modelID)
+            let loraActive = providerTargetLoRAStatusText(for: session.modelID)
             let accelerationMode = runtimeAccelerationModeDisplayText(from: session.servingDefaults.effectiveAccelerationMode)
             let context = "Context \(session.servingDefaults.effectiveMaxTokens)"
-            return RuntimeServerTargetState(
-                id: Self.serverTargetID(kind: .localServer, serverID: session.id),
+            return RuntimeProviderTargetState(
+                id: Self.providerTargetID(kind: .localServer, serverID: session.id),
                 kind: .localServer,
                 title: session.title.trimmingCharacters(in: .whitespacesAndNewlines),
                 detailText: "\(modelName) • \(endpoint)",
-                badgeText: RuntimeServerTargetKind.localServer.badgeText,
+                badgeText: RuntimeProviderTargetKind.localServer.badgeText,
                 modelID: session.modelID,
                 modelName: modelName,
                 endpointText: endpoint,
@@ -2816,18 +2947,18 @@ public final class RuntimeViewModel {
             )
         }
         let remoteTargets = remoteServers.map { server in
-            let modelName = serverTargetModelName(for: server.defaultModelID)
+            let modelName = providerTargetModelName(for: server.defaultModelID)
             let endpoint = server.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
             let healthStatus = server.healthStatus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "Unknown"
                 : server.healthStatus.trimmingCharacters(in: .whitespacesAndNewlines)
             let provider = server.providerKind.trimmingCharacters(in: .whitespacesAndNewlines)
-            return RuntimeServerTargetState(
-                id: Self.serverTargetID(kind: .remoteServer, serverID: server.id),
+            return RuntimeProviderTargetState(
+                id: Self.providerTargetID(kind: .remoteServer, serverID: server.id),
                 kind: .remoteServer,
                 title: server.title.trimmingCharacters(in: .whitespacesAndNewlines),
                 detailText: "\(modelName) • \(endpoint)",
-                badgeText: RuntimeServerTargetKind.remoteServer.badgeText,
+                badgeText: RuntimeProviderTargetKind.remoteServer.badgeText,
                 modelID: server.defaultModelID,
                 modelName: modelName,
                 endpointText: endpoint,
@@ -2846,10 +2977,41 @@ public final class RuntimeViewModel {
         return localTargets + remoteTargets
     }
 
-    public var selectedServerTarget: RuntimeServerTargetState? {
-        let targets = serverTargets
-        if selectedServerTargetID.isEmpty == false,
-           let selected = targets.first(where: { $0.id == selectedServerTargetID })
+    public var modelHubProviderTargets: [RuntimeModelHubProviderTargetState] {
+        providerTargets
+            .filter { $0.kind == .localServer }
+            .map { target in
+                RuntimeModelHubProviderTargetState(
+                    id: target.id,
+                    title: target.title.isEmpty ? "Local Provider" : target.title,
+                    detailText: target.detailText,
+                    providerID: target.serverID,
+                    modelID: target.modelID
+                )
+            }
+    }
+
+    public var selectedModelHubProviderTarget: RuntimeModelHubProviderTargetState? {
+        let targets = modelHubProviderTargets
+        if selectedModelHubProviderTargetID.isEmpty == false,
+           let selected = targets.first(where: { $0.id == selectedModelHubProviderTargetID })
+        {
+            return selected
+        }
+        return targets.first
+    }
+
+    public var modelHubProviderTargetSummaryText: String {
+        guard let target = selectedModelHubProviderTarget else {
+            return "No local provider target"
+        }
+        return "\(target.title) • \(target.detailText)"
+    }
+
+    public var selectedProviderTarget: RuntimeProviderTargetState? {
+        let targets = providerTargets
+        if selectedProviderTargetID.isEmpty == false,
+           let selected = targets.first(where: { $0.id == selectedProviderTargetID })
         {
             return selected
         }
@@ -2904,8 +3066,8 @@ public final class RuntimeViewModel {
         return merged
     }
 
-    public var diagnosticsServerTargets: [RuntimeDiagnosticsServerTargetState] {
-        let localTargets = serverTargets.compactMap { target -> RuntimeDiagnosticsServerTargetState? in
+    public var diagnosticsProviderTargets: [RuntimeDiagnosticsProviderTargetState] {
+        let localTargets = providerTargets.compactMap { target -> RuntimeDiagnosticsProviderTargetState? in
             guard target.kind == .localServer, target.isRunning else {
                 return nil
             }
@@ -2915,8 +3077,8 @@ public final class RuntimeViewModel {
             let detailText = [target.detailText, target.statusText, profileSummaryText]
                 .filter { $0.isEmpty == false }
                 .joined(separator: " • ")
-            return RuntimeDiagnosticsServerTargetState(
-                id: Self.diagnosticsLocalServerTargetID(serverID: target.serverID),
+            return RuntimeDiagnosticsProviderTargetState(
+                id: Self.diagnosticsLocalProviderTargetID(serverID: target.serverID),
                 kind: .localServer,
                 title: target.title,
                 detailText: detailText,
@@ -2925,12 +3087,12 @@ public final class RuntimeViewModel {
                 serverID: target.serverID
             )
         }
-        let remoteTargets = serverTargets.compactMap { target -> RuntimeDiagnosticsServerTargetState? in
+        let remoteTargets = providerTargets.compactMap { target -> RuntimeDiagnosticsProviderTargetState? in
             guard target.kind == .remoteServer else {
                 return nil
             }
-            return RuntimeDiagnosticsServerTargetState(
-                id: Self.diagnosticsRemoteServerTargetID(serverID: target.serverID),
+            return RuntimeDiagnosticsProviderTargetState(
+                id: Self.diagnosticsRemoteProviderTargetID(serverID: target.serverID),
                 kind: .remoteServer,
                 title: target.title,
                 detailText: target.detailText,
@@ -2939,21 +3101,21 @@ public final class RuntimeViewModel {
             )
         }
         return localTargets + remoteTargets + [
-            RuntimeDiagnosticsServerTargetState(
-                id: Self.startNewDiagnosticsServerTargetID,
+            RuntimeDiagnosticsProviderTargetState(
+                id: Self.startNewDiagnosticsProviderTargetID,
                 kind: .startNewServer,
-                title: "Start New Server...",
-                detailText: "Open Server configuration",
+                title: "Start New Provider...",
+                detailText: "Open Provider configuration",
                 modelID: "",
                 serverID: ""
             ),
         ]
     }
 
-    public var selectedDiagnosticsServerTarget: RuntimeDiagnosticsServerTargetState? {
-        let targets = diagnosticsServerTargets
-        if selectedDiagnosticsServerTargetID.isEmpty == false,
-           let selected = targets.first(where: { $0.id == selectedDiagnosticsServerTargetID })
+    public var selectedDiagnosticsProviderTarget: RuntimeDiagnosticsProviderTargetState? {
+        let targets = diagnosticsProviderTargets
+        if selectedDiagnosticsProviderTargetID.isEmpty == false,
+           let selected = targets.first(where: { $0.id == selectedDiagnosticsProviderTargetID })
         {
             return selected
         }
@@ -2969,14 +3131,14 @@ public final class RuntimeViewModel {
     }
 
     private static func diagnosticsProfileSummarySuffix(
-        for target: RuntimeDiagnosticsServerTargetState
+        for target: RuntimeDiagnosticsProviderTargetState
     ) -> String {
         target.profileSummaryText.isEmpty ? "" : " • \(target.profileSummaryText)"
     }
 
     public var diagnosticsTargetSummaryText: String {
-        guard let target = selectedDiagnosticsServerTarget else {
-            return "Select a running server for Diagnostics."
+        guard let target = selectedDiagnosticsProviderTarget else {
+            return "Select a running provider for Diagnostics."
         }
         switch target.kind {
         case .localServer:
@@ -2984,18 +3146,18 @@ public final class RuntimeViewModel {
         case .remoteServer:
             return "\(target.title) • \(target.modelID) • \(target.detailText)"
         case .startNewServer:
-            return "Create or configure a server before running Diagnostics."
+            return "Create or configure a provider before running Diagnostics."
         }
     }
 
     public var diagnosticsBenchmarkUnavailableText: String? {
-        guard let target = selectedDiagnosticsServerTarget else {
-            return "Select a local running server before running Benchmark."
+        guard let target = selectedDiagnosticsProviderTarget else {
+            return "Select a local running provider before running Benchmark."
         }
         switch target.kind {
         case .localServer:
             if target.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return "Selected local server has no model configured."
+                return "Selected local provider has no model configured."
             }
             if selectedBenchmarkSuiteIDs.isEmpty {
                 return "Select at least one benchmark dataset before running Benchmark."
@@ -3020,18 +3182,18 @@ public final class RuntimeViewModel {
         case .remoteServer:
             return Self.remoteBenchmarkUnsupportedMessage
         case .startNewServer:
-            return "Select a local running server before running Benchmark."
+            return "Select a local running provider before running Benchmark."
         }
     }
 
     public var diagnosticsEvaluationUnavailableText: String? {
-        guard let target = selectedDiagnosticsServerTarget else {
-            return "Select a running server before running Evaluation."
+        guard let target = selectedDiagnosticsProviderTarget else {
+            return "Select a running provider before running Evaluation."
         }
         switch target.kind {
         case .localServer:
             if target.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return "Selected local server has no model configured."
+                return "Selected local provider has no model configured."
             }
             if selectedEvaluationSuiteIDs.isEmpty {
                 return "Select at least one evaluation suite before running Evaluation."
@@ -3058,14 +3220,14 @@ public final class RuntimeViewModel {
                 return "Select at least one evaluation suite before running Evaluation."
             }
             if selectedEvaluationMode == .compare {
-                return "Remote Server evaluation is available for standard Evaluation runs."
+                return "Remote Provider evaluation is available for standard Evaluation runs."
             }
             if selectedEvaluationSuiteIDs != Set(["event_extraction"]) {
                 return Self.remoteEvaluationUnsupportedMessage
             }
             return nil
         case .startNewServer:
-            return "Select a running server before running Evaluation."
+            return "Select a running provider before running Evaluation."
         }
     }
 
@@ -3140,6 +3302,8 @@ public final class RuntimeViewModel {
     private let cliWorkflowRunner: (any MelixCLIWorkflowRunning)?
     private let operatorCommandRunner: MelixCLIRunner?
     private let serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring
+    private let companionPairingClient: any CompanionPairingClient
+    private let companionStatusClient: any CompanionStatusClient
     private let remoteServerStore: any RemoteServerStoring
     private let evaluationPromptStore: any EvaluationPromptStoring
     private let loraTrainingJobStore: any LoraTrainingJobStoring
@@ -3160,12 +3324,17 @@ public final class RuntimeViewModel {
     private var chatPresentationMaxLagMs = 0.0
     private var chatPresentationFlushCount = 0.0
     private var persistedServerSessions: [DesktopServerSessionState] = []
-    private var diagnosticsServerTargetSelectionUserOverridden = false
+    private var diagnosticsProviderTargetSelectionUserOverridden = false
     private var dismissedBannerIDs: Set<String> = []
     private var modelSettingsDraftModelID = ""
     private var operatorStateRestored = false
     private var lastPersistedOperatorSessionState: OperatorSessionState?
     private var gatewayAPIKeyPersistFailures = 0.0
+    private var companionPairingIssueFailures = 0.0
+    private var companionPairingRevokeFailures = 0.0
+    private var companionStatusRefreshFailures = 0.0
+    private var activeCompanionSessionToken = ""
+    private var activeCompanionPairingBaseURL: URL?
     private var remoteServerPersistFailures = 0.0
     private var evaluationPromptPersistFailures = 0.0
     private var loraTrainingJobPersistFailures = 0.0
@@ -3178,15 +3347,24 @@ public final class RuntimeViewModel {
     private var gatewayApplyTask: Task<Void, Never>?
     private var benchmarkExportBundle: ControlPlaneBenchmarkExportBundle?
 
-    private static let startNewDiagnosticsServerTargetID = "start-new-server"
-    private static let remoteBenchmarkUnsupportedMessage = "Remote Server benchmark is not supported yet; select a local running server."
-    private static let remoteEvaluationUnsupportedMessage = "Remote Server evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running server."
+    private static let startNewDiagnosticsProviderTargetID = "start-new-provider"
+    private static let remoteBenchmarkUnsupportedMessage = "Remote Provider benchmark is not supported yet; select a local running provider."
+    private static let remoteEvaluationUnsupportedMessage = "Remote Provider evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running provider."
+    // Catalog visibility is the primary hiding signal; keep explicit IDs as a
+    // fallback for snapshots from older control-plane builds.
     private static let hiddenPlaceholderModelIDs: Set<String> = [
         "melix-dev-text",
+        "melix-dev-embed",
+        "melix-dev-rerank",
+        "melix-dev-model-ops",
+        "melix-dev-ocr",
         "melix-dev-vlm",
+        "melix-dev-transcribe",
+        "melix-dev-speech",
+        "melix-dev-image",
     ]
 
-    private static func serverTargetID(kind: RuntimeServerTargetKind, serverID: String) -> String {
+    private static func providerTargetID(kind: RuntimeProviderTargetKind, serverID: String) -> String {
         "\(kind == .localServer ? "local" : "remote"):\(serverID)"
     }
 
@@ -3198,11 +3376,11 @@ public final class RuntimeViewModel {
         return trimmedModelID.split(separator: "/").last.map(String.init) ?? trimmedModelID
     }
 
-    private static func diagnosticsLocalServerTargetID(serverID: String) -> String {
+    private static func diagnosticsLocalProviderTargetID(serverID: String) -> String {
         "local:\(serverID)"
     }
 
-    private static func diagnosticsRemoteServerTargetID(serverID: String) -> String {
+    private static func diagnosticsRemoteProviderTargetID(serverID: String) -> String {
         "remote:\(serverID)"
     }
 
@@ -3401,6 +3579,8 @@ public final class RuntimeViewModel {
         cliWorkflowRunner: (any MelixCLIWorkflowRunning)? = nil,
         operatorCommandRunner: MelixCLIRunner? = nil,
         serverSessionAPIKeyStore: any ServerSessionAPIKeyStoring = NullServerSessionAPIKeyStore(),
+        companionPairingClient: any CompanionPairingClient = LiveCompanionPairingClient(),
+        companionStatusClient: any CompanionStatusClient = LiveCompanionStatusClient(),
         remoteServerStore: any RemoteServerStoring = NullRemoteServerStore(),
         evaluationPromptStore: any EvaluationPromptStoring = NullEvaluationPromptStore(),
         loraTrainingJobStore: any LoraTrainingJobStoring = NullLoraTrainingJobStore(),
@@ -3413,6 +3593,8 @@ public final class RuntimeViewModel {
         self.cliWorkflowRunner = cliWorkflowRunner
         self.operatorCommandRunner = operatorCommandRunner
         self.serverSessionAPIKeyStore = serverSessionAPIKeyStore
+        self.companionPairingClient = companionPairingClient
+        self.companionStatusClient = companionStatusClient
         self.remoteServerStore = remoteServerStore
         self.evaluationPromptStore = evaluationPromptStore
         self.loraTrainingJobStore = loraTrainingJobStore
@@ -3583,11 +3765,11 @@ public final class RuntimeViewModel {
                 selectedEvaluationRemoteServerID = servers.first?.id ?? ""
                 evaluationRemoteModelID = ""
             }
-            refreshServerTargetSelection()
-            refreshDiagnosticsServerTargetSelection()
+            refreshProviderTargetSelection()
+            refreshDiagnosticsProviderTargetSelection()
         } catch {
             remoteServerPersistFailures += 1
-            recordLocalError("Remote Server load failed: \(error)")
+            recordLocalError("Remote Provider load failed: \(error)")
         }
     }
 
@@ -3639,6 +3821,7 @@ public final class RuntimeViewModel {
         remoteServerAPIKeyDraft = ""
         remoteServerTimeoutSecondsDraft = 120
         remoteServerRateLimitPerMinuteDraft = 0
+        remoteServerToolSupportModeDraft = .auto
     }
 
     public var isRemoteServerBaseURLEditable: Bool {
@@ -3668,8 +3851,8 @@ public final class RuntimeViewModel {
         if let server = remoteServers.first(where: { $0.id == id }) {
             applyRemoteServerDraft(from: server)
         }
-        selectedServerTargetID = Self.serverTargetID(kind: .remoteServer, serverID: id)
-        isCreatingServerTarget = false
+        selectedProviderTargetID = Self.providerTargetID(kind: .remoteServer, serverID: id)
+        isCreatingProviderTarget = false
         selectedSurface = .server
         notifyStateChanged()
     }
@@ -3684,7 +3867,7 @@ public final class RuntimeViewModel {
         let selectedID = selectedRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
         if selectedID.isEmpty == false, id != selectedID {
             remoteServerIDDraft = selectedID
-            recordLocalError("Remote Server ID cannot be changed after creation. Use New to create another server.")
+            recordLocalError("Remote Provider ID cannot be changed after creation. Use New to create another provider.")
             notifyStateChanged()
             return
         }
@@ -3694,7 +3877,7 @@ public final class RuntimeViewModel {
               baseURL.isEmpty == false,
               defaultModelID.isEmpty == false
         else {
-            recordLocalError("Remote Server requires id, title, provider, base URL, and default model.")
+            recordLocalError("Remote Provider requires id, title, provider, base URL, and default model.")
             notifyStateChanged()
             return
         }
@@ -3710,6 +3893,7 @@ public final class RuntimeViewModel {
                     defaultModelID: defaultModelID,
                     timeoutSeconds: remoteServerTimeoutSecondsDraft,
                     rateLimitPerMinute: remoteServerRateLimitPerMinuteDraft,
+                    toolSupportMode: remoteServerToolSupportModeDraft,
                     apiKey: remoteServerAPIKeyDraft
                 )
             )
@@ -3717,10 +3901,10 @@ public final class RuntimeViewModel {
             selectedRemoteServerID = saved.id
             remoteServers = try remoteServerStore.list()
             applyRemoteServerDraft(from: saved)
-            selectedServerTargetID = Self.serverTargetID(kind: .remoteServer, serverID: saved.id)
-            isCreatingServerTarget = false
-            refreshServerTargetSelection()
-            refreshDiagnosticsServerTargetSelection()
+            selectedProviderTargetID = Self.providerTargetID(kind: .remoteServer, serverID: saved.id)
+            isCreatingProviderTarget = false
+            refreshProviderTargetSelection()
+            refreshDiagnosticsProviderTargetSelection()
             notifyStateChanged()
         } catch {
             remoteServerPersistFailures += 1
@@ -3730,7 +3914,7 @@ public final class RuntimeViewModel {
                     valueMs: remoteServerPersistFailures
                 )
             }
-            recordLocalError("Remote Server save failed: \(error)")
+            recordLocalError("Remote Provider save failed: \(error)")
             notifyStateChanged()
         }
     }
@@ -3749,8 +3933,8 @@ public final class RuntimeViewModel {
             } else {
                 prepareNewRemoteServerDraft()
             }
-            refreshServerTargetSelection()
-            refreshDiagnosticsServerTargetSelection()
+            refreshProviderTargetSelection()
+            refreshDiagnosticsProviderTargetSelection()
             notifyStateChanged()
         } catch {
             remoteServerPersistFailures += 1
@@ -3760,7 +3944,7 @@ public final class RuntimeViewModel {
                     valueMs: remoteServerPersistFailures
                 )
             }
-            recordLocalError("Remote Server remove failed: \(error)")
+            recordLocalError("Remote Provider remove failed: \(error)")
             notifyStateChanged()
         }
     }
@@ -3775,6 +3959,7 @@ public final class RuntimeViewModel {
         remoteServerAPIKeyDraft = ""
         remoteServerTimeoutSecondsDraft = server.timeoutSeconds
         remoteServerRateLimitPerMinuteDraft = server.rateLimitPerMinute
+        remoteServerToolSupportModeDraft = server.toolSupportMode
     }
 
     public var selectedEvaluationPrompt: EvaluationPrompt? {
@@ -5085,7 +5270,7 @@ public final class RuntimeViewModel {
             ]
             runtimeDiscoverySnapshot = try RuntimeDiscoveryPayloadDecoder.decodeSnapshot(entries)
             runtimeDiscoveryOperationInProgress = false
-            runtimeDiscoveryOperationMessage = "Runtime discovery refreshed."
+            runtimeDiscoveryOperationMessage = "Provider discovery refreshed."
             runtimeDiscoveryOperationErrorMessage = ""
             clearCLIWorkflowFailure()
             notifyStateChanged()
@@ -5624,10 +5809,10 @@ public final class RuntimeViewModel {
         openCommandCenterAction?()
     }
 
-    public func beginServerCreation(kind: RuntimeServerCreationKind = .localServer) {
-        selectedServerCreationKind = kind
-        isCreatingServerTarget = true
-        selectedServerTargetID = ""
+    public func beginProviderCreation(kind: RuntimeProviderCreationKind = .localServer) {
+        selectedProviderCreationKind = kind
+        isCreatingProviderTarget = true
+        selectedProviderTargetID = ""
         selectedSurface = .server
         switch kind {
         case .localServer:
@@ -5640,8 +5825,8 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
-    public func selectServerCreationKind(_ kind: RuntimeServerCreationKind) {
-        selectedServerCreationKind = kind
+    public func selectProviderCreationKind(_ kind: RuntimeProviderCreationKind) {
+        selectedProviderCreationKind = kind
         switch kind {
         case .localServer:
             resetLocalServerDraft()
@@ -5653,30 +5838,30 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
-    public func cancelServerCreation() {
-        isCreatingServerTarget = false
-        refreshServerTargetSelection()
+    public func cancelProviderCreation() {
+        isCreatingProviderTarget = false
+        refreshProviderTargetSelection()
         notifyStateChanged()
     }
 
-    public func selectDiagnosticsServerTarget(id: String) {
-        guard let target = diagnosticsServerTargets.first(where: { $0.id == id }) else {
+    public func selectDiagnosticsProviderTarget(id: String) {
+        guard let target = diagnosticsProviderTargets.first(where: { $0.id == id }) else {
             return
         }
         if target.kind == .startNewServer {
-            beginServerCreation(kind: .localServer)
+            beginProviderCreation(kind: .localServer)
             return
         }
-        selectedDiagnosticsServerTargetID = target.id
-        diagnosticsServerTargetSelectionUserOverridden = true
+        selectedDiagnosticsProviderTargetID = target.id
+        diagnosticsProviderTargetSelectionUserOverridden = true
         switch target.kind {
         case .localServer:
             selectedServerSessionID = target.serverID
-            selectedServerTargetID = Self.serverTargetID(kind: .localServer, serverID: target.serverID)
+            selectedProviderTargetID = Self.providerTargetID(kind: .localServer, serverID: target.serverID)
         case .remoteServer:
             selectedEvaluationRemoteServerID = target.serverID
             evaluationRemoteModelID = ""
-            selectedServerTargetID = Self.serverTargetID(kind: .remoteServer, serverID: target.serverID)
+            selectedProviderTargetID = Self.providerTargetID(kind: .remoteServer, serverID: target.serverID)
         case .startNewServer:
             break
         }
@@ -5688,11 +5873,19 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func selectModelHubProviderTarget(id: String) {
+        guard modelHubProviderTargets.contains(where: { $0.id == id }) else {
+            return
+        }
+        selectedModelHubProviderTargetID = id
+        notifyStateChanged()
+    }
+
     public func createLocalServerFromDraft() {
         guard newLocalServerTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
             selectedSurface = .server
-            isCreatingServerTarget = true
-            recordLocalError("Local Server requires a session name.")
+            isCreatingProviderTarget = true
+            recordLocalError("Local Provider requires a session name.")
             notifyStateChanged()
             return
         }
@@ -5702,6 +5895,19 @@ public final class RuntimeViewModel {
             host: newLocalServerHostDraft,
             port: newLocalServerPortDraft
         )
+    }
+
+    public func createAndStartLocalServerFromDraft() {
+        let draftTitle = newLocalServerTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        createLocalServerFromDraft()
+        guard commandWorkflowRunner == nil,
+              isCreatingProviderTarget == false,
+              let createdSession = selectedServerSession,
+              draftTitle.isEmpty || createdSession.title == draftTitle
+        else {
+            return
+        }
+        Task { await startServerSession(id: createdSession.id) }
     }
 
     public func createServerSession(
@@ -5714,12 +5920,12 @@ public final class RuntimeViewModel {
         let modelID = explicitModelID.isEmpty ? (serverModelOptions.first?.modelID ?? "") : explicitModelID
         guard modelID.isEmpty == false else {
             selectedSurface = .server
-            recordLocalError("No Ready to Run model is available. Rescan or download a model before creating a local server.")
+            recordLocalError("No Ready to Run model is available. Rescan or download a model before creating a local provider.")
             notifyStateChanged()
             return
         }
         let nextIndex = serverSessions.count + 1
-        let defaultTitle = nextIndex == 1 ? "Primary Server" : "Server \(nextIndex)"
+        let defaultTitle = nextIndex == 1 ? "Primary Provider" : "Provider \(nextIndex)"
         let title = titleOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? defaultTitle
             : titleOverride.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5746,7 +5952,7 @@ public final class RuntimeViewModel {
                     syncServerSessionsWithModels()
                     refreshAgentIntegrationExports()
                     selectedSurface = .server
-                    isCreatingServerTarget = false
+                    isCreatingProviderTarget = false
                     if chatSessions.isEmpty {
                         createChatSession()
                     }
@@ -5768,8 +5974,8 @@ public final class RuntimeViewModel {
         )
         persistedServerSessions.append(session)
         selectedServerSessionID = session.id
-        selectedServerTargetID = Self.serverTargetID(kind: .localServer, serverID: session.id)
-        isCreatingServerTarget = false
+        selectedProviderTargetID = Self.providerTargetID(kind: .localServer, serverID: session.id)
+        isCreatingProviderTarget = false
         syncServerSessionsWithModels()
         refreshAgentIntegrationExports()
         selectedSurface = .server
@@ -5779,12 +5985,12 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
-    public func selectServerTarget(id: String) {
-        guard let target = serverTargets.first(where: { $0.id == id }) else {
+    public func selectProviderTarget(id: String) {
+        guard let target = providerTargets.first(where: { $0.id == id }) else {
             return
         }
-        selectedServerTargetID = target.id
-        isCreatingServerTarget = false
+        selectedProviderTargetID = target.id
+        isCreatingProviderTarget = false
         switch target.kind {
         case .localServer:
             selectServerSession(id: target.serverID)
@@ -5797,8 +6003,8 @@ public final class RuntimeViewModel {
         guard serverSessions.contains(where: { $0.id == id }) else {
             return
         }
-        selectedServerTargetID = Self.serverTargetID(kind: .localServer, serverID: id)
-        isCreatingServerTarget = false
+        selectedProviderTargetID = Self.providerTargetID(kind: .localServer, serverID: id)
+        isCreatingProviderTarget = false
         if let commandWorkflowRunner {
             Task {
                 do {
@@ -6014,6 +6220,159 @@ public final class RuntimeViewModel {
         updateSelectedServerSession { session in
             session.servingDefaults.numDraftTokens = max(0, value)
             session.updatedAt = Date()
+        }
+    }
+
+    public func issueCompanionPairing() async {
+        guard companionPairing.phase != .issuing && companionPairing.phase != .revoking else {
+            return
+        }
+        guard let serverSession = selectedServerSession else {
+            await failCompanionPairingIssue("Select a local provider before creating companion pairing.")
+            return
+        }
+        guard let baseURL = Self.companionPairingBaseURL(for: serverSession) else {
+            await failCompanionPairingIssue("Selected provider does not have a valid companion pairing URL.")
+            return
+        }
+
+        let primaryKey: String
+        do {
+            guard let record = try serverSessionAPIKeyStore.loadPrimaryKey(serverSessionID: serverSession.id) else {
+                await failCompanionPairingIssue("Generate or restore a primary gateway API key before creating companion pairing.")
+                return
+            }
+            primaryKey = record.primaryKey
+        } catch {
+            await failCompanionPairingIssue("Primary gateway API key lookup failed: \(error)")
+            return
+        }
+
+        companionPairing = CompanionPairingState(phase: .issuing)
+        activeCompanionSessionToken = ""
+        activeCompanionPairingBaseURL = nil
+        companionStatus = CompanionStatusState()
+        notifyStateChanged()
+
+        let startedAt = Date()
+        do {
+            let result = try await companionPairingClient.issuePairing(baseURL: baseURL, apiKey: primaryKey)
+            activeCompanionSessionToken = result.resumeToken
+            activeCompanionPairingBaseURL = baseURL
+            companionPairing = CompanionPairingState.active(from: result)
+            companionStatus = CompanionStatusState()
+            await metrics.record(
+                name: "companion.pairing_issue_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            notifyStateChanged()
+        } catch {
+            await failCompanionPairingIssue("Companion pairing creation failed: \(error)")
+        }
+    }
+
+    public func revokeCompanionPairing() async {
+        guard companionPairing.phase != .revoking else {
+            return
+        }
+        guard let baseURL = activeCompanionPairingBaseURL, activeCompanionSessionToken.isEmpty == false else {
+            await failCompanionPairingRevoke("No active companion pairing token to revoke.")
+            return
+        }
+
+        let sessionToken = activeCompanionSessionToken
+        companionPairing.phase = .revoking
+        notifyStateChanged()
+
+        let startedAt = Date()
+        do {
+            try await companionPairingClient.revokePairing(baseURL: baseURL, sessionToken: sessionToken)
+            activeCompanionSessionToken = ""
+            activeCompanionPairingBaseURL = nil
+            companionPairing = CompanionPairingState()
+            companionStatus = CompanionStatusState()
+            await metrics.record(
+                name: "companion.pairing_revoke_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            notifyStateChanged()
+        } catch {
+            await failCompanionPairingRevoke("Companion pairing revocation failed: \(error)")
+        }
+    }
+
+    public func companionPairingBundleText() -> String? {
+        guard companionPairing.copyBundleAvailable, activeCompanionSessionToken.isEmpty == false else {
+            return nil
+        }
+        let payload = CompanionPairingClipboardBundle(
+            schemaVersion: "melix.companion.pairing.bundle.v1",
+            sessionID: companionPairing.sessionID,
+            scope: companionPairing.scope,
+            mobileURL: companionPairing.mobileURL,
+            statusURL: companionPairing.statusURL,
+            resumeHeader: companionPairing.resumeHeader,
+            token: activeCompanionSessionToken,
+            tokenTransport: companionPairing.tokenTransport,
+            allowedRoutes: companionPairing.allowedRoutes,
+            forbiddenCapabilities: companionPairing.forbiddenCapabilities,
+            expiresAtUnixMS: companionPairing.expiresAtUnixMS
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(payload) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    public func companionPairingCodeText() -> String? {
+        guard let bundleText = companionPairingBundleText() else {
+            return nil
+        }
+        let bundleData = Data(bundleText.utf8)
+        let encoded = bundleData.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return "melix-companion:\(encoded)"
+    }
+
+    @MainActor
+    public func refreshCompanionStatus() async {
+        guard companionStatus.phase != .loading else {
+            return
+        }
+        guard companionPairing.phase == .active,
+              activeCompanionSessionToken.isEmpty == false,
+              let statusURL = URL(string: companionPairing.statusURL),
+              companionPairing.resumeHeader.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        else {
+            await failCompanionStatusRefresh("Issue a read-only companion token before refreshing companion status.")
+            return
+        }
+
+        let resumeHeader = companionPairing.resumeHeader
+        let sessionToken = activeCompanionSessionToken
+        companionStatus.phase = .loading
+        companionStatus.lastError = nil
+        notifyStateChanged()
+
+        let startedAt = Date()
+        do {
+            let snapshot = try await companionStatusClient.refreshStatus(
+                statusURL: statusURL,
+                resumeHeader: resumeHeader,
+                sessionToken: sessionToken
+            )
+            companionStatus = CompanionStatusState.loaded(from: snapshot)
+            await metrics.record(
+                name: "companion.status_refresh_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            notifyStateChanged()
+        } catch {
+            await failCompanionStatusRefresh("Companion status refresh failed: \(error)")
         }
     }
 
@@ -6242,8 +6601,8 @@ public final class RuntimeViewModel {
 
     public func createChatSession() {
         guard operatorStateRestored || serverSessions.isEmpty == false else {
-            setLastError("Create a Server Session before opening chat.")
-            chatStatusText = "No Server Session"
+            setLastError("Create a Provider before opening chat.")
+            chatStatusText = "No Provider"
             selectedSurface = .server
             notifyStateChanged()
             return
@@ -6254,7 +6613,7 @@ public final class RuntimeViewModel {
             id: "chat-session-\(UUID().uuidString)",
             title: nextIndex == 1 ? "Chat 1" : "Chat \(nextIndex)",
             serverSessionID: "",
-            statusText: "Choose Server"
+            statusText: "Choose Provider"
         )
         chatSessions.append(session)
         loadChatSession(session)
@@ -6329,7 +6688,7 @@ public final class RuntimeViewModel {
 
         replaceChatSession(id: selectedChatSession.id) { session in
             session.serverSessionID = serverSession.id
-            if session.statusText == "Choose Server" || session.statusText == "No Server Session" {
+            if session.statusText == "Choose Provider" || session.statusText == "Choose Server" || session.statusText == "No Provider" || session.statusText == "No Server Session" {
                 session.statusText = "Idle"
             }
             session.updatedAt = Date()
@@ -6337,7 +6696,7 @@ public final class RuntimeViewModel {
         selectedServerSessionID = serverSession.id
         selectedChatModelID = serverSession.modelID
         if selectedChatSessionID == selectedChatSession.id {
-            chatStatusText = chatStatusText == "Choose Server" || chatStatusText == "No Server Session"
+            chatStatusText = chatStatusText == "Choose Provider" || chatStatusText == "Choose Server" || chatStatusText == "No Provider" || chatStatusText == "No Server Session"
                 ? "Idle"
                 : chatStatusText
         }
@@ -6361,7 +6720,7 @@ public final class RuntimeViewModel {
         let payload = """
         # \(sanitizedRichText(session.title))
 
-        - Server Session: \(session.serverSessionID)
+        - Provider: \(session.serverSessionID)
         - Branch: \(sanitizedRichText(session.branchTitle))
         - Status: \(sanitizedRichText(session.statusText))
 
@@ -6550,7 +6909,7 @@ public final class RuntimeViewModel {
             signals.append(
                 DesktopBannerState(
                     id: "runtime-monitoring",
-                    title: "Runtime Needs Monitoring",
+                    title: "Provider Needs Monitoring",
                     detail: connectionDetailText,
                     severity: .warning
                 )
@@ -6594,41 +6953,250 @@ public final class RuntimeViewModel {
     }
 
     public var audioSetupActions: [RuntimeAudioSetupActionState] {
-        latestSnapshot.models.compactMap { model in
-            let backendID = model.settings.ext["melix.audio.backend_id"]?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        audioSetupState?.primaryAction.map { [$0] } ?? []
+    }
+
+    public var audioSetupState: RuntimeAudioSetupState? {
+        let models = audioSetupCatalogModels
+        guard models.isEmpty == false else {
+            return nil
+        }
+
+        let recommendedModelIDs = recommendedAudioSetupModelIDs(from: models)
+        let selectedModelIDs = resolvedAudioSetupSelectedModelIDs(
+            recommendedModelIDs: recommendedModelIDs,
+            availableModelIDs: models.map(\.modelID)
+        )
+        let selectedModelIDSet = Set(selectedModelIDs)
+        let readySelectedModelIDs = selectedModelIDs.filter { modelID in
+            models.first(where: { $0.modelID == modelID })?.isReady == true
+        }
+        let runtimeRequiredModel = models.first { $0.runtimePackInstalled == false }
+        let capabilityGroups = audioSetupCapabilityGroups(from: models, selectedModelIDSet: selectedModelIDSet)
+
+        if let runtimeRequiredModel {
+            let runtimePackID = runtimeRequiredModel.runtimePackID.isEmpty
+                ? "melix-audio-runtime-pack"
+                : runtimeRequiredModel.runtimePackID
+            let action = RuntimeAudioSetupActionState(
+                modelID: runtimeRequiredModel.modelID,
+                alias: "Audio Support",
+                detail: "Install \(runtimePackID) to enable STT and TTS audio requests.",
+                actionTitle: "Install Audio Support",
+                kind: .installRuntime
+            )
+            return RuntimeAudioSetupState(
+                phase: .runtimeRequired,
+                title: "Audio Setup Required",
+                summary: "Install the shared audio runtime before downloading audio models.",
+                detail: "Shared runtime pack: \(runtimePackID).",
+                primaryAction: action,
+                capabilityGroups: capabilityGroups,
+                recommendedModelIDs: recommendedModelIDs,
+                selectedModelIDs: selectedModelIDs,
+                readySelectedModelIDs: readySelectedModelIDs
+            )
+        }
+
+        let selectedModels = models.filter { selectedModelIDSet.contains($0.modelID) }
+        let pendingSelectedModelIDs = selectedModels
+            .filter { $0.isReady == false && $0.isActive == false }
+            .map(\.modelID)
+        let activeSelectedModelIDs = selectedModels
+            .filter(\.isActive)
+            .map(\.modelID)
+        guard selectedModels.contains(where: { $0.isReady == false }) else {
+            return nil
+        }
+
+        let phase: RuntimeAudioSetupPhase
+        if activeSelectedModelIDs.isEmpty == false {
+            phase = readySelectedModelIDs.isEmpty ? .modelsDownloading : .partiallyReady
+        } else {
+            phase = readySelectedModelIDs.isEmpty ? .modelsRequired : .partiallyReady
+        }
+        let action = RuntimeAudioSetupActionState(
+            modelID: selectedModelIDs.first ?? "",
+            alias: "Audio Models",
+            detail: "Download the recommended STT and TTS models into Melix managed storage.",
+            actionTitle: selectedModelIDs.count > 1 ? "Start Downloads" : "Download Audio Model",
+            kind: .downloadModel,
+            modelIDs: pendingSelectedModelIDs.isEmpty ? selectedModelIDs : pendingSelectedModelIDs
+        )
+        return RuntimeAudioSetupState(
+            phase: phase,
+            title: "Audio Models Required",
+            summary: "\(readySelectedModelIDs.count) of \(selectedModelIDs.count) recommended audio models ready.",
+            detail: "Recommended setup keeps one STT model and one TTS model ready; optional alternatives remain available.",
+            primaryAction: action.modelIDs.isEmpty ? nil : action,
+            capabilityGroups: capabilityGroups,
+            recommendedModelIDs: recommendedModelIDs,
+            selectedModelIDs: selectedModelIDs,
+            readySelectedModelIDs: readySelectedModelIDs
+        )
+    }
+
+    private struct AudioSetupCatalogModel {
+        let modelID: String
+        let alias: String
+        let capabilityKey: String
+        let capabilityTitle: String
+        let setupRole: String
+        let setupPriority: Int
+        let runtimePackID: String
+        let runtimePackInstalled: Bool
+        let isRecommended: Bool
+        let isReady: Bool
+        let isActive: Bool
+        let isResumeReady: Bool
+        let progressText: String
+    }
+
+    private var audioSetupCatalogModels: [AudioSetupCatalogModel] {
+        let queueByModelID = Dictionary(grouping: downloadQueue, by: \.sourceModel)
+        return latestSnapshot.models.compactMap { model in
+            let backendID = normalizedAudioSetupValue(model.settings.ext["melix.audio.backend_id"])
             guard backendID.hasPrefix("mlx_audio.") else {
                 return nil
             }
-
-            let alias = model.settings.alias.isEmpty ? model.modelID : model.settings.alias
-            let runtimePackState = model.settings.ext["melix.audio.runtime_pack_state"]?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if runtimePackState != "installed" {
-                let runtimePackID = model.settings.ext["melix.audio.runtime_pack_id"]?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? "melix-audio-runtime-pack"
-                return RuntimeAudioSetupActionState(
-                    modelID: model.modelID,
-                    alias: alias,
-                    detail: "Install \(runtimePackID) to enable audio requests for \(alias).",
-                    actionTitle: "Install Audio Support",
-                    kind: .installRuntime
-                )
-            }
-
-            let modelState = model.settings.ext["melix.audio.model_state"]?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard modelState != "managed_local" else {
+            let modelID = model.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard modelID.isEmpty == false else {
                 return nil
             }
-            return RuntimeAudioSetupActionState(
-                modelID: model.modelID,
-                alias: alias,
-                detail: "Download \(alias) into Melix managed storage before serving audio requests.",
-                actionTitle: "Download Audio Model",
-                kind: .downloadModel
+            let capabilityKey = resolvedAudioSetupCapabilityKey(for: model, backendID: backendID)
+            let setupRole = normalizedAudioSetupValue(model.settings.ext["melix.audio.setup_role"])
+            let setupPriority = Int(normalizedAudioSetupValue(model.settings.ext["melix.audio.setup_priority"])) ?? 100
+            let runtimePackState = normalizedAudioSetupValue(model.settings.ext["melix.audio.runtime_pack_state"])
+            let modelState = normalizedAudioSetupValue(model.settings.ext["melix.audio.model_state"])
+            let entries = queueByModelID[modelID] ?? []
+            let activeEntry = entries.first(where: \.isActive)
+            let resumeEntry = entries.first(where: \.resumeReady)
+            let trimmedAlias = normalizedAudioSetupValue(model.settings.alias)
+            return AudioSetupCatalogModel(
+                modelID: modelID,
+                alias: trimmedAlias.isEmpty ? modelID : trimmedAlias,
+                capabilityKey: capabilityKey,
+                capabilityTitle: audioSetupCapabilityTitle(capabilityKey),
+                setupRole: setupRole,
+                setupPriority: setupPriority,
+                runtimePackID: normalizedAudioSetupValue(model.settings.ext["melix.audio.runtime_pack_id"]),
+                runtimePackInstalled: runtimePackState == "installed",
+                isRecommended: setupRole == "recommended",
+                isReady: modelState == "managed_local",
+                isActive: activeEntry != nil,
+                isResumeReady: resumeEntry != nil,
+                progressText: activeEntry?.progressText ?? resumeEntry?.progressText ?? ""
             )
         }
+        .sorted { lhs, rhs in
+            if lhs.capabilityKey == rhs.capabilityKey {
+                if lhs.setupPriority == rhs.setupPriority {
+                    return lhs.modelID < rhs.modelID
+                }
+                return lhs.setupPriority < rhs.setupPriority
+            }
+            return audioSetupCapabilityOrder(lhs.capabilityKey) < audioSetupCapabilityOrder(rhs.capabilityKey)
+        }
+    }
+
+    private func audioSetupCapabilityGroups(
+        from models: [AudioSetupCatalogModel],
+        selectedModelIDSet: Set<String>
+    ) -> [RuntimeAudioSetupCapabilityGroupState] {
+        let groupedModels = Dictionary(grouping: models, by: \.capabilityKey)
+        return groupedModels.keys.sorted {
+            let lhsOrder = audioSetupCapabilityOrder($0)
+            let rhsOrder = audioSetupCapabilityOrder($1)
+            return lhsOrder == rhsOrder ? $0 < $1 : lhsOrder < rhsOrder
+        }.map { key in
+            let models = (groupedModels[key] ?? []).map { model in
+                RuntimeAudioSetupModelChoiceState(
+                    modelID: model.modelID,
+                    alias: model.alias,
+                    capabilityKey: model.capabilityKey,
+                    capabilityTitle: model.capabilityTitle,
+                    setupRole: model.setupRole,
+                    setupPriority: model.setupPriority,
+                    isRecommended: model.isRecommended,
+                    isSelected: selectedModelIDSet.contains(model.modelID),
+                    isReady: model.isReady,
+                    isActive: model.isActive,
+                    isResumeReady: model.isResumeReady,
+                    progressText: model.progressText
+                )
+            }
+            return RuntimeAudioSetupCapabilityGroupState(
+                key: key,
+                title: audioSetupCapabilityTitle(key),
+                models: models
+            )
+        }
+    }
+
+    private func resolvedAudioSetupSelectedModelIDs(
+        recommendedModelIDs: [String],
+        availableModelIDs: [String]
+    ) -> [String] {
+        let availableModelIDSet = Set(availableModelIDs)
+        let confirmedIDSet = Set(confirmedAudioSetupModelIDs.filter { availableModelIDSet.contains($0) })
+        let confirmedIDs = availableModelIDs.filter { confirmedIDSet.contains($0) }
+        return confirmedIDs.isEmpty ? recommendedModelIDs : confirmedIDs
+    }
+
+    private func recommendedAudioSetupModelIDs(from models: [AudioSetupCatalogModel]) -> [String] {
+        let groupedModels = Dictionary(grouping: models, by: \.capabilityKey)
+        return groupedModels.keys.sorted {
+            let lhsOrder = audioSetupCapabilityOrder($0)
+            let rhsOrder = audioSetupCapabilityOrder($1)
+            return lhsOrder == rhsOrder ? $0 < $1 : lhsOrder < rhsOrder
+        }.flatMap { key in
+            let capabilityModels = groupedModels[key] ?? []
+            let recommendedModels = capabilityModels.filter(\.isRecommended)
+            return (recommendedModels.isEmpty ? Array(capabilityModels.prefix(1)) : recommendedModels).map(\.modelID)
+        }
+    }
+
+    private func resolvedAudioSetupCapabilityKey(
+        for model: Melix_Controlplane_V1_ModelSummary,
+        backendID: String
+    ) -> String {
+        let metadataCapability = normalizedAudioSetupValue(model.settings.ext["melix.audio.capability"])
+        if metadataCapability.isEmpty == false {
+            return metadataCapability
+        }
+        if backendID.contains(".stt") || model.kind == "transcription" {
+            return "stt"
+        }
+        if backendID.contains(".tts") || model.kind == "speech" {
+            return "tts"
+        }
+        return "audio"
+    }
+
+    private func audioSetupCapabilityTitle(_ key: String) -> String {
+        switch key {
+        case "stt":
+            return "Speech to Text"
+        case "tts":
+            return "Text to Speech"
+        default:
+            return "Audio"
+        }
+    }
+
+    private func audioSetupCapabilityOrder(_ key: String) -> Int {
+        switch key {
+        case "stt":
+            return 0
+        case "tts":
+            return 1
+        default:
+            return 10
+        }
+    }
+
+    private func normalizedAudioSetupValue(_ value: String?) -> String {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
     public var latestAdapterPackage: RuntimeAdapterPackageState? {
@@ -6925,7 +7493,7 @@ public final class RuntimeViewModel {
     }
 
     public var evaluationCompareTargetModels: [RuntimeModelRow] {
-        let baseModelID = selectedDiagnosticsServerTarget?.kind == .localServer ? resolvedEvaluationModelID() : ""
+        let baseModelID = selectedDiagnosticsProviderTarget?.kind == .localServer ? resolvedEvaluationModelID() : ""
         return evaluationModels.filter { model in
             baseModelID.isEmpty || model.modelID != baseModelID
         }
@@ -6944,8 +7512,8 @@ public final class RuntimeViewModel {
     }
 
     public var benchmarkTargetSummaryText: String {
-        guard let target = selectedDiagnosticsServerTarget else {
-            return "Select a local running server for Benchmark."
+        guard let target = selectedDiagnosticsProviderTarget else {
+            return "Select a local running provider for Benchmark."
         }
         switch target.kind {
         case .localServer:
@@ -6954,9 +7522,9 @@ public final class RuntimeViewModel {
             }
             return "\(benchmarkTargetTaskTitle) • \(target.title) • \(model.displayNameWithID)\(Self.diagnosticsProfileSummarySuffix(for: target))"
         case .remoteServer:
-            return "\(benchmarkTargetTaskTitle) • \(target.title) • Remote Server"
+            return "\(benchmarkTargetTaskTitle) • \(target.title) • Remote Provider"
         case .startNewServer:
-            return "Start or select a local server for Benchmark."
+            return "Start or select a local provider for Benchmark."
         }
     }
 
@@ -6995,8 +7563,8 @@ public final class RuntimeViewModel {
     }
 
     public var evaluationTargetSummaryText: String {
-        guard let target = selectedDiagnosticsServerTarget else {
-            return "Select a running server for Evaluation."
+        guard let target = selectedDiagnosticsProviderTarget else {
+            return "Select a running provider for Evaluation."
         }
         switch target.kind {
         case .localServer:
@@ -7007,7 +7575,7 @@ public final class RuntimeViewModel {
         case .remoteServer:
             return "\(evaluationTargetTaskTitle) • \(target.title) • \(target.modelID)"
         case .startNewServer:
-            return "Start or select a server for Evaluation."
+            return "Start or select a provider for Evaluation."
         }
     }
 
@@ -7291,18 +7859,18 @@ public final class RuntimeViewModel {
 
         guard let serverSession = selectedChatServerSession else {
             guard selectedChatSession != nil || serverSessions.isEmpty == false else {
-                chatStatusText = "No Server Session"
-                setLastError("Create a Server Session before sending chat prompts.")
+                chatStatusText = "No Provider"
+                setLastError("Create a Provider before sending chat prompts.")
                 selectedSurface = .server
                 notifyStateChanged()
                 return
             }
-            chatStatusText = "Choose Server"
-            setLastError("Choose a Server Session before sending chat prompts.")
+            chatStatusText = "Choose Provider"
+            setLastError("Choose a Provider before sending chat prompts.")
             selectedSurface = .chat
             if let selectedChatSession {
                 replaceChatSession(id: selectedChatSession.id) { session in
-                    session.statusText = "Choose Server"
+                    session.statusText = "Choose Provider"
                     session.updatedAt = Date()
                 }
             }
@@ -8484,7 +9052,13 @@ public final class RuntimeViewModel {
                     "melix.hf_repo_id": normalizedRepoID,
                     "melix.hf_revision": revision,
                     "melix.managed_import": "true",
+                    "melix.provider_target_kind": "local_provider",
                 ]
+                if let target = selectedModelHubProviderTarget {
+                    ext["melix.local_provider_id"] = target.providerID
+                    ext["melix.local_provider_title"] = target.title
+                    ext["melix.local_provider_model_id"] = target.modelID
+                }
                 if effectiveToken.isEmpty == false {
                     ext["melix.hf_token"] = effectiveToken
                 }
@@ -8970,14 +9544,33 @@ public final class RuntimeViewModel {
     }
 
     public func downloadAudioModel(modelID: String) async {
-        guard !modelID.isEmpty else {
+        await downloadAudioModels(modelIDs: [modelID])
+    }
+
+    public func downloadAudioModels(modelIDs: [String]) async {
+        let requestedModelIDs = RuntimeAudioSetupActionState.normalizedModelIDs(modelIDs)
+        guard requestedModelIDs.isEmpty == false else {
             return
         }
-        await runModelOperation(
-            modelID: modelID,
-            operation: "download",
-            outputDir: Self.defaultDownloadOutputDirectory(namespace: "melix-audio-models", modelID: modelID)
-        )
+        confirmedAudioSetupModelIDs = requestedModelIDs
+        persistOperatorSessionState()
+
+        let skippedModelIDs = Set(audioSetupCatalogModels.filter {
+            ($0.isReady || $0.isActive) && requestedModelIDs.contains($0.modelID)
+        }.map(\.modelID))
+        let pendingModelIDs = requestedModelIDs.filter { skippedModelIDs.contains($0) == false }
+        guard pendingModelIDs.isEmpty == false else {
+            await refreshDownloadQueueState(notify: false, surfaceErrors: false)
+            await refreshDesktopFoundation()
+            return
+        }
+        for modelID in pendingModelIDs {
+            await runModelOperation(
+                modelID: modelID,
+                operation: "download",
+                outputDir: Self.defaultDownloadOutputDirectory(namespace: "melix-audio-models", modelID: modelID)
+            )
+        }
         await refreshDownloadQueueState(notify: false, surfaceErrors: false)
         await refreshDesktopFoundation()
     }
@@ -8987,7 +9580,7 @@ public final class RuntimeViewModel {
         case .installRuntime:
             await installAudioRuntime(modelID: action.modelID)
         case .downloadModel:
-            await downloadAudioModel(modelID: action.modelID)
+            await downloadAudioModels(modelIDs: action.modelIDs)
         }
     }
 
@@ -9922,7 +10515,7 @@ public final class RuntimeViewModel {
         }
         let modelID = resolvedBenchmarkModelID()
         guard !modelID.isEmpty else {
-            recordLocalError("Select a local running server before running Benchmark.")
+            recordLocalError("Select a local running provider before running Benchmark.")
             notifyStateChanged()
             return
         }
@@ -10171,7 +10764,7 @@ public final class RuntimeViewModel {
         }
         let modelID = resolvedBenchmarkModelID()
         guard !modelID.isEmpty else {
-            recordLocalError("Select a local running server before running Matrix.")
+            recordLocalError("Select a local running provider before running Matrix.")
             notifyStateChanged()
             return
         }
@@ -10386,20 +10979,20 @@ public final class RuntimeViewModel {
             notifyStateChanged()
             return
         }
-        let usesRemoteTarget = selectedDiagnosticsServerTarget?.kind == .remoteServer
+        let usesRemoteTarget = selectedDiagnosticsProviderTarget?.kind == .remoteServer
         let modelID = resolvedEvaluationModelID()
         let remoteServerID = resolvedEvaluationRemoteServerID()
         let remoteModelID = resolvedEvaluationRemoteModelID()
         let usesCustomSource = evaluationDatasetSourceKind != .builtinPackage
         if usesRemoteTarget == false {
             guard !modelID.isEmpty else {
-                recordLocalError("Select a local running server before running Evaluation.")
+                recordLocalError("Select a local running provider before running Evaluation.")
                 notifyStateChanged()
                 return
             }
         } else {
             guard !remoteServerID.isEmpty else {
-                recordLocalError("Select a remote server before running Evaluation.")
+                recordLocalError("Select a remote provider before running Evaluation.")
                 notifyStateChanged()
                 return
             }
@@ -10419,7 +11012,7 @@ public final class RuntimeViewModel {
             return
         }
         if selectedEvaluationMode == .compare, usesRemoteTarget {
-            recordLocalError("Remote server targets are available for standard Evaluation runs.")
+            recordLocalError("Remote provider targets are available for standard Evaluation runs.")
             notifyStateChanged()
             return
         }
@@ -10988,7 +11581,7 @@ public final class RuntimeViewModel {
                 refreshFoundationAfterSuccess: rescan
             )
             self.isRefreshingServerModelOptions = false
-            if self.selectedServerCreationKind == .localServer {
+            if self.selectedProviderCreationKind == .localServer {
                 self.resetLocalServerDraft()
             }
             self.notifyStateChanged()
@@ -11269,17 +11862,17 @@ public final class RuntimeViewModel {
     private func chatSubmissionBlockedMessage(for serverSession: DesktopServerSessionState) -> String {
         switch serverSession.lifecycle {
         case .paused:
-            return "Resume the paused Server Session before sending chat prompts."
+            return "Resume the paused Provider before sending chat prompts."
         case .starting:
-            return "Wait for the Server Session to finish starting before sending chat prompts."
+            return "Wait for the Provider to finish starting before sending chat prompts."
         case .stopping:
-            return "Wait for the Server Session to finish stopping or start it again before sending chat prompts."
+            return "Wait for the Provider to finish stopping or start it again before sending chat prompts."
         case .stopped, .draft, .unavailable:
-            return "Start the bound Server Session before sending chat prompts."
+            return "Start the bound Provider before sending chat prompts."
         case .error:
             return serverSession.lastError.isEmpty
-                ? "Recover the failed Server Session before sending chat prompts."
-                : "Recover the failed Server Session before sending chat prompts. \(serverSession.lastError)"
+                ? "Recover the failed Provider before sending chat prompts."
+                : "Recover the failed Provider before sending chat prompts. \(serverSession.lastError)"
         case .running, .sleeping:
             return ""
         }
@@ -11333,7 +11926,7 @@ public final class RuntimeViewModel {
                 id: "chat-session-\(UUID().uuidString)",
                 title: "Chat 1",
                 serverSessionID: "",
-                statusText: "Choose Server"
+                statusText: "Choose Provider"
             )
             chatSessions = [session]
             loadChatSession(session)
@@ -11346,7 +11939,7 @@ public final class RuntimeViewModel {
             }
             var unbound = session
             unbound.serverSessionID = ""
-            unbound.statusText = "Choose Server"
+            unbound.statusText = "Choose Provider"
             unbound.updatedAt = Date()
             return unbound
         }
@@ -11373,7 +11966,7 @@ public final class RuntimeViewModel {
                 for: projectedConfig.flatMap { projection in
                     textModels.first { $0.modelID == projection.defaultModelID }
                 } ?? firstTextModel,
-                title: "Primary Server",
+                title: "Primary Provider",
                 port: projectedConfig?.port ?? MelixGatewayDefaults.port,
                 serverSessionID: seededServerSessionID,
                 modelIDOverride: projectedDefaultModelID?.isEmpty == false ? projectedDefaultModelID : nil
@@ -11418,7 +12011,7 @@ public final class RuntimeViewModel {
                 applyRuntimeSessionProjection(to: &updated, runtimeSession: runtimeSession)
             }
             if updated.title.isEmpty {
-                updated.title = offset == 0 ? "Primary Server" : "Server \(offset + 1)"
+                updated.title = offset == 0 ? "Primary Provider" : "Provider \(offset + 1)"
             }
             applyGatewayAccessProjection(to: &updated)
             return updated
@@ -11429,14 +12022,15 @@ public final class RuntimeViewModel {
         }
 
         maybeApplyStoredGatewayAccessForSelectedRunningSession()
-        refreshServerTargetSelection()
-        refreshDiagnosticsServerTargetSelection()
+        refreshProviderTargetSelection()
+        refreshModelHubProviderTargetSelection()
+        refreshDiagnosticsProviderTargetSelection()
     }
 
     private func resetLocalServerDraft() {
-        let nextIndex = serverTargets.filter { $0.kind == .localServer }.count + 1
+        let nextIndex = providerTargets.filter { $0.kind == .localServer }.count + 1
         if newLocalServerTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            newLocalServerTitleDraft = nextIndex == 1 ? "Primary Server" : "Server \(nextIndex)"
+            newLocalServerTitleDraft = nextIndex == 1 ? "Primary Provider" : "Provider \(nextIndex)"
         }
         if newLocalServerModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || serverModelOptions.contains(where: { $0.modelID == newLocalServerModelID }) == false
@@ -11456,43 +12050,53 @@ public final class RuntimeViewModel {
         MelixGatewayDefaults.port + max(0, sessionOffset)
     }
 
-    private func refreshServerTargetSelection() {
-        let targets = serverTargets
-        if selectedServerTargetID.isEmpty == false,
-           targets.contains(where: { $0.id == selectedServerTargetID })
+    private func refreshProviderTargetSelection() {
+        let targets = providerTargets
+        if selectedProviderTargetID.isEmpty == false,
+           targets.contains(where: { $0.id == selectedProviderTargetID })
         {
             return
         }
         if selectedServerSessionID.isEmpty == false,
            let localTarget = targets.first(where: { $0.kind == .localServer && $0.serverID == selectedServerSessionID })
         {
-            selectedServerTargetID = localTarget.id
+            selectedProviderTargetID = localTarget.id
             return
         }
         if selectedRemoteServerID.isEmpty == false,
            let remoteTarget = targets.first(where: { $0.kind == .remoteServer && $0.serverID == selectedRemoteServerID })
         {
-            selectedServerTargetID = remoteTarget.id
+            selectedProviderTargetID = remoteTarget.id
             return
         }
-        selectedServerTargetID = targets.first?.id ?? ""
+        selectedProviderTargetID = targets.first?.id ?? ""
     }
 
-    private func refreshDiagnosticsServerTargetSelection() {
-        let targets = diagnosticsServerTargets
-        if diagnosticsServerTargetSelectionUserOverridden == false {
-            selectedDiagnosticsServerTargetID = targets.first(where: { $0.kind == .localServer })?.id
+    private func refreshModelHubProviderTargetSelection() {
+        let targets = modelHubProviderTargets
+        if selectedModelHubProviderTargetID.isEmpty == false,
+           targets.contains(where: { $0.id == selectedModelHubProviderTargetID })
+        {
+            return
+        }
+        selectedModelHubProviderTargetID = targets.first?.id ?? ""
+    }
+
+    private func refreshDiagnosticsProviderTargetSelection() {
+        let targets = diagnosticsProviderTargets
+        if diagnosticsProviderTargetSelectionUserOverridden == false {
+            selectedDiagnosticsProviderTargetID = targets.first(where: { $0.kind == .localServer })?.id
                 ?? targets.first(where: { $0.kind != .startNewServer })?.id
                 ?? targets.first?.id
                 ?? ""
             return
         }
-        if selectedDiagnosticsServerTargetID.isEmpty == false,
-           targets.contains(where: { $0.id == selectedDiagnosticsServerTargetID })
+        if selectedDiagnosticsProviderTargetID.isEmpty == false,
+           targets.contains(where: { $0.id == selectedDiagnosticsProviderTargetID })
         {
             return
         }
-        selectedDiagnosticsServerTargetID = targets.first(where: { $0.kind != .startNewServer })?.id
+        selectedDiagnosticsProviderTargetID = targets.first(where: { $0.kind != .startNewServer })?.id
             ?? targets.first?.id
             ?? ""
     }
@@ -11558,6 +12162,7 @@ public final class RuntimeViewModel {
                 serverSessions = restoredState.serverSessions
             }
             downloadQueue = restoredState.downloadQueue
+            confirmedAudioSetupModelIDs = restoredState.confirmedAudioSetupModelIDs
             lastPersistedOperatorSessionState = restoredState
         } catch {
             recordLocalError("Operator session restore failed: \(error)")
@@ -11574,7 +12179,8 @@ public final class RuntimeViewModel {
             dismissedBannerIDs: dismissedBannerIDs.sorted(),
             downloadQueue: downloadQueue,
             registryRoots: registryConfiguredRootPaths,
-            paneVisibility: desktopPaneVisibility
+            paneVisibility: desktopPaneVisibility,
+            confirmedAudioSetupModelIDs: confirmedAudioSetupModelIDs
         )
     }
 
@@ -12203,7 +12809,7 @@ public final class RuntimeViewModel {
     }
 
     private func resolvedBenchmarkModelID() -> String {
-        if let target = selectedDiagnosticsServerTarget, target.kind == .localServer {
+        if let target = selectedDiagnosticsProviderTarget, target.kind == .localServer {
             return target.modelID
         }
         if !selectedBenchmarkModelID.isEmpty {
@@ -12213,7 +12819,7 @@ public final class RuntimeViewModel {
     }
 
     private func resolvedEvaluationModelID() -> String {
-        if let target = selectedDiagnosticsServerTarget, target.kind == .localServer {
+        if let target = selectedDiagnosticsProviderTarget, target.kind == .localServer {
             return target.modelID
         }
         if !selectedEvaluationModelID.isEmpty {
@@ -12419,7 +13025,7 @@ public final class RuntimeViewModel {
         catalogModelsIncludingRegistry.first { $0.modelID == modelID }
     }
 
-    private func serverTargetModelName(for modelID: String) -> String {
+    private func providerTargetModelName(for modelID: String) -> String {
         let trimmedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         if let row = catalogModelRow(for: trimmedModelID) {
             let displayName = row.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -12430,7 +13036,7 @@ public final class RuntimeViewModel {
         return Self.modelName(from: trimmedModelID)
     }
 
-    private func serverTargetLoRAStatusText(for modelID: String) -> String {
+    private func providerTargetLoRAStatusText(for modelID: String) -> String {
         let trimmedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedModelID.isEmpty == false else {
             return ""
@@ -12450,7 +13056,7 @@ public final class RuntimeViewModel {
     }
 
     private func selectedEvaluationRemoteServer() -> RemoteServer? {
-        if let target = selectedDiagnosticsServerTarget, target.kind == .remoteServer {
+        if let target = selectedDiagnosticsProviderTarget, target.kind == .remoteServer {
             return remoteServers.first(where: { $0.id == target.serverID })
         }
         let selectedID = selectedEvaluationRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -12474,7 +13080,7 @@ public final class RuntimeViewModel {
     }
 
     private func resolvedBenchmarkTaskKind() -> String {
-        if selectedDiagnosticsServerTarget?.kind == .localServer {
+        if selectedDiagnosticsProviderTarget?.kind == .localServer {
             let modelID = resolvedBenchmarkModelID()
             if let model = latestSnapshot.models.first(where: { $0.modelID == modelID }) {
                 return Self.benchmarkTaskKind(for: model)
@@ -12484,7 +13090,7 @@ public final class RuntimeViewModel {
             }
             return Self.benchmarkTaskKind(for: model)
         }
-        if selectedDiagnosticsServerTarget?.kind == .remoteServer {
+        if selectedDiagnosticsProviderTarget?.kind == .remoteServer {
             return "text-generation"
         }
         let modelID = resolvedBenchmarkModelID()
@@ -12520,7 +13126,7 @@ public final class RuntimeViewModel {
     }
 
     private func selectedDiagnosticsEffectiveAccelerationProfileID() -> String {
-        guard let target = selectedDiagnosticsServerTarget,
+        guard let target = selectedDiagnosticsProviderTarget,
               target.kind == .localServer,
               let session = serverSessions.first(where: { $0.id == target.serverID })
         else {
@@ -13858,6 +14464,43 @@ public final class RuntimeViewModel {
         trimRecentEvents()
     }
 
+    private func failCompanionPairingIssue(_ message: String) async {
+        companionPairingIssueFailures += 1
+        activeCompanionSessionToken = ""
+        activeCompanionPairingBaseURL = nil
+        companionPairing = CompanionPairingState.failed(message)
+        recordLocalError(message)
+        await metrics.record(
+            name: "companion.pairing_issue_failures",
+            valueMs: companionPairingIssueFailures
+        )
+        notifyStateChanged()
+    }
+
+    private func failCompanionPairingRevoke(_ message: String) async {
+        companionPairingRevokeFailures += 1
+        companionPairing.phase = .failed
+        companionPairing.lastError = message
+        recordLocalError(message)
+        await metrics.record(
+            name: "companion.pairing_revoke_failures",
+            valueMs: companionPairingRevokeFailures
+        )
+        notifyStateChanged()
+    }
+
+    @MainActor
+    private func failCompanionStatusRefresh(_ message: String) async {
+        companionStatusRefreshFailures += 1
+        companionStatus = CompanionStatusState.failed(message)
+        recordLocalError(message)
+        await metrics.record(
+            name: "companion.status_refresh_failures",
+            valueMs: 1.0
+        )
+        notifyStateChanged()
+    }
+
     private func beginRuntimeSettingsOperation() {
         runtimeSettingsOperationInProgress = true
         runtimeSettingsOperationMessage = ""
@@ -14702,10 +15345,10 @@ public final class RuntimeViewModel {
     }
 
     private func selectLocalDiagnosticsTargetForLoraFollowUp() {
-        guard let localTarget = diagnosticsServerTargets.first(where: { $0.kind == .localServer }) else {
+        guard let localTarget = diagnosticsProviderTargets.first(where: { $0.kind == .localServer }) else {
             return
         }
-        selectedDiagnosticsServerTargetID = localTarget.id
+        selectedDiagnosticsProviderTargetID = localTarget.id
     }
 
     private func loraAdapterManifestPath(for job: LoraTrainingJobRecord) -> String {
@@ -15286,9 +15929,9 @@ public final class RuntimeViewModel {
         switch event.payload {
         case .serverState(let serverStateChanged):
             if let runtimeSession = serverStateChanged.runtimeSessions.first {
-                return "Server is now \(serverStateText(serverStateChanged.state)) • \(serverSessionLifecycle(runtimeSession.lifecycleState).rawValue) • \(serverSessionPowerState(runtimeSession.powerState).rawValue)"
+                return "Provider is now \(serverStateText(serverStateChanged.state)) • \(serverSessionLifecycle(runtimeSession.lifecycleState).rawValue) • \(serverSessionPowerState(runtimeSession.powerState).rawValue)"
             }
-            return "Server is now \(serverStateText(serverStateChanged.state))"
+            return "Provider is now \(serverStateText(serverStateChanged.state))"
         case .modelState(let modelStateChanged):
             return "\(modelStateChanged.modelID) -> \(modelStateText(modelStateChanged.state))"
         case .requestProgress(let progress):
@@ -16122,6 +16765,7 @@ public final class RuntimeViewModel {
                 runSuitabilityText: result.runSuitabilityText,
                 sizeText: result.sizeText,
                 taskText: result.pipelineTag,
+                targetText: "Local Provider",
                 repoID: result.repoID,
                 canInspect: true,
                 canDownload: result.canDownload
@@ -16142,7 +16786,8 @@ public final class RuntimeViewModel {
     }
 
     private static func isHiddenPlaceholderModel(_ model: RuntimeModelRow) -> Bool {
-        isHiddenPlaceholderModelID(model.modelID)
+        model.visibility == "internal"
+            || isHiddenPlaceholderModelID(model.modelID)
             || isHiddenPlaceholderModelAlias(model.alias)
     }
 
@@ -16970,19 +17615,19 @@ private func runtimeModeBadgeFields(_ model: Melix_Controlplane_V1_ModelSummary)
     case "adapter_backed_runtime":
         return RuntimeModeBadgeFields(
             text: "adapter",
-            accessibilityLabel: "Runtime mode: adapter-backed"
+            accessibilityLabel: "Serving mode: adapter-backed"
         )
     case "fused_derived_model":
         return RuntimeModeBadgeFields(
             text: "fused",
-            accessibilityLabel: "Runtime mode: fused derived model"
+            accessibilityLabel: "Serving mode: fused derived model"
         )
     case "":
         return RuntimeModeBadgeFields(text: "", accessibilityLabel: "")
     default:
         return RuntimeModeBadgeFields(
             text: "?",
-            accessibilityLabel: "Runtime mode: unrecognized"
+            accessibilityLabel: "Serving mode: unrecognized"
         )
     }
 }
@@ -17005,6 +17650,7 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         actionTitle: runtimeCacheMissing ? "Restore Download" : runtimeActionTitle(for: model.state),
         maxContext: model.maxContext,
         alias: model.settings.alias,
+        visibility: model.settings.ext["melix.visibility"] ?? "",
         typeOverrideText: model.settings.typeOverride,
         memoryPolicyText: runtimeMemoryPolicyText(model.settings.memoryPolicy),
         diskStreamingModeText: runtimeDiskStreamingModeText(model.settings.diskStreamingMode),
@@ -18156,4 +18802,63 @@ private func runtimeFormatBytes(_ bytes: UInt64) -> String {
     formatter.includesUnit = true
     formatter.includesCount = true
     return formatter.string(fromByteCount: Int64(bytes))
+}
+
+private struct CompanionPairingClipboardBundle: Encodable {
+    let schemaVersion: String
+    let sessionID: String
+    let scope: String
+    let mobileURL: String
+    let statusURL: String
+    let resumeHeader: String
+    let token: String
+    let tokenTransport: String
+    let allowedRoutes: [String]
+    let forbiddenCapabilities: [String]
+    let expiresAtUnixMS: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case sessionID = "session_id"
+        case scope
+        case mobileURL = "mobile_url"
+        case statusURL = "status_url"
+        case resumeHeader = "resume_header"
+        case token
+        case tokenTransport = "token_transport"
+        case allowedRoutes = "allowed_routes"
+        case forbiddenCapabilities = "forbidden_capabilities"
+        case expiresAtUnixMS = "expires_at_unix_ms"
+    }
+}
+
+private extension RuntimeViewModel {
+    static func companionPairingBaseURL(for session: DesktopServerSessionState) -> URL? {
+        let host = companionPairingDisplayHost(
+            session.gatewayConfigActiveBinding ? session.effectiveHost : session.host
+        )
+        let port = session.gatewayConfigActiveBinding ? session.effectivePort : session.port
+        guard port > 0 else {
+            return nil
+        }
+
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = host
+        components.port = port
+        return components.url
+    }
+
+    static func companionPairingDisplayHost(_ host: String) -> String {
+        let candidate = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard candidate.isEmpty == false else {
+            return "127.0.0.1"
+        }
+        switch candidate.lowercased() {
+        case "0.0.0.0", "::", "[::]":
+            return "127.0.0.1"
+        default:
+            return candidate.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        }
+    }
 }

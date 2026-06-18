@@ -165,8 +165,8 @@ def test_wait_for_http_model_states_accepts_pinned_when_warm_is_required(
         def read(self) -> bytes:
             return json.dumps(
                 {
-                    "data": [
-                        {"id": "melix-dev-image", "melix_state": "pinned"},
+                    "models": [
+                        {"model_id": "melix-dev-image", "state": "pinned"},
                     ]
                 }
             ).encode("utf-8")

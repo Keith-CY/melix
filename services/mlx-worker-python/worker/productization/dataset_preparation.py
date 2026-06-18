@@ -482,21 +482,21 @@ def list_dataset_versions(
     read_json_file = _read_json_file
     for manifest_path in _iter_dataset_version_manifest_paths(versions_root):
         version = read_json_file(manifest_path)
+        version_get = version.get
         versions_append(
             {
-                "dataset_id": version.get("dataset_id", ""),
-                "version_id": version.get("version_id", ""),
-                "created_at": version.get("created_at", ""),
-                "status": version.get("status", ""),
-                "train_count": version.get("train_count", 0),
-                "validation_count": version.get("validation_count", 0),
-                "failed_count": version.get("failed_count", 0),
-                "quality_summary_path": version.get("quality_summary_path", ""),
+                "dataset_id": version_get("dataset_id", ""),
+                "version_id": version_get("version_id", ""),
+                "created_at": version_get("created_at", ""),
+                "status": version_get("status", ""),
+                "train_count": version_get("train_count", 0),
+                "validation_count": version_get("validation_count", 0),
+                "failed_count": version_get("failed_count", 0),
+                "quality_summary_path": version_get("quality_summary_path", ""),
                 "dataset_version_path": manifest_path,
             }
         )
-    as_str = str
-    versions.sort(key=lambda item: (as_str(item["created_at"]), as_str(item["version_id"])))
+    versions.sort(key=_dataset_version_list_sort_key)
     return {
         "schema_version": DATASET_VERSION_LIST_SCHEMA_VERSION,
         "workspace_manifest_path": manifest_path_string,
@@ -507,6 +507,15 @@ def list_dataset_versions(
             "dataset_version_count": len(versions),
         },
     }
+
+
+def _dataset_version_list_sort_key(item: dict[str, Any]) -> tuple[str, str]:
+    created_at = item["created_at"]
+    version_id = item["version_id"]
+    return (
+        created_at if type(created_at) is str else str(created_at),
+        version_id if type(version_id) is str else str(version_id),
+    )
 
 
 def _iter_dataset_version_manifest_paths(versions_root: Path) -> Iterable[str]:
@@ -587,7 +596,7 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
         except OSError:
             continue
     file_paths.sort()
-    return [path_cls(file_path) for file_path in file_paths]
+    return [path_cls(path) for path in file_paths]
 
 
 def _classify_source_kind_name(name: str) -> str | None:
@@ -625,9 +634,11 @@ def _classify_source_kind_name(name: str) -> str | None:
 
 
 def _source_kind_for_name(name: str) -> str | None:
-    cached = _SOURCE_KIND_BY_NAME.get(name, ...)
-    if cached is not ...:
+    try:
+        cached = _SOURCE_KIND_BY_NAME[name]
         return cached
+    except KeyError:
+        pass
     source_kind = _classify_source_kind_name(name)
     if len(_SOURCE_KIND_BY_NAME) >= _SOURCE_KIND_NAME_CACHE_MAX:
         _SOURCE_KIND_BY_NAME.clear()

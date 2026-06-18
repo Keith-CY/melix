@@ -5,7 +5,7 @@ import re
 import socket
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, NamedTuple
 
 
 PORT_CONFLICT_PATTERNS = (
@@ -26,8 +26,7 @@ _BYTE_WHITESPACE = bytes(value for value in range(256) if chr(value).isspace())
 _ORD = ord
 
 
-@dataclass(frozen=True, slots=True)
-class UpdateCheckResult:
+class UpdateCheckResult(NamedTuple):
     checked: bool
     update_available: bool
     installed_version: str
@@ -143,6 +142,27 @@ def compare_versions(left: str, right: str) -> int:
         return 0
     if right_length == left_length + 1 and right[0] == "v" and right.startswith(left, 1):
         return 0
+    if (
+        left
+        and right
+        and not left[0].isspace()
+        and not left[-1].isspace()
+        and not right[0].isspace()
+        and not right[-1].isspace()
+    ):
+        left_index = 1 if left[0] == "v" else 0
+        right_index = 1 if right[0] == "v" else 0
+        next_normalized_version_part = _next_normalized_version_part
+        while True:
+            left_value, left_index, left_done = next_normalized_version_part(left, left_index)
+            right_value, right_index, right_done = next_normalized_version_part(right, right_index)
+            if left_done and right_done:
+                return 0
+            if left_value < right_value:
+                return -1
+            if left_value > right_value:
+                return 1
+
     left_cleaned = left.strip()
     right_cleaned = right.strip()
     if left_cleaned == right_cleaned:
@@ -239,30 +259,50 @@ def classify_startup_failure(
 ) -> StartupFailureReport:
     ready_probe_url = str(manifest.get("ready_probe_url", ""))
     http_port = int(manifest.get("http_port", 0) or 0)
-    error_lower = error_text.lower()
     primary_log_path = str(manifest.get("control_plane_stderr_path", ""))
+    summary = ""
+    detail = ""
+    excerpt = ""
 
-    if _contains_any(error_lower, PORT_CONFLICT_PATTERNS):
-        summary = f"Configured HTTP port {http_port} is already in use."
-        detail = (
-            f"The control plane could not bind to {ready_probe_url}. "
-            f"Choose a different host port or stop the conflicting process."
-        )
-        excerpt = error_text
-        classification = "host_port_conflict"
-    elif _contains_any(error_lower, CRASH_PATTERNS):
-        summary = "Control plane crashed before startup completed."
-        detail = f"Melix never reached {ready_probe_url}. Inspect the control-plane logs for the crash cause."
-        excerpt = error_text
-        classification = "control_plane_crash"
+    if error_text:
+        error_lower = error_text.lower()
+        if _contains_any(error_lower, PORT_CONFLICT_PATTERNS):
+            summary = f"Configured HTTP port {http_port} is already in use."
+            detail = (
+                f"The control plane could not bind to {ready_probe_url}. "
+                f"Choose a different host port or stop the conflicting process."
+            )
+            excerpt = error_text
+            classification = "host_port_conflict"
+        elif _contains_any(error_lower, CRASH_PATTERNS):
+            summary = "Control plane crashed before startup completed."
+            detail = f"Melix never reached {ready_probe_url}. Inspect the control-plane logs for the crash cause."
+            excerpt = error_text
+            classification = "control_plane_crash"
+        else:
+            classification = ""
     else:
+        classification = ""
+
+    if not classification:
         control_plane_excerpt = _log_excerpt(
             manifest.get("control_plane_stderr_path"),
             manifest.get("control_plane_stdout_path"),
         )
-        control_plane_lower = control_plane_excerpt.lower()
 
-        if _contains_any(control_plane_lower, PORT_CONFLICT_PATTERNS):
+        if control_plane_excerpt:
+            control_plane_lower = control_plane_excerpt.lower()
+            control_plane_port_conflict = _contains_any(
+                control_plane_lower, PORT_CONFLICT_PATTERNS
+            )
+            control_plane_crash = not control_plane_port_conflict and _contains_any(
+                control_plane_lower, CRASH_PATTERNS
+            )
+        else:
+            control_plane_port_conflict = False
+            control_plane_crash = False
+
+        if control_plane_port_conflict:
             summary = f"Configured HTTP port {http_port} is already in use."
             detail = (
                 f"The control plane could not bind to {ready_probe_url}. "
@@ -270,7 +310,7 @@ def classify_startup_failure(
             )
             excerpt = control_plane_excerpt
             classification = "host_port_conflict"
-        elif control_plane_excerpt and _contains_any(control_plane_lower, CRASH_PATTERNS):
+        elif control_plane_crash:
             summary = "Control plane crashed before startup completed."
             detail = f"Melix never reached {ready_probe_url}. Inspect the control-plane logs for the crash cause."
             excerpt = control_plane_excerpt
@@ -282,8 +322,10 @@ def classify_startup_failure(
                 manifest.get("python_worker_stdout_path"),
                 manifest.get("swift_text_worker_stdout_path"),
             )
-            combined_worker = worker_excerpt_value.lower()
-            if worker_excerpt_value and _contains_any(combined_worker, CRASH_PATTERNS):
+            worker_crash = bool(worker_excerpt_value) and _contains_any(
+                worker_excerpt_value.lower(), CRASH_PATTERNS
+            )
+            if worker_crash:
                 primary_log_path = str(
                     manifest.get("python_worker_stderr_path")
                     or manifest.get("swift_text_worker_stderr_path")
@@ -311,6 +353,24 @@ def classify_startup_failure(
 
 
 def _contains_any(value: str, patterns: tuple[str, ...]) -> bool:
+    if not value:
+        return False
+    if patterns is PORT_CONFLICT_PATTERNS:
+        return (
+            "address already in use" in value
+            or "eaddrinuse" in value
+            or "bind() failed" in value
+            or "port is already in use" in value
+        )
+    if patterns is CRASH_PATTERNS:
+        return (
+            "fatal error" in value
+            or "traceback" in value
+            or "uncaught" in value
+            or "assertion failed" in value
+            or "terminated" in value
+            or "abort trap" in value
+        )
     for pattern in patterns:
         if pattern in value:
             return True

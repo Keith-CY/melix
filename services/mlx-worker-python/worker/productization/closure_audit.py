@@ -489,15 +489,16 @@ def _iter_probe_text_files(root: Path) -> Iterator[Path]:
         yield from _iter_text_files_sorted(candidate)
 
 
-def _iter_text_files_sorted(root: Path) -> Iterator[Path]:
+def _iter_text_files_sorted(root: Path | str) -> Iterator[Path]:
     with os.scandir(root) as scandir_entries:
         entries = sorted(scandir_entries, key=lambda entry: entry.name)
     for entry in entries:
+        entry_path = entry.path
         if entry.is_dir(follow_symlinks=False):
-            yield from _iter_text_files_sorted(Path(entry.path))
+            yield from _iter_text_files_sorted(entry_path)
             continue
         if entry.name.endswith(_TEXT_FILE_SUFFIXES) and entry.is_file(follow_symlinks=False):
-            yield Path(entry.path)
+            yield Path(entry_path)
 
 
 

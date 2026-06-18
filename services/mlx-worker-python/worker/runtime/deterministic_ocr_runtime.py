@@ -70,10 +70,10 @@ class DeterministicOCRRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         return prepared
 
     def prompt_token_count(self, prepared_request: PreparedVisionRequest) -> int:
+        if prepared_request is self._last_single_prompt_request:
+            return self._last_single_prompt_token_count
         images = prepared_request.images
         if not prepared_request.videos and len(images) == 1:
-            if prepared_request is self._last_single_prompt_request:
-                return self._last_single_prompt_token_count
             prompt_text = prepared_request.prompt_text
             input_bytes = prepared_request.preprocess_input_bytes
             if (

@@ -81,7 +81,8 @@ redefining equivalent contracts:
 
 ## Built-In Tool Set
 
-The v1 Melix built-in tool names are:
+The v1 Melix default built-in tool names are exported by
+`built_in_tool_config()` when no caller provides an explicit tool selection:
 
 | Tool | Kind | Observation Kind | Required Role |
 | --- | --- | --- | --- |
@@ -92,9 +93,18 @@ The v1 Melix built-in tool names are:
 | `visit` | `browser.visit` | `page_extract` | fetch or read a fixture-backed page/document |
 | `local_compute` | `compute.local` | `compute_result` | run deterministic local computation over supplied values |
 
-Additional tools may be added only by extending the registry contract, tests,
-and evidence fields in the same change. Ad hoc per-surface tool names are not
-allowed.
+The selectable agentic tool catalog also includes opt-in tools that can be
+requested by name, vector selection, or keyword selection without increasing the
+default no-selection tool schema:
+
+| Tool | Kind | Observation Kind | Required Role |
+| --- | --- | --- | --- |
+| `skill_lookup` | `skill.lookup` | `skill_lookup_results` | look up fixture-backed agent skill evidence |
+| `memory_lookup` | `memory.lookup` | `memory_lookup_results` | look up fixture-backed memory evidence |
+
+Additional tools may be added only by extending the registry contract, catalog
+tests, and evidence fields in the same change. Ad hoc per-surface tool names
+are not allowed.
 
 ## Tool Registry Contract
 
@@ -110,9 +120,39 @@ Each tool descriptor must include:
 - `toolset_version`
 - parser family and parser contract version
 
-The worker-facing registry must be serializable to a deterministic `ToolConfig`
-receipt. Any request that selects a subset of tools must preserve request order,
-deduplicate repeated names, and fail before execution on unknown names.
+The worker-facing default registry must be serializable to a deterministic
+`ToolConfig` receipt. Explicit selections are resolved against the selectable
+catalog, must preserve request order, deduplicate repeated names, and fail
+before execution on unknown names.
+
+## Tool Selection Receipt Contract
+
+Agentic prompt assembly may select a bounded subset of the built-in registry
+instead of exposing every tool schema to every local model request. Selection is
+advisory and must not remove tools that are marked always available for local
+diagnostics or deterministic compute. Semantic retrieval may provide candidate
+tool IDs, but unavailable or empty retrieval must degrade to deterministic
+keyword matching over the current user turn and recent user-turn context.
+
+The v1 selector receipt is `melix.agentic_tool_selection.v1` and records:
+
+- `toolset_version`
+- `selection_mode = vector|keyword|fallback`
+- `vector_available`
+- `fallback_reason`
+- `selected_tools[]` with `tool_id` and source label:
+  `always`, `vector`, `keyword`, or `keyword_context`
+- `dropped_tool_count`
+- `full_schema_bytes`
+- `selected_schema_bytes`
+
+Receipts must not include raw prompt text, private context, or tool arguments.
+They exist to explain why a schema was included or dropped and to measure prompt
+schema overhead. `full_schema_bytes` measures the selectable catalog, not only
+the default no-selection tool set. The deterministic agentic runtime records
+the selector receipt inside its `melix.agentic_tool_run.v1` registry receipt
+when a caller provides a selection input, and the selected registry is the
+execution allowlist for that run.
 
 ## Observation Contract
 
@@ -195,6 +235,835 @@ search rows, image search rows, pages, layouts, and crops. Broader RAG stores,
 skill entrypoints, memory entrypoints, and background-job continuations must
 reuse the same receipt shape when they add owner-aware payloads under #1761.
 
+### Prompt Construction Boundary
+
+Retrieved documents, skills, memories, tool observations, media references,
+sample questions, expected answers, and model final answers must remain
+untrusted data when they are projected into prompt messages. Prompt assembly
+must keep those segments out of system and developer instructions unless the
+operator has explicitly configured them as trusted instructions.
+
+Prompt snapshots and prompt evidence should record one receipt for each
+admitted untrusted segment. The receipt shape is:
+
+- `schema_version = melix.untrusted_context_receipt.v1`
+- `segment_id`
+- `source_type`
+- `source_field`
+- `message_role`
+- `trust_level = untrusted`
+- `policy = data_only`
+- `boundary_checked = true`
+- `included`
+- `owner_scope_checked`
+- `reason`
+- `corrective_action`
+
+The v1 agentic judge prompt snapshot slice records this receipt for every
+sample-derived user-payload field admitted into the judge user message. It does
+not change judge prompt wording or scorer behavior.
+
+The v1 control-plane chat prompt assembly slice records the same receipt shape
+for non-empty non-system/developer message parts after request shaping and
+before `Melix_Worker_V1_GenerateRequest.messages` is sent to the worker.
+Receipts are stored in `ExecutionMetadata.ext` as:
+
+- `melix.prompt_context.receipt_schema`
+- `melix.prompt_context.receipt_count`
+- `melix.prompt_context.receipts_json`
+
+The Python worker completion evidence slice forwards those three request-local
+ext values into `Completed.parser_metrics` as:
+
+- `prompt_context_receipt_schema`
+- `prompt_context_receipt_count`
+- `prompt_context_receipts_json`
+
+The worker treats the receipt JSON as opaque evidence and does not parse or
+mutate it. Source-specific RAG admission points still need their own
+admission/refusal receipts. Skill, memory, and background-continuation
+admission primitives are defined below for future entrypoint wiring.
+
+The v1 source-specific control-plane classification slice refines those chat
+prompt receipts using request-local message metadata already present at prompt
+assembly time. Tool-output messages record `source_type = tool_output` when the
+normalized role is `tool`, legacy OpenAI-compatible `function`, or
+Harmony-style `functions.<name>`. Harmony/Responses messages whose normalized
+recipient is `functions.<name>` also record `source_type = tool_output`, even
+when the original message role remains `assistant`, because the recipient marks
+the prompt segment as a tool-directed payload. Non-tool messages whose
+normalized `name` uses the reserved prefixes `retrieved_image`,
+`retrieved-image`, `image_retrieval`, `image-retrieval`, `rag_image`, or
+`rag-image` record `source_type = retrieved_image`. Non-tool
+messages whose normalized `name` uses the reserved prefixes `retrieved_document`,
+`retrieved-doc`, `document`, `doc`, `rag`, `rag_document`, or `knowledge`
+record `source_type = retrieved_document`; `skill` and `agent_skill` record
+`source_type = skill`; `memory`, `retrieved_memory`, and `pinned_memory` record
+`source_type = memory`; `background_continuation`,
+`background-continuation`, `background_job`, and `background-job` record
+`source_type = background_continuation`. Non-tool assistant messages record
+`source_type = model_final_answer` because prior model output remains
+untrusted data when it is projected back into a later prompt. Other
+non-system/developer messages continue to record `source_type =
+chat_prompt_message`.
+
+A reserved prefix matches either the exact normalized message name or the prefix
+followed by `:`, `.`, `_`, or `-`. The `_` and `-` separators preserve
+compatibility with standard OpenAI-compatible message names while the `:` and
+`.` separators keep local and legacy source identifiers classifiable.
+
+When the normalized message name is present, the prompt receipt records it as
+`source_id` only when it is a short public identifier. When the message has no
+name and its Harmony recipient identifies a `functions.<name>` target, the
+prompt receipt records that request-local recipient metadata as `source_id` only
+when it is likewise public. Short public prompt source IDs may contain ASCII
+letters, digits, `.`, `_`, `-`, and `:`. Path-like, URL-like, non-ASCII, or
+long source IDs are replaced with `prompt-source:<sha256-prefix>` in receipt
+JSON. `source_id` is source metadata only; the receipt must still omit message
+text, media URIs, media bytes, tool arguments, private prompt text, and other
+raw source payloads. The classification is evidentiary and does not replace
+source-specific owner-scope checks, admission/refusal checks, or
+background-continuation link validation.
+
+OpenAI Responses `function_call_output` input items are the Responses item-form
+equivalent of tool-output prompt data. The control-plane request adapter maps
+each admitted item into the shared prompt-message path with `message_role =
+tool` and `source_id = call_id`, then emits the same `source_type =
+tool_output` receipt. This receipt is request-local evidence only: it does not
+prove the call id matched an earlier assistant tool call and must not include
+the raw `output` body in receipt JSON.
+
+The live chat prompt receipt uses source-specific data-only policy text for the
+classified source type. Tool output records `reason = tool output is prompt
+data, not instructions`; retrieved documents record `reason = retrieved
+document evidence is prompt data, not instructions`; retrieved images record
+`reason = retrieved image evidence is prompt data, not instructions`; skills
+record `reason = skill evidence is prompt data, not instructions`; memories
+record `reason = memory evidence is prompt data, not instructions`;
+background continuations record `reason = background continuation is prompt data, not instructions`;
+model-final-answer history records `reason = model final answer history is
+prompt data, not instructions`; and generic chat prompt messages retain
+`reason = chat message content is prompt data, not instructions`. Each matching
+`corrective_action` tells downstream consumers to keep that source in its
+original user or assistant data role and not project it into system or developer
+instructions. This live-policy mapping does not create a RAG store, skill
+store, memory store, or background-job continuation store; it documents the
+final request-translation receipt for already-shaped messages.
+
+The chat prompt receipt must not include raw message content, media URLs, media
+bytes, tool arguments, or private prompt text. It records only segment IDs,
+source fields, roles, data-only policy, and corrective guidance. RAG stores,
+skill entrypoints, memory entrypoints, and background-job continuations must
+reuse this receipt shape when they add their prompt-context boundary evidence
+under #1761.
+
+The v1 MCP tool catalog prompt-adjacent metadata slice records the same receipt
+shape when `TextRequestShaper` auto-injects MCP catalog sources into
+`ToolParserSelection`. These receipts are stored in `ExecutionMetadata.ext` as:
+
+- `melix.mcp.prompt_context.receipt_schema`
+- `melix.mcp.prompt_context.receipt_count`
+- `melix.mcp.prompt_context.receipts_json`
+
+The MCP receipt records one admitted segment per selected MCP source ID after
+catalog normalization, high-risk namespace refusal, and enabled-source
+filtering. Each receipt uses `source_type = skill`, `source_field =
+mcp_tool_catalog`, and `source_id` set to the redacted MCP source ID. This
+records that the catalog source is prompt-adjacent skill/tool evidence and not
+trusted instructions. The receipt must not include MCP config paths, tool
+namespaces, tool schemas, tool arguments, private prompt text, or raw source
+payloads. Short public source IDs containing only ASCII letters, digits, `.`,
+`_`, or `-` remain readable for diagnostics. Path-like, URL-like, delimiter-heavy,
+non-ASCII, or long source IDs are replaced with `mcp-source:<sha256-prefix>` in
+receipt JSON while `melix.mcp.source_ids` remains unchanged for tool-parser
+reconstruction.
+
+The v1 control-plane session-context slice records the same receipt shape when
+`RequestCoordinator` resolves an implicit follow-up restore snapshot from
+`SessionGraphStore`. These receipts are stored in `ExecutionMetadata.ext` as:
+
+- `melix.session_context.receipt_schema`
+- `melix.session_context.receipt_count`
+- `melix.session_context.receipts_json`
+
+The session-context receipt uses `source_type = background_continuation`,
+`source_field = execution.cache_hints.restore_snapshot_id`, and records the
+selected snapshot ID as `source_id`. `owner_scope_checked` is `true` only for
+the in-memory session graph lookup that matched the request session and
+selected branch before setting the restore snapshot. Caller-supplied explicit
+`restore_snapshot_id` values must still emit the same redacted session-context
+receipt so the boundary is visible, but they must record
+`owner_scope_checked = false` until a future owner-aware snapshot lookup
+validates the ID. The receipt must not include raw prompt text, hidden
+reasoning text, prior model output, or private prompt bodies.
+
+The v1 Python worker prompt-context primitive is
+`worker.runtime.untrusted_context.untrusted_context_receipt`. It constructs the
+stable `melix.untrusted_context_receipt.v1` dictionary for both admitted and
+refused untrusted user-message segments. Existing agentic judge prompt
+snapshots use this helper, and later retrieved-document, skill, memory,
+tool-output, and background-continuation admission points must use the same
+helper or preserve its exact receipt shape when they record prompt-boundary
+evidence.
+
+Python worker receipt `source_id` values are receipt metadata only. Short public
+source IDs may contain ASCII letters, digits, `.`, `_`, `-`, and `:` and must be
+96 UTF-8 bytes or shorter. Path-like, URL-like, non-ASCII, or long source IDs
+are replaced with `source:<sha256-prefix>` in receipt JSON. When a receipt
+`segment_id` is derived from the same raw source ID prefix, the helper replaces
+that prefix with the same redacted source token before serializing the receipt.
+Receipts must continue to omit `source_id` entirely when callers provide no
+source ID.
+
+The shared Python worker prompt-context admission primitive is
+`worker.runtime.prompt_context`. A `PromptContextSegment` represents one
+untrusted source field that a caller intends to project into a user-role prompt
+payload. `admit_prompt_context_segments` returns the prompt payload fields plus
+matching untrusted-context receipts, rejects duplicate source fields before
+overwrite, and rejects non-user roles for untrusted context. Receipts contain
+source metadata and boundary decisions only; they must not copy the raw segment
+value. `refused_prompt_context_receipt` provides the same receipt shape with
+`included = false` for source-specific validators that reject malformed,
+cross-owner, or otherwise inadmissible segments before prompt assembly.
+
+The v1 prompt-context primitive slice migrates the agentic judge prompt snapshot
+receipt generation onto `worker.runtime.prompt_context` without changing
+persisted prompt messages, receipt shape, scorer behavior, or judge prompt
+wording. Later RAG, skill, memory, chat prompt-assembly, and background
+continuation slices should use this primitive when they decide which untrusted
+segments are admitted into user-role prompt context.
+
+The source-specific Python worker prompt-context helper is also in
+`worker.runtime.prompt_context`. `PromptContextSourceEvidence` and
+`admit_prompt_context_source_evidence` provide a common admission path for
+retrieved document evidence, retrieved image evidence, skill evidence, memory
+evidence, and background-continuation evidence. The helper supplies stable
+data-only reason and corrective-action text for each source type, preserves
+`source_id` and `owner_scope_checked`, rejects unsupported source types, and
+still delegates receipt construction to `PromptContextSegment`. Source-specific
+entrypoints should use `refused_source_prompt_context_receipt` when malformed,
+cross-owner, or otherwise inadmissible evidence is rejected before prompt
+assembly. The helper does not create a skill store, memory store, live RAG
+store, or background-job continuation mechanism; it standardizes the receipt
+surface those entrypoints must use when they are wired.
+
+The agentic judge prompt snapshot entrypoint must build its admitted receipts
+through `admit_prompt_context_segments` and its validator refusal receipts
+through `refused_prompt_context_receipt`. This keeps the concrete prompt
+snapshot path aligned with the shared admission primitive while preserving the
+stable receipt JSON and persisted prompt payload.
+
+The Python worker background-continuation admission primitive is
+`worker.runtime.background_continuation.admit_background_continuation`. Future
+durable local-job monitors and session follow-up paths must pass already
+redacted background-job evidence through this helper before projecting it into
+user-role prompt context. The helper records one
+`source_type = background_continuation` receipt with `source_field =
+background_job` and `source_id` set to the redacted job identifier. Malformed
+continuation fields produce `included = false` refusal receipts with `reason =
+invalid_background_continuation_field` and no user payload. The helper does not
+implement durable job storage, process monitoring, or session resume; it is only
+the prompt-context boundary for follow-up data admitted by those later
+surfaces.
+
+Concrete local-job, workflow, and continuation entrypoints may override the
+default `segment_id`, `source_field`, `reason`, and `corrective_action` when
+they need to identify the specific redacted result slot they are admitting. The
+default remains `segment_id = <job_id>:background-continuation` and
+`source_field = background_job`. Malformed entrypoint-local metadata must fail
+closed before prompt admission with the same `invalid_background_continuation_field`
+refusal receipt and must not include raw logs, command text, session contents,
+or workflow payloads.
+
+The workflow-facing Python worker helper is
+`worker.runtime.background_continuation.admit_workflow_continuation_result`.
+It is a prompt-boundary primitive for already-redacted workflow continuation
+results, not a workflow runner or scheduler. The helper maps the redacted
+workflow run ID, and optional workflow node ID, into `source_id =
+<workflow_run_id>[:<workflow_node_id>]` and keeps
+`source_type = background_continuation`. By default it emits
+`segment_id = <source_id>:workflow-continuation`,
+`source_field = workflow_result`, and workflow-specific data-only reason and
+corrective-action text. Concrete workflow entrypoints may still override
+`segment_id`, `source_field`, `reason`, and `corrective_action` through the same
+entrypoint-local metadata surface. Malformed workflow run IDs, workflow node
+IDs, result payloads, and owner-scope metadata must fail closed with
+`included = false`, `reason = invalid_background_continuation_field`, and no
+user payload.
+
+The Python worker local-job continuation primitive is
+`worker.runtime.local_job_continuation`. It defines a versioned
+`melix.local_job_continuation_record.v1` record for durable background local
+jobs before runner and monitor side effects are added. The record persists the
+job ID, command vector, working directory, log path, exit status, timeout,
+originating session ID, follow-up status, follow-up session ID,
+`followed_up_at`, and explicit completion evidence paths. Store writes use
+atomic JSON replacement plus per-record write locks and revision checks so
+concurrent writers fail closed instead of silently overwriting each other. Job
+IDs must be cross-platform-safe record filenames. If a lock file belongs to a
+dead writer PID, the store may recover it only after acquiring a short-lived
+recovery guard, renaming the stale file, and revalidating the lock identity
+before deletion. Windows process IDs are treated as active because
+`os.kill(pid, 0)` is not a portable liveness probe there. Malformed lock files,
+permission-protected active processes, active recovery guards, concurrent lock
+reacquisition, and failed lock cleanup all preserve the lock or refuse the write
+instead of deleting a possibly active writer lock. If the stale candidate
+disappears before its writer PID can be read, the store treats the lock as
+already cleared and retries acquisition instead of reporting a blocked write.
+
+Persisted local-job state is advisory. A record marked `completed` is accepted
+as final only when a success marker path or artifact path is present on the
+record or matching live evidence. A stale `completed` record without completion
+evidence must reconcile back to `running` when a matching live session still
+shows progress, emitting a `melix.local_job_continuation_receipt.v1` receipt
+with `reason = stale_done_revived`. A pending or running record with matching
+active live progress must emit `reason = live_session_reused` and
+`duplicate_launch_refused = true` so future runners reattach instead of
+launching duplicate local work. Completed records without evidence emit
+`reason = missing_completion_evidence` and remain blocked until explicit
+completion evidence appears.
+
+Callers that are reconciling persisted state must use
+`LocalJobContinuationStore.reconcile_record` instead of separately loading,
+reconciling, and saving records. The store-backed entrypoint loads the latest
+record, applies the side-effect-free reconciliation primitive, persists revived
+running state or live completion evidence with the same optimistic revision
+guard used by normal writes, and returns `None` when no record exists for the
+job ID. If another writer changes the record during reconciliation, the write
+must fail closed with the existing `record_revision_mismatch` receipt. The
+same store owns follow-up claiming through `LocalJobContinuationStore.claim_followup`.
+Claiming first reconciles the latest persisted record with optional live
+completion evidence, then marks an evidence-backed completed record
+`followup_status = in_progress` with the claiming follow-up session ID. Duplicate
+claims must return `reason = followup_already_claimed` without changing the
+record. Non-completed records return `reason = followup_not_ready`, and
+completed records without success or artifact evidence keep the existing
+`missing_completion_evidence` blocker. Claim writes use the record revision
+guard so two monitor loops cannot silently enqueue two follow-ups.
+
+The primitive does not start processes, tail logs, inject prompt follow-ups, or
+resume workflows. Store-backed local-job monitor or session follow-up callers
+that are ready to project a completed job summary into prompt context must call
+`LocalJobContinuationStore.claim_followup_prompt_context`. That entrypoint first
+computes the same reconciliation and single-claim decision as
+`claim_followup`, then admits the already-redacted completion summary through
+`admit_background_continuation` with `source_field =
+local_job_completion_summary` and `segment_id = <job_id>:local-job-followup`.
+Only after prompt-context admission succeeds may it persist the follow-up claim.
+Malformed completion summaries or owner-scope metadata must fail closed with a
+`background_continuation` refusal receipt, no prompt payload, and no stored
+`in_progress` follow-up claim. Store-level blockers such as missing completion
+evidence or an already claimed follow-up must not emit prompt-context payloads.
+
+Future local-job monitor loops should discover follow-up work through
+`LocalJobContinuationStore.scan_followup_candidates`. The scanner performs a
+one-level `os.scandir` pass over persisted `*.json` local-job record files
+without a separate pre-scan root-existence stat, keeps deterministic filename
+ordering for follow-up candidates and receipts,
+reconciles each loaded record with optional caller-provided live evidence,
+persists any reconciliation state changes through the same revision-guarded
+store path, and returns only evidence-backed `completed` records whose
+follow-up has not already been claimed. The scan is a read model for monitors:
+it must not start jobs, tail logs, claim follow-ups, inject prompt context, or
+resume sessions. Already claimed records emit `reason =
+followup_already_claimed`; stale completed records, missing completion evidence,
+and live completion evidence keep the same reconciliation receipts defined
+above. Ready records emit `reason = followup_candidate_ready`, indicating that a
+monitor may next call `claim_followup_prompt_context` to perform the single
+guarded claim and prompt-context admission. Unreadable record files must not
+abort the whole scan; they emit `reason = record_unreadable`, and
+revision-guarded store conflicts keep their store-level receipt so the monitor
+can continue scanning other records. The registered PR-scoped performance probe
+for this path is `local-job-followup-scan-scandir`, which verifies the scandir
+scan, derives job IDs directly from `.json` filenames without per-entry `Path`
+stem construction, and reports elapsed time plus `Path.exists`/`Path.glob`/
+`os.scandir` call counts.
+
+When a monitor already has redacted completion summaries for candidate records,
+it may compose discovery and guarded claiming through
+`LocalJobContinuationStore.claim_scanned_followup_prompt_contexts`. That
+entrypoint first calls `scan_followup_candidates`, then attempts
+`claim_followup_prompt_context` only for records returned as ready candidates.
+Callers must provide a follow-up session ID, a redacted completion summary, and
+an owner-scope decision for each job ID they want claimed. Missing claim inputs
+emit `reason = followup_claim_input_missing`; malformed claim inputs emit
+`reason = followup_claim_input_invalid`; prompt-admission refusals emit
+`reason = followup_prompt_context_refused` plus background-continuation refusal
+receipts, including a fallback refusal receipt if prompt admission fails before
+reconciliation evidence is available; malformed non-mapping wrapper inputs for
+the follow-up session IDs, completion summaries, or owner-scope decisions also
+emit per-candidate `followup_claim_input_invalid` receipts instead of raising
+unstructured exceptions; store revision races keep the store-level receipt such
+as `record_revision_mismatch`. These per-candidate failures must not abort
+claims for other ready records, and admission-refused or wrapper-refused
+candidates must not persist an `in_progress` follow-up claim. The batch bridge
+still must not start jobs, tail logs, write to session stores, inject prompt
+context into an agent loop, or resume workflows.
+
+When a local-job follow-up claim succeeds, the
+`melix.local_job_continuation_receipt.v1` receipt must also expose the redacted
+background-continuation prompt-boundary evidence for that claim:
+
+- `prompt_context_receipt_schema =
+  melix.untrusted_context_receipt.v1`
+- `prompt_context_receipt_count`
+- `prompt_context_receipts`
+
+The local-job claim uses `source_type = background_continuation`,
+`source_field = local_job_followup`, and `source_id` set to the redacted job ID.
+`owner_scope_checked` remains `false` until a future owner-aware local-job
+monitor validates the job/session linkage. The prompt-context receipt must not
+copy command vectors, working directories, log paths, session IDs, success
+marker paths, artifact paths, raw log output, prompt text, or hidden reasoning
+content. Duplicate, blocked, or not-ready claims must not emit a new admitted
+prompt-context segment because no follow-up projection has been reserved.
+
+Future local-job monitor, UI, and session follow-up callers that need a concrete
+session message projection must use
+`worker.runtime.local_job_continuation.project_local_job_session_followup`
+instead of manually stitching claim receipts into prompts. The helper delegates
+to `LocalJobContinuationStore.claim_followup_prompt_context`, then returns the
+store claim, copied claim receipt, copied prompt user payload, copied
+untrusted-context receipts, and a `followup_message` shaped as user-role data
+when a prompt payload was admitted: `{"role": "user", "content":
+<prompt_user_payload>, "untrusted_context_receipts": <receipts>}`. When the
+store reports a missing, duplicate, blocked, or not-ready record, the helper
+must not create a follow-up message payload and `followup_message` must be
+`None`. Malformed completion summaries or owner-scope metadata keep the existing
+fail-closed admission behavior and must not persist an `in_progress` claim. The
+projection remains side-effect-free: it does not launch local jobs, tail logs,
+read artifact contents, infer owner scope, or enqueue a UI/session request.
+
+Monitor loops that process all currently ready records must use
+`worker.runtime.local_job_continuation.project_local_job_session_followups`.
+That batch helper delegates to
+`LocalJobContinuationStore.claim_scanned_followup_prompt_contexts`, preserves
+the resulting batch receipts and refusal receipts, and returns one copied
+`LocalJobSessionFollowupProjection` plus one user-role follow-up message for
+each successfully admitted claim. Failed, blocked, duplicate, missing,
+not-ready, or admission-refused candidates remain visible only through typed
+receipts and must not create follow-up messages. The batch projection has the
+same side-effect boundary as the single-record helper: it claims only through
+the store's existing revision-guarded path and does not launch jobs, tail logs,
+read artifacts, mutate session stores, enqueue UI work, infer owner scope, or
+resume workflows.
+
+The Python worker skill and memory admission primitives are
+`worker.runtime.skill_memory_context.admit_skill_context` and
+`worker.runtime.skill_memory_context.admit_memory_context`. Future skill,
+agent-skill, retrieved-memory, and pinned-memory entrypoints must pass
+already-redacted evidence dictionaries through these helpers before projecting
+that evidence into user-role prompt context. Each helper records one
+`source_type = skill` or `source_type = memory` receipt with `source_field`
+matching the source type and `source_id` set to the redacted skill or memory
+identifier. Malformed source IDs, payload objects, or owner-scope metadata
+produce `included = false` refusal receipts with `reason =
+invalid_skill_context_field` or `invalid_memory_context_field` and no user
+payload. Concrete entrypoints may pass entrypoint-local `segment_id`,
+`source_field`, `reason`, and `corrective_action` values so public receipt
+fields remain stable for agent-skill catalogs, skill stores, pinned memories,
+or retrieved-memory stores while receipt generation still routes through
+`PromptContextSourceEvidence`. Malformed entrypoint receipt metadata fails
+closed before prompt assembly with the same refusal reason. These helpers do
+not implement skill lookup, memory persistence, retrieval ranking, or
+chat/session wiring; they are only the prompt-context boundary for evidence
+admitted by those later surfaces.
+
+Future skill and memory entrypoints that project multiple already-redacted
+items should use
+`worker.runtime.skill_memory_context.project_skill_memory_contexts`. The helper
+accepts ordered `SkillMemoryContextEntry` descriptors, delegates each item to
+the single-entry admission helpers above, returns one combined user-role prompt
+payload, and returns copied admitted receipts plus copied refusal receipts.
+The top-level entries container must be a list or tuple; malformed containers
+fail closed with `source_field = entries`, no user payload, and no admitted
+receipts.
+Malformed skill or memory entries are isolated into `refusal_receipts` and must
+not drop valid sibling entries. Non-`SkillMemoryContextEntry` objects are
+refused with `source_field = entry` and no user payload. Duplicate prompt
+payload fields fail closed for the later duplicate item with `reason =
+duplicate_skill_context_field` or `duplicate_memory_context_field`, preserving
+the first admitted entry and preventing silent prompt-payload overwrites.
+Concrete stores should pass stable unique `source_field` values such as
+`agent_skill_0` or `pinned_memory_0` when projecting more than one item of the
+same type. The batch projection remains side-effect-free: it does not read
+skill files, load memory stores, rank retrieval results, infer owner scope,
+mutate sessions, or copy raw source text into receipt JSON.
+
+Future concrete skill-store and memory-store entrypoints that already have
+redacted store records should use
+`worker.runtime.skill_memory_context.project_skill_memory_store_records`. The
+helper accepts an ordered list or tuple of record mappings, validates each
+record's `context_kind`, `source_id`, `payload`, `owner_scope_checked`, and
+optional receipt metadata, then converts valid records into
+`SkillMemoryContextEntry` descriptors for
+`project_skill_memory_contexts`. Malformed record containers fail closed with
+`source_field = records`; non-mapping records fail closed with `source_field =
+record`; unsupported `context_kind` values fail closed with `source_field =
+context_kind`. Valid sibling records remain admitted when another record is
+refused. The bridge does not perform store lookup, filesystem reads, retrieval
+ranking, owner inference, session mutation, or prompt-body copying; callers
+must pass already-redacted payload dictionaries and explicit owner-scope
+evidence.
+
+Concrete skill-store and memory-store callers that already performed lookup and
+need a session-message-shaped projection should use
+`worker.runtime.skill_memory_context.project_skill_memory_lookup_result`. The
+helper accepts a lookup-result mapping with `records` set to the ordered
+already-redacted record list, delegates those records to
+`project_skill_memory_store_records`, then returns copied prompt user payload,
+copied admitted receipts, copied refusal receipts, and `lookup_message` shaped
+as user-role data when at least one record was admitted: `{"role": "user",
+"content": <prompt_user_payload>, "untrusted_context_receipts": <receipts>}`.
+Malformed top-level lookup-result wrappers fail closed with
+`source_type = skill_memory_lookup`, `source_field = lookup_result`, no prompt
+payload, no admitted receipts, and no lookup message. Lookup-result mappings
+without a `records` key are delegated to the record projection path and fail
+closed with `source_field = records`. Record-level refusals remain visible while
+valid sibling records can still produce a lookup message. The projection does
+not load skill files, read or write memory stores, rank retrieval results, infer
+owner scope, mutate sessions, enqueue chat messages, or copy raw source text
+into receipt JSON.
+
+Concrete live or durable skill/memory lookup entrypoints may pass
+`lookup_source_id`, `lookup_segment_id`, and `lookup_source_field` to
+`project_skill_memory_lookup_result` when they need wrapper-level refusal
+receipts to reference a stable lookup source instead of the default
+`unknown-skill-memory-lookup`. The metadata is used only for top-level wrapper
+refusals and missing-wrapper-record refusals; individual store records still
+own their own `source_id`, `segment_id`, and `source_field` metadata. Malformed
+lookup wrapper metadata fails closed with `source_type = skill_memory_lookup`,
+the offending metadata field as `source_field`, no prompt payload, no admitted
+receipts, and no lookup message.
+
+The deterministic Python-worker `skill_lookup` and `memory_lookup` adapters are
+the concrete v1 callers of this lookup projection. They are opt-in selectable
+catalog tools rather than default no-selection tool schemas, so ordinary
+default tool configuration does not grow unless a caller explicitly selects or
+routes to them. They are fixture-backed and keep observation payloads shaped as
+`query`, `store_ref`, `results`, and `result_count`, while selected rows are
+converted into already-redacted skill or memory store records before receipt
+projection. They attach
+`project_skill_memory_lookup_result(...).untrusted_context_receipts` and
+`refusal_receipts` as source receipts for `normalize_tool_observation`. They do
+not emit the projection's `lookup_message` because the tool observation already
+carries the visible result payload. These adapters do not read skill files,
+persist memories, perform semantic ranking, infer owner scope, mutate sessions,
+or copy raw skill summaries, memory text, query strings, store refs, config
+paths, or prompt bodies into receipt JSON.
+
+The Python worker retrieval admission primitives are
+`worker.runtime.retrieval_context.admit_retrieved_document_context` and
+`worker.runtime.retrieval_context.admit_retrieved_image_context`. Deterministic
+text search, image search, and local visit source receipts pass already-redacted
+evidence dictionaries through these helpers before projecting that evidence
+into tool-observation prompt context. Future live RAG stores, document
+retrieval, image retrieval, and local source integration entrypoints must reuse
+the same helpers. By default, each helper records one `source_type =
+retrieved_document` or `source_type = retrieved_image` receipt with
+`source_field` matching the source type and `source_id` set to the redacted
+retrieved source identifier. Concrete result-list and visit entrypoints may
+provide entrypoint-local `segment_id`, `source_field`, `reason`, and
+`corrective_action` values so their public receipt locations remain stable.
+Malformed source IDs, payload objects, owner-scope metadata, or entrypoint
+receipt fields produce `included = false` refusal receipts with `reason =
+invalid_retrieved_document_context_field` or
+`invalid_retrieved_image_context_field` and no user payload. These helpers do
+not implement retrieval storage, ranking, indexing, ingestion, or chat/session
+wiring; they are only the prompt-context boundary for evidence admitted by
+those surfaces.
+
+Future retrieval entrypoints that project multiple already-redacted source
+items should use `worker.runtime.retrieval_context.project_retrieval_contexts`.
+The helper accepts ordered `RetrievalContextEntry` descriptors for retrieved
+documents and retrieved images, delegates every item to the single-entry
+admission helpers above, returns one combined user-role prompt payload, and
+returns copied admitted receipts plus copied refusal receipts. Malformed
+top-level entries containers fail closed with `source_field = entries`, no user
+payload, and no admitted receipts.
+retrieved entries are isolated into `refusal_receipts` and must not drop valid
+sibling entries. Duplicate prompt payload fields fail closed for the later
+duplicate item with `reason = duplicate_retrieved_document_context_field` or
+`duplicate_retrieved_image_context_field`, preserving the first admitted entry
+and preventing silent prompt-payload overwrites. Concrete result-list and local
+source entrypoints should pass stable unique `source_field` values such as
+`retrieved_document_0` or `retrieved_image_0` when projecting more than one
+retrieved item of the same type. The batch projection remains side-effect-free:
+it does not read files, query retrieval stores, rank results, index documents,
+infer owner scope, mutate sessions, or copy raw source text, captions, media
+URIs, local paths, or page content into receipt JSON.
+
+Future concrete retrieval-store entrypoints that already have redacted source
+records should use
+`worker.runtime.retrieval_context.project_retrieval_store_records`. The helper
+accepts an ordered list or tuple of record mappings, validates each record's
+`context_kind`, `source_id`, `payload`, `owner_scope_checked`, and optional
+receipt metadata, then converts valid records into `RetrievalContextEntry`
+descriptors for `project_retrieval_contexts`. Malformed record containers fail
+closed with `source_field = records`; non-mapping records fail closed with
+`source_field = record`; unsupported `context_kind` values fail closed with
+`source_field = context_kind`. Valid sibling records remain admitted when
+another record is refused. The bridge does not perform RAG store lookup,
+filesystem reads, media fetches, retrieval ranking, owner inference, session
+mutation, or prompt-body copying; callers must pass already-redacted payload
+dictionaries and explicit owner-scope evidence.
+
+Concrete retrieval callers that already performed lookup and have a wrapper
+result should use
+`worker.runtime.retrieval_context.project_retrieval_lookup_result`. The helper
+accepts a mapping shaped as `{"records": <retrieval store records>}`, delegates
+record validation to `project_retrieval_store_records`, then returns copied
+prompt user payload, copied admitted receipts, copied refusal receipts, and an
+optional user-role lookup message shaped as
+`{"role": "user", "content": <prompt_user_payload>,
+"untrusted_context_receipts": <receipts>}`. Malformed top-level lookup wrappers
+fail closed with `source_type = retrieval_lookup`,
+`source_field = lookup_result`, no prompt payload, no admitted receipts, and no
+lookup message. Missing or malformed `records` keeps the existing
+retrieved-document store-record refusal semantics. The bridge remains
+side-effect-free: it does not perform RAG store lookup, rank retrieval results,
+read files, fetch media, infer owner scope, mutate sessions, or copy raw
+retrieved text, captions, media URIs, local paths, or prompt bodies into
+receipt JSON.
+
+Concrete live or durable retrieval lookup entrypoints may pass
+`lookup_source_id`, `lookup_segment_id`, and `lookup_source_field` to
+`project_retrieval_lookup_result` when wrapper-level refusals should identify a
+stable lookup source instead of the default `unknown-retrieval-lookup`. The
+metadata is used only for top-level wrapper refusals and missing-wrapper-record
+refusals; per-result retrieval store records still own their own source and
+segment metadata. Malformed lookup wrapper metadata fails closed with
+`source_type = retrieval_lookup`, the offending metadata field as
+`source_field`, no prompt payload, no admitted receipts, and no lookup message.
+
+The deterministic Python-worker `text_search` and `image_search` adapters are
+the concrete v1 callers of this lookup projection. They keep their observation
+payloads shaped as `query`, `corpus_ref`, `results`, and `result_count`, but
+convert selected results into lookup records and attach
+`project_retrieval_lookup_result(...).untrusted_context_receipts` as source
+receipts for `normalize_tool_observation`. They do not emit the projection's
+`lookup_message` because the tool observation already carries the visible
+result payload. `visit` remains a direct retrieved-document admission path
+because it projects one visited document payload, not a multi-result lookup
+wrapper.
+
+The v1 control-plane rerank document-boundary slice applies the same receipt
+schema to the OpenAI-compatible `/v1/rerank` HTTP response. The handler emits
+one redacted `source_type = retrieved_document` receipt per candidate document
+under `untrusted_context_receipts`, plus
+`untrusted_context_receipt_schema = melix.untrusted_context_receipt.v1`. These
+receipts identify request-local document indexes and source IDs only; they must
+not include candidate document text, query text, prompt bodies, media URIs, or
+private source payloads. Because `/v1/rerank` receives caller-supplied
+documents directly and does not perform durable retrieval-store lookup in this
+slice, those receipts set `owner_scope_checked = false`. Future RAG or
+session-backed retrieval entrypoints must perform owner-scope validation before
+setting that field to `true`.
+
+The agentic judge prompt snapshot must also surface receipt evidence that is
+already attached to executed `agentic_tool_observations`. Snapshot-level
+`untrusted_context_receipts` are ordered as the admitted judge user-payload
+field receipts followed by defensive copies of each observation's
+`untrusted_context_receipts`. This preserves the judge prompt message JSON and
+tool-observation replay scope while making generic tool output and
+retrieval-source prompt boundaries visible to snapshot readers without parsing
+the untrusted payload.
+
+Rejected prompt-context segments should use the same receipt schema with
+`included = false`. For the agentic judge prompt boundary, unsupported
+top-level user-payload fields emit `reason =
+unsupported_user_payload_field`, and forbidden nested no-leak keys emit
+`reason = forbidden_user_payload_key`. These refusal receipts are attached to
+the validation error before prompt snapshot persistence so refused segments
+cannot appear in the final prompt messages.
+
+### Tool Observation Prompt Boundary
+
+Shared tool observations are generic tool output. They may later be projected
+into prompts by evaluation, SFT replay, rollout, chat, workflow, or background
+continuation surfaces, so every `melix.agentic_tool_observation.v1` trace
+observation must carry a prompt-boundary receipt for its sanitized payload.
+
+The generic observation receipt uses:
+
+- `schema_version = melix.untrusted_context_receipt.v1`
+- `segment_id = <tool_call_id>:observation`
+- `source_type = tool_observation`
+- `source_field = payload`
+- `message_role = user`
+- `trust_level = untrusted`
+- `policy = data_only`
+- `boundary_checked = true`
+- `included = true`
+- `owner_scope_checked = false`
+- `reason = tool output is prompt data, not instructions`
+- `corrective_action`
+
+The receipt must be attached beside the observation payload as
+`untrusted_context_receipt_count` and `untrusted_context_receipts`, not inside
+the sanitized payload. This keeps payload redaction, truncation, replay hashes,
+and byte metrics focused on the emitted tool output while still making the
+prompt boundary visible to downstream prompt assemblers.
+
+`melix.agentic_tool_observation.v1` records this receipt list as a
+normalization-time audit snapshot. The worker builds the generic
+`tool_observation` receipt and appends any normalized source-specific receipts
+while creating the observation record; later property reads or trace
+serialization copy that snapshot rather than re-running prompt-context
+admission. Tool-output payload text, including prompt-injection phrases such as
+requests to ignore earlier instructions, may remain in sanitized payload data
+but must not be copied into receipt JSON.
+
+Benchmark request rows derived from agentic tool turns must preserve that
+boundary evidence without promoting untrusted payload text into scalar CSV
+fields. Each `tool_turn` request row keeps the full observation, including
+`untrusted_context_receipts`, in `tool_observation_json`, and exposes only
+`untrusted_context_receipt_schema` plus `untrusted_context_receipt_count` as
+metadata columns. The count includes mapping-shaped receipt entries only; the
+schema field is the first string `schema_version` found in those receipts or an
+empty string when no receipt schema is available.
+
+The v1 generic tool-output slice adds this receipt in the shared Python worker
+tool observation normalizer. The follow-up prompt-context admission slice
+generates the receipt through `worker.runtime.prompt_context` by admitting one
+`PromptContextSegment` for the sanitized observation payload. It does not
+replace source-specific owner checks or final projection checks. Skill, memory,
+RAG, chat prompt assembly, and background-job continuation surfaces must still
+add their own admission or refusal receipts when they decide whether to
+include, reject, or re-scope a tool observation in a final prompt.
+The `model_final_answer` classification records the projection boundary for
+prior assistant output only; it does not mark generated text as trusted
+instructions and does not change assistant transcript storage.
+
+Runtime-generated GRPO candidate traces must preserve tool-observation receipt
+evidence for every candidate that executed tools. Selected candidates continue
+to include full `agentic_tool_observations` through the selected policy trace.
+Non-selected candidate reward trace rows intentionally omit full observations,
+but each generated candidate and each candidate reward trace row with a tool
+run must expose scalar receipt evidence:
+
+- `agentic_tool_untrusted_context_receipt_schema`
+- `agentic_tool_untrusted_context_receipt_count`
+
+The schema is the first string `schema_version` found on a mapping-shaped
+receipt from the candidate tool observations. The count is the total number of
+mapping-shaped receipts across those observations. These scalar fields must not
+copy tool payloads, retrieved text, page content, media references, prompt
+text, or receipt bodies into non-selected candidate rows.
+
+Training dataset normalization applies the same scalar-summary rule to
+`agentic_tool_trace` samples whose `tool_calls` are replayed through the shared
+deterministic runtime. The normalized sample keeps full
+`agentic_tool_observations` for trace replay, and exposes
+`agentic_tool_untrusted_context_receipt_count` at the sample top level when the
+replayed observations contain mapping-shaped receipts. It also exposes
+`agentic_tool_untrusted_context_receipt_schema` only when at least one counted
+receipt carries a string `schema_version`. These fields are metadata only: they
+record the first receipt schema string when present and the total receipt count
+across replayed observations, and must not copy tool payloads, retrieved text,
+page content, media references, prompt text, receipt JSON bodies, or private
+context into scalar training-package fields.
+
+The v1 deterministic retrieval source slice lets callers attach
+source-specific untrusted-context receipts beside the generic tool-observation
+receipt without adding those receipts to the sanitized payload or replay hash.
+For `text_search`, each selected result emits a `retrieved_document` receipt.
+For `image_search`, each selected result emits a `retrieved_image` receipt.
+Those receipts use `segment_id = <tool_call_id>:result-<index>`,
+`source_field = results[<index>]`, and `source_id` from the selected corpus row
+identifier or its deterministic fallback. `owner_scope_checked` records whether
+the deterministic run had an expected owner scope configured before result
+projection. Source-specific retrieval receipts must omit retrieved text,
+captions, media refs, query strings, tool arguments, and private prompt text.
+The follow-up retrieval source prompt-context admission slice generates each
+selected-result receipt through `worker.runtime.prompt_context` by admitting one
+`PromptContextSegment` for the sanitized selected result value while preserving
+the same emitted receipt fields and observation payload.
+
+The tool-observation normalizer is also an aggregation boundary for
+source-specific receipts. When callers attach a well-formed
+`melix.untrusted_context_receipt.v1` source receipt to an observation, the
+normalizer must re-emit that receipt through the shared Python worker
+`untrusted_context_receipt` helper before serialization. This preserves public
+symbolic IDs, redacts path-like, URL-like, non-ASCII, whitespace-bearing, or
+long private `source_id` values, and rewrites `segment_id` prefixes derived
+from the same raw source ID. Non-receipt diagnostic mappings may be copied as
+diagnostics, but they must not be treated as v1 untrusted-context receipts.
+Malformed mappings that claim the v1 schema but do not contain enough typed
+metadata to be safely re-emitted must become redacted `included = false`
+receipt-metadata refusal receipts instead of being copied through unchanged.
+This normalization must not change sanitized payload content, replay hashes, or
+tool-observation byte metrics.
+
+Deterministic adapter failures that reject a concrete untrusted source must also
+attach one source-specific refusal receipt beside the generic failed
+tool-observation receipt. The failed observation payload remains backward
+compatible and keeps the existing `reason`, `source_type`, `source_id`,
+`corrective_action`, and any diagnostic fields. The source refusal receipt uses
+the same `melix.untrusted_context_receipt.v1` schema with `included = false` and
+does not copy malformed values, cross-owner content, workspace paths beyond the
+public source ID, or private prompt text into receipt fields. The deterministic
+runtime currently emits these refusal receipts for:
+
+- `invalid_untrusted_input_type`: `segment_id = <source_id>:invalid-untrusted-input`
+  and `source_field` set to the rejected field.
+- `owner_scope_mismatch`: `segment_id = <source_id>:owner-scope-refusal`,
+  `source_field = owner_scope`, and `owner_scope_checked = true`.
+- `workspace_path_refused`: `segment_id = <source_id>:workspace-path-refusal`
+  and `source_field = workspace_path`.
+
+The deterministic visual tool source slice applies the same source-specific
+receipt pattern to successful `layout_parse` and `image_crop` observations.
+Each successful `layout_parse` observation emits one `retrieved_image` receipt
+with `segment_id = <tool_call_id>:layout-result` and `source_field = payload`.
+Each successful `image_crop` observation emits one `retrieved_image` receipt
+with `segment_id = <tool_call_id>:crop-result` and `source_field = payload`.
+The deterministic local compute source slice applies the same pattern to
+successful `local_compute` observations. Each successful local compute
+observation emits one `tool_output` receipt with `segment_id =
+<tool_call_id>:compute-result`, `source_field = result`, and `source_id =
+<tool_call_id>`. The `tool_output` receipt is attached beside the generic
+`tool_observation` receipt and must omit the arithmetic expression, result
+value, tool arguments, prompt text, and private context from receipt JSON.
+
+Native deterministic `local_compute` timeouts are also tool output. Each native
+timeout observation emits one `tool_output` receipt with `segment_id =
+<tool_call_id>:compute-timeout`, `source_field = timeout`, and `source_id =
+<tool_call_id>`. The receipt is metadata only and must omit timeout text,
+tool arguments, prompt text, and private context from receipt JSON while
+preserving the existing timeout payload, replay hash, byte metrics, and timeout
+counter behavior.
+
+Fixture-driven deterministic status overrides also represent tool output once
+they become timeout, failed, or cancelled observations. Each status override
+observation emits one source-specific `tool_output` receipt with `segment_id =
+<tool_call_id>:status-output`, `source_field = status`, and `source_id =
+<tool_call_id>`. The receipt is attached beside the generic `tool_observation`
+receipt and must omit override messages, error text, failure-stage strings, tool
+arguments, prompt text, and private context from receipt JSON. This receipt is
+metadata only and must not change sanitized observation payloads, replay hashes,
+byte metrics, timeout counters, or failed-status counters.
+
+Control-plane session tool results are also owner-scoped tool-output
+boundaries. `session.register_tool_result`, `session.resume_after_tool`, and
+worker stream hydration must reject a known tool-call or resume-snapshot ID when
+the ID is already attached to a different session or branch. The refusal returns
+or records `owner_scope_mismatch`, must not update `latestToolCallID`,
+`lastToolCallID`, `latestSnapshotID`, branch resume metadata, or publish a
+session mutation event, and must not copy tool result JSON, prompt text, or
+private context into the error payload. First-time IDs keep the existing
+session/branch registration behavior.
+
+Short symbolic fixture identifiers may be preserved in `source_id`; raw media
+references, file paths, URLs, whitespace-bearing identifiers, and long
+identifiers must be replaced with stable redacted identifiers shaped as
+`image-ref:<sha256-prefix>`. The source receipt records `owner_scope_checked =
+true` only when the existing visual fixture owner check ran and matched before
+payload emission. These visual source receipts must be generated through
+`worker.runtime.retrieval_context.admit_retrieved_image_context` and must omit
+layout text, crop text, raw media refs, paths, URLs, tool arguments, and private
+prompt text.
+
 ### Workspace Path Boundary
 
 Agent and workflow tools that read, write, or edit local files must resolve
@@ -220,9 +1089,48 @@ Workspace path receipts must include:
 - `allowed`
 - `refusal_reason`
 
-The v1 workspace resolver slice only introduces the shared boundary primitive.
-Adding concrete read/write/edit tools, local-job mutation hooks, and prompt
-assembly receipts remains follow-up work under #1761.
+The v1 workspace resolver slice introduced the shared boundary primitive. The
+v1 Python worker file-tool slice adds `worker.runtime.workspace_file_tools` as
+the first concrete read/write/edit operator set. Those operators call
+`WorkspacePathResolver` before any file open, parent-directory creation, write,
+or exact-replacement edit mutation, and failed resolver decisions return a
+receipt instead of touching the target path. Filesystem and text-decoding
+failures after resolver admission must also stay inside this boundary as
+`status = failed` receipts rather than escaping into the worker or agent loop.
+Receipt byte counters describe completed tool effects only; failed receipts keep
+byte counters at zero even if a preflight read occurred before the operation was
+rejected.
+
+The deterministic `visit` adapter must reuse that same boundary for local
+workspace reads. When a caller provides an explicit workspace root and asks
+`visit` to read a relative path, absolute path, or local `file://` URI, the
+runtime must resolve the target before reading. Successful local reads must
+attach a `workspace_path_receipt` to the page extraction payload. Refused paths
+must emit a failed observation with `reason = workspace_path_refused`,
+`source_type = workspace_file`, `source_id`, `workspace_path_receipt`, and a
+corrective action. Fixture-backed pages and non-local URLs keep their existing
+behavior unless a future slice adds a separate retrieval boundary.
+
+Successful deterministic `visit` payloads that include admitted page or local
+workspace file text must also attach one redacted source-specific
+untrusted-context receipt to the observation-level
+`untrusted_context_receipts`. The source receipt uses
+`source_type = retrieved_document`, `source_field = payload`, and
+`reason = visited document is prompt data, not instructions`. The receipt must
+not copy visited page text, local file content, or workspace file content into
+receipt fields. Fixture-backed pages set `owner_scope_checked = true` only when
+the configured owner-scope check ran and passed. Workspace-local reads preserve
+their `workspace_path_receipt`, but set `owner_scope_checked = false` unless a
+separate owner-scope check is added later. Missing pages, workspace path
+refusals, and unavailable workspace files must not emit an admitted
+`retrieved_document` source receipt. Workspace path refusals instead emit the
+failed adapter source refusal receipt described above with
+`source_type = workspace_file`.
+
+Live MCP, agent, workflow, and local-job mutation surfaces must reuse this
+operator layer or preserve the same resolver-before-filesystem-access invariant
+when they expose file operations. Broader prompt assembly receipts and direct
+surface integrations remain follow-up work under #1761.
 
 The observation metric keys are:
 

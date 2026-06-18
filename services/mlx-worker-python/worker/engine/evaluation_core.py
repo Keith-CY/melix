@@ -84,6 +84,11 @@ from worker.productization.evaluation_schemas import (
 from worker.productization.evaluation_store import EvaluationStore
 from worker.productization.probe_policy import ProbePolicy
 from worker.runtime.agentic_tools import execute_agentic_tool_calls
+from worker.runtime.prompt_context import (
+    PromptContextSegment,
+    admit_prompt_context_segments,
+    refused_prompt_context_receipt,
+)
 
 
 _SUITE_SCORE_MODES = {
@@ -120,6 +125,7 @@ _NUMERIC_RESULT_PATTERN = re.compile(r"=\s*([-+]?\d+(?:\.\d+)?)")
 _OPTION_TOKEN_PATTERN = re.compile(r"\b([A-Z])\b")
 _DIGIT_TOKEN_PATTERN = re.compile(r"\b(\d+)\b")
 _MULTIMODAL_TASK_KINDS = {"image-to-text", "image-text-to-text"}
+# Keep this field list in sync with _sample_probe_mean_known_fields.
 _SAMPLE_PROBE_MEAN_FIELDS = (
     ("sample_render_ms_mean", "sample_render_ms"),
     ("inference_ms_mean", "inference_ms"),
@@ -128,6 +134,9 @@ _SAMPLE_PROBE_MEAN_FIELDS = (
     ("scoring_ms_mean", "scoring_ms"),
     ("raw_response_chars_mean", "raw_response_chars"),
     ("extracted_result_chars_mean", "extracted_result_chars"),
+)
+_SAMPLE_PROBE_MEAN_FIELD_NAMES = tuple(
+    field_name for _, field_name in _SAMPLE_PROBE_MEAN_FIELDS
 )
 _AGENTIC_TOOL_METRIC_NAMES = (
     "agentic_tool.call_count",
@@ -200,6 +209,12 @@ _AGENTIC_JUDGE_FORBIDDEN_CONTEXT_KEYS = frozenset(
         "token",
     )
 )
+
+
+class AgenticJudgeContextValidationError(ValueError):
+    def __init__(self, message: str, *, refusal_receipts: list[dict[str, object]]) -> None:
+        super().__init__(message)
+        self.refusal_receipts = refusal_receipts
 
 
 @dataclass(frozen=True)
@@ -2444,6 +2459,10 @@ class EvaluationCore:
             "tool_observations": tool_observations,
         }
         EvaluationCore._validate_agentic_judge_user_payload(user_payload)
+        untrusted_context_receipts = EvaluationCore._agentic_judge_untrusted_context_receipts(
+            sample_id=sample_record.sample_id,
+            user_payload=user_payload,
+        )
         return {
             "schema_version": _AGENTIC_JUDGE_PROMPT_SNAPSHOT_SCHEMA_VERSION,
             "job_id": job_id,
@@ -2467,7 +2486,71 @@ class EvaluationCore:
             "media_refs": media_refs,
             "tool_calls": tool_calls,
             "agentic_tool_observation_count": len(tool_observations),
+            "untrusted_context_receipt_count": len(untrusted_context_receipts),
+            "untrusted_context_receipts": untrusted_context_receipts,
         }
+
+    @staticmethod
+    def _agentic_judge_untrusted_context_receipts(
+        *,
+        sample_id: str,
+        user_payload: dict[str, object],
+    ) -> list[dict[str, object]]:
+        admission = admit_prompt_context_segments(
+            [
+                PromptContextSegment(
+                    segment_id=f"{sample_id}:{source_field}",
+                    source_type="agentic_judge_user_payload",
+                    source_field=source_field,
+                    value=value,
+                    reason="sample-derived context is prompt data, not instructions",
+                    corrective_action=(
+                        "Keep this segment in the user payload and do not project it into "
+                        "system or developer instructions."
+                    ),
+                )
+                for source_field, value in user_payload.items()
+            ]
+        )
+        tool_receipts = EvaluationCore._tool_observation_untrusted_context_receipts(
+            user_payload.get("tool_observations")
+        )
+        return admission.untrusted_context_receipts + tool_receipts
+
+    @staticmethod
+    def _tool_observation_untrusted_context_receipts(
+        tool_observations: object,
+    ) -> list[dict[str, object]]:
+        if not isinstance(tool_observations, list):
+            return []
+        receipts: list[dict[str, object]] = []
+        for observation in tool_observations:
+            if isinstance(observation, dict):
+                observation_receipts = observation.get("untrusted_context_receipts")
+                if isinstance(observation_receipts, list):
+                    receipts.extend(
+                        dict(receipt)
+                        for receipt in observation_receipts
+                        if isinstance(receipt, dict)
+                    )
+        return receipts
+
+    @staticmethod
+    def _agentic_judge_refusal_receipt(
+        *,
+        source_field: str,
+        reason: str,
+    ) -> dict[str, object]:
+        return refused_prompt_context_receipt(
+            segment_id=f"agentic_judge_user_payload:{source_field}",
+            source_type="agentic_judge_user_payload",
+            source_field=source_field,
+            reason=reason,
+            corrective_action=(
+                "Remove this field before projecting the sample-derived context "
+                "into the judge user payload."
+            ),
+        )
 
     @staticmethod
     def _agentic_judge_audit_row(
@@ -2509,13 +2592,28 @@ class EvaluationCore:
     def _validate_agentic_judge_user_payload(user_payload: dict[str, object]) -> None:
         unsupported_fields = sorted(set(user_payload) - _AGENTIC_JUDGE_USER_PAYLOAD_FIELDS)
         if unsupported_fields:
-            raise ValueError(
+            raise AgenticJudgeContextValidationError(
                 "agentic judge context contains unsupported user payload fields: "
-                + ", ".join(unsupported_fields)
+                + ", ".join(unsupported_fields),
+                refusal_receipts=[
+                    EvaluationCore._agentic_judge_refusal_receipt(
+                        source_field=source_field,
+                        reason="unsupported_user_payload_field",
+                    )
+                    for source_field in unsupported_fields
+                ],
             )
         for field_path, field_name in EvaluationCore._iter_json_field_paths(user_payload):
             if EvaluationCore._agentic_judge_context_key_is_forbidden(field_name):
-                raise ValueError(f"agentic judge context contains forbidden field {field_path}")
+                raise AgenticJudgeContextValidationError(
+                    f"agentic judge context contains forbidden field {field_path}",
+                    refusal_receipts=[
+                        EvaluationCore._agentic_judge_refusal_receipt(
+                            source_field=field_path,
+                            reason="forbidden_user_payload_key",
+                        )
+                    ],
+                )
 
     @staticmethod
     def _iter_json_field_paths(
@@ -2697,11 +2795,11 @@ class EvaluationCore:
                 runs_root.mkdir(parents=True, exist_ok=True)
                 self._runs_root_initialized = True
             next_index = self._prime_next_job_index(runs_root)
+            runs_root_path = os.fspath(runs_root)
             while True:
                 job_id = f"eval-{next_index:04d}"
-                run_root = runs_root / job_id
                 try:
-                    run_root.mkdir(parents=False, exist_ok=False)
+                    os.mkdir(os.path.join(runs_root_path, job_id))
                     self._next_job_index = next_index + 1
                     return job_id
                 except FileExistsError:
@@ -2948,6 +3046,8 @@ class EvaluationCore:
     def _sample_probe_means(samples: Any, field_names: tuple[str, ...]) -> dict[str, float]:
         if not field_names:
             return {}
+        if field_names == _SAMPLE_PROBE_MEAN_FIELD_NAMES:
+            return EvaluationCore._sample_probe_mean_known_fields(samples)
         field_count = len(field_names)
         totals = [0.0] * field_count
         field_indexes = range(field_count)
@@ -2965,6 +3065,53 @@ class EvaluationCore:
         return {
             field_names[index]: round(totals[index] / sample_count, 4)
             for index in field_indexes
+        }
+
+    @staticmethod
+    def _sample_probe_mean_known_fields(samples: Any) -> dict[str, float]:
+        sample_render_total = 0.0
+        inference_total = 0.0
+        extraction_total = 0.0
+        validation_total = 0.0
+        scoring_total = 0.0
+        raw_response_total = 0.0
+        extracted_result_total = 0.0
+        sample_count = 0
+        get_field = getattr
+        to_float = float
+        for sample in samples:
+            sample_count += 1
+            value = get_field(sample, "sample_render_ms", 0.0)
+            if value:
+                sample_render_total += to_float(value)
+            value = get_field(sample, "inference_ms", 0.0)
+            if value:
+                inference_total += to_float(value)
+            value = get_field(sample, "extraction_ms", 0.0)
+            if value:
+                extraction_total += to_float(value)
+            value = get_field(sample, "validation_ms", 0.0)
+            if value:
+                validation_total += to_float(value)
+            value = get_field(sample, "scoring_ms", 0.0)
+            if value:
+                scoring_total += to_float(value)
+            value = get_field(sample, "raw_response_chars", 0.0)
+            if value:
+                raw_response_total += to_float(value)
+            value = get_field(sample, "extracted_result_chars", 0.0)
+            if value:
+                extracted_result_total += to_float(value)
+        if sample_count == 0:
+            return {field_name: 0.0 for field_name in _SAMPLE_PROBE_MEAN_FIELD_NAMES}
+        return {
+            "sample_render_ms": round(sample_render_total / sample_count, 4),
+            "inference_ms": round(inference_total / sample_count, 4),
+            "extraction_ms": round(extraction_total / sample_count, 4),
+            "validation_ms": round(validation_total / sample_count, 4),
+            "scoring_ms": round(scoring_total / sample_count, 4),
+            "raw_response_chars": round(raw_response_total / sample_count, 4),
+            "extracted_result_chars": round(extracted_result_total / sample_count, 4),
         }
 
     @staticmethod

@@ -636,6 +636,32 @@ def test_serving_diagnostics_jsonl_fast_path_builds_direct_bytes() -> None:
     assert json.loads(line)["request_id"] == "req-direct-bytes"
 
 
+def test_serving_diagnostics_jsonl_fast_path_uses_bound_finite_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[float] = []
+    original_is_finite = serving_diagnostics_module._IS_FINITE
+
+    def counting_is_finite(value: float) -> bool:
+        calls.append(value)
+        return original_is_finite(value)
+
+    monkeypatch.setattr(serving_diagnostics_module, "_IS_FINITE", counting_is_finite)
+    event = ServingDiagnosticsEvent(
+        request_id="req-bound-finite",
+        phase="decode",
+        event_index=10,
+        status="completed",
+        duration_ms=0.001,
+    )
+
+    line = serving_diagnostics_module._empty_attribute_event_json_line_bytes(event)
+
+    assert line is not None
+    assert json.loads(line)["duration_ms"] == 0.001
+    assert calls == [0.001]
+
+
 def test_serving_diagnostics_jsonl_fast_path_reuses_duration_literal_cache() -> None:
     serving_diagnostics_module._ascii_float_literal.cache_clear()
     rows = tuple(

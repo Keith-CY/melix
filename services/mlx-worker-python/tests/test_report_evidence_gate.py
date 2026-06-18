@@ -272,6 +272,39 @@ def test_report_evidence_gate_run_kind_non_string_values_still_match_by_string()
     )
 
 
+def test_report_evidence_gate_matrix_roles_keep_non_string_run_kind_match() -> None:
+    roles = report_evidence_gate_module._report_matrix_roles(
+        {"runs": [{"run_kind": 42}]},
+        {"numeric_run": {"run_kinds": ("42",)}},
+    )
+
+    assert roles == ["numeric_run"]
+
+
+def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> None:
+    report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
+    roles = report_evidence_gate_module._report_matrix_roles(
+        {"runs": [{"run_kind": "serving_benchmark"}, {"run_kind": "evaluation"}]},
+        {
+            "serving": {"run_kinds": ("serving_benchmark",)},
+            "evaluation": {"run_kinds": ("evaluation", "dialogue_evaluation")},
+            "adapter": {"run_kinds": ("adapter_check",)},
+        },
+    )
+
+    assert roles == ["serving", "evaluation"]
+    assert report_evidence_gate_module._string_frozenset_from_tuple.cache_info().misses == 0
+
+    mutable_roles = report_evidence_gate_module._report_matrix_roles(
+        {"runs": [{"run_kind": "dynamic"}, {"run_kind": "99"}]},
+        {
+            "dynamic": {"run_kinds": {"dynamic"}},
+            "numeric_rule": {"run_kinds": (99,)},
+        },
+    )
+    assert mutable_roles == ["dynamic", "numeric_rule"]
+
+
 def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple() -> None:
     report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_clear()
     rule = {"metric_prefixes": ("adapter.", "runtime.")}
@@ -824,6 +857,9 @@ def test_report_evidence_gate_covers_invalid_payload_and_edge_summaries(tmp_path
     assert gate["reports"][0]["slowest_probe_phases"] == []
     assert report_evidence_gate_module._probe_phases({"probe_summary": []}) == set()
     assert report_evidence_gate_module._dict_list({"not": "a list"}) == []
+    dict_rows = [{"phase": "setup"}, {"phase": "probe"}]
+    assert report_evidence_gate_module._dict_list(dict_rows) is dict_rows
+    assert report_evidence_gate_module._dict_list([dict_rows[0], "skip", dict_rows[1]]) == dict_rows
 
     markdown = render_pr_evidence_markdown(
         {

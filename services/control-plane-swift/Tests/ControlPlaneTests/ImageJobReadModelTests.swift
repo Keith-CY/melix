@@ -178,6 +178,74 @@ struct ImageJobReadModelTests {
         #expect(events.last?.imageJob.job.progress.stage == "decode")
     }
 
+    @Test("image job log tail preserves redacted state events")
+    func imageJobLogTailPreservesRedactedStateEvents() async throws {
+        let clock = ImageJobTestClock()
+        let readModel = ImageJobReadModel(now: clock.now)
+
+        await readModel.recordQueued(
+            requestID: "req-log-tail",
+            jobID: "job-log-tail",
+            modelID: "melix-dev-image",
+            operation: "image_generate",
+            lane: "image.generate.background",
+            promptDigest: "sha256:private-prompt"
+        )
+        await readModel.recordRunning(
+            jobID: "job-log-tail",
+            workerID: "python-image-worker",
+            stage: "decode",
+            pct: 0.5,
+            completedSteps: 1,
+            totalSteps: 2
+        )
+        var error = Melix_Controlplane_V1_ErrorStatus()
+        error.code = "worker_failed"
+        error.message = "PRIVATE IMAGE JOB ERROR MESSAGE"
+        await readModel.recordFailed(jobID: "job-log-tail", error: error)
+
+        let entries = await readModel.logTailSnapshot(limit: 10)
+
+        #expect(entries.map(\.state) == ["failed", "running", "queued"])
+        #expect(entries.map(\.eventType).allSatisfy { $0 == "image.job.state_changed" })
+        #expect(entries.map(\.source).allSatisfy { $0 == "image_jobs" })
+        #expect(entries.first?.jobID == "job-log-tail")
+        #expect(entries.first?.requestID == "req-log-tail")
+        #expect(entries.first?.modelID == "melix-dev-image")
+        #expect(entries.first?.operation == "image_generate")
+        #expect(entries.first?.lane == "image.generate.background")
+        #expect(entries.first?.workerID == "python-image-worker")
+        #expect(entries.first?.progressStage == "failed")
+        #expect(entries.first?.failureCode == "worker_failed")
+        #expect(await readModel.logTailSnapshot(limit: 0).isEmpty)
+
+        await readModel.recordQueued(
+            requestID: "req-log-tail-cancel",
+            jobID: "job-log-tail-cancel",
+            modelID: "melix-dev-image",
+            operation: "image_generate",
+            lane: "image.generate.background"
+        )
+        await readModel.recordCanceled(jobID: "job-log-tail-cancel")
+        let canceledEntry = try #require(await readModel.logTailSnapshot(limit: 1).first)
+        #expect(canceledEntry.state == "canceled")
+
+        for index in 0..<55 {
+            await readModel.recordQueued(
+                requestID: "req-log-tail-\(index)",
+                jobID: "job-log-tail-\(index)",
+                modelID: "melix-dev-image",
+                operation: "image_generate",
+                lane: "image.generate.background"
+            )
+        }
+
+        let retainedEntries = await readModel.logTailSnapshot(limit: 100)
+        #expect(retainedEntries.count == 50)
+        #expect(retainedEntries.first?.jobID == "job-log-tail-54")
+        #expect(retainedEntries.contains { $0.jobID == "job-log-tail" } == false)
+    }
+
     @Test("server snapshot builder carries image job summaries")
     func serverSnapshotBuilderCarriesImageJobSummaries() async throws {
         var job = Melix_Controlplane_V1_ImageJobSummary()

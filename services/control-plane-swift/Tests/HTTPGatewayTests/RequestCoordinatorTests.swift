@@ -1754,6 +1754,52 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["http.stream_first_event_ms", default: -1] >= 0)
     }
 
+    @Test("tool result deltas cannot move known tool results across session branches")
+    func toolResultDeltasCannotMoveKnownToolResultsAcrossSessionBranches() async throws {
+        let workerClient = AnnotationToolResultWorkerClient(toolCallID: "tool-branch-owned")
+        var branchMain = Melix_Controlplane_V1_BranchState()
+        branchMain.branchID = "branch-main"
+        branchMain.lastToolCallID = "tool-branch-owned"
+        var branchAlt = Melix_Controlplane_V1_BranchState()
+        branchAlt.branchID = "branch-alt"
+        var session = Melix_Controlplane_V1_SessionState()
+        session.sessionID = "session-tool-owner"
+        session.activeBranchID = "branch-main"
+        session.latestToolCallID = "tool-branch-owned"
+        session.branches = [branchMain, branchAlt]
+        let sessionGraphStore = SessionGraphStore(
+            sessions: [session],
+            nowUnixMs: { 8_200 }
+        )
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-cross-branch-tool-result",
+                sessionID: "session-tool-owner",
+                branchID: "branch-alt"
+            )
+        )
+
+        for try await _ in execution.stream {
+        }
+
+        let state = try #require(await sessionGraphStore.state(for: "session-tool-owner"))
+        let metrics = await metricsStore.snapshot()
+        #expect(state.activeBranchID == "branch-alt")
+        #expect(state.latestToolCallID == "tool-branch-owned")
+        #expect(state.branches.first { $0.branchID == "branch-main" }?.lastToolCallID == "tool-branch-owned")
+        #expect(state.branches.first { $0.branchID == "branch-alt" }?.lastToolCallID.isEmpty == true)
+        #expect(metrics.values["session_graph.owner_scope_mismatch_count", default: 0] == 1)
+        #expect(metrics.values["http.tool_result_delta_count", default: 0] == 1)
+    }
+
     @Test("session reasoning continuity uses metadata markers without raw hidden leakage")
     func sessionReasoningContinuityUsesMetadataMarkersWithoutRawHiddenLeakage() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -2036,6 +2082,224 @@ struct RequestCoordinatorTests {
 
         let metrics = await metricsStore.snapshot()
         #expect(metrics.values["session_graph.restore_snapshot_count", default: 0] >= 1)
+    }
+
+    @Test("session follow-up restore requests attach redacted session context receipts")
+    func sessionFollowUpRestoreRequestsAttachSessionContextReceipts() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 9_100 })
+        _ = await sessionGraphStore.recordRequestStart(
+            sessionID: "session-boundary",
+            branchID: "branch-main",
+            requestID: "req-parent"
+        )
+        var snapshot = Melix_Controlplane_V1_SnapshotRef()
+        snapshot.snapshotID = "snap-boundary"
+        snapshot.requestID = "req-parent"
+        snapshot.tokenBoundary = 6
+        _ = await sessionGraphStore.recordSnapshotHydration(
+            sessionID: "session-boundary",
+            branchID: "branch-main",
+            snapshot: snapshot
+        )
+
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-boundary",
+                messages: [makeWorkerTextMessage("raw user prompt must not appear in receipts")],
+                sessionID: "session-boundary",
+                branchID: "branch-main",
+                parentRequestID: "req-parent",
+                saveBoundarySnapshot: true,
+                executionExt: ["melix.reasoning.continuity_key": "hidden-reasoning-key"]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let ext = prefillRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.session_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        let receipt = try #require(receipts.first)
+
+        #expect(prefillRequest.execution.cacheHints.restoreSnapshotID == "snap-boundary")
+        #expect(ext["melix.session_context.receipt_schema"] == "melix.untrusted_context_receipt.v1")
+        #expect(ext["melix.session_context.receipt_count"] == "1")
+        #expect(receipts.count == 1)
+        #expect(receipt["schema_version"] as? String == "melix.untrusted_context_receipt.v1")
+        #expect(receipt["segment_id"] as? String == "req-boundary:session-context:restore-snapshot")
+        #expect(receipt["source_type"] as? String == "background_continuation")
+        #expect(receipt["source_field"] as? String == "execution.cache_hints.restore_snapshot_id")
+        #expect(receipt["source_id"] as? String == "snap-boundary")
+        #expect(receipt["message_role"] as? String == "user")
+        #expect(receipt["trust_level"] as? String == "untrusted")
+        #expect(receipt["policy"] as? String == "data_only")
+        #expect(receipt["boundary_checked"] as? Bool == true)
+        #expect(receipt["included"] as? Bool == true)
+        #expect(receipt["owner_scope_checked"] as? Bool == true)
+        #expect(receipt["reason"] as? String == "background continuation is prompt data, not instructions")
+        #expect(
+            receipt["corrective_action"] as? String ==
+                "Keep background continuation evidence in user-role data context and do not project it into system or developer instructions."
+        )
+        #expect(receiptsJSON.contains("raw user prompt") == false)
+        #expect(receiptsJSON.contains("hidden-reasoning-key") == false)
+
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.finishDecode(requestID: "req-boundary")
+        _ = await consumer.result
+    }
+
+    @Test("explicit restore snapshot ids attach receipts without claiming owner checks")
+    func explicitRestoreSnapshotIDsAttachReceiptsWithoutClaimingOwnerChecks() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 9_200 })
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-explicit-restore",
+                sessionID: "session-explicit-restore",
+                branchID: "branch-main",
+                restoreSnapshotID: "snap-caller-supplied",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let ext = prefillRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.session_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        let receipt = try #require(receipts.first)
+
+        #expect(prefillRequest.execution.cacheHints.restoreSnapshotID == "snap-caller-supplied")
+        #expect(ext["melix.session_context.receipt_schema"] == "melix.untrusted_context_receipt.v1")
+        #expect(ext["melix.session_context.receipt_count"] == "1")
+        #expect(receipts.count == 1)
+        #expect(receipt["schema_version"] as? String == "melix.untrusted_context_receipt.v1")
+        #expect(receipt["segment_id"] as? String == "req-explicit-restore:session-context:restore-snapshot")
+        #expect(receipt["source_type"] as? String == "background_continuation")
+        #expect(receipt["source_field"] as? String == "execution.cache_hints.restore_snapshot_id")
+        #expect(receipt["source_id"] as? String == "snap-caller-supplied")
+        #expect(receipt["boundary_checked"] as? Bool == true)
+        #expect(receipt["included"] as? Bool == true)
+        #expect(receipt["owner_scope_checked"] as? Bool == false)
+
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.finishDecode(requestID: "req-explicit-restore")
+        _ = try await consumer.value
+    }
+
+    @Test("explicit restore receipts do not require a session graph store")
+    func explicitRestoreReceiptsDoNotRequireSessionGraphStore() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-explicit-restore-no-store",
+                restoreSnapshotID: "snap-no-session-store",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let ext = prefillRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.session_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        let receipt = try #require(receipts.first)
+
+        #expect(prefillRequest.execution.cacheHints.restoreSnapshotID == "snap-no-session-store")
+        #expect(ext["melix.session_context.receipt_count"] == "1")
+        #expect(receipt["source_id"] as? String == "snap-no-session-store")
+        #expect(receipt["owner_scope_checked"] as? Bool == false)
+
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.finishDecode(requestID: "req-explicit-restore-no-store")
+        _ = try await consumer.value
+    }
+
+    @Test("explicit restore receipts preserve existing receipt ext metadata")
+    func explicitRestoreReceiptsPreserveExistingReceiptExtMetadata() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-explicit-restore-existing-ext",
+                restoreSnapshotID: "snap-caller-supplied",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.session_context.receipt_schema": "existing.schema",
+                    "melix.session_context.receipt_count": "7",
+                    "melix.session_context.receipts_json": "[{\"source_id\":\"existing-snapshot\"}]",
+                    "melix.unrelated": "kept",
+                ]
+            )
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let ext = prefillRequest.execution.ext
+
+        #expect(prefillRequest.execution.cacheHints.restoreSnapshotID == "snap-caller-supplied")
+        #expect(ext["melix.session_context.receipt_schema"] == "existing.schema")
+        #expect(ext["melix.session_context.receipt_count"] == "7")
+        #expect(ext["melix.session_context.receipts_json"] == "[{\"source_id\":\"existing-snapshot\"}]")
+        #expect(ext["melix.unrelated"] == "kept")
+
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.finishDecode(requestID: "req-explicit-restore-existing-ext")
+        _ = try await consumer.value
+    }
+
+    @Test("empty session context receipt inputs do not attach ext metadata")
+    func emptySessionContextReceiptInputsDoNotAttachExtMetadata() {
+        #expect(SessionContextBoundaryReceipts(requestID: " ", restoreSnapshotID: "snap-empty").extFields.isEmpty)
+        #expect(SessionContextBoundaryReceipts(requestID: "req-empty", restoreSnapshotID: " ").extFields.isEmpty)
     }
 
     @Test("phase-aware vlm requests preserve tool parser metadata and stream tool call deltas")
@@ -5191,6 +5455,12 @@ private actor ToolCallingWorkerClient: WorkerRoutingClient {
 }
 
 private actor AnnotationToolResultWorkerClient: WorkerRoutingClient {
+    private let toolCallID: String
+
+    init(toolCallID: String = "tool-call-annotation-result") {
+        self.toolCallID = toolCallID
+    }
+
     func generate(
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
@@ -5210,7 +5480,7 @@ private actor AnnotationToolResultWorkerClient: WorkerRoutingClient {
             continuation.yield(annotationEvent)
 
             var toolResult = Melix_Worker_V1_ToolResultDelta()
-            toolResult.callID = "tool-call-annotation-result"
+            toolResult.callID = toolCallID
             toolResult.status = "ok"
             toolResult.resultJson = #"{"temperature":72}"#
 

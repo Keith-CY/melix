@@ -40,7 +40,10 @@ def test_check_for_updates_reports_newer_available_version(tmp_path: Path) -> No
     assert result.update_available is True
     assert result.latest_version == "0.2.0"
     assert result.summary == "Update available: 0.2.0"
+    assert result[2] == "0.1.0"
     assert not hasattr(result, "__dict__")
+    with pytest.raises(AttributeError):
+        result.latest_version = "0.3.0"  # type: ignore[misc]
 
 
 def test_check_for_updates_reports_up_to_date_version(tmp_path: Path) -> None:
@@ -171,6 +174,20 @@ def test_compare_versions_raw_v_prefix_equivalent_values_skip_stripping() -> Non
 
     assert compare_versions(StripForbiddenVersion("v1.2.3+build"), "1.2.3+build") == 0
     assert compare_versions("2.10.0", StripForbiddenVersion("v2.10.0")) == 0
+
+
+def test_compare_versions_clean_differing_values_skip_stripping() -> None:
+    class StripForbiddenVersion(str):
+        def strip(self, chars: str | None = None) -> str:  # pragma: no cover - sentinel
+            raise AssertionError("compare_versions stripped clean differing values")
+
+    assert compare_versions(StripForbiddenVersion("v3.2.1+build"), "v3.2.0+build") == 1
+    assert compare_versions("2.9.99", StripForbiddenVersion("2.10.0")) == -1
+
+
+def test_compare_versions_whitespace_differing_values_still_normalize() -> None:
+    assert compare_versions(" v3.2.1+build ", "v3.2.0+build") == 1
+    assert compare_versions("2.9.99", " 2.10.0 ") == -1
 
 
 def test_resolve_http_port_can_pick_an_available_port_when_requested_is_busy() -> None:
@@ -592,3 +609,41 @@ def test_classify_startup_failure_falls_back_to_hang_when_logs_are_empty() -> No
 
     assert report.classification == "startup_hang"
     assert "11434" in report.summary
+
+
+def test_contains_any_fast_paths_preserve_empty_value_and_fallback_behavior() -> None:
+    assert startup_signals_module._contains_any("", startup_signals_module.CRASH_PATTERNS) is False
+    assert (
+        startup_signals_module._contains_any(
+            "EADDRINUSE".lower(),
+            startup_signals_module.PORT_CONFLICT_PATTERNS,
+        )
+        is True
+    )
+    assert startup_signals_module._contains_any("custom sentinel", ("sentinel",)) is True
+    assert startup_signals_module._contains_any("custom sentinel", ("missing",)) is False
+
+
+def test_classify_startup_failure_skips_empty_pattern_scans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    empty_pattern_scan_calls = 0
+    original_contains_any = startup_signals_module._contains_any
+
+    def tracked_contains_any(value: str, patterns: tuple[str, ...]) -> bool:
+        nonlocal empty_pattern_scan_calls
+        if value == "":  # pragma: no cover - regression path only
+            empty_pattern_scan_calls += 1  # pragma: no cover
+        return original_contains_any(value, patterns)
+
+    monkeypatch.setattr(startup_signals_module, "_contains_any", tracked_contains_any)
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+        }
+    )
+
+    assert report.classification == "startup_hang"
+    assert empty_pattern_scan_calls == 0

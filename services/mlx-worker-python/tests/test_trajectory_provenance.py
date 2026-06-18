@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -240,6 +241,42 @@ def test_load_trajectory_provenance_from_snapshot_manifest_reads_bytes(
     }
 
 
+def test_load_trajectory_provenance_from_snapshot_manifest_reuses_path_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(b"{}")
+    observed_path: object = None
+
+    def capture_extract(
+        manifest: Mapping[str, object],
+        *,
+        snapshot_manifest_path: Path | str | None = None,
+        copy_nested: bool,
+    ) -> dict[str, object]:
+        nonlocal observed_path
+        observed_path = snapshot_manifest_path
+        assert copy_nested is False
+        return {"trajectory_snapshot_manifest_path": snapshot_manifest_path}
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_JSON_LOADS",
+        lambda _payload: {"format": "agentic_tool_trace"},
+    )
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_trajectory_provenance_from_snapshot_manifest",
+        capture_extract,
+    )
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_snapshot_manifest_path": str(manifest_path)
+    }
+    assert type(observed_path) is str
+
+
 def test_load_trajectory_provenance_from_snapshot_manifest_accepts_dict_subclass(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -452,6 +489,47 @@ def test_normalize_trajectory_provenance_keeps_scalars_and_skips_empty_values() 
         "trajectory_dataset_id": "agentic-snapshot",
         "trajectory_toolset_version": 3,
     }
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        [],
+        ["agentic"],
+        ["agentic", "trajectory"],
+        ["agentic", "trajectory", 3],
+        ["agentic", "trajectory", 3, True],
+        ["agentic", "trajectory", "quality", 3, True, None, 0.75],
+    ],
+)
+def test_copy_json_list_copies_short_scalar_lists_without_recursive_calls(
+    source: list[object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_recursive_copy(value: object) -> object:
+        raise AssertionError(f"unexpected recursive copy for scalar value {value!r}")
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        fail_recursive_copy,
+    )
+
+    copied = trajectory_provenance_module._copy_json_list(source)
+
+    assert copied == source
+    assert copied is not source
+
+
+def test_copy_json_list_still_copies_nested_mutable_items() -> None:
+    source = ["agentic", {"labels": ["trajectory"]}]
+
+    copied = trajectory_provenance_module._copy_json_list(source)
+
+    assert copied == source
+    assert copied is not source
+    assert copied[1] is not source[1]
+    assert copied[1]["labels"] is not source[1]["labels"]
 
 
 def test_copy_trajectory_provenance_value_falls_back_for_custom_mutables() -> None:

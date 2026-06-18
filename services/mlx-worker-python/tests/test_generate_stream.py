@@ -35,8 +35,21 @@ class StreamingFakeBackend:
         return 2048
 
     def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
-        yield RuntimeTokenEvent(text="Hello", prompt_tokens=5, completion_tokens=1)
-        yield RuntimeTokenEvent(text=" world", prompt_tokens=5, completion_tokens=2, finish_reason="length")
+        yield RuntimeTokenEvent(
+            text="Hello",
+            prompt_tokens=5,
+            completion_tokens=1,
+            token_ids=(301,),
+            token_logprobs=(-0.11,),
+        )
+        yield RuntimeTokenEvent(
+            text=" world",
+            prompt_tokens=5,
+            completion_tokens=2,
+            token_ids=(302,),
+            token_logprobs=(-0.22,),
+            finish_reason="length",
+        )
 
 
 class EmptyStreamingFakeBackend:
@@ -60,6 +73,33 @@ class EmptyStreamingFakeBackend:
 def test_text_native_mtp_parser_metrics_fast_paths_empty_events() -> None:
     assert engine_core_module._text_native_mtp_parser_metrics(None) == {}
     assert engine_core_module._text_native_mtp_parser_metrics(RuntimeTokenEvent(text="plain")) == {}
+
+    metrics: dict[str, str] = {}
+
+    engine_core_module._apply_prompt_context_receipt_metrics(
+        metrics,
+        {
+            "melix.prompt_context.receipt_schema": "melix.untrusted_context_receipt.v1",
+            "melix.prompt_context.receipt_count": "1",
+            "melix.prompt_context.receipts_json": '[{"segment_id":"req:user:0:text:0"}]',
+        },
+    )
+
+    assert metrics == {
+        "prompt_context_receipt_schema": "melix.untrusted_context_receipt.v1",
+        "prompt_context_receipt_count": "1",
+        "prompt_context_receipts_json": '[{"segment_id":"req:user:0:text:0"}]',
+    }
+
+    metrics = {}
+    engine_core_module._apply_prompt_context_receipt_metrics(
+        metrics,
+        {"melix.prompt_context.receipt_schema": None},
+    )
+    assert metrics == {}
+
+    engine_core_module._apply_prompt_context_receipt_metrics(metrics, object())
+    assert metrics == {}
 
 
 def test_text_native_mtp_parser_metrics_preserves_speculative_and_timing_values() -> None:
@@ -650,6 +690,29 @@ def test_generate_empty_ext_plain_path_uses_default_allowed_tools_receipt(monkey
     assert completed.parser_metrics["allowed_tools_receipt_json"] == engine_core_module._DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
 
 
+def test_allowed_tools_receipt_trims_source_ids_with_cached_ext_fields() -> None:
+    request = inference_pb2.GenerateRequest()
+    request.execution.ext["melix.compat.tool_choice_resolved"] = " required "
+    request.execution.ext["melix.tool_config.source"] = " client "
+    request.execution.ext["melix.tool_config.tool_count"] = "0"
+    request.execution.ext["melix.mcp.source_ids"] = " source-a, , source-b "
+    request.execution.ext["melix.tool_parser.suppressed_reason"] = " disabled "
+
+    receipt = json.loads(EngineCore._allowed_tools_receipt_json(request))
+
+    assert receipt == {
+        "allowed_tool_count": 0,
+        "allowed_tool_names": [],
+        "schema_conflict_count": 0,
+        "schema_conflicts": [],
+        "suppressed_reason": "disabled",
+        "tool_choice_policy": "required",
+        "tool_config_source": "client",
+        "tool_config_state": "omitted",
+        "tool_source_ids": ["source-a", "source-b"],
+    }
+
+
 def test_generate_routing_ext_preserves_client_ext_and_positive_block_size() -> None:
     runtime = UsageCountingRuntime(prompt_tokens=0)
     inference_service, model_handle = build_usage_counting_services(runtime)
@@ -684,6 +747,15 @@ def test_sampling_with_resolved_stop_reuses_sampling_when_stop_sequences_match()
     resolved = EngineCore._sampling_with_resolved_stop(sampling, ())
 
     assert resolved is sampling
+
+
+def test_sampling_with_resolved_stop_reuses_sampling_when_non_empty_stop_sequences_match() -> None:
+    sampling = common_pb2.SamplingConfig(max_output_tokens=4, stop=["</turn>", "</model>"])
+
+    resolved = EngineCore._sampling_with_resolved_stop(sampling, ("</turn>", "</model>"))
+
+    assert resolved is sampling
+    assert list(resolved.stop) == ["</turn>", "</model>"]
 
 
 def test_sampling_with_resolved_stop_clones_when_stop_sequences_change() -> None:
@@ -777,9 +849,12 @@ def test_generate_streams_token_and_terminal_completion_without_usage_preserves_
 
     events = list(inference_service.Generate(request, context=None))
     token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
+    token_deltas = [event.token_delta for event in events if event.HasField("token_delta")]
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert token_text == ["Hello", " world"]
+    assert [list(delta.token_ids) for delta in token_deltas] == [[301], [302]]
+    assert [list(delta.token_logprobs) for delta in token_deltas] == [[-0.11], [-0.22]]
     assert completed.finish_reason == "length"
     assert completed.assistant_text == "Hello world"
     assert not any(event.HasField("usage_delta") for event in events)

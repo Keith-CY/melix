@@ -57,6 +57,125 @@ Expected response:
 - `resume.token` present
 - `session.remember_me = true`
 
+### Create A Companion Pairing Session
+
+```bash
+curl -sS \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: sk-desktop' \
+  -d '{"remember_me":true,"scope":"companion_read_only"}' \
+  http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/melix/auth/session
+```
+
+Expected response:
+
+- `200`
+- `session.scope = "companion_read_only"`
+- `resume.header = "x-melix-session"`
+- `resume.token` present
+- `pairing.schema_version = "melix.companion.pairing.v1"`
+- `pairing.mobile_url` points at `/v1/melix/companion`
+- `pairing.status_url` points at `/v1/melix/companion/status`
+- `pairing.allowed_routes` lists the companion token-protected status route and
+  self-revocation route
+- `pairing.forbidden_capabilities` includes mutating and private-content
+  capabilities such as `run_inference`, `mutate_runtime`, and
+  `read_private_prompts`
+
+The pairing descriptor is safe to render in a QR/token-management sheet because
+it describes how the companion client should use the session. It does not
+duplicate the raw token. Keep treating `resume.token` as the only secret value
+in the response.
+
+### Desktop Companion Token Controls
+
+The macOS API workspace includes a `Companion Pairing` panel under the
+Authentication section. It uses the selected local server session's stored
+primary gateway API key to issue a remembered `companion_read_only` session,
+then renders the safe pairing descriptor returned by the gateway.
+
+Operator actions:
+
+- `Issue Token` calls `POST /v1/melix/auth/session` with `remember_me = true`
+  and `scope = companion_read_only`.
+- `Copy Bundle` copies a one-time JSON bundle containing the descriptor and the
+  raw companion token for the operator to transfer to a companion client. The
+  bundle includes `mobile_url` so a trusted local browser can open the companion
+  status page directly.
+- `Copy Code` copies a compact `melix-companion:` pairing code. The code is a
+  URL-safe-base64 encoding of the same transient JSON bundle and is intended for
+  QR/code transfer surfaces.
+- `Pairing QR` renders the same compact `melix-companion:` pairing code as a
+  local QR preview for trusted companion-device import.
+- `Revoke Token` calls `DELETE /v1/melix/auth/session` with the active companion
+  token through `X-Melix-Session`.
+
+The desktop view model keeps the raw companion token only in transient process
+memory so the current operator session can copy or revoke it. The token is not
+written into operator session state, server-session configuration, logs,
+metrics, or the safe descriptor displayed in the panel. Closing the desktop
+process drops the transient token reference; create a new companion token if the
+current token can no longer be copied or revoked from the panel. Treat copied
+pairing bundles, `melix-companion:` pairing codes, and pairing QR screenshots as
+secret bearer material because each includes the raw companion token inside the
+transferred payload.
+
+### Desktop Companion Status Refresh
+
+The macOS API workspace also includes a `Companion Status` panel under the
+Authentication section. It is a read-only status probe for the active companion
+pairing token. The panel calls the gateway `GET /v1/melix/companion/status`
+route with the transient companion token and renders only the safe response
+fields returned by the gateway.
+
+Operator action:
+
+- `Refresh Status` calls the descriptor `pairing.status_url` with the descriptor
+  `pairing.resume_header` and active companion token.
+
+The desktop app does not tail local log files, persist fetched companion status,
+or expand the companion session allowlist. Gateway authorization and redaction
+remain the source of truth. The displayed log-tail rows must come from the
+response `logs.entries` collection and must keep raw log lines, private prompts,
+request bodies, artifact URIs, local paths, and raw error text omitted according
+to the response `redaction` labels.
+
+The deterministic desktop smoke also renders the loaded `Companion Status`
+panel at a phone-like `360x640` viewport. That smoke verifies the read-only
+status title, redacted log-tail rows, redaction summary, and generated PNG
+capture without requiring a real companion device or desktop window.
+
+### Browser Companion Status Page
+
+The gateway serves a dependency-free browser status shell at
+`pairing.mobile_url`, which resolves to `GET /v1/melix/companion`. Open this URL
+from a trusted local browser or local companion device that can reach the
+gateway host and port. The shell itself is public static HTML so a standard
+browser can load it without custom headers; live status data still requires the
+companion token and is fetched through `pairing.status_url`.
+
+Operator actions:
+
+- Paste the desktop `Copy Code` value, decoded `Pairing QR` text, or
+  `Copy Bundle` JSON into `Pairing code or JSON bundle`.
+- `Import Pairing` validates the
+  `melix.companion.pairing.bundle.v1` payload, stores the bearer token in
+  browser `localStorage` on the current device only, and uses the bundle
+  `status_url` only when it resolves to the same origin as the loaded page.
+- `Save Device Token` remains available for manually entered companion tokens
+  and stores that token in browser `localStorage` on the current device only.
+- `Refresh Status` calls `/v1/melix/companion/status` with the
+  `x-melix-session` header and renders runtime, model, queue, recent job, and
+  redacted log-tail summaries.
+- `Clear Device Token` removes the browser-local token copy from
+  `localStorage`.
+
+The page does not issue tokens, revoke tokens, expose mutating routes, scan
+camera QR codes, or render raw logs. Treat pasted pairing codes, copied bundles,
+and a browser with a saved device token as bearer-authenticated until the token
+is cleared locally or revoked through the desktop controls or
+`DELETE /v1/melix/auth/session`.
+
 ### Reuse The Session
 
 ```bash
@@ -158,7 +277,8 @@ The smoke covers:
 
 ## Metrics
 
-M9.4 records these metrics in the touched scope:
+Persistent sessions and companion desktop controls record these metrics in the
+touched scope:
 
 - `persistent_session.active_session_count`
 - `persistent_session.remembered_session_count`
@@ -166,3 +286,6 @@ M9.4 records these metrics in the touched scope:
 - `persistent_session.restore_success_rate`
 - `persistent_session.sign_out_latency_ms`
 - `persistent_session.retention_ttl_seconds`
+- `companion.status_refresh_ms`
+- `companion.status_refresh_failures`
+- `companion.mobile_page_served_count`

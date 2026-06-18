@@ -107,6 +107,13 @@ reporting:
   below zero
 - `inconclusive` otherwise
 
+Statistical-evidence performance maintenance is governed by the registered
+`statistical-evidence-bootstrap-single-sort` PR-scoped probe. The percentile
+helper may assume its input has already been sorted by the bootstrap pass and may
+compute adjacent interpolation bounds without an extra `floor`/`ceil` pair, as
+long as empty, singleton, lower-bound, upper-bound, and interpolated percentile
+semantics remain covered by the focused statistical evidence tests.
+
 The checked-in policy also includes an `m9` section for repository-owned ecosystem and security
 signals. The current required M9 probes include:
 

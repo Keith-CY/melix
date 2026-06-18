@@ -7,6 +7,28 @@ import MelixWorkerProtocol
 
 @Suite("Model Catalog")
 struct ModelCatalogTests {
+    @Test("built-in dev seed models are internal on user-facing surfaces")
+    func builtInDevSeedModelsAreInternalOnUserFacingSurfaces() async throws {
+        let seedModels = ModelCatalog.phaseSevenContractSeedModels()
+        let devSeedModels = seedModels.filter { $0.modelID.hasPrefix("melix-dev-") }
+        let visibleDevSeedModelIDs = devSeedModels
+            .filter(ModelCatalogPresentation.isUserVisible)
+            .map(\.modelID)
+
+        #expect(visibleDevSeedModelIDs.isEmpty)
+        #expect(Set(seedModels.map(\.modelID)).isSuperset(of: [
+            "melix-dev-text",
+            "melix-dev-embed",
+            "melix-dev-rerank",
+            "melix-dev-model-ops",
+            "melix-dev-ocr",
+            "melix-dev-vlm",
+            "melix-dev-transcribe",
+            "melix-dev-speech",
+            "melix-dev-image",
+        ]))
+    }
+
     @Test("presentation filters internal models and projects public metadata")
     func presentationFiltersInternalModelsAndProjectsPublicMetadata() async throws {
         var internalByVisibility = ModelCatalog.devTextModel()
@@ -1369,16 +1391,25 @@ struct ModelCatalogTests {
         #expect(whisper.settings.ext["melix.audio.backend_id"] == "mlx_audio.stt")
         #expect(whisper.settings.ext["melix.audio.family_id"] == "whisper")
         #expect(whisper.settings.ext["melix.audio.install_profile"] == "audio-stt")
+        #expect(whisper.settings.ext["melix.audio.capability"] == "stt")
+        #expect(whisper.settings.ext["melix.audio.setup_role"] == "recommended")
+        #expect(whisper.settings.ext["melix.audio.setup_priority"] == "0")
 
         #expect(parakeet.kind == "transcription")
         #expect(parakeet.settings.ext["melix.audio.backend_id"] == "mlx_audio.stt")
         #expect(parakeet.settings.ext["melix.audio.family_id"] == "parakeet")
         #expect(parakeet.settings.ext["melix.audio.install_profile"] == "audio-stt")
+        #expect(parakeet.settings.ext["melix.audio.capability"] == "stt")
+        #expect(parakeet.settings.ext["melix.audio.setup_role"] == "optional")
+        #expect(parakeet.settings.ext["melix.audio.setup_priority"] == "20")
 
         #expect(kokoro.kind == "speech")
         #expect(kokoro.settings.ext["melix.audio.backend_id"] == "mlx_audio.tts")
         #expect(kokoro.settings.ext["melix.audio.family_id"] == "kokoro")
         #expect(kokoro.settings.ext["melix.audio.output_formats"] == "wav")
+        #expect(kokoro.settings.ext["melix.audio.capability"] == "tts")
+        #expect(kokoro.settings.ext["melix.audio.setup_role"] == "recommended")
+        #expect(kokoro.settings.ext["melix.audio.setup_priority"] == "0")
         #expect(kokoro.settings.ext["melix.audio.supports_instructions"] == "false")
         #expect(kokoro.settings.ext["melix.audio.voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog.")
         #expect(kokoro.settings.ext["melix.audio.voice_locales"] == "en")
@@ -1392,6 +1423,9 @@ struct ModelCatalogTests {
         #expect(qwen3TTS.settings.ext["melix.audio.install_profile"] == "audio-tts")
         #expect(qwen3TTS.settings.ext["melix.audio.languages"] == "zh,en")
         #expect(qwen3TTS.settings.ext["melix.audio.voice_mode"] == "hybrid")
+        #expect(qwen3TTS.settings.ext["melix.audio.capability"] == "tts")
+        #expect(qwen3TTS.settings.ext["melix.audio.setup_role"] == "optional")
+        #expect(qwen3TTS.settings.ext["melix.audio.setup_priority"] == "20")
         #expect(qwen3TTS.settings.ext["melix.audio.supports_instructions"] == "true")
         #expect(
             qwen3TTS.settings.ext["melix.audio.voice_catalog_summary"]

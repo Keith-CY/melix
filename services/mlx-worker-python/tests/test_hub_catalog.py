@@ -360,6 +360,34 @@ def test_repo_id_mlx_substring_match_preserves_ascii_case_insensitivity() -> Non
     ) is True
 
 
+def test_size_hint_single_readme_uses_direct_explicit_marker_before_regex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parser = Mock(return_value=0)
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", parser)
+
+    assert (
+        hub_catalog_module._size_hint_bytes(
+            {
+                "cardData": {},
+                "readme": "README\nMODEL SIZE | 130 kb\nother metadata",
+            }
+        )
+        == 130 * KB
+    )
+    parser.assert_not_called()
+
+
+def test_size_hint_single_readme_falls_back_to_regex_when_direct_parse_misses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parser = Mock(return_value=5 * MB)
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", parser)
+
+    assert hub_catalog_module._size_hint_bytes({"cardData": {}, "readme": "Model size:"}) == 5 * MB
+    parser.assert_called_once_with("Model size:", allow_bare=False)
+
+
 def test_direct_size_hint_rejects_extra_tokens_without_full_split() -> None:
     assert _direct_size_hint_from_text("12 GB extra") == 0
     assert _direct_size_hint_from_text("12 GB") == 12 * 1024 * 1024 * 1024
@@ -380,6 +408,61 @@ def test_direct_card_size_hint_preserves_case_insensitive_label_prefix() -> None
     assert hub_catalog_module._direct_card_size_hint_from_text("MODEL SIZE|7 kb") == 7 * KB
     assert hub_catalog_module._direct_card_size_hint_from_text("model size 2 GB") == 2 * GB
     assert hub_catalog_module._direct_card_size_hint_from_text("model-size: 2 GB") == 0
+
+
+def test_size_hint_model_marker_scan_preserves_case_insensitive_pairs() -> None:
+    for text in (
+        "model size",
+        "mOdel size",
+        "Model size",
+        "MOdel size",
+        "prefix MO suffix",
+    ):
+        assert hub_catalog_module._may_contain_model_marker(text) is True
+    for text in ("", "m", "M", "metadata only", "adapter notes"):
+        assert hub_catalog_module._may_contain_model_marker(text) is False
+
+
+def test_size_hint_scans_multiple_text_fields_before_joining(monkeypatch: pytest.MonkeyPatch) -> None:
+    scanned_texts: list[str] = []
+    original_size_hint = hub_catalog_module._size_hint_from_text
+
+    def tracking_size_hint(text: str, *, allow_bare: bool) -> int:
+        scanned_texts.append(text)
+        return original_size_hint(text, allow_bare=allow_bare)
+
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", tracking_size_hint)
+
+    assert (
+        hub_catalog_module._size_hint_bytes(
+            {
+                "description": "adapter summary without size",
+                "readme": "README\nModel size: 12 GB\nother metadata",
+                "cardData": {"description": "card metadata without size"},
+            }
+        )
+        == 12 * GB
+    )
+    assert scanned_texts == []
+
+
+def test_direct_explicit_size_hint_handles_common_readme_lines() -> None:
+    assert (
+        hub_catalog_module._direct_explicit_size_hint_from_text(
+            "README\nModel size: 12 GB\nother metadata"
+        )
+        == 12 * GB
+    )
+    assert (
+        hub_catalog_module._direct_explicit_size_hint_from_text(
+            "README\nMODEL SIZE | 7 kb\nother metadata"
+        )
+        == 7 * KB
+    )
+    assert hub_catalog_module._direct_explicit_size_hint_from_text("model size 1.5 MB") == int(
+        1.5 * MB
+    )
+    assert hub_catalog_module._direct_explicit_size_hint_from_text("mOdel size: 12 GB") == 0
 
 
 def test_weight_or_config_file_preserves_case_insensitive_matches() -> None:
@@ -768,6 +851,93 @@ def test_search_models_uses_next_cursor_from_link_header() -> None:
     assert page.next_cursor == "page+2"
 
 
+def test_search_models_with_mlx_only_fetches_next_page_when_first_page_has_no_mlx_results() -> None:
+    first_response = FakeHTTPResponse(
+        [
+            {
+                "id": "google/gemma-4-12B-it",
+                "author": "google",
+                "pipeline_tag": "image-text-to-text",
+                "tags": ["gemma4", "transformers", "safetensors"],
+                "siblings": [],
+                "cardData": {},
+            },
+            {
+                "id": "unsloth/gemma-4-12b-it-GGUF",
+                "author": "unsloth",
+                "pipeline_tag": "text-generation",
+                "tags": ["gguf", "gemma4"],
+                "siblings": [],
+                "cardData": {},
+            },
+        ]
+    )
+    first_response.headers["Link"] = '<https://huggingface.co/api/models?limit=2&cursor=page%2B2>; rel="next"'
+    second_response = FakeHTTPResponse(
+        [
+            {
+                "id": "mlx-community/gemma-4-E4B-it-qat-4bit",
+                "author": "mlx-community",
+                "pipeline_tag": "image-text-to-text",
+                "tags": ["mlx", "gemma4", "qat", "4-bit"],
+                "siblings": [{"rfilename": "model.safetensors", "size": 2 * GB}],
+                "cardData": {"base_model": "google/gemma-4-E4B-it-qat-q4_0-unquantized"},
+            }
+        ]
+    )
+    responses = [first_response, second_response]
+    requested_urls: list[str] = []
+
+    def opener(request: Request):
+        requested_urls.append(request.full_url)
+        return responses.pop(0)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=32)
+    page = catalog.search_models(query="Gemma", page_size=2, cursor="", mlx_only=True)
+
+    assert [item.repo_id for item in page.items] == ["mlx-community/gemma-4-E4B-it-qat-4bit"]
+    assert page.next_cursor == ""
+    assert len(requested_urls) == 2
+    assert "search=Gemma" in requested_urls[0]
+    assert "filter=mlx" in requested_urls[0]
+    assert "cursor=page%2B2" in requested_urls[1]
+    assert "filter=mlx" in requested_urls[1]
+
+
+def test_search_models_with_mlx_only_keeps_all_compatible_results_from_fetched_pages() -> None:
+    response = FakeHTTPResponse(
+        [
+            {
+                "id": "mlx-community/gemma-4-E4B-it-qat-4bit",
+                "author": "mlx-community",
+                "pipeline_tag": "image-text-to-text",
+                "tags": ["mlx", "gemma4", "4-bit"],
+                "siblings": [],
+                "cardData": {},
+            },
+            {
+                "id": "mlx-community/gemma-4-12B-it-qat-4bit",
+                "author": "mlx-community",
+                "pipeline_tag": "image-text-to-text",
+                "tags": ["mlx", "gemma4", "4-bit"],
+                "siblings": [],
+                "cardData": {},
+            },
+        ]
+    )
+
+    def opener(_request: Request):
+        return response
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=32)
+    page = catalog.search_models(query="Gemma", page_size=1, cursor="", mlx_only=True)
+
+    assert [item.repo_id for item in page.items] == [
+        "mlx-community/gemma-4-E4B-it-qat-4bit",
+        "mlx-community/gemma-4-12B-it-qat-4bit",
+    ]
+
+
 def test_search_models_with_mlx_only_false_returns_all_results() -> None:
     payload = [
         {
@@ -789,7 +959,10 @@ def test_search_models_with_mlx_only_false_returns_all_results() -> None:
         },
     ]
 
-    def opener(_request: Request):
+    requested_urls: list[str] = []
+
+    def opener(request: Request):
+        requested_urls.append(request.full_url)
         return FakeHTTPResponse(payload)
 
     catalog = HubCatalog(opener=opener)
@@ -798,6 +971,7 @@ def test_search_models_with_mlx_only_false_returns_all_results() -> None:
     assert len(page.items) == 2
     assert page.items[0].mlx_compatible is True
     assert page.items[1].mlx_compatible is False
+    assert "filter=mlx" not in requested_urls[0]
 
 
 def test_search_models_marks_small_mlx_model_as_good_local_fit() -> None:
@@ -1101,7 +1275,7 @@ def test_size_hint_bytes_skips_explicit_parser_when_model_marker_absent(
     parser.assert_not_called()
 
 
-def test_size_hint_bytes_skips_direct_hint_parser_when_card_model_size_missing(
+def test_size_hint_bytes_uses_direct_marker_parser_when_card_model_size_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, bool]] = []
@@ -1115,18 +1289,47 @@ def test_size_hint_bytes_skips_direct_hint_parser_when_card_model_size_missing(
     assert hub_catalog_module._size_hint_bytes({"cardData": {}}) == 0
     assert calls == []
 
-    assert hub_catalog_module._size_hint_bytes({"cardData": {}, "readme": "Model size: 7 MB"}) == 0
-    assert calls == [("Model size: 7 MB", False)]
+    assert hub_catalog_module._size_hint_bytes({"cardData": {}, "readme": "Model size: 7 MB"}) == 7 * MB
+    assert calls == []
+
+
+def test_size_hint_bytes_reuses_marker_checks_before_hint_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker_calls: list[str] = []
+    original_marker = hub_catalog_module._may_contain_model_marker
+
+    def tracked_marker(text: str) -> bool:
+        marker_calls.append(text)
+        return original_marker(text)
+
+    monkeypatch.setattr(hub_catalog_module, "_may_contain_model_marker", tracked_marker)
+
+    assert (
+        hub_catalog_module._size_hint_bytes(
+            {
+                "description": "Model size appears in docs without value",
+                "readme": "Model size: 5 MB",
+                "cardData": {"description": "operator note"},
+            }
+        )
+        == 5 * MB
+    )
+    assert marker_calls == [
+        "Model size appears in docs without value",
+        "Model size: 5 MB",
+    ]
 
 
 def test_size_hint_bytes_preserves_combined_marker_parsing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, bool]] = []
+    original_size_hint = hub_catalog_module._size_hint_from_text
 
     def tracked(text: str, *, allow_bare: bool) -> int:
         calls.append((text, allow_bare))
-        return 5 * MB
+        return original_size_hint(text, allow_bare=allow_bare)
 
     monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", tracked)
 
@@ -1140,7 +1343,10 @@ def test_size_hint_bytes_preserves_combined_marker_parsing(
         )
         == 5 * MB
     )
-    assert calls == [("Model size:\n5 MB\noperator note", False)]
+    assert calls == [
+        ("Model size:", False),
+        ("Model size:\n5 MB\noperator note", False),
+    ]
 
 
 def test_size_hint_bytes_uses_direct_card_model_size_without_regex(
@@ -1216,16 +1422,12 @@ def test_size_hint_bytes_uses_single_payload_text_without_join(
     payload: dict[str, object],
     expected_text: str,
 ) -> None:
-    calls: list[tuple[str, bool]] = []
+    parser = Mock(return_value=1)
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", parser)
 
-    def tracked(text: str, *, allow_bare: bool) -> int:
-        calls.append((text, allow_bare))
-        return 1
-
-    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", tracked)
-
-    assert hub_catalog_module._size_hint_bytes(payload) == 1
-    assert calls == [(expected_text, False)]
+    expected_value = 6 * MB if expected_text == "Model size: 6 MB" else 8 * MB
+    assert hub_catalog_module._size_hint_bytes(payload) == expected_value
+    parser.assert_not_called()
 
 
 def test_search_models_ignores_sibling_sizes_without_weight_or_config_filenames() -> None:

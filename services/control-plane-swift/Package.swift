@@ -10,6 +10,7 @@ let package = Package(
     products: [
         .library(name: "MelixControlPlaneCore", targets: ["MelixControlPlaneCore"]),
         .executable(name: "melix-control-plane", targets: ["Bootstrap"]),
+        .executable(name: "melix-openai-conformance", targets: ["OpenAIConformanceHarnessCLI"]),
     ],
     dependencies: [
         .package(path: "../../packages/protocol/swift"),
@@ -26,7 +27,7 @@ let package = Package(
                 .product(name: "GRPCNIOTransportHTTP2Posix", package: "grpc-swift-nio-transport"),
             ],
             path: "Sources",
-            exclude: ["Bootstrap"],
+            exclude: ["Bootstrap", "OpenAIConformanceHarnessCLI"],
             sources: [
                 "EnginePool",
                 "HTTPGateway",
@@ -44,6 +45,11 @@ let package = Package(
             name: "Bootstrap",
             dependencies: ["MelixControlPlaneCore"],
             path: "Sources/Bootstrap"
+        ),
+        .executableTarget(
+            name: "OpenAIConformanceHarnessCLI",
+            dependencies: ["MelixControlPlaneCore"],
+            path: "Sources/OpenAIConformanceHarnessCLI"
         ),
         .testTarget(
             name: "ControlPlaneTests",

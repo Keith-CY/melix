@@ -31,6 +31,7 @@ public struct NullRemoteServerStore: RemoteServerStoring {
             defaultModelID: mutation.defaultModelID,
             timeoutSeconds: mutation.timeoutSeconds,
             rateLimitPerMinute: mutation.rateLimitPerMinute,
+            toolSupportMode: mutation.toolSupportMode,
             credentialRef: RemoteServerStore.credentialRef(for: mutation.id),
             apiKeyHint: mutation.apiKey.isEmpty ? "" : RemoteServerAPIKeyStore.maskedHint(for: mutation.apiKey)
         )

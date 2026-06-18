@@ -449,7 +449,7 @@ def read_hf_dataset_snapshot_rows(
         if remaining == 0:
             return rows
         rows.extend(_read_rows_from_file(path, limit=remaining))
-        if limit is not None and normalized_split and len(rows) >= limit:
+        if limit is not None and len(rows) >= limit:
             return rows
     return rows
 
@@ -482,7 +482,7 @@ def _first_supported_dataset_file(directory: Path) -> Path | None:
             if nested is not None:
                 return nested
             continue
-        if is_file and name not in _README_NAMES and _dataset_file_format(path):
+        if is_file:
             return path
 
 
@@ -491,6 +491,7 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
     best_path_raw = ""
     best_is_dir = False
     best_is_file = False
+    supported_suffixes = _SUPPORTED_DATASET_SUFFIXES
     try:
         with os.scandir(os.fspath(directory)) as entries:
             for entry in entries:
@@ -506,6 +507,14 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
                     continue
                 if is_file and name in _README_NAMES:
                     continue
+                if is_file:
+                    dot_index = name.rfind(".")
+                    if (
+                        dot_index <= 0
+                        or dot_index == len(name) - 1
+                        or name[dot_index:].lower() not in supported_suffixes
+                    ):
+                        continue
                 best_name = name
                 best_path_raw = entry.path
                 best_is_dir = is_dir

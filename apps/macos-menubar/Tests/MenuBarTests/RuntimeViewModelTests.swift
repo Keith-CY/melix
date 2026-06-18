@@ -89,12 +89,9 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
-        #expect(viewModel.models.map(\.modelID) == ["melix-dev-image", "melix-dev-text"])
-        #expect(viewModel.models.first { $0.modelID == "melix-dev-text" }?.alias == "Melix Text")
-        #expect(viewModel.models.first { $0.modelID == "melix-dev-image" }?.alias == "Melix Image")
-        #expect(viewModel.models.allSatisfy { !$0.alias.contains("Dev") })
-        #expect(viewModel.serveableModels.map(\.modelID) == ["melix-dev-text"])
-        #expect(viewModel.imageModels.map(\.modelID) == ["melix-dev-image"])
+        #expect(viewModel.models.isEmpty)
+        #expect(viewModel.serveableModels.isEmpty)
+        #expect(viewModel.imageModels.isEmpty)
     }
 
     @Test("remote server draft saves through app store and clears the API key field")
@@ -115,6 +112,7 @@ struct RuntimeViewModelTests {
         viewModel.remoteServerAPIKeyDraft = "sk-test-1234567890"
         viewModel.remoteServerTimeoutSecondsDraft = 180
         viewModel.remoteServerRateLimitPerMinuteDraft = 60
+        viewModel.remoteServerToolSupportModeDraft = .forceOn
 
         viewModel.saveRemoteServerDraft()
 
@@ -122,10 +120,12 @@ struct RuntimeViewModelTests {
         #expect(saved.id == "sub2api")
         #expect(saved.baseURL == "https://sub2api.example/v1/")
         #expect(saved.defaultModelID == "gemini-2.5-flash")
+        #expect(saved.toolSupportMode == .forceOn)
         #expect(saved.apiKeyHint == "sk-t...7890")
         #expect(viewModel.selectedRemoteServerID == "sub2api")
         #expect(viewModel.remoteServerAPIKeyDraft.isEmpty)
         #expect(store.savedMutations.first?.apiKey == "sk-test-1234567890")
+        #expect(store.savedMutations.first?.toolSupportMode == .forceOn)
     }
 
     @Test("remote server provider presets lock base URL and save resolved execution kind")
@@ -176,6 +176,7 @@ struct RuntimeViewModelTests {
                 defaultModelID: "deepseek-v4",
                 timeoutSeconds: 120,
                 rateLimitPerMinute: 0,
+                toolSupportMode: .forceOff,
                 credentialRef: RemoteServerStore.credentialRef(for: "sub2api"),
                 apiKeyHint: "sk-t...7890"
             ),
@@ -190,6 +191,7 @@ struct RuntimeViewModelTests {
         #expect(viewModel.remoteServerIDDraft == "sub2api")
         #expect(viewModel.remoteServerBaseURLDraft == "https://sub2api.example/v1")
         #expect(viewModel.remoteServerDefaultModelIDDraft == "deepseek-v4")
+        #expect(viewModel.remoteServerToolSupportModeDraft == .forceOff)
         #expect(viewModel.remoteServerAPIKeyDraft.isEmpty)
     }
 
@@ -224,7 +226,7 @@ struct RuntimeViewModelTests {
 
         #expect(viewModel.remoteServers.map(\.id) == ["sub2api"])
         #expect(store.savedMutations.isEmpty)
-        #expect(viewModel.lastError == "Remote Server ID cannot be changed after creation. Use New to create another server.")
+        #expect(viewModel.lastError == "Remote Provider ID cannot be changed after creation. Use New to create another provider.")
     }
 
     @Test("remote server draft validates required fields and records persistence failures")
@@ -242,7 +244,7 @@ struct RuntimeViewModelTests {
         viewModel.remoteServerIDDraft = " "
         viewModel.saveRemoteServerDraft()
 
-        #expect(viewModel.lastError == "Remote Server requires id, title, provider, base URL, and default model.")
+        #expect(viewModel.lastError == "Remote Provider requires id, title, provider, base URL, and default model.")
         #expect(store.savedMutations.isEmpty)
 
         viewModel.remoteServerIDDraft = "sub2api"
@@ -258,7 +260,7 @@ struct RuntimeViewModelTests {
             equals: 1
         )
 
-        #expect(viewModel.lastError == "Remote Server save failed: save")
+        #expect(viewModel.lastError == "Remote Provider save failed: save")
     }
 
     @Test("remote server removal selects the next server and surfaces failures")
@@ -313,7 +315,7 @@ struct RuntimeViewModelTests {
             equals: 1
         )
 
-        #expect(viewModel.lastError == "Remote Server remove failed: remove")
+        #expect(viewModel.lastError == "Remote Provider remove failed: remove")
     }
 
     @Test("null remote server store materializes non-secret state")
@@ -328,6 +330,7 @@ struct RuntimeViewModelTests {
                 defaultModelID: "gemini-2.5-flash",
                 timeoutSeconds: 75,
                 rateLimitPerMinute: 12,
+                toolSupportMode: .forceOn,
                 apiKey: "AIza-secret"
             )
         )
@@ -336,6 +339,7 @@ struct RuntimeViewModelTests {
         #expect(server.providerKind == "gemini-generative-language")
         #expect(server.baseURL == "https://generativelanguage.googleapis.com/v1beta")
         #expect(server.defaultModelID == "gemini-2.5-flash")
+        #expect(server.toolSupportMode == .forceOn)
         #expect(server.apiKeyHint == "AIza...cret")
         #expect(try NullRemoteServerStore().loadAPIKey(remoteServerID: "gemini") == nil)
         try NullRemoteServerStore().remove(id: "gemini")
@@ -1553,6 +1557,817 @@ struct RuntimeViewModelTests {
         #expect(metricValues["gateway.api_key_persist_failures"] == 0)
     }
 
+    @Test("issues companion pairing with stored primary key")
+    @MainActor
+    func issuesCompanionPairingWithStoredPrimaryKey() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-companion-issue-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let apiKeyStore = ServerSessionAPIKeyStore(melixHome: melixHome)
+        let companionClient = FakeCompanionPairingClient()
+        await companionClient.configureIssueResult(
+            CompanionPairingIssueResult(
+                sessionID: "companion-session-1",
+                scope: "companion_read_only",
+                rememberMe: true,
+                expiresAtUnixMS: 1_718_000_000_000,
+                resumeHeader: "x-melix-session",
+                resumeToken: "melix_companion_secret",
+                pairing: CompanionPairingDescriptor(
+                    schemaVersion: "melix.companion.pairing.v1",
+                    mobileURL: "http://127.0.0.1:18081/v1/melix/companion",
+                    statusURL: "http://127.0.0.1:18081/v1/melix/companion/status",
+                    resumeHeader: "x-melix-session",
+                    tokenTransport: "resume_header",
+                    allowedRoutes: [
+                        "GET /v1/melix/companion/status",
+                    ],
+                    forbiddenCapabilities: ["run_inference", "mutate_runtime", "read_private_prompts"],
+                    expiresAtUnixMS: 1_718_000_000_000
+                )
+            )
+        )
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            operatorSessionStore: operatorSessionStore,
+            serverSessionAPIKeyStore: apiKeyStore,
+            companionPairingClient: companionClient
+        )
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionHost("0.0.0.0")
+        viewModel.updateSelectedServerSessionPort(18_081)
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        try apiKeyStore.savePrimaryKey(
+            serverSessionID: serverSessionID,
+            primaryKey: "melix_primary_desktop",
+            keyID: "primary"
+        )
+
+        await viewModel.issueCompanionPairing()
+
+        let request = try #require(await companionClient.issueRequests.last)
+        #expect(request.baseURL.absoluteString == "http://127.0.0.1:18081")
+        #expect(request.apiKey == "melix_primary_desktop")
+        #expect(viewModel.companionPairing.phase == .active)
+        #expect(viewModel.companionPairing.sessionID == "companion-session-1")
+        #expect(viewModel.companionPairing.mobileURL == "http://127.0.0.1:18081/v1/melix/companion")
+        #expect(viewModel.companionPairing.statusURL == "http://127.0.0.1:18081/v1/melix/companion/status")
+        #expect(viewModel.companionPairing.resumeHeader == "x-melix-session")
+        #expect(viewModel.companionPairing.allowedRoutes == [
+            "GET /v1/melix/companion/status",
+        ])
+        #expect(viewModel.companionPairing.copyBundleAvailable)
+        #expect(String(describing: viewModel.companionPairing).contains("melix_companion_secret") == false)
+        let copyBundle = try #require(viewModel.companionPairingBundleText())
+        #expect(copyBundle.contains("melix_companion_secret"))
+        #expect(copyBundle.contains("melix.companion.pairing.bundle.v1"))
+        #expect(copyBundle.contains("\"mobile_url\" : \"http://127.0.0.1:18081/v1/melix/companion\""))
+        #expect(copyBundle.contains("http://127.0.0.1:18081/v1/melix/companion/status"))
+        let pairingCode = try #require(viewModel.companionPairingCodeText())
+        #expect(pairingCode.hasPrefix("melix-companion:"))
+        #expect(pairingCode.contains(" ") == false)
+        #expect(pairingCode.contains("\n") == false)
+        #expect(pairingCode.contains("melix_companion_secret") == false)
+        #expect(await metrics.snapshot()["companion.pairing_issue_ms"] != nil)
+    }
+
+    @Test("revokes active companion pairing token")
+    @MainActor
+    func revokesActiveCompanionPairingToken() async throws {
+        let companionClient = FakeCompanionPairingClient()
+        await companionClient.configureIssueResult(
+            CompanionPairingIssueResult(
+                sessionID: "companion-session-2",
+                scope: "companion_read_only",
+                rememberMe: true,
+                expiresAtUnixMS: 1_718_000_000_000,
+                resumeHeader: "x-melix-session",
+                resumeToken: "melix_companion_revoke_secret",
+                pairing: CompanionPairingDescriptor(
+                    schemaVersion: "melix.companion.pairing.v1",
+                    statusURL: "http://127.0.0.1:12436/v1/melix/companion/status",
+                    resumeHeader: "x-melix-session",
+                    tokenTransport: "resume_header",
+                    allowedRoutes: ["/v1/melix/companion/status"],
+                    forbiddenCapabilities: ["mutate_runtime"],
+                    expiresAtUnixMS: 1_718_000_000_000
+                )
+            )
+        )
+        let apiKeyStore = ThrowingServerSessionAPIKeyStore(
+            throwOnLoad: false,
+            throwOnSave: false,
+            loadPrimaryKeyValue: "melix_primary_desktop"
+        )
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            serverSessionAPIKeyStore: apiKeyStore,
+            companionPairingClient: companionClient
+        )
+
+        await viewModel.start()
+        await viewModel.issueCompanionPairing()
+        await viewModel.revokeCompanionPairing()
+
+        let revokeRequest = try #require(await companionClient.revokeRequests.last)
+        #expect(revokeRequest.sessionToken == "melix_companion_revoke_secret")
+        #expect(viewModel.companionPairing.phase == .idle)
+        #expect(viewModel.companionPairing.sessionID.isEmpty)
+        #expect(viewModel.companionPairing.copyBundleAvailable == false)
+        #expect(viewModel.companionPairingCodeText() == nil)
+        #expect(await metrics.snapshot()["companion.pairing_revoke_ms"] != nil)
+    }
+
+    @Test("companion pairing requires stored primary key")
+    @MainActor
+    func companionPairingRequiresStoredPrimaryKey() async throws {
+        let companionClient = FakeCompanionPairingClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            serverSessionAPIKeyStore: NullServerSessionAPIKeyStore(),
+            companionPairingClient: companionClient
+        )
+
+        await viewModel.start()
+        await viewModel.issueCompanionPairing()
+
+        #expect(await companionClient.issueRequests.isEmpty)
+        #expect(viewModel.companionPairing.phase == .failed)
+        #expect(viewModel.companionPairing.lastError == "Generate or restore a primary gateway API key before creating companion pairing.")
+        #expect(viewModel.lastError == "Generate or restore a primary gateway API key before creating companion pairing.")
+        #expect(await metrics.snapshot()["companion.pairing_issue_failures"] == 1)
+    }
+
+    @Test("companion pairing issue ignores duplicate in-flight requests")
+    @MainActor
+    func companionPairingIssueIgnoresDuplicateInFlightRequests() async throws {
+        let companionClient = FakeCompanionPairingClient()
+        await companionClient.configureIssueDelay(.milliseconds(50))
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: companionClient
+        )
+
+        await viewModel.start()
+
+        async let firstIssue: Void = viewModel.issueCompanionPairing()
+        await viewModel.issueCompanionPairing()
+        await firstIssue
+
+        #expect(await companionClient.issueRequests.count == 1)
+        #expect(viewModel.companionPairing.phase == .active)
+    }
+
+    @Test("companion pairing revoke ignores duplicate in-flight requests")
+    @MainActor
+    func companionPairingRevokeIgnoresDuplicateInFlightRequests() async throws {
+        let companionClient = FakeCompanionPairingClient()
+        await companionClient.configureRevokeDelay(.milliseconds(50))
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: companionClient
+        )
+
+        await viewModel.start()
+        await viewModel.issueCompanionPairing()
+
+        async let firstRevoke: Void = viewModel.revokeCompanionPairing()
+        await viewModel.revokeCompanionPairing()
+        await firstRevoke
+
+        #expect(await companionClient.revokeRequests.count == 1)
+        #expect(viewModel.companionPairing.phase == .idle)
+    }
+
+    @Test("companion pairing surfaces key store and transport failures")
+    @MainActor
+    func companionPairingSurfacesKeyStoreAndTransportFailures() async throws {
+        let keyLookupMetrics = MenuBarMetricsStore()
+        let keyLookupViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: keyLookupMetrics,
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: true,
+                throwOnSave: false,
+                loadPrimaryKeyValue: nil
+            ),
+            companionPairingClient: FakeCompanionPairingClient()
+        )
+
+        await keyLookupViewModel.start()
+        await keyLookupViewModel.issueCompanionPairing()
+
+        #expect(keyLookupViewModel.companionPairing.phase == .failed)
+        #expect(keyLookupViewModel.lastError?.contains("Primary gateway API key lookup failed") == true)
+        #expect(await keyLookupMetrics.snapshot()["companion.pairing_issue_failures"] == 1)
+
+        let issueClient = FakeCompanionPairingClient()
+        await issueClient.configureIssueError(MenuBarTestError(description: "gateway offline"))
+        let issueMetrics = MenuBarMetricsStore()
+        let issueViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: issueMetrics,
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: issueClient
+        )
+
+        await issueViewModel.start()
+        await issueViewModel.issueCompanionPairing()
+
+        #expect(await issueClient.issueRequests.count == 1)
+        #expect(issueViewModel.companionPairing.phase == .failed)
+        #expect(issueViewModel.lastError?.contains("Companion pairing creation failed") == true)
+        #expect(await issueMetrics.snapshot()["companion.pairing_issue_failures"] == 1)
+
+        let revokeClient = FakeCompanionPairingClient()
+        await revokeClient.configureRevokeError(MenuBarTestError(description: "revocation failed"))
+        let revokeMetrics = MenuBarMetricsStore()
+        let revokeViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: revokeMetrics,
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: revokeClient
+        )
+
+        await revokeViewModel.start()
+        await revokeViewModel.issueCompanionPairing()
+        await revokeViewModel.revokeCompanionPairing()
+
+        #expect(await revokeClient.revokeRequests.count == 1)
+        #expect(revokeViewModel.companionPairing.phase == .failed)
+        #expect(revokeViewModel.lastError?.contains("Companion pairing revocation failed") == true)
+        #expect(await revokeMetrics.snapshot()["companion.pairing_revoke_failures"] == 1)
+
+        let emptyRevokeMetrics = MenuBarMetricsStore()
+        let emptyRevokeViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: emptyRevokeMetrics
+        )
+
+        await emptyRevokeViewModel.start()
+        await emptyRevokeViewModel.revokeCompanionPairing()
+
+        #expect(emptyRevokeViewModel.companionPairing.phase == .failed)
+        #expect(emptyRevokeViewModel.lastError == "No active companion pairing token to revoke.")
+        #expect(await emptyRevokeMetrics.snapshot()["companion.pairing_revoke_failures"] == 1)
+        #expect(emptyRevokeViewModel.companionPairingBundleText() == nil)
+    }
+
+    @Test("live companion pairing client issues and revokes gateway sessions")
+    func liveCompanionPairingClientIssuesAndRevokesGatewaySessions() async throws {
+        let issuePayload = #"""
+        {
+          "session": {
+            "session_id": "companion-live-session",
+            "key_id": "primary",
+            "remember_me": true,
+            "scope": "companion_read_only",
+            "created_at_unix_ms": 1717000000000,
+            "expires_at_unix_ms": 1718000000000,
+            "revoked_at_unix_ms": 0,
+            "last_restored_at_unix_ms": 0,
+            "state": "active"
+          },
+          "resume": {
+            "header": "x-melix-session",
+            "token": "melix_live_secret"
+          },
+          "pairing": {
+            "schema_version": "melix.companion.pairing.v1",
+            "scope": "companion_read_only",
+            "token_transport": "resume_header",
+            "resume_header": "x-melix-session",
+            "mobile_url": "http://127.0.0.1:12436/v1/melix/companion",
+            "status_url": "http://127.0.0.1:12436/v1/melix/companion/status",
+            "expires_at_unix_ms": 1718000000000,
+            "allowed_origins": [],
+            "allowed_routes": [
+              {"method": "GET", "path": "/v1/melix/companion/status"},
+              {"method": "delete", "path": "/v1/melix/auth/session"}
+            ],
+            "forbidden_capabilities": ["mutate_runtime", "read_private_prompts"]
+          }
+        }
+        """#.data(using: .utf8)!
+        let transport = FakeCompanionPairingHTTPTransport()
+        await transport.configureIssueResponse(body: issuePayload)
+        await transport.configureRevokeResponse(statusCode: 204)
+        let client = LiveCompanionPairingClient(transport: transport)
+        let baseURL = try #require(URL(string: "http://127.0.0.1:12436"))
+
+        let result = try await client.issuePairing(baseURL: baseURL, apiKey: "melix_primary_desktop")
+
+        #expect(result.sessionID == "companion-live-session")
+        #expect(result.scope == "companion_read_only")
+        #expect(result.rememberMe)
+        #expect(result.resumeHeader == "x-melix-session")
+        #expect(result.resumeToken == "melix_live_secret")
+        #expect(result.pairing.schemaVersion == "melix.companion.pairing.v1")
+        #expect(result.pairing.mobileURL == "http://127.0.0.1:12436/v1/melix/companion")
+        #expect(result.pairing.statusURL == "http://127.0.0.1:12436/v1/melix/companion/status")
+        #expect(result.pairing.allowedRoutes == [
+            "GET /v1/melix/companion/status",
+            "DELETE /v1/melix/auth/session",
+        ])
+        #expect(result.pairing.forbiddenCapabilities == ["mutate_runtime", "read_private_prompts"])
+
+        let issueRequest = try #require(await transport.requests.first)
+        #expect(issueRequest.url?.absoluteString == "http://127.0.0.1:12436/v1/melix/auth/session")
+        #expect(issueRequest.method == "POST")
+        let issueHeaders = Dictionary(
+            uniqueKeysWithValues: issueRequest.headers.map { ($0.key.lowercased(), $0.value) }
+        )
+        #expect(issueHeaders["content-type"] == "application/json")
+        #expect(issueHeaders["x-api-key"] == "melix_primary_desktop")
+        let issueBody = try #require(issueRequest.body)
+        let issueJSON = try #require(JSONSerialization.jsonObject(with: issueBody) as? [String: Any])
+        #expect(issueJSON["remember_me"] as? Bool == true)
+        #expect(issueJSON["scope"] as? String == "companion_read_only")
+
+        try await client.revokePairing(baseURL: baseURL, sessionToken: "melix_live_secret")
+
+        let requests = await transport.requests
+        #expect(requests.count == 2)
+        let revokeRequest = try #require(requests.last)
+        #expect(revokeRequest.url?.absoluteString == "http://127.0.0.1:12436/v1/melix/auth/session")
+        #expect(revokeRequest.method == "DELETE")
+        let revokeHeaders = Dictionary(
+            uniqueKeysWithValues: revokeRequest.headers.map { ($0.key.lowercased(), $0.value) }
+        )
+        #expect(revokeHeaders["x-melix-session"] == "melix_live_secret")
+    }
+
+    @Test("live companion pairing client reports gateway errors and normalizes route display text")
+    func liveCompanionPairingClientReportsGatewayErrorsAndNormalizesRouteDisplayText() async throws {
+        let baseURL = try #require(URL(string: "http://127.0.0.1:12436"))
+
+        let httpFailureTransport = FakeCompanionPairingHTTPTransport()
+        await httpFailureTransport.configureIssueResponse(
+            statusCode: 500,
+            body: Data("gateway offline".utf8)
+        )
+        let httpFailureClient = LiveCompanionPairingClient(transport: httpFailureTransport)
+        do {
+            _ = try await httpFailureClient.issuePairing(baseURL: baseURL, apiKey: "melix_primary_desktop")
+            Issue.record("Expected companion pairing HTTP failure.")
+        } catch let error as CompanionPairingClientError {
+            #expect(error.description == "Companion pairing HTTP 500: gateway offline")
+        }
+
+        let missingPairingPayload = #"""
+        {
+          "session": {
+            "session_id": "companion-missing-pairing",
+            "remember_me": true,
+            "scope": "companion_read_only",
+            "expires_at_unix_ms": 1718000000000
+          },
+          "resume": {
+            "header": "x-melix-session",
+            "token": "melix_missing_pairing_secret"
+          }
+        }
+        """#.data(using: .utf8)!
+        let missingPairingTransport = FakeCompanionPairingHTTPTransport()
+        await missingPairingTransport.configureIssueResponse(body: missingPairingPayload)
+        let missingPairingClient = LiveCompanionPairingClient(transport: missingPairingTransport)
+        do {
+            _ = try await missingPairingClient.issuePairing(baseURL: baseURL, apiKey: "melix_primary_desktop")
+            Issue.record("Expected missing pairing descriptor failure.")
+        } catch let error as CompanionPairingClientError {
+            #expect(error.description == "Companion pairing response did not include a pairing descriptor.")
+        }
+
+        let routeNormalizationPayload = #"""
+        {
+          "session": {
+            "session_id": "companion-route-normalization",
+            "remember_me": true,
+            "scope": "companion_read_only",
+            "expires_at_unix_ms": 1718000000000
+          },
+          "resume": {
+            "header": "x-melix-session",
+            "token": "melix_route_secret"
+          },
+          "pairing": {
+            "schema_version": "melix.companion.pairing.v1",
+            "token_transport": "resume_header",
+            "resume_header": "x-melix-session",
+            "status_url": "http://127.0.0.1:12436/v1/melix/companion/status",
+            "expires_at_unix_ms": 1718000000000,
+            "allowed_routes": [
+              {"method": "   ", "path": "/v1/path-only"},
+              {"method": "get", "path": "   "}
+            ],
+            "forbidden_capabilities": []
+          }
+        }
+        """#.data(using: .utf8)!
+        let routeNormalizationTransport = FakeCompanionPairingHTTPTransport()
+        await routeNormalizationTransport.configureIssueResponse(body: routeNormalizationPayload)
+        let routeNormalizationClient = LiveCompanionPairingClient(transport: routeNormalizationTransport)
+
+        let routeNormalizationResult = try await routeNormalizationClient.issuePairing(
+            baseURL: baseURL,
+            apiKey: "melix_primary_desktop"
+        )
+
+        #expect(routeNormalizationResult.pairing.allowedRoutes == ["/v1/path-only", "GET"])
+        #expect(CompanionPairingClientError.invalidResponse("not HTTP").description == "not HTTP")
+    }
+
+    @Test("refreshes companion status log tail with active read-only token")
+    @MainActor
+    func refreshesCompanionStatusLogTailWithActiveReadOnlyToken() async throws {
+        let pairingClient = FakeCompanionPairingClient()
+        await pairingClient.configureIssueResult(
+            CompanionPairingIssueResult(
+                sessionID: "companion-status-session",
+                scope: "companion_read_only",
+                rememberMe: true,
+                expiresAtUnixMS: 1_718_000_000_000,
+                resumeHeader: "x-melix-session",
+                resumeToken: "melix_companion_status_secret",
+                pairing: CompanionPairingDescriptor(
+                    schemaVersion: "melix.companion.pairing.v1",
+                    statusURL: "http://127.0.0.1:12436/v1/melix/companion/status",
+                    resumeHeader: "x-melix-session",
+                    tokenTransport: "resume_header",
+                    allowedRoutes: ["GET /v1/melix/companion/status"],
+                    forbiddenCapabilities: ["mutate_runtime", "read_private_prompts"],
+                    expiresAtUnixMS: 1_718_000_000_000
+                )
+            )
+        )
+        let statusClient = FakeCompanionStatusClient()
+        await statusClient.configureRefreshResult(
+            CompanionStatusSnapshot(
+                status: "ok",
+                readOnly: true,
+                authorizationScope: "companion_read_only",
+                logTail: CompanionStatusLogTailState(
+                    source: "image_jobs",
+                    visible: 2,
+                    total: 4,
+                    entries: [
+                        CompanionStatusLogEntryState(
+                            eventType: "state_update",
+                            source: "image_jobs",
+                            jobID: "image-job-2",
+                            requestID: "request-2",
+                            modelID: "melix-dev-image",
+                            operation: "image_generate",
+                            state: "failed",
+                            lane: "interactive",
+                            workerID: "image-worker-1",
+                            progressStage: "failed",
+                            updatedAtUnixMS: 1_718_000_020_000,
+                            failureCode: "image_worker_failed",
+                            redactionSummary: "raw log line omitted; raw prompt omitted; request body omitted; artifact URIs omitted; local paths omitted; error message omitted"
+                        ),
+                        CompanionStatusLogEntryState(
+                            eventType: "state_update",
+                            source: "image_jobs",
+                            jobID: "image-job-1",
+                            requestID: "request-1",
+                            modelID: "melix-dev-image",
+                            operation: "image_generate",
+                            state: "running",
+                            lane: "background",
+                            workerID: "image-worker-2",
+                            progressStage: "sampling",
+                            updatedAtUnixMS: 1_718_000_010_000,
+                            failureCode: "",
+                            redactionSummary: "raw log line omitted; raw prompt omitted"
+                        ),
+                    ]
+                ),
+                redactionLogs: "redacted_tail"
+            )
+        )
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: pairingClient,
+            companionStatusClient: statusClient
+        )
+
+        await viewModel.start()
+        await viewModel.issueCompanionPairing()
+        await viewModel.refreshCompanionStatus()
+
+        let refreshRequest = try #require(await statusClient.refreshRequests.last)
+        #expect(refreshRequest.statusURL.absoluteString == "http://127.0.0.1:12436/v1/melix/companion/status")
+        #expect(refreshRequest.resumeHeader == "x-melix-session")
+        #expect(refreshRequest.sessionToken == "melix_companion_status_secret")
+        #expect(viewModel.companionStatus.phase == .loaded)
+        #expect(viewModel.companionStatus.status == "ok")
+        #expect(viewModel.companionStatus.logTail.visible == 2)
+        #expect(viewModel.companionStatus.logTail.total == 4)
+        #expect(viewModel.companionStatus.logTail.entries.map(\.jobID) == ["image-job-2", "image-job-1"])
+        #expect(viewModel.companionStatus.logTail.entries.first?.failureCode == "image_worker_failed")
+        #expect(viewModel.companionStatus.redactionLogs == "redacted_tail")
+        #expect(String(describing: viewModel.companionStatus).contains("melix_companion_status_secret") == false)
+        #expect(String(describing: viewModel.companionStatus).contains("private prompt") == false)
+        #expect(await metrics.snapshot()["companion.status_refresh_ms"] != nil)
+    }
+
+    @Test("companion status refresh requires active pairing")
+    @MainActor
+    func companionStatusRefreshRequiresActivePairing() async throws {
+        let statusClient = FakeCompanionStatusClient()
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            companionStatusClient: statusClient
+        )
+
+        await viewModel.start()
+        await viewModel.refreshCompanionStatus()
+
+        #expect(await statusClient.refreshRequests.isEmpty)
+        #expect(viewModel.companionStatus.phase == .failed)
+        #expect(viewModel.companionStatus.lastError == "Issue a read-only companion token before refreshing companion status.")
+        #expect(await metrics.snapshot()["companion.status_refresh_failures"] == 1)
+    }
+
+    @Test("companion status refresh surfaces transport failures")
+    @MainActor
+    func companionStatusRefreshSurfacesTransportFailures() async throws {
+        let pairingClient = FakeCompanionPairingClient()
+        await pairingClient.configureIssueResult(
+            CompanionPairingIssueResult(
+                sessionID: "companion-status-failure-session",
+                scope: "companion_read_only",
+                rememberMe: true,
+                expiresAtUnixMS: 1_718_000_000_000,
+                resumeHeader: "x-melix-session",
+                resumeToken: "melix_companion_status_failure_secret",
+                pairing: CompanionPairingDescriptor(
+                    schemaVersion: "melix.companion.pairing.v1",
+                    statusURL: "http://127.0.0.1:12436/v1/melix/companion/status",
+                    resumeHeader: "x-melix-session",
+                    tokenTransport: "resume_header",
+                    allowedRoutes: ["GET /v1/melix/companion/status"],
+                    forbiddenCapabilities: ["mutate_runtime", "read_private_prompts"],
+                    expiresAtUnixMS: 1_718_000_000_000
+                )
+            )
+        )
+        let statusClient = FakeCompanionStatusClient()
+        await statusClient.configureRefreshError(MenuBarTestError(description: "gateway offline"))
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: pairingClient,
+            companionStatusClient: statusClient
+        )
+
+        await viewModel.start()
+        await viewModel.issueCompanionPairing()
+        await viewModel.refreshCompanionStatus()
+
+        #expect(await statusClient.refreshRequests.count == 1)
+        #expect(viewModel.companionStatus.phase == .failed)
+        #expect(viewModel.companionStatus.lastError == "Companion status refresh failed: gateway offline")
+        #expect(await metrics.snapshot()["companion.status_refresh_failures"] == 1)
+    }
+
+    @Test("companion status refresh failure metric records one event per failure")
+    @MainActor
+    func companionStatusRefreshFailureMetricRecordsOneEventPerFailure() async throws {
+        let pairingClient = FakeCompanionPairingClient()
+        await pairingClient.configureIssueResult(
+            CompanionPairingIssueResult(
+                sessionID: "companion-status-repeated-failure-session",
+                scope: "companion_read_only",
+                rememberMe: true,
+                expiresAtUnixMS: 1_718_000_000_000,
+                resumeHeader: "x-melix-session",
+                resumeToken: "melix_companion_status_failure_secret",
+                pairing: CompanionPairingDescriptor(
+                    schemaVersion: "melix.companion.pairing.v1",
+                    statusURL: "http://127.0.0.1:12436/v1/melix/companion/status",
+                    resumeHeader: "x-melix-session",
+                    tokenTransport: "resume_header",
+                    allowedRoutes: ["GET /v1/melix/companion/status"],
+                    forbiddenCapabilities: ["mutate_runtime", "read_private_prompts"],
+                    expiresAtUnixMS: 1_718_000_000_000
+                )
+            )
+        )
+        let statusClient = FakeCompanionStatusClient()
+        await statusClient.configureRefreshError(MenuBarTestError(description: "gateway offline"))
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            metrics: metrics,
+            serverSessionAPIKeyStore: ThrowingServerSessionAPIKeyStore(
+                throwOnLoad: false,
+                throwOnSave: false,
+                loadPrimaryKeyValue: "melix_primary_desktop"
+            ),
+            companionPairingClient: pairingClient,
+            companionStatusClient: statusClient
+        )
+
+        await viewModel.start()
+        await viewModel.issueCompanionPairing()
+        await viewModel.refreshCompanionStatus()
+        await viewModel.refreshCompanionStatus()
+
+        #expect(await statusClient.refreshRequests.count == 2)
+        #expect(await metrics.snapshot()["companion.status_refresh_failures"] == 1)
+    }
+
+    @Test("live companion status client fetches redacted log tail and reports errors")
+    func liveCompanionStatusClientFetchesRedactedLogTailAndReportsErrors() async throws {
+        let payload = #"""
+        {
+          "schema_version": "melix.companion.status.v1",
+          "read_only": true,
+          "status": "ok",
+          "authorization": {
+            "mode": "session",
+            "scope": "companion_read_only",
+            "state": "active",
+            "session_id": "companion-live-status"
+          },
+          "logs": {
+            "source": "image_jobs",
+            "visible": 1,
+            "total": 3,
+            "entries": [
+              {
+                "event_type": "state_update",
+                "source": "image_jobs",
+                "job_id": "image-job-live",
+                "request_id": "request-live",
+                "model_id": "melix-dev-image",
+                "operation": "image_generate",
+                "state": "failed",
+                "lane": "interactive",
+                "worker_id": "image-worker-live",
+                "progress_stage": "failed",
+                "created_at_unix_ms": 1718000000000,
+                "updated_at_unix_ms": 1718000001000,
+                "failure_code": "image_worker_failed",
+                "redaction": {
+                  "raw_log_line": "omitted",
+                  "raw_prompt": "omitted",
+                  "request_body": "omitted",
+                  "artifact_uris": "omitted",
+                  "local_paths": "omitted",
+                  "error_message": "omitted"
+                }
+              }
+            ]
+          },
+          "redaction": {
+            "logs": "redacted_tail"
+          }
+        }
+        """#.data(using: .utf8)!
+        let transport = FakeCompanionStatusHTTPTransport()
+        await transport.configureResponse(body: payload)
+        let client = LiveCompanionStatusClient(transport: transport)
+        let statusURL = try #require(URL(string: "http://127.0.0.1:12436/v1/melix/companion/status"))
+
+        let snapshot = try await client.refreshStatus(
+            statusURL: statusURL,
+            resumeHeader: "x-melix-session",
+            sessionToken: "melix_live_companion_status_secret"
+        )
+
+        let request = try #require(await transport.requests.first)
+        #expect(request.url?.absoluteString == "http://127.0.0.1:12436/v1/melix/companion/status")
+        #expect(request.method == "GET")
+        let headers = Dictionary(uniqueKeysWithValues: request.headers.map { ($0.key.lowercased(), $0.value) })
+        #expect(headers["x-melix-session"] == "melix_live_companion_status_secret")
+        #expect(snapshot.status == "ok")
+        #expect(snapshot.authorizationScope == "companion_read_only")
+        #expect(snapshot.logTail.visible == 1)
+        #expect(snapshot.logTail.total == 3)
+        #expect(snapshot.logTail.entries.first?.jobID == "image-job-live")
+        #expect(snapshot.logTail.entries.first?.redactionSummary.contains("raw log line omitted") == true)
+
+        let failureTransport = FakeCompanionStatusHTTPTransport()
+        await failureTransport.configureResponse(statusCode: 403, body: Data("forbidden".utf8))
+        let failureClient = LiveCompanionStatusClient(transport: failureTransport)
+        do {
+            _ = try await failureClient.refreshStatus(
+                statusURL: statusURL,
+                resumeHeader: "x-melix-session",
+                sessionToken: "revoked"
+            )
+            Issue.record("Expected companion status HTTP failure.")
+        } catch let error as CompanionStatusClientError {
+            #expect(error.description == "Companion status HTTP 403: forbidden")
+        }
+    }
+
+    @Test("live companion status client tolerates omitted optional redaction fields")
+    func liveCompanionStatusClientToleratesOmittedOptionalRedactionFields() async throws {
+        let payload = #"""
+        {
+          "schema_version": "melix.companion.status.v1",
+          "read_only": true,
+          "status": "ok",
+          "authorization": {
+            "mode": "session",
+            "scope": "companion_read_only",
+            "state": "active",
+            "session_id": "companion-live-status"
+          },
+          "logs": {
+            "source": "image_jobs",
+            "visible": 1,
+            "total": 1,
+            "entries": [
+              {
+                "event_type": "state_update",
+                "source": "image_jobs",
+                "job_id": "image-job-live",
+                "request_id": "request-live",
+                "model_id": "melix-dev-image",
+                "operation": "image_generate",
+                "state": "succeeded",
+                "lane": "interactive",
+                "worker_id": "image-worker-live",
+                "progress_stage": "complete",
+                "created_at_unix_ms": 1718000000000,
+                "updated_at_unix_ms": 1718000001000,
+                "failure_code": null,
+                "redaction": {
+                  "raw_log_line": "omitted"
+                }
+              }
+            ]
+          },
+          "redaction": {
+            "logs": "redacted_tail"
+          }
+        }
+        """#.data(using: .utf8)!
+        let transport = FakeCompanionStatusHTTPTransport()
+        await transport.configureResponse(body: payload)
+        let client = LiveCompanionStatusClient(transport: transport)
+        let statusURL = try #require(URL(string: "http://127.0.0.1:12436/v1/melix/companion/status"))
+
+        let snapshot = try await client.refreshStatus(
+            statusURL: statusURL,
+            resumeHeader: "x-melix-session",
+            sessionToken: "melix_live_companion_status_secret"
+        )
+
+        let entry = try #require(snapshot.logTail.entries.first)
+        #expect(entry.failureCode == "")
+        #expect(entry.redactionSummary == "raw log line omitted")
+    }
+
     @Test("defers gateway apply when selected server session is not running")
     @MainActor
     func defersGatewayApplyWhenSelectedServerSessionIsNotRunning() async throws {
@@ -1916,7 +2731,7 @@ struct RuntimeViewModelTests {
         let actions = await client.recordedActions
         #expect(actions.contains(where: { $0.hasPrefix("chat:") }) == false)
         #expect(viewModel.chatStatusText == "Stopped")
-        #expect(viewModel.lastError == "Start the bound Server Session before sending chat prompts.")
+        #expect(viewModel.lastError == "Start the bound Provider before sending chat prompts.")
     }
 
     @Test("sleeping chat stays interactive while paused chat is blocked")
@@ -1977,7 +2792,7 @@ struct RuntimeViewModelTests {
 
         #expect(await client.recordedActions.filter { $0.hasPrefix("chat:") }.count == recordedChatCount)
         #expect(viewModel.chatStatusText == "Paused")
-        #expect(viewModel.lastError == "Resume the paused Server Session before sending chat prompts.")
+        #expect(viewModel.lastError == "Resume the paused Provider before sending chat prompts.")
     }
 
     @Test("new chat sessions require an explicit server selection before sending")
@@ -1999,8 +2814,8 @@ struct RuntimeViewModelTests {
         await viewModel.submitChatPrompt()
 
         #expect(await client.recordedActions.contains(where: { $0.hasPrefix("chat:") }) == false)
-        #expect(viewModel.chatStatusText == "Choose Server")
-        #expect(viewModel.lastError == "Choose a Server Session before sending chat prompts.")
+        #expect(viewModel.chatStatusText == "Choose Provider")
+        #expect(viewModel.lastError == "Choose a Provider before sending chat prompts.")
 
         viewModel.bindSelectedChatSessionToServer(serverSessionID: originalServerID)
         viewModel.chatComposerText = "send after server choice"
@@ -2070,7 +2885,7 @@ struct RuntimeViewModelTests {
 
         let createdServer = try #require(viewModel.selectedServerSession)
         #expect(createdServer.id != originalServerID)
-        #expect(createdServer.title == "Server 2")
+        #expect(createdServer.title == "Provider 2")
         #expect(createdServer.lifecycle == .draft)
         #expect(viewModel.selectedSurface == .server)
 
@@ -2292,7 +3107,7 @@ struct RuntimeViewModelTests {
         try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "starting blocked"
         await viewModel.submitChatPrompt()
-        #expect(viewModel.lastError == "Wait for the Server Session to finish starting before sending chat prompts.")
+        #expect(viewModel.lastError == "Wait for the Provider to finish starting before sending chat prompts.")
 
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-menubar-stopping-chat-\(UUID().uuidString)")
@@ -2329,7 +3144,7 @@ struct RuntimeViewModelTests {
         #expect(stoppingViewModel.selectedChatServerSession?.lifecycle == .stopped)
         stoppingViewModel.chatComposerText = "stopping blocked"
         await stoppingViewModel.submitChatPrompt()
-        #expect(stoppingViewModel.lastError == "Start the bound Server Session before sending chat prompts.")
+        #expect(stoppingViewModel.lastError == "Start the bound Provider before sending chat prompts.")
 
         let failingClient = FakeControlPlaneXPCClient()
         let failingSnapshot = makeSnapshot(
@@ -2351,7 +3166,7 @@ struct RuntimeViewModelTests {
         await failingViewModel.pauseSelectedServerSession()
         failingViewModel.chatComposerText = "error blocked"
         await failingViewModel.submitChatPrompt()
-        #expect(failingViewModel.lastError == "Recover the failed Server Session before sending chat prompts. gpu lost")
+        #expect(failingViewModel.lastError == "Recover the failed Provider before sending chat prompts. gpu lost")
     }
 
     @Test("agent integration exports mirror the selected server session and record metrics")
@@ -2666,12 +3481,12 @@ struct RuntimeViewModelTests {
 
         viewModel.chatComposerText = "wait for server"
         await viewModel.submitChatPrompt()
-        #expect(viewModel.chatStatusText == "Choose Server")
-        #expect(viewModel.lastError == "Choose a Server Session before sending chat prompts.")
+        #expect(viewModel.chatStatusText == "Choose Provider")
+        #expect(viewModel.lastError == "Choose a Provider before sending chat prompts.")
 
         viewModel.createServerSession()
         #expect(viewModel.serverSessions.isEmpty)
-        #expect(viewModel.lastError == "No Ready to Run model is available. Rescan or download a model before creating a local server.")
+        #expect(viewModel.lastError == "No Ready to Run model is available. Rescan or download a model before creating a local provider.")
 
         viewModel.createServerSession(modelID: "melix-dev-text")
 
@@ -2679,7 +3494,7 @@ struct RuntimeViewModelTests {
         let seededChat = try #require(viewModel.selectedChatSession)
         #expect(viewModel.serverSessions.count == 1)
         #expect(viewModel.chatSessions.count == 2)
-        #expect(seededServer.title == "Primary Server")
+        #expect(seededServer.title == "Primary Provider")
         #expect(seededServer.modelID == "melix-dev-text")
         #expect(seededServer.port == 12436)
         #expect(seededChat.serverSessionID == "")
@@ -2783,8 +3598,8 @@ struct RuntimeViewModelTests {
 
         #expect(exportPath == nil)
         #expect(await client.recordedActions.isEmpty)
-        #expect(viewModel.chatStatusText == "No Server Session")
-        #expect(viewModel.lastError == "Create a Server Session before sending chat prompts.")
+        #expect(viewModel.chatStatusText == "No Provider")
+        #expect(viewModel.lastError == "Create a Provider before sending chat prompts.")
         #expect(viewModel.selectedSurface == .server)
     }
 
@@ -2814,9 +3629,9 @@ struct RuntimeViewModelTests {
         drainingEvent.state = .serverDraining
         await client.sendServerStateChanged(state: .serverDraining)
         try await waitForRuntimeViewModelCondition("warning banner should surface draining runtime state") {
-            viewModel.desktopBannerState?.title == "Runtime Needs Monitoring"
+            viewModel.desktopBannerState?.title == "Provider Needs Monitoring"
         }
-        #expect(viewModel.desktopBannerState?.title == "Runtime Needs Monitoring")
+        #expect(viewModel.desktopBannerState?.title == "Provider Needs Monitoring")
 
         let imageOnlySnapshot = makeSnapshot(
             serverState: .serverReady,
@@ -2905,6 +3720,285 @@ struct RuntimeViewModelTests {
         #expect(prompt.title == "Audio Support Required")
         #expect(prompt.primaryActionTitle == "Install Audio Support")
         #expect(prompt.modelID == "melix-whisper-mlx")
+    }
+
+    @Test("audio setup state collapses shared runtime remediation across catalog audio models")
+    @MainActor
+    func audioSetupStateCollapsesSharedRuntimeRemediationAcrossCatalogAudioModels() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [ModelCatalog.devTextModel()]
+                    + makeAudioSetupCatalogModels(runtimePackState: "missing", modelState: "catalog_default")
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let setup = try #require(viewModel.audioSetupState)
+        let action = try #require(setup.primaryAction)
+        #expect(setup.phase == .runtimeRequired)
+        #expect(setup.title == "Audio Setup Required")
+        #expect(setup.summary == "Install the shared audio runtime before downloading audio models.")
+        #expect(setup.recommendedModelIDs == ["melix-whisper-mlx", "melix-kokoro-mlx"])
+        #expect(setup.selectedModelIDs == ["melix-whisper-mlx", "melix-kokoro-mlx"])
+        #expect(setup.capabilityGroups.map(\.key) == ["stt", "tts"])
+        #expect(action.kind == .installRuntime)
+        #expect(action.actionTitle == "Install Audio Support")
+        #expect(action.modelID == "melix-whisper-mlx")
+        #expect(action.modelIDs == ["melix-whisper-mlx"])
+        #expect(viewModel.audioSetupActions.count == 1)
+    }
+
+    @Test("audio setup state downloads only the confirmed recommended model scope after runtime install")
+    @MainActor
+    func audioSetupStateDownloadsConfirmedRecommendedScopeAfterRuntimeInstall() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [ModelCatalog.devTextModel()]
+                    + makeAudioSetupCatalogModels(runtimePackState: "installed", modelState: "catalog_default")
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "download",
+                outputPath: "/Users/test/.melix/models/default-managed/audio",
+                manifestJSON: "{}"
+            ),
+            forNamedOperation: "download"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let setup = try #require(viewModel.audioSetupState)
+        let action = try #require(setup.primaryAction)
+        #expect(setup.phase == .modelsRequired)
+        #expect(setup.title == "Audio Models Required")
+        #expect(setup.summary == "0 of 2 recommended audio models ready.")
+        #expect(action.kind == .downloadModel)
+        #expect(action.actionTitle == "Start Downloads")
+        #expect(action.modelIDs == ["melix-whisper-mlx", "melix-kokoro-mlx"])
+        #expect(setup.capabilityGroups.flatMap(\.models).filter(\.isSelected).map(\.modelID) == [
+            "melix-whisper-mlx",
+            "melix-kokoro-mlx",
+        ])
+        #expect(setup.capabilityGroups.flatMap(\.models).filter { $0.isRecommended == false }.map(\.modelID) == [
+            "melix-parakeet-mlx",
+            "melix-qwen3-tts-mlx",
+        ])
+
+        await viewModel.performAudioSetupAction(action)
+
+        let downloadRequests = await client.recordedModelOperationRequests.filter { $0.operation == "download" }
+        #expect(downloadRequests.map(\.modelID) == ["melix-whisper-mlx", "melix-kokoro-mlx"])
+    }
+
+    @Test("audio setup action state normalizes ids and prompt round trips multi-model scope")
+    @MainActor
+    func audioSetupActionStateNormalizesIDsAndPromptRoundTrips() {
+        let action = RuntimeAudioSetupActionState(
+            modelID: " melix-fallback ",
+            alias: "Audio Models",
+            detail: "Download selected audio models.",
+            actionTitle: "Start Downloads",
+            kind: .downloadModel,
+            modelIDs: [" melix-a ", "", "melix-a", "melix-b"]
+        )
+        let prompt = RuntimeAudioSetupPromptState(action: action)
+        let readyChoice = RuntimeAudioSetupModelChoiceState(
+            modelID: "melix-ready",
+            alias: "Ready",
+            capabilityKey: "stt",
+            capabilityTitle: "Speech to Text",
+            setupRole: "recommended",
+            setupPriority: 0,
+            isRecommended: true,
+            isSelected: true,
+            isReady: true,
+            isActive: false,
+            isResumeReady: false,
+            progressText: ""
+        )
+        let activeChoice = RuntimeAudioSetupModelChoiceState(
+            modelID: "melix-active",
+            alias: "Active",
+            capabilityKey: "tts",
+            capabilityTitle: "Text to Speech",
+            setupRole: "recommended",
+            setupPriority: 0,
+            isRecommended: true,
+            isSelected: true,
+            isReady: false,
+            isActive: true,
+            isResumeReady: false,
+            progressText: ""
+        )
+        let resumeChoice = RuntimeAudioSetupModelChoiceState(
+            modelID: "melix-resume",
+            alias: "Resume",
+            capabilityKey: "audio",
+            capabilityTitle: "Audio",
+            setupRole: "optional",
+            setupPriority: 20,
+            isRecommended: false,
+            isSelected: false,
+            isReady: false,
+            isActive: false,
+            isResumeReady: true,
+            progressText: "32%"
+        )
+        let setup = RuntimeAudioSetupState(
+            phase: .modelsRequired,
+            title: "Audio Models Required",
+            summary: "0 of 2 recommended audio models ready.",
+            detail: "Recommended setup keeps one STT model and one TTS model ready.",
+            primaryAction: action,
+            capabilityGroups: [],
+            recommendedModelIDs: action.modelIDs,
+            selectedModelIDs: action.modelIDs,
+            readySelectedModelIDs: []
+        )
+
+        #expect(action.modelID == "melix-a")
+        #expect(action.modelIDs == ["melix-a", "melix-b"])
+        #expect(action.id == "melix-a,melix-b:download_model")
+        #expect(prompt.action.modelIDs == ["melix-a", "melix-b"])
+        #expect(prompt.action.id == action.id)
+        #expect(readyChoice.statusText == "Ready")
+        #expect(activeChoice.statusText == "Downloading")
+        #expect(resumeChoice.statusText == "Resume available")
+        #expect(setup.id == "models_required")
+    }
+
+    @Test("audio setup state falls back to backend metadata and surfaces active download progress")
+    @MainActor
+    func audioSetupStateUsesFallbackMetadataAndActiveDownloadProgress() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-audio-setup-fallback-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let activeEntry = makeAudioDownloadQueueEntryState(
+            sourceModel: "melix-fallback-stt-a",
+            status: "running",
+            pct: 0.5
+        )
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .models,
+                selectedToolSection: .downloads,
+                selectedServerSessionID: "",
+                serverSessions: [],
+                downloadQueue: [activeEntry]
+            )
+        )
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    ModelCatalog.devTextModel(),
+                    makeFallbackAudioSetupModel(
+                        modelID: "melix-fallback-stt-a",
+                        alias: "Fallback STT A",
+                        kind: "transcription",
+                        backendID: "mlx_audio.custom"
+                    ),
+                    makeFallbackAudioSetupModel(
+                        modelID: "melix-fallback-stt-b",
+                        alias: "Fallback STT B",
+                        kind: "transcription",
+                        backendID: "mlx_audio.custom"
+                    ),
+                    makeFallbackAudioSetupModel(
+                        modelID: "melix-fallback-tts",
+                        alias: "Fallback TTS",
+                        kind: "speech",
+                        backendID: "mlx_audio.custom"
+                    ),
+                    makeFallbackAudioSetupModel(
+                        modelID: "melix-fallback-audio",
+                        alias: "Fallback Audio",
+                        kind: "audio",
+                        backendID: "mlx_audio.custom"
+                    ),
+                    makeFallbackAudioSetupModel(
+                        modelID: " ",
+                        alias: "Invalid Audio",
+                        kind: "audio",
+                        backendID: "mlx_audio.custom"
+                    ),
+                ]
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client, operatorSessionStore: operatorSessionStore)
+        await viewModel.start()
+
+        let setup = try #require(viewModel.audioSetupState)
+        let flatModels = setup.capabilityGroups.flatMap(\.models)
+        let activeChoice = try #require(flatModels.first { $0.modelID == "melix-fallback-stt-a" })
+
+        #expect(setup.phase == .modelsDownloading)
+        #expect(setup.capabilityGroups.map(\.key) == ["stt", "tts", "audio"])
+        #expect(setup.capabilityGroups.map(\.title) == ["Speech to Text", "Text to Speech", "Audio"])
+        #expect(setup.recommendedModelIDs == [
+            "melix-fallback-stt-a",
+            "melix-fallback-tts",
+            "melix-fallback-audio",
+        ])
+        #expect(setup.primaryAction?.modelIDs == [
+            "melix-fallback-tts",
+            "melix-fallback-audio",
+        ])
+        #expect(activeChoice.statusText.contains("50"))
+        #expect(flatModels.contains { $0.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } == false)
+    }
+
+    @Test("audio setup downloads no-op for empty scope and skip ready selected models")
+    @MainActor
+    func audioSetupDownloadNoopsForEmptyAndSkipsReadyModels() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [ModelCatalog.devTextModel()]
+                    + makeAudioSetupCatalogModels(
+                        runtimePackState: "installed",
+                        modelState: "catalog_default",
+                        managedLocalModelIDs: ["melix-whisper-mlx", "melix-kokoro-mlx"]
+                    )
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeModelOpsRegistrySnapshotManifestJSON(roots: [], downloads: [])
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        await viewModel.downloadAudioModels(modelIDs: [])
+        #expect(await client.recordedModelOperationRequests.isEmpty)
+
+        await viewModel.downloadAudioModels(modelIDs: ["melix-whisper-mlx", "melix-kokoro-mlx"])
+
+        let requests = await client.recordedModelOperationRequests
+        #expect(requests.map(\.operation) == ["registry_snapshot"])
+        #expect(requests.contains { $0.operation == "download" } == false)
+        #expect(viewModel.audioSetupState == nil)
     }
 
     @Test("runtime endpoint projection drives primary model and integration exports")
@@ -3368,6 +4462,78 @@ struct RuntimeViewModelTests {
         })
     }
 
+    @Test("model registry ready to run hides internal dev seed models")
+    @MainActor
+    func modelRegistryReadyToRunHidesInternalDevSeedModels() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let visibleModelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-embed",
+                        kind: "embedding",
+                        state: .modelPinned,
+                        features: ["embeddings"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-rerank",
+                        kind: "rerank",
+                        state: .modelPinned,
+                        features: ["rerank"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-model-ops",
+                        kind: "model_ops",
+                        state: .modelDiscovered,
+                        features: ["quantize", "download", "upload"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-ocr",
+                        kind: "ocr",
+                        state: .modelPinned,
+                        features: ["ocr", "vision"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-vlm",
+                        kind: "vlm",
+                        state: .modelWarm,
+                        features: ["vlm", "text", "chat"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-transcribe",
+                        kind: "transcription",
+                        state: .modelPinned,
+                        features: ["audio", "transcription"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-speech",
+                        kind: "speech",
+                        state: .modelPinned,
+                        features: ["audio", "speech"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-image",
+                        kind: "image",
+                        state: .modelPinned,
+                        features: ["image_generate", "image_edit", "artifact_jobs"]
+                    ),
+                    makeModelSummary(modelID: visibleModelID, state: .modelWarm),
+                ]
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let readyToRunIDs = viewModel.modelRegistryEntries
+            .filter { $0.availabilityGroup == .readyToRun }
+            .map(\.title)
+        #expect(readyToRunIDs == [visibleModelID])
+    }
+
     @Test("hub search result size text uses raw byte values")
     func hubSearchResultSizeTextUsesRawByteValues() {
         let zeroSizedResult = RuntimeHubModelSearchResultState(
@@ -3481,6 +4647,62 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedModelOperationRequests.contains {
             $0.operation == "download" && $0.modelID == heavyModel.repoID
         })
+    }
+
+    @Test("model hub local provider target excludes remote providers and records target metadata")
+    @MainActor
+    func modelHubLocalProviderTargetExcludesRemoteProvidersAndRecordsTargetMetadata() async throws {
+        let modelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: modelID, state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: "gemini",
+                    title: "Gemini",
+                    providerPreset: .gemini,
+                    providerKind: "gemini-generative-language",
+                    baseURL: "https://generativelanguage.googleapis.com/v1beta",
+                    defaultModelID: "gemini-2.5-flash",
+                    timeoutSeconds: 120,
+                    rateLimitPerMinute: 0,
+                    credentialRef: RemoteServerStore.credentialRef(for: "gemini"),
+                    apiKeyHint: "AIza...cret",
+                    healthStatus: "healthy"
+                ),
+            ]
+        )
+        let viewModel = RuntimeViewModel(client: client, remoteServerStore: remoteStore)
+        await viewModel.start()
+
+        let localTargets = viewModel.modelHubProviderTargets
+        let hasRemoteTarget = viewModel.providerTargets.contains {
+            $0.kind == .remoteServer && $0.serverID == "gemini"
+        }
+        let includesRemoteHubTarget = localTargets.contains { $0.id == "remote:gemini" }
+        #expect(hasRemoteTarget)
+        #expect(localTargets.map(\.providerID) == ["server-session-1"])
+        #expect(includesRemoteHubTarget == false)
+        #expect(viewModel.selectedModelHubProviderTarget?.providerID == "server-session-1")
+
+        viewModel.selectModelHubProviderTarget(id: "remote:gemini")
+        #expect(viewModel.selectedModelHubProviderTarget?.providerID == "server-session-1")
+
+        await viewModel.downloadHubModel(repoID: modelID)
+
+        let request = try #require(await client.recordedModelOperationRequests.first {
+            $0.operation == "download"
+        })
+        #expect(request.ext["melix.provider_target_kind"] == "local_provider")
+        #expect(request.ext["melix.local_provider_id"] == "server-session-1")
+        #expect(request.ext["melix.local_provider_title"] == "Primary Provider")
+        #expect(request.ext["melix.local_provider_model_id"] == modelID)
     }
 
     @Test("resume download reuses original output directory and mirror before refreshing queue state")
@@ -6189,7 +7411,7 @@ struct RuntimeViewModelTests {
         await imageOnlyViewModel.runBench()
 
         #expect(await imageOnlyClient.recordedBenchRequests.isEmpty)
-        #expect(imageOnlyViewModel.lastError == "Select a local running server before running Benchmark.")
+        #expect(imageOnlyViewModel.lastError == "Select a local running provider before running Benchmark.")
     }
 
     @Test("capability guards surface unsupported targets before benchmark evaluation and training dispatch")
@@ -6786,53 +8008,53 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
 
-        #expect(viewModel.serverTargets.map(\.kind) == [
+        #expect(viewModel.providerTargets.map(\.kind) == [
             .localServer,
             .remoteServer,
         ])
-        #expect(viewModel.serverTargets.map(\.badgeText) == [
+        #expect(viewModel.providerTargets.map(\.badgeText) == [
             "Local",
             "Remote",
         ])
-        #expect(viewModel.diagnosticsServerTargets.map(\.kind) == [
+        #expect(viewModel.diagnosticsProviderTargets.map(\.kind) == [
             .localServer,
             .remoteServer,
             .startNewServer,
         ])
-        #expect(viewModel.diagnosticsServerTargets.contains { target in
+        #expect(viewModel.diagnosticsProviderTargets.contains { target in
             target.kind == .localServer
                 && target.modelID == localModelID
                 && target.detailText.contains("127.0.0.1")
         })
-        #expect(viewModel.diagnosticsServerTargets.contains { target in
+        #expect(viewModel.diagnosticsProviderTargets.contains { target in
             target.kind == .remoteServer
                 && target.modelID == "google/gemma-4-31B-it"
                 && target.detailText.contains("api-inference.bitdeer.ai")
         })
 
-        let remoteTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .remoteServer })
-        viewModel.selectDiagnosticsServerTarget(id: remoteTarget.id)
-        #expect(viewModel.diagnosticsBenchmarkUnavailableText == "Remote Server benchmark is not supported yet; select a local running server.")
+        let remoteTarget = try #require(viewModel.diagnosticsProviderTargets.first { $0.kind == .remoteServer })
+        viewModel.selectDiagnosticsProviderTarget(id: remoteTarget.id)
+        #expect(viewModel.diagnosticsBenchmarkUnavailableText == "Remote Provider benchmark is not supported yet; select a local running provider.")
 
         await viewModel.runBench()
 
         #expect(await client.recordedBenchRequests.isEmpty)
-        #expect(viewModel.lastError == "Remote Server benchmark is not supported yet; select a local running server.")
+        #expect(viewModel.lastError == "Remote Provider benchmark is not supported yet; select a local running provider.")
 
-        let startNewTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .startNewServer })
+        let startNewTarget = try #require(viewModel.diagnosticsProviderTargets.first { $0.kind == .startNewServer })
         let serverSessionCount = viewModel.serverSessions.count
-        viewModel.selectDiagnosticsServerTarget(id: startNewTarget.id)
+        viewModel.selectDiagnosticsProviderTarget(id: startNewTarget.id)
 
         #expect(viewModel.selectedSurface == .server)
-        #expect(viewModel.isCreatingServerTarget)
-        #expect(viewModel.selectedServerCreationKind == .localServer)
+        #expect(viewModel.isCreatingProviderTarget)
+        #expect(viewModel.selectedProviderCreationKind == .localServer)
         #expect(viewModel.serverSessions.count == serverSessionCount)
         #expect(await client.recordedBenchRequests.isEmpty)
     }
 
-    @Test("diagnostics local server target drives benchmark matrix and evaluation requests")
+    @Test("diagnostics local provider target drives benchmark matrix and evaluation requests")
     @MainActor
-    func diagnosticsLocalServerTargetDrivesBenchmarkMatrixAndEvaluationRequests() async throws {
+    func diagnosticsLocalProviderTargetDrivesBenchmarkMatrixAndEvaluationRequests() async throws {
         let client = FakeControlPlaneXPCClient()
         let localModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
         let alternateModelID = "mlx-community/Qwen3.5-1.5B-OptiQ-4bit"
@@ -6848,8 +8070,8 @@ struct RuntimeViewModelTests {
         )
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
-        let localTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .localServer })
-        viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+        let localTarget = try #require(viewModel.diagnosticsProviderTargets.first { $0.kind == .localServer })
+        viewModel.selectDiagnosticsProviderTarget(id: localTarget.id)
         viewModel.selectedBenchmarkModelID = alternateModelID
         viewModel.selectedEvaluationModelID = alternateModelID
         viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
@@ -6913,8 +8135,8 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
-        let localTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .localServer })
-        viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+        let localTarget = try #require(viewModel.diagnosticsProviderTargets.first { $0.kind == .localServer })
+        viewModel.selectDiagnosticsProviderTarget(id: localTarget.id)
 
         #expect(localTarget.detailText.contains("profile Throughput"))
         #expect(viewModel.diagnosticsTargetSummaryText.contains("profile Throughput"))
@@ -6953,8 +8175,8 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
 
         await viewModel.start()
-        let localTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .localServer })
-        viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+        let localTarget = try #require(viewModel.diagnosticsProviderTargets.first { $0.kind == .localServer })
+        viewModel.selectDiagnosticsProviderTarget(id: localTarget.id)
         viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
 
         await viewModel.runBench()
@@ -6981,10 +8203,46 @@ struct RuntimeViewModelTests {
                 models: [
                     makeModelSummary(modelID: "melix-dev-text", state: .modelWarm),
                     makeCapabilityModelSummary(
+                        modelID: "melix-dev-embed",
+                        kind: "embedding",
+                        state: .modelPinned,
+                        features: ["embeddings"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-rerank",
+                        kind: "rerank",
+                        state: .modelPinned,
+                        features: ["rerank"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-ocr",
+                        kind: "ocr",
+                        state: .modelPinned,
+                        features: ["ocr", "vision"]
+                    ),
+                    makeCapabilityModelSummary(
                         modelID: "melix-dev-vlm",
                         kind: "vlm",
                         state: .modelWarm,
                         features: ["vlm", "text", "chat"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-transcribe",
+                        kind: "transcription",
+                        state: .modelPinned,
+                        features: ["audio", "transcription"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-speech",
+                        kind: "speech",
+                        state: .modelPinned,
+                        features: ["audio", "speech"]
+                    ),
+                    makeCapabilityModelSummary(
+                        modelID: "melix-dev-image",
+                        kind: "image",
+                        state: .modelPinned,
+                        features: ["image_generate", "image_edit", "artifact_jobs"]
                     ),
                 ]
             )
@@ -7005,14 +8263,24 @@ struct RuntimeViewModelTests {
         #expect(viewModel.serverModelOptions.map(\.modelID) == [
             "unsloth/gemma-4-E4B-it-MLX-8bit",
         ])
-        #expect(viewModel.diagnosticsServerTargets.contains { target in
-            target.modelID == "melix-dev-text" || target.modelID == "melix-dev-vlm"
-        } == false)
+        let internalDevModelIDs = Set([
+            "melix-dev-text",
+            "melix-dev-embed",
+            "melix-dev-rerank",
+            "melix-dev-model-ops",
+            "melix-dev-ocr",
+            "melix-dev-vlm",
+            "melix-dev-transcribe",
+            "melix-dev-speech",
+            "melix-dev-image",
+        ])
+        #expect(viewModel.serverModelOptions.contains { internalDevModelIDs.contains($0.modelID) } == false)
+        #expect(viewModel.diagnosticsProviderTargets.contains { internalDevModelIDs.contains($0.modelID) } == false)
 
         viewModel.createServerSession()
 
         #expect(viewModel.selectedServerSession?.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit")
-        #expect(viewModel.serverTargets.contains { target in
+        #expect(viewModel.providerTargets.contains { target in
             target.kind == .localServer && target.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit"
         })
     }
@@ -7071,9 +8339,9 @@ struct RuntimeViewModelTests {
         })
     }
 
-    @Test("local server creation refreshes ready model options from registry when catalog is empty")
+    @Test("local provider creation refreshes ready model options from registry when catalog is empty")
     @MainActor
-    func localServerCreationRefreshesReadyModelOptionsFromRegistryWhenCatalogIsEmpty() async throws {
+    func localProviderCreationRefreshesReadyModelOptionsFromRegistryWhenCatalogIsEmpty() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-menubar-server-model-refresh-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -7112,7 +8380,7 @@ struct RuntimeViewModelTests {
 
         #expect(viewModel.serverModelOptions.isEmpty)
 
-        viewModel.beginServerCreation(kind: .localServer)
+        viewModel.beginProviderCreation(kind: .localServer)
 
         #expect(viewModel.isRefreshingServerModelOptions)
         try await waitForRuntimeViewModelCondition("expected registry-backed server model options to refresh") {
@@ -7148,23 +8416,58 @@ struct RuntimeViewModelTests {
         )
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
-        viewModel.beginServerCreation()
+        viewModel.beginProviderCreation()
         viewModel.newLocalServerTitleDraft = "   "
         viewModel.newLocalServerModelID = modelID
         let sessionCount = viewModel.serverSessions.count
-        let targetCount = viewModel.serverTargets.count
+        let targetCount = viewModel.providerTargets.count
 
         viewModel.createLocalServerFromDraft()
 
         #expect(viewModel.serverSessions.count == sessionCount)
-        #expect(viewModel.serverTargets.count == targetCount)
-        #expect(viewModel.isCreatingServerTarget)
-        #expect(viewModel.lastError == "Local Server requires a session name.")
+        #expect(viewModel.providerTargets.count == targetCount)
+        #expect(viewModel.isCreatingProviderTarget)
+        #expect(viewModel.lastError == "Local Provider requires a session name.")
     }
 
-    @Test("server target rows expose session model endpoint and runtime summary")
+    @Test("local provider draft create and start triggers lifecycle start")
     @MainActor
-    func serverTargetRowsExposeSessionModelEndpointAndRuntimeSummary() async throws {
+    func localProviderDraftCreateAndStartTriggersLifecycleStart() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let modelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: modelID, state: .modelWarm)]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.beginProviderCreation()
+        viewModel.newLocalServerTitleDraft = "Qwen Local"
+        viewModel.newLocalServerModelID = modelID
+        viewModel.newLocalServerHostDraft = "127.0.0.1"
+        viewModel.newLocalServerPortDraft = 18080
+
+        viewModel.createAndStartLocalServerFromDraft()
+
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+        var actions = await client.recordedActions
+        for _ in 0..<200 where actions.contains("server.start:\(serverSessionID)") == false {
+            try await Task.sleep(for: .milliseconds(10))
+            actions = await client.recordedActions
+        }
+
+        #expect(actions.contains("server.start:\(serverSessionID)"))
+        #expect(actions.contains("gateway.config:\(serverSessionID)"))
+        #expect(actions.contains("serving-defaults.apply:\(serverSessionID)"))
+        #expect(viewModel.isCreatingProviderTarget == false)
+        #expect(viewModel.selectedServerSession?.title == "Qwen Local")
+    }
+
+    @Test("provider target rows expose session model endpoint and runtime summary")
+    @MainActor
+    func providerTargetRowsExposeSessionModelEndpointAndRuntimeSummary() async throws {
         let client = FakeControlPlaneXPCClient()
         let modelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
         var model = makeModelSummary(modelID: modelID, state: .modelWarm)
@@ -7186,7 +8489,7 @@ struct RuntimeViewModelTests {
         )
 
         let selectedServerID = try #require(viewModel.selectedServerSession?.id)
-        let target = try #require(viewModel.serverTargets.first { $0.kind == .localServer && $0.serverID == selectedServerID })
+        let target = try #require(viewModel.providerTargets.first { $0.kind == .localServer && $0.serverID == selectedServerID })
         #expect(target.title == "Qwen Local")
         #expect(target.badgeText == "Local")
         #expect(target.detailText == "Qwen 3.5 0.8B • 127.0.0.1:18080")
@@ -7242,9 +8545,9 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedModelOperationRequests.filter { $0.operation == "activate_adapter" }.isEmpty)
     }
 
-    @Test("diagnostics remote server target drives supported remote evaluation only")
+    @Test("diagnostics remote provider target drives supported remote evaluation only")
     @MainActor
-    func diagnosticsRemoteServerTargetDrivesSupportedRemoteEvaluationOnly() async throws {
+    func diagnosticsRemoteProviderTargetDrivesSupportedRemoteEvaluationOnly() async throws {
         let client = FakeControlPlaneXPCClient()
         await client.configureSnapshot(
             makeSnapshot(
@@ -7281,11 +8584,11 @@ struct RuntimeViewModelTests {
             evaluationPromptStore: FakeEvaluationPromptStore()
         )
         await viewModel.start()
-        let remoteTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .remoteServer })
-        viewModel.selectDiagnosticsServerTarget(id: remoteTarget.id)
+        let remoteTarget = try #require(viewModel.diagnosticsProviderTargets.first { $0.kind == .remoteServer })
+        viewModel.selectDiagnosticsProviderTarget(id: remoteTarget.id)
 
         viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
-        #expect(viewModel.diagnosticsEvaluationUnavailableText == "Remote Server evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running server.")
+        #expect(viewModel.diagnosticsEvaluationUnavailableText == "Remote Provider evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running provider.")
         await viewModel.runEvaluation()
         #expect(await client.recordedEvaluationRequests.isEmpty)
 
@@ -7364,7 +8667,7 @@ struct RuntimeViewModelTests {
             entry.id == "local:unsloth/gemma-4-E4B-it-MLX-8bit"
                 && entry.availabilityGroup == .readyToRun
         })
-        #expect(viewModel.diagnosticsServerTargets.contains { target in
+        #expect(viewModel.diagnosticsProviderTargets.contains { target in
             target.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit"
         } == false)
     }
@@ -7379,12 +8682,12 @@ struct RuntimeViewModelTests {
         viewModel.selectedBenchmarkSuiteIDs = ["smoke", "latency"]
 
         #expect(viewModel.benchmarkTargetTaskKind == "text-generation")
-        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local server for Benchmark.")
+        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local provider for Benchmark.")
 
         await viewModel.runBench()
 
         #expect(await client.recordedBenchRequests.isEmpty)
-        #expect(viewModel.lastError == "Select a local running server before running Benchmark.")
+        #expect(viewModel.lastError == "Select a local running provider before running Benchmark.")
     }
 
     @Test("benchmark target summaries and task inference cover missing running server fallback")
@@ -7407,7 +8710,7 @@ struct RuntimeViewModelTests {
         await viewModel.start()
 
         #expect(viewModel.benchmarkTargetTaskKind == "text-generation")
-        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local server for Benchmark.")
+        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local provider for Benchmark.")
     }
 
     @Test("benchmark task inference covers catalog OCR and image model families")
@@ -7438,10 +8741,10 @@ struct RuntimeViewModelTests {
         viewModel.selectedBenchmarkModelID = "melix-dev-image"
         #expect(viewModel.benchmarkTargetTaskKind == "image-text-to-image")
         #expect(viewModel.benchmarkTargetTaskTitle == "Image + Text to Image")
-        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local server for Benchmark.")
+        #expect(viewModel.benchmarkTargetSummaryText == "Start or select a local provider for Benchmark.")
     }
 
-    @Test("benchmark run guard rails require a local running server target")
+    @Test("benchmark run guard rails require a local running provider target")
     @MainActor
     func benchmarkRunGuardRailsRequireExplicitTargets() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -7462,7 +8765,7 @@ struct RuntimeViewModelTests {
 
         viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
         await viewModel.runBench()
-        #expect(viewModel.lastError == "Select a local running server before running Benchmark.")
+        #expect(viewModel.lastError == "Select a local running provider before running Benchmark.")
 
         #expect(await client.recordedBenchRequests.isEmpty)
     }
@@ -7670,7 +8973,7 @@ struct RuntimeViewModelTests {
         missingRepoViewModel.selectedBenchmarkPresentationMode = .matrix
         missingRepoViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
         await missingRepoViewModel.runBenchMatrix()
-        #expect(missingRepoViewModel.lastError == "Select a local running server before running Benchmark.")
+        #expect(missingRepoViewModel.lastError == "Select a local running provider before running Benchmark.")
 
         let imageClient = FakeControlPlaneXPCClient()
         await imageClient.configureSnapshot(
@@ -7685,7 +8988,7 @@ struct RuntimeViewModelTests {
         imageViewModel.selectedBenchmarkPresentationMode = .matrix
         imageViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
         await imageViewModel.runBenchMatrix()
-        #expect(imageViewModel.lastError == "Select a local running server before running Benchmark.")
+        #expect(imageViewModel.lastError == "Select a local running provider before running Benchmark.")
 
         let requestsClient = FakeControlPlaneXPCClient()
         await requestsClient.configureSnapshot(
@@ -8278,7 +9581,7 @@ struct RuntimeViewModelTests {
         let operatorStore = OperatorSessionStore(melixHome: melixHome)
         let initialServerSession = DesktopServerSessionState(
             id: "server-session-1",
-            title: "Primary Server",
+            title: "Primary Provider",
             modelID: testReadyModelID,
             host: "127.0.0.1",
             port: 18_080
@@ -8320,7 +9623,7 @@ struct RuntimeViewModelTests {
                   "server_sessions": [
                     {
                       "id": "server-session-1",
-                      "title": "Primary Server",
+                      "title": "Primary Provider",
                       "model_id": "\(modelID)",
                       "host": "127.0.0.1",
                       "port": 18080,
@@ -9000,8 +10303,8 @@ struct RuntimeViewModelTests {
         viewModel.reloadRemoteServers()
         viewModel.selectedEvaluationSemanticJudgeRemoteServerID = "judge"
         viewModel.evaluationSemanticJudgeModelID = "judge-model"
-        let localTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .localServer })
-        viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+        let localTarget = try #require(viewModel.diagnosticsProviderTargets.first { $0.kind == .localServer })
+        viewModel.selectDiagnosticsProviderTarget(id: localTarget.id)
         viewModel.selectedEvaluationMode = .compare
         viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
         viewModel.evaluationScoringMode = "multiple_choice_accuracy"
@@ -9245,8 +10548,8 @@ struct RuntimeViewModelTests {
             remoteServerStore: remoteStore
         )
         await remoteViewModel.start()
-        let remoteTarget = try #require(remoteViewModel.diagnosticsServerTargets.first { $0.kind == .remoteServer })
-        remoteViewModel.selectDiagnosticsServerTarget(id: remoteTarget.id)
+        let remoteTarget = try #require(remoteViewModel.diagnosticsProviderTargets.first { $0.kind == .remoteServer })
+        remoteViewModel.selectDiagnosticsProviderTarget(id: remoteTarget.id)
         remoteViewModel.selectedEvaluationSuiteIDs = ["event_extraction"]
 
         await remoteViewModel.runEvaluation()
@@ -9287,7 +10590,7 @@ struct RuntimeViewModelTests {
 
         await audioOnlyViewModel.runEvaluation()
 
-        #expect(audioOnlyViewModel.lastError == "Select a running server before running Evaluation.")
+        #expect(audioOnlyViewModel.lastError == "Select a running provider before running Evaluation.")
     }
 
     @Test("desktop alignment training routes CLI backed runs through alignment train")
@@ -10160,7 +11463,7 @@ struct RuntimeViewModelTests {
 
         await viewModel.activateLatestAdapter()
 
-        let disabledReason = "Fused activation is disabled for fake_relora: non_mergeable_adapter. Use Adapter-backed Runtime instead."
+        let disabledReason = "Fused activation is disabled for fake_relora: non_mergeable_adapter. Use Adapter-backed Serving instead."
         #expect(viewModel.lastError == disabledReason)
         #expect(viewModel.loraWorkflowStatus?.phase == .failed)
         #expect(viewModel.loraWorkflowStatus?.detail == disabledReason)
@@ -10447,8 +11750,8 @@ struct RuntimeViewModelTests {
         diagnosticsViewModel.selectedEvaluationSuiteIDs = ["mmlu"]
         #expect(diagnosticsViewModel.serverSessions.map(\.id).contains("server-session-1"))
         #expect(diagnosticsViewModel.serverSessions.first?.lifecycle == .running)
-        #expect(diagnosticsViewModel.serverTargets.contains { $0.kind == .localServer && $0.isRunning })
-        #expect(diagnosticsViewModel.diagnosticsServerTargets.contains { $0.kind == .localServer })
+        #expect(diagnosticsViewModel.providerTargets.contains { $0.kind == .localServer && $0.isRunning })
+        #expect(diagnosticsViewModel.diagnosticsProviderTargets.contains { $0.kind == .localServer })
 
         diagnosticsViewModel.prepareSelectedLoraTrainingJobFollowUp(.benchmark)
         #expect(diagnosticsViewModel.diagnosticsBenchmarkUnavailableText == nil)
@@ -12039,6 +13342,7 @@ struct RuntimeViewModelTests {
         ] + tokenFragments.map(ControlPlaneChatStreamEvent.tokenDelta) + [
             .completed(finishReason: "stop", assistantText: assistantText, reasoningText: ""),
         ]
+        let coalescedRenderBudget = tokenFragments.count / 10
         await client.configureChatEvents(streamEvents)
         let metrics = MenuBarMetricsStore()
         let viewModel = RuntimeViewModel(client: client, metrics: metrics)
@@ -12064,14 +13368,17 @@ struct RuntimeViewModelTests {
 
         let finalAssistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
         let metricsSnapshot = await metrics.snapshot()
+        let presentationFlushCount = try #require(metricsSnapshot["menu.chat_presentation_flush_count"])
         #expect(finalAssistantEntry.body == assistantText)
         #expect(completedCallbackAssistantBody == assistantText)
-        #expect(visibleAssistantBodies.count <= 8)
+        #expect(visibleAssistantBodies.count < tokenFragments.count)
+        #expect(visibleAssistantBodies.count <= coalescedRenderBudget)
         #expect(metricsSnapshot["menu.chat_stream_event_count"] == Double(streamEvents.count))
         #expect(metricsSnapshot["menu.chat_token_delta_count"] == Double(tokenFragments.count))
         #expect(metricsSnapshot["menu.chat_stream_transcript_bytes"] == Double(assistantText.utf8.count))
         #expect(metricsSnapshot["menu.chat_transcript_parity_mismatch_count"] == 0)
-        #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) <= 8)
+        #expect(presentationFlushCount < Double(tokenFragments.count))
+        #expect(presentationFlushCount <= Double(coalescedRenderBudget))
     }
 
     @Test("chat prompt creates a transient assistant pending row before the first token")
@@ -13345,7 +14652,7 @@ struct RuntimeViewModelTests {
         )
         let adapterRow = makeRuntimeModelRow(adapterBacked)
         #expect(adapterRow.runtimeModeText == "adapter")
-        #expect(adapterRow.runtimeModeAccessibilityLabel == "Runtime mode: adapter-backed")
+        #expect(adapterRow.runtimeModeAccessibilityLabel == "Serving mode: adapter-backed")
 
         // Fused derived model: short "fused" tag + explicit a11y.
         let fused = makeModelSummary(
@@ -13355,7 +14662,7 @@ struct RuntimeViewModelTests {
         )
         let fusedRow = makeRuntimeModelRow(fused)
         #expect(fusedRow.runtimeModeText == "fused")
-        #expect(fusedRow.runtimeModeAccessibilityLabel == "Runtime mode: fused derived model")
+        #expect(fusedRow.runtimeModeAccessibilityLabel == "Serving mode: fused derived model")
 
         // Base / legacy models: both fields empty so the view hides the
         // badge and VoiceOver announces nothing for this element.
@@ -13373,7 +14680,7 @@ struct RuntimeViewModelTests {
         )
         let unknownRow = makeRuntimeModelRow(unknown)
         #expect(unknownRow.runtimeModeText == "?")
-        #expect(unknownRow.runtimeModeAccessibilityLabel == "Runtime mode: unrecognized")
+        #expect(unknownRow.runtimeModeAccessibilityLabel == "Serving mode: unrecognized")
     }
 }
 
@@ -14109,6 +15416,74 @@ private func makeRuntimeDownloadQueueEntryState(
         stallReason: stallReason,
         resumeReady: resumeReady
     )
+}
+
+private func makeAudioDownloadQueueEntryState(
+    sourceModel: String,
+    status: String,
+    pct: Double = 0.5,
+    outputDir: String = "/tmp/melix-audio-models"
+) -> RuntimeDownloadQueueEntryState {
+    let resolvedOutputDir = "\(outputDir)/\(sourceModel)"
+    return RuntimeDownloadQueueEntryState(
+        jobID: "model-ops-\(sourceModel)",
+        sourceModel: sourceModel,
+        status: status,
+        stage: "download",
+        pct: pct,
+        outputDir: resolvedOutputDir,
+        outputPath: "\(resolvedOutputDir)/download.artifact",
+        partialPath: "\(resolvedOutputDir)/download.artifact.partial",
+        statePath: "\(resolvedOutputDir)/download.state.json",
+        selectedMirror: "",
+        downloadedBytes: 1024,
+        totalBytes: 2048,
+        resumeUsed: false,
+        resumeFromBytes: 0,
+        retryCount: 0,
+        stallDetectionCount: 0,
+        stallReason: "",
+        resumeReady: false
+    )
+}
+
+private func makeAudioSetupCatalogModels(
+    runtimePackState: String,
+    modelState: String,
+    managedLocalModelIDs: Set<String> = []
+) -> [Melix_Controlplane_V1_ModelSummary] {
+    [
+        ModelCatalog.mlxWhisperModel(),
+        ModelCatalog.mlxParakeetModel(),
+        ModelCatalog.mlxKokoroModel(),
+        ModelCatalog.mlxQwen3TTSModel(),
+    ].map { model in
+        var model = model
+        model.settings.ext["melix.audio.runtime_pack_state"] = runtimePackState
+        model.settings.ext["melix.audio.runtime_pack_id"] = "melix-audio-runtime-pack"
+        let resolvedModelState = managedLocalModelIDs.contains(model.modelID) ? "managed_local" : modelState
+        model.settings.ext["melix.audio.model_state"] = resolvedModelState
+        if resolvedModelState == "managed_local" {
+            model.settings.ext["melix.model_path"] = "/Users/test/.melix/models/audio/\(model.modelID)"
+        }
+        return model
+    }
+}
+
+private func makeFallbackAudioSetupModel(
+    modelID: String,
+    alias: String,
+    kind: String,
+    backendID: String
+) -> Melix_Controlplane_V1_ModelSummary {
+    var model = makeModelSummary(modelID: modelID, state: .modelDiscovered)
+    model.kind = kind
+    model.settings.alias = alias
+    model.settings.ext["melix.audio.backend_id"] = backendID
+    model.settings.ext["melix.audio.runtime_pack_state"] = "installed"
+    model.settings.ext["melix.audio.runtime_pack_id"] = "melix-audio-runtime-pack"
+    model.settings.ext["melix.audio.model_state"] = "catalog_default"
+    return model
 }
 
 private func makeRegistrySnapshotManifest(

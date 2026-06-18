@@ -72,6 +72,40 @@ public enum RemoteServerProviderPreset: String, Codable, CaseIterable, Sendable,
     }
 }
 
+public enum RemoteServerToolSupportMode: String, Codable, CaseIterable, Sendable, Identifiable {
+    case auto
+    case forceOn = "force_on"
+    case forceOff = "force_off"
+
+    public var id: String {
+        rawValue
+    }
+
+    public static func normalized(_ value: String) -> RemoteServerToolSupportMode? {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "auto":
+            return .auto
+        case "force-on", "force_on":
+            return .forceOn
+        case "force-off", "force_off":
+            return .forceOff
+        default:
+            return nil
+        }
+    }
+
+    public var commandValue: String {
+        switch self {
+        case .auto:
+            return "auto"
+        case .forceOn:
+            return "force-on"
+        case .forceOff:
+            return "force-off"
+        }
+    }
+}
+
 public struct RemoteServer: Codable, Equatable, Sendable, Identifiable {
     public let id: String
     public let title: String
@@ -81,6 +115,7 @@ public struct RemoteServer: Codable, Equatable, Sendable, Identifiable {
     public let defaultModelID: String
     public let timeoutSeconds: UInt32
     public let rateLimitPerMinute: UInt32
+    public let toolSupportMode: RemoteServerToolSupportMode
     public let credentialRef: String
     public let apiKeyHint: String
     public let healthStatus: String
@@ -96,6 +131,7 @@ public struct RemoteServer: Codable, Equatable, Sendable, Identifiable {
         defaultModelID: String,
         timeoutSeconds: UInt32 = 60,
         rateLimitPerMinute: UInt32 = 0,
+        toolSupportMode: RemoteServerToolSupportMode = .auto,
         credentialRef: String,
         apiKeyHint: String = "",
         healthStatus: String = "unknown",
@@ -110,6 +146,7 @@ public struct RemoteServer: Codable, Equatable, Sendable, Identifiable {
         self.defaultModelID = defaultModelID
         self.timeoutSeconds = timeoutSeconds
         self.rateLimitPerMinute = rateLimitPerMinute
+        self.toolSupportMode = toolSupportMode
         self.credentialRef = credentialRef
         self.apiKeyHint = apiKeyHint
         self.healthStatus = healthStatus
@@ -126,6 +163,7 @@ public struct RemoteServer: Codable, Equatable, Sendable, Identifiable {
         case defaultModelID = "default_model_id"
         case timeoutSeconds = "timeout_seconds"
         case rateLimitPerMinute = "rate_limit_per_minute"
+        case toolSupportMode = "tool_support_mode"
         case credentialRef = "credential_ref"
         case apiKeyHint = "api_key_hint"
         case healthStatus = "health_status"
@@ -151,6 +189,13 @@ public struct RemoteServer: Codable, Equatable, Sendable, Identifiable {
         defaultModelID = try container.decode(String.self, forKey: .defaultModelID)
         timeoutSeconds = try container.decode(UInt32.self, forKey: .timeoutSeconds)
         rateLimitPerMinute = try container.decode(UInt32.self, forKey: .rateLimitPerMinute)
+        if let rawToolSupportMode = try container.decodeIfPresent(String.self, forKey: .toolSupportMode),
+           let decodedToolSupportMode = RemoteServerToolSupportMode.normalized(rawToolSupportMode)
+        {
+            toolSupportMode = decodedToolSupportMode
+        } else {
+            toolSupportMode = .auto
+        }
         credentialRef = try container.decode(String.self, forKey: .credentialRef)
         apiKeyHint = try container.decodeIfPresent(String.self, forKey: .apiKeyHint) ?? ""
         healthStatus = try container.decodeIfPresent(String.self, forKey: .healthStatus) ?? "unknown"
@@ -168,6 +213,7 @@ public struct RemoteServer: Codable, Equatable, Sendable, Identifiable {
         try container.encode(defaultModelID, forKey: .defaultModelID)
         try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
         try container.encode(rateLimitPerMinute, forKey: .rateLimitPerMinute)
+        try container.encode(toolSupportMode, forKey: .toolSupportMode)
         try container.encode(credentialRef, forKey: .credentialRef)
         try container.encode(apiKeyHint, forKey: .apiKeyHint)
         try container.encode(healthStatus, forKey: .healthStatus)
@@ -185,6 +231,7 @@ public struct RemoteServerMutation: Equatable, Sendable {
     public let defaultModelID: String
     public let timeoutSeconds: UInt32
     public let rateLimitPerMinute: UInt32
+    public let toolSupportMode: RemoteServerToolSupportMode
     public let apiKey: String
 
     public init(
@@ -196,6 +243,7 @@ public struct RemoteServerMutation: Equatable, Sendable {
         defaultModelID: String,
         timeoutSeconds: UInt32 = 60,
         rateLimitPerMinute: UInt32 = 0,
+        toolSupportMode: RemoteServerToolSupportMode = .auto,
         apiKey: String = ""
     ) {
         self.id = id
@@ -206,6 +254,7 @@ public struct RemoteServerMutation: Equatable, Sendable {
         self.defaultModelID = defaultModelID
         self.timeoutSeconds = timeoutSeconds
         self.rateLimitPerMinute = rateLimitPerMinute
+        self.toolSupportMode = toolSupportMode
         self.apiKey = apiKey
     }
 }
@@ -283,6 +332,7 @@ public struct RemoteServerStore: Sendable {
             defaultModelID: normalizedDefaultModel,
             timeoutSeconds: mutation.timeoutSeconds == 0 ? 60 : mutation.timeoutSeconds,
             rateLimitPerMinute: mutation.rateLimitPerMinute,
+            toolSupportMode: mutation.toolSupportMode,
             credentialRef: Self.credentialRef(for: normalizedID),
             apiKeyHint: apiKeyHint,
             healthStatus: existing?.healthStatus ?? "unknown",

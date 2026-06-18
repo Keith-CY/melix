@@ -30,8 +30,8 @@ def _payload(index: int) -> tuple[dict[str, Any], int]:
     return {
         "cardData": {"description": f"training corpus {value} kb"},
         "description": f"tokenizer assets {value} MB",
-        "readme": f"adapter notes {value} MB",
-    }, 0
+        "readme": f"README\nModel size: {value} MB\nadapter notes",
+    }, value * 1024 * 1024
 
 
 def _compatibility_payload(index: int) -> tuple[dict[str, Any], bool]:

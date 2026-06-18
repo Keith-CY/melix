@@ -98,3 +98,8 @@
 - [x] Keep cadence sleeps and eligibility checks on `Duration` arithmetic.
 - [x] Remove the duplicate `menu.chat_render_update_count` metric because presentation flush count already records that cadence boundary.
 - [x] Remove redundant discard assignments at token, reasoning, and tool delta call sites.
+
+### Task 7: Stabilize release-gates cadence assertions
+
+- [x] Treat the GitHub release-gates failure with 11 presentation flushes for the 240-token synthetic stream as the red verification signal.
+- [x] Keep the test contract focused on stream fidelity, completed-state transcript parity, and render callback coalescing relative to raw token count instead of a host-speed-dependent fixed flush count.

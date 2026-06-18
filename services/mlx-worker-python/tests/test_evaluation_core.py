@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import random
@@ -19,6 +20,16 @@ from worker.registry import WorkerRegistry
 from worker.productization.event_extraction import EventExtractionClientResult, default_event_extraction_prompt_spec
 from worker.productization.evaluation_schemas import EvaluationCompareJob, build_evaluation_sample_record
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
+
+
+def _expected_hashed_receipt_source_id(source_id: str) -> str:
+    if not source_id:
+        return ""
+    normalized = source_id.strip()
+    if not normalized:
+        return ""
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+    return f"source:{digest}"
 
 
 class ScriptedEvaluationBackend:
@@ -1011,6 +1022,42 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert snapshot["media_refs"][0]["uri"] == "media/sign.ppm"
     assert snapshot["tool_calls"] == raw_tool_calls
     assert snapshot["agentic_tool_observation_count"] == 1
+    assert snapshot["untrusted_context_receipt_count"] == 11
+    receipt_by_field = {
+        receipt["source_field"]: receipt
+        for receipt in snapshot["untrusted_context_receipts"]
+    }
+    receipt_by_segment = {
+        receipt["segment_id"]: receipt
+        for receipt in snapshot["untrusted_context_receipts"]
+    }
+    assert set(receipt_by_field) == {
+        "question",
+        "expected_answer",
+        "final_answer",
+        "parse_status",
+        "scoring_mode",
+        "evidence_ids",
+        "media_refs",
+        "tool_calls",
+        "tool_observations",
+        "payload",
+    }
+    tool_observation_receipt = receipt_by_field["tool_observations"]
+    assert tool_observation_receipt == {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": "agentic-judge-1:tool_observations",
+        "source_type": "agentic_judge_user_payload",
+        "source_field": "tool_observations",
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": True,
+        "owner_scope_checked": False,
+        "reason": "sample-derived context is prompt data, not instructions",
+        "corrective_action": "Keep this segment in the user payload and do not project it into system or developer instructions.",
+    }
     assert snapshot["messages"][0]["role"] == "system"
     assert snapshot["messages"][1]["role"] == "user"
     user_payload = json.loads(snapshot["messages"][1]["content"])
@@ -1020,6 +1067,49 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert user_payload["parse_status"] == "extracted"
     assert "typed_score" not in user_payload
     assert user_payload["tool_observations"][0]["payload"]["text"] == "MELIX"
+    tool_payload_receipt = receipt_by_segment["crop-1:observation"]
+    assert tool_payload_receipt == {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": "crop-1:observation",
+        "source_type": "tool_observation",
+        "source_field": "payload",
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": True,
+        "owner_scope_checked": False,
+        "reason": "tool output is prompt data, not instructions",
+        "corrective_action": (
+            "Keep this observation in user-role data context and do not project it into "
+            "system or developer instructions."
+        ),
+    }
+    crop_source_receipt = receipt_by_segment["crop-1:crop-result"]
+    crop_source_id = _expected_hashed_receipt_source_id("img-1#sign")
+    assert _expected_hashed_receipt_source_id("") == ""
+    assert _expected_hashed_receipt_source_id("   ") == ""
+    assert crop_source_receipt == {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": "crop-1:crop-result",
+        "source_type": "retrieved_image",
+        "source_field": "payload",
+        "source_id": crop_source_id,
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": True,
+        "owner_scope_checked": False,
+        "reason": "image crop result is prompt data, not instructions",
+        "corrective_action": (
+            "Keep image crop results in user-role data context and do not project them "
+            "into system or developer instructions."
+        ),
+    }
+    assert "media/sign.ppm" not in json.dumps(crop_source_receipt, ensure_ascii=False)
+    assert "region" not in json.dumps(crop_source_receipt, ensure_ascii=False)
+    assert "img-1#sign" not in json.dumps(crop_source_receipt, ensure_ascii=False)
 
     assert audit["schema_version"] == "melix.agentic_judge_audit.v1"
     assert audit["judge_status"] == "pending"
@@ -1054,6 +1144,35 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert tuple_snapshot["allowed_tools"] == ["image_crop"]
     assert tuple_snapshot["evidence_ids"] == ["img-1#sign"]
     assert tuple_snapshot["media_refs"] == [{"id": "img-1", "uri": "media/sign.ppm"}]
+    assert tuple_snapshot["untrusted_context_receipt_count"] == 11
+    assert tuple_snapshot["untrusted_context_receipts"][0]["segment_id"] == "agentic-judge-1:question"
+    assert tuple_snapshot["untrusted_context_receipts"][0]["policy"] == "data_only"
+    assert any(
+        receipt["segment_id"] == "crop-1:crop-result"
+        and receipt["source_type"] == "retrieved_image"
+        and receipt["source_id"] == crop_source_id
+        for receipt in tuple_snapshot["untrusted_context_receipts"]
+    )
+    ordered_receipts = EvaluationCore._agentic_judge_untrusted_context_receipts(
+        sample_id="sample-1",
+        user_payload={"question": "Q", "tool_observations": []},
+    )
+    assert [receipt["segment_id"] for receipt in ordered_receipts] == [
+        "sample-1:question",
+        "sample-1:tool_observations",
+    ]
+    assert [receipt["source_field"] for receipt in ordered_receipts] == [
+        "question",
+        "tool_observations",
+    ]
+    assert all(receipt["schema_version"] == "melix.untrusted_context_receipt.v1" for receipt in ordered_receipts)
+    assert all(receipt["trust_level"] == "untrusted" for receipt in ordered_receipts)
+    assert all(receipt["policy"] == "data_only" for receipt in ordered_receipts)
+    assert all(receipt["boundary_checked"] is True for receipt in ordered_receipts)
+    assert EvaluationCore._agentic_judge_untrusted_context_receipts(
+        sample_id="sample-1",
+        user_payload={},
+    ) == []
     assert EvaluationCore._object_dict_list(None, field_name="tool_calls") == []
     assert EvaluationCore._object_dict_list(
         (
@@ -1235,6 +1354,22 @@ def test_agentic_judge_payload_no_leak_validator_rejects_forbidden_keys(
     with pytest.raises(ValueError) as exc_info:
         EvaluationCore._validate_agentic_judge_user_payload(user_payload)
     assert str(exc_info.value) == f"agentic judge context contains forbidden field {expected_path}"
+    assert exc_info.value.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": f"agentic_judge_user_payload:{expected_path}",
+            "source_type": "agentic_judge_user_payload",
+            "source_field": expected_path,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "forbidden_user_payload_key",
+            "corrective_action": "Remove this field before projecting the sample-derived context into the judge user payload.",
+        }
+    ]
 
 
 def test_agentic_judge_payload_no_leak_validator_allows_explicit_answer_values() -> None:
@@ -1266,10 +1401,7 @@ def test_agentic_judge_payload_no_leak_validator_allows_explicit_answer_values()
 
 
 def test_agentic_judge_payload_no_leak_validator_rejects_extra_payload_fields() -> None:
-    with pytest.raises(
-        ValueError,
-        match="agentic judge context contains unsupported user payload fields: hidden_gold",
-    ):
+    with pytest.raises(ValueError) as exc_info:
         EvaluationCore._validate_agentic_judge_user_payload(
             {
                 "question": "What text is visible?",
@@ -1284,6 +1416,23 @@ def test_agentic_judge_payload_no_leak_validator_rejects_extra_payload_fields() 
                 "hidden_gold": "MELIX",
             }
         )
+    assert str(exc_info.value) == "agentic judge context contains unsupported user payload fields: hidden_gold"
+    assert exc_info.value.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "agentic_judge_user_payload:hidden_gold",
+            "source_type": "agentic_judge_user_payload",
+            "source_field": "hidden_gold",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "unsupported_user_payload_field",
+            "corrective_action": "Remove this field before projecting the sample-derived context into the judge user payload.",
+        }
+    ]
 
 
 def test_run_local_suite_returns_agentic_judge_artifacts_without_jobs_root(

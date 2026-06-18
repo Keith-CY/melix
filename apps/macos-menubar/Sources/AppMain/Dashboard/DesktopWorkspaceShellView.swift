@@ -1,5 +1,6 @@
 import AppKit
 import Charts
+import CoreImage.CIFilterBuiltins
 import MelixCLICore
 import MelixControlPlaneCore
 import SwiftUI
@@ -36,7 +37,7 @@ struct DesktopWorkspaceShellView: View {
                         showsInspector: paneVisibilityBinding(.inspector, for: .image)
                     )
                 case .server:
-                    DesktopServerWorkspaceView(
+                    DesktopProviderWorkspaceView(
                         viewModel: viewModel,
                         showsSidebar: paneVisibilityBinding(.sidebar, for: .server),
                         showsInspector: paneVisibilityBinding(.inspector, for: .server)
@@ -280,6 +281,77 @@ struct DesktopInlineNoticeCardView: View {
     }
 }
 
+private enum DesktopProviderSurfacePage: String, CaseIterable, Identifiable {
+    case overview
+    case localProviders
+    case remoteProviders
+    case createLocalProvider
+    case addRemoteProvider
+    case capabilityReceipts
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .overview:
+            return "Overview"
+        case .localProviders:
+            return "Local Providers"
+        case .remoteProviders:
+            return "Remote Providers"
+        case .createLocalProvider:
+            return "Create Local Provider"
+        case .addRemoteProvider:
+            return "Add Remote Provider"
+        case .capabilityReceipts:
+            return "Capability Receipts"
+        }
+    }
+
+    var headerTitle: String {
+        switch self {
+        case .overview:
+            return "Providers"
+        default:
+            return title
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .overview:
+            return "Manage local and remote providers, health, credentials, and capability receipts."
+        case .localProviders:
+            return "Start, stop, and inspect local Apple Silicon provider profiles."
+        case .remoteProviders:
+            return "Manage outbound provider targets, credentials, and compatibility policy."
+        case .createLocalProvider:
+            return "Basic setup first, advanced provider fields collapsed for first-run creation."
+        case .addRemoteProvider:
+            return "Endpoint, authentication, capability test, and review for outbound provider setup."
+        case .capabilityReceipts:
+            return "Evidence for provider capabilities, unsupported routes, and probe freshness."
+        }
+    }
+
+    var systemImageName: String {
+        switch self {
+        case .overview:
+            return "square.grid.2x2"
+        case .localProviders:
+            return "desktopcomputer"
+        case .remoteProviders:
+            return "network"
+        case .createLocalProvider:
+            return "plus.circle"
+        case .addRemoteProvider:
+            return "network.badge.shield.half.filled"
+        case .capabilityReceipts:
+            return "checkmark.seal"
+        }
+    }
+}
+
 struct DesktopCommandCenterView: View {
     static let downloadRecoveryOverflowActionTitle = "View All Downloads"
 
@@ -395,7 +467,7 @@ enum DesktopCommandCenterVisuals {
     static let visualDirection = "Digital Broadsheet Command Center"
     static let operatorLabel = "Melix Operator"
     static let windowTitle = "Command Center"
-    static let runtimeSectionTitle = "Runtime"
+    static let runtimeSectionTitle = "Providers"
     static let pressureSectionTitle = "Resource And Queue Pressure"
     static let recoverySectionTitle = "Recovery"
     static let workflowSectionTitle = "Workflow"
@@ -449,15 +521,15 @@ private struct DesktopCommandCenterHeaderView: View {
     private var healthLabel: String {
         switch resolvedHealthState {
         case .runtimeReady:
-            return "Runtime Ready"
+            return "Providers Ready"
         case .runtimeWarning:
-            return "Runtime Warning"
+            return "Provider Warning"
         case .recoveryAvailable:
             return "Recovery Available"
         case .needsAttention:
             return "Needs Attention"
         case .runtimeState:
-            return "Runtime State"
+            return "Provider State"
         }
     }
 
@@ -912,7 +984,7 @@ private struct DesktopCommandCenterSessionSummaryPanel: View {
                     detail: chatSessions.first?.summaryText ?? "No chat sessions"
                 )
                 DesktopCommandCenterSessionMetricView(
-                    title: "Server Sessions",
+                    title: "Providers",
                     value: "\(serverSessions.count)",
                     detail: serverSessions.first?.effectiveListenerLabel ?? "No listener configured"
                 )
@@ -941,11 +1013,12 @@ private struct DesktopCommandCenterSessionMetricView: View {
     }
 }
 
-private struct DesktopServerWorkspaceView: View {
+private struct DesktopProviderWorkspaceView: View {
     let viewModel: RuntimeViewModel
     @Binding var showsSidebar: Bool
     @Binding var showsInspector: Bool
     @State private var showsAdvanced = DesktopServerWorkspaceDefaults.showsAdvancedServingDefaults
+    @State private var selectedProviderPage: DesktopProviderSurfacePage
 
     init(
         viewModel: RuntimeViewModel,
@@ -955,6 +1028,9 @@ private struct DesktopServerWorkspaceView: View {
         self.viewModel = viewModel
         _showsSidebar = showsSidebar
         _showsInspector = showsInspector
+        _selectedProviderPage = State(
+            initialValue: Self.defaultProviderSurfacePage(for: viewModel.selectedProviderTarget)
+        )
     }
 
     var body: some View {
@@ -964,14 +1040,18 @@ private struct DesktopServerWorkspaceView: View {
                 isVisible: showsSidebar,
                 idealWidth: 260
             ) {
-                DesktopServerSessionSidebar(viewModel: viewModel)
+                DesktopProviderWorkspaceSidebar(
+                    viewModel: viewModel,
+                    selectedPage: $selectedProviderPage
+                )
             }
 
-            DesktopServerSessionEditor(
+            DesktopProviderWorkspaceEditor(
                 viewModel: viewModel,
                 showsSidebar: $showsSidebar,
                 showsInspector: $showsInspector,
-                showsAdvanced: $showsAdvanced
+                showsAdvanced: $showsAdvanced,
+                selectedPage: $selectedProviderPage
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -983,6 +1063,15 @@ private struct DesktopServerWorkspaceView: View {
                 DesktopServerSessionInspector(viewModel: viewModel)
             }
         }
+        .onChange(of: viewModel.selectedProviderTarget?.id) { _, _ in
+            selectedProviderPage = Self.defaultProviderSurfacePage(for: viewModel.selectedProviderTarget)
+        }
+    }
+
+    private static func defaultProviderSurfacePage(
+        for target: RuntimeProviderTargetState?
+    ) -> DesktopProviderSurfacePage {
+        target?.kind == .remoteServer ? .remoteProviders : .localProviders
     }
 }
 
@@ -1038,103 +1127,105 @@ private struct DesktopServerMetricCard: View {
 }
 
 @MainActor
-enum DesktopServerCreationActions {
-    static func addLocalServer(viewModel: RuntimeViewModel) {
-        viewModel.beginServerCreation(kind: .localServer)
+enum DesktopProviderCreationActions {
+    static func addLocalProvider(viewModel: RuntimeViewModel) {
+        viewModel.beginProviderCreation(kind: .localServer)
     }
 
-    static func addRemoteServer(viewModel: RuntimeViewModel) {
-        viewModel.beginServerCreation(kind: .remoteServer)
+    static func addRemoteProvider(viewModel: RuntimeViewModel) {
+        viewModel.beginProviderCreation(kind: .remoteServer)
     }
 
-    static func makeAddLocalServerAction(viewModel: RuntimeViewModel) -> () -> Void {
-        { addLocalServer(viewModel: viewModel) }
+    static func makeAddLocalProviderAction(viewModel: RuntimeViewModel) -> () -> Void {
+        { addLocalProvider(viewModel: viewModel) }
     }
 
-    static func makeAddRemoteServerAction(viewModel: RuntimeViewModel) -> () -> Void {
-        { addRemoteServer(viewModel: viewModel) }
+    static func makeAddRemoteProviderAction(viewModel: RuntimeViewModel) -> () -> Void {
+        { addRemoteProvider(viewModel: viewModel) }
     }
 }
 
-private struct DesktopServerSessionSidebar: View {
+private struct DesktopProviderWorkspaceSidebar: View {
     let viewModel: RuntimeViewModel
+    @Binding var selectedPage: DesktopProviderSurfacePage
+
+    private var localTargets: [RuntimeProviderTargetState] {
+        viewModel.providerTargets.filter { $0.kind == .localServer }
+    }
+
+    private var remoteTargets: [RuntimeProviderTargetState] {
+        viewModel.providerTargets.filter { $0.kind == .remoteServer }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Servers")
+                Text("Providers")
                     .font(.headline)
                 Spacer()
                 Menu {
-                    Button("Add Local Server", action: DesktopServerCreationActions.makeAddLocalServerAction(viewModel: viewModel))
-                    Button("Add Remote Server", action: DesktopServerCreationActions.makeAddRemoteServerAction(viewModel: viewModel))
+                    Button("Create Local Provider") {
+                        selectedPage = .createLocalProvider
+                        DesktopProviderCreationActions.addLocalProvider(viewModel: viewModel)
+                    }
+                    Button("Add Remote Provider") {
+                        selectedPage = .addRemoteProvider
+                        DesktopProviderCreationActions.addRemoteProvider(viewModel: viewModel)
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }
                 .menuStyle(.borderlessButton)
                 .focusable(false)
-                .help("New Server")
-                .accessibilityLabel("New Server")
+                .help("New Provider")
+                .accessibilityLabel("New Provider")
             }
 
-            if viewModel.serverTargets.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(DesktopProviderSurfacePage.allCases) { page in
+                    DesktopProviderSurfaceNavigationRow(
+                        page: page,
+                        isSelected: selectedPage == page,
+                        countText: countText(for: page)
+                    ) {
+                        selectPage(page)
+                    }
+                }
+            }
+
+            if viewModel.providerTargets.isEmpty {
                 MelixActionableEmptyState(
-                    title: "No Servers Yet",
+                    title: "No Providers Yet",
                     systemImage: "server.rack",
                     detail: "Create a local Apple Silicon runtime or connect a remote provider before chatting, benchmarking, or generating artifacts."
                 ) {
                     VStack(spacing: MelixDesignTokens.Spacing.sm) {
-                        Button("Add Local Server", action: DesktopServerCreationActions.makeAddLocalServerAction(viewModel: viewModel))
+                        Button("Create Local Provider") {
+                            selectedPage = .createLocalProvider
+                            DesktopProviderCreationActions.addLocalProvider(viewModel: viewModel)
+                        }
                         .buttonStyle(.borderedProminent)
 
-                        Button("Add Remote Server", action: DesktopServerCreationActions.makeAddRemoteServerAction(viewModel: viewModel))
+                        Button("Add Remote Provider") {
+                            selectedPage = .addRemoteProvider
+                            DesktopProviderCreationActions.addRemoteProvider(viewModel: viewModel)
+                        }
                         .buttonStyle(.bordered)
                     }
                 }
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(viewModel.serverTargets) { target in
-                            Button {
-                                viewModel.selectServerTarget(id: target.id)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack {
-                                        Text(target.title)
-                                            .font(.headline)
-                                            .lineLimit(1)
-                                        Spacer()
-                                        Text(target.badgeText)
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundStyle(MelixDesignTokens.accent)
-                                            .padding(.horizontal, 7)
-                                            .padding(.vertical, 3)
-                                            .background(
-                                                MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.capsule),
-                                                in: Capsule()
-                                            )
-                                    }
-                                    Text(target.detailText)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                    Text(target.statusText)
-                                        .font(.caption)
-                                        .foregroundStyle(target.isRunning ? MelixDesignTokens.StatusColor.success : .secondary)
-                                        .lineLimit(1)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(
-                                    viewModel.selectedServerTarget?.id == target.id
-                                    ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
-                                    : Color.secondary.opacity(0.06),
-                                    in: RoundedRectangle(cornerRadius: 12)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .focusable(false)
-                        }
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        providerTargetGroup(
+                            title: "Local Providers",
+                            targets: localTargets,
+                            emptyText: "No local providers"
+                        )
+                        providerTargetGroup(
+                            title: "Remote Providers",
+                            targets: remoteTargets,
+                            emptyText: "No remote providers"
+                        )
                     }
                 }
             }
@@ -1142,6 +1233,321 @@ private struct DesktopServerSessionSidebar: View {
             Spacer()
         }
         .padding(20)
+    }
+
+    private func selectPage(_ page: DesktopProviderSurfacePage) {
+        selectedPage = page
+        switch page {
+        case .createLocalProvider:
+            DesktopProviderCreationActions.addLocalProvider(viewModel: viewModel)
+        case .addRemoteProvider:
+            DesktopProviderCreationActions.addRemoteProvider(viewModel: viewModel)
+        default:
+            viewModel.cancelProviderCreation()
+        }
+    }
+
+    private func countText(for page: DesktopProviderSurfacePage) -> String? {
+        switch page {
+        case .localProviders:
+            return "\(localTargets.count)"
+        case .remoteProviders:
+            return "\(remoteTargets.count)"
+        case .capabilityReceipts:
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    @ViewBuilder
+    private func providerTargetGroup(
+        title: String,
+        targets: [RuntimeProviderTargetState],
+        emptyText: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).melixSectionLabel()
+            if targets.isEmpty {
+                Text(emptyText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+            } else {
+                ForEach(targets) { target in
+                    DesktopProviderTargetSidebarRow(
+                        target: target,
+                        isSelected: viewModel.selectedProviderTarget?.id == target.id
+                    ) {
+                        selectedPage = target.kind == .localServer ? .localProviders : .remoteProviders
+                        viewModel.selectProviderTarget(id: target.id)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct DesktopProviderSurfaceNavigationRow: View {
+    let page: DesktopProviderSurfacePage
+    let isSelected: Bool
+    let countText: String?
+    let action: @MainActor () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: page.systemImageName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 18)
+                Text(page.title)
+                    .font(.caption.weight(isSelected ? .semibold : .medium))
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if let countText {
+                    Text(countText)
+                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(isSelected ? MelixDesignTokens.accent : .secondary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected
+                ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
+                : Color.clear,
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .accessibilityLabel(page.title)
+    }
+}
+
+private struct DesktopProviderTargetSidebarRow: View {
+    let target: RuntimeProviderTargetState
+    let isSelected: Bool
+    let action: @MainActor () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(target.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(target.badgeText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(MelixDesignTokens.accent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.capsule),
+                            in: Capsule()
+                        )
+                }
+                Text(target.detailText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(target.statusText)
+                    .font(.caption)
+                    .foregroundStyle(target.isRunning ? MelixDesignTokens.StatusColor.success : .secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(
+                isSelected
+                ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
+                : Color.secondary.opacity(0.06),
+                in: RoundedRectangle(cornerRadius: 12)
+            )
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+    }
+}
+
+private struct DesktopProviderOverviewView: View {
+    let viewModel: RuntimeViewModel
+    let createLocalProvider: @MainActor () -> Void
+    let addRemoteProvider: @MainActor () -> Void
+
+    private var localTargets: [RuntimeProviderTargetState] {
+        viewModel.providerTargets.filter { $0.kind == .localServer }
+    }
+
+    private var remoteTargets: [RuntimeProviderTargetState] {
+        viewModel.providerTargets.filter { $0.kind == .remoteServer }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 10)], spacing: 10) {
+                DesktopProviderSummaryTile(
+                    title: "Local Providers",
+                    value: "\(localTargets.count)",
+                    detail: localTargets.first?.statusText ?? "Create a local profile"
+                )
+                DesktopProviderSummaryTile(
+                    title: "Remote Providers",
+                    value: "\(remoteTargets.count)",
+                    detail: remoteTargets.first?.statusText ?? "Add outbound credentials"
+                )
+                DesktopProviderSummaryTile(
+                    title: "Running",
+                    value: "\(viewModel.providerTargets.filter(\.isRunning).count)",
+                    detail: "Providers available for routing"
+                )
+                DesktopProviderSummaryTile(
+                    title: "Capability Receipts",
+                    value: "0",
+                    detail: "No provider receipts captured yet"
+                )
+            }
+
+            HStack(spacing: MelixDesignTokens.Spacing.sm) {
+                Button("Create Local Provider", action: createLocalProvider)
+                    .buttonStyle(.borderedProminent)
+                Button("Add Remote Provider", action: addRemoteProvider)
+                    .buttonStyle(.bordered)
+            }
+
+            if viewModel.providerTargets.isEmpty == false {
+                DesktopProviderTargetListView(
+                    title: "Provider Profiles",
+                    emptyTitle: "No Providers",
+                    emptyDetail: "Create a local provider or add a remote provider.",
+                    targets: viewModel.providerTargets,
+                    selectedTargetID: viewModel.selectedProviderTarget?.id,
+                    selectTarget: viewModel.selectProviderTarget
+                )
+            }
+        }
+    }
+}
+
+private struct DesktopProviderSummaryTile: View {
+    let title: String
+    let value: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).melixSectionLabel()
+            Text(value)
+                .font(.title3.weight(.semibold).monospacedDigit())
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .melixCard()
+    }
+}
+
+private struct DesktopProviderTargetListView: View {
+    let title: String
+    let emptyTitle: String
+    let emptyDetail: String
+    let targets: [RuntimeProviderTargetState]
+    let selectedTargetID: String?
+    let selectTarget: @MainActor (String) -> Void
+
+    var body: some View {
+        MelixSectionCard(title) {
+            if targets.isEmpty {
+                ContentUnavailableView(
+                    emptyTitle,
+                    systemImage: "server.rack",
+                    description: Text(emptyDetail)
+                )
+            } else {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(targets) { target in
+                        DesktopProviderProfileRow(
+                            target: target,
+                            isSelected: selectedTargetID == target.id
+                        ) {
+                            selectTarget(target.id)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct DesktopProviderProfileRow: View {
+    let target: RuntimeProviderTargetState
+    let isSelected: Bool
+    let action: @MainActor () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: target.kind == .localServer ? "desktopcomputer" : "network")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(target.isRunning ? MelixDesignTokens.StatusColor.success : .secondary)
+                    .frame(width: 24, height: 24)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(target.title)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text(target.badgeText)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(MelixDesignTokens.accent)
+                    }
+                    Text(target.detailText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Text(target.statusText)
+                        .font(.caption2)
+                        .foregroundStyle(target.isRunning ? MelixDesignTokens.StatusColor.success : .secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected
+                ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
+                : Color.secondary.opacity(0.04),
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+    }
+}
+
+private struct DesktopProviderCapabilityReceiptsView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        MelixSectionCard("Capability Receipts") {
+            VStack(alignment: .leading, spacing: 12) {
+                ContentUnavailableView(
+                    "No Provider Capability Receipts",
+                    systemImage: "checkmark.seal",
+                    description: Text("Run a capability test from Add Remote Provider or inspect a provider detail after receipts are captured.")
+                )
+                if viewModel.providerTargets.isEmpty == false {
+                    Text("Provider profiles are available; receipt evidence will appear here after provider capability probes are recorded.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 }
 
@@ -1153,8 +1559,8 @@ private struct DesktopRemoteServerEditor: View {
     }
 
     var body: some View {
-        MelixSectionCard("Remote Server") {
-            VStack(alignment: .leading, spacing: 12) {
+        MelixSectionCard("Remote Provider") {
+            VStack(alignment: .leading, spacing: 14) {
                 if let selectedRemoteServer {
                     HStack(alignment: .center, spacing: 10) {
                         Image(systemName: "network.badge.shield.half.filled")
@@ -1170,134 +1576,210 @@ private struct DesktopRemoteServerEditor: View {
                     }
                 }
 
-                HStack(alignment: .top, spacing: 12) {
-                    TextField(
-                        "Remote Server ID",
-                        text: Binding(
-                            get: { viewModel.remoteServerIDDraft },
-                            set: { viewModel.remoteServerIDDraft = $0 }
-                        )
-                    )
-                    .melixOperatorTextFieldStyle()
-                    .disabled(viewModel.isRemoteServerIDEditable == false)
+                DesktopProviderFormSection("Endpoint") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top, spacing: 12) {
+                            TextField(
+                                "Remote Provider ID",
+                                text: Binding(
+                                    get: { viewModel.remoteServerIDDraft },
+                                    set: { viewModel.remoteServerIDDraft = $0 }
+                                )
+                            )
+                            .melixOperatorTextFieldStyle()
+                            .disabled(viewModel.isRemoteServerIDEditable == false)
 
-                    TextField(
-                        "Session Name",
+                            TextField(
+                                "Provider Name",
+                                text: Binding(
+                                    get: { viewModel.remoteServerTitleDraft },
+                                    set: { viewModel.remoteServerTitleDraft = $0 }
+                                )
+                            )
+                            .melixOperatorTextFieldStyle()
+                        }
+
+                        Picker(
+                            "Provider",
+                            selection: Binding(
+                                get: { viewModel.remoteServerProviderPresetDraft },
+                                set: { viewModel.selectRemoteServerProviderPreset($0) }
+                            )
+                        ) {
+                            ForEach(RemoteServerProviderPreset.allCases) { providerPreset in
+                                Text(providerPreset.title).tag(providerPreset)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        TextField(
+                            viewModel.isRemoteServerBaseURLEditable ? "Base URL" : "Base URL (preset)",
+                            text: Binding(
+                                get: { viewModel.remoteServerBaseURLDraft },
+                                set: { viewModel.remoteServerBaseURLDraft = $0 }
+                            )
+                        )
+                        .melixOperatorTextFieldStyle()
+                        .disabled(viewModel.isRemoteServerBaseURLEditable == false)
+                    }
+                }
+
+                DesktopProviderFormSection("Authentication") {
+                    SecureField(
+                        selectedRemoteServer?.apiKeyHint.isEmpty == false ? "Replace API Key" : "API Key",
                         text: Binding(
-                            get: { viewModel.remoteServerTitleDraft },
-                            set: { viewModel.remoteServerTitleDraft = $0 }
+                            get: { viewModel.remoteServerAPIKeyDraft },
+                            set: { viewModel.remoteServerAPIKeyDraft = $0 }
                         )
                     )
                     .melixOperatorTextFieldStyle()
                 }
 
-                HStack(alignment: .top, spacing: 12) {
-                    Picker(
-                        "Provider",
-                        selection: Binding(
-                            get: { viewModel.remoteServerProviderPresetDraft },
-                            set: { viewModel.selectRemoteServerProviderPreset($0) }
+                DesktopProviderFormSection("Capabilities Test") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextField(
+                            "Default Model",
+                            text: Binding(
+                                get: { viewModel.remoteServerDefaultModelIDDraft },
+                                set: { viewModel.remoteServerDefaultModelIDDraft = $0 }
+                            )
                         )
-                    ) {
-                        ForEach(RemoteServerProviderPreset.allCases) { providerPreset in
-                            Text(providerPreset.title).tag(providerPreset)
+                        .melixOperatorTextFieldStyle()
+
+                        HStack(alignment: .top, spacing: 12) {
+                            TextField(
+                                "Timeout (s)",
+                                value: Binding(
+                                    get: { viewModel.remoteServerTimeoutSecondsDraft },
+                                    set: { viewModel.remoteServerTimeoutSecondsDraft = $0 }
+                                ),
+                                format: .number
+                            )
+                            .melixOperatorTextFieldStyle()
+
+                            TextField(
+                                "Rate limit / min",
+                                value: Binding(
+                                    get: { viewModel.remoteServerRateLimitPerMinuteDraft },
+                                    set: { viewModel.remoteServerRateLimitPerMinuteDraft = $0 }
+                                ),
+                                format: .number
+                            )
+                            .melixOperatorTextFieldStyle()
+                        }
+
+                        Text("Capability test receipts will prove supported routes before this remote provider becomes routing-eligible.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                DesktopProviderFormSection("Review") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(remoteProviderReviewSummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+
+                        HStack {
+                            Button("New") {
+                                viewModel.prepareNewRemoteServerDraft()
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Save Remote Provider") {
+                                viewModel.saveRemoteServerDraft()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(viewModel.canSaveRemoteServerDraft == false)
+
+                            Button("Remove") {
+                                viewModel.removeSelectedRemoteServer()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(viewModel.selectedRemoteServerID.isEmpty)
+
+                            Spacer()
                         }
                     }
-                    .pickerStyle(.menu)
-
-                    TextField(
-                        "Default Model",
-                        text: Binding(
-                            get: { viewModel.remoteServerDefaultModelIDDraft },
-                            set: { viewModel.remoteServerDefaultModelIDDraft = $0 }
-                        )
-                    )
-                    .melixOperatorTextFieldStyle()
-                }
-
-                TextField(
-                    viewModel.isRemoteServerBaseURLEditable ? "Base URL" : "Base URL (preset)",
-                    text: Binding(
-                        get: { viewModel.remoteServerBaseURLDraft },
-                        set: { viewModel.remoteServerBaseURLDraft = $0 }
-                    )
-                )
-                .melixOperatorTextFieldStyle()
-                .disabled(viewModel.isRemoteServerBaseURLEditable == false)
-
-                SecureField(
-                    selectedRemoteServer?.apiKeyHint.isEmpty == false ? "Replace API Key" : "API Key",
-                    text: Binding(
-                        get: { viewModel.remoteServerAPIKeyDraft },
-                        set: { viewModel.remoteServerAPIKeyDraft = $0 }
-                    )
-                )
-                .melixOperatorTextFieldStyle()
-
-                HStack(alignment: .top, spacing: 12) {
-                    TextField(
-                        "Timeout (s)",
-                        value: Binding(
-                            get: { viewModel.remoteServerTimeoutSecondsDraft },
-                            set: { viewModel.remoteServerTimeoutSecondsDraft = $0 }
-                        ),
-                        format: .number
-                    )
-                    .melixOperatorTextFieldStyle()
-
-                    TextField(
-                        "Rate limit / min",
-                        value: Binding(
-                            get: { viewModel.remoteServerRateLimitPerMinuteDraft },
-                            set: { viewModel.remoteServerRateLimitPerMinuteDraft = $0 }
-                        ),
-                        format: .number
-                    )
-                    .melixOperatorTextFieldStyle()
-                }
-
-                HStack {
-                    Button("New") {
-                        viewModel.prepareNewRemoteServerDraft()
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("Save Remote Server") {
-                        viewModel.saveRemoteServerDraft()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(viewModel.canSaveRemoteServerDraft == false)
-
-                    Button("Remove") {
-                        viewModel.removeSelectedRemoteServer()
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(viewModel.selectedRemoteServerID.isEmpty)
-
-                    Spacer()
                 }
             }
         }
     }
+
+    private var remoteProviderReviewSummary: String {
+        let baseURL = viewModel.isRemoteServerBaseURLEditable
+            ? viewModel.remoteServerBaseURLDraft
+            : (viewModel.remoteServerProviderPresetDraft.fixedBaseURL ?? viewModel.remoteServerBaseURLDraft)
+        let authState = viewModel.remoteServerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "credential unchanged or missing"
+            : "credential ready"
+        return [
+            "Provider: \(viewModel.remoteServerTitleDraft)",
+            "Endpoint: \(baseURL)",
+            "Default model: \(viewModel.remoteServerDefaultModelIDDraft)",
+            "Auth: \(authState)",
+        ].joined(separator: " • ")
+    }
 }
 
-private struct DesktopServerCreationEditor: View {
+private struct DesktopProviderFormSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopProviderReviewRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 132, alignment: .leading)
+            Text(value.isEmpty ? "Not set" : value)
+                .font(.caption)
+                .foregroundStyle(value.isEmpty ? .secondary : .primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+        }
+    }
+}
+
+private struct DesktopProviderCreationEditor: View {
     let viewModel: RuntimeViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if viewModel.selectedServerCreationKind == .localServer {
-                DesktopServerCreationStepperHeader(
-                    title: "Local Server Setup",
-                    steps: ["Runtime", "Review"],
+            if viewModel.selectedProviderCreationKind == .localServer {
+                DesktopProviderCreationStepperHeader(
+                    title: "Create Local Provider",
+                    steps: ["Basic", "Advanced", "Review"],
                     activeIndex: viewModel.serverModelOptions.isEmpty ? 0 : 1
                 )
-                MelixSectionCard("Runtime") {
-                    localServerCreationContent
+                MelixSectionCard("Create Local Provider") {
+                    localProviderCreationContent
                 }
             } else {
-                DesktopServerCreationStepperHeader(
-                    title: "Remote Server Setup",
+                DesktopProviderCreationStepperHeader(
+                    title: "Add Remote Provider",
                     steps: ["Endpoint", "Authentication", "Capabilities Test", "Review"],
                     activeIndex: remoteServerActiveStepIndex
                 )
@@ -1320,8 +1802,8 @@ private struct DesktopServerCreationEditor: View {
         return 3
     }
 
-    private var localServerCreationContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private var localProviderCreationContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
             if viewModel.serverModelOptions.isEmpty {
                 if viewModel.isRefreshingServerModelOptions {
                     ContentUnavailableView(
@@ -1333,63 +1815,106 @@ private struct DesktopServerCreationEditor: View {
                     ContentUnavailableView(
                         "No Ready to Run Models",
                         systemImage: "shippingbox",
-                        description: Text("Rescan model roots or download a model before creating a local server.")
+                        description: Text("Rescan model roots or download a model before creating a local provider.")
                     )
                 }
             } else {
-                TextField(
-                    "Session Name",
-                    text: Binding(
-                        get: { viewModel.newLocalServerTitleDraft },
-                        set: { viewModel.newLocalServerTitleDraft = $0 }
-                    )
-                )
-                .melixOperatorTextFieldStyle()
+                DesktopProviderFormSection("Basic") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextField(
+                            "Provider Name",
+                            text: Binding(
+                                get: { viewModel.newLocalServerTitleDraft },
+                                set: { viewModel.newLocalServerTitleDraft = $0 }
+                            )
+                        )
+                        .melixOperatorTextFieldStyle()
 
-                Picker(
-                    "Served Model",
-                    selection: Binding(
-                        get: { viewModel.newLocalServerModelID },
-                        set: { viewModel.newLocalServerModelID = $0 }
-                    )
-                ) {
-                    ForEach(viewModel.serverModelOptions, id: \.modelID) { model in
-                        Text(model.displayNameWithID).tag(model.modelID)
+                        Picker(
+                            "Model Asset",
+                            selection: Binding(
+                                get: { viewModel.newLocalServerModelID },
+                                set: { viewModel.newLocalServerModelID = $0 }
+                            )
+                        ) {
+                            ForEach(viewModel.serverModelOptions, id: \.modelID) { model in
+                                Text(model.displayNameWithID).tag(model.modelID)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        Text("Memory Profile: default local interactive profile")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .pickerStyle(.menu)
 
-                HStack(alignment: .top, spacing: 12) {
-                    TextField(
-                        "Host",
-                        text: Binding(
-                            get: { viewModel.newLocalServerHostDraft },
-                            set: { viewModel.newLocalServerHostDraft = $0 }
+                DisclosureGroup("Advanced") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Adapter Asset: base model")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(alignment: .top, spacing: 12) {
+                            TextField(
+                                "Bind address",
+                                text: Binding(
+                                    get: { viewModel.newLocalServerHostDraft },
+                                    set: { viewModel.newLocalServerHostDraft = $0 }
+                                )
+                            )
+                            .melixOperatorTextFieldStyle()
+
+                            TextField(
+                                "HTTP port",
+                                value: Binding(
+                                    get: { viewModel.newLocalServerPortDraft },
+                                    set: { viewModel.newLocalServerPortDraft = $0 }
+                                ),
+                                format: .number
+                            )
+                            .melixOperatorTextFieldStyle()
+                            .frame(maxWidth: 120)
+                        }
+
+                        Text("Worker route, runtime directory, MELIX_HOME, queue/cache policy, and inbound auth use the current local defaults.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 8)
+                }
+
+                DesktopProviderFormSection("Review") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        DesktopProviderReviewRow(
+                            title: "Profile",
+                            value: viewModel.newLocalServerTitleDraft
                         )
-                    )
-                    .melixOperatorTextFieldStyle()
-
-                    TextField(
-                        "Port",
-                        value: Binding(
-                            get: { viewModel.newLocalServerPortDraft },
-                            set: { viewModel.newLocalServerPortDraft = $0 }
-                        ),
-                        format: .number
-                    )
-                    .melixOperatorTextFieldStyle()
-                    .frame(maxWidth: 120)
+                        DesktopProviderReviewRow(
+                            title: "Model Asset",
+                            value: viewModel.newLocalServerModelID
+                        )
+                        DesktopProviderReviewRow(
+                            title: "Bind Policy",
+                            value: "\(viewModel.newLocalServerHostDraft):\(viewModel.newLocalServerPortDraft)"
+                        )
+                        Text(viewModel.canCreateLocalServerFromDraft
+                            ? "Ready to create a draft local provider and start it from lifecycle controls."
+                            : "Create And Start is disabled until Provider Name and Model Asset are valid.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 HStack {
                     Spacer()
                     Button("Cancel") {
-                        viewModel.cancelServerCreation()
+                        viewModel.cancelProviderCreation()
                     }
                     .buttonStyle(.bordered)
 
-                    Button("Save") {
-                        viewModel.createLocalServerFromDraft()
+                    Button("Create And Start") {
+                        viewModel.createAndStartLocalServerFromDraft()
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(viewModel.canCreateLocalServerFromDraft == false)
@@ -1400,7 +1925,7 @@ private struct DesktopServerCreationEditor: View {
     }
 }
 
-private struct DesktopServerCreationStepperHeader: View {
+private struct DesktopProviderCreationStepperHeader: View {
     let title: String
     let steps: [String]
     let activeIndex: Int
@@ -1511,7 +2036,7 @@ private struct DesktopServerLoRAAdapterSection: View {
             )
         } else {
             VStack(alignment: .leading, spacing: 8) {
-                Text("The selected server model is being served directly.")
+                Text("The selected provider model is being served directly.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 ForEach(viewModel.serverAdapterOptions) { option in
@@ -1547,11 +2072,12 @@ private struct DesktopServerLoRAAdapterSection: View {
     }
 }
 
-private struct DesktopServerSessionEditor: View {
+private struct DesktopProviderWorkspaceEditor: View {
     let viewModel: RuntimeViewModel
     @Binding var showsSidebar: Bool
     @Binding var showsInspector: Bool
     @Binding var showsAdvanced: Bool
+    @Binding var selectedPage: DesktopProviderSurfacePage
 
     private let servingAccelerationModeOptions = [
         ("None", "baseline"),
@@ -1565,16 +2091,52 @@ private struct DesktopServerSessionEditor: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 DesktopWorkspaceHeader(
-                    title: "Server",
-                    subtitle: "Choose model, configure listener, then start the server session."
+                    title: selectedPage.headerTitle,
+                    subtitle: selectedPage.subtitle
                 ) {}
 
-                if viewModel.isCreatingServerTarget {
-                    DesktopServerCreationEditor(viewModel: viewModel)
-                } else if viewModel.selectedServerTarget?.kind == .remoteServer {
+                if selectedPage == .overview, viewModel.isCreatingProviderTarget == false {
+                    DesktopProviderOverviewView(
+                        viewModel: viewModel,
+                        createLocalProvider: {
+                            selectedPage = .createLocalProvider
+                            DesktopProviderCreationActions.addLocalProvider(viewModel: viewModel)
+                        },
+                        addRemoteProvider: {
+                            selectedPage = .addRemoteProvider
+                            DesktopProviderCreationActions.addRemoteProvider(viewModel: viewModel)
+                        }
+                    )
+                } else if selectedPage == .capabilityReceipts, viewModel.isCreatingProviderTarget == false {
+                    DesktopProviderCapabilityReceiptsView(viewModel: viewModel)
+                } else if selectedPage == .localProviders,
+                          viewModel.isCreatingProviderTarget == false,
+                          viewModel.selectedProviderTarget?.kind != .localServer {
+                    DesktopProviderTargetListView(
+                        title: "Local Providers",
+                        emptyTitle: "No Local Providers",
+                        emptyDetail: "Create a local Apple Silicon provider to run models on this Mac.",
+                        targets: viewModel.providerTargets.filter { $0.kind == .localServer },
+                        selectedTargetID: viewModel.selectedProviderTarget?.id,
+                        selectTarget: viewModel.selectProviderTarget
+                    )
+                } else if selectedPage == .remoteProviders,
+                          viewModel.isCreatingProviderTarget == false,
+                          viewModel.selectedProviderTarget?.kind != .remoteServer {
+                    DesktopProviderTargetListView(
+                        title: "Remote Providers",
+                        emptyTitle: "No Remote Providers",
+                        emptyDetail: "Add a remote provider for outbound calls to an OpenAI-compatible runtime.",
+                        targets: viewModel.providerTargets.filter { $0.kind == .remoteServer },
+                        selectedTargetID: viewModel.selectedProviderTarget?.id,
+                        selectTarget: viewModel.selectProviderTarget
+                    )
+                } else if viewModel.isCreatingProviderTarget {
+                    DesktopProviderCreationEditor(viewModel: viewModel)
+                } else if viewModel.selectedProviderTarget?.kind == .remoteServer {
                     DesktopRemoteServerEditor(viewModel: viewModel)
                 } else if let session = viewModel.selectedServerSession,
-                          viewModel.selectedServerTarget?.kind == .localServer {
+                          viewModel.selectedProviderTarget?.kind == .localServer {
                     if let notice = session.lifecycleBannerState {
                         DesktopInlineNoticeCardView(notice: notice)
                     }
@@ -1597,7 +2159,7 @@ private struct DesktopServerSessionEditor: View {
                             if viewModel.serverModelOptions.isEmpty {
                                 Text(viewModel.isRefreshingServerModelOptions
                                     ? "Scanning Ready to Run model roots..."
-                                    : "No Ready to Run models are available. Rescan model roots or download a model before starting a local server.")
+                                    : "No Ready to Run models are available. Rescan model roots or download a model before starting a local provider.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -1722,8 +2284,8 @@ private struct DesktopServerSessionEditor: View {
                                     Image(systemName: "ellipsis.circle")
                                 }
                                 .menuStyle(.borderlessButton)
-                                .help("More Server Actions")
-                                .accessibilityLabel("More Server Actions")
+                                .help("More Provider Actions")
+                                .accessibilityLabel("More Provider Actions")
                             }
 
                             Toggle(
@@ -1765,15 +2327,21 @@ private struct DesktopServerSessionEditor: View {
                     }
                 } else {
                     MelixActionableEmptyState(
-                        title: "No Server Selected",
+                        title: "No Provider Selected",
                         systemImage: "server.rack",
-                        detail: "Pick an existing server in the sidebar, or start a new target when this workspace is empty."
+                        detail: "Pick an existing provider in the sidebar, or start a new target when this workspace is empty."
                     ) {
                         HStack(spacing: MelixDesignTokens.Spacing.sm) {
-                            Button("Add Local Server", action: DesktopServerCreationActions.makeAddLocalServerAction(viewModel: viewModel))
+                            Button("Create Local Provider") {
+                                selectedPage = .createLocalProvider
+                                DesktopProviderCreationActions.addLocalProvider(viewModel: viewModel)
+                            }
                             .buttonStyle(.borderedProminent)
 
-                            Button("Add Remote Server", action: DesktopServerCreationActions.makeAddRemoteServerAction(viewModel: viewModel))
+                            Button("Add Remote Provider") {
+                                selectedPage = .addRemoteProvider
+                                DesktopProviderCreationActions.addRemoteProvider(viewModel: viewModel)
+                            }
                             .buttonStyle(.bordered)
                         }
                     }
@@ -1943,13 +2511,13 @@ private struct DesktopServerSessionEditor: View {
             .padding(10)
             .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
         case "accelerated_prefill":
-            accelerationModeReadOnlyCard("Uses the backend accelerated prefill profile for this server session.")
+            accelerationModeReadOnlyCard("Uses the backend accelerated prefill profile for this provider.")
         case "active_kv_quantized":
-            accelerationModeReadOnlyCard("Uses the backend active KV quantization profile for this server session.")
+            accelerationModeReadOnlyCard("Uses the backend active KV quantization profile for this provider.")
         case "sparse_prefill":
-            accelerationModeReadOnlyCard("Uses the backend sparse prefill profile for this server session.")
+            accelerationModeReadOnlyCard("Uses the backend sparse prefill profile for this provider.")
         default:
-            accelerationModeReadOnlyCard("No additional acceleration settings are enabled for this server session.")
+            accelerationModeReadOnlyCard("No additional acceleration settings are enabled for this provider.")
         }
     }
 
@@ -1969,11 +2537,23 @@ private struct DesktopServerSessionInspector: View {
     var body: some View {
         if let session = viewModel.selectedServerSession {
             DesktopInspectorContractView(
-                title: "Server Inspector",
+                title: "Provider Inspector",
                 context: "\(session.title) • \(session.modelID)",
                 health: session.lifecycleSummaryText,
                 metrics: "\(session.effectiveBaseURL) • \(session.idlePolicySummaryText)",
                 actions: [
+                    DesktopInspectorActionRow(
+                        title: "Open Detail",
+                        systemImage: "arrow.up.right.square",
+                        routeTarget: .page(
+                            domain: .server,
+                            pageID: "overview",
+                            selectedObject: .init(kind: .provider, objectID: session.id)
+                        )
+                    ) {
+                        viewModel.selectSurface(.server)
+                        viewModel.selectServerSession(id: session.id)
+                    },
                     DesktopInspectorActionRow(title: "Copy URL", systemImage: "doc.on.doc") {
                         copyToPasteboard(session.effectiveBaseURL)
                     },
@@ -1988,19 +2568,19 @@ private struct DesktopServerSessionInspector: View {
             }
         } else {
             DesktopInspectorContractView(
-                title: "Server Inspector",
-                context: "No server selected",
-                health: "Choose or create a server target",
-                metrics: "No runtime metrics",
+                title: "Provider Inspector",
+                context: "No provider selected",
+                health: "Choose or create a provider target",
+                metrics: "No provider metrics",
                 actions: [
-                    DesktopInspectorActionRow(title: "Create Local Server", systemImage: "plus.circle") {
-                        viewModel.beginServerCreation(kind: .localServer)
+                    DesktopInspectorActionRow(title: "Create Local Provider", systemImage: "plus.circle") {
+                        viewModel.beginProviderCreation(kind: .localServer)
                     },
-                    DesktopInspectorActionRow(title: "Create Remote Server", systemImage: "network.badge.shield.half.filled") {
-                        viewModel.beginServerCreation(kind: .remoteServer)
+                    DesktopInspectorActionRow(title: "Create Remote Provider", systemImage: "network.badge.shield.half.filled") {
+                        viewModel.beginProviderCreation(kind: .remoteServer)
                     },
                 ],
-                evidence: ["Server status and copy actions appear here."]
+                evidence: ["Provider status and copy actions appear here."]
             )
         }
     }
@@ -2010,7 +2590,20 @@ struct DesktopInspectorActionRow: Identifiable {
     let id = UUID()
     let title: String
     let systemImage: String
+    let routeTarget: DesktopRouteActionTarget?
     let action: @MainActor () -> Void
+
+    init(
+        title: String,
+        systemImage: String,
+        routeTarget: DesktopRouteActionTarget? = nil,
+        action: @escaping @MainActor () -> Void
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.routeTarget = routeTarget
+        self.action = action
+    }
 }
 
 struct DesktopInspectorContractView<ExtraContent: View>: View {
@@ -2416,7 +3009,7 @@ struct DesktopDownloadsToolSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Model ingress and artifact publishing stay under Tools, not Server.")
+            Text("Model ingress and artifact publishing stay under Tools, not Providers.")
                 .foregroundStyle(.secondary)
 
             MelixSectionCard("Packaging Target") {
@@ -2484,15 +3077,16 @@ struct DesktopDownloadsToolSectionView: View {
                 }
             }
 
-            if viewModel.audioSetupActions.isEmpty == false {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(viewModel.audioSetupActions) { action in
-                        DesktopAudioSetupNoticeRow(
-                            action: action,
-                            performAction: { viewModel.presentAudioSetupPrompt(action) }
-                        )
+            if let audioSetupState = viewModel.audioSetupState {
+                DesktopAudioSetupNoticeRow(
+                    setup: audioSetupState,
+                    performAction: {
+                        guard let action = audioSetupState.primaryAction else {
+                            return
+                        }
+                        viewModel.presentAudioSetupPrompt(action)
                     }
-                }
+                )
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -5356,32 +5950,128 @@ enum DesktopDownloadsLayoutMetrics {
 }
 
 struct DesktopAudioSetupNoticeRow: View {
+    let setup: RuntimeAudioSetupState
     let action: RuntimeAudioSetupActionState
     let performAction: () -> Void
 
+    init(
+        setup: RuntimeAudioSetupState,
+        performAction: @escaping () -> Void
+    ) {
+        self.setup = setup
+        self.action = setup.primaryAction ?? RuntimeAudioSetupActionState(
+            modelID: "",
+            alias: "Audio Models",
+            detail: setup.detail,
+            actionTitle: "",
+            kind: .downloadModel,
+            modelIDs: []
+        )
+        self.performAction = performAction
+    }
+
     var body: some View {
+        if setup.phase == .runtimeRequired {
+            compactRow(title: setup.title, detail: setup.summary)
+                .padding(.horizontal, 10)
+                .frame(height: DesktopDownloadsLayoutMetrics.compactAudioNoticeHeightBudget)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(audioSetupAccessibilitySummary(setup))
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                compactRow(title: setup.title, detail: setup.summary)
+                if setup.phase != .runtimeRequired {
+                    audioSetupCapabilityDetails(setup)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(audioSetupAccessibilitySummary(setup))
+        }
+    }
+
+    private func compactRow(title: String, detail: String) -> some View {
         HStack(spacing: 10) {
-            Label("Audio Setup Required", systemImage: "waveform.badge.exclamationmark")
+            Label(title, systemImage: "waveform.badge.exclamationmark")
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(title)
 
-            Text(action.detail)
+            Text(detail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .accessibilityLabel(detail)
 
             Spacer(minLength: 8)
 
-            Button(action.actionTitle, action: performAction)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .fixedSize(horizontal: true, vertical: false)
+            if action.actionTitle.isEmpty == false {
+                Button(action.actionTitle, action: performAction)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .accessibilityLabel(action.actionTitle)
+            }
         }
-        .padding(.horizontal, 10)
         .frame(height: DesktopDownloadsLayoutMetrics.compactAudioNoticeHeightBudget)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func audioSetupCapabilityDetails(_ setup: RuntimeAudioSetupState) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(setup.detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            ForEach(setup.capabilityGroups) { group in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(group.title)
+                        .font(.caption.weight(.semibold))
+                        .accessibilityLabel(group.title)
+                    ForEach(group.models) { model in
+                        HStack(spacing: 8) {
+                            Image(systemName: model.isSelected ? "checkmark.circle.fill" : "circle")
+                                .font(.caption)
+                                .foregroundStyle(model.isSelected ? MelixDesignTokens.accent : .secondary)
+                                .frame(width: 16)
+                            Text(model.alias)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .accessibilityLabel(model.alias)
+                            Text(model.isRecommended ? "Recommended" : "Optional")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .accessibilityLabel(model.isRecommended ? "Recommended" : "Optional")
+                            Spacer(minLength: 8)
+                            Text(model.statusText)
+                                .font(.caption2)
+                                .foregroundStyle(model.isReady ? .green : .secondary)
+                                .lineLimit(1)
+                                .accessibilityLabel(model.statusText)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func audioSetupAccessibilitySummary(_ setup: RuntimeAudioSetupState) -> String {
+        var parts = [
+            setup.title,
+            setup.summary,
+            setup.primaryAction?.actionTitle ?? "",
+            setup.detail,
+        ]
+        for group in setup.capabilityGroups {
+            parts.append(group.title)
+            parts.append(contentsOf: group.models.map(\.alias))
+        }
+        return parts.filter { $0.isEmpty == false }.joined(separator: " ")
     }
 }
 
@@ -5589,8 +6279,8 @@ struct DesktopTrainingToolSectionView: View {
                 return fusedActivationUnavailableText
             }
             return adapter.derivedModelID.isEmpty
-                ? "Activate the selected adapter when you want to expose it as a runtime target."
-                : "The selected adapter already has a derived runtime target available."
+                ? "Activate the selected adapter when you want to expose it as a provider target."
+                : "The selected adapter already has a derived provider target available."
         }
         return "Start training first, then activate or publish the resulting adapter package."
     }
@@ -8109,7 +8799,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            DesktopEditorialSectionCard("Runtime Diagnostics") {
+            DesktopEditorialSectionCard("Provider Diagnostics") {
                 VStack(alignment: .leading, spacing: 10) {
                     if report.probeRows.isEmpty {
                         DesktopInlineEmptyStateView(
@@ -8690,18 +9380,18 @@ struct DesktopDiagnosticsToolSectionView: View {
             if selectedStage != .evaluation {
                 DesktopEditorialSectionCard(selectedStage == .matrix ? "Matrix Configuration" : "Bench Configuration") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Running Server")
+                        Text("Running Provider")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
 
                         Picker(
-                            "Running Server",
+                            "Running Provider",
                             selection: Binding(
-                                get: { viewModel.selectedDiagnosticsServerTargetID },
-                                set: { viewModel.selectDiagnosticsServerTarget(id: $0) }
+                                get: { viewModel.selectedDiagnosticsProviderTargetID },
+                                set: { viewModel.selectDiagnosticsProviderTarget(id: $0) }
                             )
                         ) {
-                            ForEach(viewModel.diagnosticsServerTargets) { target in
+                            ForEach(viewModel.diagnosticsProviderTargets) { target in
                                 Text(target.title).tag(target.id)
                             }
                         }
@@ -9448,18 +10138,18 @@ struct DesktopDiagnosticsToolSectionView: View {
             if selectedStage == .evaluation {
                 DesktopEditorialSectionCard("Evaluation Configuration") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Running Server")
+                        Text("Running Provider")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
 
                         Picker(
-                            "Running Server",
+                            "Running Provider",
                             selection: Binding(
-                                get: { viewModel.selectedDiagnosticsServerTargetID },
-                                set: { viewModel.selectDiagnosticsServerTarget(id: $0) }
+                                get: { viewModel.selectedDiagnosticsProviderTargetID },
+                                set: { viewModel.selectDiagnosticsProviderTarget(id: $0) }
                             )
                         ) {
-                            ForEach(viewModel.diagnosticsServerTargets) { target in
+                            ForEach(viewModel.diagnosticsProviderTargets) { target in
                                 Text(target.title).tag(target.id)
                             }
                         }
@@ -9585,7 +10275,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                             .foregroundStyle(.secondary)
 
                         Picker(
-                            "Judge Remote Server",
+                            "Judge Remote Provider",
                             selection: Binding(
                                 get: { viewModel.selectedEvaluationSemanticJudgeRemoteServerID },
                                 set: { viewModel.selectedEvaluationSemanticJudgeRemoteServerID = $0 }
@@ -10069,7 +10759,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 }
             }
 
-            DesktopEditorialSectionCard("Runtime Metrics Snapshot") {
+            DesktopEditorialSectionCard("Provider Metrics Snapshot") {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(foundation.benchMetrics.prefix(10)) { metric in
                         HStack {
@@ -10137,7 +10827,7 @@ struct DesktopAgentIntegrationExportsPanel: View {
                     ContentUnavailableView(
                         "No Integration Export",
                         systemImage: "square.and.arrow.up.on.square",
-                        description: Text("Start or select a server session to render reproducible agent integration exports.")
+                        description: Text("Start or select a provider to render reproducible agent integration exports.")
                     )
                 }
             }
@@ -10249,6 +10939,444 @@ struct DesktopAPIAuthenticationReferenceView: View {
     }
 }
 
+struct DesktopAPICompanionPairingPanel: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        let presentation = DesktopAPICompanionPairingPresentation(pairing: viewModel.companionPairing)
+
+        MelixSectionCard("Companion Pairing") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(presentation.statusTitle)
+                            .font(.headline)
+                        Text(presentation.statusDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                    Text(presentation.scopeText)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                if let statusURL = presentation.statusURL {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Status URL")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(statusURL)
+                            .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                            .help(statusURL)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let allowedRoutesText = presentation.allowedRoutesText {
+                    Text(allowedRoutesText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .truncationMode(.middle)
+                        .help(allowedRoutesText)
+                }
+
+                if let pairingCode = viewModel.companionPairingCodeText() {
+                    CompanionPairingQRView(pairingCode: pairingCode)
+                }
+
+                if let errorText = presentation.errorText {
+                    Text(errorText)
+                        .font(.caption)
+                        .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    companionPairingButtons(presentation)
+                }
+                .buttonStyle(.bordered)
+            }
+            .frame(
+                minWidth: 0,
+                idealWidth: DesktopAPICompanionPairingLayout.compactContentWidth,
+                maxWidth: .infinity,
+                alignment: .leading
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func companionPairingButtons(_ presentation: DesktopAPICompanionPairingPresentation) -> some View {
+        Button("Issue Token") {
+            Task { await viewModel.issueCompanionPairing() }
+        }
+        .help("Issue a read-only companion token")
+        .disabled(presentation.issueDisabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Button("Copy Bundle") {
+            CompanionPairingClipboard.copy(viewModel.companionPairingBundleText())
+        }
+        .help("Copy the read-only companion pairing bundle")
+        .disabled(presentation.copyDisabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Button("Copy Code") {
+            CompanionPairingClipboard.copy(viewModel.companionPairingCodeText())
+        }
+        .help("Copy the read-only companion pairing code")
+        .disabled(presentation.copyDisabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Button("Revoke Token") {
+            Task { await viewModel.revokeCompanionPairing() }
+        }
+        .disabled(presentation.revokeDisabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+enum DesktopAPICompanionPairingLayout {
+    static let compactContentWidth: CGFloat = 320
+    static let qrImageSize: CGFloat = 120
+}
+
+enum CompanionPairingQRCode {
+    static func image(for code: String) -> NSImage? {
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedCode.isEmpty == false else { return nil }
+
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(trimmedCode.utf8)
+        filter.correctionLevel = "M"
+
+        guard let outputImage = filter.outputImage else { return nil }
+
+        let extent = outputImage.extent.integral
+        guard extent.width > 0, extent.height > 0 else { return nil }
+
+        let context = CIContext()
+        guard let cgImage = context.createCGImage(outputImage, from: extent) else {
+            return nil
+        }
+
+        let targetSize = DesktopAPICompanionPairingLayout.qrImageSize
+        return NSImage(size: NSSize(width: targetSize, height: targetSize), flipped: false) { rect in
+            guard let nsContext = NSGraphicsContext.current else { return false }
+            nsContext.imageInterpolation = .none
+            nsContext.cgContext.draw(cgImage, in: rect)
+            return true
+        }
+    }
+}
+
+struct CompanionPairingQRView: View {
+    let pairingCode: String
+    @State private var qrImage: NSImage?
+
+    init(pairingCode: String, initialImage: NSImage? = nil) {
+        self.pairingCode = pairingCode
+        _qrImage = State(initialValue: initialImage)
+    }
+
+    var body: some View {
+        Group {
+            if let qrImage {
+                CompanionPairingQRImageView(qrImage: qrImage)
+            }
+        }
+        .task(id: pairingCode) {
+            qrImage = CompanionPairingQRCode.image(for: pairingCode)
+        }
+    }
+}
+
+struct CompanionPairingQRImageView: View {
+    let qrImage: NSImage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Pairing QR")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Image(nsImage: qrImage)
+                .interpolation(.none)
+                .resizable()
+                .frame(
+                    width: DesktopAPICompanionPairingLayout.qrImageSize,
+                    height: DesktopAPICompanionPairingLayout.qrImageSize
+                )
+                .accessibilityLabel("Pairing QR")
+                .help("Contains the read-only companion bearer token. Share only with a trusted local device.")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct DesktopAPICompanionPairingPresentation: Equatable {
+    let statusTitle: String
+    let statusDetail: String
+    let scopeText: String
+    let statusURL: String?
+    let allowedRoutesText: String?
+    let errorText: String?
+    let issueDisabled: Bool
+    let copyDisabled: Bool
+    let revokeDisabled: Bool
+
+    init(pairing: CompanionPairingState) {
+        statusTitle = Self.statusTitle(pairing.phase)
+        statusDetail = Self.statusDetail(pairing)
+        scopeText = pairing.scope.isEmpty ? "companion_read_only" : pairing.scope
+        statusURL = pairing.statusURL.isEmpty ? nil : pairing.statusURL
+        allowedRoutesText = pairing.allowedRoutes.isEmpty
+            ? nil
+            : "Allowed routes: \(pairing.allowedRoutes.joined(separator: ", "))"
+        errorText = (pairing.lastError?.isEmpty == false) ? pairing.lastError : nil
+        issueDisabled = pairing.phase == .issuing || pairing.phase == .revoking
+        copyDisabled = pairing.copyBundleAvailable == false
+        revokeDisabled = pairing.copyBundleAvailable == false || pairing.phase == .revoking
+    }
+
+    private static func statusTitle(_ phase: CompanionPairingPhase) -> String {
+        switch phase {
+        case .idle:
+            return "No active companion token"
+        case .issuing:
+            return "Issuing companion token"
+        case .active:
+            return "Read-only companion token active"
+        case .revoking:
+            return "Revoking companion token"
+        case .failed:
+            return "Companion pairing needs attention"
+        }
+    }
+
+    private static func statusDetail(_ pairing: CompanionPairingState) -> String {
+        switch pairing.phase {
+        case .idle:
+            return "Create a transient read-only session for the selected local provider."
+        case .issuing:
+            return "Requesting a scoped companion session from the gateway."
+        case .active:
+            if pairing.expiresAtUnixMS > 0 {
+                let expiresAt = Date(timeIntervalSince1970: Double(pairing.expiresAtUnixMS) / 1_000)
+                return "Read-only token expires at \(expiresAt.formatted(date: .abbreviated, time: .shortened))."
+            }
+            return "Read-only token is active."
+        case .revoking:
+            return "Revocation uses the current companion session token once."
+        case .failed:
+            return pairing.lastError ?? "The companion token action failed."
+        }
+    }
+}
+
+struct DesktopAPICompanionStatusPanel: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        let presentation = DesktopAPICompanionStatusPresentation(status: viewModel.companionStatus)
+
+        MelixSectionCard("Companion Status") {
+            VStack(alignment: .leading, spacing: 12) {
+                ViewThatFits(in: .horizontal) {
+                    companionStatusHeader(presentation)
+                        .fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .leading, spacing: 8) {
+                        companionStatusTitle(presentation)
+                        companionStatusRefreshButton(presentation)
+                    }
+                }
+
+                if let errorText = presentation.errorText {
+                    Text(errorText)
+                        .font(.caption)
+                        .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                        .lineLimit(3)
+                        .truncationMode(.tail)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Redacted Log Tail")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    if presentation.logRows.isEmpty {
+                        Text("No companion log entries loaded.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(presentation.logRows) { row in
+                            VStack(alignment: .leading, spacing: 4) {
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(row.title)
+                                            .font(.caption.weight(.semibold))
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Spacer()
+                                        Text(row.timeText)
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(row.title)
+                                            .font(.caption.weight(.semibold))
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Text(row.timeText)
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                Text(row.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .truncationMode(.tail)
+                                Text(row.redactionText)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(3)
+                                    .truncationMode(.tail)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }
+
+                if let redactionText = presentation.redactionText {
+                    Text("Logs: \(redactionText)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .truncationMode(.tail)
+                }
+            }
+            .frame(
+                minWidth: 0,
+                idealWidth: DesktopAPICompanionStatusLayout.compactContentWidth,
+                maxWidth: .infinity,
+                alignment: .leading
+            )
+        }
+    }
+
+    private func companionStatusHeader(_ presentation: DesktopAPICompanionStatusPresentation) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            companionStatusTitle(presentation)
+            Spacer()
+            companionStatusRefreshButton(presentation)
+        }
+    }
+
+    private func companionStatusTitle(_ presentation: DesktopAPICompanionStatusPresentation) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(presentation.statusTitle)
+                .font(.headline)
+            Text(presentation.statusDetail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .truncationMode(.tail)
+        }
+    }
+
+    private func companionStatusRefreshButton(_ presentation: DesktopAPICompanionStatusPresentation) -> some View {
+        Button("Refresh Status") {
+            Task { await viewModel.refreshCompanionStatus() }
+        }
+        .buttonStyle(.bordered)
+        .disabled(presentation.refreshDisabled)
+    }
+}
+
+enum DesktopAPICompanionStatusLayout {
+    static let compactContentWidth: CGFloat = 320
+}
+
+struct DesktopAPICompanionStatusPresentation: Equatable {
+    struct LogRow: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let detail: String
+        let timeText: String
+        let redactionText: String
+    }
+
+    let statusTitle: String
+    let statusDetail: String
+    let errorText: String?
+    let redactionText: String?
+    let refreshDisabled: Bool
+    let logRows: [LogRow]
+
+    init(status: CompanionStatusState) {
+        statusTitle = Self.statusTitle(status)
+        statusDetail = Self.statusDetail(status)
+        errorText = (status.lastError?.isEmpty == false) ? status.lastError : nil
+        redactionText = status.redactionLogs.isEmpty ? nil : status.redactionLogs
+        refreshDisabled = status.phase == .loading
+        logRows = status.logTail.entries.map(Self.logRow(entry:))
+    }
+
+    private static func statusTitle(_ status: CompanionStatusState) -> String {
+        switch status.phase {
+        case .idle:
+            return "Companion status not loaded"
+        case .loading:
+            return "Refreshing companion status"
+        case .loaded:
+            return "Companion status \(status.status.isEmpty ? "loaded" : status.status)"
+        case .failed:
+            return "Companion status needs attention"
+        }
+    }
+
+    private static func statusDetail(_ status: CompanionStatusState) -> String {
+        switch status.phase {
+        case .idle:
+            return "Refresh after issuing a read-only companion token."
+        case .loading:
+            return "Reading the companion status endpoint with the transient read-only token."
+        case .loaded:
+            return "Read-only companion status, \(status.logTail.visible) of \(status.logTail.total) redacted log entries visible."
+        case .failed:
+            return status.lastError ?? "The companion status refresh failed."
+        }
+    }
+
+    private static func logRow(entry: CompanionStatusLogEntryState) -> LogRow {
+        let failureSuffix = entry.failureCode.isEmpty ? "" : " • \(entry.failureCode)"
+        return LogRow(
+            id: "\(entry.jobID)-\(entry.updatedAtUnixMS)-\(entry.eventType)",
+            title: "\(entry.jobID) • \(entry.state)",
+            detail: "\(entry.operation) • \(entry.progressStage) • \(entry.lane)\(failureSuffix)",
+            timeText: companionStatusTimestampText(entry.updatedAtUnixMS),
+            redactionText: entry.redactionSummary
+        )
+    }
+}
+
+private func companionStatusTimestampText(_ unixMS: Int64) -> String {
+    guard unixMS > 0 else {
+        return "unknown"
+    }
+    let date = Date(timeIntervalSince1970: Double(unixMS) / 1_000)
+    return date.formatted(date: .omitted, time: .shortened)
+}
+
 struct DesktopAPIQuickStartSnippet: Identifiable {
     let id: String
     let language: String
@@ -10317,9 +11445,9 @@ struct DesktopAPIQuickStartPanel: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ContentUnavailableView(
-                    "No Server Session Selected",
+                    "No Provider Selected",
                     systemImage: "network.slash",
-                    description: Text("Start or select a server session to render session-aware quick-start snippets.")
+                    description: Text("Start or select a provider to render provider-aware quick-start snippets.")
                 )
             }
         }
@@ -10892,12 +12020,17 @@ struct DesktopAPIWorkspaceView: View {
                             selectedExport: viewModel.selectedAgentIntegrationExport
                         )
                     case .authentication:
-                        DesktopAPIAuthenticationReferenceView(
-                            referenceText: desktopAPIAuthenticationReferenceText(
-                                selectedSession: viewModel.selectedServerSession,
-                                selectedExport: viewModel.selectedAgentIntegrationExport
+                        VStack(alignment: .leading, spacing: 18) {
+                            DesktopAPIAuthenticationReferenceView(
+                                referenceText: desktopAPIAuthenticationReferenceText(
+                                    selectedSession: viewModel.selectedServerSession,
+                                    selectedExport: viewModel.selectedAgentIntegrationExport
+                                )
                             )
-                        )
+                            DesktopAPICompanionPairingPanel(viewModel: viewModel)
+                            DesktopAPICompanionStatusPanel(viewModel: viewModel)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     case .quickStarts:
                         VStack(alignment: .leading, spacing: 18) {
                             DesktopAPIQuickStartPanel(
@@ -10935,7 +12068,7 @@ struct DesktopAPIWorkspaceView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    GroupBox("Current Server") {
+                    GroupBox("Current Provider") {
                         if let session = viewModel.selectedServerSession {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(session.title)
@@ -10949,7 +12082,7 @@ struct DesktopAPIWorkspaceView: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
-                            Text("No server session selected.")
+                            Text("No provider selected.")
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -11005,7 +12138,7 @@ private struct DesktopAPIEndpointConsoleView: View {
                     DesktopAPIEndpointRow(
                         title: "Chat Completions",
                         endpoint: chatEndpoint,
-                        detail: selectedSession?.lifecycleSummaryText ?? "No server session selected."
+                        detail: selectedSession?.lifecycleSummaryText ?? "No provider selected."
                     )
                     DesktopAPIEndpointRow(
                         title: "Models",
@@ -11068,7 +12201,7 @@ func desktopAPIAuthenticationReferenceText(
     selectedExport: AgentIntegrationExport?
 ) -> String {
     guard let selectedSession else {
-        return "Select a server session to render auth guidance."
+        return "Select a provider to render auth guidance."
     }
 
     let exportLead = if let selectedExport {
@@ -11129,12 +12262,27 @@ func desktopAPIAuthenticationReferenceText(selectedExport: AgentIntegrationExpor
     if let export = selectedExport {
         return "Selected target: \(export.target.rawValue). Use \(export.authPlaceholder) as the reproducible credential placeholder for \(export.baseURL)."
     }
-    return "Select a server session to render auth guidance."
+    return "Select a provider to render auth guidance."
 }
 
 enum RuntimeDiagnosticsArtifactClipboard {
     @discardableResult
     static func copy(_ value: String, to pasteboard: any RuntimePasteboardWriting = NSPasteboard.general) -> Bool {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedValue.isEmpty == false else {
+            return false
+        }
+        pasteboard.clearContents()
+        return pasteboard.setString(trimmedValue, forType: .string)
+    }
+}
+
+enum CompanionPairingClipboard {
+    @discardableResult
+    static func copy(_ value: String?, to pasteboard: any RuntimePasteboardWriting = NSPasteboard.general) -> Bool {
+        guard let value else {
+            return false
+        }
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedValue.isEmpty == false else {
             return false

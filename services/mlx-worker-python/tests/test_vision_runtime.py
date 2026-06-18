@@ -329,6 +329,16 @@ def test_ocr_single_image_token_count_reuses_same_request_cache(
 
     assert runtime.prompt_token_count(request) == len(prompt_text.split()) + 16
     assert runtime.prompt_token_count(request) == len(prompt_text.split()) + 16
+
+    class ExplodingMediaList(list):
+        def __bool__(self) -> bool:  # pragma: no cover - exercised only on regression
+            raise AssertionError("identity cache hits should not re-read request videos")
+
+        def __len__(self) -> int:  # pragma: no cover - exercised only on regression
+            raise AssertionError("identity cache hits should not re-read request images")
+
+    object.__setattr__(request, "images", ExplodingMediaList(request.images))
+    object.__setattr__(request, "videos", ExplodingMediaList(request.videos))
     assert runtime.prompt_token_count(request) == len(prompt_text.split()) + 16
 
     equivalent_request = PreparedVisionRequest(
@@ -584,6 +594,13 @@ def test_resolved_vision_family_config_uses_slots_for_hot_path_instances() -> No
     assert not hasattr(family_config, "__dict__")
     assert not hasattr(adapter, "__dict__")
     assert not hasattr(adapter.descriptor, "__dict__")
+
+
+def test_prepared_vision_request_uses_slots_for_hot_path_instances() -> None:
+    request = text_only_vlm_request("Describe this image.")
+
+    assert not hasattr(request, "__dict__")
+    assert request.prompt_text == "Describe this image."
 
 
 def test_generate_streams_vlm_response_from_file_image_uri(tmp_path: Path) -> None:

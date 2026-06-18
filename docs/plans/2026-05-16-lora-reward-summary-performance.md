@@ -21,7 +21,7 @@ Behavior remains unchanged:
 - candidate group margin and variance still use the same per-group min, max, total, square total, and count
 - non-dict candidates and candidates without `score` remain ignored
 
-A rejected experiment in this slice streamed candidate scores directly into the global score vector to remove the per-sample candidate list, but the registered local probe regressed from about 47.2 ms to 49-52 ms. The accepted change keeps the existing per-group list and only binds hot helpers.
+The 2026-06-12 follow-up re-tested candidate-score streaming with the now-registered `lora-reward-summary-candidate-minmax` probe. The accepted slice removes the per-sample `candidate_scores` list, appends valid candidate scores directly into the global score vector, and preserves the existing one-pass per-group min, max, total, and square-total calculation. The focused Linux probe improved from `elapsed_ms_mean=44.906307` ms to `39.305011` ms for the 5k-sample / 32-candidate workload.
 
 ## Validation
 

@@ -15,6 +15,7 @@ from worker.productization.device_identity import collect_device_identity
 MEMORY_COMFORT_BUDGET_FACTOR = 0.60
 RESIDENT_MEMORY_OVERHEAD_FACTOR = 1.35
 GEMMA4_QAT_AUTOMATIC_ORG = "mlx-community"
+MLX_ONLY_SEARCH_MAX_PAGES = 4
 
 _SIZE_HINT_KB = 1024
 _SIZE_HINT_MB = _SIZE_HINT_KB * 1024
@@ -141,13 +142,38 @@ class HubCatalog:
         cursor: str,
         mlx_only: bool,
     ) -> HubSearchPage:
-        payloads, next_cursor = self._fetch_models(
-            search=query,
-            page_size=page_size,
-            cursor=cursor,
-        )
-        if mlx_only:
-            payloads = [payload for payload in payloads if _payload_is_mlx_compatible(payload)]
+        normalized_page_size = max(1, page_size or 20)
+        if not mlx_only:
+            payloads, next_cursor = self._fetch_models(
+                search=query,
+                page_size=normalized_page_size,
+                cursor=cursor,
+                hub_filter="",
+            )
+            items = [self._summary_record(payload) for payload in payloads]
+            return HubSearchPage(items=items, next_cursor=next_cursor)
+
+        payloads: list[dict[str, Any]] = []
+        next_cursor = ""
+        current_cursor = cursor
+        pages_fetched = 0
+        while pages_fetched < MLX_ONLY_SEARCH_MAX_PAGES:
+            page_payloads, next_cursor = self._fetch_models(
+                search=query,
+                page_size=normalized_page_size,
+                cursor=current_cursor,
+                hub_filter="mlx",
+            )
+            payloads.extend(
+                payload
+                for payload in page_payloads
+                if _payload_is_mlx_compatible(payload)
+            )
+            pages_fetched += 1
+            if len(payloads) >= normalized_page_size or not next_cursor:
+                break
+            current_cursor = next_cursor
+
         items = [self._summary_record(payload) for payload in payloads]
         return HubSearchPage(items=items, next_cursor=next_cursor)
 
@@ -155,7 +181,7 @@ class HubCatalog:
         if not repo_id.strip():
             raise HubCatalogError("invalid_argument", "Hub repo_id is required.")
 
-        payloads, _ = self._fetch_models(search=repo_id, page_size=10, cursor="")
+        payloads, _ = self._fetch_models(search=repo_id, page_size=10, cursor="", hub_filter="")
         payload = next(
             (
                 item
@@ -174,6 +200,7 @@ class HubCatalog:
         search: str,
         page_size: int,
         cursor: str,
+        hub_filter: str,
     ) -> tuple[list[dict[str, Any]], str]:
         normalized_page_size = max(1, page_size or 20)
         params: list[tuple[str, str]] = [
@@ -184,6 +211,8 @@ class HubCatalog:
         ]
         if search:
             params.append(("search", search))
+        if hub_filter:
+            params.append(("filter", hub_filter))
         if cursor:
             params.append(("cursor", cursor))
 
@@ -420,8 +449,8 @@ def _is_mlx_atom(value: str) -> bool:
 def _tag_payload_contains_mlx(value: Any) -> bool:
     if isinstance(value, list):
         for item in value:
-            if item == "MLX" or item == "mlx" or (
-                isinstance(item, str) and len(item) == 3 and _is_mlx_atom(item)
+            if isinstance(item, str) and (
+                item == "MLX" or item == "mlx" or (len(item) == 3 and _is_mlx_atom(item))
             ):
                 return True
         return False
@@ -479,6 +508,10 @@ def _base_models(value: Any) -> list[str]:
     return []
 
 
+def _repo_id_contains_mlx(repo_id: str) -> bool:
+    return "mlx" in repo_id or "mlx" in repo_id.lower()
+
+
 def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     library_name = _string(payload.get("library_name"))
     if library_name and _is_mlx_atom(library_name):
@@ -486,7 +519,7 @@ def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     if _tag_payload_contains_mlx(payload.get("tags")):
         return True
     repo_id = _string(payload.get("id") or payload.get("modelId"))
-    if "mlx" in repo_id.lower():
+    if _repo_id_contains_mlx(repo_id):
         return True
     card_data = payload.get("cardData")
     if not isinstance(card_data, dict):
@@ -512,8 +545,7 @@ def _is_mlx_compatible(
         return True
     if _is_mlx_atom(library_name):
         return True
-    lowered_repo_id = repo_id.lower()
-    if "mlx" in lowered_repo_id:
+    if _repo_id_contains_mlx(repo_id):
         return True
     card_tags = card_data.get("tags")
     if not card_tags:
@@ -747,35 +779,39 @@ def _size_hint_bytes(payload: dict[str, Any], *, card_data: dict[str, Any] | Non
     readme_text = _string(payload.get("readme"))
     card_description_text = _string(card_data.get("description"))
     if not readme_text and not card_description_text:
-        return (
-            _size_hint_from_text(description_text, allow_bare=False)
-            if description_text and _may_contain_model_marker(description_text)
-            else 0
-        )
+        return _size_hint_from_marked_text(description_text) if description_text else 0
     if not description_text and not card_description_text:
-        return (
-            _size_hint_from_text(readme_text, allow_bare=False)
-            if readme_text and _may_contain_model_marker(readme_text)
-            else 0
-        )
+        return _size_hint_from_marked_text(readme_text) if readme_text else 0
     if not description_text and not readme_text:
-        return (
-            _size_hint_from_text(card_description_text, allow_bare=False)
-            if card_description_text and _may_contain_model_marker(card_description_text)
-            else 0
-        )
+        return _size_hint_from_marked_text(card_description_text) if card_description_text else 0
 
-    if not (
-        _may_contain_model_marker(description_text)
-        or _may_contain_model_marker(readme_text)
-        or _may_contain_model_marker(card_description_text)
-    ):
+    found_model_marker = False
+    for text in (description_text, readme_text, card_description_text):
+        if not text or not _may_contain_model_marker(text):
+            continue
+        found_model_marker = True
+        direct_hint = _direct_explicit_size_hint_from_text(text)
+        if direct_hint > 0:
+            return direct_hint
+        hint = _size_hint_from_text(text, allow_bare=False)
+        if hint > 0:
+            return hint
+    if not found_model_marker:
         return 0
     text = "\n".join(
         text
         for text in (description_text, readme_text, card_description_text)
         if text
     )
+    return _size_hint_from_text(text, allow_bare=False)
+
+
+def _size_hint_from_marked_text(text: str) -> int:
+    if not _may_contain_model_marker(text):
+        return 0
+    direct_hint = _direct_explicit_size_hint_from_text(text)
+    if direct_hint > 0:
+        return direct_hint
     return _size_hint_from_text(text, allow_bare=False)
 
 
@@ -821,6 +857,33 @@ def _direct_card_size_hint_from_text(text: str) -> int:
     if stripped_text:
         return _direct_size_hint_from_text(stripped_text)
     return _direct_size_hint_from_text(text)
+
+
+def _direct_explicit_size_hint_from_text(text: str) -> int:
+    marker_index = text.find("Model size")
+    if marker_index < 0:
+        marker_index = text.find("MODEL SIZE")
+    if marker_index < 0:
+        marker_index = text.find("model size")
+    if marker_index < 0:
+        return 0
+
+    value_start = marker_index + 10
+    text_length = len(text)
+    while value_start < text_length and text[value_start].isspace():
+        value_start += 1
+    if value_start < text_length and (text[value_start] == ":" or text[value_start] == "|"):
+        value_start += 1
+    while value_start < text_length and text[value_start].isspace():
+        value_start += 1
+
+    value_end = value_start
+    while (
+        value_end < text_length
+        and text[value_end] not in "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+    ):
+        value_end += 1
+    return _direct_size_hint_from_text(text[value_start:value_end])
 
 
 def _strip_model_size_label(text: str) -> str:
@@ -880,7 +943,7 @@ def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
 
 
 def _may_contain_model_marker(text: str) -> bool:
-    return "mo" in text or "mO" in text or "Mo" in text or "MO" in text
+    return "MO" in text or "Mo" in text or "mo" in text or "mO" in text
 
 
 def _parameter_count(value: Any) -> int:

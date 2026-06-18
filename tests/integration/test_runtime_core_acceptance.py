@@ -58,7 +58,7 @@ def test_runtime_core_keeps_text_embedding_and_rerank_models_warm_concurrently()
         assert rerank_payload["model"] == "melix-dev-rerank"
 
         stack.wait_for_models(["melix-dev-text", "melix-dev-embed", "melix-dev-rerank"], timeout_seconds=30)
-        states = model_states(stack.models_url())
+        states = model_states(stack.capabilities_url())
         assert states["melix-dev-text"] in {"warm", "pinned"}
         assert states["melix-dev-embed"] in {"warm", "pinned"}
         assert states["melix-dev-rerank"] in {"warm", "pinned"}
@@ -126,7 +126,7 @@ def post_json(url: str, payload: dict[str, object]) -> tuple[int, dict[str, obje
 def model_states(url: str) -> dict[str, str]:
     with urllib.request.urlopen(url, timeout=10) as response:
         payload = json.loads(response.read().decode("utf-8"))
-    return {item["id"]: item["melix_state"] for item in payload["data"]}
+    return {item["model_id"]: item["state"] for item in payload["models"]}
 
 
 def run_prefill_memory_guard_probe(stack: LiveMelixStack) -> dict[str, object]:

@@ -89,6 +89,7 @@ final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
             defaultModelID: mutation.defaultModelID,
             timeoutSeconds: mutation.timeoutSeconds,
             rateLimitPerMinute: mutation.rateLimitPerMinute,
+            toolSupportMode: mutation.toolSupportMode,
             credentialRef: RemoteServerStore.credentialRef(for: mutation.id),
             apiKeyHint: mutation.apiKey.isEmpty
                 ? (existing?.apiKeyHint ?? "")
@@ -112,6 +113,222 @@ final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
         removedIDs.append(id)
         apiKeys.removeValue(forKey: id)
         servers.removeAll { $0.id == id }
+    }
+}
+
+struct CompanionPairingIssueRequestRecord: Equatable, Sendable {
+    let baseURL: URL
+    let apiKey: String
+}
+
+struct CompanionPairingRevokeRequestRecord: Equatable, Sendable {
+    let baseURL: URL
+    let sessionToken: String
+}
+
+struct CompanionStatusRequestRecord: Equatable, Sendable {
+    let statusURL: URL
+    let resumeHeader: String
+    let sessionToken: String
+}
+
+actor FakeCompanionPairingClient: CompanionPairingClient {
+    private(set) var issueRequests: [CompanionPairingIssueRequestRecord] = []
+    private(set) var revokeRequests: [CompanionPairingRevokeRequestRecord] = []
+    private var issueResult = CompanionPairingIssueResult(
+        sessionID: "companion-session-test",
+        scope: "companion_read_only",
+        rememberMe: true,
+        expiresAtUnixMS: 1_718_000_000_000,
+        resumeHeader: "x-melix-session",
+        resumeToken: "melix_companion_test_token",
+        pairing: CompanionPairingDescriptor(
+            schemaVersion: "melix.companion.pairing.v1",
+            statusURL: "http://127.0.0.1:12436/v1/melix/companion/status",
+            resumeHeader: "x-melix-session",
+            tokenTransport: "resume_header",
+            allowedRoutes: ["/v1/melix/companion/status"],
+            forbiddenCapabilities: ["mutate_runtime"],
+            expiresAtUnixMS: 1_718_000_000_000
+        )
+    )
+    private var issueError: Error?
+    private var revokeError: Error?
+    private var issueDelay: Duration?
+    private var revokeDelay: Duration?
+
+    func configureIssueResult(_ result: CompanionPairingIssueResult) {
+        issueResult = result
+        issueError = nil
+    }
+
+    func configureIssueError(_ error: Error?) {
+        issueError = error
+    }
+
+    func configureRevokeError(_ error: Error?) {
+        revokeError = error
+    }
+
+    func configureIssueDelay(_ delay: Duration?) {
+        issueDelay = delay
+    }
+
+    func configureRevokeDelay(_ delay: Duration?) {
+        revokeDelay = delay
+    }
+
+    func issuePairing(baseURL: URL, apiKey: String) async throws -> CompanionPairingIssueResult {
+        issueRequests.append(CompanionPairingIssueRequestRecord(baseURL: baseURL, apiKey: apiKey))
+        if let issueDelay {
+            try? await Task.sleep(for: issueDelay)
+        }
+        if let issueError {
+            throw issueError
+        }
+        return issueResult
+    }
+
+    func revokePairing(baseURL: URL, sessionToken: String) async throws {
+        revokeRequests.append(CompanionPairingRevokeRequestRecord(baseURL: baseURL, sessionToken: sessionToken))
+        if let revokeDelay {
+            try? await Task.sleep(for: revokeDelay)
+        }
+        if let revokeError {
+            throw revokeError
+        }
+    }
+}
+
+actor FakeCompanionStatusClient: CompanionStatusClient {
+    private(set) var refreshRequests: [CompanionStatusRequestRecord] = []
+    private var refreshResult = CompanionStatusSnapshot(
+        status: "ok",
+        readOnly: true,
+        authorizationScope: "companion_read_only",
+        logTail: CompanionStatusLogTailState(
+            source: "image_jobs",
+            visible: 1,
+            total: 1,
+            entries: [
+                CompanionStatusLogEntryState(
+                    eventType: "state_update",
+                    source: "image_jobs",
+                    jobID: "image-job-1",
+                    requestID: "request-1",
+                    modelID: "melix-dev-image",
+                    operation: "image_generate",
+                    state: "running",
+                    lane: "interactive",
+                    workerID: "image-worker-1",
+                    progressStage: "sampling",
+                    updatedAtUnixMS: 1_718_000_010_000,
+                    failureCode: "",
+                    redactionSummary: "raw log line omitted; raw prompt omitted; request body omitted; artifact URIs omitted; local paths omitted; error message omitted"
+                ),
+            ]
+        ),
+        redactionLogs: "redacted_tail"
+    )
+    private var refreshError: Error?
+
+    func configureRefreshResult(_ result: CompanionStatusSnapshot) {
+        refreshResult = result
+        refreshError = nil
+    }
+
+    func configureRefreshError(_ error: Error?) {
+        refreshError = error
+    }
+
+    func refreshStatus(statusURL: URL, resumeHeader: String, sessionToken: String) async throws -> CompanionStatusSnapshot {
+        refreshRequests.append(
+            CompanionStatusRequestRecord(
+                statusURL: statusURL,
+                resumeHeader: resumeHeader,
+                sessionToken: sessionToken
+            )
+        )
+        if let refreshError {
+            throw refreshError
+        }
+        return refreshResult
+    }
+}
+
+struct CompanionPairingHTTPRequestRecord: Equatable, Sendable {
+    let url: URL?
+    let method: String
+    let headers: [String: String]
+    let body: Data?
+}
+
+actor FakeCompanionPairingHTTPTransport: CompanionPairingHTTPTransport {
+    private(set) var requests: [CompanionPairingHTTPRequestRecord] = []
+    private var issueStatusCode = 200
+    private var issueBody = Data()
+    private var revokeStatusCode = 204
+    private var revokeBody = Data()
+
+    func configureIssueResponse(statusCode: Int = 200, body: Data) {
+        issueStatusCode = statusCode
+        issueBody = body
+    }
+
+    func configureRevokeResponse(statusCode: Int = 204, body: Data = Data()) {
+        revokeStatusCode = statusCode
+        revokeBody = body
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let method = request.httpMethod ?? "GET"
+        requests.append(
+            CompanionPairingHTTPRequestRecord(
+                url: request.url,
+                method: method,
+                headers: request.allHTTPHeaderFields ?? [:],
+                body: request.httpBody
+            )
+        )
+
+        let body = method == "DELETE" ? revokeBody : issueBody
+        let statusCode = method == "DELETE" ? revokeStatusCode : issueStatusCode
+        let response = HTTPURLResponse(
+            url: request.url ?? URL(string: "http://127.0.0.1")!,
+            statusCode: statusCode,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        return (body, response)
+    }
+}
+
+actor FakeCompanionStatusHTTPTransport: CompanionStatusHTTPTransport {
+    private(set) var requests: [CompanionPairingHTTPRequestRecord] = []
+    private var statusCode = 200
+    private var body = Data()
+
+    func configureResponse(statusCode: Int = 200, body: Data) {
+        self.statusCode = statusCode
+        self.body = body
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requests.append(
+            CompanionPairingHTTPRequestRecord(
+                url: request.url,
+                method: request.httpMethod ?? "GET",
+                headers: request.allHTTPHeaderFields ?? [:],
+                body: request.httpBody
+            )
+        )
+        let response = HTTPURLResponse(
+            url: request.url ?? URL(string: "http://127.0.0.1")!,
+            statusCode: statusCode,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        return (body, response)
     }
 }
 

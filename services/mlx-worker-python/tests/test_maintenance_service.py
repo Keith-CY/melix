@@ -4875,6 +4875,8 @@ def test_split_capability_values_strips_once_and_drops_empty_segments() -> None:
     assert maintenance_core_module._split_capability_values(
         " text, image ,, qwen ,\ttool\n, "
     ) == ["text", "image", "qwen", "tool"]
+    assert maintenance_core_module._split_capability_values(" qwen ") == ["qwen"]
+    assert maintenance_core_module._split_capability_values(" \t\n ") == []
 
 
 def test_get_model_info_appends_tool_parser_when_capability_parser_metadata_is_absent(

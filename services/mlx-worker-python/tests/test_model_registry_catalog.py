@@ -1026,6 +1026,18 @@ def test_registry_root_tree_records_plain_local_weight_presence_during_single_sc
     _write_model_config(config_dir, {"model_type": "qwen3"})
     _write_weights(config_dir)
 
+    assert _hf_cache_repo_id(Path("models--mlx-community--TinyLlama-1.1B-Chat-v1.0")) == (
+        "mlx-community/TinyLlama-1.1B-Chat-v1.0"
+    )
+    assert _hf_cache_repo_id(Path("models--org--model--with--extra")) == "org/model--with--extra"
+    assert _hf_cache_repo_id(Path("repo-without-prefix")) is None
+    assert _hf_cache_repo_id(Path("models--missing-suffix")) is None
+    assert _hf_cache_repo_id(Path("models----model")) is None
+    assert _hf_cache_repo_id(Path("models--org--")) is None
+    assert _is_hf_cache_pruned_subtree(root, root / "models--org--model" / "snapshots") is True
+    assert _is_hf_cache_pruned_subtree(root, root / "models--org--model" / "refs") is True
+    assert _is_hf_cache_pruned_subtree(root, root / "models--org--model" / "blobs") is False
+
     manifest_paths, plain_scans, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
 
     assert manifest_paths == ()
@@ -1403,6 +1415,22 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
             companion=False,
         )
         == "google/gemma-4-E4B-it-qat-q4_0-unquantized"
+    )
+    assert (
+        catalog_module._gemma4_qat_source_model(
+            "noise base_model: ignored\n  'base_model: google/gemma-4-E2B-it-qat-q4_0-unquantized'\n",
+            model_size="e2b",
+            companion=False,
+        )
+        == "google/gemma-4-E2B-it-qat-q4_0-unquantized"
+    )
+    assert (
+        catalog_module._gemma4_qat_source_model(
+            "base_model:\nbase_model: google/gemma-4-E2B-it-qat-q4_0-unquantized",
+            model_size="e2b",
+            companion=False,
+        )
+        == "google/gemma-4-E2B-it-qat-q4_0-unquantized"
     )
 
 

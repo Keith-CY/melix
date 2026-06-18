@@ -1468,9 +1468,11 @@ def test_probe_collectors_use_expected_sparse_row_scan_strategy() -> None:
                 raise AssertionError("benchmark collector should scan actual row items")
             return super().__contains__(key)
 
-    class NoItemsDict(dict[str, object]):
-        def items(self):  # type: ignore[override]
-            raise AssertionError("evaluation collector should scan registered probe keys directly")
+    class NoEvaluationContainsDict(dict[str, object]):
+        def __contains__(self, key: object) -> bool:
+            if key in {"sample_render_ms", "inference_ms", "raw_response_chars"}:
+                raise AssertionError("evaluation collector should scan actual row items")
+            return super().__contains__(key)
 
     benchmark_metrics: dict[str, object] = {}
     _collect_benchmark_probe_metrics(
@@ -1495,7 +1497,7 @@ def test_probe_collectors_use_expected_sparse_row_scan_strategy() -> None:
     _collect_evaluation_sample_probe_metrics(
         evaluation_metrics,
         [
-            NoItemsDict(
+            NoEvaluationContainsDict(
                 {
                     "suite_id": "smoke",
                     "sample_render_ms": 3.0,
@@ -2437,6 +2439,7 @@ def test_report_builder_uses_sparse_evaluation_sample_rows_without_fixed_key_sca
             "raw_response_chars",
             "extracted_result_chars",
         },
+        forbid_contains=True,
     )
 
     report = build_benchmark_evaluation_report(

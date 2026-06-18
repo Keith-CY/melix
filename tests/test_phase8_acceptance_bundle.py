@@ -228,7 +228,7 @@ def test_run_acceptance_bundle_shells_out_in_expected_order(tmp_path: Path) -> N
             "update",
             "--server-session-id",
             "server-session-1",
-            "--model-id",
+            "--model",
             "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
             "--json",
         ],

@@ -1175,6 +1175,8 @@ def test_metric_value_prefers_flat_keys_and_preserves_nested_lookup() -> None:
         {"other": {"section": {"metric": 5.0}}},
         "m9.section.metric",
     ) is missing
+    assert release_gates_module._metric_value({"other": 6.0}, "metric") is missing
+    assert release_gates_module._metric_value({"m9": {"section": {}}}, "m9.section.metric") is missing
 
 
 def test_run_python_json_script_sets_repo_pythonpath_entries(

@@ -13,6 +13,8 @@ _STR = str
 
 def _strip_manifest_text(value: Any) -> str:
     if type(value) is str:
+        if value and not value[0].isspace() and not value[-1].isspace():
+            return value
         return value.strip()
     return _STR(value).strip()
 
@@ -37,6 +39,16 @@ TRAJECTORY_PROVENANCE_CSV_FIELDS = TRAJECTORY_PROVENANCE_FIELDS
 
 _JSON_IMMUTABLE_TYPES = (str, int, float, bool, type(None))
 _JSON_IMMUTABLE_TYPE_SET = frozenset(_JSON_IMMUTABLE_TYPES)
+
+
+def _copy_json_list(value: list[Any]) -> list[Any]:
+    immutable_types = _JSON_IMMUTABLE_TYPE_SET
+    for item in value:
+        if type(item) not in immutable_types:
+            return [_copy_trajectory_provenance_value(item) for item in value]
+    return value.copy()
+
+
 def _copy_trajectory_provenance_value(value: Any) -> Any:
     value_type = type(value)
     if value_type in _JSON_IMMUTABLE_TYPE_SET:
@@ -44,7 +56,7 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
     if value_type is dict:
         return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
     if value_type is list:
-        return [_copy_trajectory_provenance_value(item) for item in value]
+        return _copy_json_list(value)
     if value_type is tuple:
         return tuple(_copy_trajectory_provenance_value(item) for item in value)
     if isinstance(value, dict):
@@ -117,9 +129,11 @@ def _trajectory_provenance_from_snapshot_manifest(
 ) -> dict[str, Any]:
     manifest_get = manifest.get
     strip_text = _strip_manifest_text
-    if (
-        strip_text(manifest_get("format", "")) != "agentic_tool_trace"
-        and not strip_text(manifest_get("trajectory_trace_digest", ""))
+    format_value = manifest_get("format", "")
+    trace_digest_value = manifest_get("trajectory_trace_digest", "")
+    if format_value != "agentic_tool_trace" and (
+        strip_text(format_value) != "agentic_tool_trace"
+        and not strip_text(trace_digest_value)
     ):
         return {}
 
@@ -140,11 +154,14 @@ def _trajectory_provenance_from_snapshot_manifest(
     split = strip_text(manifest_get("trajectory_split") or "train")
     if split:
         provenance["trajectory_split"] = split
-    trace_digest = strip_text(manifest_get("trajectory_trace_digest") or "")
+    trace_digest = strip_text(trace_digest_value or "")
     if trace_digest:
         provenance["trajectory_trace_digest"] = trace_digest
     if snapshot_manifest_path is not None:
-        provenance["trajectory_snapshot_manifest_path"] = str(snapshot_manifest_path)
+        if type(snapshot_manifest_path) is str:
+            provenance["trajectory_snapshot_manifest_path"] = snapshot_manifest_path
+        else:
+            provenance["trajectory_snapshot_manifest_path"] = _STR(snapshot_manifest_path)
     trajectory_toolset_version = manifest_get("trajectory_toolset_version")
     if trajectory_toolset_version is not None and trajectory_toolset_version != "":
         provenance["trajectory_toolset_version"] = trajectory_toolset_version
@@ -182,12 +199,19 @@ def load_trajectory_provenance_from_snapshot_manifest(
     extract_provenance = _trajectory_provenance_from_snapshot_manifest
     if not isinstance(manifest_path, Path):
         manifest_path = Path(manifest_path)
+    manifest_path_text = _STR(manifest_path)
     payload = loads(read_bytes(manifest_path))
-    if type(payload) is not dict and not isinstance(payload, dict):
+    if type(payload) is dict:
+        return extract_provenance(
+            payload,
+            snapshot_manifest_path=manifest_path_text,
+            copy_nested=False,
+        )
+    if not isinstance(payload, dict):
         return {}
     return extract_provenance(
         payload,
-        snapshot_manifest_path=manifest_path,
+        snapshot_manifest_path=manifest_path_text,
         copy_nested=False,
     )
 

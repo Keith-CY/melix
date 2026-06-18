@@ -840,6 +840,10 @@ public nonisolated struct Melix_Worker_V1_TokenDelta: Sendable {
 
   public var parserObservation: String = String()
 
+  public var tokenIds: [UInt32] = []
+
+  public var tokenLogprobs: [Double] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3071,7 +3075,7 @@ nonisolated extension Melix_Worker_V1_DecodeStarted: SwiftProtobuf.Message, Swif
 
 nonisolated extension Melix_Worker_V1_TokenDelta: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".TokenDelta"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}raw_text\0\u{3}parser_observation\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}raw_text\0\u{3}parser_observation\0\u{3}token_ids\0\u{3}token_logprobs\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3082,6 +3086,8 @@ nonisolated extension Melix_Worker_V1_TokenDelta: SwiftProtobuf.Message, SwiftPr
       case 1: try { try decoder.decodeSingularStringField(value: &self.text) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.rawText) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.parserObservation) }()
+      case 4: try { try decoder.decodeRepeatedUInt32Field(value: &self.tokenIds) }()
+      case 5: try { try decoder.decodeRepeatedDoubleField(value: &self.tokenLogprobs) }()
       default: break
       }
     }
@@ -3097,6 +3103,12 @@ nonisolated extension Melix_Worker_V1_TokenDelta: SwiftProtobuf.Message, SwiftPr
     if !self.parserObservation.isEmpty {
       try visitor.visitSingularStringField(value: self.parserObservation, fieldNumber: 3)
     }
+    if !self.tokenIds.isEmpty {
+      try visitor.visitPackedUInt32Field(value: self.tokenIds, fieldNumber: 4)
+    }
+    if !self.tokenLogprobs.isEmpty {
+      try visitor.visitPackedDoubleField(value: self.tokenLogprobs, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3104,6 +3116,8 @@ nonisolated extension Melix_Worker_V1_TokenDelta: SwiftProtobuf.Message, SwiftPr
     if lhs.text != rhs.text {return false}
     if lhs.rawText != rhs.rawText {return false}
     if lhs.parserObservation != rhs.parserObservation {return false}
+    if lhs.tokenIds != rhs.tokenIds {return false}
+    if lhs.tokenLogprobs != rhs.tokenLogprobs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

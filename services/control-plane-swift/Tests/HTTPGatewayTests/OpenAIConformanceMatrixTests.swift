@@ -12,7 +12,27 @@ struct OpenAIConformanceMatrixTests {
         let route: String
         let expectedBehavior: String
         let requestBody: String
+        let workerCanDispatch: Bool
+        let model: Melix_Controlplane_V1_ModelSummary?
         let assertion: @Sendable (HTTPResponse, Melix_Worker_V1_GenerateRequest?) async throws -> OpenAIConformanceObservedStatus
+
+        init(
+            field: String,
+            route: String,
+            expectedBehavior: String,
+            requestBody: String,
+            workerCanDispatch: Bool = true,
+            model: Melix_Controlplane_V1_ModelSummary? = nil,
+            assertion: @escaping @Sendable (HTTPResponse, Melix_Worker_V1_GenerateRequest?) async throws -> OpenAIConformanceObservedStatus
+        ) {
+            self.field = field
+            self.route = route
+            self.expectedBehavior = expectedBehavior
+            self.requestBody = requestBody
+            self.workerCanDispatch = workerCanDispatch
+            self.model = model
+            self.assertion = assertion
+        }
     }
 
     @Test("chat compatibility rows normalize or reject at the OpenAI boundary")
@@ -36,11 +56,91 @@ struct OpenAIConformanceMatrixTests {
                 expectedBehavior: "conflicting max token fields return HTTP 400 and do not dispatch to the worker.",
                 requestBody: Self.body(extra: #""max_tokens": 16, "max_completion_tokens": 37"#)
             ) { response, request in
-                let payload = try await collectConformanceBody(response.body)
+                let error = try await conformanceErrorPayload(from: response.body)
                 #expect(response.statusCode == 400)
-                #expect(payload.contains("\"code\":\"invalid_generation_bounds\""))
-                #expect(payload.contains("max_tokens"))
-                #expect(payload.contains("max_completion_tokens"))
+                #expect(error["code"] as? String == "invalid_generation_bounds")
+                #expect(error["field"] as? String == "max_tokens,max_completion_tokens")
+                #expect(error["phase"] as? String == "generation_bounds")
+                #expect(error["bounds_rejection_reason"] as? String == "output_cap_conflict")
+                #expect(request == nil)
+                return .pass
+            },
+            MatrixRow(
+                field: "best_of",
+                route: "/v1/chat/completions -> typed unsupported-field rejection",
+                expectedBehavior: "unsupported OpenAI fields return a typed payload naming the field and boundary phase.",
+                requestBody: Self.body(extra: #""best_of": 2"#)
+            ) { response, request in
+                let error = try await conformanceErrorPayload(from: response.body)
+                #expect(response.statusCode == 400)
+                #expect(error["code"] as? String == "unsupported_request_field")
+                #expect(error["field"] as? String == "best_of")
+                #expect(error["phase"] as? String == "openai_request_validation")
+                #expect(request == nil)
+                return .pass
+            },
+            MatrixRow(
+                field: "messages",
+                route: "/v1/chat/completions -> typed schema rejection",
+                expectedBehavior: "invalid schema payloads return a typed error naming the incompatible field and decode phase.",
+                requestBody: """
+                {
+                  "model": "melix-dev-text",
+                  "messages": "not-an-array"
+                }
+                """
+            ) { response, request in
+                let error = try await conformanceErrorPayload(from: response.body)
+                #expect(response.statusCode == 400)
+                #expect(error["code"] as? String == "invalid_request_schema")
+                #expect(error["field"] as? String == "messages")
+                #expect(error["phase"] as? String == "decode")
+                #expect(request == nil)
+                return .pass
+            },
+            MatrixRow(
+                field: "backend_unavailable",
+                route: "/v1/chat/completions -> typed backend-unavailable rejection",
+                expectedBehavior: "worker unavailability returns a typed payload naming the dispatch phase before generation.",
+                requestBody: Self.body(extra: #""max_completion_tokens": 8"#),
+                workerCanDispatch: false
+            ) { response, request in
+                let error = try await conformanceErrorPayload(from: response.body)
+                #expect(response.statusCode == 503)
+                #expect(error["code"] as? String == "worker_unavailable")
+                #expect(error["field"] as? String == "worker")
+                #expect(error["phase"] as? String == "backend_dispatch")
+                #expect(request == nil)
+                return .pass
+            },
+            MatrixRow(
+                field: "context_overflow",
+                route: "/v1/chat/completions -> prompt-budget admission",
+                expectedBehavior: "context overflow returns a typed prompt-budget payload with context metadata and no worker dispatch.",
+                requestBody: """
+                {
+                  "model": "melix-dev-text",
+                  "max_tokens": 4,
+                  "messages": [
+                    { "role": "user", "content": "one two three four five six seven eight nine ten eleven twelve" }
+                  ]
+                }
+                """,
+                model: {
+                    var model = warmConformanceModel(id: "melix-dev-text")
+                    model.maxContext = 8
+                    return model
+                }()
+            ) { response, request in
+                let error = try await conformanceErrorPayload(from: response.body)
+                let metadata = try #require(error["prompt_token_metadata"] as? [String: Any])
+                #expect(response.statusCode == 400)
+                #expect(error["code"] as? String == "prompt_budget_exceeded")
+                #expect(error["field"] as? String == "messages")
+                #expect(error["phase"] as? String == "prompt_budget")
+                #expect(metadata["context_window_tokens"] as? Int == 8)
+                #expect(metadata["admission_phase"] as? String == "prompt_budget")
+                #expect(metadata["prefill_started"] as? Bool == false)
                 #expect(request == nil)
                 return .pass
             },
@@ -110,9 +210,23 @@ struct OpenAIConformanceMatrixTests {
                 return .pass
             },
             MatrixRow(
+                field: "seed,frequency_penalty",
+                route: "/v1/chat/completions -> sampling passthrough",
+                expectedBehavior: "seed and frequency_penalty forward into worker sampling and generation receipts.",
+                requestBody: Self.body(extra: #""seed": 123, "frequency_penalty": 0.35"#)
+            ) { response, request in
+                #expect(response.statusCode == 200)
+                let generated = try #require(request)
+                #expect(generated.sampling.seed == 123)
+                #expect(generated.sampling.frequencyPenalty == Float(0.35))
+                #expect(generated.execution.ext["melix.generation.seed"] == "123")
+                #expect(generated.execution.ext["melix.generation.frequency_penalty"] == "0.35")
+                return .pass
+            },
+            MatrixRow(
                 field: "logprobs,top_logprobs",
                 route: "/v1/chat/completions -> execution.ext effective receipt",
-                expectedBehavior: "logprobs requests are visible as unsupported-effective receipts until workers emit token distributions.",
+                expectedBehavior: "logprobs requests keep request-time receipts and surface backend token evidence at the output boundary.",
                 requestBody: Self.body(extra: #""logprobs": true, "top_logprobs": 3"#)
             ) { response, request in
                 #expect(response.statusCode == 200)
@@ -126,8 +240,11 @@ struct OpenAIConformanceMatrixTests {
 
         var reportRows: [OpenAIConformanceRow] = []
         for row in rows {
-            let worker = RecordingConformanceWorker(requestID: "req-\(row.field)")
-            let handler = Self.handler(worker: worker)
+            let worker = RecordingConformanceWorker(
+                requestID: "req-\(row.field)",
+                canDispatchRequests: row.workerCanDispatch
+            )
+            let handler = Self.handler(worker: worker, model: row.model)
             let response = try await handler.handle(
                 HTTPRequest(
                     method: .post,
@@ -280,6 +397,222 @@ struct OpenAIConformanceMatrixTests {
         #expect(request.execution.ext["melix.reasoning.mode"]?.isEmpty == false)
     }
 
+    @Test("backend token logprobs surface in non-streaming OpenAI chat response")
+    func backendTokenLogprobsSurfaceInNonStreamingOpenAIChatResponse() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-output-logprobs",
+            events: [
+                makeTokenEvent(
+                    requestID: "req-output-logprobs",
+                    seq: 1,
+                    text: "Alpha",
+                    tokenIDs: [301],
+                    tokenLogprobs: [-0.11]
+                ),
+                makeTokenEvent(
+                    requestID: "req-output-logprobs",
+                    seq: 2,
+                    text: " Beta",
+                    tokenIDs: [302],
+                    tokenLogprobs: [-0.22]
+                ),
+                makeUsageEvent(requestID: "req-output-logprobs", seq: 3, promptTokens: 3, completionTokens: 2),
+                makeCompletedEvent(
+                    requestID: "req-output-logprobs",
+                    seq: 4,
+                    finishReason: "stop",
+                    assistantText: "Alpha Beta"
+                ),
+            ]
+        )
+        let handler = Self.handler(worker: worker)
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(Self.body(extra: #""stream": false, "logprobs": true, "top_logprobs": 2"#).utf8)
+            )
+        )
+        let body = try await collectConformanceBody(response.body)
+        let data = try #require(body.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
+        let logprobs = try #require(choice["logprobs"] as? [String: Any])
+        let content = try #require(logprobs["content"] as? [[String: Any]])
+        let firstTopLogprobs = try #require(content[0]["top_logprobs"] as? [[String: Any]])
+        let secondTopLogprobs = try #require(content[1]["top_logprobs"] as? [[String: Any]])
+        let request = try #require(await worker.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(choice["finish_reason"] as? String == "stop")
+        #expect(content.count == 2)
+        #expect(content[0]["token"] as? String == "Alpha")
+        #expect(content[0]["logprob"] as? Double == -0.11)
+        #expect(firstTopLogprobs.isEmpty)
+        #expect(content[1]["token"] as? String == " Beta")
+        #expect(content[1]["logprob"] as? Double == -0.22)
+        #expect(secondTopLogprobs.isEmpty)
+        #expect(logprobs["refusal"] is NSNull)
+        #expect(request.execution.ext["melix.openai.logprobs.effective"] == "unsupported")
+    }
+
+    @Test("missing backend token logprobs do not synthesize OpenAI chat logprobs")
+    func missingBackendTokenLogprobsDoNotSynthesizeOpenAIChatLogprobs() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-output-logprobs-missing",
+            events: [
+                makeTokenEvent(requestID: "req-output-logprobs-missing", seq: 1, text: "done"),
+                makeCompletedEvent(
+                    requestID: "req-output-logprobs-missing",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "done"
+                ),
+            ]
+        )
+        let handler = Self.handler(worker: worker)
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(Self.body(extra: #""stream": false, "logprobs": true"#).utf8)
+            )
+        )
+        let body = try await collectConformanceBody(response.body)
+        let data = try #require(body.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
+        let request = try #require(await worker.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(choice["logprobs"] == nil)
+        #expect(request.execution.ext["melix.openai.logprobs.effective"] == "unsupported")
+    }
+
+    @Test("partially missing backend token logprobs do not emit partial OpenAI chat logprobs")
+    func partiallyMissingBackendTokenLogprobsDoNotEmitPartialOpenAIChatLogprobs() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-output-logprobs-partial",
+            events: [
+                makeTokenEvent(
+                    requestID: "req-output-logprobs-partial",
+                    seq: 1,
+                    text: "Alpha",
+                    tokenIDs: [301],
+                    tokenLogprobs: [-0.11]
+                ),
+                makeTokenEvent(requestID: "req-output-logprobs-partial", seq: 2, text: " Beta"),
+                makeCompletedEvent(
+                    requestID: "req-output-logprobs-partial",
+                    seq: 3,
+                    finishReason: "stop",
+                    assistantText: "Alpha Beta"
+                ),
+            ]
+        )
+        let handler = Self.handler(worker: worker)
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(Self.body(extra: #""stream": false, "logprobs": true"#).utf8)
+            )
+        )
+        let body = try await collectConformanceBody(response.body)
+        let data = try #require(body.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
+
+        #expect(response.statusCode == 200)
+        #expect(choice["logprobs"] == nil)
+    }
+
+    @Test("empty backend token evidence does not emit partial OpenAI chat logprobs")
+    func emptyBackendTokenEvidenceDoesNotEmitPartialOpenAIChatLogprobs() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-output-logprobs-empty-evidence",
+            events: [
+                makeTokenEvent(
+                    requestID: "req-output-logprobs-empty-evidence",
+                    seq: 1,
+                    text: "",
+                    tokenIDs: [300],
+                    tokenLogprobs: [-0.01]
+                ),
+                makeTokenEvent(
+                    requestID: "req-output-logprobs-empty-evidence",
+                    seq: 2,
+                    text: "Alpha",
+                    tokenIDs: [301],
+                    tokenLogprobs: [-0.11]
+                ),
+                makeCompletedEvent(
+                    requestID: "req-output-logprobs-empty-evidence",
+                    seq: 3,
+                    finishReason: "stop",
+                    assistantText: "Alpha"
+                ),
+            ]
+        )
+        let handler = Self.handler(worker: worker)
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(Self.body(extra: #""stream": false, "logprobs": true"#).utf8)
+            )
+        )
+        let body = try await collectConformanceBody(response.body)
+        let data = try #require(body.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
+
+        #expect(response.statusCode == 200)
+        #expect(choice["logprobs"] == nil)
+    }
+
+    @Test("unaligned backend token logprobs do not synthesize OpenAI chat logprobs")
+    func unalignedBackendTokenLogprobsDoNotSynthesizeOpenAIChatLogprobs() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-output-logprobs-unaligned",
+            events: [
+                makeTokenEvent(
+                    requestID: "req-output-logprobs-unaligned",
+                    seq: 1,
+                    text: "Alpha Beta",
+                    tokenIDs: [301, 302],
+                    tokenLogprobs: [-0.11, -0.22]
+                ),
+                makeCompletedEvent(
+                    requestID: "req-output-logprobs-unaligned",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "Alpha Beta"
+                ),
+            ]
+        )
+        let handler = Self.handler(worker: worker)
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(Self.body(extra: #""stream": false, "logprobs": true"#).utf8)
+            )
+        )
+        let body = try await collectConformanceBody(response.body)
+        let data = try #require(body.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
+
+        #expect(response.statusCode == 200)
+        #expect(choice["logprobs"] == nil)
+    }
+
     @Test("streaming and non-streaming fixtures agree on compatibility receipts")
     func streamingAndNonStreamingFixturesAgreeOnCompatibilityReceipts() async throws {
         let streamWorker = RecordingConformanceWorker(requestID: "req-stream")
@@ -360,7 +693,7 @@ struct OpenAIConformanceMatrixTests {
 
         #expect(response.statusCode == 200)
         #expect(request.execution.toolConfig.toolChoice.contains("get_weather"))
-        #expect(payload.contains("event: message"))
+        #expect(payload.contains("event: message") == false)
         #expect(payload.contains("\"tool_calls\""))
         #expect(payload.contains("\"name\":\"get_weather\""))
         #expect(payload.contains("\"arguments\":\"{\\\"city\\\":\\\"Tokyo\\\"}\""))
@@ -406,10 +739,111 @@ struct OpenAIConformanceMatrixTests {
         #expect(payload.contains("\"total_tokens\":12"))
         #expect(orderedConformanceRanges(in: payload, needles: [
             "\"content\":\"done\"",
-            "\"usage\"",
             "\"finish_reason\":\"stop\"",
+            "\"usage\"",
             "data: [DONE]",
         ]))
+    }
+
+    @Test("streaming prefill progress stays invisible unless opted in")
+    func streamingPrefillProgressStaysInvisibleUnlessOptedIn() async throws {
+        func prefillEvents(requestID: String) -> [Melix_Worker_V1_ExecuteEvent] {
+            [
+                makePrefillStartedEvent(requestID: requestID, seq: 1, inputTokens: 6),
+                makePrefillProgressEvent(requestID: requestID, seq: 2, processedTokens: 3, totalTokens: 6),
+                makeTokenEvent(requestID: requestID, seq: 3, text: "hi"),
+                makeUsageEvent(requestID: requestID, seq: 4, promptTokens: 6, completionTokens: 1),
+                makeCompletedEvent(requestID: requestID, seq: 5, finishReason: "stop", assistantText: "hi"),
+            ]
+        }
+        func chunkOrder(_ payload: String) -> String {
+            parseSSERecords(payload).map { $0.event ?? "data" }.joined(separator: ",")
+        }
+        func expectStrictDataPurity(_ payload: String) throws {
+            for record in parseSSERecords(payload) where record.event == nil {
+                if record.data == "[DONE]" {
+                    continue
+                }
+                let object = try JSONSerialization.jsonObject(with: Data(record.data.utf8))
+                let json = try #require(object as? [String: Any])
+                #expect(json["object"] as? String == "chat.completion.chunk")
+            }
+        }
+
+        let defaultWorker = RecordingConformanceWorker(
+            requestID: "req-stream-pf-default",
+            events: prefillEvents(requestID: "req-stream-pf-default")
+        )
+        let defaultResponse = try await Self.handler(worker: defaultWorker).handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    Self.body(extra: #""stream": true, "stream_options": { "include_usage": true }"#).utf8
+                )
+            )
+        )
+        let defaultPayload = try await collectConformanceBody(defaultResponse.body)
+
+        #expect(defaultResponse.statusCode == 200)
+        #expect(defaultPayload.contains("prefill_progress") == false)
+        #expect(defaultPayload.contains("\"processed_tokens\"") == false)
+        try expectStrictDataPurity(defaultPayload)
+        let defaultOrder = chunkOrder(defaultPayload)
+        #expect(defaultOrder == "data,data,data,data")
+
+        let optInWorker = RecordingConformanceWorker(
+            requestID: "req-stream-pf-opt-in",
+            events: prefillEvents(requestID: "req-stream-pf-opt-in")
+        )
+        let optInResponse = try await Self.handler(worker: optInWorker).handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    Self.body(
+                        extra: #""stream": true, "stream_options": { "include_usage": true, "include_prefill_progress": true }"#
+                    ).utf8
+                )
+            )
+        )
+        let optInPayload = try await collectConformanceBody(optInResponse.body)
+        let optInRequest = try #require(await optInWorker.lastGenerateRequest)
+
+        #expect(optInResponse.statusCode == 200)
+        #expect(optInRequest.execution.ext["melix.stream.include_prefill_progress"] == "true")
+        #expect(optInPayload.contains("event: prefill_progress"))
+        #expect(optInPayload.contains("\"phase\":\"started\""))
+        #expect(optInPayload.contains("\"input_tokens\":6"))
+        #expect(optInPayload.contains("\"phase\":\"progress\""))
+        #expect(optInPayload.contains("\"processed_tokens\":3"))
+        try expectStrictDataPurity(optInPayload)
+        let optInOrder = chunkOrder(optInPayload)
+        #expect(optInOrder == "prefill_progress,prefill_progress,data,data,data,data")
+
+        let report = OpenAIConformanceReport(rows: [
+            OpenAIConformanceRow(
+                field: "stream_options.include_prefill_progress=absent",
+                route: "/v1/chat/completions -> SSE chunk order",
+                expectedBehavior: "prefill telemetry is dropped; only OpenAI data chunks reach the stream.",
+                observedStatus: defaultOrder == "data,data,data,data" ? .pass : .fail,
+                observedReason: "chunk_order=\(defaultOrder)"
+            ),
+            OpenAIConformanceRow(
+                field: "stream_options.include_prefill_progress=true",
+                route: "/v1/chat/completions -> SSE chunk order",
+                expectedBehavior: "prefill telemetry uses the named prefill_progress event and stays out of unnamed data chunks.",
+                observedStatus: optInOrder == "prefill_progress,prefill_progress,data,data,data,data" ? .pass : .fail,
+                observedReason: "chunk_order=\(optInOrder)"
+            ),
+        ])
+        #expect(report.summary.passed == 2)
+        #expect(report.summary.failed == 0)
+        let reportJSON = try report.jsonString()
+        #expect(reportJSON.contains("\"chunk_order=data,data,data,data\""))
+        #expect(reportJSON.contains("\"chunk_order=prefill_progress,prefill_progress,data,data,data,data\""))
     }
 
     @Test("orphan tool-call markup is suppressed across streaming and non-streaming chat")
@@ -600,8 +1034,11 @@ struct OpenAIConformanceMatrixTests {
         #expect(!stats.hasStats)
     }
 
-    private static func handler(worker: RecordingConformanceWorker) -> OpenAIHandler {
-        let catalog = ModelCatalog(seedModels: [warmConformanceModel(id: "melix-dev-text")])
+    private static func handler(
+        worker: RecordingConformanceWorker,
+        model: Melix_Controlplane_V1_ModelSummary? = nil
+    ) -> OpenAIHandler {
+        let catalog = ModelCatalog(seedModels: [model ?? warmConformanceModel(id: "melix-dev-text")])
         let registry = WorkerRegistry(defaultTextClient: worker, modelCatalog: catalog)
         return OpenAIHandler(
             modelCatalog: catalog,
@@ -670,6 +1107,13 @@ private func collectConformanceBody(_ body: HTTPBody) async throws -> String {
     }
 }
 
+private func conformanceErrorPayload(from body: HTTPBody) async throws -> [String: Any] {
+    let payload = try await collectConformanceBody(body)
+    let data = try #require(payload.data(using: .utf8))
+    let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    return try #require(object["error"] as? [String: Any])
+}
+
 private func collectConformanceEvents(
     _ stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
 ) async throws -> [Melix_Worker_V1_ExecuteEvent] {
@@ -699,22 +1143,25 @@ private actor RecordingConformanceWorker:
     let requestID: String
     private let events: [Melix_Worker_V1_ExecuteEvent]
     private let loadModelHandle: String
+    private let dispatchAvailable: Bool
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
 
     init(
         requestID: String,
         events: [Melix_Worker_V1_ExecuteEvent]? = nil,
-        loadModelHandle: String = "melix-dev-text::swift"
+        loadModelHandle: String = "melix-dev-text::swift",
+        canDispatchRequests: Bool = true
     ) {
         self.requestID = requestID
         self.events = events ?? [
             makeCompletedEvent(requestID: requestID, seq: 1, finishReason: "stop", assistantText: "ok"),
         ]
         self.loadModelHandle = loadModelHandle
+        self.dispatchAvailable = canDispatchRequests
     }
 
     func canDispatchRequests() async -> Bool {
-        true
+        dispatchAvailable
     }
 
     func generate(

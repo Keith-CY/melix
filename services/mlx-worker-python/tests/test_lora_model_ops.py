@@ -124,7 +124,7 @@ def test_reward_summary_reuses_candidate_group_minmax(
     assert summary["candidate_group_reward_variance_mean"] == pytest.approx(
         0.19777777777777786
     )
-    assert sorted_calls == [8, 2]
+    assert sorted_calls == []
 
 
 def test_latest_checkpoint_from_directory_prefers_last_numeric_token(tmp_path: Path) -> None:
