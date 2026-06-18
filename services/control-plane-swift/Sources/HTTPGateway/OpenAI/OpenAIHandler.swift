@@ -4190,16 +4190,22 @@ button.primary:active {
         await scheduleIdleSweepIfNeeded(idleSweepRequest)
         let workerStream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
         if shouldInspectFirstStreamEventForPreSSEAdmission(translated) {
-            let inspection = await firstEvent(from: execution.stream)
-            switch inspection.firstEvent {
-            case .event(let firstEvent):
-                if let firstEvent, case .error(let error) = firstEvent.payload,
-                   isPreSSEAdmissionError(error.error) {
-                    await modelCatalog.finishRequest(modelID: translated.modelID)
-                    return workerErrorResponse(error.error)
+            var iterator = execution.stream.makeAsyncIterator()
+            do {
+                if let firstEvent = try await iterator.next() {
+                    if case .error(let error) = firstEvent.payload,
+                       isPreSSEAdmissionError(error.error) {
+                        await modelCatalog.finishRequest(modelID: translated.modelID)
+                        return workerErrorResponse(error.error)
+                    }
+                    let state = FirstStreamEventReplayState(firstEvent: firstEvent, iterator: iterator)
+                    workerStream = AsyncThrowingStream(unfolding: {
+                        try await state.next()
+                    })
+                } else {
+                    workerStream = AsyncThrowingStream(unfolding: { nil })
                 }
-                workerStream = inspection.replayingStream
-            case .failure:
+            } catch {
                 await modelCatalog.finishRequest(modelID: translated.modelID)
                 return workerUnavailableResponse()
             }
@@ -4236,74 +4242,24 @@ button.primary:active {
         normalizedMediaPartCount(from: translated.workerRequest.execution.ext) > 0
     }
 
-    private func firstEvent(
-        from stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
-    ) async -> FirstStreamEventInspection {
-        let probe = FirstStreamEventProbe()
-        let replayingStream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
-            let task = Task {
-                var didPublishFirstEvent = false
-                do {
-                    for try await event in stream {
-                        if !didPublishFirstEvent {
-                            didPublishFirstEvent = true
-                            await probe.publish(.event(event))
-                        }
-                        continuation.yield(event)
-                    }
-                    if !didPublishFirstEvent {
-                        await probe.publish(.event(nil))
-                    }
-                    continuation.finish()
-                } catch {
-                    if !didPublishFirstEvent {
-                        await probe.publish(.failure)
-                    }
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
-        let firstEvent = await probe.wait()
-        return FirstStreamEventInspection(firstEvent: firstEvent, replayingStream: replayingStream)
-    }
+    private final class FirstStreamEventReplayState: @unchecked Sendable {
+        private var firstEvent: Melix_Worker_V1_ExecuteEvent?
+        private var iterator: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Iterator
 
-    private struct FirstStreamEventInspection: Sendable {
-        let firstEvent: FirstStreamEventProbe.Result
-        let replayingStream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
-    }
-
-    private actor FirstStreamEventProbe {
-        enum Result: Sendable {
-            case event(Melix_Worker_V1_ExecuteEvent?)
-            case failure
+        init(
+            firstEvent: Melix_Worker_V1_ExecuteEvent,
+            iterator: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Iterator
+        ) {
+            self.firstEvent = firstEvent
+            self.iterator = iterator
         }
 
-        private var result: Result?
-        private var waiters: [CheckedContinuation<Result, Never>] = []
-
-        func publish(_ result: Result) {
-            guard self.result == nil else {
-                return
+        func next() async throws -> Melix_Worker_V1_ExecuteEvent? {
+            if let firstEvent {
+                self.firstEvent = nil
+                return firstEvent
             }
-            self.result = result
-            let waiters = self.waiters
-            self.waiters.removeAll()
-            for waiter in waiters {
-                waiter.resume(returning: result)
-            }
-        }
-
-        func wait() async -> Result {
-            await withCheckedContinuation { continuation in
-                if let result {
-                    continuation.resume(returning: result)
-                } else {
-                    waiters.append(continuation)
-                }
-            }
+            return try await iterator.next()
         }
     }
 
