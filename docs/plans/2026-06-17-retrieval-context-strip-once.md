@@ -1,14 +1,16 @@
 # Retrieval context direct projection strip-once fast path
 
-This Python-only performance slice is limited to the direct `RetrievalContextEntry`
-projection path in `worker.runtime.retrieval_context.project_retrieval_contexts(...)`.
+This Python-only performance slice covers the direct `RetrievalContextEntry`
+projection path in `worker.runtime.retrieval_context.project_retrieval_contexts(...)`
+and the complete dict-record fast path in
+`worker.runtime.retrieval_context.project_retrieval_store_records(...)`.
 
 ## Scope
 
-The direct complete-entry path already bypasses the generic admission helper for
-validated `RetrievalContextEntry` objects. This slice keeps that behavior and
-normalizes hot receipt fields exactly once before both validation and receipt
-construction:
+The direct complete-entry paths already bypass the generic admission helper for
+validated `RetrievalContextEntry` objects and complete dict records. This slice
+keeps that behavior and normalizes hot receipt fields exactly once before both
+validation and receipt construction:
 
 - `source_id`
 - `segment_id`
