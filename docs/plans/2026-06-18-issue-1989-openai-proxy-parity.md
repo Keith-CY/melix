@@ -93,6 +93,11 @@ This PR does not persist Server Profiles, add UI, replace remote-provider health
 - Full Swift gate: `make swift-test` passed.
 - Python gate: `make py-test` passed with `4075 passed, 14 skipped, 2 warnings`.
 - Integration gate: `make integration-test` passed with `120 passed, 1 skipped`.
+- PR review fix: `makeNormalizedChatCompletionsURL` now accepts base URLs that already end in `/chat/completions`, and request receipt mismatch checks compare arrays directly instead of comparing `.description` strings.
+- Review-focused verification: `HOME="$PWD/.swift-home" CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter OpenAIConformanceHarnessTests` passed with 17 tests in 1 suite after the review fix.
+- Review boundary verification: `HOME="$PWD/.swift-home" CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --filter 'OpenAIConformanceHarnessTests|OpenAIConformanceMatrixTests'` passed with 34 tests in 2 suites after the review fix.
+- Review coverage verification: `HOME="$PWD/.swift-home" CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache.noindex" swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'OpenAIConformanceHarnessTests|OpenAIConformanceMatrixTests'` passed with 34 tests in 2 suites after the review fix.
+- Review changed-line coverage: `UV_PYTHON=3.12 uv run python scripts/swift_changed_line_coverage.py --binary services/control-plane-swift/.build/arm64-apple-macosx/debug/MelixControlPlanePackageTests.xctest/Contents/MacOS/MelixControlPlanePackageTests --profdata services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata --diff-from origin/main services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIConformanceHarness.swift services/control-plane-swift/Sources/OpenAIConformanceHarnessCLI/main.swift services/control-plane-swift/Tests/HTTPGatewayTests/OpenAIConformanceHarnessTests.swift` reported `97.55%` total changed-line coverage (`598/613`).
 
 ## Verification Commands
 

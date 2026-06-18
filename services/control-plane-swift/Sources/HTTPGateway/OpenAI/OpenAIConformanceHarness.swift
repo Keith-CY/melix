@@ -749,21 +749,38 @@ private struct OpenAIProxyParityRequestReceipt: Equatable, Sendable {
     }
 
     func firstMismatch(against other: OpenAIProxyParityRequestReceipt) -> String? {
-        let checks: [(String, String, String)] = [
-            ("method", method, other.method),
-            ("path", path, other.path),
-            ("accept", accept, other.accept),
-            ("content_type", contentType, other.contentType),
-            ("request_kind", requestKind, other.requestKind),
-            ("body_fields", bodyFields.description, other.bodyFields.description),
-            ("stream", String(stream), String(other.stream)),
-            ("tool_names", toolNames.description, other.toolNames.description),
-            ("tool_choice_name", toolChoiceName, other.toolChoiceName),
-            ("unsupported_field", unsupportedField, other.unsupportedField),
-            ("model_present", String(modelPresent), String(other.modelPresent)),
-        ]
-        for (key, local, remote) in checks where local != remote {
-            return "request_receipt.\(key) local=\(local) remote=\(remote)"
+        if method != other.method {
+            return "request_receipt.method local=\(method) remote=\(other.method)"
+        }
+        if path != other.path {
+            return "request_receipt.path local=\(path) remote=\(other.path)"
+        }
+        if accept != other.accept {
+            return "request_receipt.accept local=\(accept) remote=\(other.accept)"
+        }
+        if contentType != other.contentType {
+            return "request_receipt.content_type local=\(contentType) remote=\(other.contentType)"
+        }
+        if requestKind != other.requestKind {
+            return "request_receipt.request_kind local=\(requestKind) remote=\(other.requestKind)"
+        }
+        if bodyFields != other.bodyFields {
+            return "request_receipt.body_fields local=\(bodyFields) remote=\(other.bodyFields)"
+        }
+        if stream != other.stream {
+            return "request_receipt.stream local=\(stream) remote=\(other.stream)"
+        }
+        if toolNames != other.toolNames {
+            return "request_receipt.tool_names local=\(toolNames) remote=\(other.toolNames)"
+        }
+        if toolChoiceName != other.toolChoiceName {
+            return "request_receipt.tool_choice_name local=\(toolChoiceName) remote=\(other.toolChoiceName)"
+        }
+        if unsupportedField != other.unsupportedField {
+            return "request_receipt.unsupported_field local=\(unsupportedField) remote=\(other.unsupportedField)"
+        }
+        if modelPresent != other.modelPresent {
+            return "request_receipt.model_present local=\(modelPresent) remote=\(other.modelPresent)"
         }
         return nil
     }
@@ -820,8 +837,11 @@ private extension HarnessRequestKind {
 private func makeNormalizedChatCompletionsURL(baseURL: String) throws -> URL {
     let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
     let normalized = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
+    let urlString = normalized.hasSuffix("/chat/completions")
+        ? normalized
+        : "\(normalized)/chat/completions"
     guard normalized.isEmpty == false,
-          let url = URL(string: "\(normalized)/chat/completions")
+          let url = URL(string: urlString)
     else {
         throw OpenAIConformanceHarnessError.invalidBaseURL(baseURL)
     }

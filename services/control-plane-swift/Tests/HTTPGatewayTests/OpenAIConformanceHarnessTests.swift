@@ -52,6 +52,33 @@ struct OpenAIConformanceHarnessTests {
         #expect(try requests.allSatisfy { try requestBodyModel($0) == "remote-model" })
     }
 
+    @Test("real backend smoke mode accepts a base URL that already targets chat completions")
+    func realBackendSmokeModeAcceptsChatCompletionsBaseURL() async throws {
+        let transport = RecordingConformanceTransport(responses: [
+            .json(statusCode: 200, body: chatCompletionBody()),
+            .sse(statusCode: 200, body: streamingToolCallBody()),
+            .json(statusCode: 400, body: errorBody(field: "best_of", phase: "openai_request_validation")),
+        ])
+        let harness = OpenAIConformanceHarness(
+            target: .realBackendSmoke(
+                baseURL: " https://provider.example/openai/v1/chat/completions/ ",
+                modelID: "remote-model",
+                apiKey: "",
+                timeoutSeconds: 30
+            ),
+            transport: transport
+        )
+
+        let report = try await harness.run()
+        let requests = await transport.requests
+
+        #expect(report.summary.passed == 3)
+        #expect(requests.count == 3)
+        #expect(requests.allSatisfy {
+            $0.url?.absoluteString == "https://provider.example/openai/v1/chat/completions"
+        })
+    }
+
     @Test("error row observed reason names status field and phase")
     func errorRowObservedReasonNamesStatusFieldAndPhase() async throws {
         let transport = RecordingConformanceTransport(responses: [
