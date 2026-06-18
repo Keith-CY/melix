@@ -449,6 +449,8 @@ class EngineCore:
                                 text=delta.content_text,
                                 raw_text=delta.raw_text,
                                 parser_observation=delta.parser_observation,
+                                token_ids=delta.token_ids,
+                                token_logprobs=delta.token_logprobs,
                             ),
                         )
 
@@ -769,7 +771,13 @@ class EngineCore:
                         seq=state.allocate_seq(),
                         phase=common_pb2.EXECUTION_DECODING,
                         admission_state=common_pb2.ADMISSION_ADMITTED,
-                        token_delta=inference_pb2.TokenDelta(text=runtime_event.text),
+                        token_delta=inference_pb2.TokenDelta(
+                            text=runtime_event.text or "",
+                            raw_text=runtime_event.raw_text or "",
+                            parser_observation=runtime_event.parser_observation or "",
+                            token_ids=runtime_event.token_ids or (),
+                            token_logprobs=runtime_event.token_logprobs or (),
+                        ),
                     )
 
             if request.return_usage and not state.cancel_event.is_set():

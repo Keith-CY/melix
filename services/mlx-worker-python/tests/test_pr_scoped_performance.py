@@ -184,6 +184,133 @@ def test_stream_assembler_token_byte_probe_covers_standard_pipe_parser() -> None
     )
 
 
+def test_stream_assembler_token_byte_probe_covers_metric_gate_regression() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "stream-assembler-token-byte-fast-decode"
+    )
+    focused_tests = (
+        (
+            "services/mlx-worker-python/tests/test_pr_scoped_performance.py::"
+            "test_stream_assembler_token_byte_probe_only_gates_current_path_metrics"
+        ),
+        (
+            "services/mlx-worker-python/tests/test_pr_scoped_performance.py::"
+            "test_stream_assembler_token_byte_probe_still_gates_large_count_helper_regression"
+        ),
+    )
+    coverage_pytest_selection = probe.coverage_command.split("&&", 1)[0]
+
+    for focused_test in focused_tests:
+        assert focused_test in probe.test_command
+        assert focused_test in coverage_pytest_selection
+
+
+def test_stream_assembler_token_byte_probe_only_gates_current_path_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "stream-assembler-token-byte-fast-decode"
+    )
+    directions = {metric.key: metric.direction for metric in probe.metrics}
+    warn_abs = {metric.key: metric.warn_abs for metric in probe.metrics}
+
+    assert directions["elapsed_ms_mean"] == "lower_is_better"
+    assert directions["delta_token_count_new_ms_mean"] == "lower_is_better"
+    assert warn_abs["delta_token_count_new_ms_mean"] == 0.5
+    assert directions["delta_token_count_delta_ms"] == "informational"
+    assert directions["delta_token_count_speedup"] == "informational"
+
+    scope = {
+        "changed_files": ["services/mlx-worker-python/worker/runtime/stream_assembler.py"],
+        "force_all": False,
+        "matched_probe_ids": [probe.probe_id],
+        "selected_count": 1,
+        "selected_probes": [probe.to_scope_dict()],
+    }
+    result = {
+        "probe": scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 100.0},
+        },
+        "base_probe": {
+            "ok": True,
+            "metrics": {
+                "elapsed_ms_mean": 400.0,
+                "delta_token_count_new_ms_mean": 7.1,
+                "delta_token_count_delta_ms": -2.2,
+                "delta_token_count_speedup": 1.31,
+            },
+        },
+        "head_probe": {
+            "ok": True,
+            "metrics": {
+                "elapsed_ms_mean": 340.0,
+                "delta_token_count_new_ms_mean": 6.9,
+                "delta_token_count_delta_ms": -1.6,
+                "delta_token_count_speedup": 1.20,
+            },
+        },
+    }
+
+    report = build_performance_report(scope=scope, probe_results=[result])
+    row = report["rows"][0]
+    metrics = {metric["key"]: metric for metric in row["metrics"]}
+
+    assert report["summary"]["status"] == "ok"
+    assert row["status"] == "ok"
+    assert metrics["elapsed_ms_mean"]["status"] == "improvement"
+    assert metrics["delta_token_count_new_ms_mean"]["status"] == "neutral"
+    assert metrics["delta_token_count_delta_ms"]["status"] == "neutral"
+    assert metrics["delta_token_count_speedup"]["status"] == "neutral"
+
+
+def test_stream_assembler_token_byte_probe_still_gates_large_count_helper_regression() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "stream-assembler-token-byte-fast-decode"
+    )
+    scope = {
+        "changed_files": ["services/mlx-worker-python/worker/runtime/stream_assembler.py"],
+        "force_all": False,
+        "matched_probe_ids": [probe.probe_id],
+        "selected_count": 1,
+        "selected_probes": [probe.to_scope_dict()],
+    }
+    result = {
+        "probe": scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 100.0},
+        },
+        "base_probe": {
+            "ok": True,
+            "metrics": {
+                "elapsed_ms_mean": 400.0,
+                "delta_token_count_new_ms_mean": 7.1,
+            },
+        },
+        "head_probe": {
+            "ok": True,
+            "metrics": {
+                "elapsed_ms_mean": 340.0,
+                "delta_token_count_new_ms_mean": 7.7,
+            },
+        },
+    }
+
+    report = build_performance_report(scope=scope, probe_results=[result])
+    row = report["rows"][0]
+    metrics = {metric["key"]: metric for metric in row["metrics"]}
+
+    assert report["summary"]["status"] == "regression"
+    assert row["status"] == "regression"
+    assert metrics["delta_token_count_new_ms_mean"]["status"] == "regression"
+
+
 def test_scope_report_selects_runtime_utils_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,

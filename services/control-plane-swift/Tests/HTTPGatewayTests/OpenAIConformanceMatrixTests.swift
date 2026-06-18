@@ -226,7 +226,7 @@ struct OpenAIConformanceMatrixTests {
             MatrixRow(
                 field: "logprobs,top_logprobs",
                 route: "/v1/chat/completions -> execution.ext effective receipt",
-                expectedBehavior: "logprobs requests are visible as unsupported-effective receipts until workers emit token distributions.",
+                expectedBehavior: "logprobs requests keep request-time receipts and surface backend token evidence at the output boundary.",
                 requestBody: Self.body(extra: #""logprobs": true, "top_logprobs": 3"#)
             ) { response, request in
                 #expect(response.statusCode == 200)
@@ -395,6 +395,222 @@ struct OpenAIConformanceMatrixTests {
         #expect(payload.contains("\"content\":\"done\""))
         #expect(request.execution.ext["melix.openai.logprobs.effective"] == "unsupported")
         #expect(request.execution.ext["melix.reasoning.mode"]?.isEmpty == false)
+    }
+
+    @Test("backend token logprobs surface in non-streaming OpenAI chat response")
+    func backendTokenLogprobsSurfaceInNonStreamingOpenAIChatResponse() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-output-logprobs",
+            events: [
+                makeTokenEvent(
+                    requestID: "req-output-logprobs",
+                    seq: 1,
+                    text: "Alpha",
+                    tokenIDs: [301],
+                    tokenLogprobs: [-0.11]
+                ),
+                makeTokenEvent(
+                    requestID: "req-output-logprobs",
+                    seq: 2,
+                    text: " Beta",
+                    tokenIDs: [302],
+                    tokenLogprobs: [-0.22]
+                ),
+                makeUsageEvent(requestID: "req-output-logprobs", seq: 3, promptTokens: 3, completionTokens: 2),
+                makeCompletedEvent(
+                    requestID: "req-output-logprobs",
+                    seq: 4,
+                    finishReason: "stop",
+                    assistantText: "Alpha Beta"
+                ),
+            ]
+        )
+        let handler = Self.handler(worker: worker)
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(Self.body(extra: #""stream": false, "logprobs": true, "top_logprobs": 2"#).utf8)
+            )
+        )
+        let body = try await collectConformanceBody(response.body)
+        let data = try #require(body.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
+        let logprobs = try #require(choice["logprobs"] as? [String: Any])
+        let content = try #require(logprobs["content"] as? [[String: Any]])
+        let firstTopLogprobs = try #require(content[0]["top_logprobs"] as? [[String: Any]])
+        let secondTopLogprobs = try #require(content[1]["top_logprobs"] as? [[String: Any]])
+        let request = try #require(await worker.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(choice["finish_reason"] as? String == "stop")
+        #expect(content.count == 2)
+        #expect(content[0]["token"] as? String == "Alpha")
+        #expect(content[0]["logprob"] as? Double == -0.11)
+        #expect(firstTopLogprobs.isEmpty)
+        #expect(content[1]["token"] as? String == " Beta")
+        #expect(content[1]["logprob"] as? Double == -0.22)
+        #expect(secondTopLogprobs.isEmpty)
+        #expect(logprobs["refusal"] is NSNull)
+        #expect(request.execution.ext["melix.openai.logprobs.effective"] == "unsupported")
+    }
+
+    @Test("missing backend token logprobs do not synthesize OpenAI chat logprobs")
+    func missingBackendTokenLogprobsDoNotSynthesizeOpenAIChatLogprobs() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-output-logprobs-missing",
+            events: [
+                makeTokenEvent(requestID: "req-output-logprobs-missing", seq: 1, text: "done"),
+                makeCompletedEvent(
+                    requestID: "req-output-logprobs-missing",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "done"
+                ),
+            ]
+        )
+        let handler = Self.handler(worker: worker)
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(Self.body(extra: #""stream": false, "logprobs": true"#).utf8)
+            )
+        )
+        let body = try await collectConformanceBody(response.body)
+        let data = try #require(body.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
+        let request = try #require(await worker.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(choice["logprobs"] == nil)
+        #expect(request.execution.ext["melix.openai.logprobs.effective"] == "unsupported")
+    }
+
+    @Test("partially missing backend token logprobs do not emit partial OpenAI chat logprobs")
+    func partiallyMissingBackendTokenLogprobsDoNotEmitPartialOpenAIChatLogprobs() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-output-logprobs-partial",
+            events: [
+                makeTokenEvent(
+                    requestID: "req-output-logprobs-partial",
+                    seq: 1,
+                    text: "Alpha",
+                    tokenIDs: [301],
+                    tokenLogprobs: [-0.11]
+                ),
+                makeTokenEvent(requestID: "req-output-logprobs-partial", seq: 2, text: " Beta"),
+                makeCompletedEvent(
+                    requestID: "req-output-logprobs-partial",
+                    seq: 3,
+                    finishReason: "stop",
+                    assistantText: "Alpha Beta"
+                ),
+            ]
+        )
+        let handler = Self.handler(worker: worker)
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(Self.body(extra: #""stream": false, "logprobs": true"#).utf8)
+            )
+        )
+        let body = try await collectConformanceBody(response.body)
+        let data = try #require(body.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
+
+        #expect(response.statusCode == 200)
+        #expect(choice["logprobs"] == nil)
+    }
+
+    @Test("empty backend token evidence does not emit partial OpenAI chat logprobs")
+    func emptyBackendTokenEvidenceDoesNotEmitPartialOpenAIChatLogprobs() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-output-logprobs-empty-evidence",
+            events: [
+                makeTokenEvent(
+                    requestID: "req-output-logprobs-empty-evidence",
+                    seq: 1,
+                    text: "",
+                    tokenIDs: [300],
+                    tokenLogprobs: [-0.01]
+                ),
+                makeTokenEvent(
+                    requestID: "req-output-logprobs-empty-evidence",
+                    seq: 2,
+                    text: "Alpha",
+                    tokenIDs: [301],
+                    tokenLogprobs: [-0.11]
+                ),
+                makeCompletedEvent(
+                    requestID: "req-output-logprobs-empty-evidence",
+                    seq: 3,
+                    finishReason: "stop",
+                    assistantText: "Alpha"
+                ),
+            ]
+        )
+        let handler = Self.handler(worker: worker)
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(Self.body(extra: #""stream": false, "logprobs": true"#).utf8)
+            )
+        )
+        let body = try await collectConformanceBody(response.body)
+        let data = try #require(body.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
+
+        #expect(response.statusCode == 200)
+        #expect(choice["logprobs"] == nil)
+    }
+
+    @Test("unaligned backend token logprobs do not synthesize OpenAI chat logprobs")
+    func unalignedBackendTokenLogprobsDoNotSynthesizeOpenAIChatLogprobs() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-output-logprobs-unaligned",
+            events: [
+                makeTokenEvent(
+                    requestID: "req-output-logprobs-unaligned",
+                    seq: 1,
+                    text: "Alpha Beta",
+                    tokenIDs: [301, 302],
+                    tokenLogprobs: [-0.11, -0.22]
+                ),
+                makeCompletedEvent(
+                    requestID: "req-output-logprobs-unaligned",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "Alpha Beta"
+                ),
+            ]
+        )
+        let handler = Self.handler(worker: worker)
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(Self.body(extra: #""stream": false, "logprobs": true"#).utf8)
+            )
+        )
+        let body = try await collectConformanceBody(response.body)
+        let data = try #require(body.data(using: .utf8))
+        let payload = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
+
+        #expect(response.statusCode == 200)
+        #expect(choice["logprobs"] == nil)
     }
 
     @Test("streaming and non-streaming fixtures agree on compatibility receipts")
