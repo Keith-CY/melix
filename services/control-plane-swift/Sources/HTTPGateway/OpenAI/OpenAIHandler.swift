@@ -4188,8 +4188,27 @@ button.primary:active {
 
         await modelCatalog.beginRequest(modelID: translated.modelID)
         await scheduleIdleSweepIfNeeded(idleSweepRequest)
+        let workerStream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+        if shouldInspectFirstStreamEventForPreSSEAdmission(translated) {
+            let inspection = await firstEvent(from: execution.stream)
+            switch inspection.firstEvent {
+            case .event(let firstEvent):
+                if let firstEvent, case .error(let error) = firstEvent.payload,
+                   isPreSSEAdmissionError(error.error) {
+                    await modelCatalog.finishRequest(modelID: translated.modelID)
+                    return workerErrorResponse(error.error)
+                }
+                workerStream = inspection.replayingStream
+            case .failure:
+                await modelCatalog.finishRequest(modelID: translated.modelID)
+                return workerUnavailableResponse()
+            }
+        } else {
+            workerStream = execution.stream
+        }
+
         let stream = sseWriter.encode(
-            stream: execution.stream,
+            stream: workerStream,
             requestID: execution.requestID,
             modelID: translated.responseModelID ?? execution.modelID,
             shape: shape,
@@ -4211,6 +4230,85 @@ button.primary:active {
             ],
             body: .stream(stream)
         )
+    }
+
+    private func shouldInspectFirstStreamEventForPreSSEAdmission(_ translated: TranslatedChatRequest) -> Bool {
+        normalizedMediaPartCount(from: translated.workerRequest.execution.ext) > 0
+    }
+
+    private func firstEvent(
+        from stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+    ) async -> FirstStreamEventInspection {
+        let probe = FirstStreamEventProbe()
+        let replayingStream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            let task = Task {
+                var didPublishFirstEvent = false
+                do {
+                    for try await event in stream {
+                        if !didPublishFirstEvent {
+                            didPublishFirstEvent = true
+                            await probe.publish(.event(event))
+                        }
+                        continuation.yield(event)
+                    }
+                    if !didPublishFirstEvent {
+                        await probe.publish(.event(nil))
+                    }
+                    continuation.finish()
+                } catch {
+                    if !didPublishFirstEvent {
+                        await probe.publish(.failure)
+                    }
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+        let firstEvent = await probe.wait()
+        return FirstStreamEventInspection(firstEvent: firstEvent, replayingStream: replayingStream)
+    }
+
+    private struct FirstStreamEventInspection: Sendable {
+        let firstEvent: FirstStreamEventProbe.Result
+        let replayingStream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+    }
+
+    private actor FirstStreamEventProbe {
+        enum Result: Sendable {
+            case event(Melix_Worker_V1_ExecuteEvent?)
+            case failure
+        }
+
+        private var result: Result?
+        private var waiters: [CheckedContinuation<Result, Never>] = []
+
+        func publish(_ result: Result) {
+            guard self.result == nil else {
+                return
+            }
+            self.result = result
+            let waiters = self.waiters
+            self.waiters.removeAll()
+            for waiter in waiters {
+                waiter.resume(returning: result)
+            }
+        }
+
+        func wait() async -> Result {
+            await withCheckedContinuation { continuation in
+                if let result {
+                    continuation.resume(returning: result)
+                } else {
+                    waiters.append(continuation)
+                }
+            }
+        }
+    }
+
+    private func isPreSSEAdmissionError(_ error: Melix_Worker_V1_ErrorStatus) -> Bool {
+        error.code == "multimodal_prefill_attention_budget_exceeded"
     }
 
     private func encodedJSONResponse<T: Encodable>(_ payload: T, statusCode: Int = 200) throws -> HTTPResponse {
@@ -4835,7 +4933,7 @@ button.primary:active {
     private func workerErrorResponse(_ error: Melix_Worker_V1_ErrorStatus) -> HTTPResponse {
         let statusCode: Int
         switch error.code {
-        case "invalid_argument":
+        case "invalid_argument", "multimodal_prefill_attention_budget_exceeded":
             statusCode = 400
         case "not_found":
             statusCode = 404

@@ -158,7 +158,8 @@ func makeErrorEvent(
     requestID: String,
     seq: UInt64,
     code: String,
-    message: String
+    message: String,
+    details: [String: String] = [:]
 ) -> Melix_Worker_V1_ExecuteEvent {
     var event = Melix_Worker_V1_ExecuteEvent()
     event.requestID = requestID
@@ -167,6 +168,7 @@ func makeErrorEvent(
     event.error = Melix_Worker_V1_ErrorEvent()
     event.error.error.code = code
     event.error.error.message = message
+    event.error.error.details = details
     return event
 }
 

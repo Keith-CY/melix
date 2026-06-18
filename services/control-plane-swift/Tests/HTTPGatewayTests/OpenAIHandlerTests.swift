@@ -4457,6 +4457,37 @@ struct OpenAIHandlerTests {
         #expect(await vlmClient.lastGenerateRequest == nil)
     }
 
+    @Test("POST /v1/chat/completions preserves first VLM token after streaming admission inspection")
+    func postChatCompletionsPreservesFirstVLMTokenAfterStreamingAdmissionInspection() async throws {
+        let requestID = "req-http-vlm-first-token-replay"
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: requestID,
+            vlmEvents: [
+                makeTokenEvent(requestID: requestID, seq: 1, text: "first"),
+                makeCompletedEvent(requestID: requestID, seq: 2, finishReason: "stop", assistantText: "first"),
+            ],
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+        let body = try #require(vlmAttentionBudgetChatBody(stream: true))
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["content-type"] == "text/event-stream; charset=utf-8")
+        #expect(payload.contains("\"content\":\"first\""), Comment(rawValue: payload))
+        #expect(payload.contains("data: [DONE]"), Comment(rawValue: payload))
+    }
+
     @Test("POST /v1/chat/completions dispatches valid non-stream media to VLM workers")
     func postChatCompletionsDispatchesValidNonStreamMediaToVLMWorkers() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
@@ -4541,6 +4572,158 @@ struct OpenAIHandlerTests {
         #expect(prefillRequest.messages[0].parts[1].imageBytes == Data("image".utf8))
         #expect(await textClient.lastGenerateRequest == nil)
         #expect(await vlmClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions rejects streaming VLM attention budget before first SSE byte")
+    func postChatCompletionsRejectsStreamingVLMAttentionBudgetBeforeFirstSSEByte() async throws {
+        let requestID = "req-http-vlm-attention-budget-stream"
+        let details = vlmAttentionBudgetDetails()
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: requestID,
+            vlmPrefillResponse: vlmAttentionBudgetPrefillRefusal(details: details),
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+        let body = try #require(vlmAttentionBudgetChatBody(stream: true))
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+        let responseDetails = try #require(error["details"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(response.headers["content-type"] == "application/json")
+        #expect(error["code"] as? String == "multimodal_prefill_attention_budget_exceeded")
+        #expect(error["message"] as? String == "Predicted multimodal prefill attention memory exceeds the active budget.")
+        #expect(responseDetails["predicted_attention_bytes"] as? String == details["predicted_attention_bytes"])
+        #expect(responseDetails["attention_budget_bytes"] as? String == details["attention_budget_bytes"])
+        #expect(responseDetails["auto_chunk_reason"] as? String == "attention_budget_exceeded")
+        #expect(responseDetails["prefill_chunk_mode"] as? String == "refused")
+        #expect(responseDetails["selected_prefill_step_size"] as? String == "0")
+        if case .stream = response.body {
+            Issue.record("Streaming VLM attention-budget admission must not return an SSE body.")
+        }
+        #expect(await harness.vlmClient.lastPrefillRequest != nil)
+        #expect(await harness.vlmClient.lastDecodeRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions preserves non-admission VLM stream errors as SSE frames")
+    func postChatCompletionsPreservesNonAdmissionVLMStreamErrorsAsSSEFrames() async throws {
+        let requestID = "req-http-vlm-pre-first-event-failure"
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: requestID,
+            vlmEvents: [],
+            vlmStreamFailure: OpenAIHandlerTestError(description: "vlm stream failed before first event"),
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+        let body = try #require(vlmAttentionBudgetChatBody(stream: true))
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["content-type"] == "text/event-stream; charset=utf-8")
+        #expect(payload.contains("event: error"), Comment(rawValue: payload))
+        #expect(payload.contains("\"code\":\"transport_error\""), Comment(rawValue: payload))
+        #expect(payload.contains("data: [DONE]"), Comment(rawValue: payload))
+        #expect(await harness.vlmClient.lastPrefillRequest != nil)
+    }
+
+    @Test("POST /v1/chat/completions preserves empty VLM stream completion after admission inspection")
+    func postChatCompletionsPreservesEmptyVLMStreamCompletionAfterAdmissionInspection() async throws {
+        let requestID = "req-http-vlm-empty-stream-replay"
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: requestID,
+            vlmEvents: [],
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+        let body = try #require(vlmAttentionBudgetChatBody(stream: true))
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(response.headers["content-type"] == "text/event-stream; charset=utf-8")
+        #expect(payload.contains("\"request_id\":\"\(requestID)\""), Comment(rawValue: payload))
+        #expect(payload.contains("data: [DONE]"), Comment(rawValue: payload))
+    }
+
+    @Test("POST /v1/chat/completions preserves VLM attention budget details across stream modes")
+    func postChatCompletionsPreservesVLMAttentionBudgetDetailsAcrossStreamModes() async throws {
+        let details = vlmAttentionBudgetDetails()
+        let streamRequestID = "req-http-vlm-attention-budget-stream-parity"
+        let nonStreamRequestID = "req-http-vlm-attention-budget-json-parity"
+        let streamHarness = makeGemma4VLMOpenAIHandler(
+            requestID: streamRequestID,
+            vlmPrefillResponse: vlmAttentionBudgetPrefillRefusal(details: details),
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+        let nonStreamHarness = makeGemma4VLMOpenAIHandler(
+            requestID: nonStreamRequestID,
+            vlmPrefillResponse: vlmAttentionBudgetPrefillRefusal(details: details),
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+
+        let streamResponse = try await streamHarness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: try #require(vlmAttentionBudgetChatBody(stream: true))
+            )
+        )
+        let nonStreamResponse = try await nonStreamHarness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: try #require(vlmAttentionBudgetChatBody(stream: false))
+            )
+        )
+        let streamError = try #require((try await jsonPayload(from: streamResponse.body))["error"] as? [String: Any])
+        let nonStreamError = try #require((try await jsonPayload(from: nonStreamResponse.body))["error"] as? [String: Any])
+        let streamDetails = try #require(streamError["details"] as? [String: Any])
+        let nonStreamDetails = try #require(nonStreamError["details"] as? [String: Any])
+
+        #expect(streamResponse.statusCode == 400)
+        #expect(nonStreamResponse.statusCode == 400)
+        #expect(streamError["code"] as? String == nonStreamError["code"] as? String)
+        #expect(streamDetails["predicted_attention_bytes"] as? String == nonStreamDetails["predicted_attention_bytes"] as? String)
+        #expect(streamDetails["attention_budget_bytes"] as? String == nonStreamDetails["attention_budget_bytes"] as? String)
+        #expect(streamDetails["auto_chunk_reason"] as? String == nonStreamDetails["auto_chunk_reason"] as? String)
+        #expect(streamDetails["prefill_chunk_mode"] as? String == nonStreamDetails["prefill_chunk_mode"] as? String)
+        #expect(streamDetails["selected_prefill_step_size"] as? String == nonStreamDetails["selected_prefill_step_size"] as? String)
     }
 
     @Test("model sparse-prefill policy is applied to generated worker requests")
@@ -13200,6 +13383,9 @@ struct OpenAIHandlerTests {
         finishReason: String = "stop",
         assistantText: String = "ready",
         textEvents: [Melix_Worker_V1_ExecuteEvent]? = nil,
+        vlmEvents: [Melix_Worker_V1_ExecuteEvent]? = nil,
+        vlmStreamFailure: Error? = nil,
+        vlmPrefillResponse: Melix_Worker_V1_PrefillResponse? = nil,
         textLoadModelHandle: String = "melix-dev-text::swift",
         gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
         mcpToolCatalog: MCPToolCatalog = .empty,
@@ -13230,16 +13416,19 @@ struct OpenAIHandlerTests {
             events: resolvedTextEvents,
             loadModelHandle: textLoadModelHandle
         )
+        let resolvedVLMEvents = vlmEvents ?? [
+            makeCompletedEvent(
+                requestID: requestID,
+                seq: 1,
+                finishReason: finishReason,
+                assistantText: assistantText
+            ),
+        ]
         let vlmClient = ScriptedWorkerClient(
-            events: [
-                makeCompletedEvent(
-                    requestID: requestID,
-                    seq: 1,
-                    finishReason: finishReason,
-                    assistantText: assistantText
-                ),
-            ],
-            loadModelHandle: "melix-dev-vlm::swift-vision"
+            events: resolvedVLMEvents,
+            streamFailure: vlmStreamFailure,
+            loadModelHandle: "melix-dev-vlm::swift-vision",
+            prefillResponseOverride: vlmPrefillResponse
         )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: textClient,
@@ -13382,6 +13571,7 @@ private actor ScriptedWorkerClient:
     private let runtimeKVCacheBytes: UInt64
     private let runtimeStatsFailure: Error?
     private let runtimeStatsResponseOverride: Melix_Worker_V1_GetRuntimeStatsResponse?
+    private let prefillResponseOverride: Melix_Worker_V1_PrefillResponse?
     private let unloadDelayNanoseconds: UInt64
     private let unloadGate: ScriptedWorkerUnloadGate?
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
@@ -13402,6 +13592,7 @@ private actor ScriptedWorkerClient:
         runtimeKVCacheBytes: UInt64 = 0,
         runtimeStatsFailure: Error? = nil,
         runtimeStatsResponseOverride: Melix_Worker_V1_GetRuntimeStatsResponse? = nil,
+        prefillResponseOverride: Melix_Worker_V1_PrefillResponse? = nil,
         unloadDelayNanoseconds: UInt64 = 0,
         unloadGate: ScriptedWorkerUnloadGate? = nil
     ) {
@@ -13415,6 +13606,7 @@ private actor ScriptedWorkerClient:
         self.runtimeKVCacheBytes = runtimeKVCacheBytes
         self.runtimeStatsFailure = runtimeStatsFailure
         self.runtimeStatsResponseOverride = runtimeStatsResponseOverride
+        self.prefillResponseOverride = prefillResponseOverride
         self.unloadDelayNanoseconds = unloadDelayNanoseconds
         self.unloadGate = unloadGate
     }
@@ -13456,6 +13648,9 @@ private actor ScriptedWorkerClient:
         request: Melix_Worker_V1_PrefillRequest
     ) async throws -> Melix_Worker_V1_PrefillResponse {
         lastPrefillRequest = request
+        if let prefillResponseOverride {
+            return prefillResponseOverride
+        }
         var response = Melix_Worker_V1_PrefillResponse()
         response.ok = true
         response.decodeHandle = "decode-\(request.execution.id.requestID)"
@@ -14200,6 +14395,48 @@ private func compatPolicyChatBody(stream: Bool) -> Data? {
       ]
     }
     """.data(using: .utf8)
+}
+
+private func vlmAttentionBudgetChatBody(stream: Bool) -> Data? {
+    """
+    {
+      "model": "melix-dev-vlm",
+      "stream": \(stream ? "true" : "false"),
+      "max_tokens": 8,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            { "type": "text", "text": "Describe this image." },
+            { "type": "image_url", "image_url": { "data": "aW1hZ2U=" } }
+          ]
+        }
+      ]
+    }
+    """.data(using: .utf8)
+}
+
+private func vlmAttentionBudgetDetails() -> [String: String] {
+    [
+        "family_id": "gemma4-v1",
+        "prompt_tokens": "512",
+        "predicted_attention_bytes": "17179869184",
+        "attention_budget_bytes": "1",
+        "auto_chunk_reason": "attention_budget_exceeded",
+        "prefill_chunk_mode": "refused",
+        "selected_prefill_step_size": "0",
+    ]
+}
+
+private func vlmAttentionBudgetPrefillRefusal(
+    details: [String: String]
+) -> Melix_Worker_V1_PrefillResponse {
+    var response = Melix_Worker_V1_PrefillResponse()
+    response.ok = false
+    response.error.code = "multimodal_prefill_attention_budget_exceeded"
+    response.error.message = "Predicted multimodal prefill attention memory exceeds the active budget."
+    response.error.details = details
+    return response
 }
 
 private func compatReceiptFieldNames(_ receipt: String) -> Set<String> {
