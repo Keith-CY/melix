@@ -126,6 +126,17 @@ def score_final_result(
     profile: EvaluationProfileDefinition,
 ) -> ScoringOutcome:
     if profile.result_kind == "json":
+        output_schema = profile.output_schema
+        if not output_schema:
+            try:
+                return _cached_schema_free_json_scoring_outcome(
+                    target=target,
+                    extracted_result=extracted_result,
+                    ignored_paths=profile.ignored_paths,
+                )
+            except json.JSONDecodeError:
+                _loads_json_payload(target)
+                return ScoringOutcome(typed_score=0.0, validation_status="parse_failed", failure_reason="invalid_json")
         return _score_json_result(
             extracted_result=extracted_result,
             target=target,
