@@ -2688,6 +2688,8 @@ def _changed_paths_match_force_all_wildcards(changed_paths: set[str]) -> bool:
 
 
 def _matches_any_glob(path: str, globs: tuple[str, ...]) -> bool:
+    if path in globs:
+        return True
     glob_matches_path = _glob_matches_path
     for glob in globs:
         if glob_matches_path(path, glob):
