@@ -231,7 +231,7 @@ struct StatusMenuTests {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
-        snapshot.models = [ModelCatalog.devTextModel()]
+        snapshot.models = [makeStatusMenuTextModel()]
         var runtimeSession = Melix_Controlplane_V1_ServerSessionRuntimeState()
         runtimeSession.serverSessionID = "server-session-1"
         runtimeSession.lifecycleState = .sleeping
@@ -657,6 +657,18 @@ private final class OpenConsoleRecorder {
     func open() {
         wasCalled = true
     }
+}
+
+private func makeStatusMenuTextModel() -> Melix_Controlplane_V1_ModelSummary {
+    var model = Melix_Controlplane_V1_ModelSummary()
+    model.modelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    model.kind = "text"
+    model.state = .modelWarm
+    model.features = ["chat"]
+    model.maxContext = 8192
+    model.settings.alias = "Qwen3.5-0.8B-OptiQ-4bit"
+    model.settings.defaultAccelerationMode = .baseline
+    return model
 }
 
 @MainActor

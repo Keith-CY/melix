@@ -79,6 +79,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let actionTitle: String
     public let maxContext: UInt32
     public let alias: String
+    public let visibility: String
     public let typeOverrideText: String
     public let memoryPolicyText: String
     public let diskStreamingModeText: String
@@ -127,6 +128,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         actionTitle: String,
         maxContext: UInt32,
         alias: String,
+        visibility: String = "",
         typeOverrideText: String = "",
         memoryPolicyText: String,
         diskStreamingModeText: String,
@@ -166,6 +168,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.actionTitle = actionTitle
         self.maxContext = maxContext
         self.alias = alias
+        self.visibility = visibility.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         self.typeOverrideText = typeOverrideText
         self.memoryPolicyText = memoryPolicyText
         self.diskStreamingModeText = diskStreamingModeText
@@ -3347,9 +3350,18 @@ public final class RuntimeViewModel {
     private static let startNewDiagnosticsProviderTargetID = "start-new-provider"
     private static let remoteBenchmarkUnsupportedMessage = "Remote Provider benchmark is not supported yet; select a local running provider."
     private static let remoteEvaluationUnsupportedMessage = "Remote Provider evaluation currently supports Event Extraction standard runs; select Event Extraction or choose a local running provider."
+    // Catalog visibility is the primary hiding signal; keep explicit IDs as a
+    // fallback for snapshots from older control-plane builds.
     private static let hiddenPlaceholderModelIDs: Set<String> = [
         "melix-dev-text",
+        "melix-dev-embed",
+        "melix-dev-rerank",
+        "melix-dev-model-ops",
+        "melix-dev-ocr",
         "melix-dev-vlm",
+        "melix-dev-transcribe",
+        "melix-dev-speech",
+        "melix-dev-image",
     ]
 
     private static func providerTargetID(kind: RuntimeProviderTargetKind, serverID: String) -> String {
@@ -16774,7 +16786,8 @@ public final class RuntimeViewModel {
     }
 
     private static func isHiddenPlaceholderModel(_ model: RuntimeModelRow) -> Bool {
-        isHiddenPlaceholderModelID(model.modelID)
+        model.visibility == "internal"
+            || isHiddenPlaceholderModelID(model.modelID)
             || isHiddenPlaceholderModelAlias(model.alias)
     }
 
@@ -17637,6 +17650,7 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         actionTitle: runtimeCacheMissing ? "Restore Download" : runtimeActionTitle(for: model.state),
         maxContext: model.maxContext,
         alias: model.settings.alias,
+        visibility: model.settings.ext["melix.visibility"] ?? "",
         typeOverrideText: model.settings.typeOverride,
         memoryPolicyText: runtimeMemoryPolicyText(model.settings.memoryPolicy),
         diskStreamingModeText: runtimeDiskStreamingModeText(model.settings.diskStreamingMode),

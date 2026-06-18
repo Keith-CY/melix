@@ -330,6 +330,9 @@ class LiveMelixStack:
     def models_url(self) -> str:
         return f"http://127.0.0.1:{self.http_port}/v1/models"
 
+    def capabilities_url(self) -> str:
+        return f"http://127.0.0.1:{self.http_port}/api/capabilities"
+
     def chat_url(self) -> str:
         return f"http://127.0.0.1:{self.http_port}/v1/chat/completions"
 
@@ -769,13 +772,13 @@ def wait_for_http_model_states(
             )
         try:
             request = urllib.request.Request(
-                f"http://127.0.0.1:{port}/v1/models",
+                f"http://127.0.0.1:{port}/api/capabilities",
                 headers=request_headers or {},
                 method="GET",
             )
             with urllib.request.urlopen(request, timeout=2) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-                states = {item["id"]: item["melix_state"] for item in payload["data"]}
+                states = {item["model_id"]: item["state"] for item in payload["models"]}
                 if all(
                     _model_state_satisfies(states.get(model_id), expected)
                     for model_id, expected in required_states.items()
@@ -787,7 +790,8 @@ def wait_for_http_model_states(
 
     raise AssertionError(
         "Control plane never exposed the required model states "
-        f"{required_states} on port {port} within {timeout_seconds:.1f}s: {last_error}"
+        f"{required_states} through /api/capabilities on port {port} "
+        f"within {timeout_seconds:.1f}s: {last_error}"
     )
 
 
