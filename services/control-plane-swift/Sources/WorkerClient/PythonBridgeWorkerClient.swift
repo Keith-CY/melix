@@ -57,6 +57,8 @@ public protocol WorkerBridgeRunning: Sendable {
 }
 
 public protocol PythonWorkerRPCRunning: Sendable {
+    func shutdown() async
+
     func handshake(
         socketPath: String,
         request: Melix_Worker_V1_HandshakeRequest
@@ -193,6 +195,10 @@ public protocol PythonWorkerRPCRunning: Sendable {
     ) async throws -> Melix_Worker_V1_SubmitResultsResponse
 }
 
+public extension PythonWorkerRPCRunning {
+    func shutdown() async {}
+}
+
 private enum PythonWorkerTransport: Sendable {
     case bridge(any WorkerBridgeRunning)
     case rpc(any PythonWorkerRPCRunning)
@@ -237,6 +243,12 @@ public struct PythonBridgeWorkerClient:
                 environment: processEnvironment
             )
         )
+    }
+
+    public func shutdown() async {
+        if case .rpc(let runner) = transport {
+            await runner.shutdown()
+        }
     }
 
     public func canDispatchRequests() async -> Bool {
@@ -1804,6 +1816,10 @@ public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
         )
     }
 
+    public func shutdown() async {
+        await sessionProvider.shutdownAll()
+    }
+
     public func handshake(
         socketPath: String,
         request: Melix_Worker_V1_HandshakeRequest
@@ -2177,7 +2193,7 @@ public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
             )
         } catch {
             if shouldInvalidateGRPCSession(for: error) {
-                sessionProvider.invalidate(socketPath: socketPath, ifMatching: session)
+                await sessionProvider.invalidate(socketPath: socketPath, ifMatching: session)
             }
             throw workerClientError(from: error)
         }
@@ -2236,7 +2252,17 @@ private final class PythonWorkerGRPCSessionProvider: @unchecked Sendable {
         }
     }
 
-    func invalidate(socketPath: String, ifMatching session: PythonWorkerGRPCSession) {
+    func invalidate(socketPath: String, ifMatching session: PythonWorkerGRPCSession) async {
+        let cachedSession = removeSession(socketPath: socketPath, ifMatching: session)
+        if let cachedSession {
+            await cachedSession.close(shutdownEventLoopGroup: shutdownEventLoopGroup)
+        }
+    }
+
+    private func removeSession(
+        socketPath: String,
+        ifMatching session: PythonWorkerGRPCSession
+    ) -> PythonWorkerGRPCSession? {
         lock.lock()
         let cachedSession = sessions[socketPath]
         if cachedSession === session {
@@ -2245,19 +2271,34 @@ private final class PythonWorkerGRPCSessionProvider: @unchecked Sendable {
         lock.unlock()
 
         if cachedSession === session {
-            session.closeNow()
+            return cachedSession
+        }
+        return nil
+    }
+
+    func shutdownAll() async {
+        let sessions = drainSessions()
+        for session in sessions {
+            await session.close(shutdownEventLoopGroup: shutdownEventLoopGroup)
         }
     }
 
     deinit {
+        let sessions = drainSessions()
+        let shutdownEventLoopGroup = self.shutdownEventLoopGroup
+        Task.detached(priority: .utility) {
+            for session in sessions {
+                await session.close(shutdownEventLoopGroup: shutdownEventLoopGroup)
+            }
+        }
+    }
+
+    private func drainSessions() -> [PythonWorkerGRPCSession] {
         lock.lock()
         let sessions = Array(sessions.values)
         self.sessions.removeAll(keepingCapacity: false)
         lock.unlock()
-
-        for session in sessions {
-            session.closeNow()
-        }
+        return sessions
     }
 }
 
@@ -2295,22 +2336,33 @@ private final class PythonWorkerGRPCSession: @unchecked Sendable {
         }
     }
 
-    func closeNow() {
+    func close(
+        shutdownEventLoopGroup: @Sendable (MultiThreadedEventLoopGroup) async throws -> Void
+    ) async {
+        guard beginClose() else {
+            return
+        }
+
+        client.beginGracefulShutdown()
+        _ = try? await connectionTask.value
+        try? await shutdownEventLoopGroup(eventLoopGroup)
+    }
+
+    private func beginClose() -> Bool {
         lock.lock()
         guard !isClosed else {
             lock.unlock()
-            return
+            return false
         }
         isClosed = true
         lock.unlock()
-
-        client.beginGracefulShutdown()
-        connectionTask.cancel()
-        try? eventLoopGroup.syncShutdownGracefully()
+        return true
     }
 
     deinit {
-        closeNow()
+        if beginClose() {
+            client.beginGracefulShutdown()
+        }
     }
 }
 
