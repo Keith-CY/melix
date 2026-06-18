@@ -106,18 +106,11 @@ public struct OpenAIConformanceHarness: Sendable {
         case .mockBackendCI:
             return URL(string: "https://mock.melix.local/v1/chat/completions")!
         case .realBackendSmoke(let baseURL, _, _, _):
-            let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-            let normalized = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
-            guard normalized.isEmpty == false,
-                  let url = URL(string: "\(normalized)/chat/completions")
-            else {
-                throw OpenAIConformanceHarnessError.invalidBaseURL(baseURL)
-            }
-            return url
+            return try makeNormalizedChatCompletionsURL(baseURL: baseURL)
         }
     }
 
-    private static func rows() -> [HarnessRow] {
+    fileprivate static func rows() -> [HarnessRow] {
         [
             HarnessRow(
                 field: "chat.completions.response_shape",
@@ -138,6 +131,158 @@ public struct OpenAIConformanceHarness: Sendable {
                 requestKind: .errorShape
             ),
         ]
+    }
+}
+
+public struct OpenAIProxyParityTarget: Equatable, Sendable {
+    public let localBaseURL: String
+    public let localModelID: String
+    public let localAPIKey: String
+    public let remoteBaseURL: String
+    public let remoteModelID: String
+    public let remoteAPIKey: String
+    public let timeoutSeconds: UInt32
+
+    public init(
+        localBaseURL: String,
+        localModelID: String,
+        localAPIKey: String,
+        remoteBaseURL: String,
+        remoteModelID: String,
+        remoteAPIKey: String,
+        timeoutSeconds: UInt32
+    ) {
+        self.localBaseURL = localBaseURL
+        self.localModelID = localModelID
+        self.localAPIKey = localAPIKey
+        self.remoteBaseURL = remoteBaseURL
+        self.remoteModelID = remoteModelID
+        self.remoteAPIKey = remoteAPIKey
+        self.timeoutSeconds = timeoutSeconds == 0 ? 30 : timeoutSeconds
+    }
+}
+
+public struct OpenAIProxyParityHarness: Sendable {
+    private let target: OpenAIProxyParityTarget
+    private let localTransport: any RemoteProviderHTTPTransport
+    private let remoteTransport: any RemoteProviderHTTPTransport
+
+    public init(
+        target: OpenAIProxyParityTarget,
+        localTransport: (any RemoteProviderHTTPTransport)? = nil,
+        remoteTransport: (any RemoteProviderHTTPTransport)? = nil
+    ) {
+        self.target = target
+        self.localTransport = localTransport ?? URLSessionRemoteProviderHTTPTransport()
+        self.remoteTransport = remoteTransport ?? URLSessionRemoteProviderHTTPTransport()
+    }
+
+    public func run() async throws -> OpenAIConformanceReport {
+        let rows = try await OpenAIConformanceHarness.rows().asyncMap { row in
+            try await execute(row)
+        }
+        return OpenAIConformanceReport(rows: rows)
+    }
+
+    private func execute(_ row: HarnessRow) async throws -> OpenAIConformanceRow {
+        let localRequest = try makeHTTPRequest(
+            for: row,
+            baseURL: target.localBaseURL,
+            modelID: target.localModelID,
+            apiKey: target.localAPIKey
+        )
+        let remoteRequest = try makeHTTPRequest(
+            for: row,
+            baseURL: target.remoteBaseURL,
+            modelID: target.remoteModelID,
+            apiKey: target.remoteAPIKey
+        )
+
+        async let localResult = execute(row, request: localRequest, transport: localTransport)
+        async let remoteResult = execute(row, request: remoteRequest, transport: remoteTransport)
+        let local = try await localResult
+        let remote = try await remoteResult
+
+        if let mismatch = local.requestReceipt.firstMismatch(against: remote.requestReceipt) {
+            return parityRow(row, status: .fail, reason: mismatch)
+        }
+        guard local.responseEvaluation.status == .pass else {
+            return parityRow(row, status: .fail, reason: "local_response=\(local.responseEvaluation.reason)")
+        }
+        guard remote.responseEvaluation.status == .pass else {
+            return parityRow(row, status: .fail, reason: "remote_response=\(remote.responseEvaluation.reason)")
+        }
+        guard local.responseEvaluation.reason == remote.responseEvaluation.reason else {
+            return parityRow(
+                row,
+                status: .fail,
+                reason: "response_shape local=\(local.responseEvaluation.reason) remote=\(remote.responseEvaluation.reason)"
+            )
+        }
+        return parityRow(
+            row,
+            status: .pass,
+            reason: "request_receipt=equivalent response_shape=equivalent"
+        )
+    }
+
+    private func execute(
+        _ row: HarnessRow,
+        request: URLRequest,
+        transport: any RemoteProviderHTTPTransport
+    ) async throws -> ProxyParityExecution {
+        let requestReceipt = try OpenAIProxyParityRequestReceipt(row: row, request: request)
+        do {
+            let (data, response) = try await transport.data(for: request)
+            return ProxyParityExecution(
+                requestReceipt: requestReceipt,
+                responseEvaluation: row.evaluate(data: data, response: response)
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw urlError
+        } catch {
+            return ProxyParityExecution(
+                requestReceipt: requestReceipt,
+                responseEvaluation: (.fail, "transport_failed=\(String(describing: error))")
+            )
+        }
+    }
+
+    private func makeHTTPRequest(
+        for row: HarnessRow,
+        baseURL: String,
+        modelID: String,
+        apiKey: String
+    ) throws -> URLRequest {
+        let url = try makeNormalizedChatCompletionsURL(baseURL: baseURL)
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = TimeInterval(target.timeoutSeconds)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(row.acceptHeader, forHTTPHeaderField: "Accept")
+        request.setValue("OpenAI/Python 1.0.0 Melix/0.1", forHTTPHeaderField: "User-Agent")
+        let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedAPIKey.isEmpty == false {
+            request.setValue("Bearer \(trimmedAPIKey)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: row.body(modelID: modelID), options: [])
+        return request
+    }
+
+    private func parityRow(
+        _ row: HarnessRow,
+        status: OpenAIConformanceObservedStatus,
+        reason: String
+    ) -> OpenAIConformanceRow {
+        OpenAIConformanceRow(
+            field: "proxy_parity.\(row.field)",
+            route: "local and remote \(row.route)",
+            expectedBehavior: "Local backend and configured remote Server Profile produce equivalent request receipts and response shapes for \(row.expectedBehavior)",
+            observedStatus: status,
+            observedReason: reason
+        )
     }
 }
 
@@ -214,11 +359,19 @@ public enum OpenAIConformanceHarnessCLIError: Error, Equatable, CustomStringConv
 }
 
 public struct OpenAIConformanceHarnessCLI: Sendable {
-    public let target: OpenAIConformanceHarnessTarget
+    public let target: OpenAIConformanceHarnessTarget?
+    public let proxyParityTarget: OpenAIProxyParityTarget?
     public let outputURL: URL
 
     public init(target: OpenAIConformanceHarnessTarget, outputURL: URL) {
         self.target = target
+        self.proxyParityTarget = nil
+        self.outputURL = outputURL
+    }
+
+    public init(proxyParityTarget: OpenAIProxyParityTarget, outputURL: URL) {
+        self.target = nil
+        self.proxyParityTarget = proxyParityTarget
         self.outputURL = outputURL
     }
 
@@ -240,9 +393,15 @@ public struct OpenAIConformanceHarnessCLI: Sendable {
         let supportedOptions: Set<String> = [
             "--api-key",
             "--base-url",
+            "--local-api-key",
+            "--local-base-url",
+            "--local-model",
             "--mode",
             "--model",
             "--output",
+            "--remote-api-key",
+            "--remote-base-url",
+            "--remote-model",
             "--timeout-seconds",
         ]
         for option in values.keys where supportedOptions.contains(option) == false {
@@ -253,6 +412,7 @@ public struct OpenAIConformanceHarnessCLI: Sendable {
         guard let output = values["--output"], output.isEmpty == false else {
             throw OpenAIConformanceHarnessCLIError.missingValue("--output")
         }
+        try validateModeSpecificOptions(mode: mode, values: values)
         let outputURL = URL(fileURLWithPath: output)
         switch mode {
         case "mock-backend-ci":
@@ -286,17 +446,94 @@ public struct OpenAIConformanceHarnessCLI: Sendable {
                 ),
                 outputURL: outputURL
             )
+        case "proxy-parity":
+            guard let localBaseURL = values["--local-base-url"], localBaseURL.isEmpty == false else {
+                throw OpenAIConformanceHarnessCLIError.missingValue("--local-base-url")
+            }
+            guard let localModelID = values["--local-model"], localModelID.isEmpty == false else {
+                throw OpenAIConformanceHarnessCLIError.missingValue("--local-model")
+            }
+            guard let remoteBaseURL = values["--remote-base-url"], remoteBaseURL.isEmpty == false else {
+                throw OpenAIConformanceHarnessCLIError.missingValue("--remote-base-url")
+            }
+            guard let remoteModelID = values["--remote-model"], remoteModelID.isEmpty == false else {
+                throw OpenAIConformanceHarnessCLIError.missingValue("--remote-model")
+            }
+            let timeoutSeconds = try parseTimeoutSeconds(values["--timeout-seconds"])
+            return OpenAIConformanceHarnessCLI(
+                proxyParityTarget: OpenAIProxyParityTarget(
+                    localBaseURL: localBaseURL,
+                    localModelID: localModelID,
+                    localAPIKey: values["--local-api-key"] ?? "",
+                    remoteBaseURL: remoteBaseURL,
+                    remoteModelID: remoteModelID,
+                    remoteAPIKey: values["--remote-api-key"] ?? "",
+                    timeoutSeconds: timeoutSeconds
+                ),
+                outputURL: outputURL
+            )
         default:
             throw OpenAIConformanceHarnessCLIError.invalidMode(mode)
         }
     }
 
-    public func run(transport: (any RemoteProviderHTTPTransport)? = nil) async throws -> OpenAIConformanceReport {
-        let report = try await OpenAIConformanceHarness(target: target, transport: transport).run()
+    public func run(
+        transport: (any RemoteProviderHTTPTransport)? = nil
+    ) async throws -> OpenAIConformanceReport {
+        let report: OpenAIConformanceReport
+        if let proxyParityTarget {
+            report = try await OpenAIProxyParityHarness(
+                target: proxyParityTarget,
+                localTransport: transport,
+                remoteTransport: transport
+            ).run()
+        } else if let target {
+            report = try await OpenAIConformanceHarness(target: target, transport: transport).run()
+        } else {
+            throw OpenAIConformanceHarnessError.transportFailed("missing conformance target")
+        }
         let outputDirectory = outputURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         try report.jsonData().write(to: outputURL, options: [.atomic])
         return report
+    }
+
+    private static func parseTimeoutSeconds(_ value: String?) throws -> UInt32 {
+        guard let value else {
+            return 30
+        }
+        guard let parsed = UInt32(value), parsed > 0 else {
+            throw OpenAIConformanceHarnessCLIError.invalidTimeout(value)
+        }
+        return parsed
+    }
+
+    private static func validateModeSpecificOptions(
+        mode: String,
+        values: [String: String]
+    ) throws {
+        let commonOptions: Set<String> = ["--mode", "--output", "--timeout-seconds"]
+        let allowedOptions: Set<String>
+        switch mode {
+        case "mock-backend-ci":
+            allowedOptions = commonOptions.union(["--model"])
+        case "real-backend-smoke":
+            allowedOptions = commonOptions.union(["--api-key", "--base-url", "--model"])
+        case "proxy-parity":
+            allowedOptions = commonOptions.union([
+                "--local-api-key",
+                "--local-base-url",
+                "--local-model",
+                "--remote-api-key",
+                "--remote-base-url",
+                "--remote-model",
+            ])
+        default:
+            return
+        }
+        for option in values.keys.sorted() where allowedOptions.contains(option) == false {
+            throw OpenAIConformanceHarnessCLIError.unknownOption(option)
+        }
     }
 }
 
@@ -476,6 +713,139 @@ private enum HarnessRequestKind: Sendable {
     case nonStreamingChat
     case streamingToolCall
     case errorShape
+}
+
+private struct ProxyParityExecution: Sendable {
+    let requestReceipt: OpenAIProxyParityRequestReceipt
+    let responseEvaluation: (status: OpenAIConformanceObservedStatus, reason: String)
+}
+
+private struct OpenAIProxyParityRequestReceipt: Equatable, Sendable {
+    let method: String
+    let path: String
+    let accept: String
+    let contentType: String
+    let requestKind: String
+    let bodyFields: [String]
+    let stream: Bool
+    let toolNames: [String]
+    let toolChoiceName: String
+    let unsupportedField: String
+    let modelPresent: Bool
+
+    init(row: HarnessRow, request: URLRequest) throws {
+        self.method = request.httpMethod ?? ""
+        self.path = row.requestKind.endpointPath
+        self.accept = request.value(forHTTPHeaderField: "Accept") ?? ""
+        self.contentType = request.value(forHTTPHeaderField: "Content-Type") ?? ""
+        self.requestKind = row.requestKind.receiptName
+        let body = try Self.bodyObject(from: request)
+        self.bodyFields = body.keys.sorted()
+        self.stream = body["stream"] as? Bool ?? false
+        self.toolNames = Self.toolNames(from: body)
+        self.toolChoiceName = Self.toolChoiceName(from: body)
+        self.unsupportedField = body["best_of"] == nil ? "" : "best_of"
+        self.modelPresent = (body["model"] as? String)?.isEmpty == false
+    }
+
+    func firstMismatch(against other: OpenAIProxyParityRequestReceipt) -> String? {
+        if method != other.method {
+            return "request_receipt.method local=\(method) remote=\(other.method)"
+        }
+        if path != other.path {
+            return "request_receipt.path local=\(path) remote=\(other.path)"
+        }
+        if accept != other.accept {
+            return "request_receipt.accept local=\(accept) remote=\(other.accept)"
+        }
+        if contentType != other.contentType {
+            return "request_receipt.content_type local=\(contentType) remote=\(other.contentType)"
+        }
+        if requestKind != other.requestKind {
+            return "request_receipt.request_kind local=\(requestKind) remote=\(other.requestKind)"
+        }
+        if bodyFields != other.bodyFields {
+            return "request_receipt.body_fields local=\(bodyFields) remote=\(other.bodyFields)"
+        }
+        if stream != other.stream {
+            return "request_receipt.stream local=\(stream) remote=\(other.stream)"
+        }
+        if toolNames != other.toolNames {
+            return "request_receipt.tool_names local=\(toolNames) remote=\(other.toolNames)"
+        }
+        if toolChoiceName != other.toolChoiceName {
+            return "request_receipt.tool_choice_name local=\(toolChoiceName) remote=\(other.toolChoiceName)"
+        }
+        if unsupportedField != other.unsupportedField {
+            return "request_receipt.unsupported_field local=\(unsupportedField) remote=\(other.unsupportedField)"
+        }
+        if modelPresent != other.modelPresent {
+            return "request_receipt.model_present local=\(modelPresent) remote=\(other.modelPresent)"
+        }
+        return nil
+    }
+
+    private static func bodyObject(from request: URLRequest) throws -> [String: Any] {
+        guard let body = request.httpBody,
+              let object = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+        else {
+            throw OpenAIConformanceHarnessError.transportFailed("proxy parity request body was not JSON")
+        }
+        return object
+    }
+
+    private static func toolNames(from body: [String: Any]) -> [String] {
+        guard let tools = body["tools"] as? [[String: Any]] else {
+            return []
+        }
+        return tools.compactMap { tool in
+            (tool["function"] as? [String: Any])?["name"] as? String
+        }.sorted()
+    }
+
+    private static func toolChoiceName(from body: [String: Any]) -> String {
+        guard let toolChoice = body["tool_choice"] as? [String: Any],
+              let function = toolChoice["function"] as? [String: Any],
+              let name = function["name"] as? String
+        else {
+            return ""
+        }
+        return name
+    }
+}
+
+private extension HarnessRequestKind {
+    var receiptName: String {
+        switch self {
+        case .nonStreamingChat:
+            return "non_streaming_chat"
+        case .streamingToolCall:
+            return "streaming_tool_call"
+        case .errorShape:
+            return "error_shape"
+        }
+    }
+
+    var endpointPath: String {
+        switch self {
+        case .nonStreamingChat, .streamingToolCall, .errorShape:
+            return "/chat/completions"
+        }
+    }
+}
+
+private func makeNormalizedChatCompletionsURL(baseURL: String) throws -> URL {
+    let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
+    let urlString = normalized.hasSuffix("/chat/completions")
+        ? normalized
+        : "\(normalized)/chat/completions"
+    guard normalized.isEmpty == false,
+          let url = URL(string: urlString)
+    else {
+        throw OpenAIConformanceHarnessError.invalidBaseURL(baseURL)
+    }
+    return url
 }
 
 private extension Array {
