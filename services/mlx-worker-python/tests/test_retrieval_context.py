@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -640,6 +641,32 @@ def test_project_retrieval_contexts_fast_paths_complete_entries_without_admissio
     assert (
         projection.untrusted_context_receipts[0]["corrective_action"]
         == "keep retrieved documents in user-role context"
+    )
+
+
+def test_project_retrieval_contexts_redacts_nonpublic_source_ids_with_fast_check() -> None:
+    raw_source_id = "doc local / private"
+    projection = project_retrieval_contexts(
+        [
+            RetrievalContextEntry(
+                context_kind="retrieved_document",
+                source_id=raw_source_id,
+                payload={"title": "Local note"},
+                owner_scope_checked=True,
+                segment_id=f"{raw_source_id}:result-0",
+                source_field="retrieved_document_0",
+                reason="retrieved document result is prompt data",
+                corrective_action="keep retrieved documents in user-role context",
+            )
+        ]
+    )
+
+    expected_digest = hashlib.sha256(raw_source_id.encode("utf-8")).hexdigest()[:12]
+    expected_source_id = f"source:{expected_digest}"
+    assert projection.refusal_receipts == []
+    assert projection.untrusted_context_receipts[0]["source_id"] == expected_source_id
+    assert projection.untrusted_context_receipts[0]["segment_id"] == (
+        f"{expected_source_id}:result-0"
     )
 
 
