@@ -4206,6 +4206,9 @@ button.primary:active {
                     workerStream = AsyncThrowingStream(unfolding: { nil })
                 }
             } catch {
+                // This is still before SSE response construction, so first-pull
+                // worker/RPC failures remain JSON errors; later stream failures
+                // continue through SSEStreamWriter as event-stream frames.
                 await modelCatalog.finishRequest(modelID: translated.modelID)
                 return workerUnavailableResponse()
             }
@@ -4242,6 +4245,8 @@ button.primary:active {
         normalizedMediaPartCount(from: translated.workerRequest.execution.ext) > 0
     }
 
+    // AsyncThrowingStream(unfolding:) serializes calls to the captured state, so
+    // this unchecked Sendable wrapper keeps the replay state single-consumer.
     private final class FirstStreamEventReplayState: @unchecked Sendable {
         private var firstEvent: Melix_Worker_V1_ExecuteEvent?
         private var iterator: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Iterator
