@@ -51,9 +51,14 @@ public struct SSEStreamWriter: Sendable {
 
     public struct StreamOptions: Sendable, Equatable {
         public let includeUsage: Bool
+        public let includePrefillProgress: Bool
 
-        public init(includeUsage: Bool = true) {
+        public init(
+            includeUsage: Bool = true,
+            includePrefillProgress: Bool = false
+        ) {
             self.includeUsage = includeUsage
+            self.includePrefillProgress = includePrefillProgress
         }
     }
 
@@ -102,9 +107,18 @@ public struct SSEStreamWriter: Sendable {
                 }
 
                 do {
+                    var deferredUsageEvent: Melix_Worker_V1_ExecuteEvent?
                     for try await event in stream {
-                        if !options.includeUsage, case .usageDelta = event.payload {
-                            continue
+                        if case .usageDelta = event.payload {
+                            guard options.includeUsage else {
+                                continue
+                            }
+                            // OpenAI strict shapes emit usage as the trailer chunk after the
+                            // finish chunk and before [DONE].
+                            if shape == .chatCompletions || shape == .completions {
+                                deferredUsageEvent = event
+                                continue
+                            }
                         }
                         let encodedEvent: Melix_Worker_V1_ExecuteEvent
                         if shape == .chatCompletions {
@@ -115,18 +129,30 @@ public struct SSEStreamWriter: Sendable {
                         } else {
                             encodedEvent = event
                         }
-                        if !Self.shouldSuppressEmptyChatTokenDelta(encodedEvent, shape: shape) {
+                        if !Self.shouldSuppressEmptyChatTokenDelta(encodedEvent, shape: shape),
+                           let encodedFrame = encode(
+                               event: encodedEvent,
+                               requestID: requestID,
+                               modelID: modelID,
+                               shape: shape,
+                               toolParser: toolParser,
+                               options: options
+                           ) {
                             emittedDataFrame = true
-                            yieldDataFrame(
-                                encode(
-                                    event: encodedEvent,
-                                    requestID: requestID,
-                                    modelID: modelID,
-                                    shape: shape,
-                                    toolParser: toolParser
-                                )
-                            )
+                            yieldDataFrame(encodedFrame)
                         }
+                    }
+                    if let deferredUsageEvent,
+                       let usageFrame = encode(
+                           event: deferredUsageEvent,
+                           requestID: requestID,
+                           modelID: modelID,
+                           shape: shape,
+                           toolParser: toolParser,
+                           options: options
+                       ) {
+                        emittedDataFrame = true
+                        yieldDataFrame(usageFrame)
                     }
                 } catch {
                     emittedDataFrame = true
@@ -237,13 +263,14 @@ public struct SSEStreamWriter: Sendable {
         requestID: String,
         modelID: String,
         shape: StreamShape,
-        toolParser: ToolParserSelection?
-    ) -> Data {
+        toolParser: ToolParserSelection?,
+        options: StreamOptions
+    ) -> Data? {
         switch shape {
         case .chatCompletions:
-            return encodeChatCompletions(event: event, requestID: requestID, modelID: modelID, toolParser: toolParser)
+            return encodeChatCompletions(event: event, requestID: requestID, modelID: modelID, toolParser: toolParser, options: options)
         case .completions:
-            return encodeCompletions(event: event, requestID: requestID, modelID: modelID, toolParser: toolParser)
+            return encodeCompletions(event: event, requestID: requestID, modelID: modelID, toolParser: toolParser, options: options)
         case .responses:
             return encodeResponses(event: event, requestID: requestID, modelID: modelID, toolParser: toolParser)
         case .messages:
@@ -251,16 +278,51 @@ public struct SSEStreamWriter: Sendable {
         }
     }
 
+    private func prefillProgressFrame(
+        event: Melix_Worker_V1_ExecuteEvent,
+        requestID: String,
+        options: StreamOptions
+    ) -> Data? {
+        guard options.includePrefillProgress else {
+            return nil
+        }
+        switch event.payload {
+        case .prefillStarted(let started):
+            return frame(
+                event: "prefill_progress",
+                json: [
+                    "object": "melix.prefill_progress",
+                    "request_id": requestID,
+                    "phase": "started",
+                    "input_tokens": Int(started.inputTokens),
+                ]
+            )
+        case .prefillProgress(let progress):
+            return frame(
+                event: "prefill_progress",
+                json: [
+                    "object": "melix.prefill_progress",
+                    "request_id": requestID,
+                    "phase": "progress",
+                    "processed_tokens": Int(progress.processedTokens),
+                    "total_tokens": Int(progress.totalTokens),
+                ]
+            )
+        default:
+            return nil
+        }
+    }
+
     private func encodeCompletions(
         event: Melix_Worker_V1_ExecuteEvent,
         requestID: String,
         modelID: String,
-        toolParser: ToolParserSelection?
-    ) -> Data {
+        toolParser: ToolParserSelection?,
+        options: StreamOptions
+    ) -> Data? {
         switch event.payload {
         case .tokenDelta(let delta):
-            return frame(
-                event: "message",
+            return dataFrame(
                 json: [
                     "id": requestID,
                     "object": "text_completion",
@@ -276,16 +338,22 @@ public struct SSEStreamWriter: Sendable {
                 ]
             )
         case .usageDelta(let usage):
-            return frame(
-                event: "usage",
+            return dataFrame(
                 json: [
-                    "request_id": requestID,
+                    "id": requestID,
+                    "object": "text_completion",
+                    "created": Int(now().timeIntervalSince1970),
+                    "model": modelID,
+                    "choices": [],
                     "usage": [
                         "prompt_tokens": Int(usage.promptTokens),
                         "completion_tokens": Int(usage.completionTokens),
+                        "total_tokens": Int(usage.promptTokens) + Int(usage.completionTokens),
                     ],
                 ]
             )
+        case .prefillStarted, .prefillProgress:
+            return prefillProgressFrame(event: event, requestID: requestID, options: options)
         case .reasoningDelta(let reasoning):
             return frame(
                 event: "reasoning",
@@ -347,8 +415,7 @@ public struct SSEStreamWriter: Sendable {
                 ]
             )
         case .completed(let completed):
-            return frame(
-                event: "message",
+            return dataFrame(
                 json: [
                     "id": requestID,
                     "object": "text_completion",
@@ -370,13 +437,7 @@ public struct SSEStreamWriter: Sendable {
                 message: error.error.message
             )
         default:
-            return frame(
-                event: "message",
-                json: [
-                    "request_id": requestID,
-                    "event_seq": Int(event.seq),
-                ]
-            )
+            return nil
         }
     }
 
@@ -384,12 +445,12 @@ public struct SSEStreamWriter: Sendable {
         event: Melix_Worker_V1_ExecuteEvent,
         requestID: String,
         modelID: String,
-        toolParser: ToolParserSelection?
-    ) -> Data {
+        toolParser: ToolParserSelection?,
+        options: StreamOptions
+    ) -> Data? {
         switch event.payload {
         case .tokenDelta(let delta):
-            return frame(
-                event: "message",
+            return dataFrame(
                 json: [
                     "id": requestID,
                     "object": "chat.completion.chunk",
@@ -407,8 +468,7 @@ public struct SSEStreamWriter: Sendable {
                 ]
             )
         case .usageDelta(let usage):
-            return frame(
-                event: "message",
+            return dataFrame(
                 json: [
                     "id": requestID,
                     "object": "chat.completion.chunk",
@@ -470,10 +530,7 @@ public struct SSEStreamWriter: Sendable {
                 ],
                 toolParser: toolParser
             )
-            return frame(
-                event: "message",
-                json: payload
-            )
+            return dataFrame(json: payload)
         case .annotationDelta(let annotation):
             var payload = annotationPayload(
                 annotation,
@@ -507,8 +564,7 @@ public struct SSEStreamWriter: Sendable {
                 ]
             )
         case .completed(let completed):
-            return frame(
-                event: "message",
+            return dataFrame(
                 json: [
                     "id": requestID,
                     "object": "chat.completion.chunk",
@@ -532,14 +588,10 @@ public struct SSEStreamWriter: Sendable {
                 code: error.error.code,
                 message: error.error.message
             )
+        case .prefillStarted, .prefillProgress:
+            return prefillProgressFrame(event: event, requestID: requestID, options: options)
         default:
-            return frame(
-                event: "message",
-                json: [
-                    "request_id": requestID,
-                    "event_seq": Int(event.seq),
-                ]
-            )
+            return nil
         }
     }
 
@@ -839,8 +891,9 @@ public struct SSEStreamWriter: Sendable {
             requestID: requestID,
             modelID: modelID,
             shape: shape,
-            toolParser: nil
-        )
+            toolParser: nil,
+            options: StreamOptions()
+        ) ?? doneFrame()
     }
 
     private func doneFrame() -> Data {
@@ -913,6 +966,14 @@ public struct SSEStreamWriter: Sendable {
         let payloadData = (try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])) ?? Data("{}".utf8)
         let payload = String(decoding: payloadData, as: UTF8.self)
         return Data("event: \(event)\ndata: \(payload)\n\n".utf8)
+    }
+
+    // Strict OpenAI stream shapes emit unnamed data-only chunks; named events are
+    // reserved for non-OpenAI telemetry.
+    private func dataFrame(json: [String: Any]) -> Data {
+        let payloadData = (try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])) ?? Data("{}".utf8)
+        let payload = String(decoding: payloadData, as: UTF8.self)
+        return Data("data: \(payload)\n\n".utf8)
     }
 }
 

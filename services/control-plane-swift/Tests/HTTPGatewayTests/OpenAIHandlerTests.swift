@@ -2801,7 +2801,7 @@ struct OpenAIHandlerTests {
         #expect(request.execution.toolConfig.toolChoice == "auto")
         #expect(request.execution.ext["melix.tool_parser.mode"] == "xml")
         #expect(request.execution.ext["melix.tool_config.source"] == "openai_chat_tools")
-        #expect(payload.contains("event: message"))
+        #expect(payload.contains("event: message") == false)
         #expect(payload.contains("\"object\":\"chat.completion.chunk\""))
         #expect(payload.contains("\"tool_calls\""))
         #expect(payload.contains("\"index\":1"))
