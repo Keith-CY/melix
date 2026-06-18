@@ -16,11 +16,25 @@ from worker.productization.evaluation_final_result import (
     EvaluationProfileDefinition,
     _local_source_metadata,
     _last_nonblank_text_line,
+    _json_typed_score,
     extract_final_result,
     materialize_hf_evaluation_dataset,
     materialize_local_evaluation_dataset,
     score_final_result,
 )
+
+
+def test_json_typed_score_short_circuits_exact_root_match_before_child_iteration() -> None:
+    class _NoItemsDict(dict[str, object]):
+        def items(self):  # type: ignore[override]
+            raise AssertionError("exact root matches should not iterate children")
+
+    expected = _NoItemsDict({"answer": {"value": 42}, "metadata": ["kept"]})
+    actual = {"answer": {"value": 42}, "metadata": ["kept"]}
+
+    assert _json_typed_score(expected=expected, actual=actual, ignored_paths=()) == 1.0
+    with pytest.raises(AssertionError, match="exact root matches"):
+        _json_typed_score(expected=expected, actual={"answer": {"value": 0}}, ignored_paths=())
 
 
 def test_write_jsonl_rows_streams_each_row_without_joining_the_full_payload(
