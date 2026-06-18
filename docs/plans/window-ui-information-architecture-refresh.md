@@ -13,12 +13,12 @@ conflict with the product spec, the product spec wins.
 Refresh the Melix desktop window UI so it reads as a local-first AI runtime
 operator console while keeping Chat as the default first surface.
 
-The accepted direction is:
+The accepted routable IA is:
 
 ```text
 Chat
 Command Center
-Servers
+Providers
 Models
 Workflows
 Jobs
@@ -26,6 +26,15 @@ Diagnostics
 API
 Image
 Settings
+```
+
+The titlebar primary navigation is intentionally limited to:
+
+```text
+Chat
+Providers
+Models
+Workflows
 ```
 
 ## Governing Spec
@@ -39,9 +48,9 @@ Implementation slices must follow
 - Inspector contract;
 - inbound and outbound credential boundaries;
 - Chat runtime-binding rules;
-- server creation split;
+- provider creation split;
 - Jobs and artifact-lineage rules;
-- first-run local-server simplification;
+- first-run local-provider simplification;
 - visual-system constraints.
 
 ## Walkthrough Evidence
@@ -59,10 +68,10 @@ The latest reviewed artifact path was:
 The walkthrough established these durable decisions:
 
 - Chat remains the default first surface.
-- Command Center is a top-level cockpit, not the home page.
-- Servers and Jobs are first-class domains.
-- Create Local Server and Add Remote Server are separate pages.
-- Add Remote Server is a strict Endpoint, Authentication, Capabilities Test,
+- Command Center is a routable cockpit, not the home page.
+- Providers and Jobs are first-class domains.
+- Create Local Provider and Add Remote Provider are separate pages.
+- Add Remote Provider is a strict Endpoint, Authentication, Capabilities Test,
   Review flow.
 - Chat composer state is runtime-driven in production.
 - Inspector state is selected-object driven when an object is selected.
@@ -71,7 +80,7 @@ The walkthrough established these durable decisions:
 - Row action navigation carries a meaningful object selection or clears it.
 - `pending_review` is review state, not health state.
 - API Playground should read as a request/response developer console.
-- Advanced local-server fields are collapsed by default for first-run setup.
+- Advanced local-provider fields are collapsed by default for first-run setup.
 
 ## First Implementation Slices
 
@@ -79,18 +88,29 @@ The implementation should proceed in small slices rather than a broad UI
 rewrite.
 
 1. Route Metadata And Shell Navigation
-   - Define route metadata for the 10 top-level domains and secondary pages.
+   - Define route metadata for the 10 routable domains and secondary pages.
    - Drive sidebar, tabs, title, subtitle, primary action, and Inspector module
      from metadata.
    - Add route state for selected objects.
 
    Status: initial implementation slice landed. The desktop shell now exposes
-   the accepted 10 top-level domains, treats Jobs as a first-class navigation
+   the accepted 10 routable domains, treats Jobs as a first-class navigation
    surface, defines typed route metadata for the accepted domain/page map, and
-   normalizes canonical selected-object route values plus legacy `eval` and
-   `token` aliases. Legacy persisted `Tools / Jobs` session state migrates to
-   the top-level Jobs surface. Follow-up slices still need to make every header,
-   secondary tab, and Inspector panel consume this metadata directly.
+   normalizes canonical selected-object route values. Legacy persisted `Tools /
+   Jobs` session state migrates to the routable Jobs surface. Follow-up slices
+   still need to make every header, secondary tab, and Inspector panel consume
+   this metadata directly.
+
+   Status: titlebar follow-up now keeps only Chat, Providers, Models, and
+   Workflows in primary navigation while preserving screenshot coverage and
+   route metadata for Command Center, Jobs, Diagnostics, API, Image, and
+   Settings.
+
+   Status: selected-object route follow-up now makes `provider:<id>` the
+   Provider Profile route kind, rejects legacy selected-object aliases, and
+   gives route-action targets an optional selected-object payload so detail
+   links and Inspector actions can carry selection through typed metadata
+   instead of string-built URLs.
 
 2. Inspector Contract
    - Implement page-level and selected-object Inspector modes.
@@ -103,16 +123,59 @@ rewrite.
 
 3. Chat Runtime Contract
    - Keep Chat default.
-   - Block send without explicit server binding.
-   - Add no-server, degraded, offline, and ready composer states driven by
+   - Block send without explicit provider binding.
+   - Add no-provider, degraded, offline, and ready composer states driven by
      runtime status.
 
-4. Servers And Jobs Domains
-   - Split Create Local Server and Add Remote Server.
-   - Expose server profiles, capability receipts, job queue, job history, and
+   Status: provider status strip follow-up now renders provider health and
+   model-capability readiness as fixed-width colored icon plus short-code
+   signals. Visible strip text stays compact; full provider, model, and runtime
+   detail moves to help text, accessibility labels, and selected-object detail.
+   The compact strip is intentionally a space-saving status-light treatment,
+   not a place for expanded metric readouts.
+
+   Status: composer repair follow-up now replaces the text input for blocking
+   provider states with one primary repair action: Choose Provider, Attach
+   Model, Start Provider, Resume Provider, Open Providers, or Run Capabilities
+   Test. Degraded providers keep the text input and expose `Send Anyway` plus a
+   compact Providers repair entry. Screenshot capture now includes no-provider,
+   missing-model, offline-provider, and degraded-provider Chat composer states.
+
+   Status: provider naming follow-up now renames window-level target and
+   creation state from Server/Runtime terminology to Provider terminology:
+   `RuntimeProviderTargetState`, `RuntimeProviderCreationKind`, Provider
+   Targets, Running Provider diagnostics pickers, and `DesktopChatProvider`
+   status strip. The execution layer keeps `runtime` and `serverSession` terms
+   where they describe protocol sessions, runtime jobs, runtime directories, or
+   diagnostic artifacts rather than user-selected provider objects.
+
+4. Providers And Jobs Domains
+   - Split Create Local Provider and Add Remote Provider.
+   - Expose provider profiles, capability receipts, job queue, job history, and
      artifact lineage.
 
-5. Domain Polish
+   Status: Providers surface follow-up now exposes Overview, Local Providers,
+   Remote Providers, Create Local Provider, Add Remote Provider, and Capability
+   Receipts as visible workspace sections. Create Local Provider contains Basic,
+   collapsed Advanced, and Review sections in one page, with Create And Start
+   routed through view-model behavior. Add Remote Provider contains the strict
+   Endpoint, Authentication, Capabilities Test, and Review sections. Capability
+   Receipts intentionally renders an empty evidence state until provider
+   capability probe data is available.
+
+5. Models Hub Boundary
+   - Keep Hugging Face search and download as model-asset workflows.
+   - Expose only local provider targets for Hub imports.
+   - Do not offer remote providers as targets for Melix-managed Hub downloads.
+
+   Status: Models Hub follow-up now renders a Local Provider Target selector
+   for Hugging Face search/import context. The selector is fed only by local
+   provider profiles; remote providers are omitted because they own upstream
+   model references in Providers instead of receiving Melix-managed Hub
+   downloads. Direct model-operation downloads carry local-provider target
+   evidence in their extension payload when a local provider exists.
+
+6. Domain Polish
    - Apply the visual signatures and domain layouts from the product spec.
    - Update screenshot capture coverage for the new shell.
 

@@ -184,6 +184,133 @@ def test_stream_assembler_token_byte_probe_covers_standard_pipe_parser() -> None
     )
 
 
+def test_stream_assembler_token_byte_probe_covers_metric_gate_regression() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "stream-assembler-token-byte-fast-decode"
+    )
+    focused_tests = (
+        (
+            "services/mlx-worker-python/tests/test_pr_scoped_performance.py::"
+            "test_stream_assembler_token_byte_probe_only_gates_current_path_metrics"
+        ),
+        (
+            "services/mlx-worker-python/tests/test_pr_scoped_performance.py::"
+            "test_stream_assembler_token_byte_probe_still_gates_large_count_helper_regression"
+        ),
+    )
+    coverage_pytest_selection = probe.coverage_command.split("&&", 1)[0]
+
+    for focused_test in focused_tests:
+        assert focused_test in probe.test_command
+        assert focused_test in coverage_pytest_selection
+
+
+def test_stream_assembler_token_byte_probe_only_gates_current_path_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "stream-assembler-token-byte-fast-decode"
+    )
+    directions = {metric.key: metric.direction for metric in probe.metrics}
+    warn_abs = {metric.key: metric.warn_abs for metric in probe.metrics}
+
+    assert directions["elapsed_ms_mean"] == "lower_is_better"
+    assert directions["delta_token_count_new_ms_mean"] == "lower_is_better"
+    assert warn_abs["delta_token_count_new_ms_mean"] == 0.5
+    assert directions["delta_token_count_delta_ms"] == "informational"
+    assert directions["delta_token_count_speedup"] == "informational"
+
+    scope = {
+        "changed_files": ["services/mlx-worker-python/worker/runtime/stream_assembler.py"],
+        "force_all": False,
+        "matched_probe_ids": [probe.probe_id],
+        "selected_count": 1,
+        "selected_probes": [probe.to_scope_dict()],
+    }
+    result = {
+        "probe": scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 100.0},
+        },
+        "base_probe": {
+            "ok": True,
+            "metrics": {
+                "elapsed_ms_mean": 400.0,
+                "delta_token_count_new_ms_mean": 7.1,
+                "delta_token_count_delta_ms": -2.2,
+                "delta_token_count_speedup": 1.31,
+            },
+        },
+        "head_probe": {
+            "ok": True,
+            "metrics": {
+                "elapsed_ms_mean": 340.0,
+                "delta_token_count_new_ms_mean": 6.9,
+                "delta_token_count_delta_ms": -1.6,
+                "delta_token_count_speedup": 1.20,
+            },
+        },
+    }
+
+    report = build_performance_report(scope=scope, probe_results=[result])
+    row = report["rows"][0]
+    metrics = {metric["key"]: metric for metric in row["metrics"]}
+
+    assert report["summary"]["status"] == "ok"
+    assert row["status"] == "ok"
+    assert metrics["elapsed_ms_mean"]["status"] == "improvement"
+    assert metrics["delta_token_count_new_ms_mean"]["status"] == "neutral"
+    assert metrics["delta_token_count_delta_ms"]["status"] == "neutral"
+    assert metrics["delta_token_count_speedup"]["status"] == "neutral"
+
+
+def test_stream_assembler_token_byte_probe_still_gates_large_count_helper_regression() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "stream-assembler-token-byte-fast-decode"
+    )
+    scope = {
+        "changed_files": ["services/mlx-worker-python/worker/runtime/stream_assembler.py"],
+        "force_all": False,
+        "matched_probe_ids": [probe.probe_id],
+        "selected_count": 1,
+        "selected_probes": [probe.to_scope_dict()],
+    }
+    result = {
+        "probe": scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 100.0},
+        },
+        "base_probe": {
+            "ok": True,
+            "metrics": {
+                "elapsed_ms_mean": 400.0,
+                "delta_token_count_new_ms_mean": 7.1,
+            },
+        },
+        "head_probe": {
+            "ok": True,
+            "metrics": {
+                "elapsed_ms_mean": 340.0,
+                "delta_token_count_new_ms_mean": 7.7,
+            },
+        },
+    }
+
+    report = build_performance_report(scope=scope, probe_results=[result])
+    row = report["rows"][0]
+    metrics = {metric["key"]: metric for metric in row["metrics"]}
+
+    assert report["summary"]["status"] == "regression"
+    assert row["status"] == "regression"
+    assert metrics["delta_token_count_new_ms_mean"]["status"] == "regression"
+
+
 def test_scope_report_selects_runtime_utils_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -237,6 +364,10 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["metric_prefix_elapsed_ms_mean"] >= 0.0
     assert metrics["target_field_elapsed_ms_mean"] >= 0.0
     assert metrics["matrix_roles_elapsed_ms_mean"] >= 0.0
+    assert metrics["dict_list_elapsed_ms_mean"] >= 0.0
+    assert metrics["dict_list_identity_hits"] == (
+        max(1.0, metrics["iterations"] / 50.0) * metrics["sample_count"]
+    )
     assert metrics["run_kind_count"] == 65.0
     assert metrics["metric_prefix_count"] == 65.0
     assert metrics["target_field_count"] == 65.0
@@ -324,6 +455,29 @@ def test_retrieval_context_projection_probe_script_emits_metrics(
     assert metrics["lookup_copy_baseline_elapsed_ms_mean"] >= 0.0
     assert metrics["lookup_copy_optimized_elapsed_ms_mean"] >= 0.0
     assert metrics["lookup_copy_speedup"] >= 0.0
+
+
+def test_retrieval_context_projection_probe_covers_lookup_wrapper_metadata() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "retrieval-context-projection-fastpath"
+    )
+    focused_tests = (
+        "services/mlx-worker-python/tests/test_retrieval_context.py::"
+        "test_project_retrieval_lookup_result_uses_wrapper_metadata_for_refusals",
+        "services/mlx-worker-python/tests/test_retrieval_context.py::"
+        "test_project_retrieval_lookup_result_uses_wrapper_metadata_for_malformed_records",
+        "services/mlx-worker-python/tests/test_retrieval_context.py::"
+        "test_project_retrieval_lookup_result_refuses_malformed_wrapper_metadata",
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py::"
+        "test_retrieval_context_projection_probe_covers_lookup_wrapper_metadata",
+    )
+    coverage_pytest_selection = probe.coverage_command.split("&&", 1)[0]
+
+    for focused_test in focused_tests:
+        assert focused_test in probe.test_command
+        assert focused_test in coverage_pytest_selection
 
 
 def test_local_job_followup_scan_probe_script_emits_metrics(
@@ -4559,6 +4713,9 @@ def test_startup_signals_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert payload["direct_control_crash_elapsed_ms_mean"] > 0
     assert payload["direct_control_crash_log_path_exists_checks_mean"] == 0.0
     assert payload["direct_control_crash_log_reads_mean"] == 0.0
+    assert payload["empty_hang_elapsed_ms_mean"] > 0
+    assert payload["empty_hang_log_path_exists_checks_mean"] == 0.0
+    assert payload["empty_hang_log_reads_mean"] == 0.0
     assert payload["worker_crash_elapsed_ms_mean"] > 0
     assert payload["worker_crash_log_path_exists_checks_mean"] == 0.0
     assert payload["worker_crash_log_reads_mean"] == 1.0
@@ -5278,6 +5435,21 @@ def test_mlx_audio_local_uri_probe_script_emits_metrics() -> None:
     assert metrics["sample_count"] == 5.0
 
 
+def test_mlx_audio_local_uri_probe_covers_audio_catalog_metadata_assertions() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-audio-local-uri-zero-copy-preprocess"
+    )
+    selector = (
+        "services/mlx-worker-python/tests/test_audio_runtime.py"
+        "::test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries"
+    )
+
+    assert selector in probe.test_command
+    assert selector in probe.coverage_command
+
+
 def test_mlx_audio_local_uri_probe_script_main_covers_checked_in_file(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -5308,7 +5480,7 @@ def test_lora_reward_summary_probe_script_emits_metrics() -> None:
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["sorted_calls_mean"] == 2.0
+    assert metrics["sorted_calls_mean"] == 0.0
     assert metrics["sample_count"] == 5000.0
     assert metrics["candidate_count"] == 32.0
     assert metrics["checksum"] > 0
@@ -5326,7 +5498,7 @@ def test_lora_reward_summary_probe_script_main_covers_checked_in_file(
     assert module.main() == 0
     payload = json.loads(capsys.readouterr().out.strip())
 
-    assert payload["sorted_calls_mean"] == 2.0
+    assert payload["sorted_calls_mean"] == 0.0
     assert payload["sample_count"] == 5000.0
     assert payload["candidate_count"] == 32.0
 
@@ -5761,6 +5933,8 @@ def test_melix_metrics_snapshot_discovery_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 9.0
     assert metrics["file_count"] == 4000.0
+    assert metrics["noise_count"] == 200.0
+    assert metrics["source_count"] == 3.0
     assert metrics["elapsed_ms_mean"] >= 0.0
 
 

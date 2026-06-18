@@ -468,6 +468,15 @@ def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> co
 def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSelectionResult:
     registry = agentic_tool_catalog_registry()
     max_selected_tools = max(1, selection_input.max_selected_tools)
+    if max_selected_tools == 1:
+        return _build_tool_selection_result(
+            registry,
+            ["local_compute"],
+            {"local_compute": "always"},
+            selection_input,
+            "fallback",
+            "no_keyword_match",
+        )
     selected_sources: dict[str, str] = {}
     selected_names: list[str] = []
     has_vector_selection = False
@@ -513,16 +522,14 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
 
     if selection_mode != "vector":
         current_matches = _keyword_tool_matches(selection_input.current_user_turn)
-        if selection_input.recent_user_turns:
+        for tool_name in current_matches:
+            add_tool(tool_name, "keyword")
+        if selection_input.recent_user_turns and len(selected_names) < max_selected_tools:
             context_matches = _keyword_tool_matches(
                 _recent_user_turns_keyword_context(selection_input.recent_user_turns)
             )
-        else:
-            context_matches = ()
-        for tool_name in current_matches:
-            add_tool(tool_name, "keyword")
-        for tool_name in context_matches:
-            add_tool(tool_name, "keyword_context")
+            for tool_name in context_matches:
+                add_tool(tool_name, "keyword_context")
         if has_keyword_selection:
             selection_mode = "keyword"
             fallback_reason = "vector_unavailable" if not selection_input.vector_available else "vector_no_match"

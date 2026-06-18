@@ -9533,6 +9533,44 @@ struct ControlPlaneServiceTests {
         #expect(missingClose.error.code == "not_found")
     }
 
+    @Test("execute rejects cross-scope session tool result mutations")
+    func executeRejectsCrossScopeSessionToolResultMutations() async throws {
+        let sessionStore = SessionGraphStore(sessions: [makeSessionState()])
+        let service = ControlPlaneService(sessionGraphStore: sessionStore)
+        let subscription = await service.subscribe()
+        var iterator = subscription.stream.makeAsyncIterator()
+
+        let mismatchedToolResult = try await service.execute(
+            makeRegisterToolResultRequest(
+                sessionID: "session-1",
+                branchID: "branch-main",
+                toolCallID: "tool-2"
+            )
+        )
+        let mismatchedResume = try await service.execute(
+            makeResumeAfterToolRequest(
+                sessionID: "session-1",
+                branchID: "branch-alt",
+                snapshotID: "snap-1"
+            )
+        )
+        try await Task.sleep(for: .milliseconds(50))
+        await service.unsubscribe(subscription.subscriptionID)
+        let publishedEvent = await iterator.next()
+        let state = try #require(await sessionStore.state(for: "session-1"))
+
+        #expect(!mismatchedToolResult.ok)
+        #expect(mismatchedToolResult.error.code == "owner_scope_mismatch")
+        #expect(!mismatchedResume.ok)
+        #expect(mismatchedResume.error.code == "owner_scope_mismatch")
+        #expect(publishedEvent == nil)
+        #expect(state.activeBranchID == "branch-main")
+        #expect(state.latestToolCallID == "tool-2")
+        #expect(state.latestSnapshotID == "snap-1")
+        #expect(state.branches.first { $0.branchID == "branch-main" }?.lastToolCallID == "tool-1")
+        #expect(state.branches.first { $0.branchID == "branch-alt" }?.resumeSnapshotID == "snap-2")
+    }
+
     @Test("session mutation responses preserve correlation metadata")
     func sessionMutationResponsesPreserveCorrelationMetadata() async throws {
         let service = ControlPlaneService()

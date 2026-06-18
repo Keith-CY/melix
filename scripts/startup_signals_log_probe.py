@@ -157,6 +157,9 @@ def main() -> int:
     direct_control_elapsed: list[float] = []
     direct_control_reads: list[float] = []
     direct_control_exists: list[float] = []
+    empty_hang_elapsed: list[float] = []
+    empty_hang_reads: list[float] = []
+    empty_hang_exists: list[float] = []
     worker_elapsed: list[float] = []
     worker_reads: list[float] = []
     worker_exists: list[float] = []
@@ -197,6 +200,19 @@ def main() -> int:
             direct_control_reads.append(reads / iterations)
             direct_control_exists.append(exists / iterations)
 
+            elapsed, reads, exists = _measure_case(
+                {
+                    "http_port": 12436,
+                    "ready_probe_url": "http://127.0.0.1:12436/v1/models",
+                },
+                error_text="",
+                expected_classification="startup_hang",
+                iterations=iterations,
+            )
+            empty_hang_elapsed.append(elapsed)
+            empty_hang_reads.append(reads / iterations)
+            empty_hang_exists.append(exists / iterations)
+
             worker_manifest = dict(manifest)
             worker_manifest.pop("control_plane_stderr_path")
             elapsed, reads, exists = _measure_case(
@@ -236,6 +252,18 @@ def main() -> int:
                 ),
                 "direct_control_crash_log_reads_mean": round(
                     statistics.fmean(direct_control_reads),
+                    6,
+                ),
+                "empty_hang_elapsed_ms_mean": round(
+                    statistics.fmean(empty_hang_elapsed),
+                    6,
+                ),
+                "empty_hang_log_path_exists_checks_mean": round(
+                    statistics.fmean(empty_hang_exists),
+                    6,
+                ),
+                "empty_hang_log_reads_mean": round(
+                    statistics.fmean(empty_hang_reads),
                     6,
                 ),
                 "iterations": float(iterations),

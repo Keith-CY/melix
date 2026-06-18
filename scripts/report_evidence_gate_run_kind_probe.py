@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
 from worker.productization.report_evidence_gate import (  # noqa: E402
+    _dict_list,
     _release_matrix_rows,
     _report_matrix_roles,
     _rule_matches_report,
@@ -241,6 +242,36 @@ def _measure_slowest_probe_phases(iterations: int, sample_count: int) -> tuple[d
     )
 
 
+def _measure_dict_list(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
+    rows = [
+        {"phase": f"probe_phase_{index}", "duration_ms": float(index)}
+        for index in range(2048)
+    ]
+    elapsed_samples: list[float] = []
+    checksum = 0
+    identity_hits = 0
+
+    for _ in range(sample_count):
+        started = time.perf_counter()
+        for _index in range(iterations):
+            result = _dict_list(rows)
+            checksum += len(result)
+            if result is rows:
+                identity_hits += 1
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
+    elapsed_mean = statistics.fmean(elapsed_samples)
+    return (
+        {
+            "dict_list_elapsed_ms_mean": elapsed_mean,
+            "dict_list_rows_per_call": float(len(rows)),
+            "dict_list_identity_hits": float(identity_hits),
+            "dict_list_checksum": float(checksum),
+        },
+        elapsed_mean,
+    )
+
+
 def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     run_kind_metrics, run_kind_elapsed = _measure_run_kind(iterations, sample_count)
     metric_prefix_metrics, metric_prefix_elapsed = _measure_metric_prefix(iterations, sample_count)
@@ -260,12 +291,15 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         slowest_probe_phase_iterations,
         sample_count,
     )
+    dict_list_iterations = max(1, iterations // 50)
+    dict_list_metrics, dict_list_elapsed = _measure_dict_list(dict_list_iterations, sample_count)
     return {
         "elapsed_ms_mean": run_kind_elapsed
         + metric_prefix_elapsed
         + target_field_elapsed
         + matrix_roles_elapsed
-        + slowest_probe_phase_elapsed,
+        + slowest_probe_phase_elapsed
+        + dict_list_elapsed,
         "iterations": float(iterations),
         "sample_count": float(sample_count),
         **run_kind_metrics,
@@ -274,6 +308,7 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         **release_matrix_metrics,
         **matrix_roles_metrics,
         **slowest_probe_phase_metrics,
+        **dict_list_metrics,
     }
 
 

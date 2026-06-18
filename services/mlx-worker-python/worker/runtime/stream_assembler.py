@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import codecs
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from functools import lru_cache
 import json
 import logging
@@ -100,8 +100,47 @@ class AssemblyDelta:
     def token_count(self) -> int:
         return 1
 
+    @property
+    def token_ids(self) -> tuple[int, ...]:
+        return ()
 
-class TokenCountedAssemblyDelta(AssemblyDelta):
+    @property
+    def token_logprobs(self) -> tuple[float, ...]:
+        return ()
+
+
+class TokenMetadataAssemblyDelta(AssemblyDelta):
+    __slots__ = ("_token_ids", "_token_logprobs")
+
+    def __init__(
+        self,
+        *,
+        content_text: str = "",
+        reasoning_text: str = "",
+        raw_text: str = "",
+        tool_call: AssembledToolCall | None = None,
+        parser_observation: str = "",
+        token_ids: tuple[int, ...] = (),
+        token_logprobs: tuple[float, ...] = (),
+    ) -> None:
+        object.__setattr__(self, "content_text", content_text)
+        object.__setattr__(self, "reasoning_text", reasoning_text)
+        object.__setattr__(self, "raw_text", raw_text)
+        object.__setattr__(self, "tool_call", tool_call)
+        object.__setattr__(self, "parser_observation", parser_observation)
+        object.__setattr__(self, "_token_ids", token_ids)
+        object.__setattr__(self, "_token_logprobs", token_logprobs)
+
+    @property
+    def token_ids(self) -> tuple[int, ...]:
+        return self._token_ids
+
+    @property
+    def token_logprobs(self) -> tuple[float, ...]:
+        return self._token_logprobs
+
+
+class TokenCountedAssemblyDelta(TokenMetadataAssemblyDelta):
     __slots__ = ("_token_count",)
 
     def __init__(
@@ -112,6 +151,8 @@ class TokenCountedAssemblyDelta(AssemblyDelta):
         raw_text: str = "",
         tool_call: AssembledToolCall | None = None,
         parser_observation: str = "",
+        token_ids: tuple[int, ...] = (),
+        token_logprobs: tuple[float, ...] = (),
         token_count: int,
     ) -> None:
         super().__init__(
@@ -120,6 +161,8 @@ class TokenCountedAssemblyDelta(AssemblyDelta):
             raw_text=raw_text,
             tool_call=tool_call,
             parser_observation=parser_observation,
+            token_ids=token_ids,
+            token_logprobs=token_logprobs,
         )
         object.__setattr__(self, "_token_count", token_count)
 
@@ -422,11 +465,26 @@ class RequestStreamAssembler:
         token_count = 0
         byte_delta = None
         token_bytes = fragment.token_bytes
-        if token_bytes is not None and not fragment.token_ids and not fragment.token_logprobs:
+        token_ids = fragment.token_ids
+        token_logprobs = fragment.token_logprobs
+        if token_bytes is not None and not token_ids and not token_logprobs:
             token_count = 1
             self._metrics["generated_token_count"] += 1
             byte_delta = self._token_byte_delta(token_bytes)
-        elif fragment.token_ids or fragment.token_logprobs:
+            if byte_delta is not None:
+                if not byte_delta:
+                    return []
+                if (
+                    not self._tool_rescue_enabled_value
+                    and not self._is_json_only_structured_output_value
+                    and not self._buffer
+                    and not fragment.parser_observation
+                    and "<" not in byte_delta
+                ):
+                    self._assistant_parts.append(byte_delta)
+                    self._raw_seen_assistant_part_count += 1
+                    return [AssemblyDelta(content_text=byte_delta, raw_text=byte_delta)]
+        elif token_ids or token_logprobs:
             token_count = self._record_token_metadata(fragment)
             if token_bytes is not None:
                 byte_delta = self._token_byte_delta(token_bytes)
@@ -461,8 +519,32 @@ class RequestStreamAssembler:
                 if raw_delta_from_token_bytes:
                     self._raw_seen_assistant_part_count += 1
                 if token_count < 2:
-                    return [AssemblyDelta(content_text=delta, raw_text=delta)]
+                    if token_ids and (delta == fragment.text or delta == fragment.raw_text):
+                        return [
+                            TokenMetadataAssemblyDelta(
+                                content_text=delta,
+                                raw_text=delta,
+                                token_ids=token_ids,
+                                token_logprobs=token_logprobs,
+                            )
+                        ]
+                    return [
+                        AssemblyDelta(
+                            content_text=delta,
+                            raw_text=delta,
+                        )
+                    ]
                 self._metrics["stream_interval_delta_flush_count"] += 1
+                if token_ids and (delta == fragment.text or delta == fragment.raw_text):
+                    return [
+                        TokenCountedAssemblyDelta(
+                            content_text=delta,
+                            raw_text=delta,
+                            token_ids=token_ids,
+                            token_logprobs=token_logprobs,
+                            token_count=token_count,
+                        )
+                    ]
                 return [
                     TokenCountedAssemblyDelta(
                         content_text=delta,
@@ -482,8 +564,32 @@ class RequestStreamAssembler:
             if raw_delta_from_token_bytes:
                 self._raw_seen_assistant_part_count += 1
             if token_count < 2:
-                return [AssemblyDelta(content_text=delta, raw_text=delta)]
+                if token_ids and (delta == fragment.text or delta == fragment.raw_text):
+                    return [
+                        TokenMetadataAssemblyDelta(
+                            content_text=delta,
+                            raw_text=delta,
+                            token_ids=token_ids,
+                            token_logprobs=token_logprobs,
+                        )
+                    ]
+                return [
+                    AssemblyDelta(
+                        content_text=delta,
+                        raw_text=delta,
+                    )
+                ]
             self._metrics["stream_interval_delta_flush_count"] += 1
+            if token_ids and (delta == fragment.text or delta == fragment.raw_text):
+                return [
+                    TokenCountedAssemblyDelta(
+                        content_text=delta,
+                        raw_text=delta,
+                        token_ids=token_ids,
+                        token_logprobs=token_logprobs,
+                        token_count=token_count,
+                    )
+                ]
             return [
                 TokenCountedAssemblyDelta(
                     content_text=delta,
@@ -506,8 +612,32 @@ class RequestStreamAssembler:
         if token_count > 1 and deltas:
             self._metrics["stream_interval_delta_flush_count"] += 1
         if fragment.parser_observation:
-            return self._annotate_deltas(deltas, fragment.parser_observation)
+            deltas = self._annotate_deltas(deltas, fragment.parser_observation)
+        if token_ids and token_logprobs:
+            return self._attach_direct_token_metadata(deltas, fragment)
         return deltas
+
+    @staticmethod
+    def _attach_direct_token_metadata(
+        deltas: list[AssemblyDelta],
+        fragment: StreamFragment,
+    ) -> list[AssemblyDelta]:
+        if (
+            len(deltas) != 1
+            or not deltas[0].content_text
+            or not fragment.token_ids
+            or not fragment.token_logprobs
+            or len(fragment.token_ids) != len(fragment.token_logprobs)
+            or deltas[0].content_text not in (fragment.text, fragment.raw_text)
+        ):
+            return deltas
+        return [
+            RequestStreamAssembler._with_token_metadata(
+                deltas[0],
+                token_ids=fragment.token_ids,
+                token_logprobs=fragment.token_logprobs,
+            )
+        ]
 
     def completed(self) -> AssemblyCompletion:
         if self._pending_token_bytes:
@@ -616,12 +746,13 @@ class RequestStreamAssembler:
     def _token_byte_delta(self, token_bytes: bytes | None) -> str | None:
         if token_bytes is None:
             return None
-        had_pending = bool(self._pending_token_bytes)
-        if not had_pending:
+        if not self._pending_token_bytes:
             try:
                 return token_bytes.decode()
             except UnicodeDecodeError:
-                pass
+                had_pending = False
+        else:
+            had_pending = True
         self._pending_token_bytes += token_bytes
         decoder = _UTF8_INCREMENTAL_DECODER()
         try:
@@ -672,13 +803,59 @@ class RequestStreamAssembler:
         parser_observation: str,
     ) -> AssemblyDelta:
         if delta.token_count == 1:
-            return replace(delta, parser_observation=parser_observation)
+            if delta.token_ids or delta.token_logprobs:
+                return TokenMetadataAssemblyDelta(
+                    content_text=delta.content_text,
+                    reasoning_text=delta.reasoning_text,
+                    raw_text=delta.raw_text,
+                    tool_call=delta.tool_call,
+                    parser_observation=parser_observation,
+                    token_ids=delta.token_ids,
+                    token_logprobs=delta.token_logprobs,
+                )
+            return AssemblyDelta(
+                content_text=delta.content_text,
+                reasoning_text=delta.reasoning_text,
+                raw_text=delta.raw_text,
+                tool_call=delta.tool_call,
+                parser_observation=parser_observation,
+            )
         return TokenCountedAssemblyDelta(
             content_text=delta.content_text,
             reasoning_text=delta.reasoning_text,
             raw_text=delta.raw_text,
             tool_call=delta.tool_call,
             parser_observation=parser_observation,
+            token_ids=delta.token_ids,
+            token_logprobs=delta.token_logprobs,
+            token_count=delta.token_count,
+        )
+
+    @staticmethod
+    def _with_token_metadata(
+        delta: AssemblyDelta,
+        *,
+        token_ids: tuple[int, ...],
+        token_logprobs: tuple[float, ...],
+    ) -> AssemblyDelta:
+        if delta.token_count == 1:
+            return TokenMetadataAssemblyDelta(
+                content_text=delta.content_text,
+                reasoning_text=delta.reasoning_text,
+                raw_text=delta.raw_text,
+                tool_call=delta.tool_call,
+                parser_observation=delta.parser_observation,
+                token_ids=token_ids,
+                token_logprobs=token_logprobs,
+            )
+        return TokenCountedAssemblyDelta(
+            content_text=delta.content_text,
+            reasoning_text=delta.reasoning_text,
+            raw_text=delta.raw_text,
+            tool_call=delta.tool_call,
+            parser_observation=delta.parser_observation,
+            token_ids=token_ids,
+            token_logprobs=token_logprobs,
             token_count=delta.token_count,
         )
 
@@ -982,6 +1159,8 @@ class RequestStreamAssembler:
             raw_text=delta.raw_text,
             tool_call=delta.tool_call,
             parser_observation=delta.parser_observation,
+            token_ids=delta.token_ids,
+            token_logprobs=delta.token_logprobs,
             token_count=token_count,
         )
 

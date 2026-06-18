@@ -508,6 +508,10 @@ def _base_models(value: Any) -> list[str]:
     return []
 
 
+def _repo_id_contains_mlx(repo_id: str) -> bool:
+    return "mlx" in repo_id or "mlx" in repo_id.lower()
+
+
 def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     library_name = _string(payload.get("library_name"))
     if library_name and _is_mlx_atom(library_name):
@@ -515,7 +519,7 @@ def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     if _tag_payload_contains_mlx(payload.get("tags")):
         return True
     repo_id = _string(payload.get("id") or payload.get("modelId"))
-    if "mlx" in repo_id.lower():
+    if _repo_id_contains_mlx(repo_id):
         return True
     card_data = payload.get("cardData")
     if not isinstance(card_data, dict):
@@ -541,8 +545,7 @@ def _is_mlx_compatible(
         return True
     if _is_mlx_atom(library_name):
         return True
-    lowered_repo_id = repo_id.lower()
-    if "mlx" in lowered_repo_id:
+    if _repo_id_contains_mlx(repo_id):
         return True
     card_tags = card_data.get("tags")
     if not card_tags:

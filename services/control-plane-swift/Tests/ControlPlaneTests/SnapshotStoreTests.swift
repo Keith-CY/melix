@@ -536,11 +536,130 @@ struct SnapshotStoreTests {
                 toolCallID: "tool-missing"
             )
         }
+        await #expect(throws: SessionGraphStoreError.unknownSessionID) {
+            _ = try await store.registerToolResult(
+                sessionID: "missing-session",
+                branchID: "branch-main",
+                toolCallID: "tool-session-1-main"
+            )
+        }
+        await #expect(throws: SessionGraphStoreError.unknownBranchID) {
+            _ = try await store.registerToolResult(
+                sessionID: "session-1",
+                branchID: "branch-missing",
+                toolCallID: "tool-session-1-main"
+            )
+        }
         await #expect(throws: SessionGraphStoreError.unknownBranchID) {
             _ = try await store.resumeAfterTool(
                 sessionID: "session-1",
                 branchID: "branch-missing",
                 snapshotID: "snap-missing"
+            )
+        }
+        await #expect(throws: SessionGraphStoreError.unknownSessionID) {
+            _ = try await store.resumeAfterTool(
+                sessionID: "missing-session",
+                branchID: "branch-main",
+                snapshotID: "snap-session-1"
+            )
+        }
+        await #expect(throws: SessionGraphStoreError.unknownBranchID) {
+            _ = try await store.resumeAfterTool(
+                sessionID: "session-1",
+                branchID: "branch-missing",
+                snapshotID: "snap-session-1"
+            )
+        }
+    }
+
+    @Test("session graph store rejects cross-scope tool result and resume replays")
+    func sessionGraphStoreRejectsCrossScopeToolResultAndResumeReplays() async throws {
+        let store = SessionGraphStore(
+            sessions: [
+                makeSessionState(id: "session-a"),
+                makeSessionState(id: "session-b"),
+            ],
+            nowUnixMs: { 4_500 }
+        )
+
+        await #expect(throws: SessionGraphStoreError.ownerScopeMismatch) {
+            _ = try await store.registerToolResult(
+                sessionID: "session-a",
+                branchID: "branch-main",
+                toolCallID: "tool-session-b-alt"
+            )
+        }
+        await #expect(throws: SessionGraphStoreError.ownerScopeMismatch) {
+            _ = try await store.registerToolResult(
+                sessionID: "session-b",
+                branchID: "branch-main",
+                toolCallID: "tool-session-b-alt"
+            )
+        }
+        await #expect(throws: SessionGraphStoreError.ownerScopeMismatch) {
+            _ = try await store.resumeAfterTool(
+                sessionID: "session-a",
+                branchID: "branch-main",
+                snapshotID: "snap-session-b"
+            )
+        }
+        await #expect(throws: SessionGraphStoreError.ownerScopeMismatch) {
+            _ = try await store.resumeAfterTool(
+                sessionID: "session-b",
+                branchID: "branch-alt",
+                snapshotID: "snap-session-b"
+            )
+        }
+
+        let sessionA = try #require(await store.state(for: "session-a"))
+        let sessionB = try #require(await store.state(for: "session-b"))
+        #expect(sessionA.latestToolCallID == "tool-session-a-main")
+        #expect(sessionA.latestSnapshotID == "snap-session-a")
+        #expect(sessionB.latestToolCallID == "tool-session-b-main")
+        #expect(sessionB.latestSnapshotID == "snap-session-b")
+        #expect(sessionB.branches.first { $0.branchID == "branch-alt" }?.lastToolCallID == "tool-session-b-alt")
+    }
+
+    @Test("session graph store accepts legacy snapshots without recorded owners")
+    func sessionGraphStoreAcceptsLegacySnapshotsWithoutRecordedOwners() async throws {
+        var session = makeSessionState(id: "session-legacy")
+        session.availableSnapshots[0].sessionID = ""
+        session.availableSnapshots[0].branchID = ""
+        session.branches[0].resumeSnapshotID = ""
+        session.latestSnapshotID = ""
+        let store = SessionGraphStore(
+            sessions: [session],
+            nowUnixMs: { 4_600 }
+        )
+
+        let resumed = try await store.resumeAfterTool(
+            sessionID: "session-legacy",
+            branchID: "branch-main",
+            snapshotID: "snap-session-legacy"
+        )
+
+        #expect(resumed.latestSnapshotID == "snap-session-legacy")
+        #expect(resumed.availableSnapshots.first?.sessionID == "session-legacy")
+        #expect(resumed.availableSnapshots.first?.branchID == "branch-main")
+        #expect(resumed.branches.first?.resumeSnapshotID == "snap-session-legacy")
+    }
+
+    @Test("session graph store rejects branch-owned resume metadata replays")
+    func sessionGraphStoreRejectsBranchOwnedResumeMetadataReplays() async throws {
+        var session = makeSessionState(id: "session-branch-owned")
+        session.availableSnapshots[0].sessionID = ""
+        session.availableSnapshots[0].branchID = ""
+        let store = SessionGraphStore(
+            sessions: [session],
+            nowUnixMs: { 4_700 }
+        )
+
+        await #expect(throws: SessionGraphStoreError.ownerScopeMismatch) {
+            _ = try await store.resumeAfterTool(
+                sessionID: "session-branch-owned",
+                branchID: "branch-alt",
+                snapshotID: "snap-session-branch-owned"
             )
         }
     }
@@ -772,18 +891,21 @@ struct SnapshotStoreTests {
         mainBranch.branchID = "branch-main"
         mainBranch.headRequestID = "req-\(id)"
         mainBranch.resumeSnapshotID = snapshot.snapshotID
+        mainBranch.lastToolCallID = "tool-\(id)-main"
         mainBranch.headCacheKey = cacheKey
 
         var altBranch = Melix_Controlplane_V1_BranchState()
         altBranch.branchID = "branch-alt"
         altBranch.parentBranchID = "branch-main"
         altBranch.headRequestID = "req-alt-\(id)"
+        altBranch.lastToolCallID = "tool-\(id)-alt"
 
         var session = Melix_Controlplane_V1_SessionState()
         session.sessionID = id
         session.activeBranchID = "branch-main"
         session.latestRequestID = "req-\(id)"
         session.latestSnapshotID = snapshot.snapshotID
+        session.latestToolCallID = mainBranch.lastToolCallID
         session.branches = [mainBranch, altBranch]
         session.availableSnapshots = [snapshot]
         return session

@@ -71,11 +71,13 @@ public struct AppScreenshotCaptureConfig: Equatable, Sendable {
 public enum AppScreenshotCaptureCase: Equatable, Sendable {
     case workspace(DesktopSurface)
     case toolSection(DesktopToolSection)
+    case chatComposer(AppScreenshotChatComposerState)
     case commandCenter
 
     public static var defaultCases: [AppScreenshotCaptureCase] {
-        DesktopSurface.visibleNavigationCases.map(AppScreenshotCaptureCase.workspace)
+        DesktopSurface.routableWorkspaceCases.map(AppScreenshotCaptureCase.workspace)
             + DesktopToolSection.allCases.map(AppScreenshotCaptureCase.toolSection)
+            + AppScreenshotChatComposerState.allCases.map(AppScreenshotCaptureCase.chatComposer)
             + [.commandCenter]
     }
 
@@ -85,6 +87,8 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
             return "workspace-\(Self.slug(surface.rawValue))"
         case .toolSection(let section):
             return "workspace-\(Self.slug(section.domain.surface.rawValue))-\(Self.slug(section.rawValue))"
+        case .chatComposer(let state):
+            return "chat-composer-\(state.id)"
         case .commandCenter:
             return "command-center"
         }
@@ -96,6 +100,8 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
             return "workspace"
         case .toolSection:
             return "tool_section"
+        case .chatComposer:
+            return "chat_composer_state"
         case .commandCenter:
             return "command_center"
         }
@@ -107,6 +113,8 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
             return surface
         case .toolSection(let section):
             return section.domain.surface
+        case .chatComposer:
+            return .chat
         case .commandCenter:
             return nil
         }
@@ -116,7 +124,7 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
         switch self {
         case .toolSection(let section):
             return section
-        case .workspace, .commandCenter:
+        case .workspace, .chatComposer, .commandCenter:
             return nil
         }
     }
@@ -137,6 +145,30 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
         return result.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 }
+
+public enum AppScreenshotChatComposerState: String, CaseIterable, Equatable, Sendable {
+    case noProvider
+    case missingModel
+    case offlineProvider
+    case degradedProvider
+
+    public var id: String {
+        switch self {
+        case .noProvider:
+            return "no-provider"
+        case .missingModel:
+            return "missing-model"
+        case .offlineProvider:
+            return "offline-provider"
+        case .degradedProvider:
+            return "degraded-provider"
+        }
+    }
+}
+
+private let appScreenshotTextModelID = "melix-screenshot-text"
+private let appScreenshotImageModelID = "melix-screenshot-image"
+private let appScreenshotVisionModelID = "melix-screenshot-vision"
 
 public struct AppScreenshotCaptureEntry: Codable, Equatable, Sendable {
     public let id: String
@@ -195,7 +227,7 @@ public final class AppScreenshotCaptureRunner {
 
         var entries: [AppScreenshotCaptureEntry] = []
         for captureCase in cases {
-            apply(captureCase)
+            await apply(captureCase)
             let screenshotURL = screenshotRoot.appendingPathComponent("\(captureCase.id).png")
             let startedAt = Date()
             do {
@@ -206,7 +238,7 @@ public final class AppScreenshotCaptureRunner {
                         to: screenshotURL,
                         size: size
                     )
-                case .workspace, .toolSection:
+                case .workspace, .toolSection, .chatComposer:
                     try renderer.render(
                         DesktopFoundationRootView(viewModel: viewModel),
                         to: screenshotURL,
@@ -246,15 +278,56 @@ public final class AppScreenshotCaptureRunner {
         return manifest
     }
 
-    private func apply(_ captureCase: AppScreenshotCaptureCase) {
+    private func apply(_ captureCase: AppScreenshotCaptureCase) async {
         switch captureCase {
         case .workspace(let surface):
             viewModel.selectSurface(surface)
         case .toolSection(let section):
             viewModel.selectToolSection(section)
+        case .chatComposer(let state):
+            await applyChatComposerState(state)
         case .commandCenter:
             break
         }
+    }
+
+    private func applyChatComposerState(_ state: AppScreenshotChatComposerState) async {
+        viewModel.selectSurface(.chat)
+        switch state {
+        case .noProvider:
+            ensureUnboundSelectedChatSession()
+        case .missingModel:
+            ensureSelectedChatSessionIsBoundToPrimaryProvider()
+            viewModel.updateSelectedServerSessionModelID("melix-dev-missing")
+        case .offlineProvider:
+            ensureSelectedChatSessionIsBoundToPrimaryProvider()
+            viewModel.updateSelectedServerSessionModelID(appScreenshotTextModelID)
+            await viewModel.stopSelectedServerSession()
+        case .degradedProvider:
+            ensureSelectedChatSessionIsBoundToPrimaryProvider()
+            viewModel.updateSelectedServerSessionModelID(appScreenshotTextModelID)
+            await viewModel.startSelectedServerSession()
+        }
+    }
+
+    private func ensureUnboundSelectedChatSession() {
+        if let unboundSession = viewModel.chatSessions.first(where: { $0.hasServerBinding == false }) {
+            viewModel.selectChatSession(id: unboundSession.id)
+        } else {
+            viewModel.createChatSession()
+        }
+        viewModel.selectSurface(.chat)
+    }
+
+    private func ensureSelectedChatSessionIsBoundToPrimaryProvider() {
+        if viewModel.selectedChatSession == nil {
+            viewModel.createChatSession()
+        }
+        guard let primaryProviderID = viewModel.serverSessions.first?.id else {
+            return
+        }
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: primaryProviderID)
+        viewModel.selectSurface(.chat)
     }
 }
 
@@ -262,7 +335,7 @@ public final class AppScreenshotCaptureRunner {
 // but the actor still owns ControlPlaneXPCClient serialization; revisit this boundary
 // before reusing the fixture outside deterministic off-screen capture.
 actor AppScreenshotCaptureControlPlaneClient: ControlPlaneXPCClient {
-    private let snapshot: Melix_Controlplane_V1_ServerSnapshot
+    private var snapshot: Melix_Controlplane_V1_ServerSnapshot
 
     init() {
         self.snapshot = Self.makeSnapshot()
@@ -294,10 +367,84 @@ actor AppScreenshotCaptureControlPlaneClient: ControlPlaneXPCClient {
         snapshot
     }
 
+    func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        updateRuntimeSession(
+            serverSessionID: serverSessionID,
+            lifecycle: .ready,
+            powerState: .active
+        )
+        return snapshot
+    }
+
+    func stopServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        updateRuntimeSession(
+            serverSessionID: serverSessionID,
+            lifecycle: .stopped,
+            powerState: .stopped
+        )
+        return snapshot
+    }
+
+    func applyServerSessionGatewayConfig(
+        serverSessionID: String,
+        host: String,
+        port: Int,
+        defaultModelID: String,
+        servedModelIDs: [String],
+        rateLimitPerMinute: Int,
+        timeoutSeconds: Int,
+        modelIdleTimeoutSeconds: Int,
+        allowedHosts: [String],
+        allowedOrigins: [String]
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = serverSessionID
+        _ = host
+        _ = port
+        _ = defaultModelID
+        _ = servedModelIDs
+        _ = rateLimitPerMinute
+        _ = timeoutSeconds
+        _ = modelIdleTimeoutSeconds
+        _ = allowedHosts
+        _ = allowedOrigins
+        return snapshot
+    }
+
+    func applyServerSessionServingDefaults(
+        serverSessionID: String,
+        temperature: Double,
+        topP: Double,
+        maxTokens: Int,
+        streamIntervalTokens: Int,
+        maxConcurrentRequests: Int,
+        concurrentProcessingEnabled: Bool,
+        prefillBatchSize: Int,
+        completionBatchSize: Int,
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode,
+        draftModelID: String,
+        numDraftTokens: Int,
+        accelerationProfile: String
+    ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
+        _ = serverSessionID
+        _ = temperature
+        _ = topP
+        _ = maxTokens
+        _ = streamIntervalTokens
+        _ = maxConcurrentRequests
+        _ = concurrentProcessingEnabled
+        _ = prefillBatchSize
+        _ = completionBatchSize
+        _ = accelerationMode
+        _ = draftModelID
+        _ = numDraftTokens
+        _ = accelerationProfile
+        return snapshot
+    }
+
     func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
         _ = modelID
         return snapshot.models.first(where: { $0.modelID == modelID }) ?? Self.makeModelSummary(
-            modelID: "melix-dev-text",
+            modelID: appScreenshotTextModelID,
             kind: "text",
             features: ["chat"],
             state: .modelWarm
@@ -354,20 +501,44 @@ actor AppScreenshotCaptureControlPlaneClient: ControlPlaneXPCClient {
         )
     }
 
+    private func updateRuntimeSession(
+        serverSessionID: String,
+        lifecycle: Melix_Controlplane_V1_ServerSessionLifecycleState,
+        powerState: Melix_Controlplane_V1_ServerSessionPowerState
+    ) {
+        if let index = snapshot.runtimeSessions.firstIndex(where: { $0.serverSessionID == serverSessionID }) {
+            snapshot.runtimeSessions[index].lifecycleState = lifecycle
+            snapshot.runtimeSessions[index].powerState = powerState
+            snapshot.runtimeSessions[index].updatedAtUnixMs += 1
+            return
+        }
+        var runtimeSession = Self.makeRuntimeSession()
+        runtimeSession.serverSessionID = serverSessionID
+        runtimeSession.lifecycleState = lifecycle
+        runtimeSession.powerState = powerState
+        snapshot.runtimeSessions.append(runtimeSession)
+    }
+
     private static func makeSnapshot() -> Melix_Controlplane_V1_ServerSnapshot {
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
         snapshot.models = [
             makeModelSummary(
-                modelID: "melix-dev-text",
+                modelID: appScreenshotTextModelID,
                 kind: "text",
                 features: ["chat", "responses", "evaluation"],
                 state: .modelWarm
             ),
             makeModelSummary(
-                modelID: "melix-dev-image",
+                modelID: appScreenshotImageModelID,
                 kind: "image",
                 features: ["image-generation", "image-edit"],
+                state: .modelDiscovered
+            ),
+            makeModelSummary(
+                modelID: appScreenshotVisionModelID,
+                kind: "vlm",
+                features: ["vlm", "vision"],
                 state: .modelDiscovered
             ),
         ]
@@ -385,7 +556,14 @@ actor AppScreenshotCaptureControlPlaneClient: ControlPlaneXPCClient {
         state: Melix_Controlplane_V1_ModelState
     ) -> Melix_Controlplane_V1_ModelSummary {
         var settings = Melix_Controlplane_V1_ModelSettings()
-        settings.alias = modelID == "melix-dev-text" ? "Melix Text" : "Melix Image"
+        switch modelID {
+        case appScreenshotTextModelID:
+            settings.alias = "Screenshot Text"
+        case appScreenshotVisionModelID:
+            settings.alias = "Screenshot Vision"
+        default:
+            settings.alias = "Screenshot Image"
+        }
         settings.memoryPolicy = .memoryResidencyEvictable
         settings.defaultAccelerationMode = .baseline
 

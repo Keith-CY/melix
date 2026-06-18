@@ -1754,6 +1754,52 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["http.stream_first_event_ms", default: -1] >= 0)
     }
 
+    @Test("tool result deltas cannot move known tool results across session branches")
+    func toolResultDeltasCannotMoveKnownToolResultsAcrossSessionBranches() async throws {
+        let workerClient = AnnotationToolResultWorkerClient(toolCallID: "tool-branch-owned")
+        var branchMain = Melix_Controlplane_V1_BranchState()
+        branchMain.branchID = "branch-main"
+        branchMain.lastToolCallID = "tool-branch-owned"
+        var branchAlt = Melix_Controlplane_V1_BranchState()
+        branchAlt.branchID = "branch-alt"
+        var session = Melix_Controlplane_V1_SessionState()
+        session.sessionID = "session-tool-owner"
+        session.activeBranchID = "branch-main"
+        session.latestToolCallID = "tool-branch-owned"
+        session.branches = [branchMain, branchAlt]
+        let sessionGraphStore = SessionGraphStore(
+            sessions: [session],
+            nowUnixMs: { 8_200 }
+        )
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-cross-branch-tool-result",
+                sessionID: "session-tool-owner",
+                branchID: "branch-alt"
+            )
+        )
+
+        for try await _ in execution.stream {
+        }
+
+        let state = try #require(await sessionGraphStore.state(for: "session-tool-owner"))
+        let metrics = await metricsStore.snapshot()
+        #expect(state.activeBranchID == "branch-alt")
+        #expect(state.latestToolCallID == "tool-branch-owned")
+        #expect(state.branches.first { $0.branchID == "branch-main" }?.lastToolCallID == "tool-branch-owned")
+        #expect(state.branches.first { $0.branchID == "branch-alt" }?.lastToolCallID.isEmpty == true)
+        #expect(metrics.values["session_graph.owner_scope_mismatch_count", default: 0] == 1)
+        #expect(metrics.values["http.tool_result_delta_count", default: 0] == 1)
+    }
+
     @Test("session reasoning continuity uses metadata markers without raw hidden leakage")
     func sessionReasoningContinuityUsesMetadataMarkersWithoutRawHiddenLeakage() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -5409,6 +5455,12 @@ private actor ToolCallingWorkerClient: WorkerRoutingClient {
 }
 
 private actor AnnotationToolResultWorkerClient: WorkerRoutingClient {
+    private let toolCallID: String
+
+    init(toolCallID: String = "tool-call-annotation-result") {
+        self.toolCallID = toolCallID
+    }
+
     func generate(
         request: Melix_Worker_V1_GenerateRequest
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
@@ -5428,7 +5480,7 @@ private actor AnnotationToolResultWorkerClient: WorkerRoutingClient {
             continuation.yield(annotationEvent)
 
             var toolResult = Melix_Worker_V1_ToolResultDelta()
-            toolResult.callID = "tool-call-annotation-result"
+            toolResult.callID = toolCallID
             toolResult.status = "ok"
             toolResult.resultJson = #"{"temperature":72}"#
 

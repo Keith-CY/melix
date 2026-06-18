@@ -13,15 +13,29 @@ public struct DesktopFoundationRootView: View {
         DesktopWorkspaceShellView(viewModel: viewModel)
             .frame(minWidth: 980, minHeight: 680)
             .tint(MelixDesignTokens.accent)
+            .background {
+                DesktopCommandCenterShortcutHost(viewModel: viewModel)
+            }
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     DesktopWorkspaceTitleBarTabsView(viewModel: viewModel)
                 }
-
-                ToolbarItem(placement: .primaryAction) {
-                    DesktopWorkspaceTitleBarActionsView(viewModel: viewModel)
-                }
             }
+    }
+}
+
+private struct DesktopCommandCenterShortcutHost: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        Button("Open Command Center") {
+            viewModel.openCommandCenter()
+        }
+        .keyboardShortcut("k", modifiers: .command)
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+        .frame(width: 0, height: 0)
+        .opacity(0)
     }
 }
 
@@ -172,6 +186,37 @@ struct DesktopModelsTabView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: true, vertical: false)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                        Text("Local Provider Target")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        if viewModel.modelHubProviderTargets.isEmpty {
+                            Text("Hugging Face imports create local model assets for local providers only.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Picker(
+                                "Local Provider Target",
+                                selection: Binding(
+                                    get: { viewModel.selectedModelHubProviderTarget?.id ?? "" },
+                                    set: { viewModel.selectModelHubProviderTarget(id: $0) }
+                                )
+                            ) {
+                                ForEach(viewModel.modelHubProviderTargets) { target in
+                                    Text(target.title).tag(target.id)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+
+                            Text(viewModel.modelHubProviderTargetSummaryText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                         }
                     }
                 }
@@ -752,6 +797,9 @@ private struct DesktopRegistryEntryRowView: View {
                 HStack(alignment: .center, spacing: MelixDesignTokens.Spacing.xs) {
                     DesktopRegistryMetadataChipView(title: entry.taskText)
                     DesktopRegistryMetadataChipView(title: entry.statusText)
+                    if !entry.targetText.isEmpty {
+                        DesktopRegistryMetadataChipView(title: "Target \(entry.targetText)")
+                    }
                     if !entry.sizeText.isEmpty {
                         DesktopRegistryMetadataChipView(title: entry.sizeText, monospaced: true)
                     }
@@ -2017,7 +2065,7 @@ struct DesktopSettingsTabView: View {
         VStack(alignment: .leading, spacing: 14) {
             if let viewModel, viewModel.runtimeSettingRows.isEmpty == false {
                 runtimeSettingsControls(viewModel)
-                Text("Runtime Settings")
+                Text("Provider Settings")
                     .font(.headline)
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(viewModel.runtimeSettingRows) { row in
@@ -2312,7 +2360,7 @@ struct DesktopSettingsTabView: View {
                 }
             }
             if payload.configSettings.isEmpty == false {
-                Text("Runtime Setting Metadata")
+                Text("Provider Setting Metadata")
                     .font(.caption)
                     .fontWeight(.semibold)
                 ForEach(payload.configSettings) { setting in
@@ -2382,7 +2430,7 @@ struct DesktopSettingsTabView: View {
     private func copyRuntimeDiscoveryValue(_ value: String) {
         let didCopy = RuntimeDiscoveryClipboard.copy(value)
         if didCopy == false {
-            assertionFailure("Runtime discovery copy failed for a non-empty value.")
+            assertionFailure("Provider discovery copy failed for a non-empty value.")
         }
     }
 
@@ -2397,7 +2445,7 @@ struct DesktopSettingsTabView: View {
                 "Validate Settings",
                 viewModel.runtimeSettingsOperationMessage,
                 viewModel.runtimeSettingsOperationErrorMessage,
-                "Runtime Settings",
+                "Provider Settings",
             ]
             values.append(contentsOf: viewModel.runtimeSettingRows.flatMap { row in
                 [

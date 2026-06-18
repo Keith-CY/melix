@@ -84,10 +84,12 @@ def _build_lookup_payload(count: int) -> dict[str, Any]:
             "index": index,
             "title": f"retrieved payload {index}",
             "metadata": {
+                "optional_note": None,
                 "scores": [index, index + 1, {"rank": index % 7}],
                 "labels": (
                     "retrieved",
                     {"kind": "document" if index % 2 == 0 else "image"},
+                    {"bucket": index % 3},
                 ),
             },
         }
@@ -258,6 +260,107 @@ def _measure_lookup_copy(func: Any, payload: Mapping[str, Any], iterations: int)
     return elapsed_ms / iterations
 
 
+class _CountingLookupResult(dict[str, Any]):
+    def __init__(self) -> None:
+        super().__init__({"records": None})
+        self.get_calls = 0
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "records":
+            self.get_calls += 1
+        return super().get(key, default)
+
+
+def _baseline_lookup_adapter(
+    lookup_result: Mapping[str, Any],
+    *,
+    lookup_source_id: Any = "",
+    lookup_segment_id: Any = "",
+    lookup_source_field: Any = "",
+) -> rc.RetrievalLookupResultProjection:
+    wrapper_metadata_refusal = rc._lookup_result_metadata_refusal(  # type: ignore[attr-defined]
+        lookup_source_id=lookup_source_id,
+        lookup_segment_id=lookup_segment_id,
+        lookup_source_field=lookup_source_field,
+    )
+    if wrapper_metadata_refusal is not None:  # pragma: no cover - defensive baseline parity
+        return rc.RetrievalLookupResultProjection(
+            prompt_user_payload={},
+            untrusted_context_receipts=[],
+            refusal_receipts=[wrapper_metadata_refusal],
+            lookup_message=None,
+        )
+    normalized_lookup_source_id = rc._lookup_metadata_text_or_default(  # type: ignore[attr-defined]
+        lookup_source_id,
+        default="unknown-retrieval-lookup",
+    )
+    normalized_lookup_segment_id = rc._lookup_metadata_text_or_default(  # type: ignore[attr-defined]
+        lookup_segment_id,
+        default=f"{normalized_lookup_source_id}:lookup-result",
+    )
+    normalized_lookup_source_field = rc._lookup_metadata_text_or_default(  # type: ignore[attr-defined]
+        lookup_source_field,
+        default="lookup_result",
+    )
+    has_lookup_metadata = (
+        lookup_source_id != "" or lookup_segment_id != "" or lookup_source_field != ""
+    )
+    store_projection = rc.project_retrieval_store_records(lookup_result.get("records"))
+    prompt_user_payload = rc._copy_payload(store_projection.user_payload)  # type: ignore[attr-defined]
+    untrusted_context_receipts = rc._copy_receipts(store_projection.untrusted_context_receipts)  # type: ignore[attr-defined]
+    refusal_receipts = rc._copy_receipts(store_projection.refusal_receipts)  # type: ignore[attr-defined]
+    if (
+        has_lookup_metadata
+        and (
+            "records" not in lookup_result
+            or not isinstance(lookup_result.get("records"), list)
+        )
+        and len(refusal_receipts) == 1
+        and not prompt_user_payload
+        and not untrusted_context_receipts
+    ):
+        refusal_receipts = [
+            rc._lookup_result_refusal(  # type: ignore[attr-defined]
+                source_id=normalized_lookup_source_id,
+                segment_id=normalized_lookup_segment_id,
+                source_field=normalized_lookup_source_field,
+            )
+        ]
+    lookup_message = None
+    if prompt_user_payload:  # pragma: no cover - defensive baseline parity
+        lookup_message = {
+            "role": "user",
+            "content": prompt_user_payload,
+            "untrusted_context_receipts": untrusted_context_receipts,
+        }
+    return rc.RetrievalLookupResultProjection(
+        prompt_user_payload=prompt_user_payload,
+        untrusted_context_receipts=untrusted_context_receipts,
+        refusal_receipts=refusal_receipts,
+        lookup_message=lookup_message,
+    )
+
+
+def _measure_lookup_records_gets(func: Any, iterations: int) -> tuple[float, float]:
+    start = time.perf_counter()
+    get_calls = 0
+    refusal_count = 0
+    for _ in range(iterations):
+        lookup_result = _CountingLookupResult()
+        projection = func(
+            lookup_result,
+            lookup_source_id="probe-lookup",
+            lookup_segment_id="probe-lookup:lookup-result",
+            lookup_source_field="probe_lookup_records",
+        )
+        get_calls += lookup_result.get_calls
+        refusal_count += len(projection.refusal_receipts)
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    if refusal_count != iterations:  # pragma: no cover - probe integrity guard
+        raise AssertionError(f"lookup records refusal drift: {refusal_count} != {iterations}")
+    return elapsed_ms / iterations, get_calls / iterations
+
+
 def _mean(values: list[float]) -> float:
     return float(statistics.fmean(values))
 
@@ -275,23 +378,29 @@ def main() -> int:
     def fake_admit_entry(entry: rc.RetrievalContextEntry) -> PromptContextAdmission:
         return admissions[entry.source_id]
 
+    # Measure direct entry projection with the real admission path so complete
+    # RetrievalContextEntry optimizations are not hidden by the store/lookup
+    # prebuilt-admission isolation shim below.
+    _measure(_baseline_project_retrieval_contexts, entries, 1)
+    _measure(rc.project_retrieval_contexts, entries, 1)
+    baseline = [
+        _measure(_baseline_project_retrieval_contexts, entries, iteration_count)
+        for _ in range(sample_count)
+    ]
+    optimized = [
+        _measure(rc.project_retrieval_contexts, entries, iteration_count)
+        for _ in range(sample_count)
+    ]
+
     rc._admit_entry = fake_admit_entry  # type: ignore[attr-defined]
     try:
-        # Warm both variants once before sampling.
-        _measure(_baseline_project_retrieval_contexts, entries, 1)
-        _measure(rc.project_retrieval_contexts, entries, 1)
+        # Warm store/lookup variants once before sampling.
         _measure_store(_baseline_project_retrieval_store_records, records, 1)
         _measure_store(rc.project_retrieval_store_records, records, 1)
         _measure_lookup_copy(_baseline_copy_lookup_payload, lookup_payload, 1)
         _measure_lookup_copy(rc._copy_payload, lookup_payload, 1)  # type: ignore[attr-defined]
-        baseline = [
-            _measure(_baseline_project_retrieval_contexts, entries, iteration_count)
-            for _ in range(sample_count)
-        ]
-        optimized = [
-            _measure(rc.project_retrieval_contexts, entries, iteration_count)
-            for _ in range(sample_count)
-        ]
+        _measure_lookup_records_gets(_baseline_lookup_adapter, 1)
+        _measure_lookup_records_gets(rc.project_retrieval_lookup_result, 1)
         store_baseline = [
             _measure_store(_baseline_project_retrieval_store_records, records, iteration_count)
             for _ in range(sample_count)
@@ -308,6 +417,14 @@ def main() -> int:
             _measure_lookup_copy(rc._copy_payload, lookup_payload, iteration_count)  # type: ignore[attr-defined]
             for _ in range(sample_count)
         ]
+        lookup_records_baseline = [
+            _measure_lookup_records_gets(_baseline_lookup_adapter, iteration_count)
+            for _ in range(sample_count)
+        ]
+        lookup_records_optimized = [
+            _measure_lookup_records_gets(rc.project_retrieval_lookup_result, iteration_count)
+            for _ in range(sample_count)
+        ]
     finally:
         rc._admit_entry = original_admit_entry  # type: ignore[attr-defined]
 
@@ -317,9 +434,14 @@ def main() -> int:
     store_optimized_mean = _mean(store_optimized)
     lookup_copy_baseline_mean = _mean(lookup_copy_baseline)
     lookup_copy_optimized_mean = _mean(lookup_copy_optimized)
+    lookup_records_baseline_elapsed_mean = _mean([sample[0] for sample in lookup_records_baseline])
+    lookup_records_optimized_elapsed_mean = _mean([sample[0] for sample in lookup_records_optimized])
+    lookup_records_baseline_gets_mean = _mean([sample[1] for sample in lookup_records_baseline])
+    lookup_records_optimized_gets_mean = _mean([sample[1] for sample in lookup_records_optimized])
     delta_ms = optimized_mean - baseline_mean
     store_delta_ms = store_optimized_mean - store_baseline_mean
     lookup_copy_delta_ms = lookup_copy_optimized_mean - lookup_copy_baseline_mean
+    lookup_records_delta_ms = lookup_records_optimized_elapsed_mean - lookup_records_baseline_elapsed_mean
     speedup = baseline_mean / optimized_mean if optimized_mean > 0.0 else 0.0
     store_speedup = store_baseline_mean / store_optimized_mean if store_optimized_mean > 0.0 else 0.0
     lookup_copy_speedup = (
@@ -340,6 +462,11 @@ def main() -> int:
         "lookup_copy_optimized_elapsed_ms_mean": lookup_copy_optimized_mean,
         "lookup_copy_delta_ms": lookup_copy_delta_ms,
         "lookup_copy_speedup": lookup_copy_speedup,
+        "lookup_records_baseline_elapsed_ms_mean": lookup_records_baseline_elapsed_mean,
+        "lookup_records_optimized_elapsed_ms_mean": lookup_records_optimized_elapsed_mean,
+        "lookup_records_delta_ms": lookup_records_delta_ms,
+        "lookup_records_baseline_get_calls_mean": lookup_records_baseline_gets_mean,
+        "lookup_records_optimized_get_calls_mean": lookup_records_optimized_gets_mean,
         "entry_count": float(entry_count),
         "sample_count": float(sample_count),
         "iteration_count": float(iteration_count),

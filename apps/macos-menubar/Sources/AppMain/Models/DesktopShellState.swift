@@ -6,7 +6,7 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
     case chat = "Chat"
     case commandCenter = "Command Center"
     case image = "Image"
-    case server = "Servers"
+    case server = "Providers"
     case models = "Models"
     case workflows = "Workflows"
     case jobs = "Jobs"
@@ -46,7 +46,15 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
         }
     }
 
+    public static var titlebarNavigationCases: [DesktopSurface] {
+        [.chat, .server, .models, .workflows]
+    }
+
     public static var visibleNavigationCases: [DesktopSurface] {
+        routableWorkspaceCases
+    }
+
+    public static var routableWorkspaceCases: [DesktopSurface] {
         [.chat, .commandCenter, .server, .models, .workflows, .jobs, .diagnostics, .api, .image, .settings]
     }
 
@@ -57,7 +65,7 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
         case .commandCenter:
             return "command"
         case .server:
-            return "servers"
+            return "providers"
         case .models:
             return "models"
         case .workflows:
@@ -75,6 +83,16 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
         case .tools:
             return "tools"
         }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self = DesktopSurface(paneVisibilityID: try container.decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 }
 
@@ -343,18 +361,18 @@ public struct DesktopRuntimeEndpointState: Equatable, Sendable {
 
     public static let fallback = DesktopRuntimeEndpointState(
         serverSessionID: "",
-        serverTitle: "No Server",
+        serverTitle: "No Provider",
         modelID: "",
         requestedBaseURL: "http://\(MelixGatewayDefaults.host):\(MelixGatewayDefaults.port)/v1",
         effectiveBaseURL: "http://\(MelixGatewayDefaults.host):\(MelixGatewayDefaults.port)/v1",
-        sharedAccessSummaryText: "No server session selected."
+        sharedAccessSummaryText: "No provider selected."
     )
 }
 
 public enum DesktopInspectorModule: String, CaseIterable, Identifiable, Codable, Sendable {
     case chatRuntime
     case commandCenter
-    case serverProfile
+    case providerProfile
     case capabilityReceipt
     case modelAsset
     case workflowTemplate
@@ -366,10 +384,50 @@ public enum DesktopInspectorModule: String, CaseIterable, Identifiable, Codable,
     case runtimeStorage
 
     public var id: String { rawValue }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "serverProfile":
+            self = .providerProfile
+        default:
+            guard let value = Self(rawValue: rawValue) else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Unknown desktop inspector module: \(rawValue)"
+                )
+            }
+            self = value
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 public enum DesktopRouteActionTarget: Equatable, Codable, Sendable {
-    case page(domain: DesktopSurface, pageID: String)
+    case page(domain: DesktopSurface, pageID: String, selectedObject: DesktopSelectedObjectRoute? = nil)
+
+    public var routePath: String {
+        switch self {
+        case .page(let domain, let pageID, let selectedObject):
+            let basePath = "/\(domain.routeDomainID)/\(pageID)"
+            guard let selectedObject else {
+                return basePath
+            }
+            return "\(basePath)?selected=\(selectedObject.urlQueryValue)"
+        }
+    }
+
+    public var selectedObject: DesktopSelectedObjectRoute? {
+        switch self {
+        case .page(_, _, let selectedObject):
+            return selectedObject
+        }
+    }
 }
 
 public struct DesktopRouteActionMetadata: Equatable, Codable, Sendable {
@@ -452,7 +510,7 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     id: "session",
                     label: "Session",
                     title: "Chat",
-                    subtitle: "Chat sessions must bind to an explicit local or remote server before sending.",
+                    subtitle: "Chat sessions must bind to an explicit local or remote provider before sending.",
                     inspectorModule: .chatRuntime
                 ),
                 .page(
@@ -500,49 +558,49 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     domain: .server,
                     id: "overview",
                     label: "Overview",
-                    title: "Servers",
-                    subtitle: "Manage local and remote server profiles, health, credentials, and capability receipts.",
-                    inspectorModule: .serverProfile,
-                    primaryAction: .init(title: "Create Local Server", target: .page(domain: .server, pageID: "create-local")),
+                    title: "Providers",
+                    subtitle: "Manage local and remote providers, health, credentials, and capability receipts.",
+                    inspectorModule: .providerProfile,
+                    primaryAction: .init(title: "Create Local Provider", target: .page(domain: .server, pageID: "create-local")),
                     secondaryActions: [
-                        .init(title: "Add Remote Server", target: .page(domain: .server, pageID: "add-remote")),
+                        .init(title: "Add Remote Provider", target: .page(domain: .server, pageID: "add-remote")),
                     ]
                 ),
                 .page(
                     domain: .server,
                     id: "local",
-                    label: "Local Servers",
-                    title: "Local Servers",
-                    subtitle: "Start, stop, and inspect local runtime profiles.",
-                    inspectorModule: .serverProfile,
-                    primaryAction: .init(title: "Create Local Server", target: .page(domain: .server, pageID: "create-local"))
+                    label: "Local Providers",
+                    title: "Local Providers",
+                    subtitle: "Start, stop, and inspect local provider profiles.",
+                    inspectorModule: .providerProfile,
+                    primaryAction: .init(title: "Create Local Provider", target: .page(domain: .server, pageID: "create-local"))
                 ),
                 .page(
                     domain: .server,
                     id: "remote",
-                    label: "Remote Servers",
-                    title: "Remote Servers",
+                    label: "Remote Providers",
+                    title: "Remote Providers",
                     subtitle: "Manage outbound provider targets and credential boundaries.",
-                    inspectorModule: .serverProfile,
-                    primaryAction: .init(title: "Add Remote Server", target: .page(domain: .server, pageID: "add-remote"))
+                    inspectorModule: .providerProfile,
+                    primaryAction: .init(title: "Add Remote Provider", target: .page(domain: .server, pageID: "add-remote"))
                 ),
                 .page(
                     domain: .server,
                     id: "create-local",
-                    label: "Create Local Server",
-                    title: "Create Local Server",
-                    subtitle: "Basic setup first, advanced runtime fields collapsed for first-run creation.",
-                    inspectorModule: .serverProfile,
+                    label: "Create Local Provider",
+                    title: "Create Local Provider",
+                    subtitle: "Basic setup first, advanced provider fields collapsed for first-run creation.",
+                    inspectorModule: .providerProfile,
                     primaryAction: .init(title: "Create And Start", target: .page(domain: .server, pageID: "local"))
                 ),
                 .page(
                     domain: .server,
                     id: "add-remote",
-                    label: "Add Remote Server",
-                    title: "Add Remote Server",
+                    label: "Add Remote Provider",
+                    title: "Add Remote Provider",
                     subtitle: "Endpoint, authentication, capability test, and review for outbound provider setup.",
                     inspectorModule: .capabilityReceipt,
-                    primaryAction: .init(title: "Save Remote Server", target: .page(domain: .server, pageID: "remote"))
+                    primaryAction: .init(title: "Save Remote Provider", target: .page(domain: .server, pageID: "remote"))
                 ),
                 .page(
                     domain: .server,
@@ -625,7 +683,7 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     id: "overview",
                     label: "Overview",
                     title: "Jobs",
-                    subtitle: "Durable operation state across models, workflows, diagnostics, image, servers, and API.",
+                    subtitle: "Durable operation state across models, workflows, diagnostics, image, providers, and API.",
                     inspectorModule: .jobLineage,
                     primaryAction: .init(title: "Refresh Jobs", target: .page(domain: .jobs, pageID: "overview"))
                 ),
@@ -712,7 +770,7 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     id: "inbound-auth",
                     label: "Inbound Auth",
                     title: "Inbound Auth",
-                    subtitle: "Configure credentials for clients calling Melix; remote provider credentials live under Servers.",
+                    subtitle: "Configure credentials for clients calling Melix; remote provider credentials live under Providers.",
                     inspectorModule: .apiInboundAuth
                 ),
                 .page(
@@ -763,9 +821,9 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                 .page(
                     domain: .settings,
                     id: "runtime-storage",
-                    label: "Runtime & Storage",
-                    title: "Runtime & Storage",
-                    subtitle: "Configure runtime discovery, model roots, storage, and operator preferences.",
+                    label: "Providers & Storage",
+                    title: "Providers & Storage",
+                    subtitle: "Configure provider discovery, model roots, storage, and operator preferences.",
                     inspectorModule: .runtimeStorage
                 ),
                 .page(
@@ -807,7 +865,7 @@ private extension DesktopRoutePageMetadata {
 }
 
 public enum DesktopSelectedObjectKind: String, CaseIterable, Identifiable, Codable, Sendable {
-    case server
+    case provider
     case model
     case adapter
     case job
@@ -820,8 +878,8 @@ public enum DesktopSelectedObjectKind: String, CaseIterable, Identifiable, Codab
 
     public init?(routePrefix: String) {
         switch routePrefix.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "server":
-            self = .server
+        case "provider", "server":
+            self = .provider
         case "model":
             self = .model
         case "adapter":
@@ -832,18 +890,35 @@ public enum DesktopSelectedObjectKind: String, CaseIterable, Identifiable, Codab
             self = .artifact
         case "receipt":
             self = .receipt
-        case "diagnostic-report", "eval":
+        case "diagnostic-report":
             self = .diagnosticReport
-        case "api-token", "token":
+        case "api-token":
             self = .apiToken
         default:
             return nil
         }
     }
 
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        guard let value = Self(routePrefix: rawValue) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unknown desktop selected object kind: \(rawValue)"
+            )
+        }
+        self = value
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
     public var defaultRoute: DesktopRouteActionTarget {
         switch self {
-        case .server:
+        case .provider:
             return .page(domain: .server, pageID: "overview")
         case .model, .adapter:
             return .page(domain: .models, pageID: "library")
@@ -869,8 +944,18 @@ public struct DesktopSelectedObjectRoute: RawRepresentable, Equatable, Codable, 
         "\(kind.rawValue):\(objectID)"
     }
 
+    public var urlQueryValue: String {
+        let encodedObjectID = objectID.addingPercentEncoding(
+            withAllowedCharacters: Self.objectIDQueryAllowedCharacters
+        ) ?? objectID
+        return "\(kind.rawValue):\(encodedObjectID)"
+    }
+
     public var defaultRoute: DesktopRouteActionTarget {
-        kind.defaultRoute
+        switch kind.defaultRoute {
+        case .page(let domain, let pageID, _):
+            return .page(domain: domain, pageID: pageID, selectedObject: self)
+        }
     }
 
     public init(kind: DesktopSelectedObjectKind, objectID: String) {
@@ -884,8 +969,9 @@ public struct DesktopSelectedObjectRoute: RawRepresentable, Equatable, Codable, 
             return nil
         }
         let prefix = String(trimmed[..<delimiterIndex])
-        let objectID = String(trimmed[trimmed.index(after: delimiterIndex)...])
+        let encodedObjectID = String(trimmed[trimmed.index(after: delimiterIndex)...])
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let objectID = encodedObjectID.removingPercentEncoding ?? encodedObjectID
         guard objectID.isEmpty == false,
               let kind = DesktopSelectedObjectKind(routePrefix: prefix)
         else {
@@ -893,6 +979,12 @@ public struct DesktopSelectedObjectRoute: RawRepresentable, Equatable, Codable, 
         }
         self.init(kind: kind, objectID: objectID)
     }
+
+    private static let objectIDQueryAllowedCharacters: CharacterSet = {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: ":/?#[]@!$&'()*+,;= ")
+        return allowed
+    }()
 }
 
 extension DesktopSurface {
@@ -902,7 +994,7 @@ extension DesktopSurface {
             self = .commandCenter
         case "image":
             self = .image
-        case "server", "servers":
+        case "server", "servers", "provider", "providers":
             self = .server
         case "models":
             self = .models
@@ -1781,46 +1873,46 @@ public extension DesktopServerSessionState {
             return nil
         case .starting:
             return DesktopBannerState(
-                title: "\(title) Is Starting",
-                detail: "Preparing \(listenerLabel) for \(modelID). Requests stay queued until the session reaches Running.",
+                title: "Provider Is Starting",
+                detail: "Preparing \(listenerLabel) for \(modelID). Requests stay queued until the provider reaches Running.",
                 severity: .info
             )
         case .running:
             return nil
         case .paused:
             return DesktopBannerState(
-                title: "\(title) Is Paused",
-                detail: "Resume the session to accept prompts and API requests. \(idlePolicySummaryText)",
+                title: "Provider Is Paused",
+                detail: "Resume the provider to accept prompts and API requests. \(idlePolicySummaryText)",
                 severity: .warning
             )
         case .sleeping:
             return DesktopBannerState(
-                title: "\(title) Is Sleeping",
-                detail: "\(powerState.rawValue) mode is active. The next request can wake the session automatically, or you can wake it manually now.",
+                title: "Provider Is Sleeping",
+                detail: "\(powerState.rawValue) mode is active. The next request can wake the provider automatically, or you can wake it manually now.",
                 severity: .info
             )
         case .stopping:
             return DesktopBannerState(
-                title: "\(title) Is Stopping",
-                detail: "Melix is draining the session and closing \(listenerLabel).",
+                title: "Provider Is Stopping",
+                detail: "Melix is draining the provider and closing \(listenerLabel).",
                 severity: .info
             )
         case .stopped:
             return DesktopBannerState(
-                title: "\(title) Is Stopped",
-                detail: "Start the session to serve \(modelID) at \(listenerLabel).",
+                title: "Provider Is Stopped",
+                detail: "Start the provider to serve \(modelID) at \(listenerLabel).",
                 severity: .warning
             )
         case .error:
             return DesktopBannerState(
-                title: "\(title) Needs Recovery",
-                detail: lastError.isEmpty ? "The session entered an error state." : lastError,
+                title: "Provider Needs Recovery",
+                detail: lastError.isEmpty ? "The provider entered an error state." : lastError,
                 severity: .critical
             )
         case .unavailable:
             return DesktopBannerState(
-                title: "\(title) Is Unavailable",
-                detail: "Bind the session to an available text model before serving requests.",
+                title: "Provider Is Unavailable",
+                detail: "Bind the provider to an available text model before serving requests.",
                 severity: .warning
             )
         }
@@ -1832,44 +1924,44 @@ public extension DesktopServerSessionState {
             return nil
         case .sleeping:
             return DesktopBannerState(
-                title: "\(title) Will Wake On Demand",
-                detail: "You can send the next prompt immediately. Melix will wake the session from \(powerState.rawValue.lowercased()) first.",
+                title: "Provider Will Wake On Demand",
+                detail: "You can send the next prompt immediately. Melix will wake the provider from \(powerState.rawValue.lowercased()) first.",
                 severity: .info
             )
         case .paused:
             return DesktopBannerState(
-                title: "\(title) Is Paused",
-                detail: "Resume the bound server session before sending prompts from this chat.",
+                title: "Provider Is Paused",
+                detail: "Resume the bound provider before sending prompts from this chat.",
                 severity: .warning
             )
         case .starting:
             return DesktopBannerState(
-                title: "\(title) Is Starting",
-                detail: "Chat stays read-only until the server session finishes booting.",
+                title: "Provider Is Starting",
+                detail: "Chat stays read-only until the provider finishes booting.",
                 severity: .info
             )
         case .stopping:
             return DesktopBannerState(
-                title: "\(title) Is Stopping",
-                detail: "This chat stays read-only while the bound server session drains.",
+                title: "Provider Is Stopping",
+                detail: "This chat stays read-only while the bound provider drains.",
                 severity: .warning
             )
         case .stopped:
             return DesktopBannerState(
-                title: "\(title) Is Stopped",
-                detail: "Start the bound server session before sending prompts from this chat.",
+                title: "Provider Is Stopped",
+                detail: "Start the bound provider before sending prompts from this chat.",
                 severity: .warning
             )
         case .error:
             return DesktopBannerState(
-                title: "\(title) Needs Recovery",
-                detail: lastError.isEmpty ? "The bound server session failed." : lastError,
+                title: "Provider Needs Recovery",
+                detail: lastError.isEmpty ? "The bound provider failed." : lastError,
                 severity: .critical
             )
         case .draft, .unavailable:
             return DesktopBannerState(
-                title: "No Active Server Session",
-                detail: "Choose a valid server session and start it before sending prompts from this chat.",
+                title: "No Active Provider",
+                detail: "Choose a valid provider and start it before sending prompts from this chat.",
                 severity: .warning
             )
         }

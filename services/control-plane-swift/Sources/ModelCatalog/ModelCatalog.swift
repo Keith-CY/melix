@@ -833,7 +833,10 @@ public actor ModelCatalog {
         voiceLocales: [String] = [],
         defaultLocale: String = "",
         packagedDefaultLocale: String = "",
-        localePolicy: String = ""
+        localePolicy: String = "",
+        setupCapability: String = "",
+        setupRole: String = "",
+        setupPriority: Int? = nil
     ) -> [String: String] {
         var metadata = [
             "melix.audio.backend_id": backendID,
@@ -849,6 +852,15 @@ public actor ModelCatalog {
         metadata["melix.audio.default_locale"] = defaultLocale
         metadata["melix.audio.packaged_default_locale"] = packagedDefaultLocale
         metadata["melix.audio.locale_policy"] = localePolicy
+        if setupCapability.isEmpty == false {
+            metadata["melix.audio.capability"] = setupCapability
+        }
+        if setupRole.isEmpty == false {
+            metadata["melix.audio.setup_role"] = setupRole
+        }
+        if let setupPriority {
+            metadata["melix.audio.setup_priority"] = "\(setupPriority)"
+        }
         return metadata
     }
 
@@ -1216,6 +1228,7 @@ public actor ModelCatalog {
         model.maxContext = 8192
         model.features = ["chat", "adaptive_thinking"]
         model.settings.alias = "Melix Text"
+        model.settings.ext["melix.visibility"] = "internal"
         model.settings.pinOnLoad = false
         model.settings.memoryPolicy = .memoryResidencyEvictable
         model.settings.defaultAccelerationMode = .baseline
@@ -1310,6 +1323,7 @@ public actor ModelCatalog {
         model.features = ["embeddings"]
         model.settings.alias = "Melix Embed"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["melix.visibility"] = "internal"
         model.settings.ext["embedding_backend_id"] = resolvedBackendID
         model.settings.ext["embedding_family_id"] = resolvedFamilyID
         model.settings.ext["embedding_pooling_mode"] = resolvedPoolingMode
@@ -1369,6 +1383,7 @@ public actor ModelCatalog {
         model.features = ["rerank"]
         model.settings.alias = "Melix Rerank"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["melix.visibility"] = "internal"
         model.settings.ext["rerank_backend_id"] = resolvedBackendID
         model.settings.ext["rerank_family_id"] = resolvedFamilyID
         model.settings.ext["rerank_scoring_mode"] = resolvedScoringMode
@@ -1412,6 +1427,7 @@ public actor ModelCatalog {
         model.supportedTasks = ["ocr"]
         model.settings.alias = "Melix OCR"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["melix.visibility"] = "internal"
         model.settings.ext["ocr_prompt_profile_id"] = "ocr-default-v1"
         model.settings.ext["ocr_prompt_template"] = "OCR instruction: {prompt}"
         model.settings.ext["ocr_auto_prompt"] = "Extract the text from the image exactly as written."
@@ -1453,6 +1469,7 @@ public actor ModelCatalog {
         model.features = ["vision", "chat"]
         model.settings.alias = "Melix Vision"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["melix.visibility"] = "internal"
         model.settings.ext["vision_family_id"] = familyID
         model.settings.ext["vision_prompt_profile_id"] = "llava-chatml-v1"
         model.settings.ext["vision_tokenization_mode"] = "interleaved"
@@ -1498,6 +1515,7 @@ public actor ModelCatalog {
         model.supportedTasks = ["transcribe"]
         model.settings.alias = "Melix Whisper"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["melix.visibility"] = "internal"
         model.settings.ext.merge(
             audioMetadata(
                 backendID: "deterministic",
@@ -1534,6 +1552,7 @@ public actor ModelCatalog {
         model.supportedTasks = ["speak"]
         model.settings.alias = "Melix Voice"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["melix.visibility"] = "internal"
         model.settings.ext.merge(
             audioMetadata(
                 backendID: "deterministic",
@@ -1583,7 +1602,10 @@ public actor ModelCatalog {
                 backendID: "mlx_audio.stt",
                 familyID: familyID,
                 installProfile: "audio-stt",
-                languages: ["auto"]
+                languages: ["auto"],
+                setupCapability: "stt",
+                setupRole: "recommended",
+                setupPriority: 0
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
@@ -1619,7 +1641,10 @@ public actor ModelCatalog {
                 backendID: "mlx_audio.stt",
                 familyID: familyID,
                 installProfile: "audio-stt",
-                languages: ["auto"]
+                languages: ["auto"],
+                setupCapability: "stt",
+                setupRole: "optional",
+                setupPriority: 20
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
@@ -1663,7 +1688,10 @@ public actor ModelCatalog {
                 voiceLocales: ["en"],
                 defaultLocale: "en",
                 packagedDefaultLocale: "en",
-                localePolicy: "request>model_default>packaged_default"
+                localePolicy: "request>model_default>packaged_default",
+                setupCapability: "tts",
+                setupRole: "recommended",
+                setupPriority: 0
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
@@ -1710,7 +1738,10 @@ public actor ModelCatalog {
                 voiceLocales: ["zh", "en"],
                 defaultLocale: "zh",
                 packagedDefaultLocale: "zh",
-                localePolicy: "request>model_default>packaged_default"
+                localePolicy: "request>model_default>packaged_default",
+                setupCapability: "tts",
+                setupRole: "optional",
+                setupPriority: 20
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
@@ -1763,6 +1794,7 @@ public actor ModelCatalog {
         model.features = capabilityAdapter.supportedTasks + ["artifact_jobs"]
         model.settings.alias = "Melix Image"
         model.settings.memoryPolicy = .memoryResidencyEvictable
+        model.settings.ext["melix.visibility"] = "internal"
         model.settings.ext["melix.image.backend_id"] = "deterministic"
         model.settings.ext["melix.image.family_id"] = detected.familyID
         model.settings.ext["melix.image.task_kind"] = detected.taskKind

@@ -15,7 +15,7 @@ enum DesktopChatLayoutMetrics {
 }
 
 private enum DesktopChatStarterPrompt: String, CaseIterable, Identifiable {
-    case runtimeState = "Explain current runtime state"
+    case providerStatus = "Explain current provider status"
     case benchmark = "Benchmark the active model"
     case syntheticDataset = "Draft a synthetic dataset recipe"
     case apiExample = "Show a local API request"
@@ -24,8 +24,8 @@ private enum DesktopChatStarterPrompt: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .runtimeState:
-            return "Summarize server, model, queue, and recent warnings."
+        case .providerStatus:
+            return "Summarize provider, model, queue, and recent warnings."
         case .benchmark:
             return "Prepare a small latency and throughput run."
         case .syntheticDataset:
@@ -37,14 +37,14 @@ private enum DesktopChatStarterPrompt: String, CaseIterable, Identifiable {
 
     var prompt: String {
         switch self {
-        case .runtimeState:
-            return "Explain the current Melix runtime state and call out anything that needs attention."
+        case .providerStatus:
+            return "Explain the current Melix provider status and call out anything that needs attention."
         case .benchmark:
             return "Set up a quick benchmark for the active model and explain what metrics to watch."
         case .syntheticDataset:
             return "Draft a synthetic dataset recipe for event extraction and list the fields I should verify."
         case .apiExample:
-            return "Show a local API request for the selected Melix server and explain the auth requirements."
+            return "Show a local API request for the selected Melix provider and explain the auth requirements."
         }
     }
 }
@@ -300,13 +300,13 @@ struct DesktopChatSessionSidebar: View {
                 MelixActionableEmptyState(
                     title: "No Chat Sessions",
                     systemImage: "message.badge",
-                    detail: "Start a chat after choosing a local or remote server. Sessions keep transcript, model, and export context together."
+                    detail: "Start a chat after choosing a local or remote provider. Sessions keep transcript, model, and export context together."
                 ) {
                     VStack(spacing: MelixDesignTokens.Spacing.sm) {
                         Button("New Chat", action: createChatSessionAction)
                         .buttonStyle(.borderedProminent)
 
-                        Button("Open Server", action: openServerAction)
+                        Button("Open Providers", action: openServerAction)
                         .buttonStyle(.bordered)
                     }
                 }
@@ -355,6 +355,20 @@ struct DesktopChatSessionWorkspace: View {
         || viewModel.selectedChatServerSession?.isInteractiveReady != true
     }
 
+    private var selectedChatModelNeedsAttachment: Bool {
+        guard let serverSession = viewModel.selectedChatServerSession else {
+            return false
+        }
+        let modelID = serverSession.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard modelID.isEmpty == false else {
+            return true
+        }
+        guard let model = viewModel.models.first(where: { $0.modelID == modelID }) else {
+            return true
+        }
+        return model.runtimeCacheMissing
+    }
+
     private func submitChatPrompt() {
         Task { await viewModel.submitChatPrompt() }
     }
@@ -391,6 +405,14 @@ struct DesktopChatSessionWorkspace: View {
             }
             await viewModel.wakeServerSession(id: serverSessionID)
         }
+    }
+
+    func openModelsSurface() {
+        viewModel.selectSurface(.models)
+    }
+
+    func openDiagnosticsSurface() {
+        viewModel.selectToolSection(.diagnostics)
     }
 
     private var chatTranscriptScrollSnapshot: DesktopChatTranscriptAutoScroll.Snapshot {
@@ -478,6 +500,7 @@ struct DesktopChatSessionWorkspace: View {
                 usageText: viewModel.lastChatUsageText,
                 serverSession: viewModel.selectedChatServerSession,
                 capabilities: viewModel.chatCapabilities,
+                isModelMissing: selectedChatModelNeedsAttachment,
                 onCommandSubmit: { draft in
                     viewModel.chatComposerText = draft
                     submitChatPrompt()
@@ -485,6 +508,8 @@ struct DesktopChatSessionWorkspace: View {
                 onSubmit: submitChatPrompt,
                 onClear: viewModel.clearChatTranscript,
                 onOpenServer: openServerSurface,
+                onOpenModels: openModelsSurface,
+                onRunCapabilitiesTest: openDiagnosticsSurface,
                 onStartServer: startSelectedChatServerSession,
                 onResumeServer: resumeSelectedChatServerSession,
                 onWakeServer: wakeSelectedChatServerSession
@@ -516,13 +541,13 @@ struct DesktopChatSessionInspector: View {
         if let server = viewModel.selectedChatServerSession {
             return "\(server.title) • \(server.modelID)"
         }
-        return "No chat server selected"
+        return "No provider selected"
     }
 
     private var runtimeHealthText: String {
         viewModel.selectedChatServerSession?.lifecycleSummaryText
             ?? viewModel.selectedChatSession?.statusText
-            ?? "Choose a server to start chatting"
+            ?? "Choose a provider to start chatting"
     }
 
     private var runtimeMetricsText: String {
@@ -537,7 +562,7 @@ struct DesktopChatSessionInspector: View {
             DesktopInspectorActionRow(title: "Open Command Center", systemImage: "command.circle") {
                 viewModel.selectSurface(.commandCenter)
             },
-            DesktopInspectorActionRow(title: "Open Server", systemImage: "server.rack") {
+            DesktopInspectorActionRow(title: "Open Providers", systemImage: "server.rack") {
                 viewModel.selectSurface(.server)
             },
             DesktopInspectorActionRow(title: "Open Diagnostics", systemImage: "stethoscope") {
@@ -629,7 +654,7 @@ private struct DesktopChatEmptyStateView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Ask Melix")
                     .font(.title3.weight(.semibold))
-                Text("Start from a runtime-aware prompt, or continue a recent local session.")
+                Text("Start from a provider-aware prompt, or continue a recent local session.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -714,16 +739,16 @@ private struct DesktopChatServerPicker: View {
             Button {
                 viewModel.selectSurface(.server)
             } label: {
-                Label("Choose Server", systemImage: "server.rack")
+                Label("Choose Provider", systemImage: "server.rack")
                     .labelStyle(.titleAndIcon)
             }
             .font(.caption2)
             .buttonStyle(.borderless)
-            .help("Open Server to create a chat provider")
-            .accessibilityLabel("Choose Chat Server")
+            .help("Open Providers to create a chat provider")
+            .accessibilityLabel("Choose Chat Provider")
         } else {
-            Picker("Server", selection: selectedServerBinding) {
-                Text("Choose Server").tag("")
+            Picker("Provider", selection: selectedServerBinding) {
+                Text("Choose Provider").tag("")
                 ForEach(viewModel.serverSessions) { session in
                     Text(session.title).tag(session.id)
                 }
@@ -732,8 +757,8 @@ private struct DesktopChatServerPicker: View {
             .pickerStyle(.menu)
             .controlSize(.small)
             .frame(maxWidth: 180)
-            .help("Choose the server or provider for this chat session")
-            .accessibilityLabel("Chat Server")
+            .help("Choose the provider for this chat session")
+            .accessibilityLabel("Chat Provider")
         }
     }
 }
@@ -870,17 +895,28 @@ struct DesktopChatComposerSurface: View {
     let usageText: String
     let serverSession: DesktopServerSessionState?
     let capabilities: [DesktopChatCapabilityRow]
+    let isModelMissing: Bool
     let onCommandSubmit: (String) -> Void
     let onSubmit: () -> Void
     let onClear: () -> Void
     let onOpenServer: () -> Void
+    let onOpenModels: () -> Void
+    let onRunCapabilitiesTest: () -> Void
     let onStartServer: () -> Void
     let onResumeServer: () -> Void
     let onWakeServer: () -> Void
 
+    var composerGate: DesktopChatComposerGate {
+        DesktopChatComposerGate(
+            serverSession: serverSession,
+            capabilities: capabilities,
+            isModelMissing: isModelMissing
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            DesktopChatRuntimeControlStrip(
+            DesktopChatProviderControlStrip(
                 serverSession: serverSession,
                 capabilities: capabilities,
                 onOpenServer: onOpenServer,
@@ -889,34 +925,47 @@ struct DesktopChatComposerSurface: View {
                 onWakeServer: onWakeServer
             )
 
-            HStack(alignment: .bottom, spacing: 10) {
-                DesktopChatComposerTextView(
-                    text: $text,
-                    isSubmitAvailable: isSubmitAvailable,
-                    onCommandSubmit: onCommandSubmit
+            if let repairState = composerGate.repairState {
+                DesktopChatComposerRepairPanel(
+                    state: repairState,
+                    onPrimaryAction: { performRepairAction(repairState.primaryActionKind) },
+                    onOpenServer: onOpenServer,
+                    onOpenModels: onOpenModels,
+                    onRunCapabilitiesTest: onRunCapabilitiesTest
                 )
-                .frame(height: DesktopChatLayoutMetrics.composerMinHeight)
+            } else {
+                HStack(alignment: .bottom, spacing: 10) {
+                    DesktopChatComposerTextView(
+                        text: $text,
+                        isSubmitAvailable: isSubmitAvailable,
+                        onCommandSubmit: onCommandSubmit
+                    )
+                    .frame(height: DesktopChatLayoutMetrics.composerMinHeight)
 
-                VStack(spacing: 6) {
-                    Button(action: primaryAction) {
-                        primaryActionLabel
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-                    .disabled(isStreaming || isSendDisabled)
-                    .help(isStreaming ? "Streaming cancellation is not available yet" : "Send")
-                    .accessibilityLabel(isStreaming ? "Stop" : "Send")
+                    VStack(spacing: 6) {
+                        primaryActionButton
 
-                    Button(action: onClear) {
-                        Image(systemName: "trash")
+                        if composerGate.isDegraded, isStreaming == false {
+                            Button(action: onOpenServer) {
+                                Image(systemName: "wrench.and.screwdriver")
+                            }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Open Providers")
+                            .accessibilityLabel("Open Providers")
+                        }
+
+                        Button(action: onClear) {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Clear Chat")
+                        .accessibilityLabel("Clear Chat")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Clear Chat")
-                    .accessibilityLabel("Clear Chat")
+                    .fixedSize(horizontal: true, vertical: false)
                 }
-                .fixedSize(horizontal: true, vertical: false)
             }
 
             HStack(spacing: 10) {
@@ -954,17 +1003,276 @@ struct DesktopChatComposerSurface: View {
         onSubmit()
     }
 
+    func performRepairAction(_ kind: DesktopChatComposerRepairActionKind) {
+        switch kind {
+        case .chooseProvider:
+            onOpenServer()
+        case .attachModel:
+            onOpenModels()
+        case .startProvider:
+            onStartServer()
+        case .resumeProvider:
+            onResumeServer()
+        case .wakeProvider:
+            onWakeServer()
+        case .openProviders:
+            onOpenServer()
+        case .runCapabilitiesTest:
+            onRunCapabilitiesTest()
+        }
+    }
+
+    var primaryActionHelpText: String {
+        if isStreaming {
+            return "Streaming cancellation is not available yet"
+        }
+        return composerGate.isDegraded ? "Send Anyway" : "Send"
+    }
+
+    var primaryActionAccessibilityLabel: String {
+        if isStreaming {
+            return "Stop"
+        }
+        return composerGate.isDegraded ? "Send Anyway" : "Send"
+    }
+
+    @ViewBuilder
+    var primaryActionButton: some View {
+        if composerGate.isDegraded, isStreaming == false {
+            Button("Send Anyway", action: primaryAction)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .disabled(isSendDisabled)
+                .help(primaryActionHelpText)
+                .accessibilityLabel(primaryActionAccessibilityLabel)
+        } else {
+            Button(action: primaryAction) {
+                primaryActionLabel
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .disabled(isStreaming || isSendDisabled)
+            .help(primaryActionHelpText)
+            .accessibilityLabel(primaryActionAccessibilityLabel)
+        }
+    }
+
     @ViewBuilder
     var primaryActionLabel: some View {
         if isStreaming {
             Label("Stop", systemImage: "stop.fill")
+        } else if composerGate.isDegraded {
+            Label("Send Anyway", systemImage: "paperplane.fill")
         } else {
             Label("Send", systemImage: "paperplane.fill")
         }
     }
 }
 
-struct DesktopChatRuntimeControlStrip: View {
+enum DesktopChatComposerRepairActionKind: Equatable {
+    case chooseProvider
+    case attachModel
+    case startProvider
+    case resumeProvider
+    case wakeProvider
+    case openProviders
+    case runCapabilitiesTest
+}
+
+struct DesktopChatComposerRepairSecondaryAction: Equatable, Identifiable {
+    let title: String
+    let kind: DesktopChatComposerRepairActionKind
+
+    var id: DesktopChatComposerRepairActionKind {
+        kind
+    }
+}
+
+struct DesktopChatComposerRepairState: Equatable {
+    let title: String
+    let detail: String
+    let primaryActionTitle: String
+    let primaryActionKind: DesktopChatComposerRepairActionKind
+    let secondaryActions: [DesktopChatComposerRepairSecondaryAction]
+    let systemImageName: String
+}
+
+struct DesktopChatComposerGate: Equatable {
+    let serverSession: DesktopServerSessionState?
+    let capabilities: [DesktopChatCapabilityRow]
+    let isModelMissing: Bool
+
+    var repairState: DesktopChatComposerRepairState? {
+        guard let serverSession else {
+            return DesktopChatComposerRepairState(
+                title: "Select a provider before sending.",
+                detail: "Bind this chat to a local or remote provider.",
+                primaryActionTitle: "Choose Provider",
+                primaryActionKind: .chooseProvider,
+                secondaryActions: [],
+                systemImageName: "server.rack"
+            )
+        }
+
+        if isModelMissing {
+            return DesktopChatComposerRepairState(
+                title: "Provider is missing a model.",
+                detail: "Attach a model before this chat can send requests.",
+                primaryActionTitle: "Attach Model",
+                primaryActionKind: .attachModel,
+                secondaryActions: [.openProviders],
+                systemImageName: "cube.box"
+            )
+        }
+
+        switch serverSession.lifecycle {
+        case .draft, .stopped, .unavailable:
+            return DesktopChatComposerRepairState(
+                title: "Provider is offline.",
+                detail: "Start the bound provider before sending.",
+                primaryActionTitle: "Start Provider",
+                primaryActionKind: .startProvider,
+                secondaryActions: [.openProviders],
+                systemImageName: "power"
+            )
+        case .paused:
+            return DesktopChatComposerRepairState(
+                title: "Provider is paused.",
+                detail: "Resume this provider before sending.",
+                primaryActionTitle: "Resume Provider",
+                primaryActionKind: .resumeProvider,
+                secondaryActions: [.openProviders],
+                systemImageName: "pause.circle"
+            )
+        case .starting:
+            return DesktopChatComposerRepairState(
+                title: "Provider is starting.",
+                detail: "Sending is blocked until startup completes.",
+                primaryActionTitle: "Open Providers",
+                primaryActionKind: .openProviders,
+                secondaryActions: [],
+                systemImageName: "arrow.clockwise.circle"
+            )
+        case .stopping:
+            return DesktopChatComposerRepairState(
+                title: "Provider is stopping.",
+                detail: "Wait for shutdown to finish, then start it again.",
+                primaryActionTitle: "Open Providers",
+                primaryActionKind: .openProviders,
+                secondaryActions: [],
+                systemImageName: "pause.circle"
+            )
+        case .error:
+            return DesktopChatComposerRepairState(
+                title: "Provider failed.",
+                detail: serverSession.lastError.isEmpty ? "Recover the failed provider before sending." : serverSession.lastError,
+                primaryActionTitle: "Open Providers",
+                primaryActionKind: .openProviders,
+                secondaryActions: [.openDiagnostics],
+                systemImageName: "exclamationmark.triangle"
+            )
+        case .sleeping, .running:
+            break
+        }
+
+        if hasInvalidCapabilityReceipt {
+            return DesktopChatComposerRepairState(
+                title: "Capability receipt is invalid.",
+                detail: "Run a capability test before sending with this model.",
+                primaryActionTitle: "Run Capabilities Test",
+                primaryActionKind: .runCapabilitiesTest,
+                secondaryActions: [.openProviders],
+                systemImageName: "checklist"
+            )
+        }
+
+        return nil
+    }
+
+    var isDegraded: Bool {
+        guard repairState == nil, serverSession != nil else {
+            return false
+        }
+        return capabilities.contains { $0.isReady == false }
+    }
+
+    private var hasInvalidCapabilityReceipt: Bool {
+        // Chat send is gated by text readiness; non-text failures are surfaced as degraded provider signals.
+        capabilities.contains { capability in
+            capability.id == "text" && capability.isReady == false
+        }
+    }
+}
+
+struct DesktopChatComposerRepairPanel: View {
+    let state: DesktopChatComposerRepairState
+    let onPrimaryAction: () -> Void
+    let onOpenServer: () -> Void
+    let onOpenModels: () -> Void
+    let onRunCapabilitiesTest: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: state.systemImageName)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+                .frame(width: 22, height: 22)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(state.title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(state.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 6) {
+                ForEach(state.secondaryActions) { action in
+                    Button(action.title) {
+                        performSecondaryAction(action.kind)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                Button(state.primaryActionTitle, action: onPrimaryAction)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .frame(minHeight: DesktopChatLayoutMetrics.composerMinHeight, alignment: .center)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(state.title) \(state.primaryActionTitle)")
+    }
+
+    func performSecondaryAction(_ kind: DesktopChatComposerRepairActionKind) {
+        switch kind {
+        case .openProviders:
+            onOpenServer()
+        case .attachModel:
+            onOpenModels()
+        case .runCapabilitiesTest:
+            onRunCapabilitiesTest()
+        case .chooseProvider, .startProvider, .resumeProvider, .wakeProvider:
+            break
+        }
+    }
+}
+
+extension DesktopChatComposerRepairSecondaryAction {
+    static let openProviders = Self(title: "Open Providers", kind: .openProviders)
+    static let openModels = Self(title: "Open Models", kind: .attachModel)
+    static let openDiagnostics = Self(title: "Open Diagnostics", kind: .runCapabilitiesTest)
+}
+
+struct DesktopChatProviderControlStrip: View {
     enum RecoveryActionKind {
         case openServer
         case startServer
@@ -988,15 +1296,15 @@ struct DesktopChatRuntimeControlStrip: View {
     var recoveryAction: RecoveryAction? {
         switch serverSession?.lifecycle {
         case .none:
-            return RecoveryAction(title: "Choose Server", kind: .openServer, isProminent: false)
+            return RecoveryAction(title: "Choose Provider", kind: .openServer, isProminent: false)
         case .paused:
-            return RecoveryAction(title: "Resume Server", kind: .resumeServer, isProminent: true)
+            return RecoveryAction(title: "Resume Provider", kind: .resumeServer, isProminent: true)
         case .sleeping:
             return RecoveryAction(title: "Wake", kind: .wakeServer, isProminent: false)
         case .draft, .stopped, .unavailable:
-            return RecoveryAction(title: "Start Server", kind: .startServer, isProminent: true)
+            return RecoveryAction(title: "Start Provider", kind: .startServer, isProminent: true)
         case .error:
-            return RecoveryAction(title: "Open Server", kind: .openServer, isProminent: true)
+            return RecoveryAction(title: "Open Providers", kind: .openServer, isProminent: true)
         case .starting, .stopping, .running:
             return nil
         }
@@ -1004,10 +1312,10 @@ struct DesktopChatRuntimeControlStrip: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            DesktopChatRuntimeServerCapsule(serverSession: serverSession)
+            DesktopChatProviderStatusSignal(serverSession: serverSession)
 
             if capabilities.isEmpty == false {
-                DesktopChatInlineCapabilityCluster(capabilities: Array(capabilities.prefix(5)))
+                DesktopChatCapabilityStatusSignal(capabilities: Array(capabilities.prefix(5)))
             }
 
             Spacer(minLength: 8)
@@ -1020,8 +1328,8 @@ struct DesktopChatRuntimeControlStrip: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .help("Open Server")
-            .accessibilityLabel("Open Server")
+            .help("Open Providers")
+            .accessibilityLabel("Open Providers")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1061,45 +1369,93 @@ struct DesktopChatRuntimeControlStrip: View {
     }
 }
 
-struct DesktopChatRuntimeServerCapsule: View {
+struct DesktopChatProviderStatusSignal: View {
     let serverSession: DesktopServerSessionState?
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 7, height: 7)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(serverTitle)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Text(serverDetail)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            Image(systemName: statusSymbolName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(statusColor)
+                .frame(width: DesktopChatProviderSignalMetrics.iconSize, height: DesktopChatProviderSignalMetrics.iconSize)
+            Text(statusShortText)
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(statusColor)
+                .lineLimit(1)
+                .frame(width: DesktopChatProviderSignalMetrics.shortTextWidth, alignment: .leading)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .frame(width: DesktopChatProviderSignalMetrics.providerSignalWidth, alignment: .leading)
         .background(Color.secondary.opacity(0.06), in: Capsule())
         .overlay(
             Capsule()
                 .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
         )
-        .help(serverSession?.runtimeDetailText ?? "Choose a server for this chat")
+        .help(helpText)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(serverTitle), \(serverDetail)")
+        .accessibilityLabel(accessibilityLabel)
     }
 
     var serverTitle: String {
-        serverSession?.title ?? "No Server"
+        serverSession?.title ?? "No Provider"
     }
 
     var serverDetail: String {
         guard let serverSession else {
-            return "Choose Server"
+            return "Choose Provider"
         }
         return "\(serverSession.lifecycle.rawValue) • \(serverSession.modelID)"
+    }
+
+    var statusShortText: String {
+        switch serverSession?.lifecycle {
+        case .running:
+            return "OK"
+        case .sleeping:
+            return "SLP"
+        case .starting:
+            return "ON"
+        case .stopping:
+            return "OFF"
+        case .paused:
+            return "PAU"
+        case .draft:
+            return "NEW"
+        case .stopped:
+            return "OFF"
+        case .unavailable:
+            return "MISS"
+        case .error:
+            return "ERR"
+        case .none:
+            return "SET"
+        }
+    }
+
+    var statusSymbolName: String {
+        switch serverSession?.lifecycle {
+        case .running:
+            return "checkmark.circle.fill"
+        case .sleeping:
+            return "moon.fill"
+        case .starting:
+            return "arrow.clockwise.circle.fill"
+        case .stopping:
+            return "pause.circle.fill"
+        case .paused:
+            return "pause.circle.fill"
+        case .draft:
+            return "plus.circle.fill"
+        case .stopped:
+            return "power.circle.fill"
+        case .unavailable:
+            return "questionmark.circle.fill"
+        case .error:
+            return "exclamationmark.triangle.fill"
+        case .none:
+            return "circle.dashed"
+        }
     }
 
     var statusColor: Color {
@@ -1114,26 +1470,76 @@ struct DesktopChatRuntimeServerCapsule: View {
             return Color.secondary.opacity(0.55)
         }
     }
+
+    var helpText: String {
+        guard let serverSession else {
+            return "Choose a provider for this chat"
+        }
+        return "\(serverSession.title) • \(serverSession.modelID) • \(serverSession.runtimeDetailText)"
+    }
+
+    var accessibilityLabel: String {
+        "\(serverTitle), \(serverDetail)"
+    }
 }
 
-struct DesktopChatInlineCapabilityCluster: View {
+struct DesktopChatCapabilityStatusSignal: View {
     let capabilities: [DesktopChatCapabilityRow]
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(capabilities) { capability in
-                Image(systemName: capability.systemImageName)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(capability.isReady ? MelixDesignTokens.accent : Color.secondary)
-                    .frame(width: 22, height: 22)
-                    .background(Color.primary.opacity(0.035), in: Circle())
-                    .help("\(capability.title): \(capability.detail)")
-                    .accessibilityLabel("\(capability.title), \(capability.isReady ? "ready" : "unavailable")")
-            }
+        HStack(spacing: 6) {
+            Image(systemName: "square.grid.2x2.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(statusColor)
+                .frame(width: DesktopChatProviderSignalMetrics.iconSize, height: DesktopChatProviderSignalMetrics.iconSize)
+            Text("\(readyCount)/\(capabilities.count)")
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(statusColor)
+                .lineLimit(1)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Model Capabilities")
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .frame(width: DesktopChatProviderSignalMetrics.capabilitySignalWidth, alignment: .leading)
+        .background(Color.secondary.opacity(0.06), in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
+        )
+        .help(helpText)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Model capabilities, \(readyCount) of \(capabilities.count) ready")
     }
+
+    var readyCount: Int {
+        capabilities.filter(\.isReady).count
+    }
+
+    var statusColor: Color {
+        if capabilities.isEmpty {
+            return Color.secondary
+        }
+        if readyCount == capabilities.count {
+            return MelixDesignTokens.StatusColor.success
+        }
+        if readyCount > 0 {
+            return MelixDesignTokens.StatusColor.warning
+        }
+        return MelixDesignTokens.StatusColor.error
+    }
+
+    var helpText: String {
+        let details = capabilities
+            .map { "\($0.shortTitle): \($0.isReady ? "ready" : "unavailable") • \($0.detail)" }
+            .joined(separator: "\n")
+        return details.isEmpty ? "No model capabilities detected" : details
+    }
+}
+
+enum DesktopChatProviderSignalMetrics {
+    static let iconSize: CGFloat = 16
+    static let shortTextWidth: CGFloat = 28
+    static let providerSignalWidth: CGFloat = 68
+    static let capabilitySignalWidth: CGFloat = 66
 }
 
 private struct DesktopChatComposerTextView: NSViewRepresentable {

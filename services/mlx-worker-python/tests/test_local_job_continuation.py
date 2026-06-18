@@ -1234,6 +1234,79 @@ def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
     assert scandir_calls == [os.fspath(tmp_path)]
 
 
+def test_store_scan_followup_candidates_does_not_follow_record_symlinks(
+    tmp_path: Path,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+    outside_root = tmp_path / "outside"
+    outside_root.mkdir()
+    outside_record = outside_root / "outside-target.json"
+    outside_record.write_text(
+        json.dumps(
+            _record(
+                job_id="outside-target",
+                status="completed",
+                exit_status=0,
+                artifact_paths=("/workspace/out/outside-target.json",),
+            ).to_dict(),
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    symlink_path = tmp_path / "linked-ready.json"
+    try:
+        symlink_path.symlink_to(outside_record)
+    except (NotImplementedError, OSError) as exc:  # pragma: no cover - platform guard
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+    scan = store.scan_followup_candidates()
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == ["ready"]
+    assert all(receipt["job_id"] != "linked-ready" for receipt in scan.receipts)
+
+
+def test_store_scan_followup_candidates_records_store_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+    receipt = {
+        "schema_version": RECEIPT_SCHEMA_VERSION,
+        "job_id": "ready",
+        "reason": "lock_busy",
+    }
+
+    def raise_store_error(
+        job_id: str,
+        *,
+        live_evidence: LocalJobLiveEvidence | None = None,
+    ) -> None:
+        raise LocalJobContinuationStoreError("busy", receipt=receipt)
+
+    monkeypatch.setattr(store, "reconcile_record", raise_store_error)
+
+    scan = store.scan_followup_candidates()
+
+    assert scan.candidates == ()
+    assert scan.receipts == (receipt,)
+
+
 def test_store_scan_followup_candidates_returns_empty_for_missing_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

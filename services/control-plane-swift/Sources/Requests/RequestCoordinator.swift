@@ -1458,11 +1458,17 @@ public actor RequestCoordinator {
             return
         }
 
-        _ = try? await sessionGraphStore.registerToolResult(
-            sessionID: requestIdentity.sessionID,
-            branchID: requestIdentity.branchID,
-            toolCallID: toolCallID
-        )
+        do {
+            _ = try await sessionGraphStore.registerToolResult(
+                sessionID: requestIdentity.sessionID,
+                branchID: requestIdentity.branchID,
+                toolCallID: toolCallID
+            )
+        } catch SessionGraphStoreError.ownerScopeMismatch {
+            await metricsStore.increment("session_graph.owner_scope_mismatch_count")
+        } catch {
+            // Stream-side session graph hydration is best-effort for non-scope errors.
+        }
     }
 
     private func preserveReasoningContinuity(
