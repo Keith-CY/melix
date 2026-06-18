@@ -517,8 +517,14 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
         for tool_name in selection_input.vector_selected_tool_ids:
             add_tool(tool_name, "vector")
         if has_vector_selection:
-            selection_mode = "vector"
-            fallback_reason = ""
+            return _build_tool_selection_result(
+                registry,
+                selected_names,
+                selected_sources,
+                selection_input,
+                "vector",
+                "",
+            )
 
     if selection_mode != "vector":
         current_matches = _keyword_tool_matches(selection_input.current_user_turn)
