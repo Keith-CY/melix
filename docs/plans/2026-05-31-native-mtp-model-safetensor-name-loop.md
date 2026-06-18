@@ -12,6 +12,8 @@ The probe is extended to measure the model safetensor listing path directly agai
 
 2026-06-07 follow-up slice: the same registered probe now also seeds duplicate native-MTP metadata entries that do not end in `.safetensors`. The loader filters those names before the duplicate-set lookup, keeping missing-path warnings and `os.path.exists()` checks limited to candidate sidecar shard paths while reducing set churn on noisy index maps.
 
+2026-06-18 follow-up slice: the MTP weight-key predicate keeps the same string-prefix semantics but replaces the tuple-based `startswith()` hot path with fixed-length prefix comparisons. The registered probe's `key_*` metrics remain the validation signal for this micro-slice while the existing sidecar shard tests keep non-`str` and custom `str` subclass behavior covered.
+
 ## Verification plan
 
 ```bash

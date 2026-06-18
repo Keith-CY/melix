@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 _PATCHED = False
 _MTP_WEIGHT_KEY_PREFIXES = ("language_model.mtp.", "mtp.")
+_MTP_WEIGHT_KEY_LONG_PREFIX = "language_model.mtp."
+_MTP_WEIGHT_KEY_SHORT_PREFIX = "mtp."
+_MTP_WEIGHT_KEY_LONG_PREFIX_LEN = len(_MTP_WEIGHT_KEY_LONG_PREFIX)
+_MTP_WEIGHT_KEY_SHORT_PREFIX_LEN = len(_MTP_WEIGHT_KEY_SHORT_PREFIX)
 
 
 def _load_json_payload(path: Path) -> dict[str, Any]:
@@ -23,10 +27,20 @@ def _load_json_payload(path: Path) -> dict[str, Any]:
 
 def _is_mtp_weight_key(key: Any) -> bool:
     if type(key) is str:
-        return key.startswith(_MTP_WEIGHT_KEY_PREFIXES)
+        return (
+            key[:_MTP_WEIGHT_KEY_LONG_PREFIX_LEN] == _MTP_WEIGHT_KEY_LONG_PREFIX
+            or key[:_MTP_WEIGHT_KEY_SHORT_PREFIX_LEN] == _MTP_WEIGHT_KEY_SHORT_PREFIX
+        )
     if isinstance(key, str):
-        return key.startswith(_MTP_WEIGHT_KEY_PREFIXES)
-    return str(key).startswith(_MTP_WEIGHT_KEY_PREFIXES)
+        return (
+            key[:_MTP_WEIGHT_KEY_LONG_PREFIX_LEN] == _MTP_WEIGHT_KEY_LONG_PREFIX
+            or key[:_MTP_WEIGHT_KEY_SHORT_PREFIX_LEN] == _MTP_WEIGHT_KEY_SHORT_PREFIX
+        )
+    value = str(key)
+    return (
+        value[:_MTP_WEIGHT_KEY_LONG_PREFIX_LEN] == _MTP_WEIGHT_KEY_LONG_PREFIX
+        or value[:_MTP_WEIGHT_KEY_SHORT_PREFIX_LEN] == _MTP_WEIGHT_KEY_SHORT_PREFIX
+    )
 
 
 def _model_safetensor_files(model_path: Path) -> list[str]:
