@@ -123,6 +123,7 @@ def project_retrieval_contexts(
     refusal_receipts: list[dict[str, object]] = []
     admit_entry = _admit_entry
     duplicate_projection_receipt = _duplicate_projection_receipt
+    build_untrusted_context_receipt = untrusted_context_receipt
     refusal_receipts_extend = refusal_receipts.extend
     refusal_receipts_append = refusal_receipts.append
     receipts_append = receipts.append
@@ -161,7 +162,7 @@ def project_retrieval_contexts(
                     and normalized_reason
                     and normalized_corrective_action
                 ):
-                    receipt = untrusted_context_receipt(
+                    receipt = build_untrusted_context_receipt(
                         segment_id=normalized_segment_id,
                         source_type=context_kind,
                         source_field=normalized_source_field,
@@ -262,6 +263,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     admit_entry = _admit_entry
     entry_type = RetrievalContextEntry
     duplicate_projection_receipt = _duplicate_projection_receipt
+    build_untrusted_context_receipt = untrusted_context_receipt
     projection_refusal_receipts_extend = projection_refusal_receipts.extend
     receipts_append = receipts.append
     user_payload_update = user_payload.update
@@ -314,7 +316,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                 and corrective_action.strip()
             ):
                 normalized_source_field = source_field.strip()
-                receipt = untrusted_context_receipt(
+                receipt = build_untrusted_context_receipt(
                     segment_id=segment_id.strip(),
                     source_type=context_kind,
                     source_field=normalized_source_field,
