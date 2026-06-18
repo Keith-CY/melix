@@ -4674,7 +4674,8 @@ struct OpenAIHandlerTests {
 
         #expect(response.statusCode == 200)
         #expect(response.headers["content-type"] == "text/event-stream; charset=utf-8")
-        #expect(payload.contains("\"request_id\":\"\(requestID)\""), Comment(rawValue: payload))
+        #expect(payload.contains("\"id\":\"\(requestID)\""), Comment(rawValue: payload))
+        #expect(payload.contains("\"finish_reason\":\"stop\""), Comment(rawValue: payload))
         #expect(payload.contains("data: [DONE]"), Comment(rawValue: payload))
     }
 
