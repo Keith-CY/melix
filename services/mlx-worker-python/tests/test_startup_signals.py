@@ -78,6 +78,20 @@ def test_read_product_version_reads_project_version(tmp_path: Path) -> None:
     assert read_product_version(tmp_path) == "1.2.3"
 
 
+def test_read_product_version_reuses_compiled_pattern(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "melix"\nversion = "1.2.3"\n', encoding="utf-8")
+
+    def fail_re_search(*args: object, **kwargs: object) -> object:  # pragma: no cover - sentinel
+        raise AssertionError("read_product_version should use the compiled version pattern")
+
+    monkeypatch.setattr(startup_signals_module.re, "search", fail_re_search)
+
+    assert read_product_version(tmp_path) == "1.2.3"
+
+
 def test_read_product_version_raises_when_version_is_missing(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "melix"\n', encoding="utf-8")
 
