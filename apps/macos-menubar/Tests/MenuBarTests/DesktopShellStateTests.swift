@@ -7,7 +7,20 @@ import Testing
 struct DesktopShellStateTests {
     @Test("desktop route metadata encodes accepted product IA")
     func desktopRouteMetadataEncodesAcceptedProductIA() throws {
-        #expect(DesktopSurface.visibleNavigationCases == [
+        #expect(DesktopSurface.titlebarNavigationCases == [
+            .chat,
+            .server,
+            .models,
+            .workflows,
+        ])
+        #expect(DesktopSurface.titlebarNavigationCases.map(\.rawValue) == [
+            "Chat",
+            "Providers",
+            "Models",
+            "Workflows",
+        ])
+        #expect(DesktopSurface.visibleNavigationCases == DesktopSurface.routableWorkspaceCases)
+        #expect(DesktopSurface.routableWorkspaceCases == [
             .chat,
             .commandCenter,
             .server,
@@ -19,10 +32,10 @@ struct DesktopShellStateTests {
             .image,
             .settings,
         ])
-        #expect(DesktopSurface.visibleNavigationCases.map(\.rawValue) == [
+        #expect(DesktopSurface.routableWorkspaceCases.map(\.rawValue) == [
             "Chat",
             "Command Center",
-            "Servers",
+            "Providers",
             "Models",
             "Workflows",
             "Jobs",
@@ -36,7 +49,7 @@ struct DesktopShellStateTests {
         #expect(metadata.domains.map(\.domain.routeDomainID) == [
             "chat",
             "command",
-            "servers",
+            "providers",
             "models",
             "workflows",
             "jobs",
@@ -60,13 +73,13 @@ struct DesktopShellStateTests {
         #expect(command.secondaryActions.first?.target == .page(domain: .jobs, pageID: "queue"))
 
         let localServer = try #require(metadata.page(domain: .server, pageID: "create-local"))
-        #expect(localServer.title == "Create Local Server")
+        #expect(localServer.title == "Create Local Provider")
         #expect(localServer.primaryAction?.title == "Create And Start")
-        #expect(localServer.inspectorModule == .serverProfile)
+        #expect(localServer.inspectorModule == .providerProfile)
 
         let remoteServer = try #require(metadata.page(domain: .server, pageID: "add-remote"))
-        #expect(remoteServer.title == "Add Remote Server")
-        #expect(remoteServer.primaryAction?.title == "Save Remote Server")
+        #expect(remoteServer.title == "Add Remote Provider")
+        #expect(remoteServer.primaryAction?.title == "Save Remote Provider")
         #expect(remoteServer.inspectorModule == .capabilityReceipt)
 
         let jobsQueue = try #require(metadata.page(domain: .jobs, pageID: "queue"))
@@ -80,31 +93,69 @@ struct DesktopShellStateTests {
 
     @Test("selected object routes normalize aliases and encode canonical values")
     func selectedObjectRoutesNormalizeAliasesAndEncodeCanonicalValues() throws {
-        let server = try #require(DesktopSelectedObjectRoute(rawValue: "server:remote-lab"))
-        #expect(server.kind == .server)
-        #expect(server.objectID == "remote-lab")
-        #expect(server.rawValue == "server:remote-lab")
-        #expect(server.defaultRoute == .page(domain: .server, pageID: "overview"))
+        let provider = try #require(DesktopSelectedObjectRoute(rawValue: "provider:remote-lab"))
+        #expect(provider.kind == .provider)
+        #expect(provider.objectID == "remote-lab")
+        #expect(provider.rawValue == "provider:remote-lab")
+        #expect(provider.urlQueryValue == "provider:remote-lab")
+        #expect(provider.defaultRoute == .page(domain: .server, pageID: "overview", selectedObject: provider))
+        #expect(provider.defaultRoute.routePath == "/providers/overview?selected=provider:remote-lab")
+        #expect(provider.defaultRoute.selectedObject == provider)
 
         let artifact = try #require(DesktopSelectedObjectRoute(rawValue: "artifact:report/benchmark-matrix-042.json"))
         #expect(artifact.kind == .artifact)
         #expect(artifact.objectID == "report/benchmark-matrix-042.json")
         #expect(artifact.rawValue == "artifact:report/benchmark-matrix-042.json")
-        #expect(artifact.defaultRoute == .page(domain: .jobs, pageID: "history"))
+        #expect(artifact.urlQueryValue == "artifact:report%2Fbenchmark-matrix-042.json")
+        #expect(artifact.defaultRoute == .page(domain: .jobs, pageID: "history", selectedObject: artifact))
+        #expect(artifact.defaultRoute.routePath == "/jobs/history?selected=artifact:report%2Fbenchmark-matrix-042.json")
 
-        let evalAlias = try #require(DesktopSelectedObjectRoute(rawValue: "eval:support-dialogue-v23"))
-        #expect(evalAlias.kind == .diagnosticReport)
-        #expect(evalAlias.rawValue == "diagnostic-report:support-dialogue-v23")
-        #expect(evalAlias.defaultRoute == .page(domain: .diagnostics, pageID: "evaluation"))
+        let encodedArtifact = try #require(DesktopSelectedObjectRoute(rawValue: "artifact:report%2Fbenchmark-matrix-042.json"))
+        #expect(encodedArtifact == artifact)
 
-        let tokenAlias = try #require(DesktopSelectedObjectRoute(rawValue: "token:lan-shared-client"))
-        #expect(tokenAlias.kind == .apiToken)
-        #expect(tokenAlias.rawValue == "api-token:lan-shared-client")
-        #expect(tokenAlias.defaultRoute == .page(domain: .api, pageID: "inbound-auth"))
+        let diagnosticReport = try #require(DesktopSelectedObjectRoute(rawValue: "diagnostic-report:support-dialogue-v23"))
+        #expect(diagnosticReport.kind == .diagnosticReport)
+        #expect(diagnosticReport.rawValue == "diagnostic-report:support-dialogue-v23")
+        #expect(diagnosticReport.defaultRoute == .page(domain: .diagnostics, pageID: "evaluation", selectedObject: diagnosticReport))
+
+        let apiToken = try #require(DesktopSelectedObjectRoute(rawValue: "api-token:lan-shared-client"))
+        #expect(apiToken.kind == .apiToken)
+        #expect(apiToken.rawValue == "api-token:lan-shared-client")
+        #expect(apiToken.defaultRoute == .page(domain: .api, pageID: "inbound-auth", selectedObject: apiToken))
+
+        let legacyServer = try #require(DesktopSelectedObjectRoute(rawValue: "server:remote-lab"))
+        #expect(legacyServer.kind == .provider)
+        #expect(legacyServer.objectID == "remote-lab")
+        #expect(legacyServer.rawValue == "provider:remote-lab")
 
         #expect(DesktopSelectedObjectRoute(rawValue: "workflow:template-1") == nil)
+        #expect(DesktopSelectedObjectRoute(rawValue: "eval:support-dialogue-v23") == nil)
+        #expect(DesktopSelectedObjectRoute(rawValue: "token:lan-shared-client") == nil)
         #expect(DesktopSelectedObjectRoute(rawValue: "job:") == nil)
         #expect(DesktopSelectedObjectRoute(rawValue: "missing-delimiter") == nil)
+    }
+
+    @Test("desktop state decodes provider terminology legacy aliases")
+    func desktopStateDecodesProviderTerminologyLegacyAliases() throws {
+        let decoder = JSONDecoder()
+
+        let serverSurface = try decoder.decode(DesktopSurface.self, from: #""Servers""#.data(using: .utf8)!)
+        let providerSurface = try decoder.decode(DesktopSurface.self, from: #""Providers""#.data(using: .utf8)!)
+        let serverInspector = try decoder.decode(DesktopInspectorModule.self, from: #""serverProfile""#.data(using: .utf8)!)
+        let providerKind = try decoder.decode(DesktopSelectedObjectKind.self, from: #""server""#.data(using: .utf8)!)
+
+        #expect(serverSurface == .server)
+        #expect(providerSurface == .server)
+        #expect(serverInspector == .providerProfile)
+        #expect(providerKind == .provider)
+
+        let encodedSurface = try JSONEncoder().encode(DesktopSurface.server)
+        let encodedInspector = try JSONEncoder().encode(DesktopInspectorModule.providerProfile)
+        let encodedKind = try JSONEncoder().encode(DesktopSelectedObjectKind.provider)
+
+        #expect(String(decoding: encodedSurface, as: UTF8.self) == #""Providers""#)
+        #expect(String(decoding: encodedInspector, as: UTF8.self) == #""providerProfile""#)
+        #expect(String(decoding: encodedKind, as: UTF8.self) == #""provider""#)
     }
 
     @Test("legacy tools jobs session restores to top-level jobs")
@@ -295,7 +346,7 @@ struct DesktopShellStateTests {
         #expect(makeDesktopShellSession(lifecycle: .running, powerState: .active).lifecycleBannerState == nil)
 
         #expect(starting.lifecycleBannerState?.severity == .info)
-        #expect(starting.lifecycleBannerState?.title == "Server Is Starting")
+        #expect(starting.lifecycleBannerState?.title == "Provider Is Starting")
 
         #expect(paused.lifecycleBannerState?.severity == .warning)
         #expect(paused.lifecycleBannerState?.detail.contains("Auto sleep enabled") ?? false)
@@ -304,7 +355,7 @@ struct DesktopShellStateTests {
         #expect(sleeping.lifecycleBannerState?.detail.contains("Deep Sleep mode is active") ?? false)
 
         #expect(stopping.lifecycleBannerState?.severity == .info)
-        #expect(stopping.lifecycleBannerState?.title == "Server Is Stopping")
+        #expect(stopping.lifecycleBannerState?.title == "Provider Is Stopping")
 
         #expect(stopped.lifecycleBannerState?.severity == .warning)
         #expect(stopped.lifecycleBannerState?.detail.contains("serve melix-dev-text") ?? false)
@@ -316,8 +367,8 @@ struct DesktopShellStateTests {
         #expect(unavailable.lifecycleBannerState?.detail.contains("available text model") ?? false)
     }
 
-    @Test("chat workspace notices cover operator-facing server states")
-    func chatWorkspaceNoticesCoverOperatorFacingServerStates() {
+    @Test("chat workspace notices cover operator-facing provider states")
+    func chatWorkspaceNoticesCoverOperatorFacingProviderStates() {
         let sleeping = makeDesktopShellSession(lifecycle: .sleeping, powerState: .deepSleep)
         let paused = makeDesktopShellSession(lifecycle: .paused, powerState: .active)
         let starting = makeDesktopShellSession(lifecycle: .starting, powerState: .active)
@@ -334,28 +385,28 @@ struct DesktopShellStateTests {
         #expect(sleeping.chatWorkspaceNoticeState?.detail.contains("deep sleep") ?? false)
 
         #expect(paused.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(paused.chatWorkspaceNoticeState?.title == "Server Is Paused")
+        #expect(paused.chatWorkspaceNoticeState?.title == "Provider Is Paused")
 
         #expect(starting.chatWorkspaceNoticeState?.severity == .info)
         #expect(starting.chatWorkspaceNoticeState?.detail.contains("read-only") ?? false)
 
         #expect(stopping.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(stopping.chatWorkspaceNoticeState?.title == "Server Is Stopping")
+        #expect(stopping.chatWorkspaceNoticeState?.title == "Provider Is Stopping")
 
         #expect(stopped.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(stopped.chatWorkspaceNoticeState?.detail.contains("Start the bound server session") ?? false)
+        #expect(stopped.chatWorkspaceNoticeState?.detail.contains("Start the bound provider") ?? false)
 
         #expect(failedEmpty.chatWorkspaceNoticeState?.severity == .critical)
-        #expect(failedEmpty.chatWorkspaceNoticeState?.detail == "The bound server session failed.")
+        #expect(failedEmpty.chatWorkspaceNoticeState?.detail == "The bound provider failed.")
 
         #expect(failedFilled.chatWorkspaceNoticeState?.severity == .critical)
         #expect(failedFilled.chatWorkspaceNoticeState?.detail == "gpu lost")
 
         #expect(draft.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(draft.chatWorkspaceNoticeState?.title == "No Active Server Session")
+        #expect(draft.chatWorkspaceNoticeState?.title == "No Active Provider")
 
         #expect(unavailable.chatWorkspaceNoticeState?.severity == .warning)
-        #expect(unavailable.chatWorkspaceNoticeState?.detail.contains("Choose a valid server session") ?? false)
+        #expect(unavailable.chatWorkspaceNoticeState?.detail.contains("Choose a valid provider") ?? false)
     }
 
     @Test("effective listener helpers and codable restore preserve gateway config projection")

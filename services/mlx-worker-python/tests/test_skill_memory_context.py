@@ -981,6 +981,115 @@ def test_project_skill_memory_lookup_result_refuses_malformed_wrapper(
     ]
 
 
+def test_project_skill_memory_lookup_result_uses_wrapper_metadata_for_refusals() -> None:
+    projection = project_skill_memory_lookup_result(
+        {},
+        lookup_source_id=" skill-store:lookup-9 ",
+        lookup_segment_id=" skill-store:lookup-9:lookup ",
+        lookup_source_field="skill_memory_records",
+    )
+
+    assert projection.prompt_user_payload == {}
+    assert projection.untrusted_context_receipts == []
+    assert projection.lookup_message is None
+    assert projection.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "skill-store:lookup-9:lookup",
+            "source_type": "skill_memory_lookup",
+            "source_field": "skill_memory_records",
+            "source_id": "skill-store:lookup-9",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "invalid_skill_memory_lookup_result",
+            "corrective_action": (
+                "Reject malformed skill or memory lookup result before prompt assembly."
+            ),
+        }
+    ]
+
+    malformed = project_skill_memory_lookup_result(
+        "bad-wrapper",
+        lookup_source_id="skill-store:lookup-9",
+        lookup_segment_id="skill-store:lookup-9:lookup",
+        lookup_source_field="skill_memory_lookup",
+    )
+
+    assert malformed.prompt_user_payload == {}
+    assert malformed.untrusted_context_receipts == []
+    assert malformed.lookup_message is None
+    assert malformed.refusal_receipts[0]["segment_id"] == "skill-store:lookup-9:lookup"
+    assert malformed.refusal_receipts[0]["source_type"] == "skill_memory_lookup"
+    assert malformed.refusal_receipts[0]["source_field"] == "skill_memory_lookup"
+    assert malformed.refusal_receipts[0]["source_id"] == "skill-store:lookup-9"
+
+
+def test_project_skill_memory_lookup_result_uses_wrapper_metadata_for_malformed_records() -> (
+    None
+):
+    projection = project_skill_memory_lookup_result(
+        {"records": None},
+        lookup_source_id="skill-store:lookup-10",
+        lookup_segment_id="skill-store:lookup-10:lookup",
+        lookup_source_field="skill_memory_records",
+    )
+
+    assert projection.prompt_user_payload == {}
+    assert projection.untrusted_context_receipts == []
+    assert projection.lookup_message is None
+    assert projection.refusal_receipts[0]["segment_id"] == (
+        "skill-store:lookup-10:lookup"
+    )
+    assert projection.refusal_receipts[0]["source_type"] == "skill_memory_lookup"
+    assert projection.refusal_receipts[0]["source_field"] == "skill_memory_records"
+    assert projection.refusal_receipts[0]["source_id"] == "skill-store:lookup-10"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_field"),
+    (
+        ({"lookup_source_id": 123}, "lookup_source_id"),
+        ({"lookup_segment_id": "   "}, "lookup_segment_id"),
+        ({"lookup_source_field": None}, "lookup_source_field"),
+    ),
+)
+def test_project_skill_memory_lookup_result_refuses_malformed_wrapper_metadata(
+    kwargs: dict[str, object],
+    expected_field: str,
+) -> None:
+    projection = project_skill_memory_lookup_result(
+        {"records": []},
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+    assert projection.prompt_user_payload == {}
+    assert projection.untrusted_context_receipts == []
+    assert projection.lookup_message is None
+    assert projection.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "unknown-skill-memory-lookup:lookup-result",
+            "source_type": "skill_memory_lookup",
+            "source_field": expected_field,
+            "source_id": "unknown-skill-memory-lookup",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "invalid_skill_memory_lookup_result",
+            "corrective_action": (
+                "Reject malformed skill or memory lookup result before prompt assembly."
+            ),
+        }
+    ]
+
+
 def test_project_skill_memory_lookup_result_refuses_missing_records_key() -> None:
     projection = project_skill_memory_lookup_result({})
 

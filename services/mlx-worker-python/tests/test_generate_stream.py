@@ -35,8 +35,21 @@ class StreamingFakeBackend:
         return 2048
 
     def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
-        yield RuntimeTokenEvent(text="Hello", prompt_tokens=5, completion_tokens=1)
-        yield RuntimeTokenEvent(text=" world", prompt_tokens=5, completion_tokens=2, finish_reason="length")
+        yield RuntimeTokenEvent(
+            text="Hello",
+            prompt_tokens=5,
+            completion_tokens=1,
+            token_ids=(301,),
+            token_logprobs=(-0.11,),
+        )
+        yield RuntimeTokenEvent(
+            text=" world",
+            prompt_tokens=5,
+            completion_tokens=2,
+            token_ids=(302,),
+            token_logprobs=(-0.22,),
+            finish_reason="length",
+        )
 
 
 class EmptyStreamingFakeBackend:
@@ -736,6 +749,15 @@ def test_sampling_with_resolved_stop_reuses_sampling_when_stop_sequences_match()
     assert resolved is sampling
 
 
+def test_sampling_with_resolved_stop_reuses_sampling_when_non_empty_stop_sequences_match() -> None:
+    sampling = common_pb2.SamplingConfig(max_output_tokens=4, stop=["</turn>", "</model>"])
+
+    resolved = EngineCore._sampling_with_resolved_stop(sampling, ("</turn>", "</model>"))
+
+    assert resolved is sampling
+    assert list(resolved.stop) == ["</turn>", "</model>"]
+
+
 def test_sampling_with_resolved_stop_clones_when_stop_sequences_change() -> None:
     sampling = common_pb2.SamplingConfig(max_output_tokens=4, stop=["old"])
 
@@ -827,9 +849,12 @@ def test_generate_streams_token_and_terminal_completion_without_usage_preserves_
 
     events = list(inference_service.Generate(request, context=None))
     token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
+    token_deltas = [event.token_delta for event in events if event.HasField("token_delta")]
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert token_text == ["Hello", " world"]
+    assert [list(delta.token_ids) for delta in token_deltas] == [[301], [302]]
+    assert [list(delta.token_logprobs) for delta in token_deltas] == [[-0.11], [-0.22]]
     assert completed.finish_reason == "length"
     assert completed.assistant_text == "Hello world"
     assert not any(event.HasField("usage_delta") for event in events)

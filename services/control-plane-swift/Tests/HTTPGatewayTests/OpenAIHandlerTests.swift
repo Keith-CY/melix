@@ -76,7 +76,7 @@ struct OpenAIHandlerTests {
     func localServerSecurityAllowsExplicitBrowserOriginWithExactCORSEcho() async throws {
         let metricsStore = MetricsStore()
         let handler = OpenAIHandler(
-            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            modelCatalog: ModelCatalog(seedModels: [publicWarmModel()]),
             requestCoordinator: RequestCoordinator(
                 workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
                 abortRegistry: AbortRegistry()
@@ -108,10 +108,11 @@ struct OpenAIHandlerTests {
                 body: Data()
             )
         )
-        let payload = try await collectBody(response.body)
+        let payload = try await jsonPayload(from: response.body)
+        let rows = try #require(payload["data"] as? [[String: Any]])
 
         #expect(response.statusCode == 200)
-        #expect(payload.contains("\"id\":\"melix-dev-text\""))
+        #expect(rows.contains { ($0["id"] as? String) == "mlx-community/Qwen3.5-9B-MLX-8bit" })
         #expect(response.headers["access-control-allow-origin"] == "http://localhost:5173")
         #expect(response.headers["vary"] == "Origin")
         #expect(response.headers.values.contains("*") == false)
@@ -238,7 +239,7 @@ struct OpenAIHandlerTests {
     func getModelsAcceptsConfiguredSharedAccessAPIKeysAndRecordsMetrics() async throws {
         let metricsStore = MetricsStore()
         let handler = OpenAIHandler(
-            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            modelCatalog: ModelCatalog(seedModels: [publicWarmModel()]),
             requestCoordinator: RequestCoordinator(
                 workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
                 abortRegistry: AbortRegistry()
@@ -262,10 +263,11 @@ struct OpenAIHandlerTests {
                 body: Data()
             )
         )
-        let payload = try await collectBody(response.body)
+        let payload = try await jsonPayload(from: response.body)
+        let rows = try #require(payload["data"] as? [[String: Any]])
 
         #expect(response.statusCode == 200)
-        #expect(payload.contains("\"id\":\"melix-dev-text\""))
+        #expect(rows.contains { ($0["id"] as? String) == "mlx-community/Qwen3.5-9B-MLX-8bit" })
         #expect(await metricsStore.value(forKey: "shared_access.accepted_client_count") == 1)
         #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 0)
     }
@@ -972,6 +974,7 @@ struct OpenAIHandlerTests {
         #expect(pairing["resume_header"] as? String == "x-melix-session")
         #expect(pairing["token_transport"] as? String == "resume_header")
         #expect(pairing["status_url"] as? String == "http://127.0.0.1:12499/v1/melix/companion/status")
+        #expect(pairing["mobile_url"] as? String == "http://127.0.0.1:12499/v1/melix/companion")
         #expect(pairing["expires_at_unix_ms"] as? Int == 3_601_000)
         #expect(pairing["allowed_origins"] as? [String] == ["http://127.0.0.1:52499"])
         #expect(allowedRoutes.contains { route in
@@ -989,15 +992,145 @@ struct OpenAIHandlerTests {
 
         let loopbackResult = try await createPairingDescriptor(host: "127.0.0.1", port: 12_500)
         #expect(loopbackResult.pairing["status_url"] as? String == "http://127.0.0.1:12500/v1/melix/companion/status")
+        #expect(loopbackResult.pairing["mobile_url"] as? String == "http://127.0.0.1:12500/v1/melix/companion")
 
         let emptyHostResult = try await createPairingDescriptor(host: "   \n", port: 12_501)
         #expect(emptyHostResult.pairing["status_url"] as? String == "http://127.0.0.1:12501/v1/melix/companion/status")
+        #expect(emptyHostResult.pairing["mobile_url"] as? String == "http://127.0.0.1:12501/v1/melix/companion")
 
         let ipv6Result = try await createPairingDescriptor(host: "fd00::1", port: 12_502)
         #expect(ipv6Result.pairing["status_url"] as? String == "http://[fd00::1]:12502/v1/melix/companion/status")
+        #expect(ipv6Result.pairing["mobile_url"] as? String == "http://[fd00::1]:12502/v1/melix/companion")
 
         let bracketedIPv6Result = try await createPairingDescriptor(host: "[fd00::2]", port: 12_503)
         #expect(bracketedIPv6Result.pairing["status_url"] as? String == "http://[fd00::2]:12503/v1/melix/companion/status")
+        #expect(bracketedIPv6Result.pairing["mobile_url"] as? String == "http://[fd00::2]:12503/v1/melix/companion")
+    }
+
+    @Test("companion mobile status page serves read-only shell for companion tokens")
+    func companionMobileStatusPageServesReadOnlyShellForCompanionTokens() async throws {
+        let metricsStore = MetricsStore()
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-companion-mobile-page-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(
+                host: "0.0.0.0",
+                port: 12_499,
+                allowedOrigins: ["http://127.0.0.1:52499"]
+            ),
+            persistentAuthSessionStore: PersistentAuthSessionStore(
+                storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+                metricsStore: metricsStore,
+                retentionTTLSeconds: 3_600,
+                nowUnixMs: { 1_000 }
+            )
+        )
+
+        let createResponse = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/melix/auth/session",
+                headers: [
+                    "content-type": "application/json",
+                    "x-api-key": "sk-codex",
+                ],
+                body: try #require("""
+                {
+                  "remember_me": true,
+                  "scope": "companion_read_only"
+                }
+                """.data(using: .utf8))
+            )
+        )
+        let createPayload = try await jsonPayload(from: createResponse.body)
+        let resume = try #require(createPayload["resume"] as? [String: Any])
+        let token = try #require(resume["token"] as? String)
+        let pairing = try #require(createPayload["pairing"] as? [String: Any])
+
+        let publicCompanionPage = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion",
+                headers: [:],
+                body: Data()
+            )
+        )
+        let pageBody = try await collectBody(publicCompanionPage.body)
+
+        let unauthenticatedStatus = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/companion/status",
+                headers: [:],
+                body: Data()
+            )
+        )
+
+        let companionMutation = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: [
+                    "content-type": "application/json",
+                    "X-Melix-Session": token,
+                ],
+                body: Data("{\"model\":\"melix-dev-text\",\"messages\":[]}".utf8)
+            )
+        )
+
+        #expect(createResponse.statusCode == 200)
+        #expect(pairing["mobile_url"] as? String == "http://127.0.0.1:12499/v1/melix/companion")
+        #expect(publicCompanionPage.statusCode == 200)
+        #expect(publicCompanionPage.headers["content-type"] == "text/html; charset=utf-8")
+        #expect(publicCompanionPage.headers["x-frame-options"] == "deny")
+        let contentSecurityPolicy = try #require(publicCompanionPage.headers["content-security-policy"])
+        #expect(contentSecurityPolicy.contains("default-src 'none'"))
+        #expect(contentSecurityPolicy.contains("connect-src 'self'"))
+        #expect(contentSecurityPolicy.contains("script-src 'unsafe-inline'"))
+        #expect(contentSecurityPolicy.contains("style-src 'unsafe-inline'"))
+        #expect(contentSecurityPolicy.contains("frame-ancestors 'none'"))
+        #expect(pageBody.contains("<meta name=\"viewport\""))
+        #expect(pageBody.contains("Melix Companion"))
+        #expect(pageBody.contains("/v1/melix/companion/status"))
+        #expect(pageBody.contains("x-melix-session"))
+        #expect(pageBody.contains("companion_read_only"))
+        #expect(pageBody.contains("Redacted Log Tail"))
+        #expect(pageBody.contains("localStorage"))
+        #expect(pageBody.contains("Pairing code or JSON bundle"))
+        #expect(pageBody.contains("melix-companion:"))
+        #expect(pageBody.contains("decodePairingCode"))
+        #expect(pageBody.contains("new TextDecoder().decode"))
+        #expect(pageBody.contains("melix.companion.pairing.bundle.v1"))
+        #expect(pageBody.contains("importPairingBundle"))
+        #expect(pageBody.contains("Paste a pairing code or JSON bundle first."))
+        #expect(pageBody.contains("pairingImport.value = ''"))
+        #expect(pageBody.contains("refreshStatus();"))
+        #expect(pageBody.contains("sameOriginStatusPath"))
+        #expect(pageBody.contains("new URL(bundle.status_url, window.location.href)"))
+        #expect(pageBody.contains("typeof data !== 'object'"))
+        #expect(pageBody.contains("POST /v1/chat/completions") == false)
+        #expect(pageBody.contains("/v1/images/generations") == false)
+        #expect(pageBody.contains("Issue Token") == false)
+        #expect(pageBody.contains(token) == false)
+        #expect(unauthenticatedStatus.statusCode == 401)
+        #expect(companionMutation.statusCode == 403)
+        #expect(await metricsStore.value(forKey: "companion.mobile_page_served_count") == 1)
     }
 
     @Test("companion status endpoint returns redacted runtime queue job and session summary")
@@ -1052,7 +1185,7 @@ struct OpenAIHandlerTests {
         )
 
         let handler = OpenAIHandler(
-            modelCatalog: ModelCatalog(seedModels: [warmModel(), warmEmbeddingModel()]),
+            modelCatalog: ModelCatalog(seedModels: [publicWarmModel(), publicWarmEmbeddingModel()]),
             requestCoordinator: RequestCoordinator(
                 workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
                 abortRegistry: AbortRegistry()
@@ -2670,7 +2803,7 @@ struct OpenAIHandlerTests {
         #expect(request.execution.toolConfig.toolChoice == "auto")
         #expect(request.execution.ext["melix.tool_parser.mode"] == "xml")
         #expect(request.execution.ext["melix.tool_config.source"] == "openai_chat_tools")
-        #expect(payload.contains("event: message"))
+        #expect(payload.contains("event: message") == false)
         #expect(payload.contains("\"object\":\"chat.completion.chunk\""))
         #expect(payload.contains("\"tool_calls\""))
         #expect(payload.contains("\"index\":1"))
@@ -2789,7 +2922,8 @@ struct OpenAIHandlerTests {
             ),
             workerRegistry: workerRegistry,
             translator: ChatRequestTranslator(requestIDGenerator: { "req-http-imported-vlm-text" }),
-            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) }),
+            gatewayServingDefaultsStore: isolatedGatewayServingDefaultsStore(prefix: "melix-imported-vlm")
         )
 
         let body = try #require(
@@ -5856,8 +5990,8 @@ struct OpenAIHandlerTests {
         #expect(await workerClient.lastGenerateRequest == nil)
     }
 
-    @Test("POST /v1/chat/completions returns invalid argument for non-string multimodal part types")
-    func postChatCompletionsReturnsInvalidArgumentForNonStringMultimodalPartTypes() async throws {
+    @Test("POST /v1/chat/completions returns typed schema errors for non-string multimodal part types")
+    func postChatCompletionsReturnsTypedSchemaErrorsForNonStringMultimodalPartTypes() async throws {
         let workerClient = ScriptedWorkerClient(events: [])
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
@@ -5893,11 +6027,55 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let payload = try await collectBody(response.body)
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
 
         #expect(response.statusCode == 400)
-        #expect(payload.contains("\"code\":\"invalid_argument\""))
-        #expect(payload.contains("Malformed multimodal chat payload."))
+        #expect(error["code"] as? String == "invalid_request_schema")
+        #expect(error["field"] as? String == "type")
+        #expect(error["phase"] as? String == "decode")
+        #expect(error["message"] as? String == "Malformed multimodal chat payload.")
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions names missing required keys in schema error fields")
+    func postChatCompletionsReturnsMissingRequiredKeyInSchemaErrorField() async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-missing-schema-key" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "invalid_request_schema")
+        #expect(error["field"] as? String == "messages")
+        #expect(error["phase"] as? String == "decode")
+        #expect(error["message"] as? String == "Malformed multimodal chat payload.")
         #expect(await workerClient.lastLoadModelRequest == nil)
         #expect(await workerClient.lastGenerateRequest == nil)
     }
@@ -7925,7 +8103,8 @@ struct OpenAIHandlerTests {
                 modelCatalog: catalog
             ),
             workerRegistry: registry,
-            translator: ChatRequestTranslator(requestIDGenerator: { "req-derived-response" })
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-derived-response" }),
+            gatewayServingDefaultsStore: isolatedGatewayServingDefaultsStore(prefix: "melix-derived-response")
         )
         let body = try #require(
             """
@@ -7951,7 +8130,11 @@ struct OpenAIHandlerTests {
 
     @Test("GET /v1/models returns model state from the catalog")
     func getModelsReturnsCatalogState() async throws {
-        let catalog = ModelCatalog(seedModels: [warmModel()])
+        var publicModel = warmModel()
+        publicModel.modelID = "mlx-community/Qwen3.5-9B-MLX-8bit"
+        publicModel.settings.alias = "Qwen 3.5 9B"
+        publicModel.settings.ext.removeValue(forKey: "melix.visibility")
+        let catalog = ModelCatalog(seedModels: [publicModel])
         let handler = OpenAIHandler(
             modelCatalog: catalog,
             requestCoordinator: RequestCoordinator(
@@ -7964,19 +8147,30 @@ struct OpenAIHandlerTests {
             HTTPRequest(method: .get, path: "/v1/models", headers: [:], body: Data())
         )
 
-        let body = try await collectBody(response.body)
+        let payload = try await jsonPayload(from: response.body)
+        let rows = try #require(payload["data"] as? [[String: Any]])
+        let row = try #require(rows.first { ($0["id"] as? String) == "mlx-community/Qwen3.5-9B-MLX-8bit" })
 
         #expect(response.statusCode == 200)
         #expect(response.headers["content-type"] == "application/json")
-        #expect(body.contains("\"object\":\"list\""))
-        #expect(body.contains("\"id\":\"melix-dev-text\""))
-        #expect(body.contains("\"melix_state\":\"warm\""))
-        #expect(body.contains("\"owned_by\":\"melix\""))
+        #expect(payload["object"] as? String == "list")
+        #expect(row["melix_state"] as? String == "warm")
+        #expect(row["owned_by"] as? String == "melix")
     }
 
-    @Test("GET /v1/models hides internal operations and exposes user-facing metadata")
-    func getModelsHidesInternalOperationsAndExposesUserFacingMetadata() async throws {
-        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
+    @Test("GET /v1/models hides internal dev seeds and exposes user-facing metadata")
+    func getModelsHidesInternalDevSeedsAndExposesUserFacingMetadata() async throws {
+        var publicText = ModelCatalog.devTextModel()
+        publicText.modelID = "mlx-community/Qwen3.5-9B-MLX-8bit"
+        publicText.settings.alias = "Qwen 3.5 9B"
+        publicText.settings.ext.removeValue(forKey: "melix.visibility")
+        var publicImage = ModelCatalog.devImageModel()
+        publicImage.modelID = "black-forest-labs/FLUX.1-schnell-MLX"
+        publicImage.settings.alias = "Flux Schnell MLX"
+        publicImage.settings.ext.removeValue(forKey: "melix.visibility")
+        let catalog = ModelCatalog(
+            seedModels: ModelCatalog.phaseSevenContractSeedModels() + [publicText, publicImage]
+        )
         let handler = OpenAIHandler(
             modelCatalog: catalog,
             requestCoordinator: RequestCoordinator(
@@ -7991,9 +8185,9 @@ struct OpenAIHandlerTests {
         let payload = try await jsonPayload(from: response.body)
         let rows = try #require(payload["data"] as? [[String: Any]])
         let ids = Set(rows.compactMap { $0["id"] as? String })
-        let text = try #require(rows.first { ($0["id"] as? String) == "melix-dev-text" })
+        let text = try #require(rows.first { ($0["id"] as? String) == "mlx-community/Qwen3.5-9B-MLX-8bit" })
         let textMetadata = try #require(text["metadata"] as? [String: Any])
-        let image = try #require(rows.first { ($0["id"] as? String) == "melix-dev-image" })
+        let image = try #require(rows.first { ($0["id"] as? String) == "black-forest-labs/FLUX.1-schnell-MLX" })
         let imageMetadata = try #require(image["metadata"] as? [String: Any])
         let imageTasks = Set(
             (imageMetadata["melix.capability.supported_tasks"] as? String ?? "")
@@ -8002,10 +8196,18 @@ struct OpenAIHandlerTests {
         )
 
         #expect(response.statusCode == 200)
-        #expect(ids.contains("melix-dev-text"))
-        #expect(ids.contains("melix-dev-image"))
-        #expect(ids.contains("melix-dev-model-ops") == false)
-        #expect(textMetadata["melix.display_name"] as? String == "Melix Text")
+        #expect(ids.isDisjoint(with: [
+            "melix-dev-text",
+            "melix-dev-embed",
+            "melix-dev-rerank",
+            "melix-dev-model-ops",
+            "melix-dev-ocr",
+            "melix-dev-vlm",
+            "melix-dev-transcribe",
+            "melix-dev-speech",
+            "melix-dev-image",
+        ]))
+        #expect(textMetadata["melix.display_name"] as? String == "Qwen 3.5 9B")
         #expect(textMetadata["melix.kind"] as? String == "text")
         #expect(textMetadata["melix.capability.class"] as? String == "text")
         #expect(textMetadata["melix.capability.supported_tasks"] as? String == "generate")
@@ -8015,7 +8217,7 @@ struct OpenAIHandlerTests {
         #expect(textMetadata["melix.load_trust.policy_source"] as? String == "not_applicable")
         #expect(textMetadata["melix.load_trust.receipt_present"] as? String == "false")
         #expect(textMetadata["melix.model_path"] == nil)
-        #expect(imageMetadata["melix.display_name"] as? String == "Melix Image")
+        #expect(imageMetadata["melix.display_name"] as? String == "Flux Schnell MLX")
         #expect(imageMetadata["melix.capability.class"] as? String == "image_generation")
         #expect(imageTasks.contains("image_generate"))
     }
@@ -8025,6 +8227,7 @@ struct OpenAIHandlerTests {
         var fallbackModel = ModelCatalog.devVLMModel()
         fallbackModel.modelID = "melix-vlm-text-fallback"
         fallbackModel.routeClass = .workerRouteSwiftText
+        fallbackModel.settings.ext.removeValue(forKey: "melix.visibility")
         fallbackModel.settings.ext["melix.capability.route_kind"] = "swift_text"
         let catalog = ModelCatalog(seedModels: [fallbackModel])
         let registry = WorkerRegistry(
@@ -8214,30 +8417,37 @@ struct OpenAIHandlerTests {
         var pinned = ModelCatalog.devTextModel()
         pinned.modelID = "melix-pinned"
         pinned.state = .modelPinned
+        pinned.settings.ext.removeValue(forKey: "melix.visibility")
 
         var unloaded = ModelCatalog.devTextModel()
         unloaded.modelID = "melix-unloaded"
         unloaded.state = .modelUnloaded
+        unloaded.settings.ext.removeValue(forKey: "melix.visibility")
 
         var loading = ModelCatalog.devTextModel()
         loading.modelID = "melix-loading"
         loading.state = .modelLoading
+        loading.settings.ext.removeValue(forKey: "melix.visibility")
 
         var discovered = ModelCatalog.devTextModel()
         discovered.modelID = "melix-discovered"
         discovered.state = .modelDiscovered
+        discovered.settings.ext.removeValue(forKey: "melix.visibility")
 
         var failed = ModelCatalog.devTextModel()
         failed.modelID = "melix-failed"
         failed.state = .modelFailed
+        failed.settings.ext.removeValue(forKey: "melix.visibility")
 
         var evicting = ModelCatalog.devTextModel()
         evicting.modelID = "melix-evicting"
         evicting.state = .modelEvicting
+        evicting.settings.ext.removeValue(forKey: "melix.visibility")
 
         var unknown = ModelCatalog.devTextModel()
         unknown.modelID = "melix-unknown"
         unknown.state = .UNRECOGNIZED(99)
+        unknown.settings.ext.removeValue(forKey: "melix.visibility")
 
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [pinned, unloaded, loading, discovered, failed, evicting, unknown]),
@@ -13104,6 +13314,35 @@ struct OpenAIHandlerTests {
         var model = ModelCatalog.devTextModel()
         model.state = .modelWarm
         return model
+    }
+
+    private func publicWarmModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = warmModel()
+        model.modelID = "mlx-community/Qwen3.5-9B-MLX-8bit"
+        model.settings.alias = "Qwen 3.5 9B"
+        model.settings.ext.removeValue(forKey: "melix.visibility")
+        return model
+    }
+
+    private func publicWarmEmbeddingModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = warmEmbeddingModel()
+        model.modelID = "BAAI/bge-small-en-v1.5-MLX"
+        model.settings.alias = "BGE Small"
+        model.settings.ext.removeValue(forKey: "melix.visibility")
+        return model
+    }
+
+    private func isolatedGatewayServingDefaultsStore(prefix: String) -> GatewayServingDefaultsStore {
+        GatewayServingDefaultsStore(
+            storeURL: FileManager.default.temporaryDirectory.appendingPathComponent(
+                "\(prefix)-\(UUID().uuidString).json"
+            ),
+            defaults: [
+                "MELIX_GATEWAY_DEFAULT_TOP_P": "1.0",
+                "MELIX_GATEWAY_ACCELERATION_MODE": "baseline",
+                "MELIX_GATEWAY_ACCELERATION_PROFILE": "balanced",
+            ]
+        )
     }
 
     private func warmEmbeddingModel() -> Melix_Controlplane_V1_ModelSummary {

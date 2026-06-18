@@ -313,13 +313,17 @@ compatibility with standard OpenAI-compatible message names while the `:` and
 `.` separators keep local and legacy source identifiers classifiable.
 
 When the normalized message name is present, the prompt receipt records it as
-`source_id`. When the message has no name and its Harmony recipient identifies a
-`functions.<name>` target, the prompt receipt records that request-local
-recipient metadata as `source_id`. `source_id` is source metadata only; the
-receipt must still omit message text, media URIs, media bytes, tool arguments,
-private prompt text, and other raw source payloads. The classification is
-evidentiary and does not replace source-specific owner-scope checks,
-admission/refusal checks, or background-continuation link validation.
+`source_id` only when it is a short public identifier. When the message has no
+name and its Harmony recipient identifies a `functions.<name>` target, the
+prompt receipt records that request-local recipient metadata as `source_id` only
+when it is likewise public. Short public prompt source IDs may contain ASCII
+letters, digits, `.`, `_`, `-`, and `:`. Path-like, URL-like, non-ASCII, or
+long source IDs are replaced with `prompt-source:<sha256-prefix>` in receipt
+JSON. `source_id` is source metadata only; the receipt must still omit message
+text, media URIs, media bytes, tool arguments, private prompt text, and other
+raw source payloads. The classification is evidentiary and does not replace
+source-specific owner-scope checks, admission/refusal checks, or
+background-continuation link validation.
 
 OpenAI Responses `function_call_output` input items are the Responses item-form
 equivalent of tool-output prompt data. The control-plane request adapter maps
@@ -399,8 +403,17 @@ stable `melix.untrusted_context_receipt.v1` dictionary for both admitted and
 refused untrusted user-message segments. Existing agentic judge prompt
 snapshots use this helper, and later retrieved-document, skill, memory,
 tool-output, and background-continuation admission points must use the same
-helper or preserve its exact receipt shape, including the optional `source_id`
-field for retrieved segments, when they record prompt-boundary evidence.
+helper or preserve its exact receipt shape when they record prompt-boundary
+evidence.
+
+Python worker receipt `source_id` values are receipt metadata only. Short public
+source IDs may contain ASCII letters, digits, `.`, `_`, `-`, and `:` and must be
+96 UTF-8 bytes or shorter. Path-like, URL-like, non-ASCII, or long source IDs
+are replaced with `source:<sha256-prefix>` in receipt JSON. When a receipt
+`segment_id` is derived from the same raw source ID prefix, the helper replaces
+that prefix with the same redacted source token before serializing the receipt.
+Receipts must continue to omit `source_id` entirely when callers provide no
+source ID.
 
 The shared Python worker prompt-context admission primitive is
 `worker.runtime.prompt_context`. A `PromptContextSegment` represents one
@@ -712,6 +725,17 @@ not load skill files, read or write memory stores, rank retrieval results, infer
 owner scope, mutate sessions, enqueue chat messages, or copy raw source text
 into receipt JSON.
 
+Concrete live or durable skill/memory lookup entrypoints may pass
+`lookup_source_id`, `lookup_segment_id`, and `lookup_source_field` to
+`project_skill_memory_lookup_result` when they need wrapper-level refusal
+receipts to reference a stable lookup source instead of the default
+`unknown-skill-memory-lookup`. The metadata is used only for top-level wrapper
+refusals and missing-wrapper-record refusals; individual store records still
+own their own `source_id`, `segment_id`, and `source_field` metadata. Malformed
+lookup wrapper metadata fails closed with `source_type = skill_memory_lookup`,
+the offending metadata field as `source_field`, no prompt payload, no admitted
+receipts, and no lookup message.
+
 The deterministic Python-worker `skill_lookup` and `memory_lookup` adapters are
 the concrete v1 callers of this lookup projection. They are opt-in selectable
 catalog tools rather than default no-selection tool schemas, so ordinary
@@ -802,6 +826,16 @@ read files, fetch media, infer owner scope, mutate sessions, or copy raw
 retrieved text, captions, media URIs, local paths, or prompt bodies into
 receipt JSON.
 
+Concrete live or durable retrieval lookup entrypoints may pass
+`lookup_source_id`, `lookup_segment_id`, and `lookup_source_field` to
+`project_retrieval_lookup_result` when wrapper-level refusals should identify a
+stable lookup source instead of the default `unknown-retrieval-lookup`. The
+metadata is used only for top-level wrapper refusals and missing-wrapper-record
+refusals; per-result retrieval store records still own their own source and
+segment metadata. Malformed lookup wrapper metadata fails closed with
+`source_type = retrieval_lookup`, the offending metadata field as
+`source_field`, no prompt payload, no admitted receipts, and no lookup message.
+
 The deterministic Python-worker `text_search` and `image_search` adapters are
 the concrete v1 callers of this lookup projection. They keep their observation
 payloads shaped as `query`, `corpus_ref`, `results`, and `result_count`, but
@@ -871,6 +905,15 @@ the sanitized payload. This keeps payload redaction, truncation, replay hashes,
 and byte metrics focused on the emitted tool output while still making the
 prompt boundary visible to downstream prompt assemblers.
 
+`melix.agentic_tool_observation.v1` records this receipt list as a
+normalization-time audit snapshot. The worker builds the generic
+`tool_observation` receipt and appends any normalized source-specific receipts
+while creating the observation record; later property reads or trace
+serialization copy that snapshot rather than re-running prompt-context
+admission. Tool-output payload text, including prompt-injection phrases such as
+requests to ignore earlier instructions, may remain in sanitized payload data
+but must not be copied into receipt JSON.
+
 Benchmark request rows derived from agentic tool turns must preserve that
 boundary evidence without promoting untrusted payload text into scalar CSV
 fields. Each `tool_turn` request row keeps the full observation, including
@@ -908,6 +951,19 @@ mapping-shaped receipts across those observations. These scalar fields must not
 copy tool payloads, retrieved text, page content, media references, prompt
 text, or receipt bodies into non-selected candidate rows.
 
+Training dataset normalization applies the same scalar-summary rule to
+`agentic_tool_trace` samples whose `tool_calls` are replayed through the shared
+deterministic runtime. The normalized sample keeps full
+`agentic_tool_observations` for trace replay, and exposes
+`agentic_tool_untrusted_context_receipt_count` at the sample top level when the
+replayed observations contain mapping-shaped receipts. It also exposes
+`agentic_tool_untrusted_context_receipt_schema` only when at least one counted
+receipt carries a string `schema_version`. These fields are metadata only: they
+record the first receipt schema string when present and the total receipt count
+across replayed observations, and must not copy tool payloads, retrieved text,
+page content, media references, prompt text, receipt JSON bodies, or private
+context into scalar training-package fields.
+
 The v1 deterministic retrieval source slice lets callers attach
 source-specific untrusted-context receipts beside the generic tool-observation
 receipt without adding those receipts to the sanitized payload or replay hash.
@@ -923,6 +979,21 @@ The follow-up retrieval source prompt-context admission slice generates each
 selected-result receipt through `worker.runtime.prompt_context` by admitting one
 `PromptContextSegment` for the sanitized selected result value while preserving
 the same emitted receipt fields and observation payload.
+
+The tool-observation normalizer is also an aggregation boundary for
+source-specific receipts. When callers attach a well-formed
+`melix.untrusted_context_receipt.v1` source receipt to an observation, the
+normalizer must re-emit that receipt through the shared Python worker
+`untrusted_context_receipt` helper before serialization. This preserves public
+symbolic IDs, redacts path-like, URL-like, non-ASCII, whitespace-bearing, or
+long private `source_id` values, and rewrites `segment_id` prefixes derived
+from the same raw source ID. Non-receipt diagnostic mappings may be copied as
+diagnostics, but they must not be treated as v1 untrusted-context receipts.
+Malformed mappings that claim the v1 schema but do not contain enough typed
+metadata to be safely re-emitted must become redacted `included = false`
+receipt-metadata refusal receipts instead of being copied through unchanged.
+This normalization must not change sanitized payload content, replay hashes, or
+tool-observation byte metrics.
 
 Deterministic adapter failures that reject a concrete untrusted source must also
 attach one source-specific refusal receipt beside the generic failed
@@ -947,6 +1018,42 @@ Each successful `layout_parse` observation emits one `retrieved_image` receipt
 with `segment_id = <tool_call_id>:layout-result` and `source_field = payload`.
 Each successful `image_crop` observation emits one `retrieved_image` receipt
 with `segment_id = <tool_call_id>:crop-result` and `source_field = payload`.
+The deterministic local compute source slice applies the same pattern to
+successful `local_compute` observations. Each successful local compute
+observation emits one `tool_output` receipt with `segment_id =
+<tool_call_id>:compute-result`, `source_field = result`, and `source_id =
+<tool_call_id>`. The `tool_output` receipt is attached beside the generic
+`tool_observation` receipt and must omit the arithmetic expression, result
+value, tool arguments, prompt text, and private context from receipt JSON.
+
+Native deterministic `local_compute` timeouts are also tool output. Each native
+timeout observation emits one `tool_output` receipt with `segment_id =
+<tool_call_id>:compute-timeout`, `source_field = timeout`, and `source_id =
+<tool_call_id>`. The receipt is metadata only and must omit timeout text,
+tool arguments, prompt text, and private context from receipt JSON while
+preserving the existing timeout payload, replay hash, byte metrics, and timeout
+counter behavior.
+
+Fixture-driven deterministic status overrides also represent tool output once
+they become timeout, failed, or cancelled observations. Each status override
+observation emits one source-specific `tool_output` receipt with `segment_id =
+<tool_call_id>:status-output`, `source_field = status`, and `source_id =
+<tool_call_id>`. The receipt is attached beside the generic `tool_observation`
+receipt and must omit override messages, error text, failure-stage strings, tool
+arguments, prompt text, and private context from receipt JSON. This receipt is
+metadata only and must not change sanitized observation payloads, replay hashes,
+byte metrics, timeout counters, or failed-status counters.
+
+Control-plane session tool results are also owner-scoped tool-output
+boundaries. `session.register_tool_result`, `session.resume_after_tool`, and
+worker stream hydration must reject a known tool-call or resume-snapshot ID when
+the ID is already attached to a different session or branch. The refusal returns
+or records `owner_scope_mismatch`, must not update `latestToolCallID`,
+`lastToolCallID`, `latestSnapshotID`, branch resume metadata, or publish a
+session mutation event, and must not copy tool result JSON, prompt text, or
+private context into the error payload. First-time IDs keep the existing
+session/branch registration behavior.
+
 Short symbolic fixture identifiers may be preserved in `source_id`; raw media
 references, file paths, URLs, whitespace-bearing identifiers, and long
 identifiers must be replaced with stable redacted identifiers shaped as

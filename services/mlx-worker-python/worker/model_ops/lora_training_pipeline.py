@@ -826,14 +826,14 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
             candidate_group_variance_total += candidate_group_variance
     if not scores:
         return {}
-    ordered = sorted(scores)
+    scores.sort()
     summary: dict[str, float | int] = {
         "reward_mean": score_total / len(scores),
-        "reward_p50": _percentile_value(ordered, 0.5),
-        "reward_p95": _percentile_value(ordered, 0.95),
+        "reward_p50": _percentile_value(scores, 0.5),
+        "reward_p95": _percentile_value(scores, 0.95),
     }
     if candidate_group_margins:
-        ordered_margins = sorted(candidate_group_margins)
+        candidate_group_margins.sort()
         candidate_group_count = len(candidate_group_margins)
         summary.update(
             {
@@ -841,11 +841,11 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
                 "candidate_group_reward_margin_mean": candidate_group_margin_total
                 / candidate_group_count,
                 "candidate_group_reward_margin_p50": _percentile_value(
-                    ordered_margins,
+                    candidate_group_margins,
                     0.5,
                 ),
                 "candidate_group_reward_margin_p95": _percentile_value(
-                    ordered_margins,
+                    candidate_group_margins,
                     0.95,
                 ),
                 "candidate_group_reward_variance_mean": candidate_group_variance_total

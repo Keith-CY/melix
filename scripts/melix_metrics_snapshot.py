@@ -77,42 +77,78 @@ def _matches_runtime_pattern(name: str, pattern: str) -> bool:
 
 
 def discover_latest_metrics_path(runtime_dir: Path | None, source_name: str) -> Path | None:
+    return discover_latest_metrics_paths(runtime_dir, (source_name,))[source_name]
+
+
+def discover_latest_metrics_paths(runtime_dir: Path | None, source_names: tuple[str, ...]) -> dict[str, Path | None]:
+    discovered: dict[str, Path | None] = {name: None for name in source_names}
     if runtime_dir is None:
-        return None
-    pattern = SOURCE_DEFINITIONS[source_name]["runtime_pattern"]
-    wildcard_index = pattern.find("*")
-    if wildcard_index == -1:
-        exact_name = pattern
-        prefix = suffix = None
-    elif pattern.find("*", wildcard_index + 1) == -1:
-        exact_name = None
-        prefix = pattern[:wildcard_index]
-        suffix = pattern[wildcard_index + 1 :]
-    else:
-        exact_name = prefix = suffix = None
+        return discovered
+    exact_matchers: dict[str, str] = {}
+    prefix_matchers_by_initial: dict[str, list[tuple[str, str, str]]] = {}
+    wildcard_matchers: list[tuple[str, str]] = []
+    for source_name in source_names:
+        pattern = SOURCE_DEFINITIONS[source_name]["runtime_pattern"]
+        wildcard_index = pattern.find("*")
+        if wildcard_index == -1:
+            exact_matchers[pattern] = source_name
+        elif pattern.find("*", wildcard_index + 1) == -1:
+            prefix = pattern[:wildcard_index]
+            suffix = pattern[wildcard_index + 1 :]
+            initial = prefix[:1]
+            prefix_matchers_by_initial.setdefault(initial, []).append(
+                (source_name, prefix, suffix)
+            )
+        else:
+            wildcard_matchers.append((source_name, pattern))
     try:
-        latest_path: Path | None = None
-        latest_mtime: float | None = None
+        latest_paths: dict[str, str | None] = {name: None for name in source_names}
+        latest_mtimes: dict[str, float | None] = {name: None for name in source_names}
+        latest_paths_set = latest_paths.__setitem__
+        latest_mtimes_set = latest_mtimes.__setitem__
         with os.scandir(os.fspath(runtime_dir.expanduser())) as entries:
             for entry in entries:
                 entry_name = entry.name
-                if exact_name is not None:
-                    if entry_name != exact_name:
+                matched_source_name = exact_matchers.get(entry_name)
+                matched_source_names: list[str] | None = None
+                if matched_source_name is None:
+                    for source_name, prefix, suffix in prefix_matchers_by_initial.get(
+                        entry_name[:1], ()
+                    ):
+                        if entry_name.startswith(prefix) and entry_name.endswith(suffix):
+                            if matched_source_names is None:
+                                matched_source_names = [source_name]
+                            else:
+                                matched_source_names.append(source_name)
+                    for source_name, pattern in wildcard_matchers:
+                        if _matches_runtime_pattern(entry_name, pattern):
+                            if matched_source_names is None:
+                                matched_source_names = [source_name]
+                            else:
+                                matched_source_names.append(source_name)
+                    if matched_source_names is None:
                         continue
-                elif prefix is not None and suffix is not None:
-                    if not entry_name.startswith(prefix) or not entry_name.endswith(suffix):
-                        continue
-                elif not _matches_runtime_pattern(entry_name, pattern):
-                    continue
                 if not entry.is_file():
                     continue
                 mtime = entry.stat().st_mtime
-                if latest_mtime is None or mtime > latest_mtime:
-                    latest_path = Path(entry.path)
-                    latest_mtime = mtime
-        return latest_path
+                if matched_source_name is not None:
+                    latest_mtime = latest_mtimes[matched_source_name]
+                    if latest_mtime is None or mtime > latest_mtime:
+                        latest_paths_set(matched_source_name, entry.path)
+                        latest_mtimes_set(matched_source_name, mtime)
+                    continue
+                assert matched_source_names is not None
+                for source_name in matched_source_names:
+                    latest_mtime = latest_mtimes[source_name]
+                    if latest_mtime is None or mtime > latest_mtime:
+                        latest_paths_set(source_name, entry.path)
+                        latest_mtimes_set(source_name, mtime)
+        for source_name, latest_path in latest_paths.items():
+            if latest_path is not None:
+                discovered[source_name] = Path(latest_path)
+        return discovered
     except OSError:
-        return None
+        return discovered
 
 
 def resolve_source_paths(
@@ -131,6 +167,7 @@ def resolve_source_paths(
         "python_worker": python_worker_metrics,
     }
     resolved: dict[str, SourcePath] = {}
+    runtime_source_names: list[str] = []
     for name, definition in SOURCE_DEFINITIONS.items():
         explicit_path = normalize_path(explicit[name])
         if explicit_path is not None:
@@ -142,7 +179,11 @@ def resolve_source_paths(
             resolved[name] = SourcePath(name=name, path=env_path, configured_by="environment")
             continue
 
-        runtime_path = discover_latest_metrics_path(runtime_dir, name)
+        runtime_source_names.append(name)
+
+    runtime_paths = discover_latest_metrics_paths(runtime_dir, tuple(runtime_source_names))
+    for name in runtime_source_names:
+        runtime_path = runtime_paths[name]
         if runtime_path is not None:
             resolved[name] = SourcePath(name=name, path=runtime_path, configured_by="runtime_dir")
             continue

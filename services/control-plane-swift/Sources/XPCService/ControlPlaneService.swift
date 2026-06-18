@@ -4941,6 +4941,12 @@ public actor ControlPlaneService {
             return errorResponse(for: request, code: "not_found", message: "Unknown session ID.")
         case SessionGraphStoreError.unknownBranchID:
             return errorResponse(for: request, code: "not_found", message: "Unknown branch ID.")
+        case SessionGraphStoreError.ownerScopeMismatch:
+            return errorResponse(
+                for: request,
+                code: "owner_scope_mismatch",
+                message: "Session tool result or resume boundary belongs to a different session scope."
+            )
         default:
             return errorResponse(for: request, code: "internal", message: "Failed to mutate session state.")
         }

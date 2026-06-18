@@ -189,6 +189,42 @@ def test_main_filters_paths_to_probe_specific_allowlist(monkeypatch, tmp_path: P
     assert "TOTAL 1 0 100%" in output
 
 
+def test_main_short_circuits_empty_filtered_paths_without_reading_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    coverage_json = tmp_path / "coverage.json"
+    coverage_json.write_text("not-json", encoding="utf-8")
+
+    def fail_changed_lines_by_path(*args: object, **kwargs: object) -> object:  # pragma: no cover
+        raise AssertionError("git diff should not run when no paths remain after filtering")
+
+    monkeypatch.setenv("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "[]")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "changed_scope_coverage.py",
+            "--coverage-json",
+            str(coverage_json),
+            "direct.py",
+        ],
+    )
+    monkeypatch.setattr(changed_scope_coverage.Path, "cwd", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(
+        changed_scope_coverage,
+        "_changed_lines_by_path",
+        fail_changed_lines_by_path,
+    )
+
+    assert changed_scope_coverage.main() == 0
+
+    output = capsys.readouterr().out
+    assert "aggregate_measurable_changed_lines=0" in output
+    assert "TOTAL 0 0 100%" in output
+
+
 def test_coverage_path_allowlist_rejects_invalid_json() -> None:
     with pytest.raises(SystemExit, match="invalid MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON"):
         changed_scope_coverage._coverage_path_allowlist(
@@ -220,6 +256,19 @@ def test_coverage_path_allowlist_parses_simple_string_without_json_decoder(monke
     assert changed_scope_coverage._coverage_path_allowlist(
         {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": '"pkg/direct.py"'}
     ) == {"pkg/direct.py"}
+
+
+def test_coverage_path_allowlist_parses_empty_array_without_json_decoder(monkeypatch) -> None:
+    changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
+
+    def fail_loads(*args: object, **kwargs: object) -> object:  # pragma: no cover
+        raise AssertionError("empty allowlists should avoid json.loads")
+
+    monkeypatch.setattr(changed_scope_coverage.json, "loads", fail_loads)
+
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": "[]"}
+    ) == frozenset()
 
 
 def test_coverage_path_allowlist_reuses_cached_raw_payload_parse(monkeypatch) -> None:
