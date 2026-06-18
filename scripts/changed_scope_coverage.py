@@ -172,6 +172,8 @@ def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
 def _filter_coverage_paths(paths: list[str], allowlist: frozenset[str] | None) -> list[str]:
     if allowlist is None:
         return paths
+    if not allowlist:
+        return []
     return [path for path in paths if path in allowlist]
 
 
