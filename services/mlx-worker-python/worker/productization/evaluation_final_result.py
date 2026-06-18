@@ -500,12 +500,16 @@ def _json_typed_score(*, expected: Any, actual: Any, ignored_paths: Collection[s
             child_path = f"{path}.{key}" if path else key
             if ignored_contains(child_path):
                 continue
-            total += score_child(
-                expected=expected_value,
-                actual=actual_get(key) if actual_get is not None else None,
-                ignored_paths=ignored_paths,
-                path=child_path,
-            )
+            actual_value = actual_get(key) if actual_get is not None else None
+            if not isinstance(expected_value, dict) and expected_value == actual_value:
+                total += 1.0
+            else:
+                total += score_child(
+                    expected=expected_value,
+                    actual=actual_value,
+                    ignored_paths=ignored_paths,
+                    path=child_path,
+                )
             count += 1
         if count == 0:
             return 1.0
