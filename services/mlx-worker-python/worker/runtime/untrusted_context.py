@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import re
 
 UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION = "melix.untrusted_context_receipt.v1"
-_PUBLIC_SOURCE_ID_MAX_BYTES = 96
-_PUBLIC_SOURCE_ID_CHARS = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-:"
-)
+_PUBLIC_SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,96}$")
 
 
 def untrusted_context_receipt(
@@ -79,6 +77,4 @@ def _redacted_segment_id(
 
 
 def _is_public_source_id(source_id: str) -> bool:
-    if len(source_id.encode("utf-8")) > _PUBLIC_SOURCE_ID_MAX_BYTES:
-        return False
-    return all(character in _PUBLIC_SOURCE_ID_CHARS for character in source_id)
+    return _PUBLIC_SOURCE_ID_RE.fullmatch(source_id) is not None
