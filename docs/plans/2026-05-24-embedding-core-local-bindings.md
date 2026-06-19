@@ -28,3 +28,9 @@ Run the registered focused pytest command, changed-scope coverage command, and
 `embedding-core-inputs-view` probe locally on Linux. Compare the local probe
 against the synced `origin/main` baseline before pushing. CI remains the merge
 gate for the registered PR-scoped performance report.
+
+## 2026-06-19 Slice
+
+The current follow-up binds `loaded_model.runtime_model` and `request.inputs` to
+locals immediately before the runtime call. This preserves the protobuf repeated
+input view, avoids list materialization, and keeps response assembly unchanged.

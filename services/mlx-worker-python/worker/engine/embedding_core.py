@@ -25,10 +25,12 @@ class EmbeddingCore:
                 )
             )
 
+        runtime_model = loaded_model.runtime_model
+        request_inputs = request.inputs
         try:
             vectors = registry.embedding_runtime.embed_inputs(
-                loaded_model.runtime_model,
-                request.inputs,
+                runtime_model,
+                request_inputs,
             )
         except Exception as exc:  # pragma: no cover - defensive branch
             return inference_pb2.EmbedResponse(
