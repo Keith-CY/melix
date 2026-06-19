@@ -41,19 +41,19 @@ def _build_snapshot(root: Path, *, row_count: int, sidecar_count: int) -> Path:
 
 
 def _read_rows_with_yield_count(snapshot_dir: Path, *, limit: int) -> tuple[list[dict[str, object]], int]:
-    original_iter = catalog._iter_supported_dataset_files
+    original_limited_iter = catalog._iter_limited_preview_dataset_files
     yielded_paths: set[Path] = set()
 
-    def tracked_iter(path: Path):
-        for candidate in original_iter(path):
+    def tracked_limited_iter(path: Path, *, limit: int):
+        for candidate in original_limited_iter(path, limit=limit):
             yielded_paths.add(candidate)
             yield candidate
 
-    catalog._iter_supported_dataset_files = tracked_iter
+    catalog._iter_limited_preview_dataset_files = tracked_limited_iter
     try:
         rows = catalog.read_hf_dataset_snapshot_rows(snapshot_dir, limit=limit)
     finally:
-        catalog._iter_supported_dataset_files = original_iter
+        catalog._iter_limited_preview_dataset_files = original_limited_iter
     return rows, len(yielded_paths)
 
 

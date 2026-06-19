@@ -400,6 +400,59 @@ def test_dataset_catalog_first_preview_scan_skips_unsupported_files_before_best(
     assert catalog._first_supported_dataset_file(snapshot_dir) == winner
 
 
+def test_dataset_catalog_limited_preview_scan_streams_multiple_files_without_sorted_walk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    empty_dir = snapshot_dir / "a-empty"
+    data_dir = snapshot_dir / "data"
+    empty_dir.mkdir(parents=True)
+    data_dir.mkdir()
+    for index in range(5):
+        (data_dir / f"part-{index:05d}.jsonl").write_text(
+            json.dumps({"prompt": f"prompt-{index}"}) + "\n",
+            encoding="utf-8",
+        )
+    for index in range(100):
+        (snapshot_dir / f"sidecar-{index:05d}.txt").write_text("ignored\n", encoding="utf-8")
+
+    def fail_sorted_walk(path: Path):
+        raise AssertionError(f"limited preview should not sort full tree: {path}")
+        yield path  # pragma: no cover
+
+    monkeypatch.setattr(catalog, "_iter_supported_dataset_files", fail_sorted_walk)
+
+    assert catalog.read_hf_dataset_snapshot_rows(snapshot_dir, limit=2) == [
+        {"prompt": "prompt-0"},
+        {"prompt": "prompt-1"},
+    ]
+    assert list(catalog._iter_first_preview_dataset_file(snapshot_dir)) == [data_dir / "part-00000.jsonl"]
+    assert list(catalog._iter_first_preview_dataset_file(tmp_path / "missing")) == []
+    assert list(catalog._iter_limited_preview_dataset_files(tmp_path / "missing", limit=2)) == []
+    assert catalog._first_supported_scan_entries(data_dir, after="", limit=0) == []
+    assert catalog._first_supported_scan_entries(data_dir, after="part-00000.jsonl", limit=1)[0][0] == "part-00001.jsonl"
+
+    direct_dir = tmp_path / "direct"
+    direct_dir.mkdir()
+    direct_first = direct_dir / "part-00000.jsonl"
+    direct_second = direct_dir / "part-00001.jsonl"
+    direct_first.write_text('{"prompt":"direct-0"}\n', encoding="utf-8")
+    direct_second.write_text('{"prompt":"direct-1"}\n', encoding="utf-8")
+    assert list(catalog._iter_limited_preview_dataset_files(direct_dir, limit=2)) == [
+        direct_first,
+        direct_second,
+    ]
+
+    original_scandir = catalog.os.scandir
+
+    def failing_scandir(_path: object):
+        raise OSError("scan failed")
+
+    monkeypatch.setattr(catalog.os, "scandir", failing_scandir)
+    assert catalog._first_supported_scan_entries(data_dir, after="", limit=1) == []
+    monkeypatch.setattr(catalog.os, "scandir", original_scandir)
+
 def test_dataset_catalog_json_row_reader_limit_uses_incremental_decode(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -775,13 +828,14 @@ def test_dataset_catalog_row_reader_stops_iterator_after_unsplit_limit(
     third_file.write_text('{"prompt":"third"}\n', encoding="utf-8")
     yielded_paths: list[Path] = []
 
-    def tracking_iter(path: Path):
+    def tracking_iter(path: Path, *, limit: int):
         assert path == snapshot_dir
+        assert limit == 2
         for candidate in (first_file, second_file, third_file):
             yielded_paths.append(candidate)
             yield candidate
 
-    monkeypatch.setattr(catalog, "_iter_supported_dataset_files", tracking_iter)
+    monkeypatch.setattr(catalog, "_iter_limited_preview_dataset_files", tracking_iter)
 
     rows = read_hf_dataset_snapshot_rows(snapshot_dir, limit=2)
 
