@@ -313,13 +313,22 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             continue
 
         if type(record) is dict:
-            source_id = record_get("source_id")
-            payload = record_get("payload")
-            owner_scope_checked = record_get("owner_scope_checked")
-            segment_id = record_get("segment_id", "")
-            source_field = record_get("source_field", "")
-            reason = record_get("reason", "")
-            corrective_action = record_get("corrective_action", "")
+            try:
+                source_id = record["source_id"]
+                payload = record["payload"]
+                owner_scope_checked = record["owner_scope_checked"]
+                segment_id = record["segment_id"]
+                source_field = record["source_field"]
+                reason = record["reason"]
+                corrective_action = record["corrective_action"]
+            except KeyError:
+                source_id = record_get("source_id")
+                payload = record_get("payload")
+                owner_scope_checked = record_get("owner_scope_checked")
+                segment_id = record_get("segment_id", "")
+                source_field = record_get("source_field", "")
+                reason = record_get("reason", "")
+                corrective_action = record_get("corrective_action", "")
             if (
                 isinstance(source_id, str)
                 and isinstance(payload, dict)
