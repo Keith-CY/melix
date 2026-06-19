@@ -1568,6 +1568,32 @@ def test_native_mtp_extra_safetensor_files_preserves_custom_file_names(
     assert extra_mtp_safetensor_files(model_dir) == [sidecar_path]
 
 
+def test_native_mtp_extra_safetensor_files_inlines_key_prefix_filter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class CustomKey:
+        def __str__(self) -> str:
+            return "mtp.custom.weight"
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    sidecar_path = model_dir / "mtp-custom.safetensors"
+    sidecar_path.write_bytes(b"mtp")
+    monkeypatch.setattr(
+        native_mtp_loader_module,
+        "_load_json_payload",
+        lambda path: {"weight_map": {CustomKey(): "mtp-custom.safetensors", "model.layers.0.weight": "ignored.safetensors"}},
+    )
+
+    def fail_weight_key_helper(key: object) -> bool:  # pragma: no cover - regression guard
+        raise AssertionError(f"_extra_mtp_safetensor_file_paths should inline key prefix checks: {key!r}")
+
+    monkeypatch.setattr(native_mtp_loader_module, "_is_mtp_weight_key", fail_weight_key_helper)
+
+    assert _extra_mtp_safetensor_file_paths(model_dir) == [str(sidecar_path)]
+
+
 def test_native_mtp_model_safetensor_listing_uses_scandir_without_glob(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
