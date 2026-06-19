@@ -73,6 +73,7 @@ struct PythonBridgeWorkerClientTests {
             #expect(events.count == 2)
             #expect(events[0].tokenDelta.text == "Py")
             #expect(events[1].completed.assistantText == "Py")
+            await client.shutdown()
         } catch {
             await fixture.stop()
             throw error
@@ -134,6 +135,7 @@ struct PythonBridgeWorkerClientTests {
             #expect(exported.exportPath == "/tmp/model-ops/export.json")
             #expect(exported.exportJson == "{\"kind\":\"benchmark\"}")
             #expect(tracker.creationCount == 1)
+            await client.shutdown()
         } catch {
             await fixture.stop()
             throw error
@@ -183,6 +185,7 @@ struct PythonBridgeWorkerClientTests {
             #expect(try await client.runtimeStats().stats.residentBytes == 12_288)
             #expect(try await client.cacheStats().stats.l1Bytes == 4_096)
             #expect(tracker.creationCount == 1)
+            await client.shutdown()
         } catch {
             await fixture.stop()
             throw error
