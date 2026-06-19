@@ -12,6 +12,8 @@ The probe is extended to measure the model safetensor listing path directly agai
 
 2026-06-07 follow-up slice: the same registered probe now also seeds duplicate native-MTP metadata entries that do not end in `.safetensors`. The loader filters those names before the duplicate-set lookup, keeping missing-path warnings and `os.path.exists()` checks limited to candidate sidecar shard paths while reducing set churn on noisy index maps.
 
+2026-06-19 follow-up slice: `_extra_mtp_safetensor_file_paths()` now inlines the native-MTP weight-key prefix check inside the weight-map scan. This keeps the public `_is_mtp_weight_key()` compatibility helper for tests and direct callers, but removes one helper call per index entry on the sidecar shard discovery hot path, including noisy non-MTP keys.
+
 ## Verification plan
 
 ```bash

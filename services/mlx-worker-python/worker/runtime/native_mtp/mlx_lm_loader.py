@@ -72,10 +72,13 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
     path_join = os.path.join
     path_exists = os.path.exists
     path_sep = os.sep
-    is_mtp_weight_key = _is_mtp_weight_key
+    key_prefixes = _MTP_WEIGHT_KEY_PREFIXES
     to_text = str
     for key, file_name in weight_map.items():
-        if not is_mtp_weight_key(key):
+        if type(key) is str:
+            if not key.startswith(key_prefixes):
+                continue
+        elif not to_text(key).startswith(key_prefixes):
             continue
         if type(file_name) is str:
             file_name_text = file_name
