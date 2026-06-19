@@ -151,10 +151,12 @@ def _fast_trajectory_provenance_from_snapshot_manifest(
     *,
     snapshot_manifest_path: str | None,
 ) -> dict[str, Any] | None:
-    if manifest.get("format") != "agentic_tool_trace":
+    manifest_get = manifest.get
+    if manifest_get("format") != "agentic_tool_trace":
         return None
+    is_clean_text = _is_clean_manifest_text
     for key in _FAST_MANIFEST_REQUIRED_KEYS:
-        if not _is_clean_manifest_text(manifest.get(key)):
+        if not is_clean_text(manifest_get(key)):
             return None
     provenance: dict[str, Any] = {
         "trajectory_dataset_id": manifest["source_dataset_id"],
@@ -166,7 +168,7 @@ def _fast_trajectory_provenance_from_snapshot_manifest(
     if snapshot_manifest_path is not None:
         provenance["trajectory_snapshot_manifest_path"] = snapshot_manifest_path
     for source_key, target_key in _FAST_MANIFEST_OPTIONAL_FIELD_MAP:
-        value = manifest.get(source_key)
+        value = manifest_get(source_key)
         if value is not None and value != "":
             provenance[target_key] = value
     return provenance
