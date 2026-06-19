@@ -558,7 +558,16 @@ def _build_tool_selection_result(
     selection_mode: str,
     fallback_reason: str,
 ) -> ToolSelectionResult:
-    selected_registry = registry.select(tuple(selected_names))
+    if len(selected_names) == 1:
+        selected_name = selected_names[0]
+        selected_registry = registry.select((selected_name,))
+        selected_tools = [{"tool_id": selected_name, "source": selected_sources[selected_name]}]
+    else:
+        selected_registry = registry.select(tuple(selected_names))
+        selected_tools = [
+            {"tool_id": tool_name, "source": selected_sources[tool_name]}
+            for tool_name in selected_registry.names()
+        ]
     registry_metrics = registry.metrics()
     selected_metrics = selected_registry.metrics()
     selected_tool_count = selected_metrics.tool_count
@@ -568,10 +577,7 @@ def _build_tool_selection_result(
         "selection_mode": selection_mode,
         "vector_available": selection_input.vector_available,
         "fallback_reason": fallback_reason,
-        "selected_tools": [
-            {"tool_id": tool_name, "source": selected_sources[tool_name]}
-            for tool_name in selected_registry.names()
-        ],
+        "selected_tools": selected_tools,
         "dropped_tool_count": max(0, registry_metrics.tool_count - selected_tool_count),
         "full_schema_bytes": registry_metrics.schema_bytes,
         "selected_schema_bytes": selected_metrics.schema_bytes,
