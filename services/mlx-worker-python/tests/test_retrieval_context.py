@@ -1341,6 +1341,43 @@ def test_project_retrieval_contexts_preserves_multi_field_admission_duplicate_sc
         }
     ]
 
+
+def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> None:
+    payload = {
+        "retrieved_context": {
+            "title": "scalar payload",
+            "score": 1.0,
+            "rank": 3,
+            "active": True,
+            "optional_note": None,
+            "metadata": {
+                "labels": ("retrieved", {"kind": "document"}, {"bucket": 1}),
+                "scores": [3, 4, {"rank": 0}],
+            },
+        }
+    }
+
+    copied = retrieval_context_module._copy_payload(payload)
+
+    assert copied == payload
+    assert copied is not payload
+    assert copied["retrieved_context"] is not payload["retrieved_context"]
+    assert copied["retrieved_context"]["metadata"] is not payload["retrieved_context"]["metadata"]
+    assert (
+        copied["retrieved_context"]["metadata"]["labels"]
+        == payload["retrieved_context"]["metadata"]["labels"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["labels"]
+        is not payload["retrieved_context"]["metadata"]["labels"]
+    )
+    assert copied["retrieved_context"]["optional_note"] is None
+    assert copied["retrieved_context"]["title"] is payload["retrieved_context"]["title"]
+    assert copied["retrieved_context"]["score"] is payload["retrieved_context"]["score"]
+    assert copied["retrieved_context"]["rank"] is payload["retrieved_context"]["rank"]
+    assert copied["retrieved_context"]["active"] is payload["retrieved_context"]["active"]
+
+
 def test_project_retrieval_contexts_refuses_unknown_context_kind() -> None:
     projection = project_retrieval_contexts(
         [
