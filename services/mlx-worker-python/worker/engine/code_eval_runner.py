@@ -463,6 +463,7 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
         field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_FRIENDLY
 
     payload: dict[str, object] = {}
+    required_string_field_count = 0
     search_start = 0
     field_value_start = _json_field_value_start_for_token
     extract_string = _extract_json_string_field_at
@@ -479,6 +480,8 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
             value = extract_string(payload_bytes, value_start)
             if value is not None:
                 payload[key] = value
+                if key != "compile_status":
+                    required_string_field_count += 1
                 search_start = value_start + len(value) + 1
             continue
 
@@ -489,7 +492,7 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
         payload[key] = value
         search_start = value_end
 
-    if _code_eval_payload_has_required_string_fields(payload):
+    if required_string_field_count == len(_REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS):
         return payload
     return None
 
