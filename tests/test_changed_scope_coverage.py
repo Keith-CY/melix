@@ -220,9 +220,12 @@ def test_main_short_circuits_empty_filtered_paths_without_reading_coverage(
 
     assert changed_scope_coverage.main() == 0
 
-    output = capsys.readouterr().out
-    assert "aggregate_measurable_changed_lines=0" in output
-    assert "TOTAL 0 0 100%" in output
+    assert capsys.readouterr().out == (
+        "aggregate_measurable_changed_lines=0\n"
+        "aggregate_covered_changed_lines=0\n"
+        "aggregate_missed_changed_lines=0\n"
+        "TOTAL 0 0 100%\n"
+    )
 
 
 def test_coverage_path_allowlist_rejects_invalid_json() -> None:
