@@ -376,6 +376,9 @@ class LocalJobContinuationStore:
         reconcile_record = self.reconcile_record
         receipts_append = receipts.append
         candidates_append = candidates.append
+        candidate_type = LocalJobContinuationFollowupCandidate
+        candidate_receipt = _followup_candidate_scan_receipt
+        unreadable_record_receipt = _unreadable_record_scan_receipt
         for job_id in record_job_ids:
             try:
                 reconciliation = reconcile_record(
@@ -386,22 +389,23 @@ class LocalJobContinuationStore:
                 receipts_append(exc.receipt)
                 continue
             except (json.JSONDecodeError, OSError, ValueError):
-                receipts_append(_unreadable_record_scan_receipt(job_id=job_id))
+                receipts_append(unreadable_record_receipt(job_id=job_id))
                 continue
             if reconciliation is None:
                 continue
-            receipt = _followup_candidate_scan_receipt(reconciliation.record)
+            receipt = candidate_receipt(reconciliation.record)
+            reason = receipt["reason"]
             # Scan-level follow-up state wins for ready or already-claimed records.
             # Otherwise surface reconciliation changes before the generic scan result.
-            if receipt["reason"] == "followup_candidate_ready":
+            if reason == "followup_candidate_ready":
                 receipts_append(receipt)
                 candidates_append(
-                    LocalJobContinuationFollowupCandidate(
+                    candidate_type(
                         record=reconciliation.record,
                         receipt=receipt,
                     )
                 )
-            elif receipt["reason"] == "followup_already_claimed":
+            elif reason == "followup_already_claimed":
                 receipts_append(receipt)
             elif reconciliation.receipt.get("reason") != "record_state_preserved":
                 receipts_append(reconciliation.receipt)
