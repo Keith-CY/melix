@@ -11,7 +11,11 @@ from worker.runtime.prompt_context import (
     refused_prompt_context_receipt,
     refused_source_prompt_context_receipt,
 )
-from worker.runtime.untrusted_context import untrusted_context_receipt
+from worker.runtime.untrusted_context import (
+    UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
+    _is_public_source_id,
+    untrusted_context_receipt,
+)
 
 
 RetrievalContextKind = Literal["retrieved_document", "retrieved_image"]
@@ -124,6 +128,8 @@ def project_retrieval_contexts(
     admit_entry = _admit_entry
     duplicate_projection_receipt = _duplicate_projection_receipt
     build_untrusted_context_receipt = untrusted_context_receipt
+    build_public_context_receipt = _public_untrusted_context_receipt
+    is_public_source_id = _is_public_source_id
     refusal_receipts_extend = refusal_receipts.extend
     refusal_receipts_append = refusal_receipts.append
     receipts_append = receipts.append
@@ -162,17 +168,28 @@ def project_retrieval_contexts(
                     and normalized_reason
                     and normalized_corrective_action
                 ):
-                    receipt = build_untrusted_context_receipt(
-                        segment_id=normalized_segment_id,
-                        source_type=context_kind,
-                        source_field=normalized_source_field,
-                        source_id=normalized_source_id,
-                        message_role="user",
-                        owner_scope_checked=owner_scope_checked,
-                        included=True,
-                        reason=normalized_reason,
-                        corrective_action=normalized_corrective_action,
-                    )
+                    if is_public_source_id(normalized_source_id):
+                        receipt = build_public_context_receipt(
+                            segment_id=normalized_segment_id,
+                            source_type=context_kind,
+                            source_field=normalized_source_field,
+                            source_id=normalized_source_id,
+                            owner_scope_checked=owner_scope_checked,
+                            reason=normalized_reason,
+                            corrective_action=normalized_corrective_action,
+                        )
+                    else:
+                        receipt = build_untrusted_context_receipt(
+                            segment_id=normalized_segment_id,
+                            source_type=context_kind,
+                            source_field=normalized_source_field,
+                            source_id=normalized_source_id,
+                            message_role="user",
+                            owner_scope_checked=owner_scope_checked,
+                            included=True,
+                            reason=normalized_reason,
+                            corrective_action=normalized_corrective_action,
+                        )
                     if normalized_source_field in user_payload:
                         refusal_receipts_append(
                             duplicate_projection_receipt(
@@ -264,6 +281,8 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     entry_type = RetrievalContextEntry
     duplicate_projection_receipt = _duplicate_projection_receipt
     build_untrusted_context_receipt = untrusted_context_receipt
+    build_public_context_receipt = _public_untrusted_context_receipt
+    is_public_source_id = _is_public_source_id
     projection_refusal_receipts_extend = projection_refusal_receipts.extend
     receipts_append = receipts.append
     user_payload_update = user_payload.update
@@ -322,17 +341,28 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                     and normalized_reason
                     and normalized_corrective_action
                 ):
-                    receipt = build_untrusted_context_receipt(
-                        segment_id=normalized_segment_id,
-                        source_type=context_kind,
-                        source_field=normalized_source_field,
-                        source_id=normalized_source_id,
-                        message_role="user",
-                        owner_scope_checked=owner_scope_checked,
-                        included=True,
-                        reason=normalized_reason,
-                        corrective_action=normalized_corrective_action,
-                    )
+                    if is_public_source_id(normalized_source_id):
+                        receipt = build_public_context_receipt(
+                            segment_id=normalized_segment_id,
+                            source_type=context_kind,
+                            source_field=normalized_source_field,
+                            source_id=normalized_source_id,
+                            owner_scope_checked=owner_scope_checked,
+                            reason=normalized_reason,
+                            corrective_action=normalized_corrective_action,
+                        )
+                    else:
+                        receipt = build_untrusted_context_receipt(
+                            segment_id=normalized_segment_id,
+                            source_type=context_kind,
+                            source_field=normalized_source_field,
+                            source_id=normalized_source_id,
+                            message_role="user",
+                            owner_scope_checked=owner_scope_checked,
+                            included=True,
+                            reason=normalized_reason,
+                            corrective_action=normalized_corrective_action,
+                        )
                     if normalized_source_field in user_payload:
                         projection_refusal_receipts_append(
                             duplicate_projection_receipt(
@@ -633,6 +663,33 @@ def _duplicate_projection_receipt(
             "retrieved entries into one prompt payload."
         ),
     )
+
+
+def _public_untrusted_context_receipt(
+    *,
+    segment_id: str,
+    source_type: str,
+    source_field: str,
+    source_id: str,
+    owner_scope_checked: bool,
+    reason: str,
+    corrective_action: str,
+) -> dict[str, object]:
+    return {
+        "schema_version": UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
+        "segment_id": segment_id,
+        "source_type": source_type,
+        "source_field": source_field,
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": True,
+        "owner_scope_checked": owner_scope_checked,
+        "reason": reason,
+        "corrective_action": corrective_action,
+        "source_id": source_id,
+    }
 
 
 def _fallback_entry_source_id(entry: RetrievalContextEntry) -> str:
