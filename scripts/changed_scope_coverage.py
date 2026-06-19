@@ -262,10 +262,12 @@ def main() -> int:
     repo_root = Path.cwd()
     paths = _filter_coverage_paths(args.paths, _coverage_path_allowlist(os.environ))
     if not paths:
-        print("aggregate_measurable_changed_lines=0")
-        print("aggregate_covered_changed_lines=0")
-        print("aggregate_missed_changed_lines=0")
-        print("TOTAL 0 0 100%")
+        sys.stdout.write(
+            "aggregate_measurable_changed_lines=0\n"
+            "aggregate_covered_changed_lines=0\n"
+            "aggregate_missed_changed_lines=0\n"
+            "TOTAL 0 0 100%\n"
+        )
         return 0
 
     coverage_payload = json.loads(Path(args.coverage_json).read_text(encoding="utf-8"))
