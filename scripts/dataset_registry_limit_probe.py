@@ -28,15 +28,15 @@ def _build_snapshot(snapshot_dir: Path, *, group_count: int, files_per_group: in
 
 
 def _sample(snapshot_dir: Path, *, limit: int) -> dict[str, float]:
-    original_iter = catalog._iter_supported_dataset_files
+    original_iter = catalog._iter_limited_preview_dataset_files
     yielded_paths: set[Path] = set()
 
-    def tracked_iter(path: Path):
-        for candidate in original_iter(path):
+    def tracked_iter(path: Path, *, limit: int):
+        for candidate in original_iter(path, limit=limit):
             yielded_paths.add(candidate)
             yield candidate
 
-    catalog._iter_supported_dataset_files = tracked_iter
+    catalog._iter_limited_preview_dataset_files = tracked_iter
     try:
         tracemalloc.start()
         started = time.perf_counter()
@@ -45,7 +45,7 @@ def _sample(snapshot_dir: Path, *, limit: int) -> dict[str, float]:
         _, peak_bytes = tracemalloc.get_traced_memory()
         tracemalloc.stop()
     finally:
-        catalog._iter_supported_dataset_files = original_iter
+        catalog._iter_limited_preview_dataset_files = original_iter
     if len(rows) != limit:
         raise SystemExit(f"expected {limit} rows, got {len(rows)}")
     return {

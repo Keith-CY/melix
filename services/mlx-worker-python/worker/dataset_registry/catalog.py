@@ -4,6 +4,7 @@ import csv
 from dataclasses import dataclass
 from functools import lru_cache
 import hashlib
+import heapq
 import json
 import os
 from pathlib import Path
@@ -440,8 +441,8 @@ def read_hf_dataset_snapshot_rows(
     resolved_snapshot_path = Path(snapshot_path).expanduser().resolve()
     normalized_split = _normalized(split)
     rows: list[dict[str, Any]] = []
-    if limit == 1 and not normalized_split:
-        selected_files = _iter_first_preview_dataset_file(resolved_snapshot_path)
+    if limit is not None and not normalized_split:
+        selected_files = _iter_limited_preview_dataset_files(resolved_snapshot_path, limit=limit)
     else:
         selected_files = _iter_selected_dataset_files(resolved_snapshot_path, split=normalized_split)
     for path in selected_files:
@@ -464,9 +465,92 @@ def _iter_selected_dataset_files(snapshot_path: Path, *, split: str) -> Iterator
 
 
 def _iter_first_preview_dataset_file(snapshot_path: Path) -> Iterator[Path]:
-    first_path = _first_supported_dataset_file(snapshot_path)
-    if first_path is not None:
-        yield first_path
+    yield from _iter_limited_preview_dataset_files(snapshot_path, limit=1)
+
+
+def _iter_limited_preview_dataset_files(directory: Path, *, limit: int) -> Iterator[Path]:
+    if limit == 1:
+        first_path = _first_supported_dataset_file(directory)
+        if first_path is not None:
+            yield first_path
+        return
+    emitted = 0
+    previous_name = ""
+    while emitted < limit:
+        next_entries = _first_supported_scan_entries(
+            directory,
+            after=previous_name,
+            limit=limit - emitted,
+        )
+        if not next_entries:
+            return
+        for name, path, is_directory, is_file in next_entries:
+            previous_name = name
+            if is_directory:
+                for nested_path in _iter_limited_preview_dataset_files(path, limit=limit - emitted):
+                    yield nested_path
+                    emitted += 1
+                    if emitted >= limit:
+                        return
+                continue
+            if is_file:
+                yield path
+                emitted += 1
+                if emitted >= limit:
+                    return
+
+
+def _first_supported_scan_entries(
+    directory: Path,
+    *,
+    after: str,
+    limit: int,
+) -> list[tuple[str, Path, bool, bool]]:
+    if limit <= 0:
+        return []
+    supported_suffixes = _SUPPORTED_DATASET_SUFFIXES
+    try:
+        with os.scandir(os.fspath(directory)) as entries:
+            return [
+                (name, Path(path_raw), is_dir, is_file)
+                for name, path_raw, is_dir, is_file in heapq.nsmallest(
+                    limit,
+                    _supported_scan_entry_records(entries, after=after, supported_suffixes=supported_suffixes),
+                    key=lambda item: item[0],
+                )
+            ]
+    except OSError:
+        return []
+
+
+def _supported_scan_entry_records(
+    entries: Iterable[os.DirEntry[str]],
+    *,
+    after: str,
+    supported_suffixes: Mapping[str, str],
+) -> Iterator[tuple[str, str, bool, bool]]:
+    for entry in entries:
+        name = entry.name
+        if name <= after:
+            continue
+        try:
+            is_dir = entry.is_dir()
+            is_file = False if is_dir else entry.is_file()
+        except OSError:
+            continue
+        if not is_dir and not is_file:
+            continue
+        if is_file and name in _README_NAMES:
+            continue
+        if is_file:
+            dot_index = name.rfind(".")
+            if (
+                dot_index <= 0
+                or dot_index == len(name) - 1
+                or name[dot_index:].lower() not in supported_suffixes
+            ):
+                continue
+        yield name, entry.path, is_dir, is_file
 
 
 def _first_supported_dataset_file(directory: Path) -> Path | None:
