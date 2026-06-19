@@ -4188,8 +4188,36 @@ button.primary:active {
 
         await modelCatalog.beginRequest(modelID: translated.modelID)
         await scheduleIdleSweepIfNeeded(idleSweepRequest)
+        let workerStream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+        if shouldInspectFirstStreamEventForPreSSEAdmission(translated) {
+            var iterator = execution.stream.makeAsyncIterator()
+            do {
+                if let firstEvent = try await iterator.next() {
+                    if case .error(let error) = firstEvent.payload,
+                       isPreSSEAdmissionError(error.error) {
+                        await modelCatalog.finishRequest(modelID: translated.modelID)
+                        return workerErrorResponse(error.error)
+                    }
+                    let state = FirstStreamEventReplayState(firstEvent: firstEvent, iterator: iterator)
+                    workerStream = AsyncThrowingStream(unfolding: {
+                        try await state.next()
+                    })
+                } else {
+                    workerStream = AsyncThrowingStream(unfolding: { nil })
+                }
+            } catch {
+                // This is still before SSE response construction, so first-pull
+                // worker/RPC failures remain JSON errors; later stream failures
+                // continue through SSEStreamWriter as event-stream frames.
+                await modelCatalog.finishRequest(modelID: translated.modelID)
+                return workerUnavailableResponse()
+            }
+        } else {
+            workerStream = execution.stream
+        }
+
         let stream = sseWriter.encode(
-            stream: execution.stream,
+            stream: workerStream,
             requestID: execution.requestID,
             modelID: translated.responseModelID ?? execution.modelID,
             shape: shape,
@@ -4212,6 +4240,37 @@ button.primary:active {
             ],
             body: .stream(stream)
         )
+    }
+
+    private func shouldInspectFirstStreamEventForPreSSEAdmission(_ translated: TranslatedChatRequest) -> Bool {
+        normalizedMediaPartCount(from: translated.workerRequest.execution.ext) > 0
+    }
+
+    // AsyncThrowingStream(unfolding:) serializes calls to the captured state, so
+    // this unchecked Sendable wrapper keeps the replay state single-consumer.
+    private final class FirstStreamEventReplayState: @unchecked Sendable {
+        private var firstEvent: Melix_Worker_V1_ExecuteEvent?
+        private var iterator: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Iterator
+
+        init(
+            firstEvent: Melix_Worker_V1_ExecuteEvent,
+            iterator: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Iterator
+        ) {
+            self.firstEvent = firstEvent
+            self.iterator = iterator
+        }
+
+        func next() async throws -> Melix_Worker_V1_ExecuteEvent? {
+            if let firstEvent {
+                self.firstEvent = nil
+                return firstEvent
+            }
+            return try await iterator.next()
+        }
+    }
+
+    private func isPreSSEAdmissionError(_ error: Melix_Worker_V1_ErrorStatus) -> Bool {
+        error.code == "multimodal_prefill_attention_budget_exceeded"
     }
 
     private func encodedJSONResponse<T: Encodable>(_ payload: T, statusCode: Int = 200) throws -> HTTPResponse {
@@ -4836,7 +4895,7 @@ button.primary:active {
     private func workerErrorResponse(_ error: Melix_Worker_V1_ErrorStatus) -> HTTPResponse {
         let statusCode: Int
         switch error.code {
-        case "invalid_argument":
+        case "invalid_argument", "multimodal_prefill_attention_budget_exceeded":
             statusCode = 400
         case "not_found":
             statusCode = 404
