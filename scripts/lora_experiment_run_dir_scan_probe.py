@@ -36,7 +36,11 @@ class FakeEntry:
         path_attr_reads += 1
         return self._path
 
-    def is_dir(self) -> bool:
+    def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+        if follow_symlinks:  # pragma: no cover - regression guard
+            raise AssertionError(  # pragma: no cover
+                "run dir scan should not follow directory symlinks"
+            )
         return self._is_dir
 
 

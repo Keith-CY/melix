@@ -105,7 +105,11 @@ def test_iter_lora_run_dirs_sorts_names_without_reading_entry_paths(tmp_path: Pa
             path_reads += 1
             raise AssertionError("_iter_lora_run_dirs should rebuild paths from entry names")
 
-        def is_dir(self) -> bool:
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            if follow_symlinks:  # pragma: no cover - regression guard
+                raise AssertionError(  # pragma: no cover
+                    "_iter_lora_run_dirs should not follow directory symlinks"
+                )
             if self._raises:
                 raise OSError("unreadable")
             return self._is_dir
