@@ -19,6 +19,16 @@ The registry entry includes focused `test_command`, `coverage_command`, and `pro
 5. Verify the zero-norm contract inside the registered project-digest probe, then run focused embedding tests, changed-scope coverage, and the registered probe locally on Linux.
 6. Use PR-scoped performance CI as the merge gate.
 
+## 2026-06-19 local binding follow-up
+
+A follow-up Python-only micro-slice keeps the same registered probe and behavior
+contract while narrowing interpreter overhead in `_project_digest()` and
+`_project_digest_expanded()`. The `math.sqrt` and `round` callables are bound
+through module/default locals so repeated deterministic embedding projection
+avoids extra global lookups on both the default 8-dimension and expanded-vector
+paths while leaving the digest unpacker and scale globals patchable for the
+zero-norm regression probe.
+
 ## Success metrics
 
 Success is measured by the registered probe's `elapsed_ms_mean` and `default_dimension_elapsed_ms_mean` moving lower without changing checksum values. Behavior parity is measured by `test_project_digest_preserves_legacy_projection_values` and the existing embedding runtime tests.
