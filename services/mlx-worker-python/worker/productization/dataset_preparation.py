@@ -587,10 +587,10 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
             with scandir(directory) as entries:
                 for entry in entries:
                     try:
-                        if entry.is_dir(follow_symlinks=False):
-                            stack_append(entry.path)
-                        elif entry.is_file(follow_symlinks=False):
+                        if entry.is_file(follow_symlinks=False):
                             file_paths_append(entry.path)
+                        elif entry.is_dir(follow_symlinks=False):
+                            stack_append(entry.path)
                     except OSError:
                         continue
         except OSError:
