@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import math
 from threading import Event
 from threading import Lock
@@ -47,6 +48,95 @@ class LoadedModel:
     load_trust: common_pb2.ModelLoadTrustPolicy
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
+
+
+@dataclass
+class ModelUnloadReceipt:
+    model_handle: str
+    found: bool
+    unloaded: bool
+    pending_unload: bool
+    abort_requested: bool = False
+    released_at: str = ""
+    unloaded_at: str = ""
+
+    @property
+    def details(self) -> dict[str, str]:
+        return {
+            "model_handle": self.model_handle,
+            "found": _bool_text(self.found),
+            "unloaded": _bool_text(self.unloaded),
+            "pending_unload": _bool_text(self.pending_unload),
+            "abort_requested": _bool_text(self.abort_requested),
+            "released_at": self.released_at,
+            "unloaded_at": self.unloaded_at,
+        }
+
+
+def _bool_text(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+class RequestRuntimeLease:
+    def __init__(
+        self,
+        registry: WorkerRegistry,
+        loaded_model: LoadedModel,
+        *,
+        request_id: str,
+        runtime_kind: str,
+        phase: str = "generate",
+    ) -> None:
+        self._registry = registry
+        self.loaded_model = loaded_model
+        self.request_id = request_id
+        self.runtime_kind = runtime_kind
+        self.phase = phase
+        self._lease_token = object()
+        self._state: RequestState | None = None
+        self._closed = False
+
+    def __enter__(self) -> RequestRuntimeLease:
+        if self._state is None:
+            self._state = self._registry._acquire_request_runtime_lease(
+                self.loaded_model,
+                request_id=self.request_id,
+                runtime_kind=self.runtime_kind,
+                phase=self.phase,
+                lease_token=self._lease_token,
+            )
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
+
+    @property
+    def state(self) -> RequestState:
+        if self._state is None:
+            raise RuntimeError("Request runtime lease has not been entered.")
+        return self._state
+
+    @property
+    def cancel_event(self) -> Event:
+        return self.state.cancel_event
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._registry._release_request_runtime_lease(
+            self.loaded_model.handle,
+            request_id=self.request_id,
+            lease_token=self._lease_token,
+        )
+
+
+class StreamLifetimeLease(RequestRuntimeLease):
+    pass
 
 
 @dataclass
@@ -137,6 +227,11 @@ class WorkerRegistry:
         self._loaded_model_resident_bytes = 0
         self._reserved_model_resident_bytes = 0
         self._requests: dict[str, RequestState] = {}
+        self._request_model_handles: dict[str, str] = {}
+        self._request_lease_tokens: dict[str, object] = {}
+        self._active_model_lease_counts: dict[str, int] = {}
+        self._pending_unload_receipts: dict[str, ModelUnloadReceipt] = {}
+        self._completed_unload_receipts: dict[str, ModelUnloadReceipt] = {}
         self._active_request_count = 0
         self._active_prefill_count = 0
         self._active_decode_count = 0
@@ -406,17 +501,111 @@ class WorkerRegistry:
         )
 
     def unload_model(self, handle: str) -> bool:
+        loaded_to_close: LoadedModel | None = None
         with self._lock:
-            loaded = self._loaded_models.pop(handle, None)
+            loaded = self._loaded_models.get(handle)
             if loaded is None:
                 return False
+            active_lease_count = self._active_model_lease_counts.get(handle, 0)
+            if active_lease_count > 0:
+                receipt = self._pending_unload_receipts.get(handle)
+                if receipt is None:
+                    self._pending_unload_receipts[handle] = ModelUnloadReceipt(
+                        model_handle=handle,
+                        found=True,
+                        unloaded=False,
+                        pending_unload=True,
+                    )
+                return False
+            self._loaded_models.pop(handle)
+            self._pending_unload_receipts.pop(handle, None)
+            self._completed_unload_receipts.pop(handle, None)
             self._invalidate_loaded_model_order_locked()
             self._loaded_model_resident_bytes = max(0, self._loaded_model_resident_bytes - loaded.estimated_resident_bytes)
+            loaded_to_close = loaded
+
+        self._close_loaded_model(loaded_to_close)
+        return True
+
+    def request_model_unload(self, handle: str, *, force: bool = False) -> ModelUnloadReceipt:
+        loaded_to_close: LoadedModel | None = None
+        with self._lock:
+            loaded = self._loaded_models.get(handle)
+            if loaded is None:
+                return ModelUnloadReceipt(
+                    model_handle=handle,
+                    found=False,
+                    unloaded=False,
+                    pending_unload=False,
+                    abort_requested=bool(force),
+                )
+
+            active_lease_count = self._active_model_lease_counts.get(handle, 0)
+            if active_lease_count > 0:
+                receipt = self._pending_unload_receipts.get(handle)
+                if receipt is None:
+                    receipt = ModelUnloadReceipt(
+                        model_handle=handle,
+                        found=True,
+                        unloaded=False,
+                        pending_unload=True,
+                        abort_requested=False,
+                    )
+                    self._pending_unload_receipts[handle] = receipt
+                if force:
+                    receipt.abort_requested = True
+                    self._abort_requests_for_model_handle_locked(handle)
+                return receipt
+
+            receipt = self._pop_loaded_model_for_unload_locked(handle, abort_requested=bool(force))
+            loaded_to_close = loaded
+
+        self._close_loaded_model(loaded_to_close)
+        return receipt
+
+    def pending_unload_receipt(self, handle: str) -> ModelUnloadReceipt | None:
+        with self._lock:
+            return self._pending_unload_receipts.get(handle) or self._completed_unload_receipts.get(handle)
+
+    def _pop_loaded_model_for_unload_locked(
+        self,
+        handle: str,
+        *,
+        abort_requested: bool,
+        released_at: str | None = None,
+    ) -> ModelUnloadReceipt:
+        loaded = self._loaded_models.pop(handle)
+        self._invalidate_loaded_model_order_locked()
+        self._loaded_model_resident_bytes = max(0, self._loaded_model_resident_bytes - loaded.estimated_resident_bytes)
+        unloaded_at = _utc_timestamp()
+        receipt = self._pending_unload_receipts.pop(handle, None)
+        if receipt is None:
+            receipt = ModelUnloadReceipt(
+                model_handle=handle,
+                found=True,
+                unloaded=True,
+                pending_unload=False,
+                abort_requested=abort_requested,
+                released_at=released_at or "",
+                unloaded_at=unloaded_at,
+            )
+        else:
+            receipt.found = True
+            receipt.unloaded = True
+            receipt.pending_unload = False
+            receipt.abort_requested = receipt.abort_requested or abort_requested
+            receipt.released_at = released_at or receipt.released_at or unloaded_at
+            receipt.unloaded_at = unloaded_at
+        self._completed_unload_receipts[handle] = receipt
+        return receipt
+
+    @staticmethod
+    def _close_loaded_model(loaded: LoadedModel | None) -> None:
+        if loaded is None:
+            return
         close_loaded_model = getattr(loaded.runtime, "close_loaded_model", None)
         if callable(close_loaded_model):
             close_loaded_model(loaded.runtime_model)
-            return True
-        return True
 
     def _invalidate_loaded_model_order_locked(self) -> None:
         self._sorted_loaded_model_handles = None
@@ -516,13 +705,128 @@ class WorkerRegistry:
 
     def start_request(self, request_id: str, runtime_kind: str = "text") -> RequestState:
         state = RequestState(request_id=request_id, runtime_kind=runtime_kind)
+        loaded_to_close: LoadedModel | None = None
         with self._lock:
             existing = self._requests.get(request_id)
             if existing is not None:
                 self._remove_request_from_counters(existing)
+                old_handle = self._request_model_handles.pop(request_id, None)
+                self._request_lease_tokens.pop(request_id, None)
+                if old_handle is not None:
+                    self._decrement_model_lease_count_locked(old_handle)
+                    loaded_to_close = self._complete_pending_unload_if_unleased_locked(old_handle)
             self._requests[request_id] = state
             self._add_request_to_counters(state)
+        self._close_loaded_model(loaded_to_close)
         return state
+
+    def acquire_request_runtime_lease(
+        self,
+        loaded_model: LoadedModel,
+        *,
+        request_id: str,
+        runtime_kind: str | None = None,
+        phase: str = "generate",
+    ) -> RequestRuntimeLease:
+        return RequestRuntimeLease(
+            self,
+            loaded_model,
+            request_id=request_id,
+            runtime_kind=runtime_kind or loaded_model.runtime_kind,
+            phase=phase,
+        )
+
+    def acquire_stream_lifetime_lease(
+        self,
+        loaded_model: LoadedModel,
+        *,
+        request_id: str,
+        runtime_kind: str | None = None,
+        phase: str = "generate",
+    ) -> StreamLifetimeLease:
+        return StreamLifetimeLease(
+            self,
+            loaded_model,
+            request_id=request_id,
+            runtime_kind=runtime_kind or loaded_model.runtime_kind,
+            phase=phase,
+        )
+
+    def _acquire_request_runtime_lease(
+        self,
+        loaded_model: LoadedModel,
+        *,
+        request_id: str,
+        runtime_kind: str,
+        phase: str,
+        lease_token: object,
+    ) -> RequestState:
+        state = RequestState(request_id=request_id, runtime_kind=runtime_kind, phase=phase)
+        loaded_to_close: LoadedModel | None = None
+        with self._lock:
+            existing = self._requests.get(request_id)
+            if existing is not None:
+                self._remove_request_from_counters(existing)
+                old_handle = self._request_model_handles.pop(request_id, None)
+                self._request_lease_tokens.pop(request_id, None)
+                if old_handle is not None:
+                    self._decrement_model_lease_count_locked(old_handle)
+                    if old_handle != loaded_model.handle:
+                        loaded_to_close = self._complete_pending_unload_if_unleased_locked(old_handle)
+            self._requests[request_id] = state
+            self._request_model_handles[request_id] = loaded_model.handle
+            self._request_lease_tokens[request_id] = lease_token
+            self._active_model_lease_counts[loaded_model.handle] = (
+                self._active_model_lease_counts.get(loaded_model.handle, 0) + 1
+            )
+            self._add_request_to_counters(state)
+        self._close_loaded_model(loaded_to_close)
+        return state
+
+    def _release_request_runtime_lease(self, handle: str, *, request_id: str, lease_token: object) -> None:
+        loaded_to_close: LoadedModel | None = None
+        with self._lock:
+            recorded_handle = self._request_model_handles.get(request_id)
+            recorded_lease_token = self._request_lease_tokens.get(request_id)
+            if recorded_handle != handle or recorded_lease_token is not lease_token:
+                return
+            state = self._requests.pop(request_id, None)
+            if state is not None:
+                self._remove_request_from_counters(state)
+            self._request_model_handles.pop(request_id, None)
+            self._request_lease_tokens.pop(request_id, None)
+            self._decrement_model_lease_count_locked(handle)
+            loaded_to_close = self._complete_pending_unload_if_unleased_locked(handle)
+
+        self._close_loaded_model(loaded_to_close)
+
+    def _decrement_model_lease_count_locked(self, handle: str) -> None:
+        current = self._active_model_lease_counts.get(handle, 0)
+        if current <= 1:
+            self._active_model_lease_counts.pop(handle, None)
+        else:
+            self._active_model_lease_counts[handle] = current - 1
+
+    def _abort_requests_for_model_handle_locked(self, handle: str) -> None:
+        for request_id, active_handle in tuple(self._request_model_handles.items()):
+            if active_handle != handle:
+                continue
+            state = self._requests.get(request_id)
+            if state is not None:
+                state.cancel_event.set()
+
+    def _complete_pending_unload_if_unleased_locked(self, handle: str) -> LoadedModel | None:
+        active_count = self._active_model_lease_counts.get(handle, 0)
+        pending = self._pending_unload_receipts.get(handle)
+        if active_count != 0 or pending is None or handle not in self._loaded_models:
+            return None
+        loaded = self._loaded_models.get(handle)
+        self._pop_loaded_model_for_unload_locked(
+            handle,
+            abort_requested=pending.abort_requested,
+            released_at=_utc_timestamp(),
+        )
+        return loaded
 
     def get_request(self, request_id: str) -> RequestState | None:
         with self._lock:
@@ -537,10 +841,17 @@ class WorkerRegistry:
                 self._add_request_to_counters(state)
 
     def finish_request(self, request_id: str) -> None:
+        loaded_to_close: LoadedModel | None = None
         with self._lock:
             state = self._requests.pop(request_id, None)
             if state is not None:
                 self._remove_request_from_counters(state)
+            handle = self._request_model_handles.pop(request_id, None)
+            self._request_lease_tokens.pop(request_id, None)
+            if handle is not None:
+                self._decrement_model_lease_count_locked(handle)
+                loaded_to_close = self._complete_pending_unload_if_unleased_locked(handle)
+        self._close_loaded_model(loaded_to_close)
 
     def abort_request(self, request_id: str) -> bool:
         with self._lock:

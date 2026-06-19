@@ -213,10 +213,25 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
         return response
 
     def UnloadModel(self, request, context):
-        found = self._registry.unload_model(request.model_handle)
+        receipt = self._registry.request_model_unload(
+            request.model_handle,
+            force=bool(request.force),
+        )
+        if receipt.unloaded:
+            return runtime_pb2.UnloadModelResponse(ok=True)
+        if receipt.pending_unload:
+            return runtime_pb2.UnloadModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="unload_pending",
+                    message="Model unload is pending until active request leases are released.",
+                    retriable=True,
+                    details=receipt.details,
+                ),
+            )
         return runtime_pb2.UnloadModelResponse(
-            ok=found,
-            error=common_pb2.ErrorStatus(code="not_found", message="Unknown model handle.") if not found else None,
+            ok=False,
+            error=common_pb2.ErrorStatus(code="not_found", message="Unknown model handle."),
         )
 
     def WarmupModel(self, request, context):

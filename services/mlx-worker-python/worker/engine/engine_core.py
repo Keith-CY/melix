@@ -215,9 +215,14 @@ class EngineCore:
 
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         generate_tokens = runtime.generate_tokens
-        state = self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
-        cancel_event = state.cancel_event
-        allocate_seq = state.allocate_seq
+        lease = self._registry.acquire_stream_lifetime_lease(
+            loaded_model,
+            request_id=request_id,
+            runtime_kind=loaded_model.runtime_kind,
+        )
+        lease.__enter__()
+        cancel_event = lease.cancel_event
+        allocate_seq = lease.state.allocate_seq
         plain_text_fast_path = self._plain_text_fast_path(request)
         compat_receipt = None if plain_text_fast_path else self._compat_policy_receipt(execution_ext)
         assembler = (
@@ -609,7 +614,7 @@ class EngineCore:
         finally:
             if loaded_model.runtime_kind in {"ocr", "vlm"} and hasattr(runtime, "last_probe_snapshot"):
                 self._registry.record_vision_probe(loaded_model.runtime_kind, runtime.last_probe_snapshot())
-            self._registry.finish_request(request_id)
+            lease.close()
 
     def prefill(self, request: inference_pb2.PrefillRequest) -> inference_pb2.PrefillResponse:
         request_id = request.execution.id.request_id
@@ -630,8 +635,12 @@ class EngineCore:
                 ),
             )
 
-        self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
-        self._registry.set_request_phase(request_id, "prefill")
+        self._registry.acquire_request_runtime_lease(
+            loaded_model,
+            request_id=request_id,
+            runtime_kind=loaded_model.runtime_kind,
+            phase="prefill",
+        ).__enter__()
 
         try:
             prefill_kwargs = {

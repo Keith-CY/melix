@@ -50,15 +50,19 @@ class ImageEditCore:
                 message=f"Image model {loaded_model.spec.model_id} does not support editing workflows.",
             )
 
-        state = self._registry.start_request(request_id, runtime_kind="image")
         try:
-            result = self._registry.image_generation_runtime.edit_image(
-                loaded_model.runtime_model,
-                request,
-                job_id=job_id,
-                images_root=self._images_root,
-                cancel_event=state.cancel_event,
-            )
+            with self._registry.acquire_request_runtime_lease(
+                loaded_model,
+                request_id=request_id,
+                runtime_kind="image",
+            ) as lease:
+                result = self._registry.image_generation_runtime.edit_image(
+                    loaded_model.runtime_model,
+                    request,
+                    job_id=job_id,
+                    images_root=self._images_root,
+                    cancel_event=lease.cancel_event,
+                )
         except ImageGenerationCancelled as exc:
             return self._terminal_response(
                 request=request,
@@ -89,9 +93,6 @@ class ImageEditCore:
                 code="runtime_error",
                 message=str(exc),
             )
-        finally:
-            self._registry.finish_request(request_id)
-
         self._registry.record_image_probe(
             self._registry.image_generation_runtime.last_probe_snapshot()
         )

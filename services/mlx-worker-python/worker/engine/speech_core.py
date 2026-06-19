@@ -25,23 +25,25 @@ class SpeechCore:
                 )
             )
 
-        self._registry.start_request(request.id.request_id, runtime_kind="speech")
-        try:
+        with self._registry.acquire_request_runtime_lease(
+            loaded_model,
+            request_id=request.id.request_id,
+            runtime_kind="speech",
+        ):
             runtime = self._registry.runtime_for_loaded_model(loaded_model)
-            result = runtime.speak(
-                loaded_model.runtime_model,
-                request,
-            )
-            if hasattr(runtime, "last_probe_snapshot"):
-                self._registry.record_speech_probe(
-                    runtime.last_probe_snapshot()
+            try:
+                result = runtime.speak(
+                    loaded_model.runtime_model,
+                    request,
                 )
-        except Exception as exc:  # pragma: no cover - defensive branch
-            return inference_pb2.SpeakResponse(
-                error=common_pb2.ErrorStatus(code="runtime_error", message=str(exc))
-            )
-        finally:
-            self._registry.finish_request(request.id.request_id)
+                if hasattr(runtime, "last_probe_snapshot"):
+                    self._registry.record_speech_probe(
+                        runtime.last_probe_snapshot()
+                    )
+            except Exception as exc:  # pragma: no cover - defensive branch
+                return inference_pb2.SpeakResponse(
+                    error=common_pb2.ErrorStatus(code="runtime_error", message=str(exc))
+                )
 
         return inference_pb2.SpeakResponse(
             audio_bytes=result.audio_bytes,
@@ -61,7 +63,12 @@ class SpeechCore:
             )
             return
 
-        self._registry.start_request(request.id.request_id, runtime_kind="speech")
+        lease = self._registry.acquire_stream_lifetime_lease(
+            loaded_model,
+            request_id=request.id.request_id,
+            runtime_kind="speech",
+        )
+        lease.__enter__()
         stream_committed = False
         try:
             runtime = self._registry.runtime_for_loaded_model(loaded_model)
@@ -92,7 +99,7 @@ class SpeechCore:
                 raise
             yield self._stream_error("runtime_error", str(exc))
         finally:
-            self._registry.finish_request(request.id.request_id)
+            lease.close()
 
     @staticmethod
     def _stream_error(code: str, message: str) -> inference_pb2.SpeakStreamEvent:
