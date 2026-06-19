@@ -11,6 +11,29 @@ import stat
 _RECORD_SORT_KEY = attrgetter("created_at_unix_ms", "queue_item_id")
 
 
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if isinstance(value, list):
+        for item in value:
+            if type(item) is not str:
+                break
+        else:
+            return tuple(value)
+    return tuple(map(str, value))  # type: ignore[arg-type]
+
+
+def _string_dict(value: object) -> dict[str, str]:
+    if isinstance(value, dict):
+        if not value:
+            return {}
+        for key, item in value.items():
+            if type(key) is not str or type(item) is not str:
+                break
+        else:
+            return dict(value)
+        return {str(key): str(item) for key, item in value.items()}
+    return {str(key): str(item) for key, item in dict(value).items()}  # type: ignore[arg-type]
+
+
 @dataclass(frozen=True, slots=True)
 class _RecordCacheEntry:
     metadata_key: tuple[int, int, int, int]
@@ -45,19 +68,12 @@ class BenchmarkQueueRecord:
 
     @staticmethod
     def from_dict(payload: dict[str, object]) -> BenchmarkQueueRecord:
-        raw_suite_ids = payload.get("suite_ids", ())
-        raw_parameters = payload.get("parameters", {})
-        parameter_items = (
-            raw_parameters.items()
-            if isinstance(raw_parameters, dict)
-            else dict(raw_parameters).items()
-        )
         return BenchmarkQueueRecord(
             queue_item_id=str(payload["queue_item_id"]),
             job_kind=str(payload["job_kind"]),
             model_id=str(payload["model_id"]),
-            suite_ids=tuple(map(str, raw_suite_ids)),
-            parameters={str(key): str(value) for key, value in parameter_items},
+            suite_ids=_string_tuple(payload.get("suite_ids", ())),
+            parameters=_string_dict(payload.get("parameters", {})),
             status=str(payload["status"]),
             created_at_unix_ms=int(payload["created_at_unix_ms"]),
             updated_at_unix_ms=int(payload["updated_at_unix_ms"]),
