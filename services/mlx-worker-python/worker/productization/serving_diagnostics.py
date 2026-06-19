@@ -44,6 +44,10 @@ _EMPTY_EVENT_JSON_DECODE_COMPLETED_REQUEST_PREFIX = (
 _EMPTY_EVENT_JSON_DECODE_COMPLETED_SUFFIX = (
     b',"schema_version":"melix.serving_diagnostics.event.v1","status":"completed"}'
 )
+_EMPTY_EVENT_JSON_DECODE_COMPLETED_SUFFIX_LINE = _EMPTY_EVENT_JSON_DECODE_COMPLETED_SUFFIX + b"\n"
+_EMPTY_EVENT_JSON_GENERIC_STATUS_PREFIX = (
+    b',"schema_version":"melix.serving_diagnostics.event.v1","status":'
+)
 
 
 @lru_cache(maxsize=1024)
@@ -594,7 +598,6 @@ def _write_jsonl(path: Path, rows: Any) -> None:
                 row,
                 request_id_literals,
             ):
-                append_line(newline)
                 continue
             row = row.to_dict()
         append_line(encode(row).encode("utf-8"))
@@ -641,7 +644,7 @@ def _extend_empty_attribute_event_json_line_bytes(
         append_line(event_index_literal)
         append_line(_EMPTY_EVENT_JSON_DECODE_COMPLETED_REQUEST_PREFIX)
         append_line(encoded_request_id)
-        append_line(_EMPTY_EVENT_JSON_DECODE_COMPLETED_SUFFIX)
+        append_line(_EMPTY_EVENT_JSON_DECODE_COMPLETED_SUFFIX_LINE)
         return True
     append_line(b'{"attributes":{},"duration_ms":')
     append_line(duration_literal)
@@ -651,9 +654,9 @@ def _extend_empty_attribute_event_json_line_bytes(
     append_line(_json_string_literal_bytes(phase))
     append_line(b',"request_id":')
     append_line(encoded_request_id)
-    append_line(b',"schema_version":"melix.serving_diagnostics.event.v1","status":')
+    append_line(_EMPTY_EVENT_JSON_GENERIC_STATUS_PREFIX)
     append_line(_json_string_literal_bytes(status))
-    append_line(b"}")
+    append_line(b"}\n")
     return True
 
 
