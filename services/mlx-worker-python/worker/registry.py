@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
@@ -34,6 +35,7 @@ from worker.runtime.runtime_utils import callable_accepts_kwarg
 
 
 _MULTIMODAL_REQUEST_KINDS = frozenset({"ocr", "vlm", "transcription", "speech", "image"})
+_COMPLETED_UNLOAD_RECEIPT_LIMIT = 256
 
 
 @dataclass(slots=True)
@@ -231,7 +233,8 @@ class WorkerRegistry:
         self._request_lease_tokens: dict[str, object] = {}
         self._active_model_lease_counts: dict[str, int] = {}
         self._pending_unload_receipts: dict[str, ModelUnloadReceipt] = {}
-        self._completed_unload_receipts: dict[str, ModelUnloadReceipt] = {}
+        self._completed_unload_receipt_limit = _COMPLETED_UNLOAD_RECEIPT_LIMIT
+        self._completed_unload_receipts: OrderedDict[str, ModelUnloadReceipt] = OrderedDict()
         self._active_request_count = 0
         self._active_prefill_count = 0
         self._active_decode_count = 0
@@ -596,8 +599,18 @@ class WorkerRegistry:
             receipt.abort_requested = receipt.abort_requested or abort_requested
             receipt.released_at = released_at or receipt.released_at or unloaded_at
             receipt.unloaded_at = unloaded_at
-        self._completed_unload_receipts[handle] = receipt
+        self._remember_completed_unload_receipt_locked(handle, receipt)
         return receipt
+
+    def _remember_completed_unload_receipt_locked(self, handle: str, receipt: ModelUnloadReceipt) -> None:
+        limit = max(0, self._completed_unload_receipt_limit)
+        if limit == 0:
+            self._completed_unload_receipts.clear()
+            return
+        self._completed_unload_receipts[handle] = receipt
+        self._completed_unload_receipts.move_to_end(handle)
+        while len(self._completed_unload_receipts) > limit:
+            self._completed_unload_receipts.popitem(last=False)
 
     @staticmethod
     def _close_loaded_model(loaded: LoadedModel | None) -> None:

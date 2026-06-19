@@ -47,6 +47,7 @@ The implementation intentionally keeps this as a worker-runtime contract instead
 
 - Acquiring a lease increments the existing active-request counters and pins the loaded model against unload.
 - Releasing a lease decrements counters and, if a pending unload exists and no leases remain, closes the runtime model and removes residency accounting.
+- Completed unload receipts are retained in a bounded recent-history FIFO so short post-release polling can observe completion without unbounded worker memory growth.
 - `request_model_unload(handle, force=false)`:
   - unknown handle: `found=false`, `unloaded=false`, `pending_unload=false`
   - no active lease: closes immediately, `unloaded=true`, `unloaded_at` set

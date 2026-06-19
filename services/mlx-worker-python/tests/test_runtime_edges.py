@@ -804,6 +804,28 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     second_counted_lease.close()
     assert registry.runtime_stats().model_resident_bytes == 0
 
+    registry._completed_unload_receipt_limit = 2
+    retained_receipt_handles = []
+    for _ in range(3):
+        retained_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+        retained_receipt = registry.request_model_unload(retained_loaded.handle)
+
+        assert retained_receipt.unloaded is True
+        retained_receipt_handles.append(retained_loaded.handle)
+
+    assert registry.pending_unload_receipt(retained_receipt_handles[0]) is None
+    assert registry.pending_unload_receipt(retained_receipt_handles[1]) is not None
+    assert registry.pending_unload_receipt(retained_receipt_handles[2]) is not None
+
+    registry._completed_unload_receipt_limit = 0
+    unretained_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    unretained_receipt = registry.request_model_unload(unretained_loaded.handle)
+
+    assert unretained_receipt.unloaded is True
+    assert registry.pending_unload_receipt(unretained_loaded.handle) is None
+    assert registry.pending_unload_receipt(retained_receipt_handles[1]) is None
+    assert registry.pending_unload_receipt(retained_receipt_handles[2]) is None
+
     vision_state = registry.start_request("req-vision", runtime_kind="ocr")
     transcription_state = registry.start_request("req-transcription", runtime_kind="transcription")
     speech_state = registry.start_request("req-speech", runtime_kind="speech")
