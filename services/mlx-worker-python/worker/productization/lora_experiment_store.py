@@ -35,7 +35,7 @@ def _iter_lora_run_dirs(train_root: Path) -> tuple[Path, ...]:
                 if not entry_name.startswith(run_dir_prefix):
                     continue
                 try:
-                    if not entry.is_dir():
+                    if not entry.is_dir(follow_symlinks=False):
                         continue
                 except OSError:
                     continue
