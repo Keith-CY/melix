@@ -7,6 +7,8 @@ import struct
 import unicodedata
 
 _SHA256 = hashlib.sha256
+_SQRT = math.sqrt
+_ROUND = round
 _UNPACK_DIGEST_UINT32 = struct.Struct("<8I").unpack
 _DIGEST_UINT32_SCALE = 2.0 / 0xFFFFFFFF
 
@@ -45,20 +47,35 @@ class DeterministicEmbeddingBackend:
     def embed_text(self, text: str, dimensions: int) -> list[float]:
         raise NotImplementedError
 
-    def _project_digest(self, seed_text: str, dimensions: int) -> list[float]:
+    def _project_digest(
+        self,
+        seed_text: str,
+        dimensions: int,
+        *,
+        _sha256=_SHA256,
+        _sqrt=_SQRT,
+        _round=_ROUND,
+    ) -> list[float]:
         base_values = [
             raw * _DIGEST_UINT32_SCALE - 1.0
-            for raw in _UNPACK_DIGEST_UINT32(_SHA256(seed_text.encode("utf-8")).digest())
+            for raw in _UNPACK_DIGEST_UINT32(_sha256(seed_text.encode("utf-8")).digest())
         ]
         if dimensions == 8:
-            l2_norm = math.sqrt(sum(value * value for value in base_values))
+            l2_norm = _sqrt(sum(value * value for value in base_values))
             if l2_norm == 0.0:
                 return [0.0] * 8
             inverse_l2_norm = 1.0 / l2_norm
-            return [round(value * inverse_l2_norm, 6) for value in base_values]
+            return [_round(value * inverse_l2_norm, 6) for value in base_values]
         return self._project_digest_expanded(base_values, dimensions)
 
-    def _project_digest_expanded(self, base_values: list[float], dimensions: int) -> list[float]:
+    def _project_digest_expanded(
+        self,
+        base_values: list[float],
+        dimensions: int,
+        *,
+        _sqrt=_SQRT,
+        _round=_ROUND,
+    ) -> list[float]:
         full_repeats, remainder = divmod(dimensions, 8)
         squared_sum = sum(value * value for value in base_values) * full_repeats
         if remainder == 1:
@@ -69,11 +86,11 @@ class DeterministicEmbeddingBackend:
                 value = base_values[index]
                 squared_sum += value * value
 
-        l2_norm = math.sqrt(squared_sum)
+        l2_norm = _sqrt(squared_sum)
         if l2_norm == 0.0:
             return [0.0] * dimensions
         inverse_l2_norm = 1.0 / l2_norm
-        normalized_base = [round(value * inverse_l2_norm, 6) for value in base_values]
+        normalized_base = [_round(value * inverse_l2_norm, 6) for value in base_values]
         if remainder == 0:
             if full_repeats == 1:
                 return normalized_base
