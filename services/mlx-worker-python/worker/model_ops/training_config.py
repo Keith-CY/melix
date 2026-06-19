@@ -1218,7 +1218,7 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
         cache = {}
         profile[_NORMALIZED_TARGET_MODULES_CACHE_KEY] = cache
     cached_targets = cache.get(raw_value)
-    if isinstance(cached_targets, tuple):
+    if cached_targets is not None:
         # Cache stores immutable tuples; list() produces a fresh copy per call so
         # callers can safely iterate without risk of mutating shared cache state.
         return list(cached_targets)
