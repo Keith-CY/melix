@@ -728,6 +728,19 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert registry.abort_request("req-stream") is False
     assert registry.unload_model(stream_loaded.handle) is True
 
+    pending_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    direct_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    pending_lease = registry.acquire_request_runtime_lease(
+        pending_loaded,
+        request_id="req-pending-sentinel",
+        runtime_kind="text",
+    )
+    pending_lease.__enter__()
+    assert registry.request_model_unload(pending_loaded.handle).pending_unload is True
+    assert registry.unload_model(direct_loaded.handle) is True
+    pending_lease.close()
+    assert registry.pending_unload_receipt(pending_loaded.handle) is not None
+
     first = registry.load_model(WorkerModelCatalog.dev_text_model())
     second = registry.load_model(WorkerModelCatalog.dev_text_model())
     third = registry.load_model(WorkerModelCatalog.dev_text_model())

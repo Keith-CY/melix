@@ -506,26 +506,40 @@ class WorkerRegistry:
     def unload_model(self, handle: str) -> bool:
         loaded_to_close: LoadedModel | None = None
         with self._lock:
-            loaded = self._loaded_models.get(handle)
-            if loaded is None:
-                return False
-            active_lease_count = self._active_model_lease_counts.get(handle, 0)
-            if active_lease_count > 0:
-                receipt = self._pending_unload_receipts.get(handle)
-                if receipt is None:
-                    self._pending_unload_receipts[handle] = ModelUnloadReceipt(
-                        model_handle=handle,
-                        found=True,
-                        unloaded=False,
-                        pending_unload=True,
-                    )
-                return False
-            self._loaded_models.pop(handle)
-            self._pending_unload_receipts.pop(handle, None)
-            self._completed_unload_receipts.pop(handle, None)
-            self._invalidate_loaded_model_order_locked()
-            self._loaded_model_resident_bytes = max(0, self._loaded_model_resident_bytes - loaded.estimated_resident_bytes)
-            loaded_to_close = loaded
+            if not self._active_model_lease_counts:
+                loaded_to_close = self._loaded_models.pop(handle, None)
+                if loaded_to_close is None:
+                    return False
+                self._invalidate_loaded_model_order_locked()
+                self._loaded_model_resident_bytes = max(
+                    0,
+                    self._loaded_model_resident_bytes - loaded_to_close.estimated_resident_bytes,
+                )
+            else:
+                loaded = self._loaded_models.get(handle)
+                if loaded is None:
+                    return False
+                if self._active_model_lease_counts.get(handle, 0) > 0:
+                    receipt = self._pending_unload_receipts.get(handle)
+                    if receipt is None:
+                        self._pending_unload_receipts[handle] = ModelUnloadReceipt(
+                            model_handle=handle,
+                            found=True,
+                            unloaded=False,
+                            pending_unload=True,
+                        )
+                    return False
+                self._loaded_models.pop(handle)
+                if self._pending_unload_receipts:
+                    self._pending_unload_receipts.pop(handle, None)
+                if self._completed_unload_receipts:
+                    self._completed_unload_receipts.pop(handle, None)
+                self._invalidate_loaded_model_order_locked()
+                self._loaded_model_resident_bytes = max(
+                    0,
+                    self._loaded_model_resident_bytes - loaded.estimated_resident_bytes,
+                )
+                loaded_to_close = loaded
 
         self._close_loaded_model(loaded_to_close)
         return True
