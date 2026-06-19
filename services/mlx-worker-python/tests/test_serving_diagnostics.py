@@ -556,6 +556,26 @@ def test_serving_diagnostics_jsonl_fast_path_reuses_request_id_literal(
     assert calls == ["req-shared-fast-path"]
 
 
+def test_serving_diagnostics_jsonl_extend_fast_path_appends_complete_line() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-inline-newline",
+        phase="decode",
+        event_index=5,
+        status="completed",
+        duration_ms=0.001,
+    )
+    payload = bytearray()
+
+    assert serving_diagnostics_module._extend_empty_attribute_event_json_line_bytes(
+        payload.extend,
+        event,
+        {},
+    ) is True
+
+    assert payload.endswith(b"\n")
+    assert json.loads(payload)["request_id"] == "req-inline-newline"
+
+
 def test_serving_diagnostics_jsonl_writer_extends_fast_path_without_join_helper(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
