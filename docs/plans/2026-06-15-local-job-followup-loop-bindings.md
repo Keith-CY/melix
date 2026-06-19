@@ -4,7 +4,7 @@ This Python performance slice is limited to `LocalJobContinuationStore.scan_foll
 
 ## Goal
 
-Keep local job follow-up scan behavior unchanged while reducing per-record Python overhead in large continuation stores. The scan already uses one `os.scandir(...)` pass; this slice avoids rebuilding the empty live-evidence mapping, binds hot loop callables once before iterating over record ids, and keeps the record-file filter on regular top-level JSON files without following symlinks.
+Keep local job follow-up scan behavior unchanged while reducing per-record Python overhead in large continuation stores. The scan already uses one `os.scandir(...)` pass; this follow-up slice builds the sortable record-id list directly during the scandir pass, removes the per-entry helper call for `.json` stem extraction, and keeps the record-file filter on regular top-level JSON files without following symlinks.
 
 ## Probe coverage
 
