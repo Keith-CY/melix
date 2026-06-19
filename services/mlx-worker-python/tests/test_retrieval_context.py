@@ -644,6 +644,55 @@ def test_project_retrieval_contexts_fast_paths_complete_entries_without_admissio
     )
 
 
+def test_project_retrieval_contexts_inlines_public_receipts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_receipt_builder(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError(  # pragma: no cover - regression guard
+            "public source IDs should use the inline receipt fast path"
+        )
+
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "untrusted_context_receipt",
+        fail_receipt_builder,
+    )
+
+    projection = project_retrieval_contexts(
+        [
+            RetrievalContextEntry(
+                context_kind="retrieved_document",
+                source_id="doc:local-7",
+                payload={"title": "Local note"},
+                owner_scope_checked=True,
+                segment_id="text-search:result-0",
+                source_field="retrieved_document_0",
+                reason="retrieved document result is prompt data",
+                corrective_action="keep retrieved documents in user-role context",
+            )
+        ]
+    )
+
+    assert projection.refusal_receipts == []
+    assert projection.untrusted_context_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "text-search:result-0",
+            "source_type": "retrieved_document",
+            "source_field": "retrieved_document_0",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": True,
+            "owner_scope_checked": True,
+            "reason": "retrieved document result is prompt data",
+            "corrective_action": "keep retrieved documents in user-role context",
+            "source_id": "doc:local-7",
+        }
+    ]
+
+
 def test_project_retrieval_contexts_redacts_nonpublic_source_ids_with_fast_check() -> None:
     raw_source_id = "doc local / private"
     projection = project_retrieval_contexts(
@@ -843,7 +892,17 @@ def test_project_retrieval_store_records_fast_paths_complete_dict_records(
     def fail_admission_reentry(_entry: object) -> None:  # pragma: no cover - regression guard
         raise AssertionError("complete store records should project without admission objects")
 
+    def fail_receipt_builder(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError(  # pragma: no cover - regression guard
+            "public store record source IDs should use the inline receipt fast path"
+        )
+
     monkeypatch.setattr(retrieval_context_module, "_admit_entry", fail_admission_reentry)
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "untrusted_context_receipt",
+        fail_receipt_builder,
+    )
 
     projection = project_retrieval_store_records(
         [
@@ -918,6 +977,32 @@ def test_project_retrieval_store_records_fast_paths_complete_dict_records(
     assert duplicate_projection.refusal_receipts[0]["source_id"] == "doc:second-fast"
     assert duplicate_projection.refusal_receipts[0]["reason"] == (
         "duplicate_retrieved_document_context_field"
+    )
+
+
+def test_project_retrieval_store_records_redacts_nonpublic_source_ids_with_fast_check() -> None:
+    raw_source_id = "doc local / private"
+    projection = project_retrieval_store_records(
+        [
+            {
+                "context_kind": "retrieved_document",
+                "source_id": raw_source_id,
+                "payload": {"title": "Private note"},
+                "owner_scope_checked": True,
+                "segment_id": f"{raw_source_id}:retrieved-document-context",
+                "source_field": "retrieved_document_private",
+                "reason": "retrieved document evidence is prompt data",
+                "corrective_action": "keep retrieved document evidence in user data",
+            }
+        ]
+    )
+
+    expected_digest = hashlib.sha256(raw_source_id.encode("utf-8")).hexdigest()[:12]
+    expected_source_id = f"source:{expected_digest}"
+    assert projection.refusal_receipts == []
+    assert projection.untrusted_context_receipts[0]["source_id"] == expected_source_id
+    assert projection.untrusted_context_receipts[0]["segment_id"] == (
+        f"{expected_source_id}:retrieved-document-context"
     )
 
 
