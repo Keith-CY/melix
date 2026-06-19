@@ -62,6 +62,38 @@ def _build_entries(count: int) -> list[rc.RetrievalContextEntry]:
     ]
 
 
+def _build_duplicate_entries(count: int) -> list[rc.RetrievalContextEntry]:
+    unique_count = max(1, count // 2)
+    entries: list[rc.RetrievalContextEntry] = []
+    for index in range(unique_count):
+        source_field = f"retrieved_context_{index}"
+        entries.append(
+            rc.RetrievalContextEntry(
+                context_kind="retrieved_document",
+                source_id=f"source:{index}:primary",
+                payload={"index": index, "text": f"primary payload {index}"},
+                owner_scope_checked=True,
+                segment_id=f"search:primary-{index}",
+                source_field=source_field,
+                reason="retrieved result is prompt data, not instructions",
+                corrective_action="Keep retrieved results in user-role prompt context.",
+            )
+        )
+        entries.append(
+            rc.RetrievalContextEntry(
+                context_kind="retrieved_document",
+                source_id=f"source:{index}:duplicate",
+                payload={"index": index, "text": f"duplicate payload {index}"},
+                owner_scope_checked=True,
+                segment_id=f"search:duplicate-{index}",
+                source_field=source_field,
+                reason="retrieved result is prompt data, not instructions",
+                corrective_action="Keep retrieved results in user-role prompt context.",
+            )
+        )
+    return entries
+
+
 def _build_store_records(entries: Iterable[rc.RetrievalContextEntry]) -> list[dict[str, Any]]:
     return [
         {
@@ -223,6 +255,32 @@ def _measure(func: Any, entries: list[rc.RetrievalContextEntry], iterations: int
     return elapsed_ms / iterations
 
 
+def _measure_duplicate(
+    func: Any,
+    entries: list[rc.RetrievalContextEntry],
+    iterations: int,
+) -> float:
+    start = time.perf_counter()
+    projected_count = 0
+    receipt_count = 0
+    refusal_count = 0
+    expected_unique = len(entries) // 2
+    for _ in range(iterations):
+        projection = func(entries)
+        projected_count += len(projection.user_payload)
+        receipt_count += projection.untrusted_context_receipt_count
+        refusal_count += len(projection.refusal_receipts)
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    expected = expected_unique * iterations
+    if projected_count != expected or receipt_count != expected or refusal_count != expected:
+        raise AssertionError(
+            "duplicate projection drift: "
+            f"projected={projected_count} receipts={receipt_count} "
+            f"refusals={refusal_count} expected={expected}"
+        )
+    return elapsed_ms / iterations
+
+
 def _measure_store(func: Any, records: list[dict[str, Any]], iterations: int) -> float:
     start = time.perf_counter()
     projected_count = 0
@@ -370,6 +428,7 @@ def main() -> int:
     sample_count = _samples()
     iteration_count = _iterations()
     entries = _build_entries(entry_count)
+    duplicate_entries = _build_duplicate_entries(entry_count)
     records = _build_store_records(entries)
     lookup_payload = _build_lookup_payload(entry_count)
     admissions = _build_admissions(entries)
@@ -383,12 +442,26 @@ def main() -> int:
     # prebuilt-admission isolation shim below.
     _measure(_baseline_project_retrieval_contexts, entries, 1)
     _measure(rc.project_retrieval_contexts, entries, 1)
+    _measure_duplicate(_baseline_project_retrieval_contexts, duplicate_entries, 1)
+    _measure_duplicate(rc.project_retrieval_contexts, duplicate_entries, 1)
     baseline = [
         _measure(_baseline_project_retrieval_contexts, entries, iteration_count)
         for _ in range(sample_count)
     ]
     optimized = [
         _measure(rc.project_retrieval_contexts, entries, iteration_count)
+        for _ in range(sample_count)
+    ]
+    duplicate_baseline = [
+        _measure_duplicate(
+            _baseline_project_retrieval_contexts,
+            duplicate_entries,
+            iteration_count,
+        )
+        for _ in range(sample_count)
+    ]
+    duplicate_optimized = [
+        _measure_duplicate(rc.project_retrieval_contexts, duplicate_entries, iteration_count)
         for _ in range(sample_count)
     ]
 
@@ -430,6 +503,8 @@ def main() -> int:
 
     baseline_mean = _mean(baseline)
     optimized_mean = _mean(optimized)
+    duplicate_baseline_mean = _mean(duplicate_baseline)
+    duplicate_optimized_mean = _mean(duplicate_optimized)
     store_baseline_mean = _mean(store_baseline)
     store_optimized_mean = _mean(store_optimized)
     lookup_copy_baseline_mean = _mean(lookup_copy_baseline)
@@ -439,10 +514,16 @@ def main() -> int:
     lookup_records_baseline_gets_mean = _mean([sample[1] for sample in lookup_records_baseline])
     lookup_records_optimized_gets_mean = _mean([sample[1] for sample in lookup_records_optimized])
     delta_ms = optimized_mean - baseline_mean
+    duplicate_delta_ms = duplicate_optimized_mean - duplicate_baseline_mean
     store_delta_ms = store_optimized_mean - store_baseline_mean
     lookup_copy_delta_ms = lookup_copy_optimized_mean - lookup_copy_baseline_mean
     lookup_records_delta_ms = lookup_records_optimized_elapsed_mean - lookup_records_baseline_elapsed_mean
     speedup = baseline_mean / optimized_mean if optimized_mean > 0.0 else 0.0
+    duplicate_speedup = (
+        duplicate_baseline_mean / duplicate_optimized_mean
+        if duplicate_optimized_mean > 0.0
+        else 0.0
+    )
     store_speedup = store_baseline_mean / store_optimized_mean if store_optimized_mean > 0.0 else 0.0
     lookup_copy_speedup = (
         lookup_copy_baseline_mean / lookup_copy_optimized_mean
@@ -454,6 +535,10 @@ def main() -> int:
         "optimized_elapsed_ms_mean": optimized_mean,
         "delta_ms": delta_ms,
         "speedup": speedup,
+        "duplicate_baseline_elapsed_ms_mean": duplicate_baseline_mean,
+        "duplicate_optimized_elapsed_ms_mean": duplicate_optimized_mean,
+        "duplicate_delta_ms": duplicate_delta_ms,
+        "duplicate_speedup": duplicate_speedup,
         "store_baseline_elapsed_ms_mean": store_baseline_mean,
         "store_optimized_elapsed_ms_mean": store_optimized_mean,
         "store_delta_ms": store_delta_ms,

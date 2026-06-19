@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import Any
 
 import pytest
 
@@ -599,6 +600,18 @@ def test_project_retrieval_contexts_fast_paths_complete_entries_without_admissio
         raise AssertionError("complete RetrievalContextEntry should use direct projection")
 
     monkeypatch.setattr(retrieval_context_module, "_admit_entry", fail_admission_reentry)
+    original_receipt_builder = retrieval_context_module.untrusted_context_receipt
+    receipt_calls: list[dict[str, object]] = []
+
+    def counted_receipt(**kwargs: Any) -> dict[str, object]:
+        receipt_calls.append(dict(kwargs))
+        return original_receipt_builder(**kwargs)
+
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "untrusted_context_receipt",
+        counted_receipt,
+    )
 
     projection = project_retrieval_contexts(
         [
@@ -634,6 +647,8 @@ def test_project_retrieval_contexts_fast_paths_complete_entries_without_admissio
     assert projection.untrusted_context_receipts[0]["source_id"] == "doc:local-7"
     assert projection.untrusted_context_receipts[0]["segment_id"] == "text-search:result-0"
     assert projection.untrusted_context_receipts[0]["source_field"] == "retrieved_document_0"
+    assert len(receipt_calls) == 1
+    assert receipt_calls[0]["source_id"] == "doc:local-7"
     assert (
         projection.untrusted_context_receipts[0]["reason"]
         == "retrieved document result is prompt data"
@@ -844,6 +859,18 @@ def test_project_retrieval_store_records_fast_paths_complete_dict_records(
         raise AssertionError("complete store records should project without admission objects")
 
     monkeypatch.setattr(retrieval_context_module, "_admit_entry", fail_admission_reentry)
+    original_receipt_builder = retrieval_context_module.untrusted_context_receipt
+    receipt_calls: list[dict[str, object]] = []
+
+    def counted_receipt(**kwargs: Any) -> dict[str, object]:
+        receipt_calls.append(dict(kwargs))
+        return original_receipt_builder(**kwargs)
+
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "untrusted_context_receipt",
+        counted_receipt,
+    )
 
     projection = project_retrieval_store_records(
         [
@@ -886,7 +913,9 @@ def test_project_retrieval_store_records_fast_paths_complete_dict_records(
     assert projection.untrusted_context_receipts[0]["reason"] == (
         "retrieved document evidence is prompt data"
     )
+    assert len(receipt_calls) == 2
 
+    receipt_calls.clear()
     duplicate_projection = project_retrieval_store_records(
         [
             {
@@ -919,6 +948,8 @@ def test_project_retrieval_store_records_fast_paths_complete_dict_records(
     assert duplicate_projection.refusal_receipts[0]["reason"] == (
         "duplicate_retrieved_document_context_field"
     )
+    assert len(receipt_calls) == 1
+    assert receipt_calls[0]["source_id"] == "doc:first-fast"
 
 
 def test_project_retrieval_contexts_isolates_refusals_without_dropping_valid_entries() -> None:

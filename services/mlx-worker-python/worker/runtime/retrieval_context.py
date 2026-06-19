@@ -162,6 +162,17 @@ def project_retrieval_contexts(
                     and normalized_reason
                     and normalized_corrective_action
                 ):
+                    if normalized_source_field in user_payload:
+                        refusal_receipts_append(
+                            _duplicate_projection_receipt_from_fields(
+                                context_kind=context_kind,
+                                source_field=normalized_source_field,
+                                source_id=normalized_source_id,
+                                segment_id=normalized_segment_id,
+                                owner_scope_checked=owner_scope_checked,
+                            )
+                        )
+                        continue
                     receipt = build_untrusted_context_receipt(
                         segment_id=normalized_segment_id,
                         source_type=context_kind,
@@ -173,14 +184,6 @@ def project_retrieval_contexts(
                         reason=normalized_reason,
                         corrective_action=normalized_corrective_action,
                     )
-                    if normalized_source_field in user_payload:
-                        refusal_receipts_append(
-                            duplicate_projection_receipt(
-                                receipt,
-                                duplicate_fields=[normalized_source_field],
-                            )
-                        )
-                        continue
                     user_payload[normalized_source_field] = payload
                     receipts_append(receipt)
                     continue
@@ -322,6 +325,17 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                     and normalized_reason
                     and normalized_corrective_action
                 ):
+                    if normalized_source_field in user_payload:
+                        projection_refusal_receipts_append(
+                            _duplicate_projection_receipt_from_fields(
+                                context_kind=context_kind,
+                                source_field=normalized_source_field,
+                                source_id=normalized_source_id,
+                                segment_id=normalized_segment_id,
+                                owner_scope_checked=owner_scope_checked,
+                            )
+                        )
+                        continue
                     receipt = build_untrusted_context_receipt(
                         segment_id=normalized_segment_id,
                         source_type=context_kind,
@@ -333,14 +347,6 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                         reason=normalized_reason,
                         corrective_action=normalized_corrective_action,
                     )
-                    if normalized_source_field in user_payload:
-                        projection_refusal_receipts_append(
-                            duplicate_projection_receipt(
-                                receipt,
-                                duplicate_fields=[normalized_source_field],
-                            )
-                        )
-                        continue
                     user_payload[normalized_source_field] = payload
                     receipts_append(receipt)
                     continue
@@ -628,6 +634,28 @@ def _duplicate_projection_receipt(
             owner_scope_checked if isinstance(owner_scope_checked, bool) else False
         ),
         reason=f"duplicate_{source_type}_context_field",
+        corrective_action=(
+            "Provide a unique source_field before projecting multiple "
+            "retrieved entries into one prompt payload."
+        ),
+    )
+
+
+def _duplicate_projection_receipt_from_fields(
+    *,
+    context_kind: RetrievalContextKind,
+    source_field: str,
+    source_id: str,
+    segment_id: str,
+    owner_scope_checked: bool,
+) -> dict[str, object]:
+    return refused_source_prompt_context_receipt(
+        segment_id=segment_id,
+        source_type=context_kind,
+        source_field=source_field,
+        source_id=source_id,
+        owner_scope_checked=owner_scope_checked,
+        reason=f"duplicate_{context_kind}_context_field",
         corrective_action=(
             "Provide a unique source_field before projecting multiple "
             "retrieved entries into one prompt payload."
