@@ -3811,6 +3811,7 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         "key_old_mean_ms",
         "key_delta_ms",
         "key_speedup",
+        "weight_load_delta_ms",
     ):
         assert native_mtp_metrics[metric_key]["direction"] == "informational"
         assert "warn_pct" not in native_mtp_metrics[metric_key]

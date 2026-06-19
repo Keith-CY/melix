@@ -14,6 +14,10 @@ The probe is extended to measure the model safetensor listing path directly agai
 
 2026-06-19 follow-up slice: `_extra_mtp_safetensor_file_paths()` now inlines the native-MTP weight-key prefix check inside the weight-map scan. This keeps the public `_is_mtp_weight_key()` compatibility helper for tests and direct callers, but removes one helper call per index entry on the sidecar shard discovery hot path, including noisy non-MTP keys.
 
+2026-06-19 follow-up slice: the sidecar shard basename filter now uses a single `str.rfind(os.sep)` pass instead of an `in` membership scan followed by `rsplit()`. This keeps nested sidecar paths and top-level `model*.safetensors` exclusion semantics unchanged while reducing string scans and temporary split-list allocation on large native-MTP index maps.
+
+2026-06-19 probe-gating note: the shared registered probe keeps `weight_load_new_mean_ms` as the gated shard-load timing metric, but treats `weight_load_delta_ms` as informational. That delta is derived from the historical and optimized helpers within one probe run, so cross-run comparisons can flag noise in an unrelated helper as a PR regression even when the optimized weight-load mean remains neutral or improved.
+
 ## Verification plan
 
 ```bash

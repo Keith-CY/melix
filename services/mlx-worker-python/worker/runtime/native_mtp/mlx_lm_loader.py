@@ -88,9 +88,8 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
             continue
         if file_name_text in seen:
             continue
-        file_basename = file_name_text
-        if path_sep in file_name_text:
-            file_basename = file_name_text.rsplit(path_sep, 1)[-1]
+        separator_index = file_name_text.rfind(path_sep)
+        file_basename = file_name_text if separator_index < 0 else file_name_text[separator_index + 1 :]
         if file_basename.startswith("model"):
             continue
         seen_add(file_name_text)
