@@ -2554,10 +2554,15 @@ def _collect_benchmark_probe_metrics(
 ) -> None:
     aggregate_pairs: dict[_ProbeAggregateKey, _NumericAggregate] = {}
     matrix_label_cache: dict[tuple[object, object, object, object, object], str] = {}
+    request_probe_keys = _REQUEST_PROBE_KEY_SET
+    agentic_tool_metric_keys = _AGENTIC_TOOL_METRIC_KEYS
+    float_or_none = _float_or_none
+    update_pair = _update_probe_aggregate_pairs
+    benchmark_label = _benchmark_probe_label
     for row in _dict_rows(rows):
         label = ""
         for key, raw_value in row.items():
-            if key not in _REQUEST_PROBE_KEY_SET:
+            if key not in request_probe_keys:
                 continue
             raw_value_type = type(raw_value)
             if raw_value_type is float:
@@ -2565,15 +2570,15 @@ def _collect_benchmark_probe_metrics(
             elif raw_value_type is int or raw_value_type is bool:
                 value = float(raw_value)
             else:
-                value = _float_or_none(raw_value)
+                value = float_or_none(raw_value)
             if value is not None:
                 if not label:
-                    label = _benchmark_probe_label(
+                    label = benchmark_label(
                         row,
                         label_cache=label_cache,
                         matrix_label_cache=matrix_label_cache,
                     )
-                _update_probe_aggregate_pairs(
+                update_pair(
                     aggregate_pairs,
                     label=label,
                     key=key,
@@ -2582,15 +2587,16 @@ def _collect_benchmark_probe_metrics(
         raw_tool_metrics = row.get("agentic_tool_metrics")
         if isinstance(raw_tool_metrics, dict):
             if not label:
-                label = _benchmark_probe_label(
+                label = benchmark_label(
                     row,
                     label_cache=label_cache,
                     matrix_label_cache=matrix_label_cache,
                 )
-            for key in _AGENTIC_TOOL_METRIC_KEYS:
-                value = _float_or_none(raw_tool_metrics.get(key))
+            raw_tool_metrics_get = raw_tool_metrics.get
+            for key in agentic_tool_metric_keys:
+                value = float_or_none(raw_tool_metrics_get(key))
                 if value is not None:
-                    _update_probe_aggregate_pairs(
+                    update_pair(
                         aggregate_pairs,
                         label=label,
                         key=key,
