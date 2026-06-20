@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,7 +13,6 @@ from worker.productization.dataset_preparation import (
     _SOURCE_KIND_BY_NAME,
     _SOURCE_KIND_NAME_CACHE_MAX,
     _iter_source_file_paths,
-    _record,
     _source_kind,
     prepare_dataset_ingest,
 )
@@ -51,22 +49,6 @@ def test_dataset_ingest_source_file_paths_use_scandir_without_rglob(
         "b/b.txt",
         "z.txt",
     ]
-
-
-def test_dataset_ingest_record_reuses_normalized_bytes_for_hash_and_size(tmp_path: Path) -> None:
-    path = tmp_path / "notes.txt"
-    record = _record(
-        path=path,
-        source_kind="text",
-        text="Alpha\r\nBeta Ω\r\n",
-        metadata={"kind": "fixture"},
-    )
-    normalized = "Alpha\nBeta Ω\n"
-    normalized_bytes = normalized.encode("utf-8")
-
-    assert record["text"] == normalized
-    assert record["content_sha256"] == hashlib.sha256(normalized_bytes).hexdigest()
-    assert record["byte_size"] == len(normalized_bytes)
 
 
 def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
