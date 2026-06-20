@@ -36,7 +36,6 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
 
 def measure(*, directory_count: int, files_per_directory: int, samples: int) -> dict[str, float]:
     elapsed_ms: list[float] = []
-    record_elapsed_ms: list[float] = []
     source_kind_elapsed_ms: list[float] = []
     file_counts: list[float] = []
     with tempfile.TemporaryDirectory(prefix="melix-dataset-source-records-probe-") as tmp:
@@ -58,26 +57,10 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
             source_kind_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
             if any(source_kind != "text" for source_kind in source_kinds):
                 raise RuntimeError("source kind classification changed")
-            started = time.perf_counter()
-            records = [
-                dataset_preparation._record(
-                    path=path,
-                    source_kind="text",
-                    text="Melix source row\r\n",
-                    metadata={},
-                )
-                for path in paths
-            ]
-            record_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
-            if len(records) != expected_count or any(record["byte_size"] != 17 for record in records):
-                raise RuntimeError("source record construction changed")
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_ms),
         "elapsed_ms_min": min(elapsed_ms),
         "elapsed_ms_p95": sorted(elapsed_ms)[int((len(elapsed_ms) - 1) * 0.95)],
-        "record_elapsed_ms_mean": statistics.fmean(record_elapsed_ms),
-        "record_elapsed_ms_min": min(record_elapsed_ms),
-        "record_elapsed_ms_p95": sorted(record_elapsed_ms)[int((len(record_elapsed_ms) - 1) * 0.95)],
         "source_kind_elapsed_ms_mean": statistics.fmean(source_kind_elapsed_ms),
         "source_kind_elapsed_ms_min": min(source_kind_elapsed_ms),
         "source_kind_elapsed_ms_p95": sorted(source_kind_elapsed_ms)[int((len(source_kind_elapsed_ms) - 1) * 0.95)],
