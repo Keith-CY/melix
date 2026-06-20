@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import socket
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,7 +23,10 @@ CRASH_PATTERNS = (
 )
 _BYTE_WHITESPACE = bytes(value for value in range(256) if chr(value).isspace())
 _ORD = ord
-_PRODUCT_VERSION_PATTERN = re.compile(r'^version\s*=\s*"([^"]+)"\s*$', re.MULTILINE)
+_VERSION_KEY = b"version"
+_VERSION_CANONICAL_PREFIX = b'version = "'
+_QUOTE_BYTE = 34
+_EQUALS_BYTE = 61
 
 
 class UpdateCheckResult(NamedTuple):
@@ -62,11 +64,41 @@ class StartupFailureReport:
 def read_product_version(repo_root: str | Path) -> str:
     root = Path(repo_root).expanduser().resolve()
     pyproject_path = root / "pyproject.toml"
-    payload = pyproject_path.read_text(encoding="utf-8")
-    match = _PRODUCT_VERSION_PATTERN.search(payload)
-    if match is None:
-        raise ValueError(f"Unable to read version from {pyproject_path}")
-    return match.group(1)
+    with pyproject_path.open("rb") as handle:
+        for raw_line in handle:
+            if not raw_line.startswith(_VERSION_KEY):
+                continue
+            if raw_line.startswith(_VERSION_CANONICAL_PREFIX) and raw_line.endswith(b'"\n'):
+                return raw_line[len(_VERSION_CANONICAL_PREFIX) : -2].decode("utf-8")
+            version = _version_from_pyproject_line(raw_line)
+            if version is not None:
+                return version
+    raise ValueError(f"Unable to read version from {pyproject_path}")
+
+
+def _version_from_pyproject_line(raw_line: bytes) -> str | None:
+    key_length = len(_VERSION_KEY)
+    cursor = key_length
+    line_length = len(raw_line)
+    while cursor < line_length and raw_line[cursor] in _BYTE_WHITESPACE:
+        cursor += 1
+    if cursor >= line_length or raw_line[cursor] != _EQUALS_BYTE:
+        return None
+    cursor += 1
+    while cursor < line_length and raw_line[cursor] in _BYTE_WHITESPACE:
+        cursor += 1
+    if cursor >= line_length or raw_line[cursor] != _QUOTE_BYTE:
+        return None
+    value_start = cursor + 1
+    value_end = raw_line.find(b'"', value_start)
+    if value_end < 0:
+        return None
+    cursor = value_end + 1
+    while cursor < line_length and raw_line[cursor] in _BYTE_WHITESPACE:
+        cursor += 1
+    if cursor != line_length:
+        return None
+    return raw_line[value_start:value_end].decode("utf-8")
 
 
 def default_update_channel_path(repo_root: str | Path) -> Path:
