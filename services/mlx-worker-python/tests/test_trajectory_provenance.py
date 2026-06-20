@@ -276,6 +276,31 @@ def test_load_trajectory_provenance_from_snapshot_manifest_fast_paths_clean_text
     }
 
 
+def test_load_trajectory_provenance_from_snapshot_manifest_fast_path_falls_back_for_defaulted_required_fields(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_trace_digest": "abc123",
+            }
+        ).encode("utf-8")
+    )
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
+
+
 def test_load_trajectory_provenance_from_snapshot_manifest_reuses_path_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
