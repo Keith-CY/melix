@@ -1546,15 +1546,11 @@ def test_search_models_treats_gated_auto_as_soft_access_not_blocked() -> None:
     assert model.recommended_action == "download"
 
 
-def test_size_hint_bytes_normalizes_each_payload_text_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[object] = []
-    original = hub_catalog_module._string
+def test_size_hint_bytes_preserves_text_field_type_guards(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_if_legacy_string_helper_is_used(_value: object) -> str:
+        raise AssertionError("_size_hint_bytes should inline hot text field string guards")
 
-    def tracked(value: object) -> str:
-        calls.append(value)
-        return original(value)
-
-    monkeypatch.setattr(hub_catalog_module, "_string", tracked)
+    monkeypatch.setattr(hub_catalog_module, "_string", fail_if_legacy_string_helper_is_used)
 
     assert (
         hub_catalog_module._size_hint_bytes(
@@ -1566,7 +1562,21 @@ def test_size_hint_bytes_normalizes_each_payload_text_once(monkeypatch: pytest.M
         )
         == 512 * MB
     )
-    assert calls == [None, "Model", "size: 512 MB", "extra notes"]
+    assert hub_catalog_module._size_hint_bytes(
+        {
+            "description": object(),
+            "readme": None,
+            "cardData": {"description": ["Model size: 512 MB"], "model_size": object()},
+        }
+    ) == 0
+    assert hub_catalog_module._payload_is_mlx_compatible(
+        {"id": "plain/model", "library_name": "mlx", "tags": [object()], "cardData": {}}
+    )
+    assert not hub_catalog_module._payload_is_mlx_compatible(
+        {"id": object(), "library_name": object(), "tags": [object()], "cardData": {"library_name": object()}}
+    )
+    with pytest.raises(AssertionError):
+        hub_catalog_module._string("legacy helper path")
 
 
 def test_search_models_ignores_non_model_size_hints_in_readme_text() -> None:

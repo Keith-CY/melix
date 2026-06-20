@@ -513,18 +513,21 @@ def _repo_id_contains_mlx(repo_id: str) -> bool:
 
 
 def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
-    library_name = _string(payload.get("library_name"))
+    raw_library_name = payload.get("library_name")
+    library_name = raw_library_name if isinstance(raw_library_name, str) else ""
     if library_name and _is_mlx_atom(library_name):
         return True
     if _tag_payload_contains_mlx(payload.get("tags")):
         return True
-    repo_id = _string(payload.get("id") or payload.get("modelId"))
+    raw_repo_id = payload.get("id") or payload.get("modelId")
+    repo_id = raw_repo_id if isinstance(raw_repo_id, str) else ""
     if _repo_id_contains_mlx(repo_id):
         return True
     card_data = payload.get("cardData")
     if not isinstance(card_data, dict):
         return False
-    if not library_name and _is_mlx_atom(_string(card_data.get("library_name"))):
+    raw_card_library_name = card_data.get("library_name")
+    if not library_name and isinstance(raw_card_library_name, str) and _is_mlx_atom(raw_card_library_name):
         return True
     card_tags = card_data.get("tags")
     if not card_tags:
@@ -766,7 +769,8 @@ def _size_hint_bytes(payload: dict[str, Any], *, card_data: dict[str, Any] | Non
     if card_data is None:
         raw_card_data = payload.get("cardData")
         card_data = raw_card_data if isinstance(raw_card_data, dict) else {}
-    direct_card_text = _string(card_data.get("model_size"))
+    raw_direct_card_text = card_data.get("model_size")
+    direct_card_text = raw_direct_card_text if isinstance(raw_direct_card_text, str) else ""
     if direct_card_text:
         direct_card_hint = _direct_card_size_hint_from_text(direct_card_text)
         if direct_card_hint > 0:
@@ -775,9 +779,12 @@ def _size_hint_bytes(payload: dict[str, Any], *, card_data: dict[str, Any] | Non
         if direct_card_hint > 0:
             return direct_card_hint
 
-    description_text = _string(payload.get("description"))
-    readme_text = _string(payload.get("readme"))
-    card_description_text = _string(card_data.get("description"))
+    raw_description_text = payload.get("description")
+    description_text = raw_description_text if isinstance(raw_description_text, str) else ""
+    raw_readme_text = payload.get("readme")
+    readme_text = raw_readme_text if isinstance(raw_readme_text, str) else ""
+    raw_card_description_text = card_data.get("description")
+    card_description_text = raw_card_description_text if isinstance(raw_card_description_text, str) else ""
     if not readme_text and not card_description_text:
         return _size_hint_from_marked_text(description_text) if description_text else 0
     if not description_text and not card_description_text:
