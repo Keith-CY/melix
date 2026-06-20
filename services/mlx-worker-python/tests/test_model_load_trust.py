@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import worker.model_load_trust as model_load_trust_module
 
 from packages.protocol.python.worker.v1 import common_pb2, runtime_pb2
 
@@ -244,6 +245,41 @@ def test_trust_policy_falls_back_to_vlm_loader_family_without_runtime_contract(t
 
     assert policy.effective_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
     assert policy.loader_family == "mlx-vlm"
+
+
+def test_trust_policy_reads_config_json_bytes_without_text_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _custom_loader_text_model(tmp_path)
+    read_bytes_calls = 0
+    original_read_bytes = model_load_trust_module.Path.read_bytes
+
+    def counted_read_bytes(path: Path) -> bytes:
+        nonlocal read_bytes_calls
+        read_bytes_calls += 1
+        return original_read_bytes(path)
+
+    def fail_read_text(
+        path: Path, *args, **kwargs
+    ) -> str:  # pragma: no cover - only runs on regression.
+        _ = path, args, kwargs
+        raise AssertionError("config.json should be parsed from bytes")
+
+    monkeypatch.setattr(model_load_trust_module.Path, "read_bytes", counted_read_bytes)
+    monkeypatch.setattr(model_load_trust_module.Path, "read_text", fail_read_text)
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+        resolve_model_load_trust_policy(
+            model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=RecordingTextBackend(),
+        )
+
+    assert read_bytes_calls == 1
+    assert exc_info.value.policy.custom_loader_required is True
+    assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
 
 
 def _custom_loader_text_model(tmp_path: Path) -> common_pb2.ModelSpec:
