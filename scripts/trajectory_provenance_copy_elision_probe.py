@@ -49,7 +49,7 @@ def _build_provenance(component_count: int) -> dict[str, Any]:
                     "name": f"component-{index}",
                     "score": float(index % 7) / 7.0,
                     "passed": index % 3 != 0,
-                    "labels": ["agentic", "trajectory", str(index % 5)],
+                    "labels": ("agentic", "trajectory", str(index % 5)),
                 }
                 for index in range(component_count)
             ],

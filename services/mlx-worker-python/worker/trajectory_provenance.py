@@ -74,6 +74,14 @@ def _copy_json_list(value: list[Any]) -> list[Any]:
     return value.copy()
 
 
+def _copy_json_tuple(value: tuple[Any, ...]) -> tuple[Any, ...]:
+    immutable_types = _JSON_IMMUTABLE_TYPE_SET
+    for item in value:
+        if type(item) not in immutable_types:
+            return tuple(_copy_trajectory_provenance_value(item) for item in value)
+    return value
+
+
 def _copy_trajectory_provenance_value(value: Any) -> Any:
     value_type = type(value)
     if value_type in _JSON_IMMUTABLE_TYPE_SET:
@@ -83,7 +91,7 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
     if value_type is list:
         return _copy_json_list(value)
     if value_type is tuple:
-        return tuple(_copy_trajectory_provenance_value(item) for item in value)
+        return _copy_json_tuple(value)
     if isinstance(value, dict):
         return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
     if isinstance(value, list):
