@@ -46,6 +46,14 @@ _DEFAULT_CONFIG_FIRST_PARTS = frozenset(
 _JSON_LIMITED_PREVIEW_CHUNK_CHARS = 16 * 1024
 
 
+def _is_supported_dataset_file_name(name: str) -> bool:
+    dot_index = name.rfind(".")
+    if dot_index <= 0 or dot_index == len(name) - 1:
+        return False
+    suffix = name[dot_index:]
+    return suffix in _SUPPORTED_DATASET_SUFFIXES or suffix.lower() in _SUPPORTED_DATASET_SUFFIXES
+
+
 @dataclass(frozen=True, slots=True)
 class DatasetFile:
     relative_path: str
@@ -508,14 +516,13 @@ def _first_supported_scan_entries(
 ) -> list[tuple[str, Path, bool, bool]]:
     if limit <= 0:
         return []
-    supported_suffixes = _SUPPORTED_DATASET_SUFFIXES
     try:
         with os.scandir(os.fspath(directory)) as entries:
             return [
                 (name, Path(path_raw), is_dir, is_file)
                 for name, path_raw, is_dir, is_file in heapq.nsmallest(
                     limit,
-                    _supported_scan_entry_records(entries, after=after, supported_suffixes=supported_suffixes),
+                    _supported_scan_entry_records(entries, after=after),
                     key=lambda item: item[0],
                 )
             ]
@@ -527,7 +534,6 @@ def _supported_scan_entry_records(
     entries: Iterable[os.DirEntry[str]],
     *,
     after: str,
-    supported_suffixes: Mapping[str, str],
 ) -> Iterator[tuple[str, str, bool, bool]]:
     for entry in entries:
         name = entry.name
@@ -542,14 +548,8 @@ def _supported_scan_entry_records(
             continue
         if is_file and name in _README_NAMES:
             continue
-        if is_file:
-            dot_index = name.rfind(".")
-            if (
-                dot_index <= 0
-                or dot_index == len(name) - 1
-                or name[dot_index:].lower() not in supported_suffixes
-            ):
-                continue
+        if is_file and not _is_supported_dataset_file_name(name):
+            continue
         yield name, entry.path, is_dir, is_file
 
 
@@ -575,7 +575,6 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
     best_path_raw = ""
     best_is_dir = False
     best_is_file = False
-    supported_suffixes = _SUPPORTED_DATASET_SUFFIXES
     try:
         with os.scandir(os.fspath(directory)) as entries:
             for entry in entries:
@@ -591,14 +590,8 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
                     continue
                 if is_file and name in _README_NAMES:
                     continue
-                if is_file:
-                    dot_index = name.rfind(".")
-                    if (
-                        dot_index <= 0
-                        or dot_index == len(name) - 1
-                        or name[dot_index:].lower() not in supported_suffixes
-                    ):
-                        continue
+                if is_file and not _is_supported_dataset_file_name(name):
+                    continue
                 best_name = name
                 best_path_raw = entry.path
                 best_is_dir = is_dir
