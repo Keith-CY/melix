@@ -100,6 +100,23 @@ def test_local_job_continuation_record_round_trips_through_store(tmp_path: Path)
     }
 
 
+def test_local_job_continuation_load_record_reads_json_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    saved = store.save_record(_record(status="completed", exit_status=0))
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        raise AssertionError(  # pragma: no cover - must stay uncalled for this regression
+            f"load_record() should avoid text decode for {self}"
+        )
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert store.load_record("job-7") == saved
+
+
 def test_stale_completed_record_with_live_progress_is_revived() -> None:
     result = reconcile_local_job_continuation(
         _record(status="completed", exit_status=0),
@@ -1969,14 +1986,14 @@ def test_load_record_tolerates_record_deleted_between_path_resolution_and_read(
 ) -> None:
     store = LocalJobContinuationStore(tmp_path)
     saved = store.save_record(_record(status="running"))
-    original_read_text = Path.read_text
+    original_read_bytes = Path.read_bytes
 
-    def delete_before_read(path: Path, *args: object, **kwargs: object) -> str:
+    def delete_before_read(path: Path, *args: object, **kwargs: object) -> bytes:
         if path == tmp_path / "job-7.json":
             path.unlink()
-        return original_read_text(path, *args, **kwargs)
+        return original_read_bytes(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_text", delete_before_read)
+    monkeypatch.setattr(Path, "read_bytes", delete_before_read)
 
     assert store.load_record(saved.job_id) is None
 

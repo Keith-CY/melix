@@ -182,7 +182,7 @@ class LocalJobContinuationStore:
     def load_record(self, job_id: str) -> LocalJobContinuationRecord | None:
         path = self._record_path(job_id)
         try:
-            content = path.read_text(encoding="utf-8")
+            content = path.read_bytes()
         except FileNotFoundError:
             return None
         return LocalJobContinuationRecord.from_dict(json.loads(content))
