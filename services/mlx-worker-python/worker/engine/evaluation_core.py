@@ -4125,6 +4125,7 @@ class EvaluationCore:
                 return option
         if stripped and stripped[0] in "+-0123456789" and EvaluationCore._looks_like_numeric(stripped):
             return EvaluationCore._normalized_numeric_literal(stripped)
+        is_ascii = stripped.isascii()
         if (
             "  " in stripped
             or "\t" in stripped
@@ -4133,12 +4134,12 @@ class EvaluationCore:
             or "\f" in stripped
             or "\v" in stripped
             or (
-                not stripped.isascii()
+                not is_ascii
                 and any(character.isspace() and character != " " for character in stripped)
             )
         ):
             stripped = " ".join(stripped.split())
-        if stripped.isascii():
+        if is_ascii:
             return stripped.lower()
         return stripped.casefold()
 
