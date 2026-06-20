@@ -328,11 +328,10 @@ def _run_kind_only_rule(rule: dict[str, object]) -> bool:
 
 def _run_kind_rule_matches(run_kinds: object, run_kind_values: frozenset[str]) -> bool:
     if isinstance(run_kinds, tuple):
+        if not run_kind_values.isdisjoint(run_kinds):
+            return True
         for run_kind in run_kinds:
-            if type(run_kind) is str:
-                if run_kind in run_kind_values:
-                    return True
-            elif str(run_kind) in run_kind_values:
+            if type(run_kind) is not str and str(run_kind) in run_kind_values:
                 return True
         return False
     return not _string_frozenset(run_kinds).isdisjoint(run_kind_values)
