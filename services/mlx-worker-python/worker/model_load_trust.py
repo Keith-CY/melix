@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import json
 from pathlib import Path
+import stat
 from typing import Any
 
 from packages.protocol.python.worker.v1 import common_pb2
@@ -221,9 +222,28 @@ def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | Non
         return None
     config_path = Path(model_path).expanduser() / "config.json"
     try:
-        if not config_path.is_file():
+        config_stat = config_path.stat()
+        if not stat.S_ISREG(config_stat.st_mode):
             return None
-        payload = json.loads(config_path.read_bytes())
+    except OSError:
+        return None
+    payload = _read_model_config_for_stat(
+        str(config_path),
+        config_stat.st_mtime_ns,
+        config_stat.st_size,
+    )
+    return payload if isinstance(payload, dict) else None
+
+
+@lru_cache(maxsize=128)
+def _read_model_config_for_stat(
+    config_path: str,
+    mtime_ns: int,
+    size: int,
+) -> dict[str, Any] | None:
+    _ = (mtime_ns, size)
+    try:
+        payload = json.loads(Path(config_path).read_bytes())
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None

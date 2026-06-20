@@ -282,6 +282,53 @@ def test_trust_policy_reads_config_json_bytes_without_text_decode(
     assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
 
 
+def test_trust_policy_caches_config_json_by_file_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_load_trust_module._read_model_config_for_stat.cache_clear()
+    model = _custom_loader_text_model(tmp_path)
+    read_bytes_calls = 0
+    original_read_bytes = model_load_trust_module.Path.read_bytes
+
+    def counted_read_bytes(path: Path) -> bytes:
+        nonlocal read_bytes_calls
+        read_bytes_calls += 1
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(model_load_trust_module.Path, "read_bytes", counted_read_bytes)
+
+    for _ in range(2):
+        with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+            resolve_model_load_trust_policy(
+                model,
+                request_policy=None,
+                runtime_kind="text",
+                runtime=RecordingTextBackend(),
+            )
+        assert exc_info.value.policy.custom_loader_required is True
+        assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
+
+    assert read_bytes_calls == 1
+
+
+def test_trust_policy_treats_missing_config_json_as_absent(tmp_path: Path) -> None:
+    model_dir = tmp_path / "plain-model"
+    model_dir.mkdir()
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = str(model_dir)
+
+    policy = resolve_model_load_trust_policy(
+        model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=RecordingTextBackend(),
+    )
+
+    assert policy.custom_loader_required is False
+    assert policy.custom_loader_detection_source == "config_json:absent"
+
+
 def _custom_loader_text_model(tmp_path: Path) -> common_pb2.ModelSpec:
     model_dir = tmp_path / "custom-loader-model"
     model_dir.mkdir()
