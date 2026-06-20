@@ -78,16 +78,30 @@ def test_read_product_version_reads_project_version(tmp_path: Path) -> None:
     assert read_product_version(tmp_path) == "1.2.3"
 
 
-def test_read_product_version_reuses_compiled_pattern(
+def test_read_product_version_scans_lines_without_full_file_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "melix"\nversion = "1.2.3"\n', encoding="utf-8")
 
-    def fail_re_search(*args: object, **kwargs: object) -> object:  # pragma: no cover - sentinel
-        raise AssertionError("read_product_version should use the compiled version pattern")
+    def fail_read_text(*args: object, **kwargs: object) -> str:  # pragma: no cover - sentinel
+        raise AssertionError("read_product_version should scan pyproject.toml lines")
 
-    monkeypatch.setattr(startup_signals_module.re, "search", fail_re_search)
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert read_product_version(tmp_path) == "1.2.3"
+
+
+def test_read_product_version_skips_malformed_version_candidates(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "versioned = \"ignored\"\n"
+        "version : \"missing-equals\"\n"
+        "version = 1.2.3\n"
+        "version = \"unterminated\n"
+        "version = \"trailing-comment\" # ignored\n"
+        "version= \"1.2.3\"",
+        encoding="utf-8",
+    )
 
     assert read_product_version(tmp_path) == "1.2.3"
 
