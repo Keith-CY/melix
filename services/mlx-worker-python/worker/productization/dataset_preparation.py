@@ -551,7 +551,7 @@ def _iter_source_records(
             )
             continue
         text = path.read_text(encoding="utf-8")
-        if not text.strip():
+        if not text or text.isspace():
             operator_failures.append(
                 {
                     "id": _failure_id("empty-source", path.name),

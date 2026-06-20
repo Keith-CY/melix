@@ -311,6 +311,7 @@ def test_dataset_ingest_emits_typed_operator_failures(tmp_path: Path) -> None:
     output_root = tmp_path / "prepared"
     input_root.mkdir()
     (input_root / "empty.txt").write_text("", encoding="utf-8")
+    (input_root / "blank.txt").write_text(" \n\t\n", encoding="utf-8")
     (input_root / "archive.bin").write_bytes(b"\x00\x01")
 
     receipt = prepare_dataset_ingest(
@@ -329,6 +330,7 @@ def test_dataset_ingest_emits_typed_operator_failures(tmp_path: Path) -> None:
         "DATASET_INGEST_UNSUPPORTED_SOURCE",
     }
     assert {failure["id"] for failure in receipt["operator_failures"]} == {
+        "dataset-ingest-empty-source-blank-txt",
         "dataset-ingest-empty-source-empty-txt",
         "dataset-ingest-unsupported-source-archive-bin",
     }

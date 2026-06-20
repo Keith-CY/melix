@@ -1,0 +1,32 @@
+# Dataset source empty check isspace fast path
+
+This Python-only performance slice is limited to `worker.productization.dataset_preparation._iter_source_records()`.
+
+## Registered probe
+
+The affected path is covered by the registered PR-scoped probe `dataset-source-records-scandir` in `infra/perf/pr_scoped_probes.json`.
+
+The probe includes focused `test_command`, `coverage_command`, and `probe_command` entries for:
+
+- `services/mlx-worker-python/worker/productization/dataset_preparation.py`
+- `services/mlx-worker-python/tests/test_dataset_preparation_ingest.py`
+- `services/mlx-worker-python/tests/test_pr_scoped_performance.py`
+- `scripts/dataset_source_records_probe.py`
+
+## Optimization
+
+Replace `not text.strip()` with `not text or text.isspace()` when detecting empty ingest sources. This preserves the empty/whitespace-only rejection behavior while avoiding allocation of a stripped copy for normal non-empty source files.
+
+## Verification plan
+
+1. Extend the focused ingest failure test to include a whitespace-only text source.
+2. Run the registered focused test command for `dataset-source-records-scandir` locally on Linux.
+3. Run the registered changed-scope coverage command locally on Linux.
+4. Run the registered probe locally via `scripts/pr_scoped_performance_run.py` against `origin/main` and this branch.
+5. Use GitHub Actions PR-scoped performance as the merge gate.
+
+## Success criteria
+
+- Focused tests pass and the whitespace-only source remains classified as `DATASET_INGEST_EMPTY_SOURCE`.
+- Changed-scope coverage for touched files remains at or above 95%.
+- The registered local and CI probes show non-regression or improvement for `elapsed_ms_mean` and related source-record metrics.
