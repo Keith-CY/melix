@@ -6505,3 +6505,32 @@ def test_deterministic_vlm_completion_token_probe_script_emits_metrics(
     assert "Prompt: Describe the restored image." in DeterministicVLMRuntime()._response_text(
         restored_request
     )
+
+
+def test_scope_report_selects_model_load_config_json_bytes_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_load_trust.py"],
+    )
+
+    assert "model-load-config-json-bytes" in _selected_probe_ids(scope)
+
+
+def test_model_load_config_json_bytes_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("MELIX_MODEL_LOAD_CONFIG_BYTES_PROBE_SAMPLES", "3")
+    monkeypatch.setenv("MELIX_MODEL_LOAD_CONFIG_BYTES_PROBE_ITERATIONS", "10")
+    monkeypatch.setenv("MELIX_MODEL_LOAD_CONFIG_BYTES_PROBE_PADDING_BYTES", "128")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/model_load_config_json_bytes_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["samples"] == 3
+    assert metrics["iterations"] == 10
+    assert metrics["config_padding_bytes"] == 128
+    assert metrics["rejections_mean"] == 10
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["peak_bytes_mean"] > 0

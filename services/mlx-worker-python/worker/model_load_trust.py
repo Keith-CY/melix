@@ -223,7 +223,7 @@ def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | Non
     try:
         if not config_path.is_file():
             return None
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
+        payload = json.loads(config_path.read_bytes())
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
