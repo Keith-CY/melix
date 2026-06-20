@@ -21,6 +21,7 @@ from worker.model_ops.hub_catalog import (
     _local_fit_evidence,
     _payload_is_mlx_compatible,
     _quantization_summary,
+    _repo_id_contains_mlx,
     _size_hint_from_text,
     _string_list,
 )
@@ -114,6 +115,12 @@ def test_mlx_library_atom_detection_preserves_mixed_case_without_lowercase_copy(
         card_data={},
         lowered_tags={"text-generation"},
     ) is True
+
+
+def test_mlx_repo_id_detection_preserves_case_insensitive_matches() -> None:
+    assert _repo_id_contains_mlx("plain/model") is False
+    assert _repo_id_contains_mlx("owner/model-mlx-suffix") is True
+    assert _repo_id_contains_mlx("owner/model-MLX-suffix") is True
 
 
 class FakeHTTPResponse:
