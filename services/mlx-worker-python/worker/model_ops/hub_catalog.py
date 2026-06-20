@@ -509,7 +509,9 @@ def _base_models(value: Any) -> list[str]:
 
 
 def _repo_id_contains_mlx(repo_id: str) -> bool:
-    return "mlx" in repo_id or "mlx" in repo_id.lower()
+    return "mlx" in repo_id or (
+        ("M" in repo_id or "L" in repo_id or "X" in repo_id) and "mlx" in repo_id.lower()
+    )
 
 
 def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
