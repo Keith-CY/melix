@@ -1090,38 +1090,23 @@ def _append_sample_output_lengths(
 ) -> None:
     append = lengths.append
     str_ = str
-    for row in train_rows:
-        if "completion" in row:
-            append(len(str_(row["completion"])))
-            continue
-        messages = row.get("messages", [])
-        if not isinstance(messages, list):
-            append(0)
-            continue
-        total = 0
-        for item in messages:
-            try:
-                content = item.get("content", "")
-            except AttributeError:
+    for rows in (train_rows, validation_rows):
+        for row in rows:
+            if "completion" in row:
+                append(len(str_(row["completion"])))
                 continue
-            total += len(str_(content))
-        append(total)
-    for row in validation_rows:
-        if "completion" in row:
-            append(len(str_(row["completion"])))
-            continue
-        messages = row.get("messages", [])
-        if not isinstance(messages, list):
-            append(0)
-            continue
-        total = 0
-        for item in messages:
-            try:
-                content = item.get("content", "")
-            except AttributeError:
+            messages = row.get("messages", [])
+            if not isinstance(messages, list):
+                append(0)
                 continue
-            total += len(str_(content))
-        append(total)
+            total = 0
+            for item in messages:
+                try:
+                    content = item.get("content", "")
+                except AttributeError:
+                    continue
+                total += len(str_(content))
+            append(total)
 
 
 def _p95(values: list[int]) -> int:

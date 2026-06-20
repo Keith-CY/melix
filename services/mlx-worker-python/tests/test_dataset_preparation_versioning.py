@@ -113,6 +113,10 @@ def test_dataset_version_writes_schema_backed_package_and_quality_summary(
     assert quality["pii_mask_count"] == 1
     assert quality["dedup_ratio"] == 0
     assert quality["metrics"]["quality_scoring_latency_ms"] >= 0
+    assert _sample_output_lengths(
+        [{"messages": "not-a-list"}],
+        [{"messages": [{"content": "hello"}, "skip-me"]}],
+    ) == [0, 5]
 
 
 def test_dataset_version_failed_segment_partition_fast_paths_empty_failures() -> None:
