@@ -59,7 +59,7 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
         opening = raw_response.rfind(fence, 0, closing)
         if opening >= 0:
             content_start = _code_block_content_start(raw_response, opening + 3)
-            candidate = raw_response[content_start:closing].strip()
+            candidate = _stripped_slice(raw_response, content_start, closing)
             if candidate:
                 return candidate, "parsed_code_block"
             if raw_response.count(fence) % 2 == 0:
@@ -68,9 +68,15 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
             opening = raw_response.rfind(fence, 0, closing)
             if opening >= 0:
                 content_start = _code_block_content_start(raw_response, opening + 3)
-                return raw_response[content_start:closing].strip(), "parsed_code_block"
+                return _stripped_slice(raw_response, content_start, closing), "parsed_code_block"
 
     return raw_response.strip(), "parsed_code"
+
+
+def _stripped_slice(text: str, start: int, end: int) -> str:
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    return text[start:end]
 
 
 def _code_block_content_start(text: str, start: int) -> int:
