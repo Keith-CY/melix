@@ -62,7 +62,11 @@ class StartupFailureReport:
 
 
 def read_product_version(repo_root: str | Path) -> str:
-    root = Path(repo_root).expanduser().resolve()
+    root = (
+        repo_root
+        if isinstance(repo_root, Path) and repo_root.is_absolute()
+        else Path(repo_root).expanduser().resolve()
+    )
     pyproject_path = root / "pyproject.toml"
     with pyproject_path.open("rb") as handle:
         for raw_line in handle:

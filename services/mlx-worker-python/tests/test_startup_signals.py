@@ -92,6 +92,27 @@ def test_read_product_version_scans_lines_without_full_file_read(
     assert read_product_version(tmp_path) == "1.2.3"
 
 
+def test_read_product_version_reuses_absolute_path_without_resolve(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "melix"\nversion = "1.2.3"\n',
+        encoding="utf-8",
+    )
+
+    def fail_resolve(
+        self: Path,
+        *args: object,
+        **kwargs: object,
+    ) -> Path:  # pragma: no cover - sentinel
+        raise AssertionError(f"read_product_version should not resolve absolute Path inputs: {self}")
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+
+    assert read_product_version(tmp_path) == "1.2.3"
+
+
 def test_read_product_version_skips_malformed_version_candidates(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         "versioned = \"ignored\"\n"
