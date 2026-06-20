@@ -469,14 +469,7 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
     registry = agentic_tool_catalog_registry()
     max_selected_tools = max(1, selection_input.max_selected_tools)
     if max_selected_tools == 1:
-        return _build_tool_selection_result(
-            registry,
-            ["local_compute"],
-            {"local_compute": "always"},
-            selection_input,
-            "fallback",
-            "no_keyword_match",
-        )
+        return _build_always_only_tool_selection_result(registry, selection_input)
     selected_sources: dict[str, str] = {}
     selected_names: list[str] = []
     has_vector_selection = False
@@ -547,6 +540,32 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
         selection_input,
         selection_mode,
         fallback_reason,
+    )
+
+
+def _build_always_only_tool_selection_result(
+    registry: ToolRegistry,
+    selection_input: ToolSelectionInput,
+) -> ToolSelectionResult:
+    selected_name = "local_compute"
+    selected_registry = registry.select((selected_name,))
+    registry_metrics = registry.metrics()
+    selected_metrics = selected_registry.metrics()
+    return ToolSelectionResult(
+        registry=selected_registry,
+        receipt={
+            "schema_version": "melix.agentic_tool_selection.v1",
+            "toolset_version": BUILTIN_TOOLSET_VERSION,
+            "selection_mode": "fallback",
+            "vector_available": selection_input.vector_available,
+            "fallback_reason": "no_keyword_match",
+            "selected_tools": [{"tool_id": selected_name, "source": "always"}],
+            "dropped_tool_count": max(
+                0, registry_metrics.tool_count - selected_metrics.tool_count
+            ),
+            "full_schema_bytes": registry_metrics.schema_bytes,
+            "selected_schema_bytes": selected_metrics.schema_bytes,
+        },
     )
 
 
