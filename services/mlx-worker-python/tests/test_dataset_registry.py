@@ -167,6 +167,11 @@ def test_dataset_catalog_file_format_uses_supported_suffixes() -> None:
     assert catalog._dataset_file_format(Path("train.JSONL")) == "jsonl"
     assert catalog._dataset_file_format(Path("train.jsonl.")) == ""
     assert catalog._dataset_file_format(Path(".jsonl")) == ""
+    assert catalog._is_supported_dataset_file_name("train.jsonl") is True
+    assert catalog._is_supported_dataset_file_name("train.JSONL") is True
+    assert catalog._is_supported_dataset_file_name("notes.txt") is False
+    assert catalog._is_supported_dataset_file_name("README") is False
+    assert catalog._is_supported_dataset_file_name(".jsonl") is False
 
 
 def test_dataset_catalog_split_alias_prefix_scan_matches_legacy_delimiters() -> None:
