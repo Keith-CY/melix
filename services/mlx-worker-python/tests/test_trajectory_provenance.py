@@ -567,6 +567,45 @@ def test_copy_json_list_still_copies_nested_mutable_items() -> None:
     assert copied[1]["labels"] is not source[1]["labels"]
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        (),
+        ("agentic",),
+        ("agentic", "trajectory"),
+        ("agentic", "trajectory", 3, True, None, 0.75),
+    ],
+)
+def test_copy_json_tuple_reuses_scalar_tuples_without_recursive_calls(
+    source: tuple[object, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_recursive_copy(value: object) -> object:
+        raise AssertionError(f"unexpected recursive copy for scalar tuple value {value!r}")
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        fail_recursive_copy,
+    )
+
+    copied = trajectory_provenance_module._copy_json_tuple(source)
+
+    assert copied == source
+    assert copied is source
+
+
+def test_copy_json_tuple_still_copies_nested_mutable_items() -> None:
+    source = ("agentic", {"labels": ["trajectory"]})
+
+    copied = trajectory_provenance_module._copy_json_tuple(source)
+
+    assert copied == source
+    assert copied is not source
+    assert copied[1] is not source[1]
+    assert copied[1]["labels"] is not source[1]["labels"]
+
+
 def test_copy_trajectory_provenance_value_falls_back_for_custom_mutables() -> None:
     class CustomMutable:
         def __init__(self, value: int) -> None:
