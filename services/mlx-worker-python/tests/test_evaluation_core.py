@@ -3513,6 +3513,7 @@ def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.Mo
     assert EvaluationCore._normalized_answer("Option C is correct") == "option c is correct"
     assert EvaluationCore._normalized_answer("STRASSE") == "strasse"
     assert EvaluationCore._normalized_answer("Straße") == "strasse"
+    assert EvaluationCore._normalized_answer("Straße\u2003CITY") == "strasse city"
 
     assert numeric_calls == 0
     assert option_calls == 0
