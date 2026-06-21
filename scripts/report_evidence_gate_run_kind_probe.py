@@ -5,6 +5,7 @@ import json
 import os
 import statistics
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from worker.productization.report_evidence_gate import (  # noqa: E402
     _report_matrix_roles,
     _rule_matches_report,
     _slowest_probe_phases,
+    load_report_payload,
 )
 
 
@@ -272,6 +274,41 @@ def _measure_dict_list(iterations: int, sample_count: int) -> tuple[dict[str, fl
     )
 
 
+def _measure_load_report_payload(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
+    payload = {
+        "schema_version": "melix.benchmark_evaluation_report.v1",
+        "report_id": "probe-load-report-payload",
+        "source_evidence_ids": [f"run-{index}" for index in range(64)],
+        "metrics": [
+            {"metric": f"probe.metric.{index}", "value": float(index), "result": "pass"}
+            for index in range(96)
+        ],
+    }
+    payload_json = json.dumps(payload, separators=(",", ":"))
+    elapsed_samples: list[float] = []
+    checksum = 0
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        report_path = Path(tmpdir) / "report.json"
+        report_path.write_text(payload_json, encoding="utf-8")
+        for _ in range(sample_count):
+            started = time.perf_counter()
+            for _index in range(iterations):
+                loaded = load_report_payload(report_path)
+                checksum += len(loaded.get("metrics", []))
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
+    elapsed_mean = statistics.fmean(elapsed_samples)
+    return (
+        {
+            "load_report_payload_elapsed_ms_mean": elapsed_mean,
+            "load_report_payload_bytes": float(len(payload_json)),
+            "load_report_payload_checksum": float(checksum),
+        },
+        elapsed_mean,
+    )
+
+
 def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     run_kind_metrics, run_kind_elapsed = _measure_run_kind(iterations, sample_count)
     metric_prefix_metrics, metric_prefix_elapsed = _measure_metric_prefix(iterations, sample_count)
@@ -293,13 +330,19 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     )
     dict_list_iterations = max(1, iterations // 50)
     dict_list_metrics, dict_list_elapsed = _measure_dict_list(dict_list_iterations, sample_count)
+    load_report_payload_iterations = max(1, iterations // 500)
+    load_report_payload_metrics, load_report_payload_elapsed = _measure_load_report_payload(
+        load_report_payload_iterations,
+        sample_count,
+    )
     return {
         "elapsed_ms_mean": run_kind_elapsed
         + metric_prefix_elapsed
         + target_field_elapsed
         + matrix_roles_elapsed
         + slowest_probe_phase_elapsed
-        + dict_list_elapsed,
+        + dict_list_elapsed
+        + load_report_payload_elapsed,
         "iterations": float(iterations),
         "sample_count": float(sample_count),
         **run_kind_metrics,
@@ -309,6 +352,7 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         **matrix_roles_metrics,
         **slowest_probe_phase_metrics,
         **dict_list_metrics,
+        **load_report_payload_metrics,
     }
 
 

@@ -871,6 +871,21 @@ def test_report_evidence_gate_covers_invalid_payload_and_edge_summaries(tmp_path
     assert "## Known Gaps" in markdown
 
 
+def test_load_report_payload_reads_json_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_path = tmp_path / "report.json"
+    report_path.write_bytes(b'{"schema_version":"fixture","value":3}')
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        raise AssertionError(f"unexpected text decode for {self}")
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert load_report_payload(report_path) == {"schema_version": "fixture", "value": 3}
+
+
 def test_report_evidence_gate_script_handles_errors_and_failed_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
