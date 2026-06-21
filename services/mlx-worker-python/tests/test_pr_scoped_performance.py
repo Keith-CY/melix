@@ -2166,8 +2166,14 @@ def test_scope_report_selects_download_pipeline_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/model_ops/download_pipeline.py"],
     )
 
-    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    selected_probes = _dict_list(scope["selected_probes"])
+    probe_ids = {probe["id"] for probe in selected_probes}
     assert "download-pipeline-directory-size-single-stat" in probe_ids
+    download_probe = next(
+        probe for probe in selected_probes if probe["id"] == "download-pipeline-directory-size-single-stat"
+    )
+    metric_keys = {metric["key"] for metric in _dict_list(download_probe["metrics"])}
+    assert "companion_receipt_elapsed_ms_mean" in metric_keys
 
 
 def test_scope_report_selects_performance_report_results_probe() -> None:
