@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -14,6 +15,7 @@ from worker.productization.benchmark_export import (
     _collect_benchmark_matrix_run,
     _collect_benchmark_run,
     _collect_evaluation_run,
+    _collect_agent_reliability_run,
     _collect_shared_export_artifacts,
     _iter_jsonl_dict_rows,
     _iter_sorted_child_directories,
@@ -35,6 +37,7 @@ from worker.productization.benchmark_export import (
     build_evaluation_samples_csv,
     build_evaluation_summary_csv,
     build_export_bundle,
+    collect_agent_reliability_artifacts,
     collect_benchmark_artifacts,
     collect_evaluation_artifacts,
     write_export_bundle,
@@ -1590,6 +1593,144 @@ def test_collect_evaluation_artifacts_normalizes_compare_runs_for_history_and_ex
     assert result["evaluation_compare_samples"][0]["target_extracted_result"] == "4"
     assert result["evaluation_compare_samples"][0]["base_extraction_status"] == "extracted"
     assert result["evaluation_compare_samples"][0]["category_label"] == "math"
+
+
+def _write_agent_reliability_fixtures(root: Path, *, row_count: int = 1) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "agent-reliability-rows.jsonl").write_text(
+        "\n".join(
+            json.dumps({
+                "schema_version": "melix.agent_reliability_row.v1",
+                "model_id": "fixture-model",
+                "backend": "fixture",
+                "profile": "ci",
+                "ablation_id": "baseline",
+                "scenario_id": f"scenario-{index}",
+                "scenario_tags": ["stateful_behavior"],
+                "accuracy": 1.0,
+                "completeness": 1.0,
+                "validation_error_count": 0.0,
+            })
+            for index in range(row_count)
+        ) + "\n"
+    )
+    (root / "agent-reliability-summary.json").write_text(
+        json.dumps({
+            "schema_version": "melix.agent_reliability_summary.v1",
+            "aggregate": {"row_count": row_count},
+            "by_ablation": {"baseline": {"completion_rate": 1.0}},
+        }) + "\n"
+    )
+
+
+def test_collect_agent_reliability_artifacts_finds_rows_and_summaries(
+    tmp_path: Path,
+) -> None:
+    _write_agent_reliability_fixtures(tmp_path)
+    _write_agent_reliability_fixtures(tmp_path / "runs" / "agent-rel-1", row_count=2)
+
+    result = collect_agent_reliability_artifacts(tmp_path)
+
+    assert [row["scenario_id"] for row in result["agent_reliability_rows"]] == [
+        "scenario-0",
+        "scenario-0",
+        "scenario-1",
+    ]
+    assert [
+        summary["aggregate"]["row_count"]
+        for summary in result["agent_reliability_summaries"]
+    ] == [1, 2]
+
+
+def test_collect_agent_reliability_artifacts_returns_empty_lists_without_markers(
+    tmp_path: Path,
+) -> None:
+    result = collect_agent_reliability_artifacts(tmp_path)
+
+    assert result == {
+        "agent_reliability_rows": [],
+        "agent_reliability_summaries": [],
+    }
+
+
+def test_collect_agent_reliability_artifacts_skips_missing_fallback_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root_scan = _ScannedDirectoryEntries(
+        directory=tmp_path,
+        file_names=(),
+        dir_names=(),
+    )
+    scan_directory = Mock(side_effect=AssertionError("unexpected directory scan"))
+    monkeypatch.setattr(
+        benchmark_export_module,
+        "_scan_directory",
+        scan_directory,
+    )
+
+    result = collect_agent_reliability_artifacts(
+        tmp_path,
+        scanned_entries=root_scan,
+    )
+
+    assert result == {
+        "agent_reliability_rows": [],
+        "agent_reliability_summaries": [],
+    }
+    scan_directory.assert_not_called()
+
+
+def test_collect_agent_reliability_artifacts_supports_summary_only_fallback(
+    tmp_path: Path,
+) -> None:
+    summary_root = tmp_path / "agent-reliability"
+    summary_root.mkdir(parents=True)
+    (summary_root / "agent-reliability-summary.json").write_text(
+        json.dumps({
+            "schema_version": "melix.agent_reliability_summary.v1",
+            "aggregate": {"row_count": 0},
+        }) + "\n"
+    )
+
+    result = collect_agent_reliability_artifacts(tmp_path)
+
+    assert result["agent_reliability_rows"] == []
+    assert result["agent_reliability_summaries"] == [
+        {
+            "schema_version": "melix.agent_reliability_summary.v1",
+            "aggregate": {"row_count": 0},
+        }
+    ]
+
+
+def test_collect_agent_reliability_run_ignores_missing_directory(tmp_path: Path) -> None:
+    rows: list[dict[str, object]] = []
+    summaries: list[dict[str, object]] = []
+
+    _collect_agent_reliability_run(
+        tmp_path / "missing",
+        rows=rows,
+        summaries=summaries,
+    )
+
+    assert rows == []
+    assert summaries == []
+
+
+def test_build_export_bundle_includes_agent_reliability_artifacts(tmp_path: Path) -> None:
+    _write_bench_fixtures(tmp_path)
+    _write_eval_fixtures(tmp_path)
+    _write_agent_reliability_fixtures(tmp_path / "agent-reliability")
+
+    bundle = build_export_bundle(tmp_path)
+
+    assert len(bundle["benchmark_jobs"]) == 1
+    assert len(bundle["evaluation_jobs"]) == 1
+    assert len(bundle["agent_reliability_rows"]) == 1
+    assert bundle["agent_reliability_summaries"][0]["schema_version"] == (
+        "melix.agent_reliability_summary.v1"
+    )
 
 
 def test_build_export_bundle_combines_benchmark_and_evaluation_artifacts(tmp_path: Path) -> None:

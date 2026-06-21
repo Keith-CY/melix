@@ -1,0 +1,25 @@
+{
+  "schema_version": "melix.agent_reliability_fixture.v1",
+  "dataset_id": "agent-reliability.dev.v1",
+  "suite_id": "agent_reliability",
+  "version": "1",
+  "split": "validation",
+  "scenario_count": 3,
+  "ablation_presets": [
+    "baseline",
+    "no_response_rescue",
+    "no_retry_nudges",
+    "no_step_enforcement",
+    "no_tool_error_recovery",
+    "no_context_compaction",
+    "all_guardrails_disabled"
+  ],
+  "tags": [
+    "plumbing",
+    "model_quality",
+    "advanced_reasoning",
+    "compaction_pressure",
+    "stateful_behavior",
+    "error_recovery"
+  ]
+}
