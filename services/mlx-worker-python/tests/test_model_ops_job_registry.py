@@ -454,6 +454,18 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
                     "failure_reason": "",
                     "status": "passed",
                 },
+                "artifact_transport_receipt": {
+                    "requested_transport": "parallel_chunked",
+                    "effective_transport": "http_range_resume",
+                    "fallback_reason": "transport_helper_unavailable",
+                    "chunk_resume_mode": "range_resume",
+                    "planned_bytes": 4096,
+                    "written_bytes": 4096,
+                    "progress_pct": 1.0,
+                    "integrity_decision": "accepted",
+                    "status": "completed",
+                    "selected_mirror": "https://huggingface.co",
+                },
             }
         ),
     )
@@ -480,6 +492,8 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
         "failure_reason": "",
     }
     assert download["artifact_integrity"]["policy_present"] is True
+    assert download["artifact_transport_status"] == "completed"
+    assert download["artifact_transport_receipt"]["effective_transport"] == "http_range_resume"
 
     registry.attach_manifest(
         job.job_id,
@@ -491,6 +505,7 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
                 "target_scope": "hub:mlx-community/demo@main",
                 "operation_kind": "managed_model_install",
                 "artifact_integrity": "not-a-receipt",
+                "artifact_transport_receipt": "not-a-receipt",
             }
         ),
     )
@@ -508,6 +523,8 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
         "checked_at": "",
         "failure_reason": "",
     }
+    assert refreshed_download["artifact_transport_receipt"] == {}
+    assert refreshed_download["artifact_transport_status"] == ""
 
 
 def test_find_download_by_operation_receipt_matches_only_scoped_active_or_completed_jobs() -> None:

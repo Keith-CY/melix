@@ -456,6 +456,200 @@ def test_managed_download_manifest_records_operation_receipt_fields(tmp_path: Pa
     }
 
 
+def test_managed_download_manifest_records_transport_receipt_progress(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(b"abcdef")
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "chunk_bytes": "2",
+            "melix.target_scope": "hub:mlx-community/demo@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.requested_transport": "parallel_chunked",
+            "melix.transport_helper_available": "false",
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-transport", output_dir=tmp_path / "output")
+
+    download_payloads = [
+        json.loads(snapshot.manifest_json)
+        for snapshot in result.snapshots
+        if snapshot.stage == "download"
+    ]
+    written_bytes = [
+        payload["artifact_transport_receipt"]["written_bytes"]
+        for payload in download_payloads
+    ]
+    completed_receipt = download_payloads[-1]["artifact_transport_receipt"]
+
+    assert written_bytes[0] == 2
+    assert written_bytes == sorted(written_bytes)
+    assert completed_receipt == {
+        "requested_transport": "parallel_chunked",
+        "effective_transport": "http_range_resume",
+        "fallback_reason": "transport_helper_unavailable",
+        "chunk_resume_mode": "range_resume",
+        "planned_bytes": 6,
+        "written_bytes": 6,
+        "progress_pct": 1.0,
+        "integrity_decision": "accepted",
+        "status": "completed",
+        "selected_mirror": "https://huggingface.co",
+    }
+
+
+def test_managed_download_transport_receipt_records_user_forced_fallback(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(b"abc")
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "melix.target_scope": "hub:mlx-community/demo@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.requested_transport": "parallel_chunked",
+            "melix.force_transport_fallback": "true",
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-force-fallback", output_dir=tmp_path / "output")
+
+    receipt = json.loads(result.snapshots[-1].manifest_json)["artifact_transport_receipt"]
+    assert receipt["requested_transport"] == "parallel_chunked"
+    assert receipt["effective_transport"] == "http_range_resume"
+    assert receipt["fallback_reason"] == "user_forced_fallback"
+
+
+def test_transport_receipt_helpers_tolerate_non_string_ext_values() -> None:
+    ext = {
+        "melix.operation_id": 1258,
+        "melix.requested_transport": " parallel_chunked ",
+        "melix.transport_helper_available": False,
+        "melix.force_transport_fallback": 0,
+    }
+
+    assert DownloadPipeline.uses_operation_receipt(ext) is True
+    assert DownloadPipeline._transport_selection(ext) == (
+        "parallel_chunked",
+        "http_range_resume",
+        "transport_helper_unavailable",
+        "range_resume",
+    )
+
+
+def test_managed_download_rejects_unknown_size_empty_body_before_activation(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "empty.bin"
+    source_path.write_bytes(b"")
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "melix.target_scope": "hub:mlx-community/demo@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.allow_unknown_size": "true",
+        },
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        pipeline.run(request, job_id="job-empty", output_dir=output_dir)
+
+    assert exc_info.value.code == "empty_artifact_body"
+    state_payload = json.loads((output_dir / "download.state.json").read_text(encoding="utf-8"))
+    assert json.loads(exc_info.value.details["state_json"]) == state_payload
+    assert state_payload["status"] == "failed"
+    assert state_payload["terminal_state"] == "failed"
+    assert state_payload["last_error"] == "empty_artifact_body"
+    assert state_payload["artifact_transport_receipt"] == {
+        "requested_transport": "http_range_resume",
+        "effective_transport": "http_range_resume",
+        "fallback_reason": "empty_body_unknown_size",
+        "chunk_resume_mode": "range_resume",
+        "planned_bytes": 0,
+        "written_bytes": 0,
+        "progress_pct": 0.0,
+        "integrity_decision": "rejected_empty_body",
+        "status": "failed",
+        "selected_mirror": "https://huggingface.co",
+    }
+    assert not (output_dir / "download.artifact").exists()
+
+
+def test_empty_body_guard_only_applies_to_managed_unknown_size_receipts(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "empty.bin"
+    source_path.write_bytes(b"")
+
+    plain_result = pipeline.run(
+        maintenance_pb2.ConvertModelRequest(
+            source_model="mlx-community/plain",
+            ext={"source_path": str(source_path)},
+        ),
+        job_id="job-plain-empty",
+        output_dir=tmp_path / "plain-output",
+    )
+    managed_result = pipeline.run(
+        maintenance_pb2.ConvertModelRequest(
+            source_model="mlx-community/managed",
+            ext={
+                "source_path": str(source_path),
+                "melix.target_scope": "hub:mlx-community/managed@main",
+                "melix.operation_kind": "managed_model_install",
+            },
+        ),
+        job_id="job-managed-empty",
+        output_dir=tmp_path / "managed-output",
+    )
+
+    assert plain_result.output_path.read_bytes() == b""
+    assert "artifact_transport_receipt" not in json.loads(plain_result.snapshots[-1].manifest_json)
+    managed_payload = json.loads(managed_result.snapshots[-1].manifest_json)
+    assert managed_payload["artifact_transport_receipt"]["status"] == "completed"
+    assert managed_payload["artifact_transport_receipt"]["planned_bytes"] == 0
+
+
+def test_managed_hub_import_records_transport_receipt(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_dir = tmp_path / "managed-snapshot"
+    source_dir.mkdir()
+    (source_dir / "config.json").write_text("{}", encoding="utf-8")
+    (source_dir / "weights.safetensors").write_bytes(b"weights")
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_dir),
+            "melix.managed_import": "true",
+            "melix.source_kind": "hub_repo",
+            "melix.hf_repo_id": "mlx-community/demo",
+            "melix.hf_revision": "main",
+            "melix.requested_transport": "parallel_chunked",
+            "melix.transport_helper_available": "false",
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-managed-hub", output_dir=tmp_path / "output")
+
+    payload = json.loads(result.snapshots[-1].manifest_json)
+    assert result.output_path == source_dir
+    assert payload["artifact_transport_receipt"] == {
+        "requested_transport": "parallel_chunked",
+        "effective_transport": "http_range_resume",
+        "fallback_reason": "transport_helper_unavailable",
+        "chunk_resume_mode": "range_resume",
+        "planned_bytes": len(b"{}") + len(b"weights"),
+        "written_bytes": len(b"{}") + len(b"weights"),
+        "progress_pct": 1.0,
+        "integrity_decision": "accepted",
+        "status": "completed",
+        "selected_mirror": "https://huggingface.co",
+    }
+
+
 def test_strict_managed_download_requires_digest_before_materializing_artifact(tmp_path: Path) -> None:
     pipeline = DownloadPipeline()
     source_path = tmp_path / "source.bin"
@@ -879,3 +1073,42 @@ def test_terminal_receipts_record_stalled_and_cancelled_integrity_failures(tmp_p
     assert cancelled["resume_eligible"] is True
     assert cancelled["partial_lifecycle"] == "cancelled_kept_for_resume"
     assert cancelled["activated"] is False
+
+
+def test_terminal_transport_receipt_preserves_original_transport_selection(tmp_path: Path) -> None:
+    state_path = tmp_path / "download.state.json"
+    base_payload = {
+        "state_path": str(state_path),
+        "selected_mirror": "https://mirror.example",
+        "downloaded_bytes": 3,
+        "total_bytes": 6,
+        "artifact_transport_receipt": {
+            "requested_transport": "parallel_chunked",
+            "effective_transport": "http_range_resume",
+            "fallback_reason": "transport_helper_unavailable",
+            "chunk_resume_mode": "range_resume",
+            "planned_bytes": 6,
+            "written_bytes": 3,
+            "progress_pct": 0.5,
+            "integrity_decision": "pending",
+            "status": "running",
+            "selected_mirror": "https://mirror.example",
+        },
+    }
+
+    cancelled = json.loads(
+        DownloadPipeline._terminal_manifest_json(dict(base_payload), status="cancelled")
+    )
+
+    assert cancelled["artifact_transport_receipt"] == {
+        "requested_transport": "parallel_chunked",
+        "effective_transport": "http_range_resume",
+        "fallback_reason": "transport_helper_unavailable",
+        "chunk_resume_mode": "range_resume",
+        "planned_bytes": 6,
+        "written_bytes": 3,
+        "progress_pct": 0.5,
+        "integrity_decision": "cancelled",
+        "status": "cancelled",
+        "selected_mirror": "https://mirror.example",
+    }

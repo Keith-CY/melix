@@ -1234,6 +1234,9 @@ class ModelOpsJobRegistry:
             artifact_integrity = manifest.get("artifact_integrity")
             if not isinstance(artifact_integrity, dict):
                 artifact_integrity = {}
+            artifact_transport_receipt = manifest.get("artifact_transport_receipt")
+            if not isinstance(artifact_transport_receipt, dict):
+                artifact_transport_receipt = {}
             artifact_integrity_summary = ModelOpsJobRegistry._artifact_integrity_summary(
                 artifact_integrity
             )
@@ -1259,6 +1262,8 @@ class ModelOpsJobRegistry:
                     "artifact_integrity": artifact_integrity,
                     "artifact_integrity_status": artifact_integrity_summary["status"],
                     "artifact_integrity_summary": artifact_integrity_summary,
+                    "artifact_transport_receipt": artifact_transport_receipt,
+                    "artifact_transport_status": str(artifact_transport_receipt.get("status", "")),
                     "output_dir": str(manifest.get("output_dir", job["output_dir"])),
                     "output_path": str(manifest.get("output_path", job["output_path"])),
                     "partial_path": partial_path,

@@ -114,6 +114,7 @@ The JSON state snapshot records at least these fields:
 - `retry_after_ms`
 - `last_error`
 - `artifact_integrity`
+- `artifact_transport_receipt`
 - `selected_mirror`
 - `downloaded_bytes`
 - `total_bytes`
@@ -131,6 +132,28 @@ The JSON state snapshot records at least these fields:
 - `terminal_state`
 
 This state is intended to remain stable enough for later desktop queue recovery and release-gate automation.
+
+`artifact_transport_receipt` records the transfer path that produced the
+managed artifact bytes. The current deterministic worker fixture records:
+
+- `requested_transport`
+- `effective_transport`
+- `fallback_reason`
+- `chunk_resume_mode`
+- `planned_bytes`
+- `written_bytes`
+- `progress_pct`
+- `integrity_decision`
+- `status`
+- `selected_mirror`
+
+The receipt is emitted on the same managed operation boundary as
+`artifact_integrity`. It reuses existing byte counters so chunk progress remains
+monotonic in `download.state.json`, records graceful fallback from unavailable
+fast transports to the resumable path, and rejects unknown-size empty bodies
+before a completed artifact can be activated. This slice documents deterministic
+local fixture behavior; it does not change the default network transport or add
+real release signing.
 
 Managed artifact installs derive `operation_id` from `operation_kind` plus
 `target_scope` unless the caller supplies `melix.operation_id`. A repeated
