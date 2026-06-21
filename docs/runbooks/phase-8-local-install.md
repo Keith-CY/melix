@@ -165,6 +165,18 @@ materialized when the request lacks immutable digest metadata in
 `last_error=missing_artifact_digest`, and records a failed `artifact_integrity`
 receipt with `policy_present=false`.
 
+For direct worker-owned downloads, strict mode also verifies SHA-256 metadata
+against the staged `*.partial` file before activation. Declarations may use
+`sha256:<64 hex>` or a bare 64-hex value. On match, the terminal
+`artifact_integrity` receipt records `verification_mode=sha256`, the declared
+`digest`, matching `actual_digest`, a real `checked_at` timestamp, and
+`status=passed` before the final rename. On mismatch, Melix refuses activation
+with `artifact_integrity_mismatch`, records `last_error=digest_mismatch`,
+keeps the staged partial for diagnosis, sets `activated=false`, and writes a
+failed `artifact_integrity` receipt with the declared and actual digests.
+Declared digest policies outside the supported SHA-256 formats also fail closed
+before activation with `artifact_integrity_unsupported`.
+
 The current strict activation gate is a worker-side fixture helper for
 receipts: activation is eligible only when the receipt is completed and
 `artifact_integrity.status` is `passed`. This is not a full signature system,

@@ -262,23 +262,34 @@ class DownloadPipeline:
                                     details={"state_json": terminal_json},
                                 )
 
-                os.replace(os.fspath(partial_path), os.fspath(output_path))
-                snapshots.append(
-                    self._snapshot(
-                        manifest_context=manifest_context,
-                        status="completed",
-                        terminal_state="completed",
-                        stage="download",
-                        pct=1.0,
-                        downloaded_bytes=total_bytes,
-                        total_bytes=total_bytes,
-                        retry_count=retry_count,
-                        resume_used=resume_used,
-                        resume_from_bytes=resume_from_bytes,
-                        stall_detection_count=stall_detection_count,
-                        stall_reason="",
-                    )
+                completed_payload = self._build_manifest_payload(
+                    manifest_context=manifest_context,
+                    status="completed",
+                    terminal_state="completed",
+                    stage="download",
+                    pct=1.0,
+                    downloaded_bytes=total_bytes,
+                    total_bytes=total_bytes,
+                    retry_count=retry_count,
+                    resume_used=resume_used,
+                    resume_from_bytes=resume_from_bytes,
+                    stall_detection_count=stall_detection_count,
+                    stall_reason="",
                 )
+                if self._artifact_digest(completed_payload.get("ext", {})):
+                    completed_payload["artifact_integrity"] = self._verified_artifact_integrity_receipt(
+                        artifact_path=partial_path,
+                        ext=completed_payload.get("ext", {}),
+                        status="passed",
+                    )
+                    self._raise_if_strict_integrity_mismatch(
+                        manifest_payload=completed_payload,
+                        partial_path=partial_path,
+                        ext=ext,
+                    )
+                os.replace(os.fspath(partial_path), os.fspath(output_path))
+                manifest_json = self._write_manifest_json(state_path, completed_payload)
+                snapshots.append(DownloadSnapshot(stage="download", pct=1.0, manifest_json=manifest_json))
                 return DownloadPipelineResult(output_path=output_path, snapshots=snapshots)
             except _RetryableDownloadFailure as exc:
                 if retry_count >= max_retries:
@@ -920,27 +931,139 @@ class DownloadPipeline:
             or ext.get("test_request_deadline_ms", "").strip() != ""
         )
 
-    @staticmethod
+    @classmethod
     def _artifact_integrity_receipt(
+        cls,
         *,
         ext: dict[str, Any],
         status: str,
         failure_reason: str = "",
+        actual_digest: str = "",
+        checked_at: str = "",
     ) -> dict[str, Any]:
-        digest = str(
-            ext.get("melix.artifact_digest")
-            or ext.get("artifact_digest")
-            or ext.get("sha256")
-            or ""
-        )
-        return {
-            "verification_mode": str(ext.get("melix.verification_mode") or "receipt_fixture"),
+        digest = cls._artifact_digest(ext)
+        normalized_actual_digest = cls._normalize_sha256_digest(actual_digest)
+        verification_mode = str(ext.get("melix.verification_mode") or "receipt_fixture")
+        if cls._sha256_digest_hex(digest) or cls._sha256_digest_hex(normalized_actual_digest):
+            verification_mode = "sha256"
+        receipt = {
+            "verification_mode": verification_mode,
             "policy_present": bool(digest or status != "failed"),
             "digest": digest,
-            "checked_at": str(ext.get("melix.integrity_checked_at") or "not_recorded"),
+            "checked_at": checked_at or str(ext.get("melix.integrity_checked_at") or "not_recorded"),
             "failure_reason": failure_reason,
             "status": status,
         }
+        if digest:
+            receipt["actual_digest"] = normalized_actual_digest
+        return receipt
+
+    @classmethod
+    def _verified_artifact_integrity_receipt(
+        cls,
+        *,
+        artifact_path: Path,
+        ext: dict[str, Any],
+        status: str,
+        failure_reason: str = "",
+    ) -> dict[str, Any]:
+        actual_digest = f"sha256:{cls._sha256_file(artifact_path)}" if cls._artifact_digest(ext) else ""
+        return cls._artifact_integrity_receipt(
+            ext=ext,
+            status=status,
+            failure_reason=failure_reason,
+            actual_digest=actual_digest,
+            checked_at=cls._utc_now_iso8601(),
+        )
+
+    @classmethod
+    def _raise_if_strict_integrity_mismatch(
+        cls,
+        *,
+        manifest_payload: dict[str, Any],
+        partial_path: Path,
+        ext: dict[str, str],
+    ) -> None:
+        if not cls._strict_install_mode(ext):
+            return
+        artifact_integrity = manifest_payload.get("artifact_integrity")
+        if not isinstance(artifact_integrity, dict):
+            return
+        declared_digest = str(artifact_integrity.get("digest", "")).strip()
+        actual_digest = str(artifact_integrity.get("actual_digest", "")).strip()
+        declared_sha256 = cls._sha256_digest_hex(declared_digest)
+        actual_sha256 = cls._sha256_digest_hex(actual_digest)
+        if not declared_sha256:
+            failure_reason = "unsupported_artifact_digest"
+            payload = cls._failed_integrity_payload(
+                manifest_payload=manifest_payload,
+                partial_path=partial_path,
+                failure_reason=failure_reason,
+            )
+            state_json = cls._write_manifest_json(Path(str(payload["state_path"])), payload)
+            raise ModelOperationError(
+                code="artifact_integrity_unsupported",
+                message="Strict managed artifact installs require a supported SHA-256 digest before activation.",
+                details={
+                    "state_json": state_json,
+                    "failure_reason": failure_reason,
+                },
+            )
+        if not actual_sha256 or declared_sha256 == actual_sha256:
+            return
+
+        failure_reason = "digest_mismatch"
+        payload = cls._failed_integrity_payload(
+            manifest_payload=manifest_payload,
+            partial_path=partial_path,
+            failure_reason=failure_reason,
+        )
+        state_json = cls._write_manifest_json(Path(str(payload["state_path"])), payload)
+        raise ModelOperationError(
+            code="artifact_integrity_mismatch",
+            message="Strict managed artifact install digest verification failed before activation.",
+            details={
+                "state_json": state_json,
+                "failure_reason": failure_reason,
+            },
+        )
+
+    @classmethod
+    def _failed_integrity_payload(
+        cls,
+        *,
+        manifest_payload: dict[str, Any],
+        partial_path: Path,
+        failure_reason: str,
+    ) -> dict[str, Any]:
+        artifact_integrity = manifest_payload.get("artifact_integrity")
+        if not isinstance(artifact_integrity, dict):
+            artifact_integrity = {}
+        payload = dict(manifest_payload)
+        payload.update(
+            {
+                "status": "failed",
+                "terminal_state": "failed",
+                "last_error": failure_reason,
+                "artifact_integrity": {
+                    **artifact_integrity,
+                    "failure_reason": failure_reason,
+                    "status": "failed",
+                },
+                "activated": False,
+            }
+        )
+        partial_bytes, partial_age_ms = cls._partial_file_state(partial_path)
+        payload.update(
+            {
+                "partial_bytes": partial_bytes,
+                "partial_age_ms": partial_age_ms,
+                "resume_eligible": False,
+                "stale_partial_removed": bool(payload.get("stale_partial_removed", False)),
+                "partial_lifecycle": "failed_kept_for_resume",
+            }
+        )
+        return payload
 
     @classmethod
     def _raise_if_strict_integrity_missing(
@@ -1023,14 +1146,47 @@ class DownloadPipeline:
             return True
         return ext.get("melix.install_mode", "").strip().lower() == "strict"
 
-    @staticmethod
-    def _artifact_digest(ext: dict[str, Any]) -> str:
-        return str(
+    @classmethod
+    def _artifact_digest(cls, ext: dict[str, Any]) -> str:
+        return cls._normalize_sha256_digest(
             ext.get("melix.artifact_digest")
             or ext.get("artifact_digest")
             or ext.get("sha256")
             or ""
-        ).strip()
+        )
+
+    @staticmethod
+    def _normalize_sha256_digest(raw_digest: Any) -> str:
+        digest = str(raw_digest or "").strip()
+        if not digest:
+            return ""
+        lowered = digest.lower()
+        hex_part = lowered.removeprefix("sha256:")
+        if len(hex_part) == 64 and all(char in "0123456789abcdef" for char in hex_part):
+            return f"sha256:{hex_part}"
+        return digest
+
+    @staticmethod
+    def _sha256_digest_hex(digest: str) -> str:
+        normalized = DownloadPipeline._normalize_sha256_digest(digest)
+        if not normalized.startswith("sha256:"):
+            return ""
+        hex_part = normalized.removeprefix("sha256:")
+        if len(hex_part) == 64 and all(char in "0123456789abcdef" for char in hex_part):
+            return hex_part
+        return ""
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as file:
+            for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _utc_now_iso8601() -> str:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     @staticmethod
     def _write_json_atomically(path: Path, payload: dict[str, Any]) -> None:
