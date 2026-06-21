@@ -137,9 +137,12 @@ def clear_installed_package_version_cache() -> None:
 
 def estimate_model_weight_resident_bytes(model_path: str) -> int:
     """Estimate model resident bytes from local weight artifacts."""
-    if not str(model_path or "").strip():
+    raw_model_path = model_path or ""
+    if not raw_model_path.strip():
         return 0
-    root = Path(model_path).expanduser()
+    root = Path(raw_model_path)
+    if raw_model_path[0] == "~":
+        root = root.expanduser()
     try:
         if root.is_file():
             return _weight_file_size(root)
