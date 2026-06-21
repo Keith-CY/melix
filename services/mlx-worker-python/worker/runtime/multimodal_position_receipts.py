@@ -195,7 +195,7 @@ def build_hybrid_state_patch_receipt(
         1 for row_receipt in row_receipts if row_receipt["row_state_guard"] == "row_drift"
     )
     text_only_rope_drift = any(
-        "text_only_rope_mode_mismatch" in row_receipt["row_drift_reasons"]
+        "text_only_rope_mode_mismatch" in cast(list[str], row_receipt["row_drift_reasons"])
         for row_receipt in row_receipts
     )
     return {
