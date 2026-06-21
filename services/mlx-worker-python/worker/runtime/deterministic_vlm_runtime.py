@@ -19,7 +19,10 @@ from worker.runtime.deterministic_delay import sleep_if_configured
 from worker.runtime.deterministic_probe_mixin import DeterministicProbeMixin
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
-from worker.runtime.multimodal_position_receipts import build_position_metadata_receipt
+from worker.runtime.multimodal_position_receipts import (
+    build_position_metadata_receipt,
+    empty_quantized_kv_mask_receipt,
+)
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
@@ -54,6 +57,9 @@ class VisionProbeSnapshot:
     attention_budget_receipt: dict[str, object] = field(default_factory=dict)
     position_metadata_receipt: dict[str, object] = field(
         default_factory=lambda: build_position_metadata_receipt()
+    )
+    quantized_kv_mask_receipt: dict[str, object] = field(
+        default_factory=empty_quantized_kv_mask_receipt
     )
     text_batch_generator_submitted_request_count: int = 0
     text_batch_generator_completed_request_count: int = 0
@@ -571,6 +577,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                 fallback_reason=fast_path.multimodal_fallback_reason,
                 seq_len=seq_len,
             ),
+            quantized_kv_mask_receipt=empty_quantized_kv_mask_receipt(),
         )
 
     def _position_metadata_receipt(
