@@ -38,7 +38,11 @@ from worker.runtime.multimodal_attention_policy import (
     int_metadata as _attention_int_metadata,
 )
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
-from worker.runtime.multimodal_position_receipts import build_position_metadata_receipt
+from worker.runtime.multimodal_position_receipts import (
+    NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT,
+    build_hybrid_state_patch_receipt,
+    build_position_metadata_receipt,
+)
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.runtime_utils import (
     callable_accepts_kwarg as _callable_accepts_kwarg,
@@ -3030,6 +3034,25 @@ class MLXVLMRuntime:
             if int(receipt.get("media_position_count", 0) or 0) == 0:
                 return
         fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
+        position_metadata_receipt = self._position_metadata_receipt(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            fallback_reason=fast_path.multimodal_fallback_reason,
+            seq_len=seq_len,
+        )
+        hybrid_seq_len = int(position_metadata_receipt["seq_len"])
+        hybrid_state_patch_receipt = (
+            NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT
+            if fast_path.hybrid_state_patch_mode == "not_applicable"
+            else self._hybrid_state_patch_receipt(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                patch_mode=fast_path.hybrid_state_patch_mode,
+                fallback_reason=fast_path.multimodal_fallback_reason,
+                family_fast_path_override_count=fast_path.family_fast_path_override_count,
+                seq_len=hybrid_seq_len,
+            )
+        )
         self._last_fast_path_signature = signature
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
@@ -3050,6 +3073,13 @@ class MLXVLMRuntime:
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+            hybrid_state_patch_mode=fast_path.hybrid_state_patch_mode,
+            hybrid_state_advance_count=(
+                0
+                if fast_path.hybrid_state_patch_mode == "not_applicable"
+                else int(hybrid_state_patch_receipt["cache_advance_count"])
+            ),
+            family_fast_path_override_count=fast_path.family_fast_path_override_count,
             attention_budget_receipt=build_attention_budget_receipt(
                 attention_policy
                 if attention_policy is not None
@@ -3059,12 +3089,8 @@ class MLXVLMRuntime:
                     seq_len=seq_len,
                 )
             ),
-            position_metadata_receipt=self._position_metadata_receipt(
-                loaded_model=loaded_model,
-                prepared_request=prepared_request,
-                fallback_reason=fast_path.multimodal_fallback_reason,
-                seq_len=seq_len,
-            ),
+            position_metadata_receipt=position_metadata_receipt,
+            hybrid_state_patch_receipt=hybrid_state_patch_receipt,
         )
 
     def _position_metadata_receipt(
@@ -3081,6 +3107,49 @@ class MLXVLMRuntime:
             prepared_request=prepared_request,
             seq_len=seq_len,
             fallback_reason=fallback_reason,
+        )
+
+    def _hybrid_state_patch_receipt(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        patch_mode: str,
+        fallback_reason: str,
+        family_fast_path_override_count: int,
+        seq_len: int,
+    ) -> dict[str, object]:
+        family_config = self._family_config(loaded_model)
+        family_id = str(getattr(family_config, "family_id", "") or "")
+        media_count = (
+            len(prepared_request.images)
+            + prepared_request.effective_video_frame_count
+            + (
+                len(prepared_request.videos)
+                if prepared_request.videos and prepared_request.effective_video_frame_count <= 0
+                else 0
+            )
+        )
+        cache_advance = 0 if patch_mode == "fallback" else max(0, int(seq_len or 0))
+        row = {
+            "row_index": 0,
+            "seq_len": seq_len,
+            "cache_offset": 0,
+            "cache_advance": cache_advance,
+            "expected_cache_advance": seq_len,
+            "media_count": media_count,
+            "contiguous_state_start": 0,
+            "contiguous_state_end": cache_advance,
+            "expected_contiguous_state_start": 0,
+            "expected_contiguous_state_end": seq_len,
+            "text_only_rope_mode": "multimodal" if media_count else "text_only",
+        }
+        return build_hybrid_state_patch_receipt(
+            family_id=family_id,
+            patch_mode=patch_mode,
+            fallback_reason=fallback_reason,
+            family_fast_path_override_count=family_fast_path_override_count,
+            rows=[row],
         )
 
     def _attention_prefill_policy(

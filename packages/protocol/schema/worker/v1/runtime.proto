@@ -146,6 +146,9 @@ message RuntimeStats {
   double text_batch_generator_speculative_mtp_head_ms_total = 74;
   double text_batch_generator_speculative_sample_ms_total = 75;
   double text_batch_generator_speculative_cache_ops_ms_total = 76;
+  string last_hybrid_state_patch_mode = 77;
+  uint64 last_hybrid_state_advance_count = 78;
+  uint64 last_family_fast_path_override_count = 79;
 }
 
 message GetRuntimeStatsRequest {}

@@ -9,9 +9,11 @@ from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.mlx_vlm_runtime import AutoMLXVLMBackend, MLXVLMRuntime
 from worker.runtime.multimodal_position_receipts import (
+    build_hybrid_state_patch_receipt,
     build_mixed_batch_geometry_receipt,
     build_position_metadata_receipt,
     build_quantized_kv_mask_receipt,
+    empty_hybrid_state_patch_receipt,
 )
 from worker.runtime.multimodal_preprocessing import (
     PreparedImageInput,
@@ -340,6 +342,202 @@ def test_quantized_kv_mask_receipt_covers_defensive_edges() -> None:
     assert shape_backed_logits_receipt["logit_parity"]["sample_count"] == 2
     assert ragged_logits_receipt["logit_parity"]["status"] == "within_tolerance"
     assert ragged_logits_receipt["logit_parity"]["sample_count"] == 3
+
+
+def test_hybrid_state_patch_receipt_preserves_variable_length_multimodal_rows() -> None:
+    receipt = build_hybrid_state_patch_receipt(
+        family_id="gemma4-v1",
+        patch_mode="family_scoped",
+        rows=[
+            {
+                "row_index": 0,
+                "seq_len": 13,
+                "cache_offset": 0,
+                "cache_advance": 13,
+                "expected_cache_advance": 13,
+                "media_count": 1,
+                "contiguous_state_start": 0,
+                "contiguous_state_end": 13,
+                "expected_contiguous_state_start": 0,
+                "expected_contiguous_state_end": 13,
+                "text_only_rope_mode": "multimodal",
+            },
+            {
+                "row_index": 1,
+                "seq_len": 21,
+                "cache_offset": 5,
+                "cache_advance": 21,
+                "expected_cache_advance": 21,
+                "media_count": 2,
+                "contiguous_state_start": 5,
+                "contiguous_state_end": 26,
+                "expected_contiguous_state_start": 5,
+                "expected_contiguous_state_end": 26,
+                "text_only_rope_mode": "multimodal",
+            },
+            {
+                "row_index": 2,
+                "seq_len": 8,
+                "cache_offset": 26,
+                "cache_advance": 8,
+                "expected_cache_advance": 8,
+                "media_count": 0,
+                "contiguous_state_start": 26,
+                "contiguous_state_end": 34,
+                "expected_contiguous_state_start": 26,
+                "expected_contiguous_state_end": 34,
+                "text_only_rope_mode": "text_only",
+            },
+        ],
+    )
+
+    assert receipt == {
+        "schema_version": "melix.hybrid_state_patch_receipt.v1",
+        "family_id": "gemma4-v1",
+        "patch_mode": "family_scoped",
+        "batch_row_count": 3,
+        "mixed_length_batch": True,
+        "cache_advance_count": 42,
+        "family_fast_path_override_count": 0,
+        "contiguous_state_guard": "aligned",
+        "text_only_rope_guard": "aligned",
+        "row_drift_count": 0,
+        "fallback_reason": "",
+        "rows": [
+            {
+                "row_index": 0,
+                "seq_len": 13,
+                "cache_offset": 0,
+                "cache_advance": 13,
+                "expected_cache_advance": 13,
+                "media_count": 1,
+                "contiguous_state_start": 0,
+                "contiguous_state_end": 13,
+                "expected_contiguous_state_start": 0,
+                "expected_contiguous_state_end": 13,
+                "text_only_rope_mode": "multimodal",
+                "row_state_guard": "aligned",
+                "row_drift_reasons": [],
+            },
+            {
+                "row_index": 1,
+                "seq_len": 21,
+                "cache_offset": 5,
+                "cache_advance": 21,
+                "expected_cache_advance": 21,
+                "media_count": 2,
+                "contiguous_state_start": 5,
+                "contiguous_state_end": 26,
+                "expected_contiguous_state_start": 5,
+                "expected_contiguous_state_end": 26,
+                "text_only_rope_mode": "multimodal",
+                "row_state_guard": "aligned",
+                "row_drift_reasons": [],
+            },
+            {
+                "row_index": 2,
+                "seq_len": 8,
+                "cache_offset": 26,
+                "cache_advance": 8,
+                "expected_cache_advance": 8,
+                "media_count": 0,
+                "contiguous_state_start": 26,
+                "contiguous_state_end": 34,
+                "expected_contiguous_state_start": 26,
+                "expected_contiguous_state_end": 34,
+                "text_only_rope_mode": "text_only",
+                "row_state_guard": "aligned",
+                "row_drift_reasons": [],
+            },
+        ],
+    }
+
+
+def test_hybrid_state_patch_receipt_gates_unsupported_paths_before_fast_path() -> None:
+    receipt = build_hybrid_state_patch_receipt(
+        family_id="unknown-vlm",
+        patch_mode="fallback",
+        fallback_reason="unsupported_hybrid_state_family",
+        family_fast_path_override_count=1,
+        rows=[
+            {
+                "row_index": 0,
+                "seq_len": 13,
+                "cache_offset": 0,
+                "cache_advance": 0,
+                "expected_cache_advance": 13,
+                "media_count": 1,
+                "contiguous_state_start": 0,
+                "contiguous_state_end": 0,
+                "expected_contiguous_state_start": 0,
+                "expected_contiguous_state_end": 13,
+                "text_only_rope_mode": "multimodal",
+            }
+        ],
+    )
+
+    assert receipt["patch_mode"] == "fallback"
+    assert receipt["cache_advance_count"] == 0
+    assert receipt["family_fast_path_override_count"] == 1
+    assert receipt["contiguous_state_guard"] == "row_drift"
+    assert receipt["text_only_rope_guard"] == "aligned"
+    assert receipt["row_drift_count"] == 1
+    assert receipt["fallback_reason"] == "unsupported_hybrid_state_family"
+    assert receipt["rows"][0]["row_drift_reasons"] == [
+        "cache_advance_mismatch",
+        "contiguous_state_end_mismatch",
+    ]
+
+
+def test_empty_hybrid_state_patch_receipt_records_unreported_baseline() -> None:
+    assert empty_hybrid_state_patch_receipt() == {
+        "schema_version": "melix.hybrid_state_patch_receipt.v1",
+        "family_id": "",
+        "patch_mode": "not_reported",
+        "batch_row_count": 0,
+        "mixed_length_batch": False,
+        "cache_advance_count": 0,
+        "family_fast_path_override_count": 0,
+        "contiguous_state_guard": "aligned",
+        "text_only_rope_guard": "aligned",
+        "row_drift_count": 0,
+        "fallback_reason": "",
+        "rows": [],
+    }
+
+
+def test_hybrid_state_patch_receipt_flags_row_index_seq_start_and_rope_drift() -> None:
+    receipt = build_hybrid_state_patch_receipt(
+        family_id="gemma4-v1",
+        patch_mode="family_scoped",
+        rows=[
+            {
+                "row_index": 2,
+                "seq_len": 0,
+                "cache_offset": 4,
+                "cache_advance": 0,
+                "expected_cache_advance": 0,
+                "media_count": 0,
+                "contiguous_state_start": 3,
+                "contiguous_state_end": 4,
+                "expected_contiguous_state_start": 4,
+                "expected_contiguous_state_end": 4,
+                "text_only_rope_mode": "multimodal",
+                "expected_text_only_rope_mode": "text_only",
+            }
+        ],
+    )
+
+    assert receipt["contiguous_state_guard"] == "row_drift"
+    assert receipt["text_only_rope_guard"] == "row_drift"
+    assert receipt["row_drift_count"] == 1
+    assert receipt["rows"][0]["row_state_guard"] == "row_drift"
+    assert receipt["rows"][0]["row_drift_reasons"] == [
+        "row_index_mismatch",
+        "seq_len_missing",
+        "contiguous_state_start_mismatch",
+        "text_only_rope_mode_mismatch",
+    ]
 
 
 def test_mixed_batch_geometry_receipt_preserves_three_row_prompt_and_media_geometry() -> None:
@@ -929,6 +1127,96 @@ def test_vlm_probe_snapshot_records_quantized_kv_mask_receipt_container() -> Non
     }
 
 
+def test_vlm_probe_snapshot_records_hybrid_state_patch_receipt_and_metrics() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    prepared = resolve_vision_family_config(loaded_model).shape_request(
+        PreparedVisionRequest(
+            prompt_text="Describe the image.",
+            images=[
+                PreparedImageInput(
+                    bytes_data=b"hybrid state receipt image",
+                    source_kind="inline",
+                    reference="inline:image",
+                    mime_type="image/jpeg",
+                    format="jpg",
+                    filename="image.jpg",
+                    sha256_hex="deadbeef",
+                )
+            ],
+            videos=[],
+            video_frame_policies=[],
+            preprocess_latency_ms=0.0,
+            preprocess_input_bytes=len(b"hybrid state receipt image"),
+            preprocess_peak_memory_bytes=len(b"hybrid state receipt image"),
+            prompt_hash_hex="1" * 64,
+            multimodal_hash_hex="2" * 64,
+        )
+    )
+
+    list(runtime.generate_tokens(loaded_model, prepared, None, Event()))
+    probe = runtime.last_probe_snapshot()
+    receipt = probe.hybrid_state_patch_receipt
+
+    assert probe.hybrid_state_patch_mode == "family_scoped"
+    assert probe.hybrid_state_advance_count == receipt["cache_advance_count"]
+    assert probe.family_fast_path_override_count == 0
+    assert receipt["schema_version"] == "melix.hybrid_state_patch_receipt.v1"
+    assert receipt["family_id"] == "llava-v1"
+    assert receipt["patch_mode"] == "family_scoped"
+    assert receipt["batch_row_count"] == 1
+    assert receipt["cache_advance_count"] > 0
+    assert receipt["contiguous_state_guard"] == "aligned"
+    assert receipt["text_only_rope_guard"] == "aligned"
+
+
+def test_vlm_probe_snapshot_counts_fallback_video_without_expanded_frames() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    prepared = resolve_vision_family_config(loaded_model).shape_request(
+        PreparedVisionRequest(
+            prompt_text="Describe the video.",
+            images=[],
+            videos=[
+                PreparedVideoInput(
+                    bytes_data=b"hybrid-state-video",
+                    source_kind="inline",
+                    reference="inline:video",
+                    mime_type="video/mp4",
+                    format="mp4",
+                    filename="video.mp4",
+                    byte_length=len(b"hybrid-state-video"),
+                    sha256_hex="feed",
+                    duration_ms=2_000,
+                    frame_budget=0,
+                    start_ms=0,
+                    end_ms=2_000,
+                )
+            ],
+            video_frame_policies=[],
+            preprocess_latency_ms=0.0,
+            preprocess_input_bytes=len(b"hybrid-state-video"),
+            preprocess_peak_memory_bytes=len(b"hybrid-state-video"),
+            prompt_hash_hex="3" * 64,
+            multimodal_hash_hex="4" * 64,
+        )
+    )
+
+    runtime._record_fast_path_probe(loaded_model, prepared)
+    probe = runtime.last_probe_snapshot()
+    receipt = probe.hybrid_state_patch_receipt
+
+    assert probe.hybrid_state_patch_mode == "fallback"
+    assert probe.family_fast_path_override_count == 1
+    assert receipt["cache_advance_count"] == 0
+    assert receipt["fallback_reason"] == "video_fast_path_unimplemented"
+    assert receipt["rows"][0]["media_count"] == 1
+    assert receipt["rows"][0]["row_drift_reasons"] == [
+        "cache_advance_mismatch",
+        "contiguous_state_end_mismatch",
+    ]
+
+
 def test_vlm_fast_path_probe_resets_quantized_kv_mask_receipt_container() -> None:
     runtime = DeterministicVLMRuntime()
     loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
@@ -1117,6 +1405,57 @@ def test_mlx_vlm_runtime_position_receipt_records_fallback_reason_for_text_backe
     assert receipt["vision_metadata_guard"] == "missing_position_metadata"
     assert receipt["vision_metadata_reuse_allowed"] is False
     assert receipt["stale_metadata_fallback_count"] == 1
+
+
+def test_mlx_vlm_runtime_hybrid_receipt_counts_fallback_video_without_expanded_frames() -> None:
+    runtime = MLXVLMRuntime()
+    loaded_model = {
+        "metadata": {
+            "vision_family_id": "gemma4-v1",
+            "melix.vlm.execution_mode": "multimodal",
+        },
+        "model": SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+    }
+    prepared = PreparedVisionRequest(
+        prompt_text="Describe the video.",
+        images=[],
+        videos=[
+            PreparedVideoInput(
+                bytes_data=b"hybrid-state-video",
+                source_kind="inline",
+                reference="inline:video",
+                mime_type="video/mp4",
+                format="mp4",
+                filename="video.mp4",
+                byte_length=len(b"hybrid-state-video"),
+                sha256_hex="feed",
+                duration_ms=2_000,
+                frame_budget=0,
+                start_ms=0,
+                end_ms=2_000,
+            )
+        ],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=len(b"hybrid-state-video"),
+        preprocess_peak_memory_bytes=len(b"hybrid-state-video"),
+        prompt_hash_hex="3" * 64,
+        multimodal_hash_hex="4" * 64,
+    )
+
+    runtime._record_fast_path_probe(loaded_model, prepared)
+    probe = runtime.last_probe_snapshot()
+    receipt = probe.hybrid_state_patch_receipt
+
+    assert probe.hybrid_state_patch_mode == "fallback"
+    assert probe.family_fast_path_override_count == 1
+    assert receipt["fallback_reason"] == "video_fast_path_unimplemented"
+    assert receipt["cache_advance_count"] == 0
+    assert receipt["rows"][0]["media_count"] == 1
+    assert receipt["rows"][0]["row_drift_reasons"] == [
+        "cache_advance_mismatch",
+        "contiguous_state_end_mismatch",
+    ]
 
 
 def test_mlx_vlm_runtime_position_receipt_records_baseline_for_prompt_only_turns() -> None:

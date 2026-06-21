@@ -22,6 +22,7 @@ MULTIMODAL_LOAD_NATIVE_QUANTIZED = "native_quantized"
 MULTIMODAL_LOAD_FALLBACK = "fallback"
 
 _SUPPORTED_FAST_PATH_FAMILIES = frozenset({"gemma4-v1", "llava-v1", "paligemma-v1"})
+_HYBRID_STATE_PATCH_FAMILIES = frozenset({"gemma4-v1", "llava-v1"})
 _NATIVE_QUANTIZED_PROFILES = frozenset({"q4", "q6", "q8", "int4", "int8", "mlx-q4", "mlx-q8"})
 _FAST_PATH_SIGNATURE_METADATA_KEYS = frozenset(
     {
@@ -39,7 +40,7 @@ _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS = ("model_id", "revision", "tokenizer_hash",
 _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED = tuple(sorted(_FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ImageFeatureCacheKey:
     family_id: str
     adapter_hash: str
@@ -48,7 +49,7 @@ class ImageFeatureCacheKey:
     sha256_hex: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MultimodalFastPathDecision:
     image_feature_cache_hits: int
     image_feature_cache_misses: int
@@ -58,6 +59,24 @@ class MultimodalFastPathDecision:
     multi_image_scatter_mode: str
     quantized_load_mode: str
     quantized_load_fallback_reason: str
+    hybrid_state_patch_mode: str
+    hybrid_state_advance_count: int
+    family_fast_path_override_count: int
+
+
+_NO_MEDIA_FAST_PATH_DECISION = MultimodalFastPathDecision(
+    image_feature_cache_hits=0,
+    image_feature_cache_misses=0,
+    multimodal_decode_mode=MULTIMODAL_DECODE_BASELINE,
+    multimodal_fallback_reason="no_media",
+    multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
+    multi_image_scatter_mode="none",
+    quantized_load_mode=MULTIMODAL_LOAD_FALLBACK,
+    quantized_load_fallback_reason="not_quantized",
+    hybrid_state_patch_mode="not_applicable",
+    hybrid_state_advance_count=0,
+    family_fast_path_override_count=0,
+)
 
 
 class MultimodalFastPathController:
@@ -91,6 +110,8 @@ class MultimodalFastPathController:
         )
 
         if not prepared_request.images and not prepared_request.videos:
+            if quantized_load_mode == MULTIMODAL_LOAD_FALLBACK and quantized_fallback == "not_quantized":
+                return _NO_MEDIA_FAST_PATH_DECISION
             return MultimodalFastPathDecision(
                 image_feature_cache_hits=0,
                 image_feature_cache_misses=0,
@@ -100,6 +121,9 @@ class MultimodalFastPathController:
                 multi_image_scatter_mode="none",
                 quantized_load_mode=quantized_load_mode,
                 quantized_load_fallback_reason=quantized_fallback,
+                hybrid_state_patch_mode="not_applicable",
+                hybrid_state_advance_count=0,
+                family_fast_path_override_count=0,
             )
 
         if execution_mode == "text_backed":
@@ -121,6 +145,19 @@ class MultimodalFastPathController:
                 reason="unsupported_family",
                 quantized_load_mode=MULTIMODAL_LOAD_FALLBACK,
                 quantized_load_fallback_reason="unsupported_family",
+                hybrid_state_patch_mode="fallback",
+                hybrid_state_advance_count=0,
+                family_fast_path_override_count=1,
+            )
+
+        if family_id not in _HYBRID_STATE_PATCH_FAMILIES:
+            return self._fallback_decision(
+                reason="unsupported_hybrid_state_family",
+                quantized_load_mode=quantized_load_mode,
+                quantized_load_fallback_reason=quantized_fallback,
+                hybrid_state_patch_mode="fallback",
+                hybrid_state_advance_count=0,
+                family_fast_path_override_count=1,
             )
 
         if prepared_request.videos and not prepared_request.images:
@@ -128,6 +165,9 @@ class MultimodalFastPathController:
                 reason="video_fast_path_unimplemented",
                 quantized_load_mode=quantized_load_mode,
                 quantized_load_fallback_reason=quantized_fallback,
+                hybrid_state_patch_mode="fallback",
+                hybrid_state_advance_count=0,
+                family_fast_path_override_count=1,
             )
 
         hits = 0
@@ -171,6 +211,9 @@ class MultimodalFastPathController:
             multi_image_scatter_mode="per_sample" if len(prepared_request.images) > 1 else "none",
             quantized_load_mode=quantized_load_mode,
             quantized_load_fallback_reason=quantized_fallback,
+            hybrid_state_patch_mode="family_scoped",
+            hybrid_state_advance_count=max(1, len(prepared_request.images) + len(prepared_request.videos)),
+            family_fast_path_override_count=0,
         )
 
     @staticmethod
@@ -230,6 +273,9 @@ class MultimodalFastPathController:
         reason: str,
         quantized_load_mode: str,
         quantized_load_fallback_reason: str,
+        hybrid_state_patch_mode: str = "fallback",
+        hybrid_state_advance_count: int = 0,
+        family_fast_path_override_count: int = 0,
     ) -> MultimodalFastPathDecision:
         return MultimodalFastPathDecision(
             image_feature_cache_hits=0,
@@ -240,6 +286,9 @@ class MultimodalFastPathController:
             multi_image_scatter_mode="none",
             quantized_load_mode=quantized_load_mode,
             quantized_load_fallback_reason=quantized_load_fallback_reason,
+            hybrid_state_patch_mode=hybrid_state_patch_mode,
+            hybrid_state_advance_count=hybrid_state_advance_count,
+            family_fast_path_override_count=family_fast_path_override_count,
         )
 
     @staticmethod

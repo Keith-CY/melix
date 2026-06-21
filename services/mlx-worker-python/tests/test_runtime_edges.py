@@ -863,6 +863,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
             multimodal_decode_mode="text_only_batch_generator",
             multimodal_fallback_reason="",
             multimodal_decode_sync_mode="executor_batch_generator",
+            hybrid_state_patch_mode="family_scoped",
+            hybrid_state_advance_count=42,
+            family_fast_path_override_count=1,
             text_batch_generator_submitted_request_count=2,
             text_batch_generator_completed_request_count=1,
             text_batch_generator_step_count=16,
@@ -907,6 +910,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert vision_stats.last_multimodal_decode_mode == "text_only_batch_generator"
     assert vision_stats.last_multimodal_fallback_reason == ""
     assert vision_stats.last_multimodal_decode_sync_mode == "executor_batch_generator"
+    assert vision_stats.last_hybrid_state_patch_mode == "family_scoped"
+    assert vision_stats.last_hybrid_state_advance_count == 42
+    assert vision_stats.last_family_fast_path_override_count == 1
     assert vision_stats.text_batch_generator_submitted_request_count == 2
     assert vision_stats.text_batch_generator_completed_request_count == 1
     assert vision_stats.text_batch_generator_step_count == 16

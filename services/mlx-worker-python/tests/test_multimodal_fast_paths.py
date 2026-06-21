@@ -246,6 +246,35 @@ def test_fast_path_admits_native_quantized_supported_multimodal_family() -> None
     assert unsupported.quantized_load_fallback_reason == "unsupported_family"
 
 
+def test_fast_path_records_hybrid_state_patch_mode_for_supported_family() -> None:
+    controller = MultimodalFastPathController()
+
+    decision = controller.plan(
+        _loaded_model(family_id="gemma4-v1"),
+        _request([_image(b"image")]),
+    )
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
+    assert decision.hybrid_state_patch_mode == "family_scoped"
+    assert decision.hybrid_state_advance_count == 1
+    assert decision.family_fast_path_override_count == 0
+
+
+def test_fast_path_gates_unsupported_hybrid_state_before_default_route() -> None:
+    controller = MultimodalFastPathController()
+
+    decision = controller.plan(
+        _loaded_model(family_id="paligemma-v1"),
+        _request([_image(b"image")]),
+    )
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
+    assert decision.multimodal_fallback_reason == "unsupported_hybrid_state_family"
+    assert decision.hybrid_state_patch_mode == "fallback"
+    assert decision.hybrid_state_advance_count == 0
+    assert decision.family_fast_path_override_count == 1
+
+
 def test_fast_path_warns_and_falls_back_when_family_metadata_is_missing(caplog) -> None:
     controller = MultimodalFastPathController()
     loaded_model = _loaded_model()
