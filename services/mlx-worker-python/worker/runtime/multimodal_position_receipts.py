@@ -87,6 +87,25 @@ def build_position_metadata_receipt(
     }
 
 
+def empty_quantized_kv_mask_receipt() -> dict[str, object]:
+    return {
+        "schema_version": "melix.quantized_kv_mask_receipt.v1",
+        "batch_row_count": 0,
+        "unequal_cache_offsets": False,
+        "per_row_offsets": [],
+        "cache_mask_guard": "aligned",
+        "row_drift_count": 0,
+        "cache_mask_shapes": [],
+        "offset_receipts": [],
+        "logit_parity": {
+            "status": "not_provided",
+            "sample_count": 0,
+            "max_abs_delta": 0.0,
+            "tolerance": 0.0,
+        },
+    }
+
+
 def build_quantized_kv_mask_receipt(
     *,
     rows: list[dict[str, Any]],
@@ -278,10 +297,20 @@ def _normalized_shape(value: Any) -> list[int]:
         return []
     shape = getattr(value, "shape", None)
     if isinstance(shape, (list, tuple)):
-        return [_non_negative_int(part) for part in shape]
+        return _flatten_shape_parts(shape)
     if isinstance(value, (list, tuple)):
-        return [_non_negative_int(part) for part in value]
+        return _flatten_shape_parts(value)
     return [_non_negative_int(value)]
+
+
+def _flatten_shape_parts(value: list[Any] | tuple[Any, ...]) -> list[int]:
+    parts: list[int] = []
+    for part in value:
+        if isinstance(part, (list, tuple)):
+            parts.extend(_flatten_shape_parts(part))
+        else:
+            parts.append(_non_negative_int(part))
+    return parts
 
 
 def _non_negative_int(value: Any) -> int:
@@ -303,10 +332,14 @@ def _logit_parity_receipt(
             "tolerance": normalized_tolerance,
         }
 
+    quantized_shape = _numeric_shape(quantized_logits)
+    unquantized_shape = _numeric_shape(unquantized_logits)
     quantized_values = _flatten_numeric_values(quantized_logits)
     unquantized_values = _flatten_numeric_values(unquantized_logits)
     sample_count = min(len(quantized_values), len(unquantized_values))
-    if len(quantized_values) != len(unquantized_values):
+    if quantized_shape != unquantized_shape:
+        status = "shape_mismatch"
+    elif len(quantized_values) != len(unquantized_values):
         status = "shape_mismatch"
     elif sample_count == 0:
         status = "empty"
@@ -328,6 +361,25 @@ def _logit_parity_receipt(
         "max_abs_delta": round(max_abs_delta, 10),
         "tolerance": normalized_tolerance,
     }
+
+
+def _numeric_shape(value: Any) -> tuple[int, ...]:
+    shape = getattr(value, "shape", None)
+    if isinstance(shape, (list, tuple)):
+        return tuple(_non_negative_int(part) for part in shape)
+
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        value = tolist()
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return (0,)
+        child_shapes = [_numeric_shape(item) for item in value]
+        first_shape = child_shapes[0]
+        if any(child_shape != first_shape for child_shape in child_shapes):
+            return (len(value), -1)
+        return (len(value), *first_shape)
+    return ()
 
 
 def _flatten_numeric_values(value: Any) -> list[float]:

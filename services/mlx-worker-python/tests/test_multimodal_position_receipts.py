@@ -255,6 +255,12 @@ def test_quantized_kv_mask_receipt_covers_defensive_edges() -> None:
         def tolist(self) -> list[list[float]]:
             return [[1.0, 2.0]]
 
+    class ShapeBackedLogits:
+        shape = (1, 2)
+
+        def tolist(self) -> list[list[float]]:
+            return [[1.0, 2.0]]
+
     missing_receipt = build_quantized_kv_mask_receipt(rows=[{}])
     shape_receipt = build_quantized_kv_mask_receipt(
         rows=[
@@ -286,6 +292,32 @@ def test_quantized_kv_mask_receipt_covers_defensive_edges() -> None:
         quantized_logits=[],
         unquantized_logits=[],
     )
+    nested_shape_receipt = build_quantized_kv_mask_receipt(
+        rows=[
+            {
+                "seq_len": 3,
+                "cache_offset": 2,
+                "kv_seq_len": 5,
+                "cache_mask_shape": [[1, 1], [3, 5]],
+            }
+        ],
+    )
+    structured_shape_mismatch_receipt = build_quantized_kv_mask_receipt(
+        rows=[],
+        quantized_logits=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        unquantized_logits=[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
+        tolerance=100.0,
+    )
+    shape_backed_logits_receipt = build_quantized_kv_mask_receipt(
+        rows=[],
+        quantized_logits=ShapeBackedLogits(),
+        unquantized_logits=ShapeBackedLogits(),
+    )
+    ragged_logits_receipt = build_quantized_kv_mask_receipt(
+        rows=[],
+        quantized_logits=[[1.0], [2.0, 3.0]],
+        unquantized_logits=[[1.0], [2.0, 3.0]],
+    )
 
     assert missing_receipt["offset_receipts"][0]["cache_mask_drift_reasons"] == [
         "seq_len_missing",
@@ -300,6 +332,14 @@ def test_quantized_kv_mask_receipt_covers_defensive_edges() -> None:
     assert scalar_shape_receipt["cache_mask_shapes"] == [[1]]
     assert scalar_shape_receipt["logit_parity"]["status"] == "shape_mismatch"
     assert empty_logits_receipt["logit_parity"]["status"] == "empty"
+    assert nested_shape_receipt["cache_mask_guard"] == "aligned"
+    assert nested_shape_receipt["cache_mask_shapes"] == [[1, 1, 3, 5]]
+    assert structured_shape_mismatch_receipt["logit_parity"]["status"] == "shape_mismatch"
+    assert structured_shape_mismatch_receipt["logit_parity"]["sample_count"] == 6
+    assert shape_backed_logits_receipt["logit_parity"]["status"] == "within_tolerance"
+    assert shape_backed_logits_receipt["logit_parity"]["sample_count"] == 2
+    assert ragged_logits_receipt["logit_parity"]["status"] == "within_tolerance"
+    assert ragged_logits_receipt["logit_parity"]["sample_count"] == 3
 
 
 def test_mixed_batch_geometry_receipt_preserves_three_row_prompt_and_media_geometry() -> None:
@@ -889,7 +929,7 @@ def test_vlm_probe_snapshot_records_quantized_kv_mask_receipt_container() -> Non
     }
 
 
-def test_vlm_fast_path_probe_reuses_quantized_kv_mask_receipt_container() -> None:
+def test_vlm_fast_path_probe_resets_quantized_kv_mask_receipt_container() -> None:
     runtime = DeterministicVLMRuntime()
     loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
     first_prepared = resolve_vision_family_config(loaded_model).shape_request(
@@ -941,12 +981,15 @@ def test_vlm_fast_path_probe_reuses_quantized_kv_mask_receipt_container() -> Non
 
     list(runtime.generate_tokens(loaded_model, first_prepared, None, Event()))
     first_receipt = runtime.last_probe_snapshot().quantized_kv_mask_receipt
+    first_receipt["batch_row_count"] = 1
+    first_receipt["per_row_offsets"] = [42]
     list(runtime.generate_tokens(loaded_model, second_prepared, None, Event()))
     second_receipt = runtime.last_probe_snapshot().quantized_kv_mask_receipt
 
-    assert second_receipt is first_receipt
+    assert second_receipt is not first_receipt
     assert second_receipt["schema_version"] == "melix.quantized_kv_mask_receipt.v1"
     assert second_receipt["batch_row_count"] == 0
+    assert second_receipt["per_row_offsets"] == []
 
 
 def test_mlx_vlm_runtime_records_position_metadata_receipt_for_media_requests() -> None:
