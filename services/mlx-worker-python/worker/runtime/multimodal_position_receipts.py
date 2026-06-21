@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import reduce
 from operator import mul
-from typing import Any
+from typing import Any, cast
 
 
 def build_mixed_batch_geometry_receipt(*, rows: list[dict[str, Any]]) -> dict[str, object]:
@@ -87,6 +87,65 @@ def build_position_metadata_receipt(
     }
 
 
+def empty_quantized_kv_mask_receipt() -> dict[str, object]:
+    return {
+        "schema_version": "melix.quantized_kv_mask_receipt.v1",
+        "batch_row_count": 0,
+        "unequal_cache_offsets": False,
+        "per_row_offsets": [],
+        "cache_mask_guard": "aligned",
+        "row_drift_count": 0,
+        "cache_mask_shapes": [],
+        "offset_receipts": [],
+        "logit_parity": {
+            "status": "not_provided",
+            "sample_count": 0,
+            "max_abs_delta": 0.0,
+            "tolerance": 0.0,
+        },
+    }
+
+
+def build_quantized_kv_mask_receipt(
+    *,
+    rows: list[dict[str, Any]],
+    quantized_logits: Any | None = None,
+    unquantized_logits: Any | None = None,
+    tolerance: float = 0.0,
+) -> dict[str, object]:
+    row_receipts: list[dict[str, object]] = []
+    per_row_offsets: list[int] = []
+    cache_mask_shapes: list[list[int]] = []
+
+    for expected_row_index, row in enumerate(rows):
+        row_receipt = _quantized_kv_mask_row_receipt(
+            row=row,
+            expected_row_index=expected_row_index,
+        )
+        row_receipts.append(row_receipt)
+        per_row_offsets.append(int(row_receipt["cache_offset"]))
+        cache_mask_shapes.append(cast(list[int], row_receipt["cache_mask_shape"]))
+
+    row_drift_count = sum(
+        1 for row_receipt in row_receipts if row_receipt["cache_mask_guard"] == "row_drift"
+    )
+    return {
+        "schema_version": "melix.quantized_kv_mask_receipt.v1",
+        "batch_row_count": len(row_receipts),
+        "unequal_cache_offsets": len(set(per_row_offsets)) > 1,
+        "per_row_offsets": per_row_offsets,
+        "cache_mask_guard": "row_drift" if row_drift_count else "aligned",
+        "row_drift_count": row_drift_count,
+        "cache_mask_shapes": cache_mask_shapes,
+        "offset_receipts": row_receipts,
+        "logit_parity": _logit_parity_receipt(
+            quantized_logits=quantized_logits,
+            unquantized_logits=unquantized_logits,
+            tolerance=tolerance,
+        ),
+    }
+
+
 def _mixed_batch_row_geometry_receipt(
     *,
     row: dict[str, Any],
@@ -163,6 +222,47 @@ def _mixed_batch_row_geometry_receipt(
     }
 
 
+def _quantized_kv_mask_row_receipt(
+    *,
+    row: dict[str, Any],
+    expected_row_index: int,
+) -> dict[str, object]:
+    row_index = _non_negative_int(row.get("row_index", expected_row_index))
+    seq_len = _non_negative_int(row.get("seq_len", 0))
+    cache_offset = _non_negative_int(row.get("cache_offset", 0))
+    expected_cache_offset = _non_negative_int(row.get("expected_cache_offset", cache_offset))
+    kv_seq_len = _non_negative_int(row.get("kv_seq_len", cache_offset + seq_len))
+    cache_mask_shape = _normalized_shape(row.get("cache_mask_shape", row.get("mask_shape")))
+    expected_cache_mask_shape = _normalized_shape(row.get("expected_cache_mask_shape"))
+    if not expected_cache_mask_shape:
+        expected_cache_mask_shape = [1, 1, seq_len, kv_seq_len]
+
+    drift_reasons: list[str] = []
+    if row_index != expected_row_index:
+        drift_reasons.append("row_index_mismatch")
+    if cache_offset != expected_cache_offset:
+        drift_reasons.append("cache_offset_mismatch")
+    if seq_len <= 0:
+        drift_reasons.append("seq_len_missing")
+    if kv_seq_len <= 0:
+        drift_reasons.append("kv_seq_len_missing")
+    if not cache_mask_shape:
+        drift_reasons.append("cache_mask_shape_missing")
+    elif cache_mask_shape != expected_cache_mask_shape:
+        drift_reasons.append("cache_mask_shape_mismatch")
+
+    return {
+        "row_index": row_index,
+        "cache_offset": cache_offset,
+        "seq_len": seq_len,
+        "kv_seq_len": kv_seq_len,
+        "expected_cache_mask_shape": expected_cache_mask_shape,
+        "cache_mask_shape": cache_mask_shape,
+        "cache_mask_guard": "row_drift" if drift_reasons else "aligned",
+        "cache_mask_drift_reasons": drift_reasons,
+    }
+
+
 def _media_position_count(prepared_request: Any | None) -> int:
     if prepared_request is None:
         return 0
@@ -192,8 +292,106 @@ def _normalized_identity(value: Any) -> list[str]:
     return [str(value)]
 
 
+def _normalized_shape(value: Any) -> list[int]:
+    if value is None:
+        return []
+    shape = getattr(value, "shape", None)
+    if isinstance(shape, (list, tuple)):
+        return _flatten_shape_parts(shape)
+    if isinstance(value, (list, tuple)):
+        return _flatten_shape_parts(value)
+    return [_non_negative_int(value)]
+
+
+def _flatten_shape_parts(value: list[Any] | tuple[Any, ...]) -> list[int]:
+    parts: list[int] = []
+    for part in value:
+        if isinstance(part, (list, tuple)):
+            parts.extend(_flatten_shape_parts(part))
+        else:
+            parts.append(_non_negative_int(part))
+    return parts
+
+
 def _non_negative_int(value: Any) -> int:
     return max(0, int(value or 0))
+
+
+def _logit_parity_receipt(
+    *,
+    quantized_logits: Any | None,
+    unquantized_logits: Any | None,
+    tolerance: float,
+) -> dict[str, object]:
+    normalized_tolerance = max(0.0, float(tolerance or 0.0))
+    if quantized_logits is None or unquantized_logits is None:
+        return {
+            "status": "not_provided",
+            "sample_count": 0,
+            "max_abs_delta": 0.0,
+            "tolerance": normalized_tolerance,
+        }
+
+    quantized_shape = _numeric_shape(quantized_logits)
+    unquantized_shape = _numeric_shape(unquantized_logits)
+    quantized_values = _flatten_numeric_values(quantized_logits)
+    unquantized_values = _flatten_numeric_values(unquantized_logits)
+    sample_count = min(len(quantized_values), len(unquantized_values))
+    if quantized_shape != unquantized_shape:
+        status = "shape_mismatch"
+    elif len(quantized_values) != len(unquantized_values):
+        status = "shape_mismatch"
+    elif sample_count == 0:
+        status = "empty"
+    else:
+        status = "within_tolerance"
+
+    max_abs_delta = 0.0
+    if sample_count:
+        max_abs_delta = max(
+            abs(quantized_values[index] - unquantized_values[index])
+            for index in range(sample_count)
+        )
+        if status == "within_tolerance" and max_abs_delta > normalized_tolerance:
+            status = "outside_tolerance"
+
+    return {
+        "status": status,
+        "sample_count": sample_count,
+        "max_abs_delta": round(max_abs_delta, 10),
+        "tolerance": normalized_tolerance,
+    }
+
+
+def _numeric_shape(value: Any) -> tuple[int, ...]:
+    shape = getattr(value, "shape", None)
+    if isinstance(shape, (list, tuple)):
+        return tuple(_non_negative_int(part) for part in shape)
+
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        value = tolist()
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return (0,)
+        child_shapes = [_numeric_shape(item) for item in value]
+        first_shape = child_shapes[0]
+        if any(child_shape != first_shape for child_shape in child_shapes):
+            return (len(value), -1)
+        return (len(value), *first_shape)
+    return ()
+
+
+def _flatten_numeric_values(value: Any) -> list[float]:
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        value = tolist()
+    if isinstance(value, (list, tuple)):
+        flattened: list[float] = []
+        for item in value:
+            flattened.extend(_flatten_numeric_values(item))
+        return flattened
+    return [float(value)]
 
 
 def _value_count(value: Any | None) -> int:
