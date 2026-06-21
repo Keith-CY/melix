@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import reduce
 from operator import mul
-from typing import Any
+from typing import Any, cast
 
 
 def build_mixed_batch_geometry_receipt(*, rows: list[dict[str, Any]]) -> dict[str, object]:
@@ -124,7 +124,7 @@ def build_quantized_kv_mask_receipt(
         )
         row_receipts.append(row_receipt)
         per_row_offsets.append(int(row_receipt["cache_offset"]))
-        cache_mask_shapes.append(list(row_receipt["cache_mask_shape"]))  # type: ignore[arg-type]
+        cache_mask_shapes.append(cast(list[int], row_receipt["cache_mask_shape"]))
 
     row_drift_count = sum(
         1 for row_receipt in row_receipts if row_receipt["cache_mask_guard"] == "row_drift"
