@@ -312,6 +312,25 @@ def test_trust_policy_caches_config_json_by_file_stat(
     assert read_bytes_calls == 1
 
 
+def test_trust_policy_auto_map_custom_loader_scan_avoids_string_coercion_for_strings() -> None:
+    class NoisyString(str):
+        def __str__(self) -> str:  # pragma: no cover - only runs on regression.
+            raise AssertionError("string auto_map values should not be coerced through str()")
+
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": NoisyString("custom.Loader")}) is True
+
+
+def test_trust_policy_auto_map_custom_loader_scan_preserves_blank_string_behavior() -> None:
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": " \t\n"}) is False
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": "custom.Loader"}) is True
+
+
+def test_trust_policy_auto_map_custom_loader_scan_preserves_non_string_fallback() -> None:
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": None}) is False
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": 0}) is True
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": object()}) is True
+
+
 def test_trust_policy_skips_expanduser_for_plain_model_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
