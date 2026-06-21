@@ -14,6 +14,26 @@ from worker.model_ops.download_pipeline import DownloadPipeline
 from worker.model_ops.errors import ModelOperationError
 
 
+def _expected_directory_snapshot_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    file_paths = sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    )
+    for path in file_paths:
+        relative_path = path.relative_to(root).as_posix()
+        file_bytes = path.read_bytes()
+        digest.update(b"file\0")
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(len(file_bytes)).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(file_bytes)
+        digest.update(b"\0")
+    return f"sha256:{digest.hexdigest()}"
+
+
 def test_selected_mirror_uses_first_configured_mirror() -> None:
     assert (
         DownloadPipeline._selected_mirror({"mirror_urls": " , https://first.example, https://second.example"})
@@ -666,6 +686,99 @@ def test_strict_managed_hub_import_requires_digest_before_snapshot_resolution(tm
     assert state_payload["artifact_integrity"]["failure_reason"] == "missing_artifact_digest"
     assert state_payload["output_path"] == ""
     assert state_payload["partial_path"] == ""
+
+
+def test_strict_managed_hub_import_with_matching_snapshot_digest_activates(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_dir = tmp_path / "managed-snapshot"
+    nested_dir = source_dir / "tokenizer"
+    nested_dir.mkdir(parents=True)
+    (source_dir / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
+    (nested_dir / "tokenizer.json").write_text('{"version":"1.0"}\n', encoding="utf-8")
+    (source_dir / "model.safetensors").write_bytes(b"weights")
+    declared_digest = _expected_directory_snapshot_digest(source_dir)
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_dir),
+            "melix.managed_import": "true",
+            "melix.source_kind": "hub_repo",
+            "melix.hf_repo_id": "mlx-community/demo",
+            "melix.hf_revision": "main",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": declared_digest,
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-strict-hub-digest", output_dir=output_dir)
+
+    payload = json.loads(result.snapshots[-1].manifest_json)
+    assert result.output_path == source_dir.resolve()
+    assert payload["status"] == "completed"
+    assert payload["stage"] == "materialize"
+    assert payload["managed_model_path"] == str(source_dir.resolve())
+    assert payload["artifact_integrity"] == {
+        "verification_mode": "sha256",
+        "policy_present": True,
+        "digest": declared_digest,
+        "actual_digest": declared_digest,
+        "checked_at": payload["artifact_integrity"]["checked_at"],
+        "failure_reason": "",
+        "status": "passed",
+    }
+    assert payload["artifact_integrity"]["checked_at"] != "not_recorded"
+    assert payload["activated"] is True
+
+
+def test_strict_managed_hub_import_rejects_snapshot_digest_mismatch_before_activation(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_dir = tmp_path / "managed-snapshot"
+    source_dir.mkdir()
+    (source_dir / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
+    (source_dir / "model.safetensors").write_bytes(b"weights")
+    declared_digest = "sha256:" + ("0" * 64)
+    actual_digest = _expected_directory_snapshot_digest(source_dir)
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_dir),
+            "melix.managed_import": "true",
+            "melix.source_kind": "hub_repo",
+            "melix.hf_repo_id": "mlx-community/demo",
+            "melix.hf_revision": "main",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": declared_digest,
+        },
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        pipeline.run(request, job_id="job-strict-hub-digest-mismatch", output_dir=output_dir)
+
+    assert exc_info.value.code == "artifact_integrity_mismatch"
+    state_payload = json.loads((output_dir / "download.state.json").read_text(encoding="utf-8"))
+    assert json.loads(exc_info.value.details["state_json"]) == state_payload
+    assert state_payload["status"] == "failed"
+    assert state_payload["terminal_state"] == "failed"
+    assert state_payload["last_error"] == "digest_mismatch"
+    assert state_payload["stage"] == "materialize"
+    assert state_payload["managed_model_path"] == str(source_dir.resolve())
+    assert state_payload["artifact_integrity"] == {
+        "verification_mode": "sha256",
+        "policy_present": True,
+        "digest": declared_digest,
+        "actual_digest": actual_digest,
+        "checked_at": state_payload["artifact_integrity"]["checked_at"],
+        "failure_reason": "digest_mismatch",
+        "status": "failed",
+    }
+    assert state_payload["artifact_integrity"]["checked_at"] != "not_recorded"
+    assert state_payload["partial_path"] == ""
+    assert state_payload["partial_bytes"] == 0
+    assert state_payload["resume_eligible"] is False
+    assert state_payload["partial_lifecycle"] == "none"
+    assert state_payload["activated"] is False
 
 
 def test_operation_identity_respects_explicit_id_and_local_source_fallback(tmp_path: Path) -> None:

@@ -521,6 +521,13 @@ class DownloadPipeline:
         public_ext = self._public_ext(request.ext)
         config_payload = self._load_model_config_payload(runtime_model_path)
         draft_metadata = dflash_draft_metadata(config_payload)
+        artifact_integrity = self._artifact_integrity_receipt(ext=public_ext, status="passed")
+        if self._artifact_digest(public_ext):
+            artifact_integrity = self._verified_directory_artifact_integrity_receipt(
+                artifact_path=runtime_model_path,
+                ext=public_ext,
+                status="passed",
+            )
         payload = {
             "schema_version": "melix.download_job.v1",
             "job_id": job_id,
@@ -532,7 +539,7 @@ class DownloadPipeline:
             "timeout_ms": max(0, self._int(ext.get("test_request_deadline_ms") or ext.get("timeout_ms"), default=0)),
             "retry_after_ms": max(0, self._int(ext.get("retry_after_ms") or ext.get("test_request_deadline_ms"), default=0)),
             "last_error": "",
-            "artifact_integrity": self._artifact_integrity_receipt(ext=public_ext, status="passed"),
+            "artifact_integrity": artifact_integrity,
             "model_id": repo_id,
             "managed_model_path": str(output_path),
             "source_model": request.source_model,
@@ -575,6 +582,11 @@ class DownloadPipeline:
                 "download.stall_detection_count": 0,
             },
         }
+        self._raise_if_strict_integrity_mismatch(
+            manifest_payload=payload,
+            partial_path=Path(""),
+            ext=ext,
+        )
         self._write_json_atomically(state_path, payload)
         return json.dumps(payload, sort_keys=True)
 
@@ -977,6 +989,24 @@ class DownloadPipeline:
         )
 
     @classmethod
+    def _verified_directory_artifact_integrity_receipt(
+        cls,
+        *,
+        artifact_path: Path,
+        ext: dict[str, Any],
+        status: str,
+        failure_reason: str = "",
+    ) -> dict[str, Any]:
+        actual_digest = f"sha256:{cls._sha256_directory_snapshot(artifact_path)}" if cls._artifact_digest(ext) else ""
+        return cls._artifact_integrity_receipt(
+            ext=ext,
+            status=status,
+            failure_reason=failure_reason,
+            actual_digest=actual_digest,
+            checked_at=cls._utc_now_iso8601(),
+        )
+
+    @classmethod
     def _raise_if_strict_integrity_mismatch(
         cls,
         *,
@@ -1053,14 +1083,20 @@ class DownloadPipeline:
                 "activated": False,
             }
         )
-        partial_bytes, partial_age_ms = cls._partial_file_state(partial_path)
+        has_partial_path = str(partial_path) not in {"", "."}
+        partial_bytes, partial_age_ms = (
+            cls._partial_file_state(partial_path)
+            if has_partial_path
+            else (0, 0)
+        )
+        partial_lifecycle = "failed_kept_for_resume" if has_partial_path else "none"
         payload.update(
             {
                 "partial_bytes": partial_bytes,
                 "partial_age_ms": partial_age_ms,
                 "resume_eligible": False,
                 "stale_partial_removed": bool(payload.get("stale_partial_removed", False)),
-                "partial_lifecycle": "failed_kept_for_resume",
+                "partial_lifecycle": partial_lifecycle,
             }
         )
         return payload
@@ -1182,6 +1218,28 @@ class DownloadPipeline:
         with path.open("rb") as file:
             for chunk in iter(lambda: file.read(1024 * 1024), b""):
                 digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _sha256_directory_snapshot(path: Path) -> str:
+        digest = hashlib.sha256()
+        file_paths = sorted(
+            candidate
+            for candidate in path.rglob("*")
+            if candidate.is_file() and not candidate.is_symlink()
+        )
+        for file_path in file_paths:
+            relative_path = file_path.relative_to(path).as_posix()
+            file_size = file_path.stat().st_size
+            digest.update(b"file\0")
+            digest.update(relative_path.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(str(file_size).encode("ascii"))
+            digest.update(b"\0")
+            with file_path.open("rb") as file:
+                for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            digest.update(b"\0")
         return digest.hexdigest()
 
     @staticmethod

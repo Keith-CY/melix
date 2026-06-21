@@ -177,6 +177,18 @@ failed `artifact_integrity` receipt with the declared and actual digests.
 Declared digest policies outside the supported SHA-256 formats also fail closed
 before activation with `artifact_integrity_unsupported`.
 
+For managed Hub repository imports, strict mode verifies SHA-256 metadata
+against the resolved snapshot directory before reporting the snapshot as
+activated. The directory digest is deterministic for regular files: Melix
+sorts repo-relative file paths, then hashes each file's path, byte length, and
+bytes. Directory entries, symlinks, and symlink targets are outside this
+slice's hash surface. On match, the terminal `artifact_integrity` receipt
+records the declared `digest`, matching `actual_digest`, real `checked_at`, and
+`activated=true`. On mismatch, Melix refuses the import with
+`artifact_integrity_mismatch`, records `last_error=digest_mismatch`, writes a
+failed receipt with the declared and actual directory digests, and sets
+`activated=false`.
+
 The current strict activation gate is a worker-side fixture helper for
 receipts: activation is eligible only when the receipt is completed and
 `artifact_integrity.status` is `passed`. This is not a full signature system,
