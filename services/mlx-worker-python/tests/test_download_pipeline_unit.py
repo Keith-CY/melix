@@ -94,6 +94,42 @@ def test_directory_size_does_not_follow_symlinked_entries(tmp_path: Path) -> Non
     assert DownloadPipeline._directory_size(model_dir) == len(b"weights")
 
 
+def test_directory_snapshot_digest_uses_scandir_stack_without_path_rglob(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "managed-snapshot"
+    nested_dir = model_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    (model_dir / "config.json").write_bytes(b"{}")
+    (nested_dir / "weights.safetensors").write_bytes(b"weights")
+
+    expected_digest = _expected_directory_snapshot_digest(model_dir).removeprefix("sha256:")
+
+    def fail_rglob(self: Path, pattern: str):
+        raise AssertionError("expected explicit os.scandir stack, not Path.rglob")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    assert DownloadPipeline._sha256_directory_snapshot(model_dir) == expected_digest
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink support unavailable")
+def test_directory_snapshot_digest_does_not_follow_symlinked_entries(tmp_path: Path) -> None:
+    model_dir = tmp_path / "managed-snapshot"
+    nested_dir = model_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    (nested_dir / "weights.safetensors").write_bytes(b"weights")
+    outside_file = tmp_path / "outside.safetensors"
+    outside_file.write_bytes(b"outside")
+    os.symlink(outside_file, model_dir / "linked-file.safetensors")
+    os.symlink(nested_dir, model_dir / "linked-dir")
+
+    assert DownloadPipeline._sha256_directory_snapshot(model_dir) == _expected_directory_snapshot_digest(
+        model_dir
+    ).removeprefix("sha256:")
+
+
 def test_run_reuses_public_ext_across_many_snapshots(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -191,14 +227,24 @@ def test_run_plain_download_does_not_build_operation_receipts(
         "_artifact_integrity_receipt",
         staticmethod(artifact_integrity_receipt),
     )
+    companion_manifest = Mock(
+        side_effect=AssertionError("plain downloads should not parse companion manifests")
+    )
+    monkeypatch.setattr(
+        DownloadPipeline,
+        "_companion_manifest",
+        staticmethod(companion_manifest),
+    )
 
     result = pipeline.run(request, job_id="job-plain", output_dir=tmp_path / "output")
 
     artifact_integrity_receipt.assert_not_called()
+    companion_manifest.assert_not_called()
     assert result.output_path.read_bytes() == b"abcdef"
     payload = json.loads(result.snapshots[-1].manifest_json)
     assert "artifact_integrity" not in payload
     assert "operation_id" not in payload
+    assert "artifact_companions" not in payload
 
 
 def test_run_retry_exhausted_path_does_not_reparse_manifest_json(
@@ -847,6 +893,220 @@ def test_strict_managed_download_rejects_unsupported_digest_policy_before_activa
     assert state_payload["activated"] is False
     assert not (output_dir / "download.artifact").exists()
     assert (output_dir / "download.artifact.partial").read_bytes() == source_bytes
+
+
+def test_strict_managed_download_records_required_companion_artifacts(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    source_path = artifact_dir / "model.gguf"
+    source_bytes = b"model-bytes"
+    source_path.write_bytes(source_bytes)
+    (artifact_dir / "tokenizer.json").write_text("{}", encoding="utf-8")
+    projector_dir = artifact_dir / "projector"
+    projector_dir.mkdir()
+    (projector_dir / "config.json").write_text("{}", encoding="utf-8")
+    (projector_dir / "weights.safetensors").write_bytes(b"weights")
+    managed_root = tmp_path / "managed-root"
+    (managed_root / "optional").mkdir(parents=True)
+    (managed_root / "optional" / "processor.json").write_text("{}", encoding="utf-8")
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/vlm",
+        ext={
+            "source_path": str(source_path),
+            "output_filename": "model.gguf",
+            "melix.target_scope": "hub:mlx-community/vlm@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": f"sha256:{hashlib.sha256(source_bytes).hexdigest()}",
+            "melix.managed_root": str(managed_root),
+            "melix.companion_manifest": json.dumps(
+                [
+                    {"path": "tokenizer.json", "kind": "file", "required": True},
+                    {"path": "projector", "kind": "directory", "required": True},
+                    {"path": "optional/processor.json", "kind": "file", "required": False},
+                ]
+            ),
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-companion", output_dir=tmp_path / "output")
+
+    payload = json.loads(result.snapshots[-1].manifest_json)
+    receipt = payload["artifact_companions"]
+    assert payload["status"] == "completed"
+    assert payload["activated"] is True
+    assert receipt["primary_artifact"] == str(tmp_path / "output" / "model.gguf")
+    assert receipt["verification_result"] == "passed"
+    assert receipt["missing_required"] == []
+    assert receipt["staged_file_count"] == 4
+    companions = {entry["declared_path"]: entry for entry in receipt["companion_artifacts"]}
+    assert companions["tokenizer.json"]["status"] == "present"
+    assert companions["tokenizer.json"]["file_count"] == 1
+    assert companions["tokenizer.json"]["resolved_path"] == str(tmp_path / "output" / "tokenizer.json")
+    assert companions["projector"]["kind"] == "directory"
+    assert companions["projector"]["file_count"] == 2
+    assert companions["projector"]["resolved_path"] == str(tmp_path / "output" / "projector")
+    assert companions["optional/processor.json"]["resolved_path"] == str(
+        tmp_path / "output" / "processor.json"
+    )
+    assert (tmp_path / "output" / "tokenizer.json").read_text(encoding="utf-8") == "{}"
+    assert (tmp_path / "output" / "projector" / "config.json").read_text(encoding="utf-8") == "{}"
+    assert (tmp_path / "output" / "projector" / "weights.safetensors").read_bytes() == b"weights"
+    assert (tmp_path / "output" / "processor.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_strict_managed_download_rejects_missing_required_companion_before_activation(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    source_path = artifact_dir / "model.gguf"
+    source_bytes = b"model-bytes"
+    source_path.write_bytes(source_bytes)
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/vlm",
+        ext={
+            "source_path": str(source_path),
+            "output_filename": "model.gguf",
+            "melix.target_scope": "hub:mlx-community/vlm@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": f"sha256:{hashlib.sha256(source_bytes).hexdigest()}",
+            "melix.companion_manifest": json.dumps(
+                [
+                    {"path": "tokenizer.json", "kind": "file", "required": True},
+                    {"path": "projector", "kind": "directory", "required": True},
+                ]
+            ),
+        },
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        pipeline.run(request, job_id="job-missing-companion", output_dir=output_dir)
+
+    assert exc_info.value.code == "artifact_companion_required"
+    payload = json.loads(exc_info.value.details["state_json"])
+    state_payload = json.loads((output_dir / "model.gguf.state.json").read_text(encoding="utf-8"))
+    assert payload == state_payload
+    assert payload["status"] == "failed"
+    assert payload["terminal_state"] == "failed"
+    assert payload["last_error"] == "missing_required_companion"
+    assert payload["artifact_companions"]["verification_result"] == "failed"
+    assert payload["artifact_companions"]["missing_required"] == ["tokenizer.json", "projector"]
+    assert payload["artifact_companions"]["staged_file_count"] == 0
+    assert payload["activated"] is False
+    assert not (output_dir / "model.gguf").exists()
+    assert (output_dir / "model.gguf.partial").read_bytes() == b"model-bytes"
+
+
+def test_companion_manifest_parser_tolerates_malformed_entries() -> None:
+    assert DownloadPipeline._companion_manifest({"melix.companion_manifest": "{broken"}) == []
+    assert DownloadPipeline._companion_manifest({"melix.companion_manifest": "{}"}) == []
+    assert DownloadPipeline._companion_manifest(
+        {
+            "melix.companion_manifest": json.dumps(
+                [
+                    "ignored",
+                    {"path": "   "},
+                    {"path": "processor.json", "kind": "weird", "required": "false"},
+                    {"path": "projector", "kind": "directory", "required": "yes"},
+                ]
+            )
+        }
+    ) == [
+        {"path": "processor.json", "kind": "file", "required": False},
+        {"path": "projector", "kind": "directory", "required": True},
+    ]
+
+
+def test_companion_receipt_handles_absolute_paths_and_kind_mismatch(tmp_path: Path) -> None:
+    primary_artifact = tmp_path / "model.gguf"
+    primary_artifact.write_bytes(b"model")
+    absolute_companion = tmp_path / "absolute-tokenizer.json"
+    absolute_companion.write_text("{}", encoding="utf-8")
+
+    receipt = DownloadPipeline._artifact_companions_receipt(
+        primary_artifact=primary_artifact,
+        ext={
+            "melix.companion_manifest": json.dumps(
+                [
+                    {"path": str(absolute_companion), "kind": "file", "required": True},
+                    {"path": "model.gguf", "kind": "directory", "required": True},
+                ]
+            )
+        },
+    )
+
+    companions = {entry["declared_path"]: entry for entry in receipt["companion_artifacts"]}
+    assert companions[str(absolute_companion)]["status"] == "present"
+    assert companions[str(absolute_companion)]["file_count"] == 1
+    assert companions["model.gguf"]["status"] == "missing"
+    assert companions["model.gguf"]["resolved_path"] == ""
+    assert receipt["missing_required"] == ["model.gguf"]
+    assert receipt["verification_result"] == "failed"
+
+
+def test_companion_path_resolution_rejects_relative_escape(tmp_path: Path) -> None:
+    primary_artifact = tmp_path / "output" / "model.gguf"
+    primary_artifact.parent.mkdir()
+    primary_artifact.write_bytes(b"model")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    search_artifact = source_dir / "model.gguf"
+    search_artifact.write_bytes(b"model")
+    escaped = tmp_path / "escaped-tokenizer.json"
+    escaped.write_text("{}", encoding="utf-8")
+
+    receipt = DownloadPipeline._artifact_companions_receipt(
+        primary_artifact=primary_artifact,
+        companion_search_artifact=search_artifact,
+        ext={
+            "melix.companion_manifest": json.dumps(
+                [{"path": "../escaped-tokenizer.json", "kind": "file", "required": True}]
+            )
+        },
+    )
+
+    companion = receipt["companion_artifacts"][0]
+    assert companion["status"] == "missing"
+    assert companion["resolved_path"] == ""
+    assert receipt["missing_required"] == ["../escaped-tokenizer.json"]
+    assert receipt["verification_result"] == "failed"
+
+
+def test_stage_companion_replaces_existing_target_type_mismatches(tmp_path: Path) -> None:
+    primary_artifact = tmp_path / "output" / "model.gguf"
+    primary_artifact.parent.mkdir()
+    primary_artifact.write_bytes(b"model")
+    source_dir = tmp_path / "source-projector"
+    source_dir.mkdir()
+    (source_dir / "config.json").write_text("{}", encoding="utf-8")
+    target_dir_name = "projector"
+    (primary_artifact.parent / target_dir_name).write_text("stale-file", encoding="utf-8")
+
+    staged_dir = DownloadPipeline._stage_companion_path(
+        declared_path=target_dir_name,
+        source_path=source_dir,
+        primary_artifact=primary_artifact,
+    )
+
+    assert staged_dir.is_dir()
+    assert (staged_dir / "config.json").read_text(encoding="utf-8") == "{}"
+
+    file_source = tmp_path / "tokenizer.json"
+    file_source.write_text("fresh", encoding="utf-8")
+    stale_target = primary_artifact.parent / "tokenizer.json"
+    stale_target.mkdir()
+
+    staged_file = DownloadPipeline._stage_companion_path(
+        declared_path="tokenizer.json",
+        source_path=file_source,
+        primary_artifact=primary_artifact,
+    )
+
+    assert staged_file.is_file()
+    assert staged_file.read_text(encoding="utf-8") == "fresh"
 
 
 def test_strict_managed_hub_import_requires_digest_before_snapshot_resolution(tmp_path: Path) -> None:

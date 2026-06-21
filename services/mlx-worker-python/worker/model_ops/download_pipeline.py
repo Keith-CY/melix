@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 import time
 from dataclasses import dataclass
@@ -297,7 +298,27 @@ class DownloadPipeline:
                         partial_path=partial_path,
                         ext=ext,
                     )
+                companion_declarations = (
+                    self._companion_manifest(ext) if "melix.companion_manifest" in ext else []
+                )
+                if companion_declarations:
+                    self._raise_if_required_companions_missing(
+                        manifest_payload=completed_payload,
+                        primary_artifact=output_path,
+                        companion_search_artifact=source_path,
+                        primary_staging_path=partial_path,
+                        ext=ext,
+                        declarations=companion_declarations,
+                    )
                 os.replace(os.fspath(partial_path), os.fspath(output_path))
+                if companion_declarations:
+                    completed_payload["artifact_companions"] = self._artifact_companions_receipt(
+                        primary_artifact=output_path,
+                        companion_search_artifact=source_path,
+                        ext=ext,
+                        declarations=companion_declarations,
+                        stage=True,
+                    )
                 manifest_json = self._write_manifest_json(state_path, completed_payload)
                 snapshots.append(DownloadSnapshot(stage="download", pct=1.0, manifest_json=manifest_json))
                 return DownloadPipelineResult(output_path=output_path, snapshots=snapshots)
@@ -1428,28 +1449,283 @@ class DownloadPipeline:
     @staticmethod
     def _sha256_directory_snapshot(path: Path) -> str:
         digest = hashlib.sha256()
-        file_paths = sorted(
-            candidate
-            for candidate in path.rglob("*")
-            if candidate.is_file() and not candidate.is_symlink()
-        )
-        for file_path in file_paths:
-            relative_path = file_path.relative_to(path).as_posix()
-            file_size = file_path.stat().st_size
+        for relative_path, file_path, file_size in DownloadPipeline._directory_snapshot_files(path):
             digest.update(b"file\0")
             digest.update(relative_path.encode("utf-8"))
             digest.update(b"\0")
             digest.update(str(file_size).encode("ascii"))
             digest.update(b"\0")
-            with file_path.open("rb") as file:
+            with open(file_path, "rb") as file:
                 for chunk in iter(lambda: file.read(1024 * 1024), b""):
                     digest.update(chunk)
             digest.update(b"\0")
         return digest.hexdigest()
 
     @staticmethod
+    def _directory_snapshot_files(path: Path) -> list[tuple[str, str, int]]:
+        root_path = os.fspath(path)
+        root_prefix_length = len(root_path.rstrip(os.sep)) + 1
+        files: list[tuple[str, str, int]] = []
+        append_file = files.append
+        stack = [root_path]
+        append_directory = stack.append
+        pop_directory = stack.pop
+        scandir = os.scandir
+        is_dir = os.DirEntry.is_dir
+        is_file = os.DirEntry.is_file
+        stat_entry = os.DirEntry.stat
+        while stack:
+            current = pop_directory()
+            with scandir(current) as entries:
+                for entry in entries:
+                    if is_dir(entry, follow_symlinks=False):
+                        append_directory(entry.path)
+                        continue
+                    if is_file(entry, follow_symlinks=False):
+                        relative_path = entry.path[root_prefix_length:].replace(os.sep, "/")
+                        append_file(
+                            (
+                                relative_path,
+                                entry.path,
+                                stat_entry(entry, follow_symlinks=False).st_size,
+                            )
+                        )
+        files.sort()
+        return files
+
+    @staticmethod
     def _utc_now_iso8601() -> str:
         return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    @classmethod
+    def _raise_if_required_companions_missing(
+        cls,
+        *,
+        manifest_payload: dict[str, Any],
+        primary_artifact: Path,
+        companion_search_artifact: Path,
+        primary_staging_path: Path,
+        ext: dict[str, str],
+        declarations: list[dict[str, Any]] | None = None,
+    ) -> None:
+        receipt = cls._artifact_companions_receipt(
+            primary_artifact=primary_artifact,
+            companion_search_artifact=companion_search_artifact,
+            ext=ext,
+            declarations=declarations,
+        )
+        missing_required = receipt.get("missing_required", [])
+        if not cls._strict_install_mode(ext) or not missing_required:
+            return
+
+        payload = dict(manifest_payload)
+        payload.update(
+            {
+                "status": "failed",
+                "terminal_state": "failed",
+                "last_error": "missing_required_companion",
+                "artifact_companions": receipt,
+                "output_path": str(primary_artifact),
+                "partial_path": str(primary_staging_path),
+                "activated": False,
+            }
+        )
+        payload.update(
+            cls._partial_lifecycle_receipt(
+                total_bytes=int(payload.get("total_bytes", 0)),
+                downloaded_bytes=int(payload.get("downloaded_bytes", 0)),
+                terminal_state="failed",
+            )
+        )
+        state_json = cls._write_manifest_json(Path(str(payload["state_path"])), payload)
+        raise ModelOperationError(
+            code="artifact_companion_required",
+            message="Strict managed artifact installs require declared companion artifacts before activation.",
+            details={
+                "state_json": state_json,
+                "failure_reason": "missing_required_companion",
+            },
+        )
+
+    @classmethod
+    def _artifact_companions_receipt(
+        cls,
+        *,
+        primary_artifact: Path,
+        companion_search_artifact: Path | None = None,
+        ext: dict[str, str],
+        declarations: list[dict[str, Any]] | None = None,
+        stage: bool = False,
+    ) -> dict[str, Any]:
+        declarations = cls._companion_manifest(ext) if declarations is None else declarations
+        companion_artifacts = [
+            cls._companion_artifact_receipt(
+                primary_artifact=primary_artifact,
+                companion_search_artifact=companion_search_artifact or primary_artifact,
+                ext=ext,
+                declaration=declaration,
+                stage=stage,
+            )
+            for declaration in declarations
+        ]
+        missing_required = [
+            str(entry["declared_path"])
+            for entry in companion_artifacts
+            if entry["required"] is True and entry["status"] == "missing"
+        ]
+        return {
+            "primary_artifact": str(primary_artifact),
+            "companion_artifacts": companion_artifacts,
+            "missing_required": missing_required,
+            "staged_file_count": sum(int(entry["file_count"]) for entry in companion_artifacts),
+            "verification_result": "failed" if missing_required else "passed",
+        }
+
+    @staticmethod
+    def _companion_manifest(ext: dict[str, str]) -> list[dict[str, Any]]:
+        raw_manifest = ext.get("melix.companion_manifest", "").strip()
+        if not raw_manifest:
+            return []
+        try:
+            payload = json.loads(raw_manifest)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+        declarations: list[dict[str, Any]] = []
+        for raw_entry in payload:
+            if not isinstance(raw_entry, dict):
+                continue
+            declared_path = str(raw_entry.get("path", "")).strip()
+            if not declared_path:
+                continue
+            kind = str(raw_entry.get("kind", "file")).strip().lower()
+            if kind not in {"file", "directory"}:
+                kind = "file"
+            required_raw = str(raw_entry.get("required", "true")).strip().lower()
+            declarations.append(
+                {
+                    "path": declared_path,
+                    "kind": kind,
+                    "required": required_raw not in {"0", "false", "no", "off"},
+                }
+            )
+        return declarations
+
+    @classmethod
+    def _companion_artifact_receipt(
+        cls,
+        *,
+        primary_artifact: Path,
+        companion_search_artifact: Path,
+        ext: dict[str, str],
+        declaration: dict[str, Any],
+        stage: bool = False,
+    ) -> dict[str, Any]:
+        declared_path = str(declaration["path"])
+        kind = str(declaration["kind"])
+        required = bool(declaration["required"])
+        resolved_path = cls._resolve_companion_path(
+            declared_path=declared_path,
+            primary_artifact=primary_artifact,
+            companion_search_artifact=companion_search_artifact,
+            ext=ext,
+        )
+        status = "missing"
+        file_count = 0
+        byte_count = 0
+        files: list[str] = []
+        if resolved_path is not None:
+            if kind == "directory" and resolved_path.is_dir():
+                if stage:
+                    resolved_path = cls._stage_companion_path(
+                        declared_path=declared_path,
+                        source_path=resolved_path,
+                        primary_artifact=primary_artifact,
+                    )
+                file_paths = sorted(path for path in resolved_path.rglob("*") if path.is_file())
+                files = [str(path) for path in file_paths]
+                file_count = len(file_paths)
+                byte_count = sum(path.stat().st_size for path in file_paths)
+                status = "present"
+            elif kind == "file" and resolved_path.is_file():
+                if stage:
+                    resolved_path = cls._stage_companion_path(
+                        declared_path=declared_path,
+                        source_path=resolved_path,
+                        primary_artifact=primary_artifact,
+                    )
+                files = [str(resolved_path)]
+                file_count = 1
+                byte_count = resolved_path.stat().st_size
+                status = "present"
+            else:
+                resolved_path = None
+        return {
+            "declared_path": declared_path,
+            "resolved_path": str(resolved_path) if resolved_path is not None else "",
+            "kind": kind,
+            "required": required,
+            "status": status,
+            "file_count": file_count,
+            "byte_count": byte_count,
+            "files": files,
+        }
+
+    @staticmethod
+    def _resolve_companion_path(
+        *,
+        declared_path: str,
+        primary_artifact: Path,
+        companion_search_artifact: Path,
+        ext: dict[str, str],
+    ) -> Path | None:
+        candidate = Path(declared_path).expanduser()
+        if candidate.is_absolute() and candidate.exists():
+            return candidate.resolve()
+        search_roots = [companion_search_artifact.parent, primary_artifact.parent]
+        managed_root = ext.get("melix.managed_root", "").strip()
+        if managed_root:
+            search_roots.append(Path(managed_root).expanduser())
+        for root in search_roots:
+            resolved_root = root.resolve()
+            resolved = (resolved_root / candidate).resolve()
+            try:
+                resolved.relative_to(resolved_root)
+            except ValueError:
+                continue
+            if resolved.exists():
+                return resolved
+        return None
+
+    @staticmethod
+    def _remove_existing_companion_target(target_path: Path) -> None:
+        if not target_path.exists() and not target_path.is_symlink():
+            return
+        if target_path.is_dir() and not target_path.is_symlink():
+            shutil.rmtree(target_path)
+            return
+        target_path.unlink()
+
+    @classmethod
+    def _stage_companion_path(
+        cls,
+        *,
+        declared_path: str,
+        source_path: Path,
+        primary_artifact: Path,
+    ) -> Path:
+        target_path = primary_artifact.parent / Path(declared_path).name
+        if source_path.resolve() == target_path.resolve():
+            return target_path
+        if source_path.is_dir():
+            cls._remove_existing_companion_target(target_path)
+            shutil.copytree(source_path, target_path)
+            return target_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        cls._remove_existing_companion_target(target_path)
+        shutil.copy2(source_path, target_path)
+        return target_path
 
     @staticmethod
     def _write_json_atomically(path: Path, payload: dict[str, Any]) -> None:
