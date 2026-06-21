@@ -181,6 +181,24 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
     def estimate_resident_bytes(self, model_spec):
         return 4096
 
+    def close_loaded_model(self, loaded_model) -> None:
+        model_id = self._metadata_value(loaded_model, "model_id", "")
+        if not model_id:
+            self._clear_cache_entries(tuple(self._cache_entries))
+            return
+
+        evicted_identities = tuple(
+            cache_identity
+            for cache_identity, entry in self._cache_entries.items()
+            if entry.model_id == model_id
+            and entry.revision == self._metadata_value(loaded_model, "revision", entry.revision)
+            and entry.tokenizer_hash
+            == self._metadata_value(loaded_model, "tokenizer_hash", entry.tokenizer_hash)
+            and entry.quant_profile_id
+            == self._metadata_value(loaded_model, "quant_profile_id", entry.quant_profile_id)
+        )
+        self._clear_cache_entries(evicted_identities)
+
     def render_prompt(
         self,
         messages,
@@ -588,6 +606,20 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
     def _record_cache_entry(self, entry: VisionCacheEntry) -> None:
         self._cache_entries[entry.cache_identity] = entry
         self._cache_l1_bytes += entry.bytes_used
+        self._cache_snapshot = None
+
+    def _clear_cache_entries(self, cache_identities: tuple[str, ...]) -> None:
+        if not cache_identities:
+            return
+        evicted = set(cache_identities)
+        for cache_identity in evicted:
+            self._cache_entries.pop(cache_identity, None)
+        self._decode_sessions = {
+            decode_handle: session
+            for decode_handle, session in self._decode_sessions.items()
+            if session.cache_identity not in evicted
+        }
+        self._cache_l1_bytes = sum(entry.bytes_used for entry in self._cache_entries.values())
         self._cache_snapshot = None
 
     def _cache_snapshot_message(self) -> cache_pb2.CacheSnapshot:

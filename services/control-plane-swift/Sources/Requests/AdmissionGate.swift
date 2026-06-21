@@ -32,6 +32,8 @@ public actor AdmissionGate {
         let requestID: String
         let cohortID: String
         let maxBatchSize: UInt32
+        let priorityScore: Double
+        let sequence: UInt64
     }
 
     private struct FrontBatch: Sendable {
@@ -47,6 +49,7 @@ public actor AdmissionGate {
     private var waiters: [String: CheckedContinuation<AdmissionGrant, Never>]
     private var pendingFormationID: UInt64?
     private var nextFormationID: UInt64
+    private var nextQueueSequence: UInt64
 
     public init(batchFormationWindowNanos: UInt64 = AdmissionGate.defaultBatchFormationWindowNanos) {
         self.batchFormationWindowNanos = batchFormationWindowNanos
@@ -55,25 +58,28 @@ public actor AdmissionGate {
         self.queuedEntries = []
         self.waiters = [:]
         self.nextFormationID = 1
+        self.nextQueueSequence = 1
     }
 
     public func nextQueuePosition(
         cohortID: String = "",
-        maxBatchSize: UInt32 = 1
+        maxBatchSize: UInt32 = 1,
+        priorityScore: Double = 0
     ) -> UInt32 {
         if activeRequestIDs.isEmpty {
-            return UInt32(queuedEntries.count + 1)
+            return queuedPosition(forPriorityScore: priorityScore)
         }
         if canJoinActiveBatch(cohortID: cohortID, maxBatchSize: maxBatchSize) {
             return 1
         }
-        return UInt32(queuedEntries.count + 1)
+        return queuedPosition(forPriorityScore: priorityScore)
     }
 
     public func acquire(
         requestID: String,
         cohortID: String = "",
-        maxBatchSize: UInt32 = 1
+        maxBatchSize: UInt32 = 1,
+        priorityScore: Double = 0
     ) async -> AdmissionGrant {
         let normalizedCapacity = normalizedBatchCapacity(maxBatchSize)
         if activeRequestIDs.isEmpty,
@@ -81,7 +87,8 @@ public actor AdmissionGate {
             return await enqueueQueuedRequest(
                 requestID: requestID,
                 cohortID: cohortID,
-                maxBatchSize: normalizedCapacity
+                maxBatchSize: normalizedCapacity,
+                priorityScore: priorityScore
             )
         }
 
@@ -93,7 +100,8 @@ public actor AdmissionGate {
                 return await enqueueQueuedRequest(
                     requestID: requestID,
                     cohortID: cohortID,
-                    maxBatchSize: normalizedCapacity
+                    maxBatchSize: normalizedCapacity,
+                    priorityScore: priorityScore
                 )
             }
             activeRequestIDs = [requestID]
@@ -125,9 +133,13 @@ public actor AdmissionGate {
                 QueueEntry(
                     requestID: requestID,
                     cohortID: cohortID,
-                    maxBatchSize: normalizedBatchCapacity(maxBatchSize)
+                    maxBatchSize: normalizedBatchCapacity(maxBatchSize),
+                    priorityScore: priorityScore,
+                    sequence: nextQueueSequence
                 )
             )
+            nextQueueSequence &+= 1
+            sortQueuedEntriesByPriority()
         }
 
         return await withCheckedContinuation { continuation in
@@ -209,7 +221,8 @@ public actor AdmissionGate {
     private func enqueueQueuedRequest(
         requestID: String,
         cohortID: String,
-        maxBatchSize: UInt32
+        maxBatchSize: UInt32,
+        priorityScore: Double
     ) async -> AdmissionGrant {
         await withCheckedContinuation { continuation in
             if !queuedEntries.contains(where: { $0.requestID == requestID }) {
@@ -217,9 +230,13 @@ public actor AdmissionGate {
                     QueueEntry(
                         requestID: requestID,
                         cohortID: cohortID,
-                        maxBatchSize: maxBatchSize
+                        maxBatchSize: maxBatchSize,
+                        priorityScore: priorityScore,
+                        sequence: nextQueueSequence
                     )
                 )
+                nextQueueSequence &+= 1
+                sortQueuedEntriesByPriority()
             }
             waiters[requestID] = continuation
 
@@ -305,6 +322,22 @@ public actor AdmissionGate {
 
     private func normalizedBatchCapacity(_ capacity: UInt32) -> UInt32 {
         max(capacity, 1)
+    }
+
+    private func queuedPosition(forPriorityScore priorityScore: Double) -> UInt32 {
+        let precedingCount = queuedEntries.filter { entry in
+            entry.priorityScore >= priorityScore
+        }.count
+        return UInt32(precedingCount + 1)
+    }
+
+    private func sortQueuedEntriesByPriority() {
+        queuedEntries.sort { lhs, rhs in
+            if lhs.priorityScore != rhs.priorityScore {
+                return lhs.priorityScore > rhs.priorityScore
+            }
+            return lhs.sequence < rhs.sequence
+        }
     }
 
     private func canJoinActiveBatch(
