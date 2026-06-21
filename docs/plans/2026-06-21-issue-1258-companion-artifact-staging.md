@@ -77,4 +77,4 @@ Out of scope:
 - [x] Run changed-scope coverage for the touched Python files.
 - [x] Run PR-scoped performance for the changed scope and require `Status: ok`.
 - [x] Run `git diff --check`.
-- [ ] Commit one focused #1258 slice.
+- [x] Commit one focused #1258 slice.
