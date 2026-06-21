@@ -1234,6 +1234,9 @@ class ModelOpsJobRegistry:
             artifact_integrity = manifest.get("artifact_integrity")
             if not isinstance(artifact_integrity, dict):
                 artifact_integrity = {}
+            artifact_transport_receipt = manifest.get("artifact_transport_receipt")
+            if not isinstance(artifact_transport_receipt, dict):
+                artifact_transport_receipt = {}
             downloaded_bytes = int(manifest.get("downloaded_bytes", 0))
             total_bytes = int(manifest.get("total_bytes", 0))
             partial_path = str(manifest.get("partial_path", ""))
@@ -1255,6 +1258,8 @@ class ModelOpsJobRegistry:
                     "last_error": str(manifest.get("last_error", "")),
                     "artifact_integrity": artifact_integrity,
                     "artifact_integrity_status": str(artifact_integrity.get("status", "")),
+                    "artifact_transport_receipt": artifact_transport_receipt,
+                    "artifact_transport_status": str(artifact_transport_receipt.get("status", "")),
                     "output_dir": str(manifest.get("output_dir", job["output_dir"])),
                     "output_path": str(manifest.get("output_path", job["output_path"])),
                     "partial_path": partial_path,

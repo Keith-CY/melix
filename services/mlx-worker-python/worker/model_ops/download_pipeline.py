@@ -45,6 +45,11 @@ class _DownloadManifestContext:
     base_payload: dict[str, Any]
     pending_artifact_integrity: dict[str, Any] | None
     passed_artifact_integrity: dict[str, Any] | None
+    transport_receipt_enabled: bool
+    requested_transport: str
+    effective_transport: str
+    fallback_reason: str
+    chunk_resume_mode: str
     stale_partial_removed: bool
     stale_partial_bytes: int
     stale_partial_age_ms: int
@@ -149,6 +154,11 @@ class DownloadPipeline:
                 selected_mirror=selected_mirror,
                 ext=ext,
             )
+        self._raise_if_empty_unknown_size_body(
+            manifest_context=manifest_context,
+            ext=ext,
+            total_bytes=total_bytes,
+        )
         snapshots: list[DownloadSnapshot] = [
             self._snapshot(
                 manifest_context=manifest_context,
@@ -510,6 +520,9 @@ class DownloadPipeline:
         public_ext = self._public_ext(request.ext)
         config_payload = self._load_model_config_payload(runtime_model_path)
         draft_metadata = dflash_draft_metadata(config_payload)
+        requested_transport, effective_transport, fallback_reason, chunk_resume_mode = (
+            self._transport_selection(public_ext)
+        )
         payload = {
             "schema_version": "melix.download_job.v1",
             "job_id": job_id,
@@ -522,6 +535,17 @@ class DownloadPipeline:
             "retry_after_ms": max(0, self._int(ext.get("retry_after_ms") or ext.get("test_request_deadline_ms"), default=0)),
             "last_error": "",
             "artifact_integrity": self._artifact_integrity_receipt(ext=public_ext, status="passed"),
+            "artifact_transport_receipt": self._artifact_transport_receipt(
+                requested_transport=requested_transport,
+                effective_transport=effective_transport,
+                fallback_reason=fallback_reason,
+                chunk_resume_mode=chunk_resume_mode,
+                planned_bytes=total_bytes,
+                written_bytes=total_bytes,
+                selected_mirror="https://huggingface.co",
+                integrity_decision="accepted",
+                status="completed",
+            ),
             "model_id": repo_id,
             "managed_model_path": str(output_path),
             "source_model": request.source_model,
@@ -663,6 +687,12 @@ class DownloadPipeline:
     ) -> _DownloadManifestContext:
         public_ext = self._public_ext(request.ext)
         receipt_enabled = self.uses_operation_receipt(ext)
+        (
+            requested_transport,
+            effective_transport,
+            fallback_reason,
+            chunk_resume_mode,
+        ) = self._transport_selection(public_ext)
         receipt_payload: dict[str, Any] = {}
         if receipt_enabled:
             receipt_payload = {
@@ -699,6 +729,11 @@ class DownloadPipeline:
                 if receipt_enabled
                 else None
             ),
+            transport_receipt_enabled=self._transport_receipt_enabled(ext),
+            requested_transport=requested_transport,
+            effective_transport=effective_transport,
+            fallback_reason=fallback_reason,
+            chunk_resume_mode=chunk_resume_mode,
             stale_partial_removed=stale_partial_removed,
             stale_partial_bytes=stale_partial_bytes,
             stale_partial_age_ms=stale_partial_age_ms,
@@ -757,6 +792,20 @@ class DownloadPipeline:
                     stale_partial_bytes=manifest_context.stale_partial_bytes,
                     stale_partial_age_ms=manifest_context.stale_partial_age_ms,
                 )
+            )
+        if manifest_context.transport_receipt_enabled:
+            payload["artifact_transport_receipt"] = DownloadPipeline._artifact_transport_receipt(
+                requested_transport=manifest_context.requested_transport,
+                effective_transport=manifest_context.effective_transport,
+                fallback_reason=manifest_context.fallback_reason,
+                chunk_resume_mode=manifest_context.chunk_resume_mode,
+                planned_bytes=total_bytes,
+                written_bytes=downloaded_bytes,
+                selected_mirror=str(payload.get("selected_mirror", "")),
+                integrity_decision=(
+                    "accepted" if terminal_state == "completed" else "pending"
+                ),
+                status="completed" if terminal_state == "completed" else status,
             )
         return payload
 
@@ -858,6 +907,7 @@ class DownloadPipeline:
                 stale_partial_age_ms=int(payload.get("partial_age_ms", 0)),
             )
         )
+        DownloadPipeline._refresh_terminal_transport_receipt(payload, status=status)
         return DownloadPipeline._write_manifest_json(Path(str(payload["state_path"])), payload)
 
     @classmethod
@@ -942,6 +992,140 @@ class DownloadPipeline:
             "status": status,
         }
 
+    @staticmethod
+    def _transport_receipt_enabled(ext: dict[str, str]) -> bool:
+        return DownloadPipeline.uses_operation_receipt(ext)
+
+    @staticmethod
+    def _transport_selection(ext: dict[str, str]) -> tuple[str, str, str, str]:
+        requested = ext.get("melix.requested_transport", "").strip() or "http_range_resume"
+        effective = requested
+        fallback_reason = ""
+        helper_available = ext.get("melix.transport_helper_available", "").strip().lower()
+        force_fallback = ext.get("melix.force_transport_fallback", "").strip().lower()
+
+        if force_fallback in {"1", "true", "yes", "on"}:
+            effective = "http_range_resume"
+            fallback_reason = "user_forced_fallback"
+        elif requested == "parallel_chunked" and helper_available in {"0", "false", "no", "off"}:
+            effective = "http_range_resume"
+            fallback_reason = "transport_helper_unavailable"
+
+        chunk_resume_mode = "parallel_chunks" if effective == "parallel_chunked" else "range_resume"
+        return requested, effective, fallback_reason, chunk_resume_mode
+
+    @staticmethod
+    def _artifact_transport_receipt(
+        *,
+        requested_transport: str,
+        effective_transport: str,
+        fallback_reason: str,
+        chunk_resume_mode: str,
+        planned_bytes: int,
+        written_bytes: int,
+        selected_mirror: str,
+        integrity_decision: str,
+        status: str,
+    ) -> dict[str, Any]:
+        progress_pct = 0.0 if planned_bytes <= 0 else written_bytes / planned_bytes
+        return {
+            "requested_transport": requested_transport,
+            "effective_transport": effective_transport,
+            "fallback_reason": fallback_reason,
+            "chunk_resume_mode": chunk_resume_mode,
+            "planned_bytes": planned_bytes,
+            "written_bytes": written_bytes,
+            "progress_pct": round(progress_pct, 6),
+            "integrity_decision": integrity_decision,
+            "status": status,
+            "selected_mirror": selected_mirror,
+        }
+
+    @staticmethod
+    def _refresh_terminal_transport_receipt(payload: dict[str, Any], *, status: str) -> None:
+        receipt = payload.get("artifact_transport_receipt")
+        if not isinstance(receipt, dict):
+            ext = payload.get("ext", {})
+            if not isinstance(ext, dict) or not DownloadPipeline._transport_receipt_enabled(ext):
+                return
+            requested, effective, fallback_reason, chunk_resume_mode = (
+                DownloadPipeline._transport_selection(ext)
+            )
+        else:
+            requested = str(receipt.get("requested_transport") or "http_range_resume")
+            effective = str(receipt.get("effective_transport") or requested)
+            fallback_reason = str(receipt.get("fallback_reason") or "")
+            chunk_resume_mode = str(receipt.get("chunk_resume_mode") or "range_resume")
+        integrity_decision = "cancelled" if status == "cancelled" else "rejected"
+        payload["artifact_transport_receipt"] = DownloadPipeline._artifact_transport_receipt(
+            requested_transport=requested,
+            effective_transport=effective,
+            fallback_reason=fallback_reason,
+            chunk_resume_mode=chunk_resume_mode,
+            planned_bytes=int(payload.get("total_bytes", 0)),
+            written_bytes=int(payload.get("downloaded_bytes", 0)),
+            selected_mirror=str(payload.get("selected_mirror", "")),
+            integrity_decision=integrity_decision,
+            status=status,
+        )
+
+    @classmethod
+    def _raise_if_empty_unknown_size_body(
+        cls,
+        *,
+        manifest_context: _DownloadManifestContext,
+        ext: dict[str, str],
+        total_bytes: int,
+    ) -> None:
+        if total_bytes != 0:
+            return
+        if not cls._transport_receipt_enabled(ext):
+            return
+        if ext.get("melix.allow_unknown_size", "").strip().lower() not in {"1", "true", "yes", "on"}:
+            return
+
+        payload = cls._build_manifest_payload(
+            manifest_context=manifest_context,
+            status="failed",
+            terminal_state="failed",
+            stage="download",
+            pct=0.0,
+            downloaded_bytes=0,
+            total_bytes=0,
+            retry_count=0,
+            resume_used=False,
+            resume_from_bytes=0,
+            stall_detection_count=0,
+            stall_reason="",
+        )
+        payload["last_error"] = "empty_artifact_body"
+        payload["artifact_integrity"] = cls._artifact_integrity_receipt(
+            ext=payload.get("ext", {}),
+            status="failed",
+            failure_reason="empty_artifact_body",
+        )
+        requested, effective, _, chunk_resume_mode = cls._transport_selection(payload.get("ext", {}))
+        payload["artifact_transport_receipt"] = cls._artifact_transport_receipt(
+            requested_transport=requested,
+            effective_transport=effective,
+            fallback_reason="empty_body_unknown_size",
+            chunk_resume_mode=chunk_resume_mode,
+            planned_bytes=0,
+            written_bytes=0,
+            selected_mirror=str(payload.get("selected_mirror", "")),
+            integrity_decision="rejected_empty_body",
+            status="failed",
+        )
+        state_json = cls._write_manifest_json(manifest_context.state_path, payload)
+        raise ModelOperationError(
+            code="empty_artifact_body",
+            message="Managed artifact download returned an empty body without a canonical size.",
+            details={
+                "state_json": state_json,
+                "failure_reason": "empty_artifact_body",
+            },
+        )
+
     @classmethod
     def _raise_if_strict_integrity_missing(
         cls,
@@ -1006,6 +1190,20 @@ class DownloadPipeline:
                 "download.stall_detection_count": 0,
             },
         }
+        requested_transport, effective_transport, fallback_reason, chunk_resume_mode = (
+            cls._transport_selection(public_ext)
+        )
+        payload["artifact_transport_receipt"] = cls._artifact_transport_receipt(
+            requested_transport=requested_transport,
+            effective_transport=effective_transport,
+            fallback_reason=fallback_reason,
+            chunk_resume_mode=chunk_resume_mode,
+            planned_bytes=0,
+            written_bytes=0,
+            selected_mirror=selected_mirror,
+            integrity_decision="rejected_preflight",
+            status="failed",
+        )
         state_json = cls._write_manifest_json(state_path, payload)
         raise ModelOperationError(
             code="artifact_integrity_required",
