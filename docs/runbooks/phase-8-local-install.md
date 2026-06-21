@@ -114,6 +114,7 @@ The JSON state snapshot records at least these fields:
 - `retry_after_ms`
 - `last_error`
 - `artifact_integrity`
+- `artifact_transport_receipt`
 - `selected_mirror`
 - `downloaded_bytes`
 - `total_bytes`
@@ -131,6 +132,28 @@ The JSON state snapshot records at least these fields:
 - `terminal_state`
 
 This state is intended to remain stable enough for later desktop queue recovery and release-gate automation.
+
+`artifact_transport_receipt` records the transfer path that produced the
+managed artifact bytes. The current deterministic worker fixture records:
+
+- `requested_transport`
+- `effective_transport`
+- `fallback_reason`
+- `chunk_resume_mode`
+- `planned_bytes`
+- `written_bytes`
+- `progress_pct`
+- `integrity_decision`
+- `status`
+- `selected_mirror`
+
+The receipt is emitted on the same managed operation boundary as
+`artifact_integrity`. It reuses existing byte counters so chunk progress remains
+monotonic in `download.state.json`, records graceful fallback from unavailable
+fast transports to the resumable path, and rejects unknown-size empty bodies
+before a completed artifact can be activated. This slice documents deterministic
+local fixture behavior; it does not change the default network transport or add
+real release signing.
 
 Managed artifact installs derive `operation_id` from `operation_kind` plus
 `target_scope` unless the caller supplies `melix.operation_id`. A repeated
@@ -165,6 +188,37 @@ materialized when the request lacks immutable digest metadata in
 `last_error=missing_artifact_digest`, and records a failed `artifact_integrity`
 receipt with `policy_present=false`.
 
+For direct worker-owned downloads, strict mode also verifies SHA-256 metadata
+against the staged `*.partial` file before activation. Declarations may use
+`sha256:<64 hex>` or a bare 64-hex value. On match, the terminal
+`artifact_integrity` receipt records `verification_mode=sha256`, the declared
+`digest`, matching `actual_digest`, a real `checked_at` timestamp, and
+`status=passed` before the final rename. On mismatch, Melix refuses activation
+with `artifact_integrity_mismatch`, records `last_error=digest_mismatch`,
+keeps the staged partial for diagnosis, sets `activated=false`, and writes a
+failed `artifact_integrity` receipt with the declared and actual digests.
+Declared digest policies outside the supported SHA-256 formats also fail closed
+before activation with `artifact_integrity_unsupported`.
+
+For managed Hub repository imports, strict mode verifies SHA-256 metadata
+against the resolved snapshot directory before reporting the snapshot as
+activated. The directory digest is deterministic for regular files: Melix
+sorts repo-relative file paths, then hashes each file's path, byte length, and
+bytes. Directory entries, symlinks, and symlink targets are outside this
+slice's hash surface. On match, the terminal `artifact_integrity` receipt
+records the declared `digest`, matching `actual_digest`, real `checked_at`, and
+`activated=true`. On mismatch, Melix refuses the import with
+`artifact_integrity_mismatch`, records `last_error=digest_mismatch`, writes a
+failed receipt with the declared and actual directory digests, and sets
+`activated=false`.
+
+Model-ops download diagnostics preserve the full `artifact_integrity` receipt
+and expose a normalized `artifact_integrity_summary` object for stable
+machine-readable reporting. The summary always includes `status`,
+`verification_mode`, `policy_present`, `digest`, `actual_digest`, `checked_at`,
+and `failure_reason`; malformed or missing receipt payloads use empty-string
+defaults and `policy_present=false` rather than omitting the fields.
+
 Managed artifact requests may also declare companion artifacts with
 `melix.companion_manifest`, encoded as a JSON array. Each entry has:
 
@@ -192,6 +246,15 @@ The current strict activation gate is a worker-side fixture helper for
 receipts: activation is eligible only when the receipt is completed and
 `artifact_integrity.status` is `passed`. This is not a full signature system,
 release publish-token flow, asynchronous installer, or desktop UI contract.
+
+Export diagnostics include managed artifact integrity receipts when
+`ExportResults` or `write_export_bundle(...)` scans a jobs root that contains
+model-ops download state. The bundle field
+`managed_artifact_integrity_receipts[]` flattens each persisted download
+receipt with `verification_mode`, `policy_present`, `digest`, `checked_at`,
+and `failure_reason` plus the job and operation identity. Strict refusals are
+reported with `activation_decision=blocked`; completed receipts with
+`artifact_integrity.status=passed` are reported with `activation_decision=allowed`.
 
 ## Bootstrap
 

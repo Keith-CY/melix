@@ -312,6 +312,25 @@ def test_trust_policy_caches_config_json_by_file_stat(
     assert read_bytes_calls == 1
 
 
+def test_trust_policy_auto_map_custom_loader_scan_avoids_string_coercion_for_strings() -> None:
+    class NoisyString(str):
+        def __str__(self) -> str:  # pragma: no cover - only runs on regression.
+            raise AssertionError("string auto_map values should not be coerced through str()")
+
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": NoisyString("custom.Loader")}) is True
+
+
+def test_trust_policy_auto_map_custom_loader_scan_preserves_blank_string_behavior() -> None:
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": " \t\n"}) is False
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": "custom.Loader"}) is True
+
+
+def test_trust_policy_auto_map_custom_loader_scan_preserves_non_string_fallback() -> None:
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": None}) is False
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": 0}) is True
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": object()}) is True
+
+
 def test_trust_policy_skips_expanduser_for_plain_model_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -322,6 +341,29 @@ def test_trust_policy_skips_expanduser_for_plain_model_path(
         raise AssertionError(f"plain model path should not call expanduser(): {path}")
 
     monkeypatch.setattr(model_load_trust_module.Path, "expanduser", fail_expanduser)
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+        resolve_model_load_trust_policy(
+            model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=RecordingTextBackend(),
+        )
+
+    assert exc_info.value.policy.custom_loader_required is True
+    assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
+
+
+def test_trust_policy_stats_plain_config_path_without_path_join(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _custom_loader_text_model(tmp_path)
+
+    def fail_path_join(path: Path, key: str) -> Path:  # pragma: no cover - only runs on regression.
+        raise AssertionError(f"plain model path should not use Path join for {key}: {path}")
+
+    monkeypatch.setattr(model_load_trust_module.Path, "__truediv__", fail_path_join)
 
     with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
         resolve_model_load_trust_policy(

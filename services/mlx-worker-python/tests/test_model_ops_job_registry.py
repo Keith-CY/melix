@@ -471,6 +471,18 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
                     "staged_file_count": 1,
                     "verification_result": "passed",
                 },
+                "artifact_transport_receipt": {
+                    "requested_transport": "parallel_chunked",
+                    "effective_transport": "http_range_resume",
+                    "fallback_reason": "transport_helper_unavailable",
+                    "chunk_resume_mode": "range_resume",
+                    "planned_bytes": 4096,
+                    "written_bytes": 4096,
+                    "progress_pct": 1.0,
+                    "integrity_decision": "accepted",
+                    "status": "completed",
+                    "selected_mirror": "https://huggingface.co",
+                },
             }
         ),
     )
@@ -487,11 +499,22 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
     assert download["retry_after_ms"] == 500
     assert download["last_error"] == ""
     assert download["artifact_integrity_status"] == "passed"
+    assert download["artifact_integrity_summary"] == {
+        "status": "passed",
+        "verification_mode": "receipt_fixture",
+        "policy_present": True,
+        "digest": "sha256:abc",
+        "actual_digest": "",
+        "checked_at": "2026-05-24T00:00:00Z",
+        "failure_reason": "",
+    }
     assert download["artifact_integrity"]["policy_present"] is True
     assert download["artifact_companions_status"] == "passed"
     assert download["missing_required_companions"] == []
     assert download["artifact_companions"]["primary_artifact"] == "/runtime/download/model.gguf"
     assert download["artifact_companions"]["staged_file_count"] == 1
+    assert download["artifact_transport_status"] == "completed"
+    assert download["artifact_transport_receipt"]["effective_transport"] == "http_range_resume"
 
     registry.attach_manifest(
         job.job_id,
@@ -507,6 +530,7 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
                     "missing_required": "tokenizer.json",
                     "verification_result": "failed",
                 },
+                "artifact_transport_receipt": "not-a-receipt",
             }
         ),
     )
@@ -518,6 +542,17 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
     assert refreshed_download["artifact_companions"]["verification_result"] == "failed"
     assert refreshed_download["artifact_companions_status"] == "failed"
     assert refreshed_download["missing_required_companions"] == []
+    assert refreshed_download["artifact_integrity_summary"] == {
+        "status": "",
+        "verification_mode": "",
+        "policy_present": False,
+        "digest": "",
+        "actual_digest": "",
+        "checked_at": "",
+        "failure_reason": "",
+    }
+    assert refreshed_download["artifact_transport_receipt"] == {}
+    assert refreshed_download["artifact_transport_status"] == ""
 
     registry.attach_manifest(
         job.job_id,
