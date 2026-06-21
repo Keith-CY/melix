@@ -331,6 +331,25 @@ def test_trust_policy_auto_map_custom_loader_scan_preserves_non_string_fallback(
     assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": object()}) is True
 
 
+def test_route_class_runtime_kind_map_preserves_supported_defaults() -> None:
+    model = WorkerModelCatalog.dev_text_model()
+
+    expected_routes = {
+        "text": common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
+        "vlm": common_pb2.WORKER_ROUTE_PYTHON_VLM,
+        "ocr": common_pb2.WORKER_ROUTE_PYTHON_OCR,
+        "embedding": common_pb2.WORKER_ROUTE_PYTHON_EMBEDDING,
+        "rerank": common_pb2.WORKER_ROUTE_PYTHON_RERANK,
+        "transcription": common_pb2.WORKER_ROUTE_PYTHON_TRANSCRIPTION,
+        "speech": common_pb2.WORKER_ROUTE_PYTHON_SPEECH,
+        "image": common_pb2.WORKER_ROUTE_PYTHON_IMAGE,
+    }
+
+    for runtime_kind, route_class in expected_routes.items():
+        assert model_load_trust_module._route_class(model, None, runtime_kind) == route_class
+    assert model_load_trust_module._route_class(model, None, "unknown") == common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED
+
+
 def test_trust_policy_skips_expanduser_for_plain_model_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

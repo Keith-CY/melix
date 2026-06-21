@@ -19,6 +19,16 @@ CONFIG_JSON_AUTO_MAP_SOURCE = "config_json:auto_map"
 BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST = "custom_loader_requires_trust_remote_code"
 TRUST_APPLICABLE_TEXT_LOADERS = frozenset({"mlx_lm", "mlx_lm_unavailable"})
 TRUST_APPLICABLE_VLM_LOADERS = frozenset({"mlx_vlm", "python_vlm", "mlx_vlm_unavailable"})
+ROUTE_CLASS_BY_RUNTIME_KIND = {
+    "text": common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
+    "vlm": common_pb2.WORKER_ROUTE_PYTHON_VLM,
+    "ocr": common_pb2.WORKER_ROUTE_PYTHON_OCR,
+    "embedding": common_pb2.WORKER_ROUTE_PYTHON_EMBEDDING,
+    "rerank": common_pb2.WORKER_ROUTE_PYTHON_RERANK,
+    "transcription": common_pb2.WORKER_ROUTE_PYTHON_TRANSCRIPTION,
+    "speech": common_pb2.WORKER_ROUTE_PYTHON_SPEECH,
+    "image": common_pb2.WORKER_ROUTE_PYTHON_IMAGE,
+}
 
 
 @dataclass(frozen=True)
@@ -146,16 +156,7 @@ def _route_class(
         return request_policy.route_class
     if model_spec.route_class != common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED:
         return model_spec.route_class
-    return {
-        "text": common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
-        "vlm": common_pb2.WORKER_ROUTE_PYTHON_VLM,
-        "ocr": common_pb2.WORKER_ROUTE_PYTHON_OCR,
-        "embedding": common_pb2.WORKER_ROUTE_PYTHON_EMBEDDING,
-        "rerank": common_pb2.WORKER_ROUTE_PYTHON_RERANK,
-        "transcription": common_pb2.WORKER_ROUTE_PYTHON_TRANSCRIPTION,
-        "speech": common_pb2.WORKER_ROUTE_PYTHON_SPEECH,
-        "image": common_pb2.WORKER_ROUTE_PYTHON_IMAGE,
-    }.get(runtime_kind, common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED)
+    return ROUTE_CLASS_BY_RUNTIME_KIND.get(runtime_kind, common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED)
 
 
 def _loader_family(
