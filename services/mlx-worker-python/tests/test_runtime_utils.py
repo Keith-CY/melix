@@ -266,6 +266,36 @@ def test_estimate_model_weight_resident_bytes_uses_indexed_unique_shards(tmp_pat
     assert runtime_utils.estimate_model_weight_resident_bytes(str(bundle)) == 18
 
 
+def test_estimate_model_weight_resident_bytes_skips_expanduser_for_plain_paths(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "plain-model"
+    bundle.mkdir()
+    (bundle / "model.safetensors").write_bytes(b"weights")
+
+    def fail_expanduser(self: Path):  # pragma: no cover - must stay uncalled for this regression
+        _ = self
+        raise AssertionError("plain model paths should not call Path.expanduser")
+
+    monkeypatch.setattr(runtime_utils.Path, "expanduser", fail_expanduser)
+
+    assert runtime_utils.estimate_model_weight_resident_bytes(str(bundle)) == len(b"weights")
+
+
+def test_estimate_model_weight_resident_bytes_expands_tilde_paths(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    bundle = home / "tilde-model"
+    bundle.mkdir(parents=True)
+    (bundle / "model.safetensors").write_bytes(b"weights")
+    monkeypatch.setenv("HOME", str(home))
+
+    assert runtime_utils.estimate_model_weight_resident_bytes("~/tilde-model") == len(b"weights")
+
+
 def test_estimate_model_weight_resident_bytes_falls_back_to_top_level_weights(tmp_path) -> None:
     bundle = tmp_path / "flat-model"
     bundle.mkdir()
