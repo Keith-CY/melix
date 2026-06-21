@@ -242,6 +242,12 @@ required companions raise `artifact_companion_required` before the final
 artifact is activated; the state file records `last_error=missing_required_companion`
 and `artifact_companions.verification_result=failed`.
 
+Nested relative `path` values are lookup paths only. When a companion is staged,
+Melix places the companion file or directory next to the activated primary
+artifact using the declared path's basename; for example,
+`optional/processor.json` stages as `processor.json` beside the primary
+artifact.
+
 The current strict activation gate is a worker-side fixture helper for
 receipts: activation is eligible only when the receipt is completed and
 `artifact_integrity.status` is `passed`. This is not a full signature system,
