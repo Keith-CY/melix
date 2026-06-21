@@ -35,7 +35,7 @@ DEFAULT_RELEASE_EVIDENCE_MATRIX: dict[str, dict[str, object]] = {
 def load_report_payload(path: str | Path) -> dict[str, object]:
     report_path = Path(path)
     try:
-        payload = json.loads(report_path.read_text(encoding="utf-8"))
+        payload = json.loads(report_path.read_bytes())
     except json.JSONDecodeError as exc:
         raise ValueError(f"report JSON could not be decoded: {report_path}") from exc
     if not isinstance(payload, dict):
