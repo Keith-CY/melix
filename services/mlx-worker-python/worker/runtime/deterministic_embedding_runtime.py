@@ -23,6 +23,12 @@ def _repeated_input_cycle_length(inputs: Sequence[str]) -> int:
         return 0
     if cycle_length == 0 or input_count % cycle_length != 0:
         return 0
+    if cycle_length == 1:
+        first_input = inputs[0]
+        for index in range(1, input_count):
+            if inputs[index] != first_input:
+                return 0
+        return 1
     cycle = inputs[:cycle_length]
     for index in range(cycle_length, input_count, cycle_length):
         if inputs[index : index + cycle_length] != cycle:
@@ -76,7 +82,7 @@ class DeterministicEmbeddingRuntime:
                 vector = embed_text(backend, text, dimensions)
                 append_vector(vector)
             cycle_vectors = tuple(vectors)
-            for _ in range(len(inputs) // cycle_length - 1):
+            for _ in range(input_count // cycle_length - 1):
                 vectors.extend(vector.copy() for vector in cycle_vectors)
             return vectors
 
