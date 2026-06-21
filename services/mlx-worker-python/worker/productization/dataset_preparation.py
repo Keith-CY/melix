@@ -1090,25 +1090,32 @@ def _append_sample_output_lengths(
     train_rows: list[dict[str, Any]],
     validation_rows: list[dict[str, Any]],
 ) -> None:
+    _append_rows_output_lengths(lengths, train_rows)
+    _append_rows_output_lengths(lengths, validation_rows)
+
+
+def _append_rows_output_lengths(
+    lengths: list[int],
+    rows: list[dict[str, Any]],
+) -> None:
     append = lengths.append
     str_ = str
-    for rows in (train_rows, validation_rows):
-        for row in rows:
-            if "completion" in row:
-                append(len(str_(row["completion"])))
+    for row in rows:
+        if "completion" in row:
+            append(len(str_(row["completion"])))
+            continue
+        messages = row.get("messages", [])
+        if not isinstance(messages, list):
+            append(0)
+            continue
+        total = 0
+        for item in messages:
+            try:
+                content = item.get("content", "")
+            except AttributeError:
                 continue
-            messages = row.get("messages", [])
-            if not isinstance(messages, list):
-                append(0)
-                continue
-            total = 0
-            for item in messages:
-                try:
-                    content = item.get("content", "")
-                except AttributeError:
-                    continue
-                total += len(str_(content))
-            append(total)
+            total += len(str_(content))
+        append(total)
 
 
 def _p95(values: list[int]) -> int:
