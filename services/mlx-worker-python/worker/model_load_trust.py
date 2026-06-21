@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 import json
+import os
 from pathlib import Path
 import stat
 from typing import Any
@@ -220,18 +221,22 @@ def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | Non
     model_path = str(getattr(model_spec, "model_path", "") or "").strip()
     if not model_path:
         return None
-    model_dir = Path(model_path)
     if model_path.startswith("~"):
-        model_dir = model_dir.expanduser()
-    config_path = model_dir / "config.json"
+        config_path = Path(model_path).expanduser() / "config.json"
+        config_path_text = str(config_path)
+        stat_path: str | os.PathLike[str] = config_path
+    else:
+        separator = "" if model_path.endswith(os.sep) else os.sep
+        config_path_text = f"{model_path}{separator}config.json"
+        stat_path = config_path_text
     try:
-        config_stat = config_path.stat()
+        config_stat = os.stat(stat_path)
         if not stat.S_ISREG(config_stat.st_mode):
             return None
     except OSError:
         return None
     payload = _read_model_config_for_stat(
-        str(config_path),
+        config_path_text,
         config_stat.st_mtime_ns,
         config_stat.st_size,
     )
