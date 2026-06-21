@@ -8,7 +8,10 @@ from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtim
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
+from worker.runtime.deterministic_embedding_runtime import (
+    DeterministicEmbeddingRuntime,
+    _repeated_input_cycle_length,
+)
 from worker.runtime.embedding_backends import (
     BERTEmbeddingBackend,
     DeterministicEmbeddingBackend,
@@ -444,6 +447,12 @@ def test_embed_runtime_replays_single_input_cycles_without_generator_reentry() -
     assert vectors[0] is not vectors[-1]
     vectors[0][0] = 99.0
     assert vectors[-1] == [1.0, 1.0]
+
+
+def test_repeated_input_cycle_length_rejects_partial_single_input_cycles() -> None:
+    inputs = ["same-document"] * 1024 + ["different-document"]
+
+    assert _repeated_input_cycle_length(inputs) == 0
 
 
 def test_load_model_rejects_unsupported_embedding_backend() -> None:
