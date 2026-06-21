@@ -24,23 +24,25 @@ class TranscriptionCore:
                 )
             )
 
-        self._registry.start_request(request.id.request_id, runtime_kind="transcription")
-        try:
+        with self._registry.acquire_request_runtime_lease(
+            loaded_model,
+            request_id=request.id.request_id,
+            runtime_kind="transcription",
+        ):
             runtime = self._registry.runtime_for_loaded_model(loaded_model)
-            transcript = runtime.transcribe(
-                loaded_model.runtime_model,
-                request,
-            )
-            if hasattr(runtime, "last_probe_snapshot"):
-                self._registry.record_transcription_probe(
-                    runtime.last_probe_snapshot()
+            try:
+                transcript = runtime.transcribe(
+                    loaded_model.runtime_model,
+                    request,
                 )
-        except Exception as exc:  # pragma: no cover - defensive branch
-            return inference_pb2.TranscribeResponse(
-                error=common_pb2.ErrorStatus(code="runtime_error", message=str(exc))
-            )
-        finally:
-            self._registry.finish_request(request.id.request_id)
+                if hasattr(runtime, "last_probe_snapshot"):
+                    self._registry.record_transcription_probe(
+                        runtime.last_probe_snapshot()
+                    )
+            except Exception as exc:  # pragma: no cover - defensive branch
+                return inference_pb2.TranscribeResponse(
+                    error=common_pb2.ErrorStatus(code="runtime_error", message=str(exc))
+                )
 
         return inference_pb2.TranscribeResponse(
             text=transcript.text,

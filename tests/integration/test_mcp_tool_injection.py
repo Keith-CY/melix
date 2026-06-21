@@ -63,7 +63,10 @@ def test_responses_endpoint_auto_injects_mcp_tools_from_repo_owned_config() -> N
             timeout=10,
         )
         body = response.read().decode("utf-8")
-        metrics = _wait_for_metric(stack.control_plane_metrics_path, "mcp.tool_injection_count")
+        metrics = _wait_for_metric(
+            stack.control_plane_metrics_path,
+            "mcp.tool_injection_success_rate",
+        )
         values = metrics["values"]
 
         assert response.status == 200

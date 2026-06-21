@@ -379,6 +379,39 @@ def test_runtime_service_handles_failures_and_state_transitions() -> None:
     draining_stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None)
     assert draining_stats.stats.worker_state == "draining"
 
+    active_model_handle = load_default_model(runtime_service)
+    active_loaded_model = registry.get_loaded_model(active_model_handle)
+    assert active_loaded_model is not None
+
+    with registry.acquire_request_runtime_lease(
+        active_loaded_model,
+        request_id="req-active-service",
+        runtime_kind="text",
+    ):
+        pending = runtime_service.UnloadModel(
+            runtime_pb2.UnloadModelRequest(model_handle=active_model_handle, force=True),
+            context=None,
+        )
+
+        assert pending.ok is False
+        assert pending.error.code == "unload_pending"
+        assert pending.error.retriable is True
+        assert pending.error.details["model_handle"] == active_model_handle
+        assert pending.error.details["abort_requested"] == "true"
+        assert pending.error.details["pending_unload"] == "true"
+        assert pending.error.details["released_at"] == ""
+        assert pending.error.details["unloaded_at"] == ""
+        assert registry.get_loaded_model(active_model_handle) is active_loaded_model
+
+    active_receipt = registry.pending_unload_receipt(active_model_handle)
+    assert active_receipt is not None
+    assert active_receipt.unloaded is True
+    assert active_receipt.pending_unload is False
+    assert active_receipt.abort_requested is True
+    assert active_receipt.released_at
+    assert active_receipt.unloaded_at
+    assert registry.get_loaded_model(active_model_handle) is None
+
     found = runtime_service.UnloadModel(
         runtime_pb2.UnloadModelRequest(model_handle=model_handle),
         context=None,
@@ -508,6 +541,30 @@ def test_worker_registry_avoids_rescanning_loaded_models_for_resident_bytes() ->
     assert registry.unload_model("missing-handle") is False
     assert registry.runtime_stats().model_resident_bytes == 0
 
+    class ClosingRuntime:
+        runtime_name = "closing-runtime"
+
+        def __init__(self) -> None:
+            self.closed_models: list[dict[str, str]] = []
+
+        def load_model(self, model_spec):
+            return {"model_id": model_spec.model_id}
+
+        def estimate_resident_bytes(self, model_spec):
+            _ = model_spec
+            return 1024
+
+        def close_loaded_model(self, loaded_model) -> None:
+            self.closed_models.append(loaded_model)
+
+    closing_runtime = ClosingRuntime()
+    closing_registry = WorkerRegistry(runtime=closing_runtime)  # type: ignore[arg-type]
+    closing_loaded = closing_registry.load_model(WorkerModelCatalog.dev_text_model())
+
+    assert closing_registry.unload_model(closing_loaded.handle) is True
+    assert closing_runtime.closed_models == [closing_loaded.runtime_model]
+    assert closing_registry.unload_model(closing_loaded.handle) is False
+
     applicable_registry = build_registry(backend=ApplicableBackend())
     applicable_loaded = applicable_registry.load_model(WorkerModelCatalog.dev_text_model())
     applicable_stats = applicable_registry.runtime_stats()
@@ -540,7 +597,6 @@ def test_worker_registry_closes_runtime_model_on_unload() -> None:
     assert registry.unload_model(loaded.handle) is True
     assert runtime.closed_models == [loaded.runtime_model]
     assert registry.unload_model(loaded.handle) is False
-
 
 
 def test_worker_registry_reuses_sorted_handles_across_listing_calls(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -589,6 +645,199 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
 
     registry.finish_request("req-1")
     assert registry.get_request("req-1") is None
+
+    leased_model = registry.load_model(WorkerModelCatalog.dev_text_model())
+    with registry.acquire_request_runtime_lease(
+        leased_model,
+        request_id="req-active-lease",
+        runtime_kind="text",
+    ):
+        assert registry.unload_model(leased_model.handle) is False
+        receipt = registry.request_model_unload(leased_model.handle)
+
+        assert receipt.found is True
+        assert receipt.unloaded is False
+        assert receipt.pending_unload is True
+        assert receipt.abort_requested is False
+        assert receipt.released_at == ""
+        assert receipt.unloaded_at == ""
+        assert registry.get_loaded_model(leased_model.handle) is leased_model
+        assert registry.runtime_stats().model_resident_bytes == leased_model.estimated_resident_bytes
+
+    completed = registry.pending_unload_receipt(leased_model.handle)
+    assert completed is not None
+    assert completed.pending_unload is False
+    assert completed.released_at
+    assert completed.unloaded_at
+    assert completed.unloaded is True
+    assert registry.get_loaded_model(leased_model.handle) is None
+    assert registry.runtime_stats().model_resident_bytes == 0
+
+    force_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    with registry.acquire_request_runtime_lease(
+        force_loaded,
+        request_id="req-abort",
+        runtime_kind="text",
+    ) as force_lease:
+        receipt = registry.request_model_unload(force_loaded.handle, force=True)
+
+        assert receipt.found is True
+        assert receipt.unloaded is False
+        assert receipt.pending_unload is True
+        assert receipt.abort_requested is True
+        assert force_lease.cancel_event.is_set() is True
+        assert registry.abort_request("req-abort") is True
+
+    force_receipt = registry.pending_unload_receipt(force_loaded.handle)
+    assert force_receipt is not None
+    assert force_receipt.abort_requested is True
+    assert force_receipt.pending_unload is False
+    assert force_receipt.unloaded is True
+    assert force_receipt.released_at
+    assert force_receipt.unloaded_at
+    assert registry.abort_request("req-abort") is False
+
+    guarded_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    guarded_lease = registry.acquire_request_runtime_lease(
+        guarded_loaded,
+        request_id="req-guarded",
+        runtime_kind="text",
+    )
+
+    with pytest.raises(RuntimeError, match="has not been entered"):
+        _ = guarded_lease.state
+
+    guarded_lease.__enter__()
+    assert registry.abort_request("req-guarded") is True
+    guarded_lease.close()
+    guarded_lease.close()
+
+    assert registry.abort_request("req-guarded") is False
+    assert registry.unload_model(guarded_loaded.handle) is True
+
+    stream_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    with registry.acquire_stream_lifetime_lease(
+        stream_loaded,
+        request_id="req-stream",
+        runtime_kind="text",
+    ) as stream_lease:
+        assert stream_lease.cancel_event.is_set() is False
+        assert registry.abort_request("req-stream") is True
+        assert stream_lease.cancel_event.is_set() is True
+
+    assert registry.abort_request("req-stream") is False
+    assert registry.unload_model(stream_loaded.handle) is True
+
+    pending_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    direct_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    pending_lease = registry.acquire_request_runtime_lease(
+        pending_loaded,
+        request_id="req-pending-sentinel",
+        runtime_kind="text",
+    )
+    pending_lease.__enter__()
+    assert registry.request_model_unload(pending_loaded.handle).pending_unload is True
+    assert registry.unload_model(direct_loaded.handle) is True
+    pending_lease.close()
+    assert registry.pending_unload_receipt(pending_loaded.handle) is not None
+
+    first = registry.load_model(WorkerModelCatalog.dev_text_model())
+    second = registry.load_model(WorkerModelCatalog.dev_text_model())
+    third = registry.load_model(WorkerModelCatalog.dev_text_model())
+
+    first_lease = registry.acquire_request_runtime_lease(
+        first,
+        request_id="req-reused-id",
+        runtime_kind="text",
+    )
+    first_lease.__enter__()
+    second_lease = registry.acquire_request_runtime_lease(
+        second,
+        request_id="req-reused-id",
+        runtime_kind="text",
+    )
+    second_lease.__enter__()
+    first_lease.close()
+    third_lease = registry.acquire_request_runtime_lease(
+        third,
+        request_id="req-third",
+        runtime_kind="text",
+    )
+    third_lease.__enter__()
+
+    first_receipt = registry.request_model_unload(first.handle)
+    second_receipt = registry.request_model_unload(second.handle, force=True)
+
+    assert first_receipt.unloaded is True
+    assert second_receipt.pending_unload is True
+    assert second_lease.cancel_event.is_set() is True
+    assert third_lease.cancel_event.is_set() is False
+    assert registry.abort_request("req-reused-id") is True
+
+    registry.start_request("req-third", runtime_kind="text")
+    assert registry.request_model_unload(third.handle).unloaded is True
+    registry.finish_request("req-third")
+    second_lease.close()
+    third_lease.close()
+
+    second_completed = registry.pending_unload_receipt(second.handle)
+    assert second_completed is not None
+    assert second_completed.unloaded is True
+
+    counted_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    first_counted_lease = registry.acquire_request_runtime_lease(
+        counted_loaded,
+        request_id="req-count-a",
+        runtime_kind="text",
+    )
+    second_counted_lease = registry.acquire_request_runtime_lease(
+        counted_loaded,
+        request_id="req-count-b",
+        runtime_kind="text",
+    )
+    first_counted_lease.__enter__()
+    second_counted_lease.__enter__()
+
+    pending = registry.request_model_unload(counted_loaded.handle)
+    assert pending.pending_unload is True
+
+    registry.finish_request("req-count-a")
+    assert registry.get_loaded_model(counted_loaded.handle) is counted_loaded
+    count_receipt = registry.pending_unload_receipt(counted_loaded.handle)
+    assert count_receipt is not None
+    assert count_receipt.pending_unload is True
+
+    registry.finish_request("req-count-b")
+    count_completed = registry.pending_unload_receipt(counted_loaded.handle)
+    assert count_completed is not None
+    assert count_completed.unloaded is True
+    assert registry.get_loaded_model(counted_loaded.handle) is None
+
+    first_counted_lease.close()
+    second_counted_lease.close()
+    assert registry.runtime_stats().model_resident_bytes == 0
+
+    registry._completed_unload_receipt_limit = 2
+    retained_receipt_handles = []
+    for _ in range(3):
+        retained_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+        retained_receipt = registry.request_model_unload(retained_loaded.handle)
+
+        assert retained_receipt.unloaded is True
+        retained_receipt_handles.append(retained_loaded.handle)
+
+    assert registry.pending_unload_receipt(retained_receipt_handles[0]) is None
+    assert registry.pending_unload_receipt(retained_receipt_handles[1]) is not None
+    assert registry.pending_unload_receipt(retained_receipt_handles[2]) is not None
+
+    registry._completed_unload_receipt_limit = 0
+    unretained_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
+    unretained_receipt = registry.request_model_unload(unretained_loaded.handle)
+
+    assert unretained_receipt.unloaded is True
+    assert registry.pending_unload_receipt(unretained_loaded.handle) is None
+    assert registry.pending_unload_receipt(retained_receipt_handles[1]) is None
+    assert registry.pending_unload_receipt(retained_receipt_handles[2]) is None
 
     vision_state = registry.start_request("req-vision", runtime_kind="ocr")
     transcription_state = registry.start_request("req-transcription", runtime_kind="transcription")
