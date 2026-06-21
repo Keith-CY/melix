@@ -774,6 +774,9 @@ def _resolve_agent_reliability_artifact_root(
     if _has_agent_reliability_markers(scan):
         return jobs_root, scan
 
+    if scan is None or not scan.has_dir("agent-reliability"):
+        return None, None
+
     fallback_root = jobs_root / "agent-reliability"
     fallback_scan = _scan_directory(fallback_root)
     if _has_agent_reliability_markers(fallback_scan):

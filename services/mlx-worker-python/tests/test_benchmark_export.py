@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -1650,6 +1651,34 @@ def test_collect_agent_reliability_artifacts_returns_empty_lists_without_markers
         "agent_reliability_rows": [],
         "agent_reliability_summaries": [],
     }
+
+
+def test_collect_agent_reliability_artifacts_skips_missing_fallback_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root_scan = _ScannedDirectoryEntries(
+        directory=tmp_path,
+        file_names=(),
+        dir_names=(),
+    )
+    scan_directory = Mock(side_effect=AssertionError("unexpected directory scan"))
+    monkeypatch.setattr(
+        benchmark_export_module,
+        "_scan_directory",
+        scan_directory,
+    )
+
+    result = collect_agent_reliability_artifacts(
+        tmp_path,
+        scanned_entries=root_scan,
+    )
+
+    assert result == {
+        "agent_reliability_rows": [],
+        "agent_reliability_summaries": [],
+    }
+    scan_directory.assert_not_called()
 
 
 def test_collect_agent_reliability_artifacts_supports_summary_only_fallback(
