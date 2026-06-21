@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -76,6 +77,37 @@ def test_read_product_version_reads_project_version(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "melix"\nversion = "1.2.3"\n', encoding="utf-8")
 
     assert read_product_version(tmp_path) == "1.2.3"
+
+
+def test_read_product_version_reuses_stat_valid_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pyproject_path = tmp_path / "pyproject.toml"
+    pyproject_path.write_text('[project]\nname = "melix"\nversion = "1.2.3"\n', encoding="utf-8")
+    startup_signals_module._PRODUCT_VERSION_CACHE.clear()
+
+    assert read_product_version(tmp_path) == "1.2.3"
+
+    open_calls = 0
+    original_open = Path.open
+
+    def counted_open(self: Path, *args: Any, **kwargs: Any):
+        nonlocal open_calls
+        if self == pyproject_path:
+            open_calls += 1
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", counted_open)
+
+    assert read_product_version(tmp_path) == "1.2.3"
+    assert open_calls == 0
+
+    pyproject_path.write_text('[project]\nname = "melix"\nversion = "22.33.44"\n', encoding="utf-8")
+    open_calls = 0
+
+    assert read_product_version(tmp_path) == "22.33.44"
+    assert open_calls == 1
 
 
 def test_read_product_version_scans_lines_without_full_file_read(
