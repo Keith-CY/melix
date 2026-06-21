@@ -40,6 +40,7 @@ from worker.productization.benchmark_export import (
     collect_agent_reliability_artifacts,
     collect_benchmark_artifacts,
     collect_evaluation_artifacts,
+    collect_model_ops_artifacts,
     write_export_bundle,
 )
 
@@ -235,6 +236,213 @@ def _write_bench_fixtures(root: Path) -> None:
             ],
         }) + "\n"
     )
+
+
+def test_collect_model_ops_artifacts_exports_managed_artifact_integrity_receipts(tmp_path: Path) -> None:
+    model_ops_root = tmp_path / "model-ops"
+    output_root = model_ops_root / "downloads" / "strict-demo"
+    state_path = output_root / "download.state.json"
+    output_root.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.download_job.v1",
+                "job_id": "model-ops-0042",
+                "operation": "download",
+                "operation_id": "managed_model_install:strict-demo",
+                "target_scope": "hub:mlx-community/strict-demo@main",
+                "operation_kind": "managed_model_install",
+                "source_model": "mlx-community/strict-demo",
+                "status": "failed",
+                "terminal_state": "failed",
+                "output_path": str(output_root / "download.artifact"),
+                "state_path": str(state_path),
+                "artifact_integrity": {
+                    "verification_mode": "receipt_fixture",
+                    "policy_present": False,
+                    "digest": "",
+                    "checked_at": "not_recorded",
+                    "failure_reason": "missing_artifact_digest",
+                    "status": "failed",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = collect_model_ops_artifacts(tmp_path)
+    bundle = build_export_bundle(tmp_path)
+
+    assert artifacts["managed_artifact_integrity_receipts"] == [
+        {
+            "schema_version": "melix.managed_artifact_integrity_receipt.v1",
+            "job_id": "model-ops-0042",
+            "operation_id": "managed_model_install:strict-demo",
+            "target_scope": "hub:mlx-community/strict-demo@main",
+            "operation_kind": "managed_model_install",
+            "source_model": "mlx-community/strict-demo",
+            "status": "failed",
+            "terminal_state": "failed",
+            "activation_decision": "blocked",
+            "artifact_integrity_status": "failed",
+            "verification_mode": "receipt_fixture",
+            "policy_present": False,
+            "digest": "",
+            "checked_at": "not_recorded",
+            "failure_reason": "missing_artifact_digest",
+            "output_path": str(output_root / "download.artifact"),
+            "state_path": str(state_path),
+        }
+    ]
+    assert bundle["managed_artifact_integrity_receipts"] == artifacts[
+        "managed_artifact_integrity_receipts"
+    ]
+
+
+def test_collect_model_ops_artifacts_skips_malformed_or_unrelated_state_files(tmp_path: Path) -> None:
+    model_ops_root = tmp_path / "model-ops" / "downloads"
+    malformed_root = model_ops_root / "malformed"
+    unrelated_root = model_ops_root / "unrelated"
+    non_receipt_root = model_ops_root / "non-receipt"
+    malformed_root.mkdir(parents=True)
+    unrelated_root.mkdir()
+    non_receipt_root.mkdir()
+
+    (malformed_root / "download.state.json").write_text("{", encoding="utf-8")
+    (unrelated_root / "download.state.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.download_job.v1",
+                "job_id": "model-ops-unrelated",
+                "operation": "convert",
+                "artifact_integrity": {"status": "failed"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (non_receipt_root / "custom-output.state.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.download_job.v1",
+                "job_id": "model-ops-non-receipt",
+                "operation": "download",
+                "artifact_integrity": "failed",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert collect_model_ops_artifacts(tmp_path)["managed_artifact_integrity_receipts"] == []
+
+
+def test_collect_model_ops_artifacts_handles_root_state_markers_and_activation_decisions(
+    tmp_path: Path,
+) -> None:
+    completed_state = tmp_path / "download.state.json"
+    pending_state = tmp_path / "custom-output.state.json"
+    completed_state.write_text(
+        json.dumps(
+            {
+                "job_id": "model-ops-completed",
+                "operation": "download",
+                "status": "completed",
+                "terminal_state": "completed",
+                "artifact_integrity": {
+                    "verification_mode": "receipt_fixture",
+                    "policy_present": True,
+                    "digest": "sha256:abc",
+                    "checked_at": "2026-06-21T00:00:00Z",
+                    "failure_reason": "",
+                    "status": "passed",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    pending_state.write_text(
+        json.dumps(
+            {
+                "job_id": "model-ops-pending",
+                "operation": "download",
+                "status": "in_progress",
+                "artifact_integrity": {
+                    "verification_mode": "receipt_fixture",
+                    "policy_present": "yes",
+                    "digest": "",
+                    "checked_at": "not_recorded",
+                    "failure_reason": "",
+                    "status": "pending",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    receipts = collect_model_ops_artifacts(tmp_path)["managed_artifact_integrity_receipts"]
+
+    assert [receipt["job_id"] for receipt in receipts] == [
+        "model-ops-completed",
+        "model-ops-pending",
+    ]
+    assert receipts[0]["activation_decision"] == "allowed"
+    assert receipts[0]["policy_present"] is True
+    assert receipts[0]["state_path"] == str(completed_state)
+    assert receipts[1]["activation_decision"] == "pending"
+    assert receipts[1]["policy_present"] is False
+    assert receipts[1]["state_path"] == str(pending_state)
+
+
+def test_collect_model_ops_artifacts_dedupes_resolved_state_paths(tmp_path: Path) -> None:
+    real_state_path = tmp_path / "download.state.json"
+    linked_state_dir = tmp_path / "model-ops"
+    linked_state_path = linked_state_dir / "linked-output.state.json"
+    linked_state_dir.mkdir()
+    real_state_path.write_text(
+        json.dumps(
+            {
+                "job_id": "model-ops-linked",
+                "operation": "download",
+                "status": "failed",
+                "terminal_state": "failed",
+                "state_path": str(real_state_path),
+                "artifact_integrity": {
+                    "verification_mode": "receipt_fixture",
+                    "policy_present": False,
+                    "digest": "",
+                    "checked_at": "not_recorded",
+                    "failure_reason": "missing_artifact_digest",
+                    "status": "failed",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    linked_state_path.symlink_to(real_state_path)
+
+    receipts = collect_model_ops_artifacts(tmp_path)["managed_artifact_integrity_receipts"]
+
+    assert len(receipts) == 1
+    assert receipts[0]["job_id"] == "model-ops-linked"
+
+
+def test_iter_model_ops_state_files_skips_disappearing_directories(tmp_path: Path) -> None:
+    scan = _ScannedDirectoryEntries(
+        directory=tmp_path,
+        file_names=(),
+        dir_names=("missing",),
+    )
+
+    assert benchmark_export_module._iter_model_ops_state_files(
+        tmp_path,
+        scanned_entries=scan,
+    ) == ()
+    assert benchmark_export_module._has_model_ops_state_markers(None) is False
 
 
 def _write_bench_run_fixture(root: Path, *, job_id: str, model_id: str, ttft_ms: float) -> None:
@@ -1838,6 +2046,34 @@ def test_collect_shared_export_artifacts_falls_back_for_nested_bench_without_sca
 
 def test_write_export_bundle_persists_structured_json(tmp_path: Path) -> None:
     _write_bench_fixtures(tmp_path)
+    output_root = tmp_path / "model-ops" / "downloads" / "strict-demo"
+    state_path = output_root / "download.state.json"
+    output_root.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "job_id": "model-ops-0042",
+                "operation": "download",
+                "operation_id": "managed_model_install:strict-demo",
+                "target_scope": "hub:mlx-community/strict-demo@main",
+                "operation_kind": "managed_model_install",
+                "source_model": "mlx-community/strict-demo",
+                "status": "failed",
+                "terminal_state": "failed",
+                "output_path": str(output_root / "download.artifact"),
+                "artifact_integrity": {
+                    "verification_mode": "receipt_fixture",
+                    "policy_present": False,
+                    "digest": "",
+                    "checked_at": "not_recorded",
+                    "failure_reason": "missing_artifact_digest",
+                    "status": "failed",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     output = tmp_path / "export" / "bundle.json"
 
     result_path = write_export_bundle(tmp_path, output)
@@ -1847,6 +2083,27 @@ def test_write_export_bundle_persists_structured_json(tmp_path: Path) -> None:
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["export_schema_version"] == "melix.benchmark_export.v1"
     assert len(payload["benchmark_jobs"]) == 1
+    assert payload["managed_artifact_integrity_receipts"] == [
+        {
+            "schema_version": "melix.managed_artifact_integrity_receipt.v1",
+            "job_id": "model-ops-0042",
+            "operation_id": "managed_model_install:strict-demo",
+            "target_scope": "hub:mlx-community/strict-demo@main",
+            "operation_kind": "managed_model_install",
+            "source_model": "mlx-community/strict-demo",
+            "status": "failed",
+            "terminal_state": "failed",
+            "activation_decision": "blocked",
+            "artifact_integrity_status": "failed",
+            "verification_mode": "receipt_fixture",
+            "policy_present": False,
+            "digest": "",
+            "checked_at": "not_recorded",
+            "failure_reason": "missing_artifact_digest",
+            "output_path": str(output_root / "download.artifact"),
+            "state_path": str(state_path),
+        }
+    ]
 
 
 def test_build_benchmark_summary_csv_uses_canonical_rows(tmp_path: Path) -> None:

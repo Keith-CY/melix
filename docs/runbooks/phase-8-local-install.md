@@ -170,6 +170,15 @@ receipts: activation is eligible only when the receipt is completed and
 `artifact_integrity.status` is `passed`. This is not a full signature system,
 release publish-token flow, asynchronous installer, or desktop UI contract.
 
+Export diagnostics include managed artifact integrity receipts when
+`ExportResults` or `write_export_bundle(...)` scans a jobs root that contains
+model-ops download state. The bundle field
+`managed_artifact_integrity_receipts[]` flattens each persisted download
+receipt with `verification_mode`, `policy_present`, `digest`, `checked_at`,
+and `failure_reason` plus the job and operation identity. Strict refusals are
+reported with `activation_decision=blocked`; completed receipts with
+`artifact_integrity.status=passed` are reported with `activation_decision=allowed`.
+
 ## Bootstrap
 
 Load the generated launch agents:
