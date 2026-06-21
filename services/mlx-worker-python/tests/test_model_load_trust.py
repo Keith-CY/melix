@@ -335,6 +335,29 @@ def test_trust_policy_skips_expanduser_for_plain_model_path(
     assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
 
 
+def test_trust_policy_stats_plain_config_path_without_path_join(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _custom_loader_text_model(tmp_path)
+
+    def fail_path_join(path: Path, key: str) -> Path:  # pragma: no cover - only runs on regression.
+        raise AssertionError(f"plain model path should not use Path join for {key}: {path}")
+
+    monkeypatch.setattr(model_load_trust_module.Path, "__truediv__", fail_path_join)
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+        resolve_model_load_trust_policy(
+            model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=RecordingTextBackend(),
+        )
+
+    assert exc_info.value.policy.custom_loader_required is True
+    assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
+
+
 def test_trust_policy_expands_tilde_model_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
