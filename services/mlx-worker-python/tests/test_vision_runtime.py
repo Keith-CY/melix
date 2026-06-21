@@ -1859,6 +1859,38 @@ def test_prepare_vision_request_parses_each_image_uri_once(
     assert [prepared.filename for prepared in request.images] == [image.name, image.name]
     assert parse_calls == []
 
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Cache the reusable image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"shared focused probe cache payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+    list(runtime.generate_tokens(loaded_model, prepared, None, Event()))
+
+    assert runtime.cache_stats_response().stats.block_count == 1
+
+    runtime.close_loaded_model({"model_id": "other-vlm"})
+
+    assert runtime.cache_stats_response().stats.block_count == 1
+
+    runtime.close_loaded_model({})
+
+    assert runtime.cache_stats_response().stats.block_count == 0
+
 
 def test_prepare_vision_request_parses_remote_image_uri_once(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeHeaders:
