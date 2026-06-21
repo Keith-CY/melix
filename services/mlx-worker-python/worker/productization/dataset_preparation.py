@@ -479,9 +479,11 @@ def list_dataset_versions(
     manifest_path_string = os.fspath(workspace_manifest_path)
     versions: list[dict[str, Any]] = []
     versions_append = versions.append
-    read_json_file = _read_json_file
+    json_loads = json.loads
+    open_file = open
     for manifest_path in _iter_dataset_version_manifest_paths(versions_root):
-        version = read_json_file(manifest_path)
+        with open_file(manifest_path, "rb") as handle:
+            version = json_loads(handle.read())
         version_get = version.get
         versions_append(
             {

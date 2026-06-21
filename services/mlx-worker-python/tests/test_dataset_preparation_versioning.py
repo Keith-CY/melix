@@ -306,6 +306,13 @@ def test_dataset_version_listing_uses_scandir_without_path_glob(
 
     monkeypatch.setattr("worker.productization.dataset_preparation._read_json", fail_read_json)
 
+    def fail_read_json_file(path: str):  # pragma: no cover - exercised only on regression
+        raise AssertionError(
+            f"list_dataset_versions() should inline manifest JSON loading without _read_json_file({path!s})"
+        )
+
+    monkeypatch.setattr("worker.productization.dataset_preparation._read_json_file", fail_read_json_file)
+
     listing = list_dataset_versions(
         workspace_manifest_path=tmp_path / "workspace-manifest.json",
         output_root=output_root,
