@@ -536,6 +536,116 @@ tool-use prompts and preserve the shared `tool_calls` plus
 remain governed by `docs/unified-agentic-tool-runtime-contract.md`; benchmark
 fixtures must not introduce benchmark-only tool names.
 
+## Agent Reliability Track
+
+Melix may persist a repository-owned agent reliability track alongside existing
+benchmark and evaluation artifacts. The first slice is fixture-backed and lives
+in the Python worker productization layer; it does not replace `bench run`,
+`bench matrix run`, `eval run`, or `eval compare`.
+
+The track measures whether runtime guardrails change agent completion behavior
+under deterministic scenarios. It supports these ablation presets:
+
+- `baseline`
+- `no_response_rescue`
+- `no_retry_nudges`
+- `no_step_enforcement`
+- `no_tool_error_recovery`
+- `no_context_compaction`
+- `all_guardrails_disabled`
+
+Each preset expands to explicit boolean guardrail switches for response rescue,
+retry nudges, step enforcement, tool error recovery, and context compaction.
+Reports must persist the expanded switches with every row so later evidence
+does not depend on prose preset names alone.
+
+Scenario rows may be tagged with:
+
+- `plumbing`
+- `model_quality`
+- `advanced_reasoning`
+- `compaction_pressure`
+- `stateful_behavior`
+- `error_recovery`
+
+Stateful scenarios must validate both model-facing output and backend state.
+A row where the model emits the correct tool name but the wrong argument must
+fail validation when the backend state does not match the scenario's expected
+state. This rule prevents tool-call string matching from masking downstream
+state regressions.
+
+The fixture package shape is:
+
+- `manifest.json`
+  - `schema_version: melix.agent_reliability_fixture.v1`
+  - `dataset_id`
+  - `suite_id`
+  - `version`
+  - `split`
+  - `scenario_count`
+  - supported `ablation_presets`
+  - supported `tags`
+- `scenarios.jsonl`
+  - one JSON object per scenario
+  - `id`
+  - `title`
+  - `tags`
+  - `input`
+  - `tool_backend`
+  - `expected_output_contains`
+  - `expected_backend_state`
+  - `responses_by_ablation`
+  - optional `metric_hints`
+
+The deterministic runner writes:
+
+- `agent-reliability-rows.jsonl`
+- `agent-reliability-summary.json`
+- `agent-reliability-report.md`
+
+Each JSONL row uses `schema_version: melix.agent_reliability_row.v1` and must
+include:
+
+- model, backend, profile, ablation, and scenario identity
+- expanded guardrail switches
+- scenario tags
+- accuracy and completeness
+- wasted tool calls
+- retry count
+- nudge count
+- validation error count
+- compaction event count
+- elapsed time
+- token and cost estimates when available
+- parsed tool calls
+- backend state, expected backend state, and mismatch details
+
+The summary uses `schema_version: melix.agent_reliability_summary.v1`. It must
+aggregate rows by ablation and include deltas versus `baseline` for completion
+rate, accuracy, and wasted tool calls. Markdown reports must include the same
+per-ablation delta table plus scenario-level rows so issue and PR evidence can
+show which guardrail changed completion behavior.
+
+Existing benchmark export bundles must include discovered agent reliability
+rows and summaries under `agent_reliability_rows` and
+`agent_reliability_summaries` when an output root contains these artifacts.
+
+Resume mode reads existing `agent-reliability-rows.jsonl`, preserves completed
+rows by `model_id|backend|profile|ablation_id|scenario_id`, and executes only
+missing identities. Existing rows must not be duplicated during resume.
+
+The fixture-backed local command is:
+
+```bash
+python scripts/agent_reliability_eval.py \
+  --fixture-root services/mlx-worker-python/fixtures/evaluation/agent-reliability.dev.v1 \
+  --output-dir .runtime/agent-reliability \
+  --model-id fixture-model \
+  --backend fixture \
+  --profile ci \
+  --json
+```
+
 ## Task Kinds
 
 Melix benchmark and evaluation targets use the following task-aligned values:

@@ -257,6 +257,43 @@ def collect_evaluation_artifacts(jobs_root: Path) -> dict[str, object]:
     }
 
 
+def collect_agent_reliability_artifacts(
+    jobs_root: Path,
+    *,
+    scanned_entries: _ScannedDirectoryEntries | None = None,
+) -> dict[str, object]:
+    rows: list[dict[str, object]] = []
+    summaries: list[dict[str, object]] = []
+    artifact_root, artifact_scan = _resolve_agent_reliability_artifact_root(
+        Path(jobs_root),
+        scanned_entries=scanned_entries,
+    )
+    if artifact_root is None:
+        return {
+            "agent_reliability_rows": rows,
+            "agent_reliability_summaries": summaries,
+        }
+
+    _collect_agent_reliability_run(
+        artifact_root,
+        rows=rows,
+        summaries=summaries,
+        scanned_entries=artifact_scan,
+    )
+    runs_root = artifact_root / "runs"
+    for run_root in _iter_sorted_child_directories(runs_root):
+        _collect_agent_reliability_run(
+            run_root,
+            rows=rows,
+            summaries=summaries,
+        )
+
+    return {
+        "agent_reliability_rows": rows,
+        "agent_reliability_summaries": summaries,
+    }
+
+
 def build_export_bundle(jobs_root: Path) -> dict[str, object]:
     jobs_root = Path(jobs_root)
     root_scan = _scan_directory(jobs_root)
@@ -283,6 +320,10 @@ def build_export_bundle(jobs_root: Path) -> dict[str, object]:
     else:
         benchmark = collect_benchmark_artifacts(jobs_root)
         evaluation = collect_evaluation_artifacts(jobs_root)
+    agent_reliability = collect_agent_reliability_artifacts(
+        jobs_root,
+        scanned_entries=root_scan,
+    )
     run_evidence = _dedupe_run_evidence(
         [
             *[row for row in benchmark.get("run_evidence", []) if isinstance(row, dict)],
@@ -296,6 +337,7 @@ def build_export_bundle(jobs_root: Path) -> dict[str, object]:
         "exported_at_unix_ms": int(time.time() * 1000),
         **benchmark_payload,
         **evaluation_payload,
+        **agent_reliability,
         "run_evidence": run_evidence,
     }
 
@@ -723,6 +765,31 @@ def _resolve_artifact_root(
     return jobs_root
 
 
+def _resolve_agent_reliability_artifact_root(
+    jobs_root: Path,
+    *,
+    scanned_entries: _ScannedDirectoryEntries | None = None,
+) -> tuple[Path | None, _ScannedDirectoryEntries | None]:
+    scan = scanned_entries if scanned_entries is not None and scanned_entries.directory == jobs_root else _scan_directory(jobs_root)
+    if _has_agent_reliability_markers(scan):
+        return jobs_root, scan
+
+    fallback_root = jobs_root / "agent-reliability"
+    fallback_scan = _scan_directory(fallback_root)
+    if _has_agent_reliability_markers(fallback_scan):
+        return fallback_root, fallback_scan
+    return None, None
+
+
+def _has_agent_reliability_markers(scan: _ScannedDirectoryEntries | None) -> bool:
+    if scan is None:
+        return False
+    return (
+        scan.file_path("agent-reliability-rows.jsonl") is not None
+        or scan.file_path("agent-reliability-summary.json") is not None
+    )
+
+
 
 def _iter_sorted_child_directories(parent: Path) -> tuple[Path, ...]:
     try:
@@ -860,6 +927,28 @@ def _collect_benchmark_run(
         evidence_row = _try_load_json_object(evidence_path)
         if evidence_row is not None:
             run_evidence.append(evidence_row)
+
+
+def _collect_agent_reliability_run(
+    run_root: Path,
+    *,
+    rows: list[dict[str, object]],
+    summaries: list[dict[str, object]],
+    scanned_entries: _ScannedDirectoryEntries | None = None,
+) -> None:
+    scan = scanned_entries if scanned_entries is not None and scanned_entries.directory == run_root else _scan_directory(run_root)
+    if scan is None:
+        return
+    rows_path = scan.file_path("agent-reliability-rows.jsonl")
+    summary_path = scan.file_path("agent-reliability-summary.json")
+
+    if rows_path is not None:
+        rows.extend(_try_iter_jsonl_dict_rows(rows_path))
+
+    if summary_path is not None:
+        summary_row = _try_load_json_object(summary_path)
+        if summary_row is not None:
+            summaries.append(summary_row)
 
 
 def _collect_benchmark_matrix_run(
