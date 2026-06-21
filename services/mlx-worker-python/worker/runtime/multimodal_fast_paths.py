@@ -89,6 +89,30 @@ class MultimodalFastPathController:
         loaded_model: Any,
         prepared_request: PreparedVisionRequest,
     ) -> MultimodalFastPathDecision:
+        if not prepared_request.images and not prepared_request.videos:
+            family_id = _loaded_metadata_value(loaded_model, "vision_family_id")
+            resolved_execution_mode = (
+                _loaded_metadata_value(loaded_model, "melix.vlm.execution_mode")
+                or _loaded_metadata_value(loaded_model, "execution_mode")
+            )
+            execution_mode = resolved_execution_mode or "multimodal"
+            quant_profile_id = _loaded_metadata_value(loaded_model, "quant_profile_id") or "none"
+            quantized_load_mode, quantized_fallback = self._quantized_load_admission(
+                family_id=family_id,
+                execution_mode=execution_mode,
+                quant_profile_id=quant_profile_id,
+            )
+            return MultimodalFastPathDecision(
+                image_feature_cache_hits=0,
+                image_feature_cache_misses=0,
+                multimodal_decode_mode=MULTIMODAL_DECODE_BASELINE,
+                multimodal_fallback_reason="no_media",
+                multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
+                multi_image_scatter_mode="none",
+                quantized_load_mode=quantized_load_mode,
+                quantized_load_fallback_reason=quantized_fallback,
+            )
+
         metadata = _loaded_metadata(loaded_model)
         family_id = _loaded_value(loaded_model, metadata, "vision_family_id")
         resolved_execution_mode = (
@@ -105,18 +129,6 @@ class MultimodalFastPathController:
             execution_mode=execution_mode,
             quant_profile_id=quant_profile_id,
         )
-
-        if not prepared_request.images and not prepared_request.videos:
-            return MultimodalFastPathDecision(
-                image_feature_cache_hits=0,
-                image_feature_cache_misses=0,
-                multimodal_decode_mode=MULTIMODAL_DECODE_BASELINE,
-                multimodal_fallback_reason="no_media",
-                multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
-                multi_image_scatter_mode="none",
-                quantized_load_mode=quantized_load_mode,
-                quantized_load_fallback_reason=quantized_fallback,
-            )
 
         if execution_mode == "text_backed":
             return self._fallback_decision(
@@ -299,11 +311,7 @@ def fast_path_probe_signature(
     if isinstance(loaded_model, dict):
         top_level_repr = _top_level_signature_repr(loaded_model)
         metadata_pairs: list[tuple[str, str]] = []
-        metadata_keys = (
-            _FAST_PATH_SIGNATURE_METADATA_KEYS_SORTED
-            if prepared_request.images or prepared_request.videos
-            else _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED
-        )
+        metadata_keys = _signature_metadata_keys(loaded_model, prepared_request)
         nested_metadata = loaded_model.get("metadata", {})
         nested_metadata_is_dict = isinstance(nested_metadata, dict)
         for key in metadata_keys:
@@ -346,6 +354,17 @@ def _top_level_signature_repr(loaded_model: dict[str, Any]) -> str:
     )
 
 
+def _signature_metadata_keys(
+    loaded_model: dict[str, Any],
+    prepared_request: PreparedVisionRequest,
+) -> tuple[str, ...]:
+    if not prepared_request.images and not prepared_request.videos:
+        return _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED
+    if _has_any_loaded_metadata(loaded_model, _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS):
+        return _FAST_PATH_SIGNATURE_METADATA_KEYS_SORTED
+    return _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED
+
+
 def _signature_pairs_repr(pairs: Any) -> str:
     chunks = [f"({key!r}, {value!r})" for key, value in pairs]
     if not chunks:
@@ -385,6 +404,31 @@ def _loaded_metadata(loaded_model: Any) -> dict[str, str]:
             if normalized:
                 combined[str(key)] = normalized
     return combined
+
+
+def _loaded_metadata_value(loaded_model: Any, key: str) -> str:
+    if not isinstance(loaded_model, dict):
+        return ""
+    metadata = loaded_model.get("metadata", {})
+    if isinstance(metadata, dict) and key in metadata:
+        normalized = str(metadata[key]).strip()
+        if normalized:
+            return normalized
+    value = loaded_model.get(key, "")
+    if value:
+        return str(value).strip()
+    return ""
+
+
+def _has_any_loaded_metadata(loaded_model: dict[str, Any], keys: frozenset[str]) -> bool:
+    for source in (loaded_model, loaded_model.get("metadata", {})):
+        if not isinstance(source, dict) or keys.isdisjoint(source):
+            continue
+        for key in keys:
+            value = source.get(key, "")
+            if value and str(value).strip():
+                return True
+    return False
 
 
 def _loaded_value(loaded_model: Any, metadata: dict[str, str], key: str) -> str:

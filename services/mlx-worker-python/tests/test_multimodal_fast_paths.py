@@ -226,6 +226,54 @@ def test_fast_path_uses_baseline_for_text_only_turns() -> None:
     assert decision.multi_image_scatter_mode == "none"
 
 
+def test_fast_path_text_only_plan_uses_lightweight_metadata_lookup() -> None:
+    class FixedKeyMetadata(dict):
+        def items(self):  # type: ignore[override]  # pragma: no cover
+            raise AssertionError("text-only plan should not scan arbitrary metadata items")
+
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model(quant_profile_id="q8")
+    loaded_model["metadata"] = FixedKeyMetadata(
+        {
+            "melix.vlm.execution_mode": "multimodal",
+            "vision_family_id": "gemma4-v1",
+            "vision_prompt_profile_id": "gemma4-chatml-v1",
+            **{"unrelated." + str(index): "ignored" for index in range(1000)},
+        }
+    )
+
+    decision = controller.plan(loaded_model, _request([]))
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_BASELINE
+    assert decision.multimodal_fallback_reason == "no_media"
+    assert decision.quantized_load_mode == MULTIMODAL_LOAD_NATIVE_QUANTIZED
+
+
+def test_fast_path_text_only_plan_handles_non_dict_loaded_models() -> None:
+    controller = MultimodalFastPathController()
+
+    decision = controller.plan(object(), _request([]))
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_BASELINE
+    assert decision.multimodal_fallback_reason == "no_media"
+    assert decision.quantized_load_mode == MULTIMODAL_LOAD_FALLBACK
+    assert decision.quantized_load_fallback_reason == "not_quantized"
+
+
+def test_fast_path_text_only_plan_falls_back_when_metadata_value_is_blank() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model(quant_profile_id="q8")
+    metadata = loaded_model["metadata"]
+    assert isinstance(metadata, dict)
+    metadata["melix.vlm.execution_mode"] = "  "
+
+    decision = controller.plan(loaded_model, _request([]))
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_BASELINE
+    assert decision.multimodal_fallback_reason == "no_media"
+    assert decision.quantized_load_mode == MULTIMODAL_LOAD_NATIVE_QUANTIZED
+
+
 def test_fast_path_admits_native_quantized_supported_multimodal_family() -> None:
     controller = MultimodalFastPathController()
 
@@ -570,6 +618,28 @@ def test_fast_path_probe_signature_reuses_pre_sorted_top_level_keys() -> None:
         "(('model_id', 'melix-dev-vlm'), ('quant_profile_id', 'q8'), "
         "('revision', 'main'), ('tokenizer_hash', 'tok'))"
     )
+
+
+def test_fast_path_probe_signature_only_expands_processor_keys_when_present() -> None:
+    loaded_model = _loaded_model()
+
+    text_signature = fast_path_probe_signature(loaded_model, _request([]))
+    assert "vision_processor_policy" not in text_signature[2]
+    assert "vision_projected_feature_shape" not in text_signature[2]
+
+    legacy_signature = fast_path_probe_signature(loaded_model, _request([_image(b"image")]))
+    assert "vision_processor_policy" not in legacy_signature[2]
+    assert "vision_projected_feature_shape" not in legacy_signature[2]
+
+    metadata = loaded_model["metadata"]
+    assert isinstance(metadata, dict)
+    metadata["vision_processor_policy"] = "gemma4-multicrop-v1"
+    metadata["vision_projected_feature_shape"] = "4x256x4096"
+
+    processor_signature = fast_path_probe_signature(loaded_model, _request([_image(b"image")]))
+    assert "('vision_processor_policy', 'gemma4-multicrop-v1')" in processor_signature[2]
+    assert "('vision_projected_feature_shape', '4x256x4096')" in processor_signature[2]
+
 
 def test_fast_path_probe_signature_serializes_pairs_like_tuple_repr() -> None:
     pairs = [("vision_family_id", "gemma4-v1"), ("quoted", "value'with\\nnewline")]
