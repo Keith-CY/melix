@@ -231,12 +231,12 @@ def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | Non
     model_path = str(getattr(model_spec, "model_path", "") or "").strip()
     if not model_path:
         return None
-    if model_path.startswith("~"):
+    if model_path[0] == "~":
         config_path = Path(model_path).expanduser() / "config.json"
         config_path_text = str(config_path)
         stat_path: str | os.PathLike[str] = config_path
     else:
-        separator = "" if model_path.endswith(os.sep) else os.sep
+        separator = "" if model_path[-1] == os.sep else os.sep
         config_path_text = f"{model_path}{separator}config.json"
         stat_path = config_path_text
     try:

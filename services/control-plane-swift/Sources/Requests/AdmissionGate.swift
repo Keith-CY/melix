@@ -164,7 +164,7 @@ public actor AdmissionGate {
             if queuedEntries.isEmpty {
                 pendingFormationID = nil
             } else if activeRequestIDs.isEmpty, index == 0 {
-                scheduleFormationFlushIfNeeded()
+                admitNextOrScheduleFormationFlush()
             }
         }
     }
@@ -240,11 +240,7 @@ public actor AdmissionGate {
             }
             waiters[requestID] = continuation
 
-            if queuedFrontCohortIsFull() {
-                admitNextIfPossible()
-            } else {
-                scheduleFormationFlushIfNeeded()
-            }
+            admitNextOrScheduleFormationFlush()
         }
     }
 
@@ -265,6 +261,14 @@ public actor AdmissionGate {
             return true
         }
         return queuedEntries.count > frontBatch.entries.count
+    }
+
+    private func admitNextOrScheduleFormationFlush() {
+        if shouldScheduleFormationFlush() && !queuedFrontCohortIsFull() {
+            scheduleFormationFlushIfNeeded()
+        } else {
+            admitNextIfPossible()
+        }
     }
 
     private func frontCompatibleBatch() -> FrontBatch? {
@@ -294,11 +298,7 @@ public actor AdmissionGate {
 
     private func scheduleFormationFlushIfNeeded() {
         guard pendingFormationID == nil,
-              let first = queuedEntries.first,
-              shouldFormBatchBeforeAdmission(
-                  cohortID: first.cohortID,
-                  maxBatchSize: first.maxBatchSize
-              )
+              shouldScheduleFormationFlush()
         else {
             return
         }
@@ -311,6 +311,16 @@ public actor AdmissionGate {
             try? await Task.sleep(nanoseconds: windowNanos)
             self.flushFormationIfCurrent(formationID)
         }
+    }
+
+    private func shouldScheduleFormationFlush() -> Bool {
+        guard let first = queuedEntries.first else {
+            return false
+        }
+        return shouldFormBatchBeforeAdmission(
+            cohortID: first.cohortID,
+            maxBatchSize: first.maxBatchSize
+        )
     }
 
     private func flushFormationIfCurrent(_ formationID: UInt64) {

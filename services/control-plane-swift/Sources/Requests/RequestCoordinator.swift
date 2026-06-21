@@ -930,6 +930,7 @@ public actor RequestCoordinator {
                 upstream = try await workerClient.generate(request: workerRequest)
             }
             if !(await abortRegistry.contains(request.requestID)) {
+                _ = try? await workerClient.abort(requestID: request.requestID)
                 await finishRequestTracking(requestID: request.requestID, phase: .requestAborted)
                 return await makeCancelledExecution(requestID: request.requestID, modelID: request.modelID)
             }

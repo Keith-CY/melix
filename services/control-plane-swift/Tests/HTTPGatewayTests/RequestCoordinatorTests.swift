@@ -342,6 +342,7 @@ struct RequestCoordinatorTests {
         #expect(terminalEvent.completed.finishReason == "cancelled")
         #expect(terminalProgress?.phase == .requestAborted)
         #expect(metrics.values["http.abort_ms", default: 0] >= 0)
+        #expect(await workerClient.abortedRequestIDs == ["req-admitted-abort", "req-admitted-abort"])
     }
 
     @Test("second request queues until the active request releases admission")
@@ -680,7 +681,12 @@ struct RequestCoordinatorTests {
         let backgroundTerminal = try #require(await backgroundIterator.next())
         let metrics = await metricsStore.snapshot()
 
-        #expect(await workerClient.abortedRequestIDs == ["req-background-before-send"])
+        #expect(
+            await workerClient.abortedRequestIDs == [
+                "req-background-before-send",
+                "req-background-before-send",
+            ]
+        )
         #expect(interactiveEvents.last?.completed.finishReason == "stop")
         #expect(backgroundTerminal.completed.finishReason == "cancelled")
         #expect(metrics.values["scheduler.preemption_count", default: 0] == 1)
@@ -5078,6 +5084,7 @@ private actor BlockingWorkerClient: WorkerRoutingClient {
 }
 
 private actor SlowGenerateWorkerClient: WorkerRoutingClient {
+    private(set) var abortedRequestIDs: [String] = []
     private var generateStartedWaiters: [CheckedContinuation<Void, Never>] = []
     private var generateGate: CheckedContinuation<Void, Never>?
     private var generateStarted = false
@@ -5116,7 +5123,8 @@ private actor SlowGenerateWorkerClient: WorkerRoutingClient {
     }
 
     func abort(requestID: String) async throws -> Bool {
-        true
+        abortedRequestIDs.append(requestID)
+        return true
     }
 
     func loadModel(
