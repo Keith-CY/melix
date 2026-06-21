@@ -27,6 +27,7 @@ _VERSION_KEY = b"version"
 _VERSION_CANONICAL_PREFIX = b'version = "'
 _QUOTE_BYTE = 34
 _EQUALS_BYTE = 61
+_PRODUCT_VERSION_CACHE: dict[str, tuple[int, int, str]] = {}
 
 
 class UpdateCheckResult(NamedTuple):
@@ -68,14 +69,32 @@ def read_product_version(repo_root: str | Path) -> str:
         else Path(repo_root).expanduser().resolve()
     )
     pyproject_path = root / "pyproject.toml"
+    stat_result = pyproject_path.stat()
+    cache_key = str(pyproject_path)
+    cached = _PRODUCT_VERSION_CACHE.get(cache_key)
+    if cached is not None:
+        cached_mtime_ns, cached_size, cached_version = cached
+        if cached_mtime_ns == stat_result.st_mtime_ns and cached_size == stat_result.st_size:
+            return cached_version
     with pyproject_path.open("rb") as handle:
         for raw_line in handle:
             if not raw_line.startswith(_VERSION_KEY):
                 continue
             if raw_line.startswith(_VERSION_CANONICAL_PREFIX) and raw_line.endswith(b'"\n'):
-                return raw_line[len(_VERSION_CANONICAL_PREFIX) : -2].decode("utf-8")
+                version = raw_line[len(_VERSION_CANONICAL_PREFIX) : -2].decode("utf-8")
+                _PRODUCT_VERSION_CACHE[cache_key] = (
+                    stat_result.st_mtime_ns,
+                    stat_result.st_size,
+                    version,
+                )
+                return version
             version = _version_from_pyproject_line(raw_line)
             if version is not None:
+                _PRODUCT_VERSION_CACHE[cache_key] = (
+                    stat_result.st_mtime_ns,
+                    stat_result.st_size,
+                    version,
+                )
                 return version
     raise ValueError(f"Unable to read version from {pyproject_path}")
 
