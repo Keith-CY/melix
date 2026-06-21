@@ -1956,7 +1956,7 @@ class MLXVLMRuntime:
                     prompt_text=prompt_text,
                     include_chat_messages=include_chat_messages,
                 )
-        self._record_fast_path_probe(loaded_model, prepared, family_config=family_config)
+        self._record_fast_path_probe(loaded_model, prepared)
         return prepared
 
     def prompt_token_count(
