@@ -1122,6 +1122,8 @@ def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[boo
     has_audio = False
     for name in weight_names:
         first_character = name[0]
+        if first_character == "l":
+            continue
         if first_character == "v":
             if not has_vision and name.startswith("vision_tower."):
                 if has_audio:
