@@ -11,6 +11,7 @@ from worker.runtime.mlx_vlm_runtime import AutoMLXVLMBackend, MLXVLMRuntime
 from worker.runtime.multimodal_position_receipts import (
     build_mixed_batch_geometry_receipt,
     build_position_metadata_receipt,
+    build_quantized_kv_mask_receipt,
 )
 from worker.runtime.multimodal_preprocessing import (
     PreparedImageInput,
@@ -145,6 +146,200 @@ def test_position_metadata_receipt_counts_flat_metadata_values() -> None:
 
     assert receipt["position_ids_count"] == 4
     assert receipt["rope_deltas_count"] == 2
+
+
+def test_quantized_kv_mask_receipt_preserves_offsets_shapes_and_logit_parity() -> None:
+    receipt = build_quantized_kv_mask_receipt(
+        rows=[
+            {
+                "row_index": 0,
+                "seq_len": 4,
+                "cache_offset": 3,
+                "kv_seq_len": 7,
+                "cache_mask_shape": [1, 1, 4, 7],
+            },
+            {
+                "row_index": 1,
+                "seq_len": 2,
+                "cache_offset": 9,
+                "kv_seq_len": 11,
+                "cache_mask_shape": [1, 1, 2, 11],
+            },
+        ],
+        quantized_logits=[
+            [0.1250, 0.2500, 0.3750],
+            [0.5000, 0.6250, 0.7500],
+        ],
+        unquantized_logits=[
+            [0.1251, 0.2499, 0.3750],
+            [0.5002, 0.6249, 0.7499],
+        ],
+        tolerance=0.001,
+    )
+
+    assert receipt["schema_version"] == "melix.quantized_kv_mask_receipt.v1"
+    assert receipt["batch_row_count"] == 2
+    assert receipt["per_row_offsets"] == [3, 9]
+    assert receipt["unequal_cache_offsets"] is True
+    assert receipt["cache_mask_guard"] == "aligned"
+    assert receipt["cache_mask_shapes"] == [[1, 1, 4, 7], [1, 1, 2, 11]]
+    assert receipt["offset_receipts"] == [
+        {
+            "row_index": 0,
+            "cache_offset": 3,
+            "seq_len": 4,
+            "kv_seq_len": 7,
+            "expected_cache_mask_shape": [1, 1, 4, 7],
+            "cache_mask_shape": [1, 1, 4, 7],
+            "cache_mask_guard": "aligned",
+            "cache_mask_drift_reasons": [],
+        },
+        {
+            "row_index": 1,
+            "cache_offset": 9,
+            "seq_len": 2,
+            "kv_seq_len": 11,
+            "expected_cache_mask_shape": [1, 1, 2, 11],
+            "cache_mask_shape": [1, 1, 2, 11],
+            "cache_mask_guard": "aligned",
+            "cache_mask_drift_reasons": [],
+        },
+    ]
+    assert receipt["logit_parity"] == {
+        "status": "within_tolerance",
+        "sample_count": 6,
+        "max_abs_delta": 0.0002,
+        "tolerance": 0.001,
+    }
+
+
+def test_quantized_kv_mask_receipt_flags_shape_offset_and_logit_drift() -> None:
+    receipt = build_quantized_kv_mask_receipt(
+        rows=[
+            {
+                "row_index": 2,
+                "seq_len": 4,
+                "cache_offset": 3,
+                "kv_seq_len": 8,
+                "expected_cache_offset": 5,
+                "cache_mask_shape": [1, 1, 4, 7],
+            }
+        ],
+        quantized_logits=[1.25, 2.0],
+        unquantized_logits=[1.0, 2.0],
+        tolerance=0.01,
+    )
+
+    assert receipt["cache_mask_guard"] == "row_drift"
+    assert receipt["row_drift_count"] == 1
+    assert receipt["per_row_offsets"] == [3]
+    assert receipt["offset_receipts"][0]["cache_mask_guard"] == "row_drift"
+    assert receipt["offset_receipts"][0]["cache_mask_drift_reasons"] == [
+        "row_index_mismatch",
+        "cache_offset_mismatch",
+        "cache_mask_shape_mismatch",
+    ]
+    assert receipt["logit_parity"] == {
+        "status": "outside_tolerance",
+        "sample_count": 2,
+        "max_abs_delta": 0.25,
+        "tolerance": 0.01,
+    }
+
+
+def test_quantized_kv_mask_receipt_covers_defensive_edges() -> None:
+    class ShapeBackedMask:
+        shape = (1, 1, 3, 5)
+
+    class ArrayLikeLogits:
+        def tolist(self) -> list[list[float]]:
+            return [[1.0, 2.0]]
+
+    class ShapeBackedLogits:
+        shape = (1, 2)
+
+        def tolist(self) -> list[list[float]]:
+            return [[1.0, 2.0]]
+
+    missing_receipt = build_quantized_kv_mask_receipt(rows=[{}])
+    shape_receipt = build_quantized_kv_mask_receipt(
+        rows=[
+            {
+                "seq_len": 3,
+                "cache_offset": 2,
+                "kv_seq_len": 5,
+                "cache_mask_shape": ShapeBackedMask(),
+            }
+        ],
+        quantized_logits=ArrayLikeLogits(),
+        unquantized_logits=[[1.0, 2.0]],
+    )
+    scalar_shape_receipt = build_quantized_kv_mask_receipt(
+        rows=[
+            {
+                "seq_len": 1,
+                "cache_offset": 0,
+                "kv_seq_len": 1,
+                "cache_mask_shape": 1,
+                "expected_cache_mask_shape": 1,
+            }
+        ],
+        quantized_logits=[1.0, 2.0],
+        unquantized_logits=[1.0],
+    )
+    empty_logits_receipt = build_quantized_kv_mask_receipt(
+        rows=[],
+        quantized_logits=[],
+        unquantized_logits=[],
+    )
+    nested_shape_receipt = build_quantized_kv_mask_receipt(
+        rows=[
+            {
+                "seq_len": 3,
+                "cache_offset": 2,
+                "kv_seq_len": 5,
+                "cache_mask_shape": [[1, 1], [3, 5]],
+            }
+        ],
+    )
+    structured_shape_mismatch_receipt = build_quantized_kv_mask_receipt(
+        rows=[],
+        quantized_logits=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        unquantized_logits=[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
+        tolerance=100.0,
+    )
+    shape_backed_logits_receipt = build_quantized_kv_mask_receipt(
+        rows=[],
+        quantized_logits=ShapeBackedLogits(),
+        unquantized_logits=ShapeBackedLogits(),
+    )
+    ragged_logits_receipt = build_quantized_kv_mask_receipt(
+        rows=[],
+        quantized_logits=[[1.0], [2.0, 3.0]],
+        unquantized_logits=[[1.0], [2.0, 3.0]],
+    )
+
+    assert missing_receipt["offset_receipts"][0]["cache_mask_drift_reasons"] == [
+        "seq_len_missing",
+        "kv_seq_len_missing",
+        "cache_mask_shape_missing",
+    ]
+    assert missing_receipt["logit_parity"]["status"] == "not_provided"
+    assert shape_receipt["cache_mask_guard"] == "aligned"
+    assert shape_receipt["cache_mask_shapes"] == [[1, 1, 3, 5]]
+    assert shape_receipt["logit_parity"]["status"] == "within_tolerance"
+    assert scalar_shape_receipt["cache_mask_guard"] == "aligned"
+    assert scalar_shape_receipt["cache_mask_shapes"] == [[1]]
+    assert scalar_shape_receipt["logit_parity"]["status"] == "shape_mismatch"
+    assert empty_logits_receipt["logit_parity"]["status"] == "empty"
+    assert nested_shape_receipt["cache_mask_guard"] == "aligned"
+    assert nested_shape_receipt["cache_mask_shapes"] == [[1, 1, 3, 5]]
+    assert structured_shape_mismatch_receipt["logit_parity"]["status"] == "shape_mismatch"
+    assert structured_shape_mismatch_receipt["logit_parity"]["sample_count"] == 6
+    assert shape_backed_logits_receipt["logit_parity"]["status"] == "within_tolerance"
+    assert shape_backed_logits_receipt["logit_parity"]["sample_count"] == 2
+    assert ragged_logits_receipt["logit_parity"]["status"] == "within_tolerance"
+    assert ragged_logits_receipt["logit_parity"]["sample_count"] == 3
 
 
 def test_mixed_batch_geometry_receipt_preserves_three_row_prompt_and_media_geometry() -> None:
@@ -684,6 +879,117 @@ def test_deterministic_vlm_runtime_records_position_metadata_receipt() -> None:
     assert receipt["companion_rederive_skip_reason"] == (
         "multimodal_companion_rederive_skipped_has_media"
     )
+
+
+def test_vlm_probe_snapshot_records_quantized_kv_mask_receipt_container() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    prepared = resolve_vision_family_config(loaded_model).shape_request(
+        PreparedVisionRequest(
+            prompt_text="Describe the image.",
+            images=[
+                PreparedImageInput(
+                    bytes_data=b"quantized mask receipt image",
+                    source_kind="inline",
+                    reference="inline:image",
+                    mime_type="image/jpeg",
+                    format="jpg",
+                    filename="image.jpg",
+                    sha256_hex="deadbeef",
+                )
+            ],
+            videos=[],
+            video_frame_policies=[],
+            preprocess_latency_ms=0.0,
+            preprocess_input_bytes=len(b"quantized mask receipt image"),
+            preprocess_peak_memory_bytes=len(b"quantized mask receipt image"),
+            prompt_hash_hex="1" * 64,
+            multimodal_hash_hex="2" * 64,
+        )
+    )
+
+    list(runtime.generate_tokens(loaded_model, prepared, None, Event()))
+    receipt = runtime.last_probe_snapshot().quantized_kv_mask_receipt
+
+    assert receipt == {
+        "schema_version": "melix.quantized_kv_mask_receipt.v1",
+        "batch_row_count": 0,
+        "unequal_cache_offsets": False,
+        "per_row_offsets": [],
+        "cache_mask_guard": "aligned",
+        "row_drift_count": 0,
+        "cache_mask_shapes": [],
+        "offset_receipts": [],
+        "logit_parity": {
+            "status": "not_provided",
+            "sample_count": 0,
+            "max_abs_delta": 0.0,
+            "tolerance": 0.0,
+        },
+    }
+
+
+def test_vlm_fast_path_probe_resets_quantized_kv_mask_receipt_container() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    first_prepared = resolve_vision_family_config(loaded_model).shape_request(
+        PreparedVisionRequest(
+            prompt_text="Describe the first image.",
+            images=[
+                PreparedImageInput(
+                    bytes_data=b"first quantized mask receipt image",
+                    source_kind="inline",
+                    reference="inline:first",
+                    mime_type="image/jpeg",
+                    format="jpg",
+                    filename="first.jpg",
+                    sha256_hex="1" * 64,
+                )
+            ],
+            videos=[],
+            video_frame_policies=[],
+            preprocess_latency_ms=0.0,
+            preprocess_input_bytes=len(b"first quantized mask receipt image"),
+            preprocess_peak_memory_bytes=len(b"first quantized mask receipt image"),
+            prompt_hash_hex="1" * 64,
+            multimodal_hash_hex="2" * 64,
+        )
+    )
+    second_prepared = resolve_vision_family_config(loaded_model).shape_request(
+        PreparedVisionRequest(
+            prompt_text="Describe the second image.",
+            images=[
+                PreparedImageInput(
+                    bytes_data=b"second quantized mask receipt image",
+                    source_kind="inline",
+                    reference="inline:second",
+                    mime_type="image/jpeg",
+                    format="jpg",
+                    filename="second.jpg",
+                    sha256_hex="2" * 64,
+                )
+            ],
+            videos=[],
+            video_frame_policies=[],
+            preprocess_latency_ms=0.0,
+            preprocess_input_bytes=len(b"second quantized mask receipt image"),
+            preprocess_peak_memory_bytes=len(b"second quantized mask receipt image"),
+            prompt_hash_hex="3" * 64,
+            multimodal_hash_hex="4" * 64,
+        )
+    )
+
+    list(runtime.generate_tokens(loaded_model, first_prepared, None, Event()))
+    first_receipt = runtime.last_probe_snapshot().quantized_kv_mask_receipt
+    first_receipt["batch_row_count"] = 1
+    first_receipt["per_row_offsets"] = [42]
+    list(runtime.generate_tokens(loaded_model, second_prepared, None, Event()))
+    second_receipt = runtime.last_probe_snapshot().quantized_kv_mask_receipt
+
+    assert second_receipt is not first_receipt
+    assert second_receipt["schema_version"] == "melix.quantized_kv_mask_receipt.v1"
+    assert second_receipt["batch_row_count"] == 0
+    assert second_receipt["per_row_offsets"] == []
 
 
 def test_mlx_vlm_runtime_records_position_metadata_receipt_for_media_requests() -> None:
