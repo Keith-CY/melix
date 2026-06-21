@@ -215,7 +215,10 @@ def _chunk_single_turn(
     actionable guidance.
     """
 
-    full = system_prefix + [user, assistant]
+    if system_prefix:
+        full = system_prefix + [user, assistant]
+    else:
+        full = [user, assistant]
     if full_len is None:
         full_len = _render_len(full, tokenizer, tools=tools)
     if full_len <= chunk_size:
@@ -236,7 +239,10 @@ def _chunk_single_turn(
     # segment per bucket.
     words = user_content.split()
     word_count = len(words)
-    minimal_chunk = system_prefix + [{"role": "user", "content": ""}, assistant]
+    if system_prefix:
+        minimal_chunk = system_prefix + [{"role": "user", "content": ""}, assistant]
+    else:
+        minimal_chunk = [{"role": "user", "content": ""}, assistant]
     if _render_len(minimal_chunk, tokenizer, tools=tools) > chunk_size:
         raise ModelOperationError(
             code="chunk_size_too_small",
@@ -262,7 +268,11 @@ def _chunk_single_turn(
         segment_count = 0
         for segment in _iter_word_segments(words, k):
             segment_count += 1
-            chunk = system_prefix + [{"role": "user", "content": segment}, assistant]
+            user_segment = {"role": "user", "content": segment}
+            if system_prefix:
+                chunk = system_prefix + [user_segment, assistant]
+            else:
+                chunk = [user_segment, assistant]
             if _render_len(chunk, tokenizer, tools=tools) > chunk_size:
                 break
             chunks.append(chunk)
