@@ -33,6 +33,17 @@ from worker.runtime.vision_family_adapters import (
 )
 
 _EMPTY_PROCESSOR_SHAPE_RECEIPT: dict[str, object] = {}
+_TEXT_ONLY_EMPTY_MODEL_FAST_PATH_SIGNATURE = (
+    "(('model_id', ''), ('quant_profile_id', ''), "
+    "('revision', ''), ('tokenizer_hash', ''))"
+)
+
+
+def _has_only_internal_fast_path_signature_metadata(loaded_model) -> bool:
+    return isinstance(loaded_model, dict) and (
+        not loaded_model
+        or (len(loaded_model) == 1 and "_vision_family_config" in loaded_model)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,7 +553,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         seq_len: int | None = None,
         attention_policy: AttentionPrefillPolicyDecision | None = None,
     ) -> None:
-        signature = fast_path_probe_signature(loaded_model, prepared_request)
+        signature = self._fast_path_probe_signature(loaded_model, prepared_request)
         if self._last_fast_path_signature == signature:
             return
         self._record_fast_path_probe(
@@ -580,7 +591,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                 execution_ext=None,
             )
         attention_budget_receipt = build_attention_budget_receipt(attention_decision)
-        self._last_fast_path_signature = signature or fast_path_probe_signature(
+        self._last_fast_path_signature = signature or self._fast_path_probe_signature(
             loaded_model,
             prepared_request,
         )
@@ -621,6 +632,23 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             ),
             quantized_kv_mask_receipt=empty_quantized_kv_mask_receipt(),
         )
+
+    @staticmethod
+    def _fast_path_probe_signature(
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+    ) -> tuple[str, ...]:
+        if (
+            not prepared_request.images
+            and not prepared_request.videos
+            and _has_only_internal_fast_path_signature_metadata(loaded_model)
+        ):
+            return (
+                prepared_request.multimodal_hash_hex,
+                _TEXT_ONLY_EMPTY_MODEL_FAST_PATH_SIGNATURE,
+                "()",
+            )
+        return fast_path_probe_signature(loaded_model, prepared_request)
 
     def _processor_shape_receipt(
         self,
