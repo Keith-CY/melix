@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -112,6 +114,29 @@ def main() -> int:
         )
         stall_manifest = _latest_manifest_payload(stall_events)
 
+        stale_source = root / "stale-source.bin"
+        stale_bytes = _write_source(stale_source, size=1024)
+        stale_output_dir = root / "stale-partial"
+        stale_output_dir.mkdir()
+        stale_partial_path = stale_output_dir / "download.artifact.partial"
+        stale_partial_path.write_bytes(b"stale-bytes")
+        old_timestamp = time.time() - 60
+        os.utime(stale_partial_path, (old_timestamp, old_timestamp))
+        stale_events = _run_download(
+            service,
+            source_model="mlx-community/stale-partial-smoke",
+            output_dir=str(stale_output_dir),
+            generate_manifest=True,
+            ext={
+                "operation": "download",
+                "source_path": str(stale_source),
+                "melix.target_scope": "hub:mlx-community/stale-partial-smoke@main",
+                "melix.operation_kind": "managed_model_install",
+                "melix.stale_partial_after_ms": "1",
+            },
+        )
+        stale_manifest = _latest_manifest_payload(stale_events)
+
         checks = {
             "retry_success": retry_events[-1].HasField("completed")
             and retry_manifest["retry_count"] == 2
@@ -125,6 +150,12 @@ def main() -> int:
             and stall_events[-1].failed.error.code == "download_stalled"
             and stall_manifest["terminal_state"] == "stalled"
             and stall_manifest["stall_reason"] == "no_progress_timeout",
+            "stale_partial_removed": stale_events[-1].HasField("completed")
+            and stale_manifest["stale_partial_removed"] is True
+            and stale_manifest["partial_lifecycle"] == "completed_activated"
+            and stale_manifest["resume_eligible"] is False
+            and Path(stale_events[-1].completed.output_path).read_bytes() == stale_bytes
+            and not stale_partial_path.exists(),
         }
 
         result = {
@@ -144,6 +175,12 @@ def main() -> int:
                 "status": stall_manifest["status"],
                 "stall_detection_count": stall_manifest["stall_detection_count"],
                 "stall_reason": stall_manifest["stall_reason"],
+            },
+            "stale_partial": {
+                "status": stale_manifest["status"],
+                "partial_lifecycle": stale_manifest["partial_lifecycle"],
+                "stale_partial_removed": stale_manifest["stale_partial_removed"],
+                "resume_eligible": stale_manifest["resume_eligible"],
             },
         }
 

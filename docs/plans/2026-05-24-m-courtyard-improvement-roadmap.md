@@ -214,7 +214,9 @@ coverage, and retained artifact size.
 #### Plan P3.1: Multi-Target Export Contract
 
 Define and implement a target-aware export contract for Melix managed
-artifacts, Ollama, GGUF, and MLX-compatible local runtimes.
+artifacts, Ollama, GGUF, and MLX-compatible local runtimes. The detailed M3
+execution plan is
+[`2026-06-21-runtime-aware-export-and-serving-verification.md`](2026-06-21-runtime-aware-export-and-serving-verification.md).
 
 ##### Unit U3.1.1: Define Export Target Manifest for Melix, Ollama, GGUF, and MLX
 
@@ -235,7 +237,8 @@ safe-to-delete intermediates.
 
 Require export completion to prove the artifact can be inspected, loaded, and
 used for at least one bounded generation path, then surface actionable
-diagnostics when it cannot.
+diagnostics when it cannot. The detailed M3 execution plan is
+[`2026-06-21-runtime-aware-export-and-serving-verification.md`](2026-06-21-runtime-aware-export-and-serving-verification.md).
 
 ##### Unit U3.2.1: Add Post-Export Load and Generation Smoke Test
 

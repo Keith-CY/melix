@@ -409,6 +409,283 @@ struct RequestCoordinatorTests {
         #expect(await workerClient.generatedRequestIDs == ["req-1", "req-2", "req-3"])
     }
 
+    @Test("priority queue admits interactive work before older background work")
+    func priorityQueueAdmitsInteractiveWorkBeforeOlderBackgroundWork() async throws {
+        let workerClient = ControlledCompletionWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel
+        )
+
+        let activeExecution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-active", priority: 120, latencyClass: "interactive")
+        )
+        let activeConsumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in activeExecution.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        let backgroundTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(requestID: "req-background", priority: 20, latencyClass: "background")
+            )
+        }
+        let backgroundQueued = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-background",
+            phase: .requestQueued
+        )
+        #expect(backgroundQueued?.phase == .requestQueued)
+
+        let interactiveTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(requestID: "req-interactive", priority: 100, latencyClass: "interactive")
+            )
+        }
+        let interactiveQueued = await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-interactive",
+            phase: .requestQueued
+        )
+        #expect(interactiveQueued?.phase == .requestQueued)
+
+        await workerClient.finish(requestID: "req-active", text: "active done")
+        _ = try await activeConsumer.value
+
+        let generatedAfterFirstRelease = try #require(await waitForGeneratedRequestIDs(
+            workerClient,
+            count: 2
+        ))
+        try #require(generatedAfterFirstRelease == ["req-active", "req-interactive"])
+
+        let interactiveExecution = try await interactiveTask.value
+        let interactiveConsumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in interactiveExecution.stream {
+                events.append(event)
+            }
+            return events
+        }
+        await workerClient.finish(requestID: "req-interactive", text: "interactive done")
+        _ = try await interactiveConsumer.value
+
+        let backgroundExecution = try await backgroundTask.value
+        let backgroundConsumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in backgroundExecution.stream {
+                events.append(event)
+            }
+            return events
+        }
+        await workerClient.finish(requestID: "req-background", text: "background done")
+        _ = try await backgroundConsumer.value
+
+        #expect(await workerClient.generatedRequestIDs == ["req-active", "req-interactive", "req-background"])
+    }
+
+    @Test("interactive work preempts active lower priority work and writes a cancellation receipt")
+    func interactiveWorkPreemptsActiveLowerPriorityWorkAndWritesCancellationReceipt() async throws {
+        let workerClient = ControlledCompletionWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-preemption-receipt-\(UUID().uuidString)", isDirectory: true)
+        let receiptPath = directory.appendingPathComponent("scheduler-receipts.jsonl").path
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore,
+            routeSelectionReceiptPath: receiptPath
+        )
+
+        let backgroundExecution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-background-active", priority: 20, latencyClass: "background")
+        )
+        let backgroundConsumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in backgroundExecution.stream {
+                events.append(event)
+            }
+            return events
+        }
+        await workerClient.emitToken(requestID: "req-background-active", text: "partial")
+
+        let interactiveTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(requestID: "req-interactive-preempt", priority: 100, latencyClass: "interactive")
+            )
+        }
+        let generatedAfterPreemptionAttempt = await waitForGeneratedRequestIDs(workerClient, count: 2)
+        try #require(generatedAfterPreemptionAttempt == ["req-background-active", "req-interactive-preempt"])
+
+        let interactiveExecution = try await interactiveTask.value
+        let interactiveConsumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in interactiveExecution.stream {
+                events.append(event)
+            }
+            return events
+        }
+        await workerClient.finish(requestID: "req-interactive-preempt", text: "interactive done")
+
+        let interactiveEvents = try await interactiveConsumer.value
+        let backgroundEvents = try await backgroundConsumer.value
+        let metrics = await metricsStore.snapshot()
+        let receipts = try #require(await waitForJSONLLines(atPath: receiptPath, expectedCount: 3))
+        let cancellationReceipt = try #require(receipts.first { $0["receipt_type"] as? String == "scheduler.cancellation" })
+
+        #expect(await workerClient.generatedRequestIDs == ["req-background-active", "req-interactive-preempt"])
+        #expect(await workerClient.abortedRequestIDs == ["req-background-active"])
+        #expect(interactiveEvents.last?.completed.finishReason == "stop")
+        #expect(backgroundEvents.last?.completed.finishReason == "cancelled")
+        #expect(cancellationReceipt["request_id"] as? String == "req-background-active")
+        #expect(cancellationReceipt["preempting_request_id"] as? String == "req-interactive-preempt")
+        #expect(cancellationReceipt["cancellation_reason"] as? String == "preempted")
+        #expect(cancellationReceipt["stream_lifecycle"] as? String == "detached")
+        #expect(cancellationReceipt["cancel_signal_source"] as? String == "scheduler.preemption")
+        #expect(cancellationReceipt["partial_output_saved"] as? Bool == true)
+        #expect(cancellationReceipt["priority_class"] as? String == "background_batch")
+        #expect((cancellationReceipt["run_time_ms"] as? Double ?? -1) >= 0)
+        #expect((cancellationReceipt["upstream_cancel_latency_ms"] as? Double ?? -1) >= 0)
+        #expect(metrics.values["scheduler.preemption_count", default: 0] == 1)
+        #expect(metrics.values["scheduler.cancellation_receipt_emitted", default: 0] == 1)
+    }
+
+    @Test("foreground preemption receipts preserve explicit lifecycle and maintenance priority")
+    func foregroundPreemptionReceiptsPreserveExplicitLifecycleAndMaintenancePriority() async throws {
+        let workerClient = ControlledCompletionWorkerClient()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-foreground-preemption-receipt-\(UUID().uuidString)", isDirectory: true)
+        let receiptPath = directory.appendingPathComponent("scheduler-receipts.jsonl").path
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: SchedulerReadModel(),
+            metricsStore: MetricsStore(),
+            routeSelectionReceiptPath: receiptPath
+        )
+
+        let maintenanceExecution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-maintenance-active",
+                priority: 5,
+                latencyClass: "maintenance",
+                executionExt: ["melix.stream_lifecycle": "ephemeral"]
+            )
+        )
+        let maintenanceConsumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in maintenanceExecution.stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        let foregroundTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-foreground-preempt",
+                    priority: 80,
+                    latencyClass: "batch"
+                )
+            )
+        }
+
+        let foregroundExecution = try await foregroundTask.value
+        let foregroundConsumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in foregroundExecution.stream {
+                events.append(event)
+            }
+            return events
+        }
+        await workerClient.finish(requestID: "req-foreground-preempt", text: "foreground done")
+
+        let foregroundEvents = try await foregroundConsumer.value
+        let maintenanceEvents = try await maintenanceConsumer.value
+        let receipts = try #require(await waitForJSONLLines(atPath: receiptPath, expectedCount: 3))
+        let cancellationReceipt = try #require(receipts.first { $0["receipt_type"] as? String == "scheduler.cancellation" })
+
+        #expect(await workerClient.generatedRequestIDs == ["req-maintenance-active", "req-foreground-preempt"])
+        #expect(await workerClient.abortedRequestIDs == ["req-maintenance-active"])
+        #expect(foregroundEvents.last?.completed.finishReason == "stop")
+        #expect(maintenanceEvents.last?.completed.finishReason == "cancelled")
+        #expect(cancellationReceipt["request_id"] as? String == "req-maintenance-active")
+        #expect(cancellationReceipt["preempting_request_id"] as? String == "req-foreground-preempt")
+        #expect(cancellationReceipt["priority_class"] as? String == "maintenance")
+        #expect(cancellationReceipt["stream_lifecycle"] as? String == "ephemeral")
+    }
+
+    @Test("interactive work can preempt lower priority work before worker generate returns")
+    func interactiveWorkCanPreemptLowerPriorityWorkBeforeWorkerGenerateReturns() async throws {
+        let workerClient = SlowFirstGenerateWorkerClient(firstBlockedRequestID: "req-background-before-send")
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let backgroundTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-background-before-send",
+                    priority: 20,
+                    latencyClass: "background"
+                )
+            )
+        }
+        await workerClient.waitUntilGenerateStarted()
+
+        let interactiveTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-interactive-before-send",
+                    priority: 100,
+                    latencyClass: "interactive"
+                )
+            )
+        }
+
+        let generatedIDs = try #require(await waitForGeneratedRequestIDs(workerClient, count: 2))
+        #expect(generatedIDs == ["req-background-before-send", "req-interactive-before-send"])
+
+        let interactiveExecution = try await interactiveTask.value
+        let interactiveConsumer = Task {
+            var events: [Melix_Worker_V1_ExecuteEvent] = []
+            for try await event in interactiveExecution.stream {
+                events.append(event)
+            }
+            return events
+        }
+        await workerClient.finish(requestID: "req-interactive-before-send", text: "interactive done")
+        let interactiveEvents = try await interactiveConsumer.value
+
+        let backgroundExecution = try await backgroundTask.value
+        var backgroundIterator = backgroundExecution.stream.makeAsyncIterator()
+        let backgroundTerminal = try #require(await backgroundIterator.next())
+        let metrics = await metricsStore.snapshot()
+
+        #expect(await workerClient.abortedRequestIDs == ["req-background-before-send"])
+        #expect(interactiveEvents.last?.completed.finishReason == "stop")
+        #expect(backgroundTerminal.completed.finishReason == "cancelled")
+        #expect(metrics.values["scheduler.preemption_count", default: 0] == 1)
+    }
+
     @Test("duplicate request identifiers are rejected while the original request is tracked")
     func duplicateRequestIdentifiersAreRejectedWhileTracked() async throws {
         let workerClient = BlockingWorkerClient()
@@ -4719,6 +4996,41 @@ private func waitForJSONLLines(
     return parseJSONLLines(contents.split(separator: "\n"))
 }
 
+private func waitForGeneratedRequestIDs(
+    _ workerClient: ControlledCompletionWorkerClient,
+    count: Int,
+    attempts: Int = 50
+) async -> [String]? {
+    await waitForGeneratedRequestIDs(count: count, attempts: attempts) {
+        await workerClient.generatedRequestIDs
+    }
+}
+
+private func waitForGeneratedRequestIDs(
+    _ workerClient: SlowFirstGenerateWorkerClient,
+    count: Int,
+    attempts: Int = 50
+) async -> [String]? {
+    await waitForGeneratedRequestIDs(count: count, attempts: attempts) {
+        await workerClient.generatedRequestIDs
+    }
+}
+
+private func waitForGeneratedRequestIDs(
+    count: Int,
+    attempts: Int,
+    snapshot: () async -> [String]
+) async -> [String]? {
+    for _ in 0..<attempts {
+        let ids = await snapshot()
+        if ids.count >= count {
+            return ids
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return await snapshot()
+}
+
 private func parseJSONLLines(_ lines: [Substring]) -> [[String: Any]]? {
     var payloads: [[String: Any]] = []
     for line in lines {
@@ -4863,6 +5175,160 @@ private actor SlowDispatchWorkerClient: WorkerRoutingClient {
     func abort(requestID: String) async throws -> Bool {
         abortedRequestIDs.append(requestID)
         continuations.removeValue(forKey: requestID)?.finish()
+        return true
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "melix-dev-text::swift"
+        return response
+    }
+}
+
+private actor ControlledCompletionWorkerClient: WorkerRoutingClient {
+    private(set) var generatedRequestIDs: [String] = []
+    private(set) var abortedRequestIDs: [String] = []
+    private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        generatedRequestIDs.append(request.execution.id.requestID)
+        let requestID = request.execution.id.requestID
+        return AsyncThrowingStream { continuation in
+            continuations[requestID] = continuation
+        }
+    }
+
+    func emitToken(requestID: String, text: String) {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionDecoding
+        event.lane = "text.decode.interactive"
+        var delta = Melix_Worker_V1_TokenDelta()
+        delta.text = text
+        event.tokenDelta = delta
+        continuations[requestID]?.yield(event)
+    }
+
+    func finish(requestID: String, text: String) {
+        yieldCompleted(requestID: requestID, text: text, finishReason: "stop", phase: .executionCompleted)
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        abortedRequestIDs.append(requestID)
+        yieldCompleted(requestID: requestID, text: "", finishReason: "cancelled", phase: .executionAborted)
+        return true
+    }
+
+    private func yieldCompleted(
+        requestID: String,
+        text: String,
+        finishReason: String,
+        phase: Melix_Worker_V1_ExecutionPhase
+    ) {
+        guard let continuation = continuations.removeValue(forKey: requestID) else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = phase
+        event.lane = "text.decode.interactive"
+        var completed = Melix_Worker_V1_Completed()
+        completed.assistantText = text
+        completed.finishReason = finishReason
+        event.completed = completed
+        continuation.yield(event)
+        continuation.finish()
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "melix-dev-text::swift"
+        return response
+    }
+}
+
+private actor SlowFirstGenerateWorkerClient: WorkerRoutingClient {
+    private(set) var generatedRequestIDs: [String] = []
+    private(set) var abortedRequestIDs: [String] = []
+    private let firstBlockedRequestID: String
+    private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
+    private var generateStartedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var firstGenerateGate: CheckedContinuation<Void, Never>?
+    private var firstGenerateStarted = false
+
+    init(firstBlockedRequestID: String) {
+        self.firstBlockedRequestID = firstBlockedRequestID
+    }
+
+    func waitUntilGenerateStarted() async {
+        if firstGenerateStarted {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            generateStartedWaiters.append(continuation)
+        }
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        let requestID = request.execution.id.requestID
+        generatedRequestIDs.append(requestID)
+        if requestID == firstBlockedRequestID {
+            firstGenerateStarted = true
+            await withCheckedContinuation { continuation in
+                firstGenerateGate = continuation
+                let waiters = generateStartedWaiters
+                generateStartedWaiters.removeAll()
+                waiters.forEach { $0.resume() }
+            }
+        }
+        return AsyncThrowingStream { continuation in
+            continuations[requestID] = continuation
+        }
+    }
+
+    func finish(requestID: String, text: String) {
+        guard let continuation = continuations.removeValue(forKey: requestID) else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionCompleted
+        event.lane = "text.decode.interactive"
+        var completed = Melix_Worker_V1_Completed()
+        completed.assistantText = text
+        completed.finishReason = "stop"
+        event.completed = completed
+        continuation.yield(event)
+        continuation.finish()
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        abortedRequestIDs.append(requestID)
+        if requestID == firstBlockedRequestID {
+            firstGenerateGate?.resume()
+            firstGenerateGate = nil
+        }
         return true
     }
 
@@ -5709,6 +6175,10 @@ private func makeTranslatedChatRequest(
     restoreSnapshotID: String = "",
     saveBoundarySnapshot: Bool = false,
     preferHotPrefix: Bool = false,
+    lane: String = "text.decode.interactive",
+    priority: Int32 = 100,
+    latencyClass: String = "interactive",
+    latencySensitive: Bool = true,
     executionExt: [String: String] = [:]
 ) -> TranslatedChatRequest {
     var workerRequest = Melix_Worker_V1_GenerateRequest()
@@ -5720,9 +6190,10 @@ private func makeTranslatedChatRequest(
     workerRequest.execution.id.parentRequestID = parentRequestID
     workerRequest.execution.modelHandle = "melix-dev-text::local"
     workerRequest.execution.scheduling = Melix_Worker_V1_SchedulingHints()
-    workerRequest.execution.scheduling.lane = "text.decode.interactive"
-    workerRequest.execution.scheduling.priority = 100
-    workerRequest.execution.scheduling.latencySensitive = true
+    workerRequest.execution.id.latencyClass = latencyClass
+    workerRequest.execution.scheduling.lane = lane
+    workerRequest.execution.scheduling.priority = priority
+    workerRequest.execution.scheduling.latencySensitive = latencySensitive
     workerRequest.execution.cacheHints = Melix_Worker_V1_CacheHints()
     workerRequest.execution.cacheHints.restoreSnapshotID = restoreSnapshotID
     workerRequest.execution.cacheHints.saveBoundarySnapshot = saveBoundarySnapshot

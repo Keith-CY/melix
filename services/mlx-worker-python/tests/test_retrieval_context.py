@@ -1778,7 +1778,7 @@ def test_project_retrieval_lookup_result_preserves_valid_tuple_records_with_meta
 
 def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drift() -> None:
     nested_value = {"rank": 1}
-    three_item_nested_value = {"rank": 3}
+    four_item_nested_value = {"rank": 4}
     two_item_list_value = {"rank": 20}
     three_item_list_value = {"rank": 30}
     lookup_result = {
@@ -1828,7 +1828,7 @@ def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drif
                 {
                     "context_kind": "retrieved_document",
                     "source_id": "doc:long-tuple",
-                    "payload": {"metadata": ("a", three_item_nested_value, "c")},
+                    "payload": {"metadata": ("a", four_item_nested_value, "c", "d")},
                     "owner_scope_checked": True,
                     "source_field": "long_tuple",
                 },
@@ -1868,8 +1868,8 @@ def test_project_retrieval_lookup_result_copies_tuple_payloads_without_type_drif
     single_metadata = varied_projection.prompt_user_payload["single_tuple"]["metadata"]
     assert single_metadata == ({"rank": 2},)
     long_metadata = varied_projection.prompt_user_payload["long_tuple"]["metadata"]
-    assert long_metadata == ("a", {"rank": 3}, "c")
-    assert long_metadata[1] is not three_item_nested_value
+    assert long_metadata == ("a", {"rank": 4}, "c", "d")
+    assert long_metadata[1] is not four_item_nested_value
     empty_list_metadata = varied_projection.prompt_user_payload["empty_list"]["metadata"]
     assert type(empty_list_metadata) is list
     assert empty_list_metadata == []

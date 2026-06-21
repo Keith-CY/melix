@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import threading
+import time
 from typing import Any
 
 from packages.protocol.python.worker.v1 import maintenance_pb2
@@ -167,3 +169,47 @@ def test_strict_managed_download_failure_emits_integrity_receipt(tmp_path: Path)
     assert manifest_payload["artifact_integrity"]["failure_reason"] == "missing_artifact_digest"
     assert json.loads((output_dir / "download.state.json").read_text(encoding="utf-8")) == manifest_payload
     assert service._core._job_registry.snapshot()["downloads"][0]["artifact_integrity_status"] == "failed"
+
+
+def test_managed_download_registry_exposes_stale_partial_lifecycle(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    source_path, source_bytes = _write_download_source_file(tmp_path, size=1024)
+    output_dir = tmp_path / "managed-stale-partial"
+    output_dir.mkdir()
+    partial_path = output_dir / "download.artifact.partial"
+    partial_path.write_bytes(b"old-partial")
+    old_timestamp = time.time() - 60
+    os.utime(partial_path, (old_timestamp, old_timestamp))
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/stale-partial-demo",
+                output_dir=str(output_dir),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "source_path": str(source_path),
+                    "melix.managed_import": "true",
+                    "melix.target_scope": "hub:mlx-community/stale-partial-demo@main",
+                    "melix.operation_kind": "managed_model_install",
+                    "melix.stale_partial_after_ms": "1",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    manifest_payload = json.loads(
+        [event.manifest.manifest_json for event in events if event.HasField("manifest")][-1]
+    )
+    download = service._core._job_registry.snapshot()["downloads"][0]
+    assert Path(events[-1].completed.output_path).read_bytes() == source_bytes
+    assert manifest_payload["stale_partial_removed"] is True
+    assert manifest_payload["partial_lifecycle"] == "completed_activated"
+    assert download["stale_partial_removed"] is True
+    assert download["partial_lifecycle"] == "completed_activated"
+    assert download["partial_bytes"] == 0
+    assert download["resume_eligible"] is False
+    assert download["activated"] is True
+    assert not partial_path.exists()
