@@ -411,9 +411,11 @@ def _loaded_metadata_value(loaded_model: Any, key: str) -> str:
         return ""
     metadata = loaded_model.get("metadata", {})
     if isinstance(metadata, dict) and key in metadata:
-        normalized = str(metadata[key]).strip()
-        if normalized:
-            return normalized
+        value = metadata[key]
+        if value is not None:
+            normalized = str(value).strip()
+            if normalized:
+                return normalized
     value = loaded_model.get(key, "")
     if value:
         return str(value).strip()

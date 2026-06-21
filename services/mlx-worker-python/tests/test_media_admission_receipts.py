@@ -7,7 +7,7 @@ from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
-from worker.runtime.multimodal_preprocessing import PreparedVisionRequest
+from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
 from worker.runtime.vision_family_adapters import (
     resolve_vision_family_config,
     vision_processor_capability_metadata,
@@ -235,6 +235,44 @@ def test_text_only_generate_rejects_video_only_media_before_prompt_conversion() 
     assert events[0].error.error.details["video_count"] == "1"
 
 
+def test_media_admission_scan_skips_empty_parts_before_media() -> None:
+    runtime_service, inference_service = build_services()
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="text-empty-part-then-image-rejected"),
+            model_handle=model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(),
+                    common_pb2.MessagePart(text="Describe this."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"image after empty part",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        ),
+                    ),
+                ],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+        return_usage=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    assert len(events) == 1
+    assert events[0].error.error.code == "unsupported_media"
+    assert events[0].error.error.details["media_count"] == "1"
+    assert events[0].error.error.details["image_count"] == "1"
+
+
 def test_vlm_runtime_records_processor_shape_receipt() -> None:
     runtime = DeterministicVLMRuntime()
     loaded_model = runtime.load_model(processor_shape_model())
@@ -326,6 +364,22 @@ def test_vlm_processor_shape_receipt_uses_defaults_without_metadata() -> None:
     }
 
 
+def test_vlm_processor_shape_receipt_ignores_invalid_max_crop_count() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = {
+        "vision_processor_policy": "paligemma-multicrop-v2",
+        "vision_processor_max_crop_count": "2x2",
+    }
+
+    receipt = runtime._processor_shape_receipt(
+        loaded_model=loaded_model,
+        prepared_request=text_only_vlm_request("Caption this."),
+    )
+
+    assert receipt["processor_policy"] == "paligemma-multicrop-v2"
+    assert receipt["max_crop_count"] == 0
+
+
 def test_vlm_text_only_cache_fingerprint_preserves_existing_multimodal_hash() -> None:
     runtime = DeterministicVLMRuntime()
     prepared = text_only_vlm_request("Caption this.")
@@ -336,6 +390,37 @@ def test_vlm_text_only_cache_fingerprint_preserves_existing_multimodal_hash() ->
 
     assert cache_identity.endswith(prepared.multimodal_hash_hex)
     assert scope_id == f"melix-dev-vlm:{prepared.multimodal_hash_hex[:16]}"
+
+
+def test_vlm_cache_identity_fingerprint_uses_identity_segment_for_media() -> None:
+    runtime = DeterministicVLMRuntime()
+    prepared = text_only_vlm_request("Caption this.")
+    assert (
+        runtime._cache_identity_fingerprint_hash_hex(
+            cache_identity="model:dev:q8:text:off:fingerprint",
+            prepared_request=prepared,
+        )
+        == prepared.multimodal_hash_hex
+    )
+    prepared.images.append(
+        PreparedImageInput(
+            bytes_data=b"image",
+            source_kind="inline",
+            reference="inline:image.jpg",
+            mime_type="image/jpeg",
+            format="jpg",
+            filename="image.jpg",
+            sha256_hex="3" * 64,
+        )
+    )
+
+    assert (
+        runtime._cache_identity_fingerprint_hash_hex(
+            cache_identity="model:dev:q8:text:off:fingerprint",
+            prepared_request=prepared,
+        )
+        == "fingerprint"
+    )
 
 
 def test_vlm_runtime_cache_misses_when_processor_shape_changes() -> None:

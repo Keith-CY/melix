@@ -302,10 +302,9 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                     prepared_request=prepared_request,
                     cache_identity=cache_identity,
                     scope_id=scope_id,
-                    fingerprint_hash_hex=(
-                        cache_identity[-64:]
-                        if prepared_request.images or prepared_request.videos
-                        else prepared_request.multimodal_hash_hex
+                    fingerprint_hash_hex=self._cache_identity_fingerprint_hash_hex(
+                        cache_identity=cache_identity,
+                        prepared_request=prepared_request,
                     ),
                     token_length=prompt_tokens,
                     execution_ext=execution_ext,
@@ -448,10 +447,9 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                     prepared_request=prepared_request,
                     cache_identity=cache_identity,
                     scope_id=scope_id,
-                    fingerprint_hash_hex=(
-                        cache_identity[-64:]
-                        if prepared_request.images or prepared_request.videos
-                        else prepared_request.multimodal_hash_hex
+                    fingerprint_hash_hex=self._cache_identity_fingerprint_hash_hex(
+                        cache_identity=cache_identity,
+                        prepared_request=prepared_request,
                     ),
                     token_length=prompt_tokens,
                     execution_ext=execution_ext,
@@ -786,6 +784,16 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         )
         return identity, f"{model_id}:{fingerprint_hash_hex[:16]}"
 
+    @staticmethod
+    def _cache_identity_fingerprint_hash_hex(
+        *,
+        cache_identity: str,
+        prepared_request: PreparedVisionRequest,
+    ) -> str:
+        if prepared_request.images or prepared_request.videos:
+            return cache_identity.split(":")[-1]
+        return prepared_request.multimodal_hash_hex
+
     def _block_table_for(
         self,
         prepared_request: PreparedVisionRequest,
@@ -993,8 +1001,11 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
 
     @staticmethod
     def _metadata_int_value(loaded_model, key: str, default: int) -> int:
-        raw_value = DeterministicVLMRuntime._metadata_value(loaded_model, key, "")
-        return max(0, int(raw_value or default))
+        if isinstance(loaded_model, dict):
+            value = _int_metadata(loaded_model, key)
+            if value:
+                return value
+        return max(0, default)
 
     def _family_config(self, loaded_model) -> object:
         metadata: dict[str, str] = {}

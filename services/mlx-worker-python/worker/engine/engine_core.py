@@ -914,8 +914,8 @@ class EngineCore:
         for message in messages:
             for part in getattr(message, "parts", ()):
                 part_kind = part.WhichOneof("part")
-                if part_kind != "text":
-                    return part_kind is not None
+                if part_kind is not None and part_kind != "text":
+                    return True
         return False
 
     @staticmethod

@@ -274,6 +274,21 @@ def test_fast_path_text_only_plan_falls_back_when_metadata_value_is_blank() -> N
     assert decision.quantized_load_mode == MULTIMODAL_LOAD_NATIVE_QUANTIZED
 
 
+def test_fast_path_text_only_plan_falls_back_when_metadata_value_is_none() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model(quant_profile_id="q8")
+    loaded_model["melix.vlm.execution_mode"] = "multimodal"
+    metadata = loaded_model["metadata"]
+    assert isinstance(metadata, dict)
+    metadata["melix.vlm.execution_mode"] = None
+
+    decision = controller.plan(loaded_model, _request([]))
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_BASELINE
+    assert decision.multimodal_fallback_reason == "no_media"
+    assert decision.quantized_load_mode == MULTIMODAL_LOAD_NATIVE_QUANTIZED
+
+
 def test_fast_path_admits_native_quantized_supported_multimodal_family() -> None:
     controller = MultimodalFastPathController()
 
