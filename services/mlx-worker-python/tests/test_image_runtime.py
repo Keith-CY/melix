@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from threading import Event
+from unittest.mock import Mock
 
 import pytest
 
@@ -245,6 +246,55 @@ def test_image_generation_and_edit_bind_model_id_once_per_loop(tmp_path: Path) -
 
     assert len(edited.images) == 5
     assert CountingLoadedModel.get_calls == 1
+
+
+def test_image_edit_plain_file_uri_skips_unquote(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "source.png"
+    source.write_bytes(b"SOURCE_IMAGE")
+    unquote = Mock(side_effect=AssertionError("plain file URI should not be unquoted"))
+
+    monkeypatch.setattr(
+        "worker.runtime.deterministic_image_generation_runtime.unquote",
+        unquote,
+    )
+
+    resolved = DeterministicImageGenerationRuntime._path_from_uri(source.as_uri(), label="image")
+
+    assert resolved == source
+    unquote.assert_not_called()
+
+
+def test_image_edit_percent_encoded_file_uri_still_unquotes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source image.png"
+    source.write_bytes(b"SOURCE_IMAGE")
+    calls = 0
+
+    def counting_unquote(value: str) -> str:
+        nonlocal calls
+        calls += 1
+        return value.replace("%20", " ")
+
+    monkeypatch.setattr(
+        "worker.runtime.deterministic_image_generation_runtime.unquote",
+        counting_unquote,
+    )
+
+    resolved = DeterministicImageGenerationRuntime._path_from_uri(source.as_uri(), label="image")
+
+    assert resolved == source
+    assert calls == 1
+
+
+def test_image_edit_raw_local_path_still_resolves(tmp_path: Path) -> None:
+    source = tmp_path / "source.png"
+    source.write_bytes(b"SOURCE_IMAGE")
+
+    resolved = DeterministicImageGenerationRuntime._path_from_uri(str(source), label="image")
+
+    assert resolved == source
 
 
 def test_image_edit_binds_strength_once_per_loop(tmp_path: Path) -> None:

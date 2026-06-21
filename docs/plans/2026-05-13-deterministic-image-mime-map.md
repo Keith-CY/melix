@@ -30,3 +30,9 @@ The local Linux probe compares `elapsed_ms_mean` and preserves output byte accou
 - Changed-scope coverage for touched executable scope remains at least 95%.
 - The registered probe completes locally and in CI.
 - The PR-scoped performance workflow reports the registered probe successfully before merge.
+
+## 2026-06-21 follow-up: plain file URI unquote elision
+
+This follow-up keeps the scope inside `DeterministicImageGenerationRuntime._path_from_uri(...)` for image-edit source and mask inputs. Plain local `file://` URIs now construct the local `Path` directly from the parsed path when it contains no percent escapes, while percent-encoded file paths still use `urllib.parse.unquote(...)` before existence checks. Non-file URI rejection and raw local path handling remain unchanged.
+
+The existing registered probe `deterministic-image-edit-digest-reuse` is extended to exercise source and mask file URIs, report `unquote_calls_mean`, and keep the digest reuse guard rail. Focused tests pin both the no-escape fast path and the percent-encoded fallback path.

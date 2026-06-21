@@ -424,7 +424,11 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
     def _path_from_uri(uri: str, *, label: str) -> Path:
         parsed = urlparse(uri)
         if parsed.scheme in {"", "file"}:
-            candidate = Path(unquote(parsed.path)) if parsed.scheme == "file" else Path(uri)
+            if parsed.scheme == "file":
+                parsed_path = parsed.path
+                candidate = Path(unquote(parsed_path) if "%" in parsed_path else parsed_path)
+            else:
+                candidate = Path(uri)
             if not candidate.exists():
                 raise ValueError(f"Missing local {label}: {uri}")
             return candidate
