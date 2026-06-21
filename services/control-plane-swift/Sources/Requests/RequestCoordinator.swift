@@ -450,6 +450,16 @@ private struct SchedulingPlan: Sendable {
     let accelerationRefusal: AccelerationReceiptValidation?
 }
 
+private struct ActiveSchedulingRecord: Sendable {
+    let requestID: String
+    let priorityScore: Double
+    let priorityClass: String
+    let lane: String
+    let streamLifecycle: String
+    let admittedAt: Date
+    var partialOutputSaved: Bool
+}
+
 private struct ModelAccelerationResolution: Sendable {
     let request: TranslatedChatRequest
     let accelerationRefusal: AccelerationReceiptValidation?
@@ -632,6 +642,7 @@ public actor RequestCoordinator {
     private var disconnectResumeAttemptCount: Double
     private var disconnectResumeSuccessCount: Double
     private var requestPlans: [String: SchedulingPlan]
+    private var activeSchedulingRecords: [String: ActiveSchedulingRecord]
     private var coldTTFTBaselinesByBranch: [String: Double]
     private var schedulingDecisionCount: Double
     private var cacheRouteEligibleCount: Double
@@ -679,6 +690,7 @@ public actor RequestCoordinator {
         self.disconnectResumeAttemptCount = 0
         self.disconnectResumeSuccessCount = 0
         self.requestPlans = [:]
+        self.activeSchedulingRecords = [:]
         self.coldTTFTBaselinesByBranch = [:]
         self.schedulingDecisionCount = 0
         self.cacheRouteEligibleCount = 0
@@ -801,13 +813,18 @@ public actor RequestCoordinator {
         }
         let initialQueuePosition = await admissionGate.nextQueuePosition(
             cohortID: plan.batchCohortID,
-            maxBatchSize: plan.batchMaxSize
+            maxBatchSize: plan.batchMaxSize,
+            priorityScore: Double(priority)
         )
         await schedulerReadModel.recordQueued(
             requestID: request.requestID,
             laneHint: lane,
             priority: priority,
             queuePosition: initialQueuePosition
+        )
+        await preemptLowerPriorityActiveRequestIfNeeded(
+            preemptingRequestID: request.requestID,
+            preemptingPriorityScore: Double(priority)
         )
         let routeStartedAt = now()
         let workerClient = plan.workerClient
@@ -841,7 +858,8 @@ public actor RequestCoordinator {
         let admission = await admissionGate.acquire(
             requestID: request.requestID,
             cohortID: plan.batchCohortID,
-            maxBatchSize: plan.batchMaxSize
+            maxBatchSize: plan.batchMaxSize,
+            priorityScore: Double(priority)
         )
         switch admission.outcome {
         case .cancelled:
@@ -868,18 +886,34 @@ public actor RequestCoordinator {
             mergedIntoBatch: admission.mergedIntoBatch,
             affinityClass: plan.cacheRouteClass.rawValue
         )
-        _ = await modelCatalog?.markModelUsed(id: request.modelID)
-        if !(await abortRegistry.contains(request.requestID)) {
-            await finishRequestTracking(requestID: request.requestID, phase: .requestAborted)
-            return await makeCancelledExecution(requestID: request.requestID, modelID: request.modelID)
-        }
-
         var workerRequest = request.workerRequest
         annotateAdmissionBatchMetadata(
             on: &workerRequest,
             admission: admission,
             plan: plan
         )
+        let requestID = request.requestID
+        let modelID = request.modelID
+        activeWorkerClients[requestID] = workerClient
+        activeSchedulingRecords[requestID] = ActiveSchedulingRecord(
+            requestID: requestID,
+            priorityScore: Double(priority),
+            priorityClass: priorityClass(
+                priorityScore: Double(priority),
+                latencyClass: workerRequest.execution.id.latencyClass
+            ),
+            lane: plan.decodeLane,
+            streamLifecycle: streamLifecycle(from: workerRequest),
+            admittedAt: dispatchStartedAt,
+            partialOutputSaved: false
+        )
+        self.dispatchStartedAt[requestID] = dispatchStartedAt
+
+        _ = await modelCatalog?.markModelUsed(id: request.modelID)
+        if !(await abortRegistry.contains(request.requestID)) {
+            await finishRequestTracking(requestID: request.requestID, phase: .requestAborted)
+            return await makeCancelledExecution(requestID: request.requestID, modelID: request.modelID)
+        }
 
         do {
             let upstream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
@@ -896,15 +930,10 @@ public actor RequestCoordinator {
                 upstream = try await workerClient.generate(request: workerRequest)
             }
             if !(await abortRegistry.contains(request.requestID)) {
-                _ = try? await workerClient.abort(requestID: request.requestID)
                 await finishRequestTracking(requestID: request.requestID, phase: .requestAborted)
                 return await makeCancelledExecution(requestID: request.requestID, modelID: request.modelID)
             }
             await metricsStore.increment("requests.inflight")
-            let requestID = request.requestID
-            let modelID = request.modelID
-            activeWorkerClients[requestID] = workerClient
-            self.dispatchStartedAt[requestID] = dispatchStartedAt
             let hub = ResumableExecutionHub(
                 requestID: requestID,
                 modelID: modelID,
@@ -1005,6 +1034,9 @@ public actor RequestCoordinator {
                             }
                             if shouldYieldBeforeObservability {
                                 await hub.yield(outputEvent)
+                            }
+                            if self.isSemanticStreamEvent(outputEvent) {
+                                self.markPartialOutputSaved(requestID: requestID)
                             }
 
                             await self.recordPhaseObservability(
@@ -1164,6 +1196,14 @@ public actor RequestCoordinator {
         }
     }
 
+    private func markPartialOutputSaved(requestID: String) {
+        guard var record = activeSchedulingRecords[requestID] else {
+            return
+        }
+        record.partialOutputSaved = true
+        activeSchedulingRecords[requestID] = record
+    }
+
     private func publishesDecodingPhase(_ event: Melix_Worker_V1_ExecuteEvent) -> Bool {
         switch event.payload {
         case .decodeStarted, .tokenDelta, .reasoningDelta, .toolCallDelta, .annotationDelta, .toolResultDelta, .usageDelta:
@@ -1222,6 +1262,50 @@ public actor RequestCoordinator {
         return true
     }
 
+    private func preemptLowerPriorityActiveRequestIfNeeded(
+        preemptingRequestID: String,
+        preemptingPriorityScore: Double
+    ) async {
+        guard let victim = activeSchedulingRecords.values.min(by: { lhs, rhs in
+            if lhs.priorityScore != rhs.priorityScore {
+                return lhs.priorityScore < rhs.priorityScore
+            }
+            return lhs.admittedAt < rhs.admittedAt
+        }) else {
+            return
+        }
+        guard victim.priorityScore < preemptingPriorityScore else {
+            return
+        }
+        let phase = await schedulerReadModel.progressSnapshot(for: victim.requestID)?.phase ?? .requestAdmitted
+        let startedAt = now()
+        guard await abortRegistry.abort(victim.requestID) else {
+            return
+        }
+        await metricsStore.increment("scheduler.preemption_count")
+        await recordAbortMetrics(phase: phase, startedAt: startedAt)
+        await recordCancellationReceipt(
+            record: victim,
+            preemptingRequestID: preemptingRequestID,
+            cancellationReason: "preempted",
+            cancelSignalSource: "scheduler.preemption"
+        )
+
+        let hasExecutionHub = executionHubs[victim.requestID] != nil
+        if let hub = executionHubs[victim.requestID] {
+            await hub.emitLifecycle(.cancelled)
+        }
+        if let workerClient = activeWorkerClients[victim.requestID] {
+            _ = try? await workerClient.abort(requestID: victim.requestID)
+            if !hasExecutionHub {
+                await finishRequestTracking(requestID: victim.requestID, phase: .requestAborted)
+            }
+            return
+        }
+
+        await finishRequestTracking(requestID: victim.requestID, phase: .requestAborted)
+    }
+
     private func finishRequestTracking(
         requestID: String,
         phase: Melix_Controlplane_V1_RequestPhase? = nil
@@ -1235,6 +1319,7 @@ public actor RequestCoordinator {
         activeWorkerClients.removeValue(forKey: requestID)
         executionHubs.removeValue(forKey: requestID)
         requestPlans.removeValue(forKey: requestID)
+        activeSchedulingRecords.removeValue(forKey: requestID)
         if let phase {
             await schedulerReadModel.recordTerminalState(requestID: requestID, phase: phase)
         }
@@ -2592,6 +2677,62 @@ public actor RequestCoordinator {
             return
         }
         routeSelectionReceiptWriter.append(data)
+    }
+
+    private func recordCancellationReceipt(
+        record: ActiveSchedulingRecord,
+        preemptingRequestID: String,
+        cancellationReason: String,
+        cancelSignalSource: String
+    ) async {
+        let runTimeMs = max(0, now().timeIntervalSince(record.admittedAt) * 1000)
+        await metricsStore.increment("scheduler.cancellation_receipt_emitted")
+        guard let routeSelectionReceiptWriter else {
+            return
+        }
+        let payload: [String: Any] = [
+            "receipt_type": "scheduler.cancellation",
+            "request_id": record.requestID,
+            "preempting_request_id": preemptingRequestID,
+            "cancellation_reason": cancellationReason,
+            "cancel_signal_source": cancelSignalSource,
+            "stream_lifecycle": record.streamLifecycle,
+            "partial_output_saved": record.partialOutputSaved,
+            "priority_class": record.priorityClass,
+            "priority_score": record.priorityScore,
+            "lane": record.lane,
+            "run_time_ms": runTimeMs,
+            "recorded_at_unix_ms": Int64(now().timeIntervalSince1970 * 1000),
+        ]
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+            return
+        }
+        routeSelectionReceiptWriter.append(data)
+    }
+
+    private func priorityClass(priorityScore: Double, latencyClass: String) -> String {
+        let normalizedLatency = latencyClass.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalizedLatency == "interactive" || priorityScore >= 100 {
+            return "interactive"
+        }
+        if priorityScore >= 80 {
+            return "foreground_batch"
+        }
+        if priorityScore >= 20 {
+            return "background_batch"
+        }
+        return "maintenance"
+    }
+
+    private func streamLifecycle(from request: Melix_Worker_V1_GenerateRequest) -> String {
+        let explicit = request.execution.ext["melix.stream_lifecycle"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        if explicit == "ephemeral" || explicit == "detached" {
+            return explicit
+        }
+        return "detached"
     }
 
     private func recordMultimodalBatchingMetrics(for plan: SchedulingPlan) async {
