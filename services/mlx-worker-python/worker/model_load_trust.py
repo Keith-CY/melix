@@ -220,7 +220,10 @@ def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | Non
     model_path = str(getattr(model_spec, "model_path", "") or "").strip()
     if not model_path:
         return None
-    config_path = Path(model_path).expanduser() / "config.json"
+    model_dir = Path(model_path)
+    if model_path.startswith("~"):
+        model_dir = model_dir.expanduser()
+    config_path = model_dir / "config.json"
     try:
         config_stat = config_path.stat()
         if not stat.S_ISREG(config_stat.st_mode):
