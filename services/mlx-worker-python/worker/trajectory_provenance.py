@@ -146,18 +146,44 @@ def _fast_trajectory_provenance_from_snapshot_manifest(
     manifest_get = manifest.get
     if manifest_get("format") != "agentic_tool_trace":
         return None
-    is_clean_text = _is_clean_manifest_text
     dataset_id = manifest_get("source_dataset_id")
+    if (
+        type(dataset_id) is not str
+        or dataset_id == ""
+        or dataset_id[0].isspace()
+        or dataset_id[-1].isspace()
+    ):
+        return None
     dataset_version = manifest_get("version")
+    if (
+        type(dataset_version) is not str
+        or dataset_version == ""
+        or dataset_version[0].isspace()
+        or dataset_version[-1].isspace()
+    ):
+        return None
     schema_version = manifest_get("trajectory_schema_version")
+    if (
+        type(schema_version) is not str
+        or schema_version == ""
+        or schema_version[0].isspace()
+        or schema_version[-1].isspace()
+    ):
+        return None
     split = manifest_get("trajectory_split")
+    if (
+        type(split) is not str
+        or split == ""
+        or split[0].isspace()
+        or split[-1].isspace()
+    ):
+        return None
     trace_digest = manifest_get("trajectory_trace_digest")
-    if not (
-        is_clean_text(dataset_id)
-        and is_clean_text(dataset_version)
-        and is_clean_text(schema_version)
-        and is_clean_text(split)
-        and is_clean_text(trace_digest)
+    if (
+        type(trace_digest) is not str
+        or trace_digest == ""
+        or trace_digest[0].isspace()
+        or trace_digest[-1].isspace()
     ):
         return None
     provenance: dict[str, Any] = {
