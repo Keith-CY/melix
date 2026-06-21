@@ -1009,7 +1009,7 @@ class DownloadPipeline:
                     "failure_reason": failure_reason,
                 },
             )
-        if not actual_sha256 or declared_sha256 == actual_sha256:
+        if declared_sha256 == actual_sha256:
             return
 
         failure_reason = "digest_mismatch"

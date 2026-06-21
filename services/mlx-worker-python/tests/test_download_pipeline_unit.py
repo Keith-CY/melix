@@ -551,6 +551,42 @@ def test_strict_managed_download_rejects_digest_mismatch_before_activation(tmp_p
     assert (output_dir / "download.artifact.partial").read_bytes() == source_bytes
 
 
+def test_strict_integrity_rejects_missing_actual_digest_before_activation(tmp_path: Path) -> None:
+    partial_path = tmp_path / "download.artifact.partial"
+    partial_path.write_bytes(b"abcdef")
+    state_path = tmp_path / "state.json"
+    manifest_payload = {
+        "state_path": str(state_path),
+        "artifact_integrity": {
+            "verification_mode": "sha256",
+            "policy_present": True,
+            "digest": "sha256:" + ("a" * 64),
+            "actual_digest": "",
+            "checked_at": "2026-06-21T00:00:00Z",
+            "failure_reason": "",
+            "status": "passed",
+        },
+        "activated": False,
+    }
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        DownloadPipeline._raise_if_strict_integrity_mismatch(
+            manifest_payload=manifest_payload,
+            partial_path=partial_path,
+            ext={"melix.strict_install_mode": "true"},
+        )
+
+    assert exc_info.value.code == "artifact_integrity_mismatch"
+    state_payload = json.loads(exc_info.value.details["state_json"])
+    assert state_payload["status"] == "failed"
+    assert state_payload["terminal_state"] == "failed"
+    assert state_payload["last_error"] == "digest_mismatch"
+    assert state_payload["artifact_integrity"]["failure_reason"] == "digest_mismatch"
+    assert state_payload["artifact_integrity"]["status"] == "failed"
+    assert state_payload["activated"] is False
+    assert state_payload["partial_lifecycle"] == "failed_kept_for_resume"
+
+
 def test_artifact_integrity_receipt_normalizes_bare_sha256_digest() -> None:
     digest = "a" * 64
 
