@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,26 @@ from packages.protocol.python.worker.v1 import maintenance_pb2
 
 from test_maintenance_service import _write_download_source_file, build_service
 from worker.model_ops.download_pipeline import DownloadPipelineResult
+
+
+def _expected_directory_snapshot_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    file_paths = sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    )
+    for path in file_paths:
+        relative_path = path.relative_to(root).as_posix()
+        file_bytes = path.read_bytes()
+        digest.update(b"file\0")
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(len(file_bytes)).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(file_bytes)
+        digest.update(b"\0")
+    return f"sha256:{digest.hexdigest()}"
 
 
 def test_duplicate_managed_download_reuses_scoped_operation_receipt(tmp_path: Path) -> None:
@@ -168,6 +189,53 @@ def test_strict_managed_download_failure_emits_integrity_receipt(tmp_path: Path)
     assert manifest_payload["artifact_integrity"]["policy_present"] is False
     assert manifest_payload["artifact_integrity"]["failure_reason"] == "missing_artifact_digest"
     assert json.loads((output_dir / "download.state.json").read_text(encoding="utf-8")) == manifest_payload
+    assert service._core._job_registry.snapshot()["downloads"][0]["artifact_integrity_status"] == "failed"
+
+
+def test_strict_managed_hub_download_failure_emits_snapshot_digest_receipt(tmp_path: Path) -> None:
+    source_dir = tmp_path / "hub-source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
+    (source_dir / "model.safetensors").write_bytes(b"weights")
+    actual_digest = _expected_directory_snapshot_digest(source_dir)
+    output_dir = tmp_path / "download-managed-digest-failed"
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                output_dir=str(output_dir),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "melix.source_kind": "hub_repo",
+                    "melix.hf_repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    "melix.hf_revision": "main",
+                    "melix.managed_import": "true",
+                    "melix.strict_install_mode": "true",
+                    "melix.artifact_digest": "sha256:" + ("0" * 64),
+                    "source_path": str(source_dir),
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[-1].HasField("failed")
+    assert events[-1].failed.error.code == "artifact_integrity_mismatch"
+    failed_manifest = json.loads(events[-1].failed.error.details["state_json"])
+    persisted_manifest = json.loads((output_dir / "download.state.json").read_text(encoding="utf-8"))
+    assert failed_manifest == persisted_manifest
+    assert failed_manifest["status"] == "failed"
+    assert failed_manifest["terminal_state"] == "failed"
+    assert failed_manifest["last_error"] == "digest_mismatch"
+    assert failed_manifest["managed_model_path"] == str(source_dir.resolve())
+    assert failed_manifest["artifact_integrity"]["digest"] == "sha256:" + ("0" * 64)
+    assert failed_manifest["artifact_integrity"]["actual_digest"] == actual_digest
+    assert failed_manifest["artifact_integrity"]["failure_reason"] == "digest_mismatch"
+    assert failed_manifest["artifact_integrity"]["status"] == "failed"
+    assert failed_manifest["activated"] is False
     assert service._core._job_registry.snapshot()["downloads"][0]["artifact_integrity_status"] == "failed"
 
 

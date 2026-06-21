@@ -1237,6 +1237,9 @@ class ModelOpsJobRegistry:
             artifact_transport_receipt = manifest.get("artifact_transport_receipt")
             if not isinstance(artifact_transport_receipt, dict):
                 artifact_transport_receipt = {}
+            artifact_integrity_summary = ModelOpsJobRegistry._artifact_integrity_summary(
+                artifact_integrity
+            )
             downloaded_bytes = int(manifest.get("downloaded_bytes", 0))
             total_bytes = int(manifest.get("total_bytes", 0))
             partial_path = str(manifest.get("partial_path", ""))
@@ -1257,7 +1260,8 @@ class ModelOpsJobRegistry:
                     "retry_after_ms": int(manifest.get("retry_after_ms", 0)),
                     "last_error": str(manifest.get("last_error", "")),
                     "artifact_integrity": artifact_integrity,
-                    "artifact_integrity_status": str(artifact_integrity.get("status", "")),
+                    "artifact_integrity_status": artifact_integrity_summary["status"],
+                    "artifact_integrity_summary": artifact_integrity_summary,
                     "artifact_transport_receipt": artifact_transport_receipt,
                     "artifact_transport_status": str(artifact_transport_receipt.get("status", "")),
                     "output_dir": str(manifest.get("output_dir", job["output_dir"])),
@@ -1291,6 +1295,18 @@ class ModelOpsJobRegistry:
                 }
             )
         return downloads
+
+    @staticmethod
+    def _artifact_integrity_summary(artifact_integrity: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "status": str(artifact_integrity.get("status", "")),
+            "verification_mode": str(artifact_integrity.get("verification_mode", "")),
+            "policy_present": artifact_integrity.get("policy_present") is True,
+            "digest": str(artifact_integrity.get("digest", "")),
+            "actual_digest": str(artifact_integrity.get("actual_digest", "")),
+            "checked_at": str(artifact_integrity.get("checked_at", "")),
+            "failure_reason": str(artifact_integrity.get("failure_reason", "")),
+        }
 
     @staticmethod
     def strict_activation_receipt_passed(manifest: dict[str, Any]) -> bool:

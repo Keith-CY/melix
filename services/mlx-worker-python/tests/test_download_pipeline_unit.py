@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,26 @@ import pytest
 from packages.protocol.python.worker.v1 import maintenance_pb2
 from worker.model_ops.download_pipeline import DownloadPipeline
 from worker.model_ops.errors import ModelOperationError
+
+
+def _expected_directory_snapshot_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    file_paths = sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    )
+    for path in file_paths:
+        relative_path = path.relative_to(root).as_posix()
+        file_bytes = path.read_bytes()
+        digest.update(b"file\0")
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(len(file_bytes)).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(file_bytes)
+        digest.update(b"\0")
+    return f"sha256:{digest.hexdigest()}"
 
 
 def test_selected_mirror_uses_first_configured_mirror() -> None:
@@ -669,7 +690,9 @@ def test_strict_managed_download_requires_digest_before_materializing_artifact(t
 def test_strict_managed_download_with_digest_materializes_artifact(tmp_path: Path) -> None:
     pipeline = DownloadPipeline()
     source_path = tmp_path / "source.bin"
-    source_path.write_bytes(b"abcdef")
+    source_bytes = b"abcdef"
+    source_path.write_bytes(source_bytes)
+    digest = hashlib.sha256(source_bytes).hexdigest()
     request = maintenance_pb2.ConvertModelRequest(
         source_model="mlx-community/demo",
         ext={
@@ -677,17 +700,153 @@ def test_strict_managed_download_with_digest_materializes_artifact(tmp_path: Pat
             "melix.target_scope": "hub:mlx-community/demo@main",
             "melix.operation_kind": "managed_model_install",
             "melix.strict_install_mode": "true",
-            "melix.artifact_digest": "sha256:abc",
+            "melix.artifact_digest": f"sha256:{digest}",
         },
     )
 
     result = pipeline.run(request, job_id="job-strict-digest", output_dir=tmp_path / "output")
 
-    assert result.output_path.read_bytes() == b"abcdef"
+    assert result.output_path.read_bytes() == source_bytes
     payload = json.loads(result.snapshots[-1].manifest_json)
     assert payload["status"] == "completed"
-    assert payload["artifact_integrity"]["status"] == "passed"
-    assert payload["artifact_integrity"]["digest"] == "sha256:abc"
+    assert payload["artifact_integrity"] == {
+        "verification_mode": "sha256",
+        "policy_present": True,
+        "digest": f"sha256:{digest}",
+        "actual_digest": f"sha256:{digest}",
+        "checked_at": payload["artifact_integrity"]["checked_at"],
+        "failure_reason": "",
+        "status": "passed",
+    }
+    assert payload["artifact_integrity"]["checked_at"] != "not_recorded"
+    assert payload["activated"] is True
+
+
+def test_strict_managed_download_rejects_digest_mismatch_before_activation(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_bytes = b"abcdef"
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(source_bytes)
+    declared_digest = "sha256:" + ("0" * 64)
+    actual_digest = f"sha256:{hashlib.sha256(source_bytes).hexdigest()}"
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "melix.target_scope": "hub:mlx-community/demo@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": declared_digest,
+        },
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        pipeline.run(request, job_id="job-strict-digest-mismatch", output_dir=output_dir)
+
+    assert exc_info.value.code == "artifact_integrity_mismatch"
+    state_payload = json.loads(exc_info.value.details["state_json"])
+    assert state_payload["status"] == "failed"
+    assert state_payload["terminal_state"] == "failed"
+    assert state_payload["last_error"] == "digest_mismatch"
+    assert state_payload["artifact_integrity"] == {
+        "verification_mode": "sha256",
+        "policy_present": True,
+        "digest": declared_digest,
+        "actual_digest": actual_digest,
+        "checked_at": state_payload["artifact_integrity"]["checked_at"],
+        "failure_reason": "digest_mismatch",
+        "status": "failed",
+    }
+    assert state_payload["artifact_integrity"]["checked_at"] != "not_recorded"
+    assert state_payload["partial_lifecycle"] == "failed_kept_for_resume"
+    assert state_payload["activated"] is False
+    assert not (output_dir / "download.artifact").exists()
+    assert (output_dir / "download.artifact.partial").read_bytes() == source_bytes
+
+
+def test_strict_integrity_rejects_missing_actual_digest_before_activation(tmp_path: Path) -> None:
+    partial_path = tmp_path / "download.artifact.partial"
+    partial_path.write_bytes(b"abcdef")
+    state_path = tmp_path / "state.json"
+    manifest_payload = {
+        "state_path": str(state_path),
+        "artifact_integrity": {
+            "verification_mode": "sha256",
+            "policy_present": True,
+            "digest": "sha256:" + ("a" * 64),
+            "actual_digest": "",
+            "checked_at": "2026-06-21T00:00:00Z",
+            "failure_reason": "",
+            "status": "passed",
+        },
+        "activated": False,
+    }
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        DownloadPipeline._raise_if_strict_integrity_mismatch(
+            manifest_payload=manifest_payload,
+            partial_path=partial_path,
+            ext={"melix.strict_install_mode": "true"},
+        )
+
+    assert exc_info.value.code == "artifact_integrity_mismatch"
+    state_payload = json.loads(exc_info.value.details["state_json"])
+    assert state_payload["status"] == "failed"
+    assert state_payload["terminal_state"] == "failed"
+    assert state_payload["last_error"] == "digest_mismatch"
+    assert state_payload["artifact_integrity"]["failure_reason"] == "digest_mismatch"
+    assert state_payload["artifact_integrity"]["status"] == "failed"
+    assert state_payload["activated"] is False
+    assert state_payload["partial_lifecycle"] == "failed_kept_for_resume"
+
+
+def test_artifact_integrity_receipt_normalizes_bare_sha256_digest() -> None:
+    digest = "a" * 64
+
+    receipt = DownloadPipeline._artifact_integrity_receipt(
+        ext={"sha256": digest},
+        status="pending",
+    )
+
+    assert receipt["verification_mode"] == "sha256"
+    assert receipt["digest"] == f"sha256:{digest}"
+    assert receipt["actual_digest"] == ""
+
+
+def test_strict_managed_download_rejects_unsupported_digest_policy_before_activation(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_bytes = b"abcdef"
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(source_bytes)
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "melix.target_scope": "hub:mlx-community/demo@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": "md5:not-supported",
+        },
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        pipeline.run(request, job_id="job-strict-unsupported-digest", output_dir=output_dir)
+
+    assert exc_info.value.code == "artifact_integrity_unsupported"
+    state_payload = json.loads(exc_info.value.details["state_json"])
+    assert state_payload["status"] == "failed"
+    assert state_payload["terminal_state"] == "failed"
+    assert state_payload["last_error"] == "unsupported_artifact_digest"
+    assert state_payload["artifact_integrity"]["verification_mode"] == "sha256"
+    assert state_payload["artifact_integrity"]["digest"] == "md5:not-supported"
+    assert state_payload["artifact_integrity"]["actual_digest"] == f"sha256:{hashlib.sha256(source_bytes).hexdigest()}"
+    assert state_payload["artifact_integrity"]["failure_reason"] == "unsupported_artifact_digest"
+    assert state_payload["artifact_integrity"]["status"] == "failed"
+    assert state_payload["activated"] is False
+    assert not (output_dir / "download.artifact").exists()
+    assert (output_dir / "download.artifact.partial").read_bytes() == source_bytes
 
 
 def test_strict_managed_hub_import_requires_digest_before_snapshot_resolution(tmp_path: Path) -> None:
@@ -721,6 +880,99 @@ def test_strict_managed_hub_import_requires_digest_before_snapshot_resolution(tm
     assert state_payload["artifact_integrity"]["failure_reason"] == "missing_artifact_digest"
     assert state_payload["output_path"] == ""
     assert state_payload["partial_path"] == ""
+
+
+def test_strict_managed_hub_import_with_matching_snapshot_digest_activates(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_dir = tmp_path / "managed-snapshot"
+    nested_dir = source_dir / "tokenizer"
+    nested_dir.mkdir(parents=True)
+    (source_dir / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
+    (nested_dir / "tokenizer.json").write_text('{"version":"1.0"}\n', encoding="utf-8")
+    (source_dir / "model.safetensors").write_bytes(b"weights")
+    declared_digest = _expected_directory_snapshot_digest(source_dir)
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_dir),
+            "melix.managed_import": "true",
+            "melix.source_kind": "hub_repo",
+            "melix.hf_repo_id": "mlx-community/demo",
+            "melix.hf_revision": "main",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": declared_digest,
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-strict-hub-digest", output_dir=output_dir)
+
+    payload = json.loads(result.snapshots[-1].manifest_json)
+    assert result.output_path == source_dir.resolve()
+    assert payload["status"] == "completed"
+    assert payload["stage"] == "materialize"
+    assert payload["managed_model_path"] == str(source_dir.resolve())
+    assert payload["artifact_integrity"] == {
+        "verification_mode": "sha256",
+        "policy_present": True,
+        "digest": declared_digest,
+        "actual_digest": declared_digest,
+        "checked_at": payload["artifact_integrity"]["checked_at"],
+        "failure_reason": "",
+        "status": "passed",
+    }
+    assert payload["artifact_integrity"]["checked_at"] != "not_recorded"
+    assert payload["activated"] is True
+
+
+def test_strict_managed_hub_import_rejects_snapshot_digest_mismatch_before_activation(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_dir = tmp_path / "managed-snapshot"
+    source_dir.mkdir()
+    (source_dir / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
+    (source_dir / "model.safetensors").write_bytes(b"weights")
+    declared_digest = "sha256:" + ("0" * 64)
+    actual_digest = _expected_directory_snapshot_digest(source_dir)
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_dir),
+            "melix.managed_import": "true",
+            "melix.source_kind": "hub_repo",
+            "melix.hf_repo_id": "mlx-community/demo",
+            "melix.hf_revision": "main",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": declared_digest,
+        },
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        pipeline.run(request, job_id="job-strict-hub-digest-mismatch", output_dir=output_dir)
+
+    assert exc_info.value.code == "artifact_integrity_mismatch"
+    state_payload = json.loads((output_dir / "download.state.json").read_text(encoding="utf-8"))
+    assert json.loads(exc_info.value.details["state_json"]) == state_payload
+    assert state_payload["status"] == "failed"
+    assert state_payload["terminal_state"] == "failed"
+    assert state_payload["last_error"] == "digest_mismatch"
+    assert state_payload["stage"] == "materialize"
+    assert state_payload["managed_model_path"] == str(source_dir.resolve())
+    assert state_payload["artifact_integrity"] == {
+        "verification_mode": "sha256",
+        "policy_present": True,
+        "digest": declared_digest,
+        "actual_digest": actual_digest,
+        "checked_at": state_payload["artifact_integrity"]["checked_at"],
+        "failure_reason": "digest_mismatch",
+        "status": "failed",
+    }
+    assert state_payload["artifact_integrity"]["checked_at"] != "not_recorded"
+    assert state_payload["partial_path"] == ""
+    assert state_payload["partial_bytes"] == 0
+    assert state_payload["resume_eligible"] is False
+    assert state_payload["partial_lifecycle"] == "none"
+    assert state_payload["activated"] is False
 
 
 def test_operation_identity_respects_explicit_id_and_local_source_fallback(tmp_path: Path) -> None:

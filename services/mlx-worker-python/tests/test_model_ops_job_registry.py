@@ -482,6 +482,15 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
     assert download["retry_after_ms"] == 500
     assert download["last_error"] == ""
     assert download["artifact_integrity_status"] == "passed"
+    assert download["artifact_integrity_summary"] == {
+        "status": "passed",
+        "verification_mode": "receipt_fixture",
+        "policy_present": True,
+        "digest": "sha256:abc",
+        "actual_digest": "",
+        "checked_at": "2026-05-24T00:00:00Z",
+        "failure_reason": "",
+    }
     assert download["artifact_integrity"]["policy_present"] is True
     assert download["artifact_transport_status"] == "completed"
     assert download["artifact_transport_receipt"]["effective_transport"] == "http_range_resume"
@@ -505,6 +514,15 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
     assert refreshed_download["operation_id"] == "managed_model_install:def"
     assert refreshed_download["artifact_integrity"] == {}
     assert refreshed_download["artifact_integrity_status"] == ""
+    assert refreshed_download["artifact_integrity_summary"] == {
+        "status": "",
+        "verification_mode": "",
+        "policy_present": False,
+        "digest": "",
+        "actual_digest": "",
+        "checked_at": "",
+        "failure_reason": "",
+    }
     assert refreshed_download["artifact_transport_receipt"] == {}
     assert refreshed_download["artifact_transport_status"] == ""
 
