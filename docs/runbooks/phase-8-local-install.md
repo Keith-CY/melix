@@ -189,6 +189,13 @@ records the declared `digest`, matching `actual_digest`, real `checked_at`, and
 failed receipt with the declared and actual directory digests, and sets
 `activated=false`.
 
+Model-ops download diagnostics preserve the full `artifact_integrity` receipt
+and expose a normalized `artifact_integrity_summary` object for stable
+machine-readable reporting. The summary always includes `status`,
+`verification_mode`, `policy_present`, `digest`, `actual_digest`, `checked_at`,
+and `failure_reason`; malformed or missing receipt payloads use empty-string
+defaults and `policy_present=false` rather than omitting the fields.
+
 The current strict activation gate is a worker-side fixture helper for
 receipts: activation is eligible only when the receipt is completed and
 `artifact_integrity.status` is `passed`. This is not a full signature system,
