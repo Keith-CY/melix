@@ -312,6 +312,55 @@ def test_trust_policy_caches_config_json_by_file_stat(
     assert read_bytes_calls == 1
 
 
+def test_trust_policy_skips_expanduser_for_plain_model_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _custom_loader_text_model(tmp_path)
+
+    def fail_expanduser(path: Path) -> Path:  # pragma: no cover - only runs on regression.
+        raise AssertionError(f"plain model path should not call expanduser(): {path}")
+
+    monkeypatch.setattr(model_load_trust_module.Path, "expanduser", fail_expanduser)
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+        resolve_model_load_trust_policy(
+            model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=RecordingTextBackend(),
+        )
+
+    assert exc_info.value.policy.custom_loader_required is True
+    assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
+
+
+def test_trust_policy_expands_tilde_model_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    model_dir = tmp_path / "tilde-custom-loader-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(
+        json.dumps({"auto_map": {"AutoModelForCausalLM": "custom.Loader"}}),
+        encoding="utf-8",
+    )
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = "~/tilde-custom-loader-model"
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+        resolve_model_load_trust_policy(
+            model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=RecordingTextBackend(),
+        )
+
+    assert exc_info.value.policy.custom_loader_required is True
+    assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
+
+
 def test_trust_policy_treats_missing_config_json_as_absent(tmp_path: Path) -> None:
     model_dir = tmp_path / "plain-model"
     model_dir.mkdir()
