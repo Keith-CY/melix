@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import time
 from unittest.mock import Mock
 
 import pytest
@@ -112,6 +113,40 @@ def test_run_reuses_public_ext_across_many_snapshots(
     assert payload["terminal_state"] == "completed"
 
 
+def test_run_derives_partial_lifecycle_without_per_snapshot_file_stat(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(b"abcdef")
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "chunk_bytes": "1",
+        },
+    )
+    partial_state = Mock(side_effect=AssertionError("snapshot hot path should not stat partial file"))
+    monkeypatch.setattr(
+        DownloadPipeline,
+        "_partial_file_state",
+        staticmethod(partial_state),
+    )
+
+    result = pipeline.run(request, job_id="job-hot-path", output_dir=tmp_path / "output")
+
+    assert result.output_path.read_bytes() == b"abcdef"
+    assert partial_state.call_count == 0
+    running_payload = json.loads(result.snapshots[1].manifest_json)
+    assert "partial_bytes" not in running_payload
+    assert "resume_eligible" not in running_payload
+    assert "partial_lifecycle" not in running_payload
+    completed_payload = json.loads(result.snapshots[-1].manifest_json)
+    assert "partial_bytes" not in completed_payload
+    assert "partial_lifecycle" not in completed_payload
+
+
 def test_run_plain_download_does_not_build_operation_receipts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -219,6 +254,8 @@ def test_run_resumes_named_artifact_from_preserved_partial(tmp_path: Path) -> No
             "source_path": str(source_path),
             "output_filename": "model.gguf",
             "chunk_bytes": "2",
+            "melix.target_scope": "hub:mlx-community/vlm@main",
+            "melix.operation_kind": "managed_model_install",
         },
     )
 
@@ -229,6 +266,85 @@ def test_run_resumes_named_artifact_from_preserved_partial(tmp_path: Path) -> No
     payload = json.loads(result.snapshots[-1].manifest_json)
     assert payload["resume_used"] is True
     assert payload["resume_from_bytes"] == 4
+    assert payload["partial_bytes"] == 0
+    assert payload["resume_eligible"] is False
+    assert payload["stale_partial_removed"] is False
+    assert payload["partial_lifecycle"] == "completed_activated"
+    assert payload["activated"] is True
+
+
+def test_run_removes_stale_partial_before_resume(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.gguf"
+    source_path.write_bytes(b"abcdefgh")
+    output_dir = tmp_path / "flat-cache"
+    output_dir.mkdir()
+    partial_path = output_dir / "model.gguf.partial"
+    partial_path.write_bytes(b"stale")
+    old_timestamp = time.time() - 30
+    os.utime(partial_path, (old_timestamp, old_timestamp))
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/vlm",
+        ext={
+            "source_path": str(source_path),
+            "output_filename": "model.gguf",
+            "chunk_bytes": "4",
+            "melix.target_scope": "hub:mlx-community/vlm@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.stale_partial_after_ms": "1",
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-stale-partial", output_dir=output_dir)
+
+    assert result.output_path.read_bytes() == b"abcdefgh"
+    prepare_payload = json.loads(result.snapshots[0].manifest_json)
+    completed_payload = json.loads(result.snapshots[-1].manifest_json)
+    assert prepare_payload["partial_bytes"] == len(b"stale")
+    assert prepare_payload["partial_age_ms"] >= 1
+    assert prepare_payload["resume_eligible"] is False
+    assert prepare_payload["stale_partial_removed"] is True
+    assert prepare_payload["partial_lifecycle"] == "stale_removed"
+    assert prepare_payload["activated"] is False
+    assert completed_payload["resume_used"] is False
+    assert completed_payload["resume_from_bytes"] == 0
+    assert completed_payload["partial_bytes"] == 0
+    assert completed_payload["stale_partial_removed"] is True
+    assert completed_payload["partial_lifecycle"] == "completed_activated"
+    assert completed_payload["activated"] is True
+    assert not partial_path.exists()
+
+
+def test_sweep_stale_partial_removes_complete_partial(tmp_path: Path) -> None:
+    partial_path = tmp_path / "download.artifact.partial"
+    partial_path.write_bytes(b"abcdefgh")
+
+    removed, partial_bytes, partial_age_ms = DownloadPipeline._sweep_stale_partial(
+        partial_path=partial_path,
+        total_bytes=8,
+        ext={"melix.stale_partial_after_ms": "60000"},
+    )
+
+    assert removed is True
+    assert partial_bytes == 8
+    assert partial_age_ms >= 0
+    assert not partial_path.exists()
+
+
+def test_sweep_stale_partial_keeps_recent_partial(tmp_path: Path) -> None:
+    partial_path = tmp_path / "download.artifact.partial"
+    partial_path.write_bytes(b"abcd")
+
+    removed, partial_bytes, partial_age_ms = DownloadPipeline._sweep_stale_partial(
+        partial_path=partial_path,
+        total_bytes=8,
+        ext={"melix.stale_partial_after_ms": "60000"},
+    )
+
+    assert removed is False
+    assert partial_bytes == 0
+    assert partial_age_ms == 0
+    assert partial_path.read_bytes() == b"abcd"
 
 
 def test_managed_download_manifest_records_operation_receipt_fields(tmp_path: Path) -> None:
@@ -437,6 +553,9 @@ def test_terminal_receipts_record_stalled_and_cancelled_integrity_failures(tmp_p
         "state_path": str(state_path),
         "ext": {"melix.artifact_digest": "sha256:abc"},
         "stall_reason": "no_progress_timeout",
+        "partial_path": str(tmp_path / "download.artifact.partial"),
+        "downloaded_bytes": 128,
+        "total_bytes": 1024,
     }
 
     stalled = json.loads(
@@ -449,5 +568,14 @@ def test_terminal_receipts_record_stalled_and_cancelled_integrity_failures(tmp_p
     assert stalled["last_error"] == "no_progress_timeout"
     assert stalled["artifact_integrity"]["status"] == "failed"
     assert stalled["artifact_integrity"]["digest"] == "sha256:abc"
+    assert stalled["partial_bytes"] == 128
+    assert stalled["resume_eligible"] is True
+    assert stalled["stale_partial_removed"] is False
+    assert stalled["partial_lifecycle"] == "stalled_kept_for_resume"
+    assert stalled["activated"] is False
     assert cancelled["last_error"] == "download_cancelled"
     assert cancelled["artifact_integrity"]["failure_reason"] == "download_cancelled"
+    assert cancelled["partial_bytes"] == 128
+    assert cancelled["resume_eligible"] is True
+    assert cancelled["partial_lifecycle"] == "cancelled_kept_for_resume"
+    assert cancelled["activated"] is False

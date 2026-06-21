@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,9 @@ _HF_TOKEN_EXT_KEYS = {
     "HUGGINGFACE_HUB_TOKEN",
     "HF_TOKEN",
 }
+_PARTIAL_RESUME_ELIGIBLE_STATES = frozenset(
+    {"running", "retrying", "in_progress", "failed", "stalled", "cancelled"}
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,9 @@ class _DownloadManifestContext:
     base_payload: dict[str, Any]
     pending_artifact_integrity: dict[str, Any] | None
     passed_artifact_integrity: dict[str, Any] | None
+    stale_partial_removed: bool
+    stale_partial_bytes: int
+    stale_partial_age_ms: int
 
 
 @dataclass(frozen=True)
@@ -111,6 +118,11 @@ class DownloadPipeline:
 
         retry_count = 0
         stall_detection_count = 0
+        stale_partial_removed, stale_partial_bytes, stale_partial_age_ms = self._sweep_stale_partial(
+            partial_path=partial_path,
+            total_bytes=total_bytes,
+            ext=ext,
+        )
         resume_from_bytes = self._resume_from_bytes(partial_path=partial_path, total_bytes=total_bytes)
         resume_used = resume_from_bytes > 0
         manifest_context = self._manifest_context(
@@ -122,6 +134,9 @@ class DownloadPipeline:
             state_path=state_path,
             selected_mirror=selected_mirror,
             ext=ext,
+            stale_partial_removed=stale_partial_removed,
+            stale_partial_bytes=stale_partial_bytes,
+            stale_partial_age_ms=stale_partial_age_ms,
         )
         if strict_integrity_preflight:
             self._raise_if_strict_integrity_missing(
@@ -334,6 +349,40 @@ class DownloadPipeline:
             return 0
         return min(partial_path.stat().st_size, total_bytes)
 
+    @classmethod
+    def _sweep_stale_partial(
+        cls,
+        *,
+        partial_path: Path,
+        total_bytes: int,
+        ext: dict[str, str],
+    ) -> tuple[bool, int, int]:
+        max_age_ms = max(
+            0,
+            cls._int(
+                ext.get("melix.stale_partial_after_ms") or ext.get("stale_partial_after_ms"),
+                default=0,
+            ),
+        )
+        if max_age_ms <= 0 or not partial_path.exists():
+            return False, 0, 0
+
+        partial_bytes, partial_age_ms = cls._partial_file_state(partial_path)
+        if partial_bytes <= 0 or (total_bytes > 0 and partial_bytes >= total_bytes):
+            partial_path.unlink(missing_ok=True)
+            return True, partial_bytes, partial_age_ms
+        if partial_age_ms >= max_age_ms:
+            partial_path.unlink(missing_ok=True)
+            return True, partial_bytes, partial_age_ms
+        return False, 0, 0
+
+    @staticmethod
+    def _partial_file_state(partial_path: Path) -> tuple[int, int]:
+        if not partial_path.exists():
+            return 0, 0
+        stat_result = partial_path.stat()
+        return stat_result.st_size, max(0, int((time.time() - stat_result.st_mtime) * 1000))
+
     @staticmethod
     def _selected_mirror(ext: dict[str, str]) -> str:
         explicit = ext.get("mirror_url", "").strip()
@@ -493,6 +542,12 @@ class DownloadPipeline:
             "retry_count": 0,
             "stall_detection_count": 0,
             "stall_reason": "",
+            "partial_bytes": 0,
+            "partial_age_ms": 0,
+            "resume_eligible": False,
+            "stale_partial_removed": False,
+            "partial_lifecycle": "completed_activated",
+            "activated": True,
             "ext": {
                 **public_ext,
                 "melix.hf_repo_id": repo_id,
@@ -602,6 +657,9 @@ class DownloadPipeline:
         state_path: Path,
         selected_mirror: str,
         ext: dict[str, str],
+        stale_partial_removed: bool,
+        stale_partial_bytes: int,
+        stale_partial_age_ms: int,
     ) -> _DownloadManifestContext:
         public_ext = self._public_ext(request.ext)
         receipt_enabled = self.uses_operation_receipt(ext)
@@ -641,6 +699,9 @@ class DownloadPipeline:
                 if receipt_enabled
                 else None
             ),
+            stale_partial_removed=stale_partial_removed,
+            stale_partial_bytes=stale_partial_bytes,
+            stale_partial_age_ms=stale_partial_age_ms,
         )
 
     @staticmethod
@@ -687,7 +748,71 @@ class DownloadPipeline:
                 if terminal_state == "completed"
                 else manifest_context.pending_artifact_integrity
             )
+            payload.update(
+                DownloadPipeline._partial_lifecycle_receipt(
+                    total_bytes=total_bytes,
+                    downloaded_bytes=downloaded_bytes,
+                    terminal_state=terminal_state,
+                    stale_partial_removed=manifest_context.stale_partial_removed,
+                    stale_partial_bytes=manifest_context.stale_partial_bytes,
+                    stale_partial_age_ms=manifest_context.stale_partial_age_ms,
+                )
+            )
         return payload
+
+    @staticmethod
+    def _partial_lifecycle_receipt(
+        *,
+        total_bytes: int,
+        downloaded_bytes: int,
+        terminal_state: str,
+        stale_partial_removed: bool = False,
+        stale_partial_bytes: int = 0,
+        stale_partial_age_ms: int = 0,
+    ) -> dict[str, Any]:
+        partial_bytes = 0
+        partial_age_ms = 0
+        if downloaded_bytes > 0 and (total_bytes == 0 or downloaded_bytes < total_bytes):
+            partial_bytes = downloaded_bytes
+        if stale_partial_removed and terminal_state != "completed":
+            partial_bytes = stale_partial_bytes
+            partial_age_ms = stale_partial_age_ms
+
+        activated = terminal_state == "completed"
+        resume_eligible = (
+            partial_bytes > 0
+            and not activated
+            and not stale_partial_removed
+            and (total_bytes == 0 or partial_bytes < total_bytes)
+            and terminal_state in _PARTIAL_RESUME_ELIGIBLE_STATES
+        )
+
+        if activated:
+            partial_bytes = 0
+            partial_age_ms = 0
+            lifecycle = "completed_activated"
+        elif stale_partial_removed:
+            resume_eligible = False
+            lifecycle = "stale_removed"
+        elif partial_bytes <= 0:
+            lifecycle = "none"
+        elif terminal_state == "cancelled":
+            lifecycle = "cancelled_kept_for_resume"
+        elif terminal_state == "stalled":
+            lifecycle = "stalled_kept_for_resume"
+        elif terminal_state == "failed":
+            lifecycle = "failed_kept_for_resume"
+        else:
+            lifecycle = "resume_candidate" if resume_eligible else "partial_present"
+
+        return {
+            "partial_bytes": partial_bytes,
+            "partial_age_ms": partial_age_ms,
+            "resume_eligible": resume_eligible,
+            "stale_partial_removed": stale_partial_removed,
+            "partial_lifecycle": lifecycle,
+            "activated": activated,
+        }
 
     @staticmethod
     def _write_manifest_json(state_path: Path, payload: dict[str, Any]) -> str:
@@ -722,6 +847,16 @@ class DownloadPipeline:
                 status="failed",
                 failure_reason="download_cancelled",
             )
+        payload.update(
+            DownloadPipeline._partial_lifecycle_receipt(
+                total_bytes=int(payload.get("total_bytes", 0)),
+                downloaded_bytes=int(payload.get("downloaded_bytes", 0)),
+                terminal_state=str(payload.get("terminal_state", payload.get("status", ""))),
+                stale_partial_removed=bool(payload.get("stale_partial_removed", False)),
+                stale_partial_bytes=int(payload.get("partial_bytes", 0)),
+                stale_partial_age_ms=int(payload.get("partial_age_ms", 0)),
+            )
+        )
         return DownloadPipeline._write_manifest_json(Path(str(payload["state_path"])), payload)
 
     @classmethod
@@ -857,6 +992,12 @@ class DownloadPipeline:
             "retry_count": 0,
             "stall_detection_count": 0,
             "stall_reason": "",
+            "partial_bytes": 0,
+            "partial_age_ms": 0,
+            "resume_eligible": False,
+            "stale_partial_removed": False,
+            "partial_lifecycle": "none",
+            "activated": False,
             "ext": public_ext,
             "metrics": {
                 "download.resume_success_rate": 0.0,
