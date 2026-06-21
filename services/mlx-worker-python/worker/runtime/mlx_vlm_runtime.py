@@ -1954,7 +1954,7 @@ class MLXVLMRuntime:
                     prompt_text=prompt_text,
                     include_chat_messages=include_chat_messages,
                 )
-        self._record_fast_path_probe(loaded_model, prepared)
+        self._record_fast_path_probe(loaded_model, prepared, family_config=family_config)
         return prepared
 
     def prompt_token_count(
@@ -3024,6 +3024,7 @@ class MLXVLMRuntime:
         signature: tuple[str, ...] | None = None,
         seq_len: int | None = None,
         attention_policy: AttentionPrefillPolicyDecision | None = None,
+        family_config: Any | None = None,
     ) -> None:
         signature = signature or fast_path_probe_signature(
             loaded_model,
@@ -3039,20 +3040,22 @@ class MLXVLMRuntime:
             prepared_request=prepared_request,
             fallback_reason=fast_path.multimodal_fallback_reason,
             seq_len=seq_len,
+            family_config=family_config,
         )
-        hybrid_seq_len = int(position_metadata_receipt["seq_len"])
-        hybrid_state_patch_receipt = (
-            NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT
-            if fast_path.hybrid_state_patch_mode == "not_applicable"
-            else self._hybrid_state_patch_receipt(
+        if fast_path.hybrid_state_patch_mode == "not_applicable":
+            hybrid_state_patch_receipt = NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT
+            hybrid_state_advance_count = 0
+        else:
+            hybrid_state_patch_receipt = self._hybrid_state_patch_receipt(
                 loaded_model=loaded_model,
                 prepared_request=prepared_request,
                 patch_mode=fast_path.hybrid_state_patch_mode,
                 fallback_reason=fast_path.multimodal_fallback_reason,
                 family_fast_path_override_count=fast_path.family_fast_path_override_count,
-                seq_len=hybrid_seq_len,
+                seq_len=int(position_metadata_receipt["seq_len"]),
+                family_config=family_config,
             )
-        )
+            hybrid_state_advance_count = int(hybrid_state_patch_receipt["cache_advance_count"])
         self._last_fast_path_signature = signature
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
@@ -3074,11 +3077,7 @@ class MLXVLMRuntime:
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
             hybrid_state_patch_mode=fast_path.hybrid_state_patch_mode,
-            hybrid_state_advance_count=(
-                0
-                if fast_path.hybrid_state_patch_mode == "not_applicable"
-                else int(hybrid_state_patch_receipt["cache_advance_count"])
-            ),
+            hybrid_state_advance_count=hybrid_state_advance_count,
             family_fast_path_override_count=fast_path.family_fast_path_override_count,
             attention_budget_receipt=build_attention_budget_receipt(
                 attention_policy
@@ -3100,9 +3099,13 @@ class MLXVLMRuntime:
         prepared_request: PreparedVisionRequest,
         fallback_reason: str,
         seq_len: int | None = None,
+        family_config: Any | None = None,
     ) -> dict[str, object]:
         if seq_len is None:
-            seq_len = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+            if family_config is None:
+                seq_len = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+            else:
+                seq_len = family_config.prompt_token_count(prepared_request)
         return build_position_metadata_receipt(
             prepared_request=prepared_request,
             seq_len=seq_len,
@@ -3118,8 +3121,10 @@ class MLXVLMRuntime:
         fallback_reason: str,
         family_fast_path_override_count: int,
         seq_len: int,
+        family_config: Any | None = None,
     ) -> dict[str, object]:
-        family_config = self._family_config(loaded_model)
+        if family_config is None:
+            family_config = self._family_config(loaded_model)
         family_id = str(getattr(family_config, "family_id", "") or "")
         media_count = (
             len(prepared_request.images)
