@@ -599,6 +599,23 @@ def test_score_final_result_aggregates_wide_json_without_losing_ignored_paths() 
     assert score.typed_score == pytest.approx(0.75)
 
 
+def test_json_typed_score_preserves_nested_ignored_paths_with_prefix_reuse() -> None:
+    expected = {
+        "outer": {
+            "kept": "same",
+            "metadata": {"confidence": 1.0, "evidence": ["source"]},
+        }
+    }
+    actual = {
+        "outer": {
+            "kept": "same",
+            "metadata": {"confidence": 0.0, "evidence": ["different"]},
+        }
+    }
+
+    assert _json_typed_score(expected=expected, actual=actual, ignored_paths={"outer.metadata"}) == 1.0
+
+
 def test_score_final_result_recurses_into_partially_different_json_lists() -> None:
     score = score_final_result(
         extracted_result=json.dumps({"scores": [1, 99, 3]}),

@@ -498,8 +498,9 @@ def _json_typed_score(*, expected: Any, actual: Any, ignored_paths: Collection[s
         actual_get = actual_dict.get if actual_dict is not None else None
         ignored_contains = ignored_paths.__contains__
         score_child = _json_typed_score
+        child_prefix = f"{path}." if path else ""
         for key, expected_value in expected.items():
-            child_path = f"{path}.{key}" if path else key
+            child_path = child_prefix + key
             if ignored_contains(child_path):
                 continue
             actual_value = actual_get(key) if actual_get is not None else None
