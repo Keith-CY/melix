@@ -94,6 +94,42 @@ def test_directory_size_does_not_follow_symlinked_entries(tmp_path: Path) -> Non
     assert DownloadPipeline._directory_size(model_dir) == len(b"weights")
 
 
+def test_directory_snapshot_digest_uses_scandir_stack_without_path_rglob(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "managed-snapshot"
+    nested_dir = model_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    (model_dir / "config.json").write_bytes(b"{}")
+    (nested_dir / "weights.safetensors").write_bytes(b"weights")
+
+    expected_digest = _expected_directory_snapshot_digest(model_dir).removeprefix("sha256:")
+
+    def fail_rglob(self: Path, pattern: str):
+        raise AssertionError("expected explicit os.scandir stack, not Path.rglob")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    assert DownloadPipeline._sha256_directory_snapshot(model_dir) == expected_digest
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink support unavailable")
+def test_directory_snapshot_digest_does_not_follow_symlinked_entries(tmp_path: Path) -> None:
+    model_dir = tmp_path / "managed-snapshot"
+    nested_dir = model_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    (nested_dir / "weights.safetensors").write_bytes(b"weights")
+    outside_file = tmp_path / "outside.safetensors"
+    outside_file.write_bytes(b"outside")
+    os.symlink(outside_file, model_dir / "linked-file.safetensors")
+    os.symlink(nested_dir, model_dir / "linked-dir")
+
+    assert DownloadPipeline._sha256_directory_snapshot(model_dir) == _expected_directory_snapshot_digest(
+        model_dir
+    ).removeprefix("sha256:")
+
+
 def test_run_reuses_public_ext_across_many_snapshots(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

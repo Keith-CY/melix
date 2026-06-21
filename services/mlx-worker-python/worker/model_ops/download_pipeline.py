@@ -1428,24 +1428,49 @@ class DownloadPipeline:
     @staticmethod
     def _sha256_directory_snapshot(path: Path) -> str:
         digest = hashlib.sha256()
-        file_paths = sorted(
-            candidate
-            for candidate in path.rglob("*")
-            if candidate.is_file() and not candidate.is_symlink()
-        )
-        for file_path in file_paths:
-            relative_path = file_path.relative_to(path).as_posix()
-            file_size = file_path.stat().st_size
+        for relative_path, file_path, file_size in DownloadPipeline._directory_snapshot_files(path):
             digest.update(b"file\0")
             digest.update(relative_path.encode("utf-8"))
             digest.update(b"\0")
             digest.update(str(file_size).encode("ascii"))
             digest.update(b"\0")
-            with file_path.open("rb") as file:
+            with open(file_path, "rb") as file:
                 for chunk in iter(lambda: file.read(1024 * 1024), b""):
                     digest.update(chunk)
             digest.update(b"\0")
         return digest.hexdigest()
+
+    @staticmethod
+    def _directory_snapshot_files(path: Path) -> list[tuple[str, str, int]]:
+        root_path = os.fspath(path)
+        root_prefix_length = len(root_path.rstrip(os.sep)) + 1
+        files: list[tuple[str, str, int]] = []
+        append_file = files.append
+        stack = [root_path]
+        append_directory = stack.append
+        pop_directory = stack.pop
+        scandir = os.scandir
+        is_dir = os.DirEntry.is_dir
+        is_file = os.DirEntry.is_file
+        stat_entry = os.DirEntry.stat
+        while stack:
+            current = pop_directory()
+            with scandir(current) as entries:
+                for entry in entries:
+                    if is_dir(entry, follow_symlinks=False):
+                        append_directory(entry.path)
+                        continue
+                    if is_file(entry, follow_symlinks=False):
+                        relative_path = entry.path[root_prefix_length:].replace(os.sep, "/")
+                        append_file(
+                            (
+                                relative_path,
+                                entry.path,
+                                stat_entry(entry, follow_symlinks=False).st_size,
+                            )
+                        )
+        files.sort()
+        return files
 
     @staticmethod
     def _utc_now_iso8601() -> str:
