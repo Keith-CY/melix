@@ -12,6 +12,10 @@ The affected path is covered by the registered PR-scoped probe `model-load-confi
 
 `_read_model_config()` previously loaded `config.json` with `Path.read_text(encoding="utf-8")` before calling `json.loads()`. Python's JSON decoder accepts UTF-8 bytes directly, so this slice reads `config.json` with `Path.read_bytes()` and lets `json.loads()` decode during parse. The expected benefit is lower intermediate string allocation and slightly lower policy-resolution latency for repeated model-load trust checks on custom-loader model directories.
 
+## Follow-up Slice: Plain Path Character Guards
+
+The 2026-06-21 follow-up keeps the same registered probe and narrows the optimization to the hot plain-path config lookup. `_read_model_config()` now checks the first and last character of the already-normalized non-empty `model_path` instead of calling `str.startswith("~")` and `str.endswith(os.sep)`. This preserves tilde expansion and plain-path behavior while shaving method-call overhead from repeated trust-policy resolution.
+
 ## Verification Plan
 
 1. Add regression coverage proving the trust policy reads `config.json` through `Path.read_bytes()` without using `Path.read_text()`.
