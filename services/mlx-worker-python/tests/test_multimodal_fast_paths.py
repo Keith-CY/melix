@@ -362,6 +362,48 @@ def test_fast_path_avoids_repeating_preprocessing_fingerprint_lookups_for_same_r
         _preprocessing_fingerprint.cache_clear()
 
 
+def test_fast_path_cache_misses_when_processor_shape_metadata_changes() -> None:
+    controller = MultimodalFastPathController()
+    first_model = _loaded_model()
+    second_model = _loaded_model()
+    first_metadata = first_model["metadata"]
+    second_metadata = second_model["metadata"]
+    assert isinstance(first_metadata, dict)
+    assert isinstance(second_metadata, dict)
+    first_metadata.update(
+        {
+            "vision_processor_policy": "gemma4-multicrop-v1",
+            "vision_processor_crop_grid": "2x2",
+            "vision_processor_patch_size": "14",
+            "vision_processor_max_crop_count": "4",
+            "vision_prompt_format": "interleaved-image-text",
+            "vision_projected_feature_shape": "4x256x4096",
+        }
+    )
+    second_metadata.update(
+        {
+            "vision_processor_policy": "gemma4-multicrop-v2",
+            "vision_processor_crop_grid": "3x3",
+            "vision_processor_patch_size": "14",
+            "vision_processor_max_crop_count": "9",
+            "vision_prompt_format": "interleaved-image-text",
+            "vision_projected_feature_shape": "9x256x4096",
+        }
+    )
+    image = _image(b"same-processor-sensitive-image")
+
+    first = controller.plan(first_model, _request([image]))
+    same_shape = controller.plan(first_model, _request([image]))
+    changed_shape = controller.plan(second_model, _request([image]))
+
+    assert first.image_feature_cache_hits == 0
+    assert first.image_feature_cache_misses == 1
+    assert same_shape.image_feature_cache_hits == 1
+    assert same_shape.image_feature_cache_misses == 0
+    assert changed_shape.image_feature_cache_hits == 0
+    assert changed_shape.image_feature_cache_misses == 1
+
+
 def test_fast_path_builds_request_scoped_cache_keys_with_one_fingerprint_per_media_shape(monkeypatch) -> None:
     controller = MultimodalFastPathController()
     loaded_model = _loaded_model()
@@ -369,7 +411,7 @@ def test_fast_path_builds_request_scoped_cache_keys_with_one_fingerprint_per_med
     assert isinstance(metadata, dict)
     first_image = _image(b"first-image", filename="first.jpg")
     second_image = _image(b"second-image", filename="second.jpg")
-    fingerprint_calls: list[tuple[str, str, str, str, str]] = []
+    fingerprint_calls: list[tuple[str, str, str, str, str, str, str, str, str, str, str]] = []
 
     def fake_fingerprint(
         mime_type: str,
@@ -377,6 +419,12 @@ def test_fast_path_builds_request_scoped_cache_keys_with_one_fingerprint_per_med
         vision_prompt_profile_id: str,
         vision_tokenization_mode: str,
         vision_max_images_per_prompt: str,
+        vision_processor_policy: str,
+        vision_processor_crop_grid: str,
+        vision_processor_patch_size: str,
+        vision_processor_max_crop_count: str,
+        vision_prompt_format: str,
+        vision_projected_feature_shape: str,
     ) -> str:
         fingerprint_calls.append(
             (
@@ -385,6 +433,12 @@ def test_fast_path_builds_request_scoped_cache_keys_with_one_fingerprint_per_med
                 vision_prompt_profile_id,
                 vision_tokenization_mode,
                 vision_max_images_per_prompt,
+                vision_processor_policy,
+                vision_processor_crop_grid,
+                vision_processor_patch_size,
+                vision_processor_max_crop_count,
+                vision_prompt_format,
+                vision_projected_feature_shape,
             )
         )
         return "fake-fingerprint"
@@ -422,6 +476,12 @@ def test_fast_path_builds_request_scoped_cache_keys_with_one_fingerprint_per_med
             "gemma4-chatml-v1",
             "interleaved",
             "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
         )
     ]
 
@@ -448,6 +508,12 @@ def test_fast_path_cache_key_wrapper_preserves_existing_key_shape() -> None:
             "jpg",
             "gemma4-chatml-v1",
             "interleaved",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
             "",
         ),
         quant_profile_id="none",

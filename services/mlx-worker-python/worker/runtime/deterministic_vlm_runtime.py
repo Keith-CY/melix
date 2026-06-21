@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import hashlib
 import json
 from pathlib import Path
 from threading import Event
@@ -26,7 +27,12 @@ from worker.runtime.multimodal_position_receipts import (
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
-from worker.runtime.vision_family_adapters import resolve_vision_family_config
+from worker.runtime.vision_family_adapters import (
+    resolve_vision_family_config,
+    vision_processor_capability_metadata,
+)
+
+_EMPTY_PROCESSOR_SHAPE_RECEIPT: dict[str, object] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +117,15 @@ class VisionCacheEntry:
     token_length: int
 
 
+@dataclass(frozen=True, slots=True)
+class VisionProbeSnapshotView:
+    snapshot: VisionProbeSnapshot
+    processor_shape_receipt: dict[str, object]
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.snapshot, name)
+
+
 @dataclass(frozen=True)
 class VisionPrefillSession:
     decode_handle: str
@@ -147,6 +162,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         self._temp_root = Path(temp_root) if temp_root is not None else None
         self._temp_media_session_factory = temp_media_session_factory or TempMediaSession
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
+        self._last_processor_shape_receipt = _EMPTY_PROCESSOR_SHAPE_RECEIPT
         self._cache_entries: dict[str, VisionCacheEntry] = {}
         self._decode_sessions: dict[str, VisionPrefillSession] = {}
         self._cache_lookups = 0
@@ -160,12 +176,21 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         self._last_completion_token_text = ""
         self._last_completion_token_count = 0
 
+    def last_probe_snapshot(self) -> VisionProbeSnapshot | VisionProbeSnapshotView:
+        if self._last_processor_shape_receipt:
+            return VisionProbeSnapshotView(
+                self._last_probe,
+                self._last_processor_shape_receipt,
+            )
+        return self._last_probe
+
     def load_model(self, model_spec):
         ext = dict(model_spec.ext)
         family_config = resolve_vision_family_config(ext)
         metadata = {
             **ext,
             **family_config.capability_metadata(),
+            **vision_processor_capability_metadata(ext),
             "melix.vlm.execution_mode": ext.get(
                 "melix.vlm.execution_mode",
                 "multimodal",
@@ -277,6 +302,11 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                     prepared_request=prepared_request,
                     cache_identity=cache_identity,
                     scope_id=scope_id,
+                    fingerprint_hash_hex=(
+                        cache_identity[-64:]
+                        if prepared_request.images or prepared_request.videos
+                        else prepared_request.multimodal_hash_hex
+                    ),
                     token_length=prompt_tokens,
                     execution_ext=execution_ext,
                 )
@@ -418,6 +448,11 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                     prepared_request=prepared_request,
                     cache_identity=cache_identity,
                     scope_id=scope_id,
+                    fingerprint_hash_hex=(
+                        cache_identity[-64:]
+                        if prepared_request.images or prepared_request.videos
+                        else prepared_request.multimodal_hash_hex
+                    ),
                     token_length=prompt_tokens,
                     execution_ext=execution_ext,
                 )
@@ -551,6 +586,15 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             loaded_model,
             prepared_request,
         )
+        processor_shape_receipt = (
+            self._processor_shape_receipt(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+            )
+            if prepared_request.images or prepared_request.videos
+            else _EMPTY_PROCESSOR_SHAPE_RECEIPT
+        )
+        self._last_processor_shape_receipt = processor_shape_receipt
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,
@@ -579,6 +623,34 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             ),
             quantized_kv_mask_receipt=empty_quantized_kv_mask_receipt(),
         )
+
+    def _processor_shape_receipt(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+    ) -> dict[str, object]:
+        image_count = len(prepared_request.images)
+        video_count = len(prepared_request.videos)
+        return {
+            "processor_policy": self._metadata_value(loaded_model, "vision_processor_policy", ""),
+            "media_count": image_count + video_count,
+            "image_count": image_count,
+            "video_count": video_count,
+            "crop_grid": self._metadata_value(loaded_model, "vision_processor_crop_grid", ""),
+            "patch_size": self._metadata_value(loaded_model, "vision_processor_patch_size", ""),
+            "max_crop_count": self._metadata_int_value(
+                loaded_model,
+                "vision_processor_max_crop_count",
+                0,
+            ),
+            "prompt_format": self._metadata_value(loaded_model, "vision_prompt_format", ""),
+            "projected_feature_shape": self._metadata_value(
+                loaded_model,
+                "vision_projected_feature_shape",
+                "",
+            ),
+        }
 
     def _position_metadata_receipt(
         self,
@@ -695,6 +767,13 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         quant_profile_id = self._metadata_value(loaded_model, "quant_profile_id", "q8")
         parser_mode = self._effective_parser_mode(loaded_model, execution_ext)
         reasoning_mode = self._metadata_value(loaded_model, "reasoning_mode", "off")
+        if prepared_request.images or prepared_request.videos:
+            fingerprint_hash_hex = self._cache_fingerprint_hash_hex(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+            )
+        else:
+            fingerprint_hash_hex = prepared_request.multimodal_hash_hex
         identity = ":".join(
             [
                 model_id,
@@ -702,10 +781,10 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                 quant_profile_id,
                 parser_mode,
                 reasoning_mode,
-                prepared_request.multimodal_hash_hex,
+                fingerprint_hash_hex,
             ]
         )
-        return identity, f"{model_id}:{prepared_request.multimodal_hash_hex[:16]}"
+        return identity, f"{model_id}:{fingerprint_hash_hex[:16]}"
 
     def _block_table_for(
         self,
@@ -717,7 +796,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         cache_entry = self._cache_entries[cache_identity]
         cache_key = common_pb2.CacheKey(
             prefix_hash=bytes.fromhex(prepared_request.prompt_hash_hex),
-            fingerprint_hash=bytes.fromhex(prepared_request.multimodal_hash_hex),
+            fingerprint_hash=bytes.fromhex(cache_entry.fingerprint_hash_hex),
             scope_id=scope_id,
         )
         block = common_pb2.BlockRef(
@@ -747,6 +826,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         prepared_request: PreparedVisionRequest,
         cache_identity: str,
         scope_id: str,
+        fingerprint_hash_hex: str,
         token_length: int | None = None,
         execution_ext: dict[str, str] | None = None,
     ) -> VisionCacheEntry:
@@ -767,10 +847,30 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             reasoning_mode=self._metadata_value(loaded_model, "reasoning_mode", "off"),
             multimodal_adapter_hash=self._metadata_value(loaded_model, "multimodal_adapter_hash", ""),
             prompt_hash_hex=prepared_request.prompt_hash_hex,
-            fingerprint_hash_hex=prepared_request.multimodal_hash_hex,
+            fingerprint_hash_hex=fingerprint_hash_hex,
             bytes_used=bytes_used,
             token_length=token_length,
         )
+
+    def _cache_fingerprint_hash_hex(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+    ) -> str:
+        digest = hashlib.sha256()
+        for value in (
+            prepared_request.multimodal_hash_hex,
+            self._metadata_value(loaded_model, "vision_processor_policy", ""),
+            self._metadata_value(loaded_model, "vision_processor_crop_grid", ""),
+            self._metadata_value(loaded_model, "vision_processor_patch_size", ""),
+            str(self._metadata_int_value(loaded_model, "vision_processor_max_crop_count", 0)),
+            self._metadata_value(loaded_model, "vision_prompt_format", ""),
+            self._metadata_value(loaded_model, "vision_projected_feature_shape", ""),
+        ):
+            digest.update(value.encode("utf-8"))
+            digest.update(b"\0")
+        return digest.hexdigest()
 
     @staticmethod
     def _response_text(prepared_request: PreparedVisionRequest) -> str:
@@ -890,6 +990,11 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             if isinstance(value, str) and value:
                 return value
         return default
+
+    @staticmethod
+    def _metadata_int_value(loaded_model, key: str, default: int) -> int:
+        raw_value = DeterministicVLMRuntime._metadata_value(loaded_model, key, "")
+        return max(0, int(raw_value or default))
 
     def _family_config(self, loaded_model) -> object:
         metadata: dict[str, str] = {}

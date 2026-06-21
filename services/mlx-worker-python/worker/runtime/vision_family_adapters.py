@@ -152,6 +152,32 @@ class VisionFamilyAdapter:
 
 
 _DEFAULT_FAMILY_ID = "llava-v1"
+_VISION_PROCESSOR_DEFAULTS: dict[str, tuple[str, str, str, int, str, str]] = {
+    "llava-v1": (
+        "llava-single-crop-v1",
+        "1x1",
+        "14",
+        1,
+        "interleaved-image-text",
+        "1x256x4096",
+    ),
+    "paligemma-v1": (
+        "paligemma-single-crop-v1",
+        "1x1",
+        "14",
+        1,
+        "prefix-image-first",
+        "1x256x2048",
+    ),
+    "gemma4-v1": (
+        "gemma4-multicrop-v1",
+        "2x2",
+        "14",
+        4,
+        "interleaved-image-text",
+        "4x256x4096",
+    ),
+}
 _VISION_FAMILY_ADAPTERS: dict[str, VisionFamilyAdapter] = {
     "llava-v1": VisionFamilyAdapter(
         descriptor=VisionFamilyDescriptor(
@@ -211,6 +237,35 @@ def resolve_vision_family_config(metadata: dict[str, str] | None = None) -> Reso
     if adapter is None:
         raise ValueError(f"Unsupported vision family adapter: {family_id}")
     return adapter.resolve(metadata)
+
+
+def vision_processor_capability_metadata(metadata: dict[str, str] | None = None) -> dict[str, str]:
+    metadata = dict(metadata or {})
+    family_id = _string_value(metadata, "vision_family_id", _DEFAULT_FAMILY_ID)
+    defaults = _VISION_PROCESSOR_DEFAULTS.get(family_id, _VISION_PROCESSOR_DEFAULTS[_DEFAULT_FAMILY_ID])
+    return {
+        "vision_processor_policy": _string_value(metadata, "vision_processor_policy", defaults[0]),
+        "vision_processor_crop_grid": _string_value(
+            metadata,
+            "vision_processor_crop_grid",
+            defaults[1],
+        ),
+        "vision_processor_patch_size": _string_value(
+            metadata,
+            "vision_processor_patch_size",
+            defaults[2],
+        ),
+        "vision_processor_max_crop_count": str(
+            _int_value(metadata, "vision_processor_max_crop_count", defaults[3])
+        ),
+        "vision_prompt_format": _string_value(metadata, "vision_prompt_format", defaults[4]),
+        "vision_projected_feature_shape": _string_value(
+            metadata,
+            "vision_projected_feature_shape",
+            defaults[5],
+        ),
+    }
+
 
 def _with_prompt_text(
     prepared_request: PreparedVisionRequest,

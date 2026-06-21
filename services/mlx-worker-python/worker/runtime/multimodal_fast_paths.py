@@ -23,7 +23,7 @@ MULTIMODAL_LOAD_FALLBACK = "fallback"
 
 _SUPPORTED_FAST_PATH_FAMILIES = frozenset({"gemma4-v1", "llava-v1", "paligemma-v1"})
 _NATIVE_QUANTIZED_PROFILES = frozenset({"q4", "q6", "q8", "int4", "int8", "mlx-q4", "mlx-q8"})
-_FAST_PATH_SIGNATURE_METADATA_KEYS = frozenset(
+_FAST_PATH_SIGNATURE_CORE_METADATA_KEYS = frozenset(
     {
         "melix.vlm.execution_mode",
         "vision_family_id",
@@ -34,7 +34,23 @@ _FAST_PATH_SIGNATURE_METADATA_KEYS = frozenset(
         "multimodal_adapter_hash",
     }
 )
+_FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS = frozenset(
+    {
+        "vision_processor_policy",
+        "vision_processor_crop_grid",
+        "vision_processor_patch_size",
+        "vision_processor_max_crop_count",
+        "vision_prompt_format",
+        "vision_projected_feature_shape",
+    }
+)
+_FAST_PATH_SIGNATURE_METADATA_KEYS = (
+    _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS | _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS
+)
 _FAST_PATH_SIGNATURE_METADATA_KEYS_SORTED = tuple(sorted(_FAST_PATH_SIGNATURE_METADATA_KEYS))
+_FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED = tuple(
+    sorted(_FAST_PATH_SIGNATURE_CORE_METADATA_KEYS)
+)
 _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS = ("model_id", "revision", "tokenizer_hash", "quant_profile_id")
 _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED = tuple(sorted(_FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS))
 
@@ -184,6 +200,12 @@ class MultimodalFastPathController:
         vision_prompt_profile_id = metadata.get("vision_prompt_profile_id", "")
         vision_tokenization_mode = metadata.get("vision_tokenization_mode", "")
         vision_max_images_per_prompt = metadata.get("vision_max_images_per_prompt", "")
+        vision_processor_policy = metadata.get("vision_processor_policy", "")
+        vision_processor_crop_grid = metadata.get("vision_processor_crop_grid", "")
+        vision_processor_patch_size = metadata.get("vision_processor_patch_size", "")
+        vision_processor_max_crop_count = metadata.get("vision_processor_max_crop_count", "")
+        vision_prompt_format = metadata.get("vision_prompt_format", "")
+        vision_projected_feature_shape = metadata.get("vision_projected_feature_shape", "")
         preprocessing_fingerprints: dict[tuple[str, str], str] = {}
 
         def build(image: PreparedImageInput) -> ImageFeatureCacheKey:
@@ -196,6 +218,12 @@ class MultimodalFastPathController:
                     vision_prompt_profile_id,
                     vision_tokenization_mode,
                     vision_max_images_per_prompt,
+                    vision_processor_policy,
+                    vision_processor_crop_grid,
+                    vision_processor_patch_size,
+                    vision_processor_max_crop_count,
+                    vision_prompt_format,
+                    vision_projected_feature_shape,
                 )
                 preprocessing_fingerprints[shape] = preprocessing_fingerprint
             return ImageFeatureCacheKey(
@@ -271,9 +299,14 @@ def fast_path_probe_signature(
     if isinstance(loaded_model, dict):
         top_level_repr = _top_level_signature_repr(loaded_model)
         metadata_pairs: list[tuple[str, str]] = []
+        metadata_keys = (
+            _FAST_PATH_SIGNATURE_METADATA_KEYS_SORTED
+            if prepared_request.images or prepared_request.videos
+            else _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED
+        )
         nested_metadata = loaded_model.get("metadata", {})
         nested_metadata_is_dict = isinstance(nested_metadata, dict)
-        for key in _FAST_PATH_SIGNATURE_METADATA_KEYS_SORTED:
+        for key in metadata_keys:
             normalized = ""
             value = loaded_model.get(key)
             if isinstance(value, str) and value.strip():
@@ -332,6 +365,12 @@ def _loaded_metadata(loaded_model: Any) -> dict[str, str]:
         "vision_prompt_profile_id",
         "vision_tokenization_mode",
         "vision_max_images_per_prompt",
+        "vision_processor_policy",
+        "vision_processor_crop_grid",
+        "vision_processor_patch_size",
+        "vision_processor_max_crop_count",
+        "vision_prompt_format",
+        "vision_projected_feature_shape",
         "melix.multimodal_adapter_hash",
         "multimodal_adapter_hash",
     ):
@@ -373,6 +412,12 @@ def _preprocessing_fingerprint(
     vision_prompt_profile_id: str,
     vision_tokenization_mode: str,
     vision_max_images_per_prompt: str,
+    vision_processor_policy: str,
+    vision_processor_crop_grid: str,
+    vision_processor_patch_size: str,
+    vision_processor_max_crop_count: str,
+    vision_prompt_format: str,
+    vision_projected_feature_shape: str,
 ) -> str:
     digest = hashlib.sha256()
     for value in (
@@ -381,6 +426,12 @@ def _preprocessing_fingerprint(
         vision_prompt_profile_id,
         vision_tokenization_mode,
         vision_max_images_per_prompt,
+        vision_processor_policy,
+        vision_processor_crop_grid,
+        vision_processor_patch_size,
+        vision_processor_max_crop_count,
+        vision_prompt_format,
+        vision_projected_feature_shape,
     ):
         digest.update(str(value or "").encode("utf-8"))
         digest.update(b"\0")
