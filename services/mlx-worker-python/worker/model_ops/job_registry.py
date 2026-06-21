@@ -1238,6 +1238,7 @@ class ModelOpsJobRegistry:
             total_bytes = int(manifest.get("total_bytes", 0))
             partial_path = str(manifest.get("partial_path", ""))
             status = str(manifest.get("terminal_state", manifest.get("status", job["status"])))
+            resume_eligible = bool(manifest.get("resume_eligible", False))
             downloads.append(
                 {
                     "job_id": job["job_id"],
@@ -1266,11 +1267,21 @@ class ModelOpsJobRegistry:
                     "retry_count": int(manifest.get("retry_count", 0)),
                     "stall_detection_count": int(manifest.get("stall_detection_count", 0)),
                     "stall_reason": str(manifest.get("stall_reason", "")),
+                    "partial_bytes": int(manifest.get("partial_bytes", 0)),
+                    "partial_age_ms": int(manifest.get("partial_age_ms", 0)),
+                    "resume_eligible": resume_eligible,
+                    "stale_partial_removed": bool(manifest.get("stale_partial_removed", False)),
+                    "partial_lifecycle": str(manifest.get("partial_lifecycle", "")),
+                    "activated": bool(manifest.get("activated", status == "completed")),
                     "resume_ready": (
-                        partial_path != ""
-                        and downloaded_bytes > 0
-                        and (total_bytes == 0 or downloaded_bytes < total_bytes)
-                        and status in {"failed", "stalled", "running", "retrying"}
+                        resume_eligible
+                        if "resume_eligible" in manifest
+                        else (
+                            partial_path != ""
+                            and downloaded_bytes > 0
+                            and (total_bytes == 0 or downloaded_bytes < total_bytes)
+                            and status in {"failed", "stalled", "running", "retrying"}
+                        )
                     ),
                 }
             )

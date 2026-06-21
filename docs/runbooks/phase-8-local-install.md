@@ -122,6 +122,12 @@ The JSON state snapshot records at least these fields:
 - `retry_count`
 - `stall_detection_count`
 - `stall_reason`
+- `partial_bytes`
+- `partial_age_ms`
+- `resume_eligible`
+- `stale_partial_removed`
+- `partial_lifecycle`
+- `activated`
 - `terminal_state`
 
 This state is intended to remain stable enough for later desktop queue recovery and release-gate automation.
@@ -137,6 +143,18 @@ When a request deadline is exceeded while bytes are still progressing, the
 receipt status is `in_progress` rather than `failed`. Failed, stalled, and
 cancelled terminal paths still set `last_error` and a failed
 `artifact_integrity` receipt.
+
+Partial artifacts have an explicit lifecycle in the same receipt. Recent
+partials that end in `failed`, `stalled`, or `cancelled` states remain
+`resume_eligible=true` when they contain fewer bytes than the planned artifact.
+Explicit cancels report `partial_lifecycle=cancelled_kept_for_resume`; no-progress
+stalls report `partial_lifecycle=stalled_kept_for_resume`. A managed download
+request can set `melix.stale_partial_after_ms` or `stale_partial_after_ms` to
+reap abandoned `*.partial` files before resuming. When the sweep removes a
+partial, the prepare receipt records `stale_partial_removed=true`,
+`partial_bytes`, `partial_age_ms`, and `partial_lifecycle=stale_removed`; the
+completed receipt records `partial_lifecycle=completed_activated` and
+`activated=true`.
 
 Managed artifact requests can opt into the current strict install preflight
 with `melix.strict_install_mode=true` or `melix.install_mode=strict`. Strict
