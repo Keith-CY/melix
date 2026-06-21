@@ -294,6 +294,37 @@ def collect_agent_reliability_artifacts(
     }
 
 
+def collect_model_ops_artifacts(
+    jobs_root: Path,
+    *,
+    scanned_entries: _ScannedDirectoryEntries | None = None,
+) -> dict[str, object]:
+    receipts: list[dict[str, object]] = []
+    seen_paths: set[Path] = set()
+    for model_ops_root, root_scan in _candidate_model_ops_roots(
+        Path(jobs_root),
+        scanned_entries=scanned_entries,
+    ):
+        for state_path in _iter_model_ops_state_files(model_ops_root, scanned_entries=root_scan):
+            resolved_state_path = _try_resolve_path(state_path)
+            if resolved_state_path is None:
+                continue
+            if resolved_state_path in seen_paths:
+                continue
+            seen_paths.add(resolved_state_path)
+            payload = _try_load_json_object(state_path)
+            if payload is None:
+                continue
+            receipt = _managed_artifact_integrity_receipt_row(payload, state_path=state_path)
+            if receipt is None:
+                continue
+            receipts.append(receipt)
+    receipts.sort(key=lambda row: (str(row.get("job_id", "")), str(row.get("state_path", ""))))
+    return {
+        "managed_artifact_integrity_receipts": receipts,
+    }
+
+
 def build_export_bundle(jobs_root: Path) -> dict[str, object]:
     jobs_root = Path(jobs_root)
     root_scan = _scan_directory(jobs_root)
@@ -324,6 +355,7 @@ def build_export_bundle(jobs_root: Path) -> dict[str, object]:
         jobs_root,
         scanned_entries=root_scan,
     )
+    model_ops = collect_model_ops_artifacts(jobs_root, scanned_entries=root_scan)
     run_evidence = _dedupe_run_evidence(
         [
             *[row for row in benchmark.get("run_evidence", []) if isinstance(row, dict)],
@@ -338,6 +370,7 @@ def build_export_bundle(jobs_root: Path) -> dict[str, object]:
         **benchmark_payload,
         **evaluation_payload,
         **agent_reliability,
+        **model_ops,
         "run_evidence": run_evidence,
     }
 
@@ -784,6 +817,128 @@ def _resolve_agent_reliability_artifact_root(
     return None, None
 
 
+def _candidate_model_ops_roots(
+    jobs_root: Path,
+    *,
+    scanned_entries: _ScannedDirectoryEntries | None = None,
+) -> tuple[tuple[Path, _ScannedDirectoryEntries | None], ...]:
+    root_scan = (
+        scanned_entries
+        if scanned_entries is not None and scanned_entries.directory == jobs_root
+        else _scan_directory(jobs_root)
+    )
+    candidates: list[tuple[Path, _ScannedDirectoryEntries | None]] = []
+    if jobs_root.name == "model-ops" or _has_model_ops_state_markers(root_scan):
+        candidates.append((jobs_root, root_scan))
+    if root_scan is not None and root_scan.has_dir("model-ops"):
+        candidates.append((jobs_root / "model-ops", None))
+
+    roots: list[tuple[Path, _ScannedDirectoryEntries | None]] = []
+    seen: set[Path] = set()
+    for candidate, candidate_scan in candidates:
+        resolved = _try_resolve_path(candidate)
+        if resolved is None:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        roots.append((candidate, candidate_scan))
+    return tuple(roots)
+
+
+def _iter_model_ops_state_files(
+    root: Path,
+    *,
+    scanned_entries: _ScannedDirectoryEntries | None = None,
+) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    visited: set[Path] = set()
+    stack: list[tuple[Path, _ScannedDirectoryEntries | None]] = [
+        (
+            root,
+            scanned_entries if scanned_entries is not None and scanned_entries.directory == root else None,
+        )
+    ]
+    while stack:
+        directory, provided_scan = stack.pop()
+        resolved_directory = _try_resolve_path(directory)
+        if resolved_directory is None:
+            continue
+        if resolved_directory in visited:
+            continue
+        visited.add(resolved_directory)
+        scan = provided_scan if provided_scan is not None else _scan_directory(directory)
+        if scan is None:
+            continue
+        for name in reversed(scan.dir_names):
+            stack.append((directory / name, None))
+        for name in scan.file_names:
+            if name == "download.state.json" or name.endswith(".state.json"):
+                paths.append(directory / name)
+    return tuple(sorted(paths))
+
+
+def _try_resolve_path(path: Path) -> Path | None:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+def _has_model_ops_state_markers(scan: _ScannedDirectoryEntries | None) -> bool:
+    if scan is None:
+        return False
+    return any(name == "download.state.json" or name.endswith(".state.json") for name in scan.file_names)
+
+
+def _managed_artifact_integrity_receipt_row(
+    payload: dict[str, object],
+    *,
+    state_path: Path,
+) -> dict[str, object] | None:
+    if payload.get("operation") != "download":
+        return None
+    artifact_integrity = payload.get("artifact_integrity")
+    if not isinstance(artifact_integrity, dict):
+        return None
+
+    status = str(payload.get("status", ""))
+    terminal_state = str(payload.get("terminal_state", status))
+    artifact_status = str(artifact_integrity.get("status", ""))
+    policy_present = artifact_integrity.get("policy_present")
+
+    return {
+        "schema_version": "melix.managed_artifact_integrity_receipt.v1",
+        "job_id": str(payload.get("job_id", "")),
+        "operation_id": str(payload.get("operation_id", "")),
+        "target_scope": str(payload.get("target_scope", "")),
+        "operation_kind": str(payload.get("operation_kind", "")),
+        "source_model": str(payload.get("source_model", "")),
+        "status": status,
+        "terminal_state": terminal_state,
+        "activation_decision": _managed_artifact_activation_decision(
+            terminal_state=terminal_state,
+            artifact_status=artifact_status,
+        ),
+        "artifact_integrity_status": artifact_status,
+        "verification_mode": str(artifact_integrity.get("verification_mode", "")),
+        "policy_present": policy_present if isinstance(policy_present, bool) else False,
+        "digest": str(artifact_integrity.get("digest", "")),
+        "checked_at": str(artifact_integrity.get("checked_at", "")),
+        "failure_reason": str(artifact_integrity.get("failure_reason", "")),
+        "output_path": str(payload.get("output_path", "")),
+        "state_path": str(payload.get("state_path") or state_path),
+    }
+
+
+def _managed_artifact_activation_decision(*, terminal_state: str, artifact_status: str) -> str:
+    if terminal_state == "completed" and artifact_status == "passed":
+        return "allowed"
+    if terminal_state in {"failed", "cancelled", "stalled"} or artifact_status == "failed":
+        return "blocked"
+    return "pending"
+
+
 def _has_agent_reliability_markers(scan: _ScannedDirectoryEntries | None) -> bool:
     if scan is None:
         return False
@@ -839,7 +994,7 @@ def _load_json_object(path: Path) -> dict[str, object]:
 def _try_load_json_object(path: Path) -> dict[str, object] | None:
     try:
         return _load_json_object(path)
-    except OSError:
+    except (OSError, TypeError, json.JSONDecodeError):
         return None
 
 
