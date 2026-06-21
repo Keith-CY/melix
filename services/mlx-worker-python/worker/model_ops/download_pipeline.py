@@ -298,19 +298,23 @@ class DownloadPipeline:
                         partial_path=partial_path,
                         ext=ext,
                     )
-                self._raise_if_required_companions_missing(
-                    manifest_payload=completed_payload,
-                    primary_artifact=output_path,
-                    companion_search_artifact=source_path,
-                    primary_staging_path=partial_path,
-                    ext=ext,
-                )
+                companion_declarations = self._companion_manifest(ext)
+                if companion_declarations:
+                    self._raise_if_required_companions_missing(
+                        manifest_payload=completed_payload,
+                        primary_artifact=output_path,
+                        companion_search_artifact=source_path,
+                        primary_staging_path=partial_path,
+                        ext=ext,
+                        declarations=companion_declarations,
+                    )
                 os.replace(os.fspath(partial_path), os.fspath(output_path))
-                if self._companion_manifest(ext):
+                if companion_declarations:
                     completed_payload["artifact_companions"] = self._artifact_companions_receipt(
                         primary_artifact=output_path,
                         companion_search_artifact=source_path,
                         ext=ext,
+                        declarations=companion_declarations,
                         stage=True,
                     )
                 manifest_json = self._write_manifest_json(state_path, completed_payload)
@@ -1475,11 +1479,13 @@ class DownloadPipeline:
         companion_search_artifact: Path,
         primary_staging_path: Path,
         ext: dict[str, str],
+        declarations: list[dict[str, Any]] | None = None,
     ) -> None:
         receipt = cls._artifact_companions_receipt(
             primary_artifact=primary_artifact,
             companion_search_artifact=companion_search_artifact,
             ext=ext,
+            declarations=declarations,
         )
         missing_required = receipt.get("missing_required", [])
         if not cls._strict_install_mode(ext) or not missing_required:
@@ -1521,9 +1527,10 @@ class DownloadPipeline:
         primary_artifact: Path,
         companion_search_artifact: Path | None = None,
         ext: dict[str, str],
+        declarations: list[dict[str, Any]] | None = None,
         stage: bool = False,
     ) -> dict[str, Any]:
-        declarations = cls._companion_manifest(ext)
+        declarations = cls._companion_manifest(ext) if declarations is None else declarations
         companion_artifacts = [
             cls._companion_artifact_receipt(
                 primary_artifact=primary_artifact,
