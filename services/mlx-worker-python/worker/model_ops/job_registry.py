@@ -1234,6 +1234,12 @@ class ModelOpsJobRegistry:
             artifact_integrity = manifest.get("artifact_integrity")
             if not isinstance(artifact_integrity, dict):
                 artifact_integrity = {}
+            artifact_companions = manifest.get("artifact_companions")
+            if not isinstance(artifact_companions, dict):
+                artifact_companions = {}
+            missing_required_companions = artifact_companions.get("missing_required", [])
+            if not isinstance(missing_required_companions, list):
+                missing_required_companions = []
             artifact_transport_receipt = manifest.get("artifact_transport_receipt")
             if not isinstance(artifact_transport_receipt, dict):
                 artifact_transport_receipt = {}
@@ -1260,6 +1266,9 @@ class ModelOpsJobRegistry:
                     "retry_after_ms": int(manifest.get("retry_after_ms", 0)),
                     "last_error": str(manifest.get("last_error", "")),
                     "artifact_integrity": artifact_integrity,
+                    "artifact_companions": artifact_companions,
+                    "artifact_companions_status": str(artifact_companions.get("verification_result", "")),
+                    "missing_required_companions": [str(item) for item in missing_required_companions],
                     "artifact_integrity_status": artifact_integrity_summary["status"],
                     "artifact_integrity_summary": artifact_integrity_summary,
                     "artifact_transport_receipt": artifact_transport_receipt,
