@@ -225,14 +225,14 @@ discovered under an export target must receive exactly one retention row with:
 
 Retention classes have these default decisions:
 
-| Retention class | Default decision |
-|---|---|
-| `required` | `retain` |
-| `evidence` | `retain` |
-| `runtime_log` | `delete_after_ttl` after diagnostics complete |
-| `intermediate` | `cleanable` after target verification passes or is explicitly waived |
-| `cache` | `cleanable` after the target manifest records source provenance and digest |
-| `temporary` | `delete_after_success` |
+| Retention class | Default decision | Condition / notes |
+|---|---|---|
+| `required` | `retain` | Always retained. |
+| `evidence` | `retain` | Always retained. |
+| `runtime_log` | `delete_after_ttl` | After diagnostics complete. |
+| `intermediate` | `cleanable` | After target verification passes or is explicitly waived. |
+| `cache` | `cleanable` | After the target manifest records source provenance and digest. |
+| `temporary` | `delete_after_success` | After target verification passes or is explicitly waived. |
 
 Cleanup must preserve target manifests, export reports, smoke receipts,
 diagnostic receipts, redacted evidence excerpts, and required runtime artifacts.
