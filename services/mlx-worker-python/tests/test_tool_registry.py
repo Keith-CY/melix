@@ -366,6 +366,21 @@ def test_tool_registry_select_caches_single_name_fast_path() -> None:
     assert registry.select(["visit"]) is selected
 
 
+def test_tool_registry_exact_single_name_select_skips_normalization() -> None:
+    class StripFailingName(str):
+        def strip(self, chars: str | None = None) -> str:
+            raise AssertionError("exact single-name selection should not strip")
+
+    registry = ToolRegistry(built_in_tool_registry().tools)
+
+    selected = registry.select((StripFailingName("visit"),))
+
+    assert selected.names() == ("visit",)
+    assert registry.select([StripFailingName("visit")]) is selected
+    with pytest.raises(AssertionError, match="exact single-name selection"):
+        StripFailingName("visit").strip()
+
+
 def test_tool_registry_select_single_name_returns_self_for_single_tool_registry() -> None:
     registry = ToolRegistry((built_in_tool_registry().tools[0],))
 
