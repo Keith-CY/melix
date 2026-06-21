@@ -1,14 +1,14 @@
-# Model load config path stat performance slice
+# Model load route class map performance slice
 
 ## Scope
 
-This Python-only performance slice is limited to `worker.model_load_trust._read_model_config()` in `services/mlx-worker-python/worker/model_load_trust.py`.
+This Python-only performance slice is limited to `worker.model_load_trust._route_class()` in `services/mlx-worker-python/worker/model_load_trust.py`.
 
 ## Change
 
-`resolve_model_load_trust_policy(...)` consults `_read_model_config()` for applicable text/VLM model loads. The previous plain-path flow built `Path(model_path) / "config.json"` and then called `Path.stat()` before passing the string path into the cached JSON reader.
+`resolve_model_load_trust_policy(...)` calls `_route_class()` for applicable text/VLM model loads before config JSON custom-loader detection. The previous fallback flow rebuilt the same runtime-kind-to-route-class dictionary on each policy resolution when neither the request nor model spec provided an explicit route class.
 
-This slice keeps the tilde expansion behavior unchanged, but lets the common plain-path case build the `config.json` path as a string and call `os.stat(...)` directly. That avoids per-resolution `Path` construction and `Path.__truediv__` overhead on the hot path while preserving the same file-type check, cache key, missing-file handling, and JSON byte loading behavior.
+This slice hoists that static mapping to the module-level `ROUTE_CLASS_BY_RUNTIME_KIND` constant and reuses it for fallback lookup. That removes a repeated dictionary allocation while preserving request override behavior, model-spec override behavior, unknown-runtime fallback behavior, and all supported runtime-kind route defaults.
 
 ## Probe coverage
 
@@ -29,4 +29,4 @@ Run on Linux:
 
 ## Expected effect
 
-The slice removes plain-path `Path` object construction from each model-load trust config lookup before the cached config JSON reader. Accept only if the registered probe shows directionally better elapsed-time metrics without behavior drift.
+The slice removes repeated fallback route-class dictionary construction from each model-load trust policy resolution. Accept only if the registered probe shows directionally better elapsed-time metrics without behavior drift.
