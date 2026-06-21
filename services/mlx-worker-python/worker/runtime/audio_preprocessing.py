@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from time import perf_counter
 from urllib.parse import unquote, urlparse
@@ -52,13 +53,13 @@ def prepare_audio_input(request, *, read_uri_bytes: bool = True) -> PreparedAudi
                 input_bytes = path.stat().st_size
         except OSError as exc:
             raise AudioPreprocessError(f"Missing local audio input: {request.audio_uri}") from exc
-        local_path = str(path)
+        local_path = os.fspath(path)
         source_kind = "uri"
         reference = request.audio_uri
         if not format_name:
-            format_name = path.suffix.lstrip(".")
+            format_name = os.path.splitext(local_path)[1].lstrip(".")
         if not filename:
-            filename = path.name
+            filename = os.path.basename(local_path)
     else:
         raise AudioPreprocessError("No audio input provided.")
 
