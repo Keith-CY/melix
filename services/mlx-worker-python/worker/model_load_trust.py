@@ -212,9 +212,19 @@ def _detect_custom_loader_requirement(model_spec: common_pb2.ModelSpec) -> tuple
     if not config:
         return False, "config_json:absent"
     auto_map = config.get("auto_map")
-    if isinstance(auto_map, dict) and any(str(value or "").strip() for value in auto_map.values()):
+    if isinstance(auto_map, dict) and _auto_map_has_custom_loader(auto_map):
         return True, CONFIG_JSON_AUTO_MAP_SOURCE
     return False, "config_json"
+
+
+def _auto_map_has_custom_loader(auto_map: dict[Any, Any]) -> bool:
+    for value in auto_map.values():
+        if isinstance(value, str):
+            if value and not value.isspace():
+                return True
+        elif value is not None and str(value).strip():
+            return True
+    return False
 
 
 def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | None:
