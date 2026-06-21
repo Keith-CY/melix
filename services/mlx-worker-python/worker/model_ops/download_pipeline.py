@@ -1235,13 +1235,28 @@ class DownloadPipeline:
         if managed_root:
             search_roots.append(Path(managed_root).expanduser())
         for root in search_roots:
-            resolved = (root / candidate).resolve()
+            resolved_root = root.resolve()
+            resolved = (resolved_root / candidate).resolve()
+            try:
+                resolved.relative_to(resolved_root)
+            except ValueError:
+                continue
             if resolved.exists():
                 return resolved
         return None
 
     @staticmethod
+    def _remove_existing_companion_target(target_path: Path) -> None:
+        if not target_path.exists() and not target_path.is_symlink():
+            return
+        if target_path.is_dir() and not target_path.is_symlink():
+            shutil.rmtree(target_path)
+            return
+        target_path.unlink()
+
+    @classmethod
     def _stage_companion_path(
+        cls,
         *,
         declared_path: str,
         source_path: Path,
@@ -1251,11 +1266,11 @@ class DownloadPipeline:
         if source_path.resolve() == target_path.resolve():
             return target_path
         if source_path.is_dir():
-            if target_path.exists():
-                shutil.rmtree(target_path)
+            cls._remove_existing_companion_target(target_path)
             shutil.copytree(source_path, target_path)
             return target_path
         target_path.parent.mkdir(parents=True, exist_ok=True)
+        cls._remove_existing_companion_target(target_path)
         shutil.copy2(source_path, target_path)
         return target_path
 

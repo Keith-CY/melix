@@ -647,6 +647,68 @@ def test_companion_receipt_handles_absolute_paths_and_kind_mismatch(tmp_path: Pa
     assert receipt["verification_result"] == "failed"
 
 
+def test_companion_path_resolution_rejects_relative_escape(tmp_path: Path) -> None:
+    primary_artifact = tmp_path / "output" / "model.gguf"
+    primary_artifact.parent.mkdir()
+    primary_artifact.write_bytes(b"model")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    search_artifact = source_dir / "model.gguf"
+    search_artifact.write_bytes(b"model")
+    escaped = tmp_path / "escaped-tokenizer.json"
+    escaped.write_text("{}", encoding="utf-8")
+
+    receipt = DownloadPipeline._artifact_companions_receipt(
+        primary_artifact=primary_artifact,
+        companion_search_artifact=search_artifact,
+        ext={
+            "melix.companion_manifest": json.dumps(
+                [{"path": "../escaped-tokenizer.json", "kind": "file", "required": True}]
+            )
+        },
+    )
+
+    companion = receipt["companion_artifacts"][0]
+    assert companion["status"] == "missing"
+    assert companion["resolved_path"] == ""
+    assert receipt["missing_required"] == ["../escaped-tokenizer.json"]
+    assert receipt["verification_result"] == "failed"
+
+
+def test_stage_companion_replaces_existing_target_type_mismatches(tmp_path: Path) -> None:
+    primary_artifact = tmp_path / "output" / "model.gguf"
+    primary_artifact.parent.mkdir()
+    primary_artifact.write_bytes(b"model")
+    source_dir = tmp_path / "source-projector"
+    source_dir.mkdir()
+    (source_dir / "config.json").write_text("{}", encoding="utf-8")
+    target_dir_name = "projector"
+    (primary_artifact.parent / target_dir_name).write_text("stale-file", encoding="utf-8")
+
+    staged_dir = DownloadPipeline._stage_companion_path(
+        declared_path=target_dir_name,
+        source_path=source_dir,
+        primary_artifact=primary_artifact,
+    )
+
+    assert staged_dir.is_dir()
+    assert (staged_dir / "config.json").read_text(encoding="utf-8") == "{}"
+
+    file_source = tmp_path / "tokenizer.json"
+    file_source.write_text("fresh", encoding="utf-8")
+    stale_target = primary_artifact.parent / "tokenizer.json"
+    stale_target.mkdir()
+
+    staged_file = DownloadPipeline._stage_companion_path(
+        declared_path="tokenizer.json",
+        source_path=file_source,
+        primary_artifact=primary_artifact,
+    )
+
+    assert staged_file.is_file()
+    assert staged_file.read_text(encoding="utf-8") == "fresh"
+
+
 def test_strict_managed_hub_import_requires_digest_before_snapshot_resolution(tmp_path: Path) -> None:
     pipeline = DownloadPipeline()
     source_dir = tmp_path / "managed-snapshot"
