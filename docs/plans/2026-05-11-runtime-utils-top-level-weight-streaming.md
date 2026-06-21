@@ -45,3 +45,16 @@ while avoiding extra string checks for common non-weight files in flat bundles.
 Validation remains the focused runtime-utils pytest selection, changed-scope
 coverage for `runtime_utils.py`, `test_runtime_utils.py`, and the registered probe
 script, plus the local and CI `runtime-utils-top-level-weight-streaming` probe.
+
+## 2026-06-21 Plain-path expanduser fast path
+
+This follow-up Python slice keeps the same registered probe and narrows only the
+resident-byte entrypoint before the top-level scan. Plain absolute or relative
+model paths no longer call `Path.expanduser()`; `~`-prefixed paths keep the
+previous user-expansion behavior. This preserves indexed, flat-bundle, and
+single-file resident-byte semantics while removing repeated user-home expansion
+work from local model scan probes.
+
+Validation remains the focused runtime-utils pytest selection, changed-scope
+coverage for `runtime_utils.py`, `test_runtime_utils.py`, and the registered probe
+script, plus the local and CI `runtime-utils-top-level-weight-streaming` probe.

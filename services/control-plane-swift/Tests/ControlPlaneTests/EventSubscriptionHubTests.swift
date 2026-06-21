@@ -411,6 +411,86 @@ struct CoreUtilityTests {
         #expect(finalSnapshot.queuedRequestIDs.isEmpty)
     }
 
+    @Test("admission gate admits non-forming queued front immediately")
+    func admissionGateAdmitsNonFormingQueuedFrontImmediately() async {
+        let gate = AdmissionGate(batchFormationWindowNanos: 2_000_000_000)
+
+        let formingTask = Task {
+            await gate.acquire(
+                requestID: "req-forming-front",
+                cohortID: "swift-text|forming",
+                maxBatchSize: 2,
+                priorityScore: 0
+            )
+        }
+        _ = await waitForAdmissionGateSnapshot(gate) { snapshot in
+            snapshot.queuedRequestIDs == ["req-forming-front"]
+        }
+
+        let nonFormingTask = Task {
+            await gate.acquire(
+                requestID: "req-non-forming-front",
+                cohortID: "",
+                maxBatchSize: 4,
+                priorityScore: 10
+            )
+        }
+        let admittedSnapshot = await waitForAdmissionGateSnapshot(gate) { snapshot in
+            snapshot.activeRequestIDs == ["req-non-forming-front"]
+                && snapshot.queuedRequestIDs == ["req-forming-front"]
+        }
+        let nonFormingGrant = await nonFormingTask.value
+        await gate.release(requestID: "req-non-forming-front")
+        let formingGrant = await formingTask.value
+        await gate.release(requestID: "req-forming-front")
+
+        #expect(admittedSnapshot.activeRequestIDs == ["req-non-forming-front"])
+        #expect(admittedSnapshot.queuedRequestIDs == ["req-forming-front"])
+        #expect(nonFormingGrant.outcome == .admitted)
+        #expect(formingGrant.outcome == .admitted)
+    }
+
+    @Test("admission gate keeps formation queue live after cancelling queued front")
+    func admissionGateKeepsFormationQueueLiveAfterCancellingQueuedFront() async {
+        let gate = AdmissionGate(batchFormationWindowNanos: 2_000_000_000)
+
+        let cancelledTask = Task {
+            await gate.acquire(
+                requestID: "req-forming-cancelled",
+                cohortID: "swift-text|forming",
+                maxBatchSize: 3
+            )
+        }
+        _ = await waitForAdmissionGateSnapshot(gate) { snapshot in
+            snapshot.queuedRequestIDs == ["req-forming-cancelled"]
+        }
+
+        let survivorTask = Task {
+            await gate.acquire(
+                requestID: "req-forming-survivor",
+                cohortID: "swift-text|forming",
+                maxBatchSize: 3
+            )
+        }
+        _ = await waitForAdmissionGateSnapshot(gate) { snapshot in
+            snapshot.queuedRequestIDs == ["req-forming-cancelled", "req-forming-survivor"]
+        }
+
+        await gate.release(requestID: "req-forming-cancelled")
+        let snapshotAfterCancellation = await waitForAdmissionGateSnapshot(gate) { snapshot in
+            snapshot.activeRequestIDs.isEmpty
+                && snapshot.queuedRequestIDs == ["req-forming-survivor"]
+        }
+        let cancelledGrant = await cancelledTask.value
+        await gate.release(requestID: "req-forming-survivor")
+        let survivorGrant = await survivorTask.value
+
+        #expect(snapshotAfterCancellation.activeRequestIDs.isEmpty)
+        #expect(snapshotAfterCancellation.queuedRequestIDs == ["req-forming-survivor"])
+        #expect(cancelledGrant.outcome == .cancelled)
+        #expect(survivorGrant.outcome == .cancelled)
+    }
+
     @Test("admission gate forms a compatible cohort before releasing the first batchable request")
     func admissionGateFormsCompatibleCohortBeforeReleasingFirstBatchableRequest() async {
         let gate = AdmissionGate(batchFormationWindowNanos: 100_000_000)

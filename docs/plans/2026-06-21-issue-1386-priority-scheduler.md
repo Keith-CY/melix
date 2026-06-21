@@ -78,3 +78,17 @@ Out of scope:
 - The preempted request receives a cancelled completion rather than hanging.
 - Receipts preserve the cancellation reason and partial-output flag.
 - Metrics expose preemption and cancellation receipt emission.
+
+## Review Remediation
+
+PR review identified two liveness and cancellation gaps after the initial priority scheduler merge.
+
+- `AdmissionGate` must not leave a queued front request idle when the request is not eligible for batch formation. `admitNextOrScheduleFormationFlush()` centralizes the choice between immediate admission and formation-window scheduling, and queued-front release reuses that same path.
+- `RequestCoordinator` must send a safeguard worker abort when cancellation is observed immediately after `workerClient.generate` returns. This covers the race where the first abort arrived before the worker registered generation state.
+
+Verification coverage:
+
+- `admissionGateAdmitsNonFormingQueuedFrontImmediately`
+- `admissionGateKeepsFormationQueueLiveAfterCancellingQueuedFront`
+- `admittedRequestCancellationBeforeGenerateReturnsYieldsACancelledExecution`
+- `interactiveWorkCanPreemptLowerPriorityWorkBeforeWorkerGenerateReturns`

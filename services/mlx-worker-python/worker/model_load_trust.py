@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 import json
+import os
 from pathlib import Path
 import stat
 from typing import Any
@@ -211,24 +212,41 @@ def _detect_custom_loader_requirement(model_spec: common_pb2.ModelSpec) -> tuple
     if not config:
         return False, "config_json:absent"
     auto_map = config.get("auto_map")
-    if isinstance(auto_map, dict) and any(str(value or "").strip() for value in auto_map.values()):
+    if isinstance(auto_map, dict) and _auto_map_has_custom_loader(auto_map):
         return True, CONFIG_JSON_AUTO_MAP_SOURCE
     return False, "config_json"
+
+
+def _auto_map_has_custom_loader(auto_map: dict[Any, Any]) -> bool:
+    for value in auto_map.values():
+        if isinstance(value, str):
+            if value and not value.isspace():
+                return True
+        elif value is not None and str(value).strip():
+            return True
+    return False
 
 
 def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | None:
     model_path = str(getattr(model_spec, "model_path", "") or "").strip()
     if not model_path:
         return None
-    config_path = Path(model_path).expanduser() / "config.json"
+    if model_path[0] == "~":
+        config_path = Path(model_path).expanduser() / "config.json"
+        config_path_text = str(config_path)
+        stat_path: str | os.PathLike[str] = config_path
+    else:
+        separator = "" if model_path[-1] == os.sep else os.sep
+        config_path_text = f"{model_path}{separator}config.json"
+        stat_path = config_path_text
     try:
-        config_stat = config_path.stat()
+        config_stat = os.stat(stat_path)
         if not stat.S_ISREG(config_stat.st_mode):
             return None
     except OSError:
         return None
     payload = _read_model_config_for_stat(
-        str(config_path),
+        config_path_text,
         config_stat.st_mtime_ns,
         config_stat.st_size,
     )
