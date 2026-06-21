@@ -431,6 +431,65 @@ def test_collect_model_ops_artifacts_dedupes_resolved_state_paths(tmp_path: Path
     assert receipts[0]["job_id"] == "model-ops-linked"
 
 
+def test_collect_model_ops_artifacts_skips_unresolvable_state_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "model-ops" / "downloads" / "download.state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "job_id": "model-ops-unresolvable",
+                "operation": "download",
+                "status": "completed",
+                "terminal_state": "completed",
+                "artifact_integrity": {
+                    "verification_mode": "receipt_fixture",
+                    "policy_present": True,
+                    "digest": "sha256:abc",
+                    "checked_at": "2026-06-21T00:00:00Z",
+                    "failure_reason": "",
+                    "status": "passed",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    original_resolve = Path.resolve
+
+    def flaky_resolve(self: Path, *args: object, **kwargs: object) -> Path:
+        if self == state_path:
+            raise OSError("cannot resolve state path")
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", flaky_resolve)
+
+    assert collect_model_ops_artifacts(tmp_path)["managed_artifact_integrity_receipts"] == []
+
+
+def test_collect_model_ops_artifacts_skips_symlink_loop_state_paths(tmp_path: Path) -> None:
+    model_ops_root = tmp_path / "model-ops"
+    model_ops_root.mkdir()
+    loop_path = model_ops_root / "download.state.json"
+    loop_path.symlink_to(loop_path)
+
+    assert collect_model_ops_artifacts(tmp_path)["managed_artifact_integrity_receipts"] == []
+
+
+def test_iter_model_ops_state_files_skips_directory_cycles(tmp_path: Path) -> None:
+    model_ops_root = tmp_path / "model-ops"
+    state_path = model_ops_root / "download.state.json"
+    model_ops_root.mkdir()
+    state_path.write_text("{}", encoding="utf-8")
+    (model_ops_root / "cycle").symlink_to(model_ops_root, target_is_directory=True)
+
+    assert benchmark_export_module._iter_model_ops_state_files(model_ops_root) == (
+        state_path,
+    )
+
+
 def test_iter_model_ops_state_files_skips_disappearing_directories(tmp_path: Path) -> None:
     scan = _ScannedDirectoryEntries(
         directory=tmp_path,

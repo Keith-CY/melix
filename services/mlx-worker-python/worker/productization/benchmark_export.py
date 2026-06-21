@@ -306,7 +306,9 @@ def collect_model_ops_artifacts(
         scanned_entries=scanned_entries,
     ):
         for state_path in _iter_model_ops_state_files(model_ops_root, scanned_entries=root_scan):
-            resolved_state_path = state_path.resolve()
+            resolved_state_path = _try_resolve_path(state_path)
+            if resolved_state_path is None:
+                continue
             if resolved_state_path in seen_paths:
                 continue
             seen_paths.add(resolved_state_path)
@@ -834,9 +836,8 @@ def _candidate_model_ops_roots(
     roots: list[tuple[Path, _ScannedDirectoryEntries | None]] = []
     seen: set[Path] = set()
     for candidate, candidate_scan in candidates:
-        try:
-            resolved = candidate.resolve()
-        except OSError:
+        resolved = _try_resolve_path(candidate)
+        if resolved is None:
             continue
         if resolved in seen:
             continue
@@ -851,6 +852,7 @@ def _iter_model_ops_state_files(
     scanned_entries: _ScannedDirectoryEntries | None = None,
 ) -> tuple[Path, ...]:
     paths: list[Path] = []
+    visited: set[Path] = set()
     stack: list[tuple[Path, _ScannedDirectoryEntries | None]] = [
         (
             root,
@@ -859,6 +861,12 @@ def _iter_model_ops_state_files(
     ]
     while stack:
         directory, provided_scan = stack.pop()
+        resolved_directory = _try_resolve_path(directory)
+        if resolved_directory is None:
+            continue
+        if resolved_directory in visited:
+            continue
+        visited.add(resolved_directory)
         scan = provided_scan if provided_scan is not None else _scan_directory(directory)
         if scan is None:
             continue
@@ -868,6 +876,13 @@ def _iter_model_ops_state_files(
             if name == "download.state.json" or name.endswith(".state.json"):
                 paths.append(directory / name)
     return tuple(sorted(paths))
+
+
+def _try_resolve_path(path: Path) -> Path | None:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return None
 
 
 def _has_model_ops_state_markers(scan: _ScannedDirectoryEntries | None) -> bool:
