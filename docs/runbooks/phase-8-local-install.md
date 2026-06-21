@@ -165,6 +165,29 @@ materialized when the request lacks immutable digest metadata in
 `last_error=missing_artifact_digest`, and records a failed `artifact_integrity`
 receipt with `policy_present=false`.
 
+Managed artifact requests may also declare companion artifacts with
+`melix.companion_manifest`, encoded as a JSON array. Each entry has:
+
+- `path`: file or directory path relative to the primary artifact directory or
+  `melix.managed_root`, or an absolute path
+- `kind`: `file` or `directory`
+- `required`: boolean-like value; required companions fail strict activation
+  when missing
+
+The companion staging receipt is recorded as `artifact_companions` and includes:
+
+- `primary_artifact`
+- `companion_artifacts[]`
+- `missing_required[]`
+- `staged_file_count`
+- `verification_result`
+
+Directory-valued companions are expanded file-by-file for deterministic
+`file_count`, `byte_count`, and `files` evidence. In strict mode, missing
+required companions raise `artifact_companion_required` before the final
+artifact is activated; the state file records `last_error=missing_required_companion`
+and `artifact_companions.verification_result=failed`.
+
 The current strict activation gate is a worker-side fixture helper for
 receipts: activation is eligible only when the receipt is completed and
 `artifact_integrity.status` is `passed`. This is not a full signature system,

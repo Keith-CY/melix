@@ -454,6 +454,23 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
                     "failure_reason": "",
                     "status": "passed",
                 },
+                "artifact_companions": {
+                    "primary_artifact": "/runtime/download/model.gguf",
+                    "companion_artifacts": [
+                        {
+                            "declared_path": "tokenizer.json",
+                            "resolved_path": "/runtime/download/tokenizer.json",
+                            "kind": "file",
+                            "required": True,
+                            "status": "present",
+                            "file_count": 1,
+                            "byte_count": 2,
+                        }
+                    ],
+                    "missing_required": [],
+                    "staged_file_count": 1,
+                    "verification_result": "passed",
+                },
             }
         ),
     )
@@ -471,6 +488,10 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
     assert download["last_error"] == ""
     assert download["artifact_integrity_status"] == "passed"
     assert download["artifact_integrity"]["policy_present"] is True
+    assert download["artifact_companions_status"] == "passed"
+    assert download["missing_required_companions"] == []
+    assert download["artifact_companions"]["primary_artifact"] == "/runtime/download/model.gguf"
+    assert download["artifact_companions"]["staged_file_count"] == 1
 
     registry.attach_manifest(
         job.job_id,
@@ -482,6 +503,10 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
                 "target_scope": "hub:mlx-community/demo@main",
                 "operation_kind": "managed_model_install",
                 "artifact_integrity": "not-a-receipt",
+                "artifact_companions": {
+                    "missing_required": "tokenizer.json",
+                    "verification_result": "failed",
+                },
             }
         ),
     )
@@ -490,6 +515,28 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
     assert refreshed_download["operation_id"] == "managed_model_install:def"
     assert refreshed_download["artifact_integrity"] == {}
     assert refreshed_download["artifact_integrity_status"] == ""
+    assert refreshed_download["artifact_companions"]["verification_result"] == "failed"
+    assert refreshed_download["artifact_companions_status"] == "failed"
+    assert refreshed_download["missing_required_companions"] == []
+
+    registry.attach_manifest(
+        job.job_id,
+        json.dumps(
+            {
+                "status": "completed",
+                "terminal_state": "completed",
+                "operation_id": "managed_model_install:ghi",
+                "target_scope": "hub:mlx-community/demo@main",
+                "operation_kind": "managed_model_install",
+                "artifact_companions": "not-a-receipt",
+            }
+        ),
+    )
+    malformed_companion_download = registry.snapshot()["downloads"][0]
+
+    assert malformed_companion_download["artifact_companions"] == {}
+    assert malformed_companion_download["artifact_companions_status"] == ""
+    assert malformed_companion_download["missing_required_companions"] == []
 
 
 def test_find_download_by_operation_receipt_matches_only_scoped_active_or_completed_jobs() -> None:
