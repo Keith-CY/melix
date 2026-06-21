@@ -315,7 +315,39 @@ def test_run_removes_stale_partial_before_resume(tmp_path: Path) -> None:
     assert not partial_path.exists()
 
 
-def test_sweep_stale_partial_removes_complete_partial(tmp_path: Path) -> None:
+def test_run_reports_new_partial_progress_after_stale_partial_removal(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.gguf"
+    source_path.write_bytes(b"abcdefgh")
+    output_dir = tmp_path / "flat-cache"
+    output_dir.mkdir()
+    partial_path = output_dir / "model.gguf.partial"
+    partial_path.write_bytes(b"old")
+    old_timestamp = time.time() - 30
+    os.utime(partial_path, (old_timestamp, old_timestamp))
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/vlm",
+        ext={
+            "source_path": str(source_path),
+            "output_filename": "model.gguf",
+            "chunk_bytes": "2",
+            "melix.target_scope": "hub:mlx-community/vlm@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.stale_partial_after_ms": "1",
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-stale-then-progress", output_dir=output_dir)
+
+    progress_payload = json.loads(result.snapshots[1].manifest_json)
+    assert progress_payload["downloaded_bytes"] == 2
+    assert progress_payload["partial_bytes"] == 2
+    assert progress_payload["resume_eligible"] is True
+    assert progress_payload["stale_partial_removed"] is True
+    assert progress_payload["partial_lifecycle"] == "resume_candidate"
+
+
+def test_sweep_stale_partial_keeps_recent_complete_partial(tmp_path: Path) -> None:
     partial_path = tmp_path / "download.artifact.partial"
     partial_path.write_bytes(b"abcdefgh")
 
@@ -325,8 +357,24 @@ def test_sweep_stale_partial_removes_complete_partial(tmp_path: Path) -> None:
         ext={"melix.stale_partial_after_ms": "60000"},
     )
 
+    assert removed is False
+    assert partial_bytes == 0
+    assert partial_age_ms == 0
+    assert partial_path.read_bytes() == b"abcdefgh"
+
+
+def test_sweep_stale_partial_removes_oversized_partial(tmp_path: Path) -> None:
+    partial_path = tmp_path / "download.artifact.partial"
+    partial_path.write_bytes(b"abcdefghi")
+
+    removed, partial_bytes, partial_age_ms = DownloadPipeline._sweep_stale_partial(
+        partial_path=partial_path,
+        total_bytes=8,
+        ext={"melix.stale_partial_after_ms": "60000"},
+    )
+
     assert removed is True
-    assert partial_bytes == 8
+    assert partial_bytes == 9
     assert partial_age_ms >= 0
     assert not partial_path.exists()
 

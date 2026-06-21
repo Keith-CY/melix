@@ -368,7 +368,7 @@ class DownloadPipeline:
             return False, 0, 0
 
         partial_bytes, partial_age_ms = cls._partial_file_state(partial_path)
-        if partial_bytes <= 0 or (total_bytes > 0 and partial_bytes >= total_bytes):
+        if partial_bytes <= 0 or (total_bytes > 0 and partial_bytes > total_bytes):
             partial_path.unlink(missing_ok=True)
             return True, partial_bytes, partial_age_ms
         if partial_age_ms >= max_age_ms:
@@ -774,7 +774,8 @@ class DownloadPipeline:
         partial_age_ms = 0
         if downloaded_bytes > 0 and (total_bytes == 0 or downloaded_bytes < total_bytes):
             partial_bytes = downloaded_bytes
-        if stale_partial_removed and terminal_state != "completed":
+        stale_removal_only = stale_partial_removed and partial_bytes <= 0 and terminal_state != "completed"
+        if stale_removal_only:
             partial_bytes = stale_partial_bytes
             partial_age_ms = stale_partial_age_ms
 
@@ -782,7 +783,7 @@ class DownloadPipeline:
         resume_eligible = (
             partial_bytes > 0
             and not activated
-            and not stale_partial_removed
+            and not stale_removal_only
             and (total_bytes == 0 or partial_bytes < total_bytes)
             and terminal_state in _PARTIAL_RESUME_ELIGIBLE_STATES
         )
@@ -791,7 +792,7 @@ class DownloadPipeline:
             partial_bytes = 0
             partial_age_ms = 0
             lifecycle = "completed_activated"
-        elif stale_partial_removed:
+        elif stale_removal_only:
             resume_eligible = False
             lifecycle = "stale_removed"
         elif partial_bytes <= 0:

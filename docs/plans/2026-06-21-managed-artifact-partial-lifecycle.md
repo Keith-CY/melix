@@ -56,7 +56,7 @@ Issue #1258 is a broad tracking issue. This PR intentionally implements the curr
 ## Task 2: Implement Pipeline Receipt Fields
 
 - [ ] Add partial lifecycle derivation in `DownloadPipeline.run` before `_resume_from_bytes`.
-- [ ] Preserve recent partial files for resume, remove only partial files older than configured `melix.stale_partial_after_ms` / `stale_partial_after_ms`.
+- [ ] Preserve recent partial files for resume, remove empty or oversized invalid partial files, and remove aged partial files older than configured `melix.stale_partial_after_ms` / `stale_partial_after_ms`.
 - [ ] Include lifecycle fields in managed/operation-receipt prepare, progress, terminal, strict-preflight, and managed hub import payloads.
 - [ ] Keep existing plain downloads working without adding managed artifact lifecycle fields or per-snapshot filesystem probes.
 - [ ] Run focused pytest until green.
