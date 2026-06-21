@@ -503,6 +503,23 @@ def test_managed_download_transport_receipt_records_user_forced_fallback(tmp_pat
     assert receipt["fallback_reason"] == "user_forced_fallback"
 
 
+def test_transport_receipt_helpers_tolerate_non_string_ext_values() -> None:
+    ext = {
+        "melix.operation_id": 1258,
+        "melix.requested_transport": " parallel_chunked ",
+        "melix.transport_helper_available": False,
+        "melix.force_transport_fallback": 0,
+    }
+
+    assert DownloadPipeline.uses_operation_receipt(ext) is True
+    assert DownloadPipeline._transport_selection(ext) == (
+        "parallel_chunked",
+        "http_range_resume",
+        "transport_helper_unavailable",
+        "range_resume",
+    )
+
+
 def test_managed_download_rejects_unknown_size_empty_body_before_activation(tmp_path: Path) -> None:
     pipeline = DownloadPipeline()
     source_path = tmp_path / "empty.bin"

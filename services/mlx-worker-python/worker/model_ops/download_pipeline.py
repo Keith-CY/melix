@@ -76,7 +76,7 @@ class DownloadPipeline:
         ext = dict(request.ext)
         strict_integrity_preflight = (
             "melix.strict_install_mode" in ext
-            or ("melix.install_mode" in ext and ext.get("melix.install_mode", "").strip().lower() == "strict")
+            or ("melix.install_mode" in ext and self._ext_text(ext, "melix.install_mode").lower() == "strict")
         )
         if self._is_managed_hub_repo_import(ext):
             if strict_integrity_preflight:
@@ -323,13 +323,13 @@ class DownloadPipeline:
         output_dir: Path,
         ext: dict[str, str],
     ) -> DownloadPipelineResult:
-        repo_id = ext.get("melix.hf_repo_id", "").strip() or request.source_model.strip()
+        repo_id = self._ext_text(ext, "melix.hf_repo_id") or request.source_model.strip()
         if "/" not in repo_id:
             raise ModelOperationError(
                 code="invalid_argument",
                 message="managed hub import requires melix.hf_repo_id in org/repo format.",
             )
-        revision = ext.get("melix.hf_revision", "").strip() or "main"
+        revision = self._ext_text(ext, "melix.hf_revision") or "main"
 
         source_dir = self._resolve_managed_hub_source_path(output_dir=output_dir, ext=ext, repo_id=repo_id, revision=revision)
         total_bytes = self._directory_size(source_dir)
@@ -394,25 +394,25 @@ class DownloadPipeline:
         return stat_result.st_size, max(0, int((time.time() - stat_result.st_mtime) * 1000))
 
     @staticmethod
-    def _selected_mirror(ext: dict[str, str]) -> str:
-        explicit = ext.get("mirror_url", "").strip()
+    def _selected_mirror(ext: dict[str, Any]) -> str:
+        explicit = DownloadPipeline._ext_text(ext, "mirror_url")
         if explicit:
             return explicit
-        for mirror in ext.get("mirror_urls", "").split(","):
+        for mirror in DownloadPipeline._ext_text(ext, "mirror_urls").split(","):
             mirror = mirror.strip()
             if mirror:
                 return mirror
         return "https://huggingface.co"
 
     @staticmethod
-    def _output_filename(ext: dict[str, str]) -> str:
-        raw_name = ext.get("output_filename", "").strip() or "download.artifact"
+    def _output_filename(ext: dict[str, Any]) -> str:
+        raw_name = DownloadPipeline._ext_text(ext, "output_filename") or "download.artifact"
         name = Path(raw_name).name
         return name or "download.artifact"
 
     @staticmethod
-    def _state_filename(*, ext: dict[str, str], output_filename: str) -> str:
-        if not ext.get("output_filename", "").strip():
+    def _state_filename(*, ext: dict[str, Any], output_filename: str) -> str:
+        if not DownloadPipeline._ext_text(ext, "output_filename"):
             return "download.state.json"
         return f"{output_filename}.state.json"
 
@@ -421,9 +421,9 @@ class DownloadPipeline:
         *,
         request: maintenance_pb2.ConvertModelRequest,
         output_dir: Path,
-        ext: dict[str, str],
+        ext: dict[str, Any],
     ) -> Path:
-        source_path_raw = ext.get("source_path", "").strip()
+        source_path_raw = DownloadPipeline._ext_text(ext, "source_path")
         if source_path_raw:
             source_path = Path(source_path_raw).expanduser().resolve()
             if not source_path.is_file():
@@ -446,21 +446,21 @@ class DownloadPipeline:
         return synthetic_source
 
     @staticmethod
-    def _is_managed_hub_repo_import(ext: dict[str, str]) -> bool:
+    def _is_managed_hub_repo_import(ext: dict[str, Any]) -> bool:
         return (
-            ext.get("melix.managed_import", "").strip().lower() in {"1", "true", "yes", "on"}
-            and ext.get("melix.source_kind", "").strip() == "hub_repo"
+            DownloadPipeline._ext_text(ext, "melix.managed_import").lower() in {"1", "true", "yes", "on"}
+            and DownloadPipeline._ext_text(ext, "melix.source_kind") == "hub_repo"
         )
 
     def _resolve_managed_hub_source_path(
         self,
         *,
         output_dir: Path,
-        ext: dict[str, str],
+        ext: dict[str, Any],
         repo_id: str,
         revision: str,
     ) -> Path:
-        source_path_raw = ext.get("source_path", "").strip()
+        source_path_raw = self._ext_text(ext, "source_path")
         if source_path_raw:
             source_path = Path(source_path_raw).expanduser().resolve()
             if source_path.is_dir():
@@ -636,6 +636,13 @@ class DownloadPipeline:
             return int(raw_value)
         except ValueError:
             return default
+
+    @staticmethod
+    def _ext_text(ext: dict[str, Any], key: str, default: str = "") -> str:
+        value = ext.get(key, default)
+        if value is None:
+            return default
+        return str(value).strip()
 
     def _snapshot(
         self,
@@ -919,17 +926,17 @@ class DownloadPipeline:
         return operation_id, target_scope, operation_kind
 
     @staticmethod
-    def _operation_kind(ext: dict[str, str]) -> str:
-        return ext.get("melix.operation_kind", "").strip() or "managed_model_install"
+    def _operation_kind(ext: dict[str, Any]) -> str:
+        return DownloadPipeline._ext_text(ext, "melix.operation_kind") or "managed_model_install"
 
     @classmethod
     def _operation_id(
         cls,
         *,
         request: maintenance_pb2.ConvertModelRequest,
-        ext: dict[str, str],
+        ext: dict[str, Any],
     ) -> str:
-        explicit = ext.get("melix.operation_id", "").strip()
+        explicit = cls._ext_text(ext, "melix.operation_id")
         if explicit:
             return explicit
         operation_kind = cls._operation_kind(ext)
@@ -941,33 +948,33 @@ class DownloadPipeline:
     def _target_scope(
         *,
         request: maintenance_pb2.ConvertModelRequest,
-        ext: dict[str, str],
+        ext: dict[str, Any],
     ) -> str:
-        explicit = ext.get("melix.target_scope", "").strip()
+        explicit = DownloadPipeline._ext_text(ext, "melix.target_scope")
         if explicit:
             return explicit
-        repo_id = ext.get("melix.hf_repo_id", "").strip() or request.source_model.strip()
-        revision = ext.get("melix.hf_revision", "").strip() or "main"
+        repo_id = DownloadPipeline._ext_text(ext, "melix.hf_repo_id") or request.source_model.strip()
+        revision = DownloadPipeline._ext_text(ext, "melix.hf_revision") or "main"
         if repo_id:
             return f"hub:{repo_id}@{revision}"
-        source_path = ext.get("source_path", "").strip()
+        source_path = DownloadPipeline._ext_text(ext, "source_path")
         if source_path:
             return f"local:{Path(source_path).expanduser().resolve()}"
         return request.source_model.strip() or "download"
 
     @staticmethod
-    def uses_operation_receipt(ext: dict[str, str]) -> bool:
+    def uses_operation_receipt(ext: dict[str, Any]) -> bool:
         return (
-            ext.get("melix.managed_import", "").strip().lower() in {"1", "true", "yes", "on"}
-            or ext.get("melix.operation_id", "").strip() != ""
-            or ext.get("melix.operation_kind", "").strip() != ""
-            or ext.get("melix.target_scope", "").strip() != ""
-            or ext.get("melix.strict_install_mode", "").strip() != ""
-            or ext.get("melix.install_mode", "").strip().lower() == "strict"
-            or ext.get("melix.artifact_digest", "").strip() != ""
-            or ext.get("artifact_digest", "").strip() != ""
-            or ext.get("sha256", "").strip() != ""
-            or ext.get("test_request_deadline_ms", "").strip() != ""
+            DownloadPipeline._ext_text(ext, "melix.managed_import").lower() in {"1", "true", "yes", "on"}
+            or DownloadPipeline._ext_text(ext, "melix.operation_id") != ""
+            or DownloadPipeline._ext_text(ext, "melix.operation_kind") != ""
+            or DownloadPipeline._ext_text(ext, "melix.target_scope") != ""
+            or DownloadPipeline._ext_text(ext, "melix.strict_install_mode") != ""
+            or DownloadPipeline._ext_text(ext, "melix.install_mode").lower() == "strict"
+            or DownloadPipeline._ext_text(ext, "melix.artifact_digest") != ""
+            or DownloadPipeline._ext_text(ext, "artifact_digest") != ""
+            or DownloadPipeline._ext_text(ext, "sha256") != ""
+            or DownloadPipeline._ext_text(ext, "test_request_deadline_ms") != ""
         )
 
     @staticmethod
@@ -993,16 +1000,16 @@ class DownloadPipeline:
         }
 
     @staticmethod
-    def _transport_receipt_enabled(ext: dict[str, str]) -> bool:
+    def _transport_receipt_enabled(ext: dict[str, Any]) -> bool:
         return DownloadPipeline.uses_operation_receipt(ext)
 
     @staticmethod
-    def _transport_selection(ext: dict[str, str]) -> tuple[str, str, str, str]:
-        requested = ext.get("melix.requested_transport", "").strip() or "http_range_resume"
+    def _transport_selection(ext: dict[str, Any]) -> tuple[str, str, str, str]:
+        requested = DownloadPipeline._ext_text(ext, "melix.requested_transport") or "http_range_resume"
         effective = requested
         fallback_reason = ""
-        helper_available = ext.get("melix.transport_helper_available", "").strip().lower()
-        force_fallback = ext.get("melix.force_transport_fallback", "").strip().lower()
+        helper_available = DownloadPipeline._ext_text(ext, "melix.transport_helper_available").lower()
+        force_fallback = DownloadPipeline._ext_text(ext, "melix.force_transport_fallback").lower()
 
         if force_fallback in {"1", "true", "yes", "on"}:
             effective = "http_range_resume"
@@ -1074,14 +1081,14 @@ class DownloadPipeline:
         cls,
         *,
         manifest_context: _DownloadManifestContext,
-        ext: dict[str, str],
+        ext: dict[str, Any],
         total_bytes: int,
     ) -> None:
         if total_bytes != 0:
             return
         if not cls._transport_receipt_enabled(ext):
             return
-        if ext.get("melix.allow_unknown_size", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        if cls._ext_text(ext, "melix.allow_unknown_size").lower() not in {"1", "true", "yes", "on"}:
             return
 
         payload = cls._build_manifest_payload(
@@ -1137,7 +1144,7 @@ class DownloadPipeline:
         output_path: Path,
         partial_path: Path,
         selected_mirror: str,
-        ext: dict[str, str],
+        ext: dict[str, Any],
     ) -> None:
         if not cls._strict_install_mode(ext) or cls._artifact_digest(ext):
             return
@@ -1215,11 +1222,11 @@ class DownloadPipeline:
         )
 
     @staticmethod
-    def _strict_install_mode(ext: dict[str, str]) -> bool:
-        raw_flag = ext.get("melix.strict_install_mode", "").strip().lower()
+    def _strict_install_mode(ext: dict[str, Any]) -> bool:
+        raw_flag = DownloadPipeline._ext_text(ext, "melix.strict_install_mode").lower()
         if raw_flag in {"1", "true", "yes", "on"}:
             return True
-        return ext.get("melix.install_mode", "").strip().lower() == "strict"
+        return DownloadPipeline._ext_text(ext, "melix.install_mode").lower() == "strict"
 
     @staticmethod
     def _artifact_digest(ext: dict[str, Any]) -> str:
@@ -1254,9 +1261,9 @@ class DownloadPipeline:
         return (Path.home() / ".cache" / "huggingface" / "hub").resolve()
 
     @staticmethod
-    def _huggingface_token(ext: dict[str, str]) -> str:
+    def _huggingface_token(ext: dict[str, Any]) -> str:
         for key in ("melix.hf_token", "hf_token", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN"):
-            token = ext.get(key, "").strip()
+            token = DownloadPipeline._ext_text(ext, key)
             if token:
                 return token
         return ""
