@@ -60,11 +60,12 @@ def _measure_product_version_read(iterations: int, sample_count: int) -> dict[st
             '[project]\nname = "melix"\nversion = "1.2.3"\n',
             encoding="utf-8",
         )
+        repo_root_string = str(repo_root)
         for _ in range(sample_count):
             tracemalloc.start()
             started = time.perf_counter()
             for _ in range(iterations):
-                version = startup_signals.read_product_version(repo_root)
+                version = startup_signals.read_product_version(repo_root_string)
             elapsed_samples.append((time.perf_counter() - started) * 1000.0)
             _, peak = tracemalloc.get_traced_memory()
             tracemalloc.stop()

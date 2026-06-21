@@ -63,11 +63,12 @@ class StartupFailureReport:
 
 
 def read_product_version(repo_root: str | Path) -> str:
-    root = (
-        repo_root
-        if isinstance(repo_root, Path) and repo_root.is_absolute()
-        else Path(repo_root).expanduser().resolve()
-    )
+    if isinstance(repo_root, Path):
+        root = repo_root if repo_root.is_absolute() else repo_root.expanduser().resolve()
+    else:
+        root = Path(repo_root).expanduser()
+        if not root.is_absolute():
+            root = root.resolve()
     pyproject_path = root / "pyproject.toml"
     stat_result = pyproject_path.stat()
     cache_key = str(pyproject_path)
