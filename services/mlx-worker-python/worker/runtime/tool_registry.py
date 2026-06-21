@@ -297,6 +297,25 @@ class ToolRegistry:
 
         if len(names) == 1:
             raw_name = names[0]
+            tool_by_name = self._tool_by_name
+            missing_tool_sentinel = _MISSING_TOOL_SENTINEL
+            tool = tool_by_name.get(raw_name, missing_tool_sentinel)
+            if tool is not missing_tool_sentinel:
+                requested_names = (raw_name,)
+                cached_selection = self._selection_cache.get(requested_names)
+                if cached_selection is not None:
+                    return cached_selection
+                selection = ToolRegistry(
+                    (cast(ToolDescriptor, tool),),
+                    schema_version=self._schema_version,
+                    toolset_version=self._toolset_version,
+                    parser=self._parser,
+                    parser_contract_version=self._parser_contract_version,
+                )
+                if len(self._selection_cache) >= _SELECTION_CACHE_MAX_SIZE:
+                    self._selection_cache.clear()
+                self._selection_cache[requested_names] = selection
+                return selection
             normalized_name = raw_name.strip()
             if normalized_name:
                 requested_names = (normalized_name,)
@@ -307,8 +326,8 @@ class ToolRegistry:
                     if isinstance(names, tuple) and names != requested_names:
                         self._selection_cache[names] = cached_selection
                     return cached_selection
-                tool = self._tool_by_name.get(normalized_name, _MISSING_TOOL_SENTINEL)
-                if tool is _MISSING_TOOL_SENTINEL:
+                tool = tool_by_name.get(normalized_name, missing_tool_sentinel)
+                if tool is missing_tool_sentinel:
                     raise ToolRegistryError(
                         f"Unknown tool registry entry requested: {normalized_name}"
                     )
