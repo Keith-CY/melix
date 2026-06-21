@@ -310,25 +310,19 @@ def fast_path_probe_signature(
     metadata_repr = "()"
     if isinstance(loaded_model, dict):
         top_level_repr = _top_level_signature_repr(loaded_model)
-        metadata_pairs: list[tuple[str, str]] = []
         metadata_keys = _signature_metadata_keys(loaded_model, prepared_request)
         nested_metadata = loaded_model.get("metadata", {})
         nested_metadata_is_dict = isinstance(nested_metadata, dict)
-        for key in metadata_keys:
-            normalized = ""
-            value = loaded_model.get(key)
-            if isinstance(value, str) and value.strip():
-                normalized = value.strip()
-            if nested_metadata_is_dict and key in nested_metadata:
-                # Nested runtime metadata is authoritative over import-time top-level copies.
-                # The accepted key set is fixed, so probe those keys directly instead of
-                # scanning and sorting arbitrary metadata payloads on every signature call.
-                nested_normalized = str(nested_metadata[key]).strip()
-                if nested_normalized:
-                    normalized = nested_normalized
-            if normalized:
-                metadata_pairs.append((key, normalized))
-        metadata_repr = _signature_pairs_repr(metadata_pairs)
+        metadata_values = tuple(
+            _signature_metadata_value(
+                loaded_model,
+                nested_metadata,
+                nested_metadata_is_dict,
+                key,
+            )
+            for key in metadata_keys
+        )
+        metadata_repr = _signature_key_values_repr(metadata_keys, metadata_values)
     return (
         prepared_request.multimodal_hash_hex,
         top_level_repr,
@@ -337,10 +331,21 @@ def fast_path_probe_signature(
 
 
 def _top_level_signature_repr(loaded_model: dict[str, Any]) -> str:
-    model_id = str(loaded_model.get("model_id", ""))
-    quant_profile_id = str(loaded_model.get("quant_profile_id", ""))
-    revision = str(loaded_model.get("revision", ""))
-    tokenizer_hash = str(loaded_model.get("tokenizer_hash", ""))
+    return _top_level_signature_repr_values(
+        str(loaded_model.get("model_id", "")),
+        str(loaded_model.get("quant_profile_id", "")),
+        str(loaded_model.get("revision", "")),
+        str(loaded_model.get("tokenizer_hash", "")),
+    )
+
+
+@lru_cache(maxsize=1024)
+def _top_level_signature_repr_values(
+    model_id: str,
+    quant_profile_id: str,
+    revision: str,
+    tokenizer_hash: str,
+) -> str:
     return (
         "(('model_id', "
         + repr(model_id)
@@ -354,6 +359,26 @@ def _top_level_signature_repr(loaded_model: dict[str, Any]) -> str:
     )
 
 
+def _signature_metadata_value(
+    loaded_model: dict[str, Any],
+    nested_metadata: Any,
+    nested_metadata_is_dict: bool,
+    key: str,
+) -> str:
+    normalized = ""
+    value = loaded_model.get(key)
+    if isinstance(value, str) and value.strip():
+        normalized = value.strip()
+    if nested_metadata_is_dict and key in nested_metadata:
+        # Nested runtime metadata is authoritative over import-time top-level copies.
+        # The accepted key set is fixed, so probe those keys directly instead of
+        # scanning and sorting arbitrary metadata payloads on every signature call.
+        nested_normalized = str(nested_metadata[key]).strip()
+        if nested_normalized:
+            normalized = nested_normalized
+    return normalized
+
+
 def _signature_metadata_keys(
     loaded_model: dict[str, Any],
     prepared_request: PreparedVisionRequest,
@@ -363,6 +388,20 @@ def _signature_metadata_keys(
     if _has_any_loaded_metadata(loaded_model, _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS):
         return _FAST_PATH_SIGNATURE_METADATA_KEYS_SORTED
     return _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED
+
+
+@lru_cache(maxsize=2048)
+def _signature_key_values_repr(keys: tuple[str, ...], values: tuple[str, ...]) -> str:
+    chunks = [
+        f"({key!r}, {value!r})"
+        for key, value in zip(keys, values, strict=True)
+        if value
+    ]
+    if not chunks:
+        return "()"
+    if len(chunks) == 1:
+        return f"({chunks[0]},)"
+    return "(" + ", ".join(chunks) + ")"
 
 
 def _signature_pairs_repr(pairs: Any) -> str:
