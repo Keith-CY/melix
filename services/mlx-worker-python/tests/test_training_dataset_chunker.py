@@ -187,6 +187,53 @@ def test_long_single_turn_splits_into_multiple_chunks() -> None:
         assert chunk["id"] == f"long#chunk-{idx}"
 
 
+def test_long_single_turn_without_system_prefix_keeps_two_message_chunks() -> None:
+    tokenizer = _FakeTokenizer()
+    sample = {
+        "id": "long-no-system",
+        "messages": [
+            {"role": "user", "content": _words(180)},
+            {"role": "assistant", "content": "ack"},
+        ],
+    }
+
+    chunked, stats = chunk_long_samples([sample], chunk_size=70, tokenizer=tokenizer)
+
+    assert stats.chunk_count == len(chunked) >= 3
+    for idx, chunk in enumerate(chunked):
+        assert [message["role"] for message in chunk["messages"]] == [
+            "user",
+            "assistant",
+        ]
+        assert chunk["messages"][1]["content"] == "ack"
+        assert chunk["id"] == f"long-no-system#chunk-{idx}"
+
+
+def test_long_single_turn_with_system_prefix_keeps_three_message_chunks() -> None:
+    tokenizer = _FakeTokenizer()
+    sample = {
+        "id": "long-with-system",
+        "messages": [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": _words(180)},
+            {"role": "assistant", "content": "ack"},
+        ],
+    }
+
+    chunked, stats = chunk_long_samples([sample], chunk_size=75, tokenizer=tokenizer)
+
+    assert stats.chunk_count == len(chunked) >= 3
+    for idx, chunk in enumerate(chunked):
+        assert [message["role"] for message in chunk["messages"]] == [
+            "system",
+            "user",
+            "assistant",
+        ]
+        assert chunk["messages"][0]["content"] == "sys"
+        assert chunk["messages"][2]["content"] == "ack"
+        assert chunk["id"] == f"long-with-system#chunk-{idx}"
+
+
 def test_single_turn_search_stops_candidate_rendering_after_first_oversized_segment() -> None:
     tokenizer = _CountingTokenizer()
     sample = {
