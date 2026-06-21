@@ -1,6 +1,6 @@
-# Retrieval lookup small tuple copy fast path
+# Retrieval lookup four-item tuple copy fast path
 
-This Python performance slice is limited to tuple handling inside
+This Python performance slice is limited to four-item tuple handling inside
 `worker.runtime.retrieval_context._copy_payload_value(...)`, which is used by
 `project_retrieval_lookup_result(...)` when projecting retrieval lookup payloads
 into prompt messages.
@@ -8,9 +8,8 @@ into prompt messages.
 ## Goal
 
 Keep retrieval lookup projection behavior unchanged while avoiding the temporary
-list allocation created for the common zero-, one-, and two-item tuple payload
-values. Tuple payloads remain tuples, and nested mutable values are still
-recursively copied.
+list allocation created for four-item tuple payload values. Tuple payloads remain
+tuples, and nested mutable values are still recursively copied.
 
 ## Probe coverage
 
