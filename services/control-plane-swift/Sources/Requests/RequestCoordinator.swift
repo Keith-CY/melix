@@ -1283,20 +1283,26 @@ public actor RequestCoordinator {
             return
         }
         await metricsStore.increment("scheduler.preemption_count")
+        let upstreamCancelStartedAt = now()
+        var upstreamCancelLatencyMs: Double?
+        if let workerClient = activeWorkerClients[victim.requestID] {
+            _ = try? await workerClient.abort(requestID: victim.requestID)
+            upstreamCancelLatencyMs = max(0, now().timeIntervalSince(upstreamCancelStartedAt) * 1000)
+        }
         await recordAbortMetrics(phase: phase, startedAt: startedAt)
         await recordCancellationReceipt(
             record: victim,
             preemptingRequestID: preemptingRequestID,
             cancellationReason: "preempted",
-            cancelSignalSource: "scheduler.preemption"
+            cancelSignalSource: "scheduler.preemption",
+            upstreamCancelLatencyMs: upstreamCancelLatencyMs
         )
 
         let hasExecutionHub = executionHubs[victim.requestID] != nil
         if let hub = executionHubs[victim.requestID] {
             await hub.emitLifecycle(.cancelled)
         }
-        if let workerClient = activeWorkerClients[victim.requestID] {
-            _ = try? await workerClient.abort(requestID: victim.requestID)
+        if activeWorkerClients[victim.requestID] != nil {
             if !hasExecutionHub {
                 await finishRequestTracking(requestID: victim.requestID, phase: .requestAborted)
             }
@@ -2683,7 +2689,8 @@ public actor RequestCoordinator {
         record: ActiveSchedulingRecord,
         preemptingRequestID: String,
         cancellationReason: String,
-        cancelSignalSource: String
+        cancelSignalSource: String,
+        upstreamCancelLatencyMs: Double?
     ) async {
         let runTimeMs = max(0, now().timeIntervalSince(record.admittedAt) * 1000)
         await metricsStore.increment("scheduler.cancellation_receipt_emitted")
@@ -2702,6 +2709,7 @@ public actor RequestCoordinator {
             "priority_score": record.priorityScore,
             "lane": record.lane,
             "run_time_ms": runTimeMs,
+            "upstream_cancel_latency_ms": upstreamCancelLatencyMs ?? NSNull(),
             "recorded_at_unix_ms": Int64(now().timeIntervalSince1970 * 1000),
         ]
         guard JSONSerialization.isValidJSONObject(payload),

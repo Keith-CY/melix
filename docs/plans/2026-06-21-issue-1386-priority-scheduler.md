@@ -26,7 +26,7 @@ In scope:
 
 - priority queue ordering for text chat completions in `RequestCoordinator`;
 - cooperative preemption when an interactive or otherwise higher-priority request arrives behind lower-priority active work;
-- cancellation/preemption receipt payloads with request id, preempting request id, cancellation reason, priority class, wait/run timing, lifecycle, cancel source, and partial-output flag;
+- cancellation/preemption receipt payloads with request id, preempting request id, cancellation reason, priority class, wait/run timing, upstream cancel latency, lifecycle, cancel source, and partial-output flag;
 - metrics for scheduler preemption count and cancellation receipt emission;
 - deterministic Swift tests covering priority ordering, preemption, and receipt content.
 

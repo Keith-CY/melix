@@ -555,6 +555,7 @@ struct RequestCoordinatorTests {
         #expect(cancellationReceipt["partial_output_saved"] as? Bool == true)
         #expect(cancellationReceipt["priority_class"] as? String == "background_batch")
         #expect((cancellationReceipt["run_time_ms"] as? Double ?? -1) >= 0)
+        #expect((cancellationReceipt["upstream_cancel_latency_ms"] as? Double ?? -1) >= 0)
         #expect(metrics.values["scheduler.preemption_count", default: 0] == 1)
         #expect(metrics.values["scheduler.cancellation_receipt_emitted", default: 0] == 1)
     }
