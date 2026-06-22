@@ -6536,6 +6536,7 @@ def _assert_image_feature_cache_helper_contracts() -> None:
         assert _split_image_feature_payloads(None, 2) is None
         assert _split_image_feature_payloads(["a", "b"], 2) == ("a", "b")
         assert _split_image_feature_payloads("single", 1) == ("single",)
+        assert _split_image_feature_payloads(["a", "b"], 1) is None
         assert _split_image_feature_payloads("none", 0) == ()
         assert _split_image_feature_payloads(SimpleNamespace(shape=()), 2) is None
         assert _split_image_feature_payloads(SimpleNamespace(shape=("bad",)), 2) is None

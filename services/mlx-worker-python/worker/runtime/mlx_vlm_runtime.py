@@ -527,8 +527,8 @@ def _split_image_feature_payloads(features: Any, expected_count: int) -> tuple[A
         return ()
     if features is None:
         return None
-    if isinstance(features, list | tuple) and len(features) == count:
-        return tuple(features)
+    if isinstance(features, list | tuple):
+        return tuple(features) if len(features) == count else None
     if count == 1:
         return (features,)
     shape = getattr(features, "shape", None)

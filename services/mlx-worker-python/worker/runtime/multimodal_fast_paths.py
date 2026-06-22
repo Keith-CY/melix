@@ -313,9 +313,12 @@ class MultimodalFastPathController:
         payloads: Iterable[Any | None],
     ) -> tuple[bool, ...]:
         keys = self.image_feature_cache_keys(loaded_model, prepared_request)
+        payloads_tuple = tuple(payloads)
+        if len(payloads_tuple) != len(keys):
+            return tuple(False for _ in keys)
         stored: list[bool] = []
         with self._image_feature_cache_lock:
-            for key, image, payload in zip(keys, prepared_request.images, payloads, strict=False):
+            for key, image, payload in zip(keys, prepared_request.images, payloads_tuple, strict=True):
                 if key is None or payload is None:
                     stored.append(False)
                     continue
@@ -329,8 +332,6 @@ class MultimodalFastPathController:
                 while len(self._image_feature_cache) > self._max_image_feature_cache_entries:
                     self._image_feature_cache.popitem(last=False)
                 stored.append(self._image_feature_cache.get(key) is stored_entry)
-        if len(stored) < len(keys):
-            stored.extend(False for _ in keys[len(stored):])
         return tuple(stored)
 
     def image_feature_cache_summary(self) -> tuple[int, int]:

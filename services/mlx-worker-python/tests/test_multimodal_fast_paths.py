@@ -208,6 +208,35 @@ def test_fast_path_returns_stable_image_feature_payloads_after_store() -> None:
     assert repeat.image_feature_cache_artifact_count == 1
 
 
+def test_fast_path_rejects_mismatched_image_feature_payload_count() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model()
+    images = [
+        _image(b"first-image", filename="first.jpg"),
+        _image(b"second-image", filename="second.jpg"),
+    ]
+    request = _request(images)
+
+    assert controller.put_image_feature_payloads(loaded_model, request, ("only-first",)) == (
+        False,
+        False,
+    )
+    assert controller.put_image_feature_payloads(
+        loaded_model,
+        request,
+        ("first", "second", "extra"),
+    ) == (
+        False,
+        False,
+    )
+
+    assert controller.image_feature_payloads(loaded_model, request) == (None, None)
+    decision = controller.plan(loaded_model, request)
+    assert decision.image_feature_cache_hits == 0
+    assert decision.image_feature_cache_misses == 2
+    assert decision.image_feature_cache_artifact_count == 0
+
+
 def test_fast_path_records_row_local_per_sample_scatter_for_heterogeneous_multi_image_rows() -> None:
     controller = MultimodalFastPathController()
     loaded_model = _loaded_model()
