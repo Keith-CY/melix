@@ -212,12 +212,35 @@ records the declared `digest`, matching `actual_digest`, real `checked_at`, and
 failed receipt with the declared and actual directory digests, and sets
 `activated=false`.
 
+Managed artifact requests can also carry release policy evidence in
+`melix.artifact_id`, `melix.source_ref`, `melix.expected_source_ref`,
+`melix.signature_status`, and `melix.policy_mode`. The `artifact_integrity`
+receipt preserves these values as `artifact_id`, `source_ref`,
+`expected_source_ref`, `signature_status`, and `policy_mode`, plus
+`activation_decision`. Strict mode refuses activation with
+`artifact_release_ref_mismatch` when `expected_source_ref` is present and does
+not match `source_ref`. Strict mode also refuses activation with
+`artifact_signature_required` when `policy_mode=signed` and
+`signature_status` is not `verified`. These fields are the current
+metadata-shaped policy boundary; they do not perform cryptographic signature
+verification or fetch release refs from a remote hosting API.
+
 Model-ops download diagnostics preserve the full `artifact_integrity` receipt
 and expose a normalized `artifact_integrity_summary` object for stable
 machine-readable reporting. The summary always includes `status`,
 `verification_mode`, `policy_present`, `digest`, `actual_digest`, `checked_at`,
-and `failure_reason`; malformed or missing receipt payloads use empty-string
-defaults and `policy_present=false` rather than omitting the fields.
+`failure_reason`, `artifact_id`, `source_ref`, `expected_source_ref`,
+`signature_status`, `policy_mode`, and `activation_decision`; malformed or
+missing receipt payloads use empty-string defaults and `policy_present=false`
+rather than omitting the fields.
+
+Managed artifact download/import completions also project the same integrity
+receipt through the typed worker and control-plane `ModelOperationArtifact`
+schema as `artifact_integrity`. This lets CLI, desktop, and API consumers read
+the install trust decision from protocol fields without reparsing raw
+`manifest_json`. The typed projection is a copy of the worker-owned receipt; it
+does not add a second verification path and does not replace the persisted
+`download.state.json` source of truth.
 
 Managed artifact requests may also declare companion artifacts with
 `melix.companion_manifest`, encoded as a JSON array. Each entry has:

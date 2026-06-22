@@ -453,6 +453,12 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
                     "checked_at": "2026-05-24T00:00:00Z",
                     "failure_reason": "",
                     "status": "passed",
+                    "artifact_id": "artifact-demo",
+                    "source_ref": "refs/tags/v1.0.0",
+                    "expected_source_ref": "refs/tags/v1.0.0",
+                    "signature_status": "verified",
+                    "policy_mode": "signed",
+                    "activation_decision": "allowed",
                 },
                 "artifact_companions": {
                     "primary_artifact": "/runtime/download/model.gguf",
@@ -507,6 +513,12 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
         "actual_digest": "",
         "checked_at": "2026-05-24T00:00:00Z",
         "failure_reason": "",
+        "artifact_id": "artifact-demo",
+        "source_ref": "refs/tags/v1.0.0",
+        "expected_source_ref": "refs/tags/v1.0.0",
+        "signature_status": "verified",
+        "policy_mode": "signed",
+        "activation_decision": "allowed",
     }
     assert download["artifact_integrity"]["policy_present"] is True
     assert download["artifact_companions_status"] == "passed"
@@ -550,6 +562,12 @@ def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
         "actual_digest": "",
         "checked_at": "",
         "failure_reason": "",
+        "artifact_id": "",
+        "source_ref": "",
+        "expected_source_ref": "",
+        "signature_status": "",
+        "policy_mode": "",
+        "activation_decision": "",
     }
     assert refreshed_download["artifact_transport_receipt"] == {}
     assert refreshed_download["artifact_transport_status"] == ""
