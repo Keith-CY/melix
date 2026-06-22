@@ -360,16 +360,23 @@ def fast_path_probe_signature(
         metadata_keys = _signature_metadata_keys(loaded_model, prepared_request)
         nested_metadata = loaded_model.get("metadata", {})
         nested_metadata_is_dict = isinstance(nested_metadata, dict)
-        metadata_values = tuple(
-            _signature_metadata_value(
+        if metadata_keys == _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED:
+            metadata_repr = _core_signature_metadata_repr(
                 loaded_model,
                 nested_metadata,
                 nested_metadata_is_dict,
-                key,
             )
-            for key in metadata_keys
-        )
-        metadata_repr = _signature_key_values_repr(metadata_keys, metadata_values)
+        else:
+            metadata_values = tuple(
+                _signature_metadata_value(
+                    loaded_model,
+                    nested_metadata,
+                    nested_metadata_is_dict,
+                    key,
+                )
+                for key in metadata_keys
+            )
+            metadata_repr = _signature_key_values_repr(metadata_keys, metadata_values)
     return (
         prepared_request.multimodal_hash_hex,
         top_level_repr,
@@ -403,6 +410,81 @@ def _top_level_signature_repr_values(
         + "), ('tokenizer_hash', "
         + repr(tokenizer_hash)
         + "))"
+    )
+
+
+def _core_signature_metadata_repr(
+    loaded_model: dict[str, Any],
+    nested_metadata: Any,
+    nested_metadata_is_dict: bool,
+) -> str:
+    return _core_signature_metadata_repr_values(
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[0],
+        ),
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[1],
+        ),
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[2],
+        ),
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[3],
+        ),
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[4],
+        ),
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[5],
+        ),
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[6],
+        ),
+    )
+
+
+@lru_cache(maxsize=2048)
+def _core_signature_metadata_repr_values(
+    melix_adapter_hash: str,
+    execution_mode: str,
+    adapter_hash: str,
+    family_id: str,
+    max_images_per_prompt: str,
+    prompt_profile_id: str,
+    tokenization_mode: str,
+) -> str:
+    return _signature_key_values_repr(
+        _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED,
+        (
+            melix_adapter_hash,
+            execution_mode,
+            adapter_hash,
+            family_id,
+            max_images_per_prompt,
+            prompt_profile_id,
+            tokenization_mode,
+        ),
     )
 
 
