@@ -42,7 +42,7 @@ def _image(
         format="jpg",
         filename=filename,
         sha256_hex=hashlib.sha256(payload).hexdigest() if sha256_hex is None else sha256_hex,
-        preprocessing_policy=dict(preprocessing_policy or {}),
+        preprocessing_policy=dict(preprocessing_policy) if preprocessing_policy else None,
     )
 
 

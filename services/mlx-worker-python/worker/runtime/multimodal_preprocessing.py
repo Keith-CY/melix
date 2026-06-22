@@ -14,7 +14,7 @@ from urllib.request import urlopen
 from worker.runtime.video_preprocessing import PreparedVideoInput, prepare_video_input
 from worker.runtime.vlm_preprocessing_policy import (
     empty_preprocessing_policy,
-    normalize_media_preprocessing_policy,
+    normalize_image_preprocessing_policy,
     request_preprocessing_policy_signature_for_known_policy_state,
     update_multimodal_image_hashes,
 )
@@ -37,7 +37,9 @@ class PreparedImageInput:
     format: str
     filename: str
     sha256_hex: str
-    preprocessing_policy: dict[str, object] = field(default_factory=empty_preprocessing_policy)
+    preprocessing_policy: dict[str, object] | None = field(
+        default_factory=empty_preprocessing_policy
+    )
 
     @property
     def byte_length(self) -> int:
@@ -198,10 +200,12 @@ def _prepare_image_part(
     raise MultimodalPreprocessError("No image input provided.")
 
 
-def _normalize_image_preprocessing_policy(media) -> dict[str, object]:
-    return normalize_media_preprocessing_policy(
-        media,
-        error_factory=MultimodalPreprocessError,
+def _normalize_image_preprocessing_policy(media) -> dict[str, object] | None:
+    hints = getattr(media, "preprocessing_hints", None)
+    return (
+        normalize_image_preprocessing_policy(hints, error_factory=MultimodalPreprocessError)
+        if hints
+        else None
     )
 
 

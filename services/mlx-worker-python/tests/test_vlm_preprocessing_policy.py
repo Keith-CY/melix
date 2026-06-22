@@ -45,7 +45,7 @@ def _image_message(hints: dict[str, str]) -> list[common_pb2.ChatMessage]:
 
 
 def _prepared_request(
-    *policies: dict[str, object],
+    *policies: dict[str, object] | None,
     prompt_hash_hex: str = "p" * 64,
     multimodal_hash_hex: str = "m" * 64,
 ) -> PreparedVisionRequest:
@@ -58,7 +58,7 @@ def _prepared_request(
             format="jpg",
             filename=f"image-{index}.jpg",
             sha256_hex=hashlib.sha256(f"image-{index}".encode("utf-8")).hexdigest(),
-            preprocessing_policy=dict(policy),
+            preprocessing_policy=dict(policy) if policy else None,
         )
         for index, policy in enumerate(policies)
     ]
@@ -138,6 +138,31 @@ def test_prepare_vision_request_omits_empty_image_preprocessing_hints() -> None:
     assert request.images[0].preprocessing_policy == {"min_pixels": 1024}
 
 
+def test_prepare_vision_request_uses_none_for_missing_preprocessing_hints() -> None:
+    request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe the image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"policy-image",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="sample.jpg",
+                            format="jpg",
+                        ),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    assert request.images[0].preprocessing_policy is None
+    assert request.preprocessing_policy_signature == ""
+
+
 def test_prepare_vision_request_rejects_unsupported_image_preprocessing_hints() -> None:
     with pytest.raises(
         MultimodalPreprocessError,
@@ -201,7 +226,7 @@ def test_preprocessing_policy_receipt_records_normalized_image_policy() -> None:
 
 def test_prepared_request_preprocessing_policy_receipt_skips_empty_policy_requests() -> None:
     assert prepared_request_preprocessing_policy_receipt(_prepared_request()) == {}
-    assert prepared_request_preprocessing_policy_receipt(_prepared_request({})) == {}
+    assert prepared_request_preprocessing_policy_receipt(_prepared_request(None)) == {}
 
 
 def test_prepared_request_preprocessing_policy_receipt_uses_request_signature_gate() -> None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 _SUPPORTED_IMAGE_PREPROCESSING_HINTS = frozenset(
@@ -23,11 +23,11 @@ _IMAGE_PREPROCESSING_INT_HINTS = frozenset(
     }
 )
 _IMAGE_PREPROCESSING_LAYOUT_VALUES = frozenset({"channels_first", "channels_last"})
-EMPTY_PREPROCESSING_POLICY: dict[str, object] = {}
+EMPTY_PREPROCESSING_POLICY: None = None
 EMPTY_PREPROCESSING_POLICY_RECEIPT: dict[str, object] = {}
 
 
-def empty_preprocessing_policy() -> dict[str, object]:
+def empty_preprocessing_policy() -> None:
     return EMPTY_PREPROCESSING_POLICY
 
 
@@ -39,7 +39,7 @@ def normalize_image_preprocessing_policy(
     hints: Any,
     *,
     error_factory: type[Exception] = ValueError,
-) -> dict[str, object]:
+) -> dict[str, object] | None:
     if not hints:
         return EMPTY_PREPROCESSING_POLICY
     normalized: dict[str, object] = {}
@@ -61,7 +61,7 @@ def normalize_media_preprocessing_policy(
     media: Any,
     *,
     error_factory: type[Exception] = ValueError,
-) -> dict[str, object]:
+) -> dict[str, object] | None:
     hints = getattr(media, "preprocessing_hints", None)
     if not hints:
         return EMPTY_PREPROCESSING_POLICY
@@ -93,7 +93,7 @@ def _normalized_layout_value(
     return value
 
 
-def preprocessing_policy_signature_value(policy: dict[str, object]) -> str:
+def preprocessing_policy_signature_value(policy: Mapping[str, object] | None) -> str:
     if not policy:
         return ""
     return json.dumps(
@@ -194,6 +194,8 @@ def image_preprocessing_resize_shape(images: Iterable[Any]) -> tuple[int, int] |
     resize_shape: tuple[int, int] | None = None
     for image in images:
         policy = getattr(image, "preprocessing_policy", EMPTY_PREPROCESSING_POLICY)
+        if not policy:
+            continue
         height = policy.get("resized_height")
         width = policy.get("resized_width")
         if height is None and width is None:
