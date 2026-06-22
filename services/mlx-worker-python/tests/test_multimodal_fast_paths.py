@@ -22,6 +22,7 @@ from worker.runtime.multimodal_fast_paths import (
 from worker.runtime.multimodal_position_receipts import build_mixed_batch_geometry_receipt
 from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
 from worker.runtime.video_preprocessing import PreparedVideoInput
+from worker.runtime.vlm_preprocessing_policy import request_preprocessing_policy_signature
 
 
 def _image(
@@ -29,6 +30,7 @@ def _image(
     *,
     filename: str = "sample.jpg",
     sha256_hex: str | None = None,
+    preprocessing_policy: dict[str, object] | None = None,
 ) -> PreparedImageInput:
     import hashlib
 
@@ -40,6 +42,7 @@ def _image(
         format="jpg",
         filename=filename,
         sha256_hex=hashlib.sha256(payload).hexdigest() if sha256_hex is None else sha256_hex,
+        preprocessing_policy=dict(preprocessing_policy or {}),
     )
 
 
@@ -79,6 +82,7 @@ def _request(
         + sum(video.byte_length for video in videos or []),
         prompt_hash_hex="prompt",
         multimodal_hash_hex="multi",
+        preprocessing_policy_signature=request_preprocessing_policy_signature(images or []),
     )
 
 
@@ -636,6 +640,39 @@ def test_fast_path_cache_misses_when_processor_shape_metadata_changes() -> None:
     assert same_shape.image_feature_cache_misses == 0
     assert changed_shape.image_feature_cache_hits == 0
     assert changed_shape.image_feature_cache_misses == 1
+
+
+def test_fast_path_cache_misses_when_request_preprocessing_policy_changes() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model()
+    base_image = _image(
+        b"same-policy-sensitive-image",
+        preprocessing_policy={
+            "min_pixels": 1024,
+            "max_pixels": 4096,
+            "layout": "channels_last",
+        },
+    )
+    resized_image = _image(
+        b"same-policy-sensitive-image",
+        preprocessing_policy={
+            "min_pixels": 2048,
+            "max_pixels": 8192,
+            "layout": "channels_last",
+        },
+    )
+
+    first = controller.plan(loaded_model, _request([base_image]))
+    controller.put_image_feature_payloads(loaded_model, _request([base_image]), ("policy-a",))
+    same_policy = controller.plan(loaded_model, _request([base_image]))
+    changed_policy = controller.plan(loaded_model, _request([resized_image]))
+
+    assert first.image_feature_cache_hits == 0
+    assert first.image_feature_cache_misses == 1
+    assert same_policy.image_feature_cache_hits == 1
+    assert same_policy.image_feature_cache_misses == 0
+    assert changed_policy.image_feature_cache_hits == 0
+    assert changed_policy.image_feature_cache_misses == 1
 
 
 def test_fast_path_builds_request_scoped_cache_keys_with_one_fingerprint_per_media_shape(monkeypatch) -> None:

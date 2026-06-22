@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import mimetypes
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import ceil
 from pathlib import Path
 from time import perf_counter
@@ -12,6 +12,12 @@ from urllib.parse import ParseResult, unquote, urlparse
 from urllib.request import urlopen
 
 from worker.runtime.video_preprocessing import PreparedVideoInput, prepare_video_input
+from worker.runtime.vlm_preprocessing_policy import (
+    empty_preprocessing_policy,
+    normalize_media_preprocessing_policy,
+    request_preprocessing_policy_signature_for_known_policy_state,
+    update_multimodal_image_hashes,
+)
 
 
 _LOCAL_IMAGE_PARSE = ParseResult("", "", "", "", "", "")
@@ -31,6 +37,7 @@ class PreparedImageInput:
     format: str
     filename: str
     sha256_hex: str
+    preprocessing_policy: dict[str, object] = field(default_factory=empty_preprocessing_policy)
 
     @property
     def byte_length(self) -> int:
@@ -73,6 +80,7 @@ class PreparedVisionRequest:
     prompt_hash_hex: str = ""
     multimodal_hash_hex: str = ""
     chat_messages: tuple[dict[str, object], ...] = ()
+    preprocessing_policy_signature: str = ""
 
     @property
     def contains_video(self) -> bool:
@@ -97,6 +105,7 @@ def prepare_vision_request(messages) -> PreparedVisionRequest:
     images: list[PreparedImageInput] = []
     videos: list[PreparedVideoInput] = []
     input_bytes = 0
+    has_preprocessing_policy = False
     image_uri_cache: dict[str, tuple[bytes, str, str, str, str, str]] = {}
 
     for message in messages:
@@ -108,6 +117,9 @@ def prepare_vision_request(messages) -> PreparedVisionRequest:
             if part.image_bytes or part.image_uri:
                 image = _prepare_image_part(part, image_uri_cache=image_uri_cache)
                 images.append(image)
+                has_preprocessing_policy = has_preprocessing_policy or bool(
+                    image.preprocessing_policy
+                )
                 input_bytes += image.byte_length
             if part.video_bytes or part.video_uri:
                 video = prepare_video_input(part)
@@ -126,6 +138,7 @@ def prepare_vision_request(messages) -> PreparedVisionRequest:
         images,
         videos,
         video_frame_policies,
+        has_preprocessing_policy=has_preprocessing_policy,
     )
     return PreparedVisionRequest(
         prompt_text=prompt_text,
@@ -137,6 +150,10 @@ def prepare_vision_request(messages) -> PreparedVisionRequest:
         preprocess_peak_memory_bytes=input_bytes,
         prompt_hash_hex=prompt_hash_hex,
         multimodal_hash_hex=multimodal_hash_hex,
+        preprocessing_policy_signature=request_preprocessing_policy_signature_for_known_policy_state(
+            images,
+            has_preprocessing_policy=has_preprocessing_policy,
+        ),
     )
 
 
@@ -148,6 +165,7 @@ def _prepare_image_part(
     mime_type = getattr(media, "mime_type", "")
     format_name = getattr(media, "format", "")
     filename = getattr(media, "filename", "")
+    preprocessing_policy = _normalize_image_preprocessing_policy(media)
 
     if part.image_bytes:
         bytes_data = bytes(part.image_bytes)
@@ -159,6 +177,7 @@ def _prepare_image_part(
             format=format_name,
             filename=filename or "inline-image",
             sha256_hex=_sha256_hex(bytes_data),
+            preprocessing_policy=preprocessing_policy,
         )
 
     if part.image_uri:
@@ -173,9 +192,17 @@ def _prepare_image_part(
             format=format_name or detected_format,
             filename=filename or detected_filename,
             sha256_hex=sha256_hex,
+            preprocessing_policy=preprocessing_policy,
         )
 
     raise MultimodalPreprocessError("No image input provided.")
+
+
+def _normalize_image_preprocessing_policy(media) -> dict[str, object]:
+    return normalize_media_preprocessing_policy(
+        media,
+        error_factory=MultimodalPreprocessError,
+    )
 
 
 def _cached_image_uri_payload(
@@ -327,12 +354,21 @@ def _vision_request_hash(
     images: list[PreparedImageInput],
     videos: list[PreparedVideoInput],
     video_frame_policies: list[PreparedVideoFramePolicy],
+    *,
+    has_preprocessing_policy: bool | None = None,
 ) -> str:
     digest = hashlib.sha256()
     update = digest.update
     update(prompt_hash_hex.encode("ascii"))
-    for image in images:
-        update(image.sha256_hex.encode("ascii"))
+    update_multimodal_image_hashes(
+        digest,
+        images,
+        has_preprocessing_policy=(
+            any(image.preprocessing_policy for image in images)
+            if has_preprocessing_policy is None
+            else has_preprocessing_policy
+        ),
+    )
     for video, policy in zip(videos, video_frame_policies, strict=False):
         digest.update(video.sha256_hex.encode("ascii"))
         for value in (

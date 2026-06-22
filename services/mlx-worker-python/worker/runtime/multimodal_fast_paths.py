@@ -8,7 +8,11 @@ import logging
 from threading import Lock
 from typing import Any, Callable, Iterable
 
-from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
+from worker.runtime.multimodal_preprocessing import (
+    PreparedImageInput,
+    PreparedVisionRequest,
+)
+from worker.runtime.vlm_preprocessing_policy import preprocessing_policy_signature_value
 
 logger = logging.getLogger(__name__)
 
@@ -392,10 +396,13 @@ class MultimodalFastPathController:
         vision_processor_max_crop_count = metadata.get("vision_processor_max_crop_count", "")
         vision_prompt_format = metadata.get("vision_prompt_format", "")
         vision_projected_feature_shape = metadata.get("vision_projected_feature_shape", "")
-        preprocessing_fingerprints: dict[tuple[str, str], str] = {}
+        preprocessing_fingerprints: dict[tuple[str, str, str], str] = {}
 
         def build(image: PreparedImageInput) -> ImageFeatureCacheKey:
-            shape = (image.mime_type, image.format)
+            request_preprocessing_policy = preprocessing_policy_signature_value(
+                image.preprocessing_policy
+            )
+            shape = (image.mime_type, image.format, request_preprocessing_policy)
             preprocessing_fingerprint = preprocessing_fingerprints.get(shape)
             if preprocessing_fingerprint is None:
                 preprocessing_fingerprint = _preprocessing_fingerprint(
@@ -411,6 +418,11 @@ class MultimodalFastPathController:
                     vision_prompt_format,
                     vision_projected_feature_shape,
                 )
+                if request_preprocessing_policy:
+                    preprocessing_fingerprint = _request_preprocessing_fingerprint(
+                        preprocessing_fingerprint,
+                        request_preprocessing_policy,
+                    )
                 preprocessing_fingerprints[shape] = preprocessing_fingerprint
             return ImageFeatureCacheKey(
                 family_id=family_id,
@@ -564,11 +576,15 @@ def fast_path_probe_signature(
                 for key in metadata_keys
             )
             metadata_repr = _signature_key_values_repr(metadata_keys, metadata_values)
-    return (
+    signature = (
         prepared_request.multimodal_hash_hex,
         top_level_repr,
         metadata_repr,
     )
+    policy_signature = prepared_request.preprocessing_policy_signature
+    if policy_signature:
+        return (*signature, policy_signature)
+    return signature
 
 
 def _top_level_signature_repr(loaded_model: dict[str, Any]) -> str:
@@ -804,6 +820,18 @@ def _adapter_hash(metadata: dict[str, str]) -> str:
         or metadata.get("multimodal_adapter_hash", "").strip()
         or "adapter-unset"
     )
+
+
+@lru_cache(maxsize=2048)
+def _request_preprocessing_fingerprint(
+    base_fingerprint: str,
+    request_preprocessing_policy: str,
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(base_fingerprint.encode("ascii"))
+    digest.update(b"\0request_preprocessing_policy\0")
+    digest.update(request_preprocessing_policy.encode("utf-8"))
+    return digest.hexdigest()
 
 
 @lru_cache(maxsize=256)

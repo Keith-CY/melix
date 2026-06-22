@@ -406,6 +406,20 @@ Executable unit issues:
   coverage at or above 95%, and a PR-scoped deterministic VLM/image-cache
   performance probe with zero regressions.
 
+- Unit 3.1.4 extends the real image-feature cache identity with the
+  request-scoped preprocessing policy carried by existing
+  `MediaMetadata.preprocessing_hints`. The worker normalizes supported pixel and
+  processor-layout controls before image processing: `min_pixels`,
+  `max_pixels`, `resized_height`, `resized_width`, `layout`, and
+  `input_data_format`. Unsupported preprocessing keys fail closed with a typed
+  preprocessing error before decode, so requests cannot silently fall back to a
+  text-only or default image-processing path. The normalized policy receipt is
+  included in the prepared vision request hash, the fast-path probe signature,
+  and every image-feature cache key; identical image bytes may hit only when the
+  normalized preprocessing policy also matches. No protobuf schema change is
+  required for this slice because `MediaMetadata.preprocessing_hints` is already
+  the request-side extension point.
+
 ## Verification Policy
 
 Per milestone:

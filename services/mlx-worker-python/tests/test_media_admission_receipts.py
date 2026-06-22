@@ -276,7 +276,26 @@ def test_media_admission_scan_skips_empty_parts_before_media() -> None:
 def test_vlm_runtime_records_processor_shape_receipt() -> None:
     runtime = DeterministicVLMRuntime()
     loaded_model = runtime.load_model(processor_shape_model())
-    messages = image_messages(b"processor receipt image")
+    messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[
+                common_pb2.MessagePart(text="Caption the image."),
+                common_pb2.MessagePart(
+                    image_bytes=b"processor receipt image",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        preprocessing_hints={
+                            "min_pixels": "1024",
+                            "max_pixels": "4096",
+                            "layout": "channels-first",
+                        },
+                    ),
+                ),
+            ],
+        )
+    ]
 
     prepared = runtime.render_prompt(messages, loaded_model=loaded_model)
     list(runtime.generate_tokens(loaded_model, prepared, None, Event()))
@@ -292,6 +311,22 @@ def test_vlm_runtime_records_processor_shape_receipt() -> None:
         "max_crop_count": 4,
         "prompt_format": "prefix-image-first",
         "projected_feature_shape": "4x256x2048",
+    }
+    assert probe.preprocessing_policy_receipt == {
+        "image_count": 1,
+        "policy_count": 1,
+        "accepted_fields": ["layout", "max_pixels", "min_pixels"],
+        "unsupported_fields": [],
+        "policies": [
+            {
+                "image_index": 0,
+                "policy": {
+                    "layout": "channels_first",
+                    "max_pixels": 4096,
+                    "min_pixels": 1024,
+                },
+            }
+        ],
     }
     assert probe.image_feature_cache_hits == 0
     assert probe.image_feature_cache_misses == 1
