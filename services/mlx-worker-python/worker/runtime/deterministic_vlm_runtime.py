@@ -516,8 +516,8 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             temp_root=self._temp_root,
             prefix="melix-vlm-",
         )
-        self._stage_temp_media(prepared_request, temp_media_session)
         try:
+            self._stage_temp_media(prepared_request, temp_media_session)
             sleep_if_configured("vlm")
             if cancel_event.is_set():
                 return
