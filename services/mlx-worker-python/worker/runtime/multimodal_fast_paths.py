@@ -8,7 +8,12 @@ import logging
 from threading import Lock
 from typing import Any, Callable, Iterable
 
-from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
+from worker.runtime.multimodal_preprocessing import (
+    PreparedImageInput,
+    PreparedVideoFramePolicy,
+    PreparedVisionRequest,
+)
+from worker.runtime.video_preprocessing import PreparedVideoInput
 
 logger = logging.getLogger(__name__)
 
@@ -421,7 +426,7 @@ class MultimodalFastPathController:
         ):
             keys.append(cache_key_factory(video, policy) if video.sha256_hex else None)
         if len(keys) < len(prepared_request.videos):
-            keys.extend(None for _ in range(len(prepared_request.videos) - len(keys)))
+            keys.extend([None] * (len(prepared_request.videos) - len(keys)))
         return tuple(keys)
 
     @staticmethod
@@ -478,7 +483,7 @@ class MultimodalFastPathController:
         adapter_hash: str,
         quant_profile_id: str,
         metadata: dict[str, str],
-    ) -> Callable[[Any, Any], VideoFeatureCacheKey]:
+    ) -> Callable[[PreparedVideoInput, PreparedVideoFramePolicy], VideoFeatureCacheKey]:
         vision_prompt_profile_id = metadata.get("vision_prompt_profile_id", "")
         vision_tokenization_mode = metadata.get("vision_tokenization_mode", "")
         vision_max_videos_per_prompt = metadata.get("vision_max_videos_per_prompt", "")
@@ -486,16 +491,19 @@ class MultimodalFastPathController:
         video_frame_token_cost = metadata.get("vision_video_frame_token_cost", "")
         preprocessing_fingerprints: dict[tuple[str, str, str, int, int, int, int, int], str] = {}
 
-        def build(video: Any, policy: Any) -> VideoFeatureCacheKey:
+        def build(
+            video: PreparedVideoInput,
+            policy: PreparedVideoFramePolicy,
+        ) -> VideoFeatureCacheKey:
             shape = (
-                str(getattr(video, "mime_type", "") or ""),
-                str(getattr(video, "format", "") or ""),
-                str(getattr(policy, "sampling_strategy", "") or ""),
-                int(getattr(policy, "requested_frame_budget", 0) or 0),
-                int(getattr(policy, "effective_frame_count", 0) or 0),
-                int(getattr(policy, "clip_start_ms", 0) or 0),
-                int(getattr(policy, "clip_end_ms", 0) or 0),
-                int(getattr(policy, "clip_duration_ms", 0) or 0),
+                video.mime_type,
+                video.format,
+                policy.sampling_strategy,
+                policy.requested_frame_budget,
+                policy.effective_frame_count,
+                policy.clip_start_ms,
+                policy.clip_end_ms,
+                policy.clip_duration_ms,
             )
             preprocessing_fingerprint = preprocessing_fingerprints.get(shape)
             if preprocessing_fingerprint is None:
