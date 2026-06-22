@@ -36,6 +36,7 @@ from worker.runtime.runtime_utils import callable_accepts_kwarg
 
 _MULTIMODAL_REQUEST_KINDS = frozenset({"ocr", "vlm", "transcription", "speech", "image"})
 _COMPLETED_UNLOAD_RECEIPT_LIMIT = 256
+_DEFAULT_HYBRID_STATE_PROBE = ("", 0, 0)
 
 
 @dataclass(slots=True)
@@ -257,9 +258,6 @@ class WorkerRegistry:
         self._last_multimodal_decode_mode = ""
         self._last_multimodal_fallback_reason = ""
         self._last_multimodal_decode_sync_mode = ""
-        self._last_hybrid_state_patch_mode = ""
-        self._last_hybrid_state_advance_count = 0
-        self._last_family_fast_path_override_count = 0
         self._has_multimodal_decode_probe = False
         self._text_batch_generator_submitted_request_count = 0
         self._text_batch_generator_completed_request_count = 0
@@ -1088,9 +1086,7 @@ class WorkerRegistry:
             self._text_batch_generator_speculative_mtp_head_ms_total,
             self._text_batch_generator_speculative_sample_ms_total,
             self._text_batch_generator_speculative_cache_ops_ms_total,
-            self._last_hybrid_state_patch_mode,
-            self._last_hybrid_state_advance_count,
-            self._last_family_fast_path_override_count,
+            *getattr(self, "_last_hybrid_state_probe", _DEFAULT_HYBRID_STATE_PROBE),
         )
 
     @staticmethod
@@ -1181,14 +1177,10 @@ class WorkerRegistry:
             self._last_multimodal_decode_sync_mode = str(
                 getattr(probe, "multimodal_decode_sync_mode", "baseline")
             )
-            self._last_hybrid_state_patch_mode = str(
-                getattr(probe, "hybrid_state_patch_mode", "not_reported")
-            )
-            self._last_hybrid_state_advance_count = int(
-                getattr(probe, "hybrid_state_advance_count", 0)
-            )
-            self._last_family_fast_path_override_count = int(
-                getattr(probe, "family_fast_path_override_count", 0)
+            self._last_hybrid_state_probe = (
+                str(getattr(probe, "hybrid_state_patch_mode", "not_reported")),
+                int(getattr(probe, "hybrid_state_advance_count", 0)),
+                int(getattr(probe, "family_fast_path_override_count", 0)),
             )
             self._text_batch_generator_submitted_request_count = int(
                 getattr(probe, "text_batch_generator_submitted_request_count", 0)
@@ -1296,9 +1288,6 @@ class WorkerRegistry:
             self._last_multimodal_decode_mode = ""
             self._last_multimodal_fallback_reason = ""
             self._last_multimodal_decode_sync_mode = ""
-            self._last_hybrid_state_patch_mode = ""
-            self._last_hybrid_state_advance_count = 0
-            self._last_family_fast_path_override_count = 0
             self._has_multimodal_decode_probe = False
             self._clear_text_batch_generator_probe_locked()
             self._last_language_fallback_count = int(getattr(probe, "language_fallback_count", 0))
@@ -1334,9 +1323,6 @@ class WorkerRegistry:
             self._last_multimodal_decode_mode = ""
             self._last_multimodal_fallback_reason = ""
             self._last_multimodal_decode_sync_mode = ""
-            self._last_hybrid_state_patch_mode = ""
-            self._last_hybrid_state_advance_count = 0
-            self._last_family_fast_path_override_count = 0
             self._has_multimodal_decode_probe = False
             self._clear_text_batch_generator_probe_locked()
             self._last_voice_fallback_count = int(getattr(probe, "voice_fallback_count", 0))
@@ -1378,9 +1364,6 @@ class WorkerRegistry:
             self._last_multimodal_decode_mode = ""
             self._last_multimodal_fallback_reason = ""
             self._last_multimodal_decode_sync_mode = ""
-            self._last_hybrid_state_patch_mode = ""
-            self._last_hybrid_state_advance_count = 0
-            self._last_family_fast_path_override_count = 0
             self._has_multimodal_decode_probe = False
             self._clear_text_batch_generator_probe_locked()
             self._last_video_effective_frame_count = 0
