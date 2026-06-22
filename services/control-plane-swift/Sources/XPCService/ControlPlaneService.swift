@@ -2978,6 +2978,29 @@ public actor ControlPlaneService {
         message.smokeTestRequested = artifact.smokeTestRequested
         message.smokeTestPassed = artifact.smokeTestPassed
         message.runtime = artifact.runtime
+        if artifact.hasArtifactIntegrity {
+            message.artifactIntegrity = controlPlaneArtifactIntegrity(from: artifact.artifactIntegrity)
+        }
+        return message
+    }
+
+    private func controlPlaneArtifactIntegrity(
+        from receipt: Melix_Worker_V1_ArtifactIntegrityReceipt
+    ) -> Melix_Controlplane_V1_ArtifactIntegrityReceipt {
+        var message = Melix_Controlplane_V1_ArtifactIntegrityReceipt()
+        message.status = receipt.status
+        message.verificationMode = receipt.verificationMode
+        message.policyPresent = receipt.policyPresent
+        message.digest = receipt.digest
+        message.actualDigest = receipt.actualDigest
+        message.checkedAt = receipt.checkedAt
+        message.failureReason = receipt.failureReason
+        message.artifactID = receipt.artifactID
+        message.sourceRef = receipt.sourceRef
+        message.expectedSourceRef = receipt.expectedSourceRef
+        message.signatureStatus = receipt.signatureStatus
+        message.policyMode = receipt.policyMode
+        message.activationDecision = receipt.activationDecision
         return message
     }
 

@@ -3439,6 +3439,91 @@ struct ControlPlaneServiceTests {
         #expect(response.model.operation.artifact.smokeTestPassed)
     }
 
+    @Test("execute projects managed artifact integrity receipt through model operation artifacts")
+    func executeProjectsManagedArtifactIntegrityReceiptThroughModelOperationArtifacts() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        await modelOpsClient.setConvertEvents([
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.started = Melix_Worker_V1_ConvertStarted()
+                event.started.jobID = "job-managed-integrity-123"
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.manifest = Melix_Worker_V1_ConvertManifest()
+                event.manifest.manifestJson = #"{"artifact_integrity":{"status":"passed"}}"#
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_ConvertModelEvent()
+                event.completed = Melix_Worker_V1_ConvertCompleted()
+                event.completed.outputPath = "/tmp/melix-downloads/qwen35/download.artifact"
+                event.completed.artifact = Melix_Worker_V1_QuantizedArtifact()
+                event.completed.artifact.schemaVersion = "melix.managed_artifact.v1"
+                event.completed.artifact.artifactKind = "managed_artifact"
+                event.completed.artifact.manifestPath = "/tmp/melix-downloads/qwen35/download.state.json"
+                event.completed.artifact.bundlePath = "/tmp/melix-downloads/qwen35/download.artifact"
+                event.completed.artifact.artifactBytes = 1024
+                event.completed.artifact.manifestBytes = 512
+                event.completed.artifact.servingCompatible = true
+                event.completed.artifact.runtime = "mlx_text"
+                event.completed.artifact.artifactIntegrity = Melix_Worker_V1_ArtifactIntegrityReceipt()
+                event.completed.artifact.artifactIntegrity.status = "passed"
+                event.completed.artifact.artifactIntegrity.verificationMode = "sha256"
+                event.completed.artifact.artifactIntegrity.policyPresent = true
+                event.completed.artifact.artifactIntegrity.digest = "sha256:declared"
+                event.completed.artifact.artifactIntegrity.actualDigest = "sha256:actual"
+                event.completed.artifact.artifactIntegrity.checkedAt = "2026-06-22T03:00:00Z"
+                event.completed.artifact.artifactIntegrity.failureReason = ""
+                event.completed.artifact.artifactIntegrity.artifactID = "qwen35-managed"
+                event.completed.artifact.artifactIntegrity.sourceRef = "refs/tags/v1.0.0"
+                event.completed.artifact.artifactIntegrity.expectedSourceRef = "refs/tags/v1.0.0"
+                event.completed.artifact.artifactIntegrity.signatureStatus = "verified"
+                event.completed.artifact.artifactIntegrity.policyMode = "signed"
+                event.completed.artifact.artifactIntegrity.activationDecision = "allowed"
+                return event
+            }(),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunModelOperationRequest(
+                modelID: "melix-dev-text",
+                operation: "download",
+                outputDir: "/tmp/melix-downloads/qwen35",
+                ext: [
+                    "melix.source_kind": "hub_repo",
+                    "melix.managed_import": "true",
+                    "melix.hf_repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                ]
+            )
+        )
+        let receipt = response.model.operation.artifact.artifactIntegrity
+
+        #expect(response.ok)
+        #expect(response.model.operation.artifact.artifactKind == "managed_artifact")
+        #expect(receipt.status == "passed")
+        #expect(receipt.verificationMode == "sha256")
+        #expect(receipt.policyPresent)
+        #expect(receipt.digest == "sha256:declared")
+        #expect(receipt.actualDigest == "sha256:actual")
+        #expect(receipt.checkedAt == "2026-06-22T03:00:00Z")
+        #expect(receipt.failureReason == "")
+        #expect(receipt.artifactID == "qwen35-managed")
+        #expect(receipt.sourceRef == "refs/tags/v1.0.0")
+        #expect(receipt.expectedSourceRef == "refs/tags/v1.0.0")
+        #expect(receipt.signatureStatus == "verified")
+        #expect(receipt.policyMode == "signed")
+        #expect(receipt.activationDecision == "allowed")
+    }
+
     @Test("execute allows managed hub import downloads for unknown model ids")
     func executeAllowsManagedHubImportDownloadsForUnknownModelIDs() async throws {
         let modelOpsClient = ScriptedModelOperationsWorkerClient()
