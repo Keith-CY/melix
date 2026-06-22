@@ -21,7 +21,10 @@ from worker.runtime.deterministic_probe_mixin import DeterministicProbeMixin
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_position_receipts import (
+    NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT,
+    build_hybrid_state_patch_receipt,
     build_position_metadata_receipt,
+    empty_hybrid_state_patch_receipt,
     empty_quantized_kv_mask_receipt,
 )
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
@@ -71,12 +74,18 @@ class VisionProbeSnapshot:
     multimodal_position_slice_fallback_count: int = 0
     quantized_load_mode: str = "fallback"
     quantized_load_fallback_reason: str = "not_reported"
+    hybrid_state_patch_mode: str = "not_reported"
+    hybrid_state_advance_count: int = 0
+    family_fast_path_override_count: int = 0
     attention_budget_receipt: dict[str, object] = field(default_factory=dict)
     position_metadata_receipt: dict[str, object] = field(
         default_factory=lambda: build_position_metadata_receipt()
     )
     quantized_kv_mask_receipt: dict[str, object] = field(
         default_factory=empty_quantized_kv_mask_receipt
+    )
+    hybrid_state_patch_receipt: dict[str, object] = field(
+        default_factory=empty_hybrid_state_patch_receipt
     )
     text_batch_generator_submitted_request_count: int = 0
     text_batch_generator_completed_request_count: int = 0
@@ -591,6 +600,26 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                 execution_ext=None,
             )
         attention_budget_receipt = build_attention_budget_receipt(attention_decision)
+        position_metadata_receipt = self._position_metadata_receipt(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            fallback_reason=fast_path.multimodal_fallback_reason,
+            seq_len=seq_len,
+        )
+        hybrid_seq_len = int(position_metadata_receipt["seq_len"])
+        if fast_path.hybrid_state_patch_mode == "not_applicable" and not (
+            prepared_request.images or prepared_request.videos
+        ):
+            hybrid_state_patch_receipt = NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT
+        else:
+            hybrid_state_patch_receipt = self._hybrid_state_patch_receipt(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                patch_mode=fast_path.hybrid_state_patch_mode,
+                fallback_reason=fast_path.multimodal_fallback_reason,
+                family_fast_path_override_count=fast_path.family_fast_path_override_count,
+                seq_len=hybrid_seq_len,
+            )
         self._last_fast_path_signature = signature or self._fast_path_probe_signature(
             loaded_model,
             prepared_request,
@@ -623,14 +652,17 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
-            attention_budget_receipt=attention_budget_receipt,
-            position_metadata_receipt=self._position_metadata_receipt(
-                loaded_model=loaded_model,
-                prepared_request=prepared_request,
-                fallback_reason=fast_path.multimodal_fallback_reason,
-                seq_len=seq_len,
+            hybrid_state_patch_mode=fast_path.hybrid_state_patch_mode,
+            hybrid_state_advance_count=(
+                0
+                if fast_path.hybrid_state_patch_mode == "not_applicable"
+                else int(hybrid_state_patch_receipt["cache_advance_count"])
             ),
+            family_fast_path_override_count=fast_path.family_fast_path_override_count,
+            attention_budget_receipt=attention_budget_receipt,
+            position_metadata_receipt=position_metadata_receipt,
             quantized_kv_mask_receipt=empty_quantized_kv_mask_receipt(),
+            hybrid_state_patch_receipt=hybrid_state_patch_receipt,
         )
 
     @staticmethod
@@ -692,6 +724,55 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             prepared_request=prepared_request,
             seq_len=seq_len,
             fallback_reason=fallback_reason,
+        )
+
+    def _hybrid_state_patch_receipt(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        patch_mode: str,
+        fallback_reason: str,
+        family_fast_path_override_count: int,
+        seq_len: int,
+    ) -> dict[str, object]:
+        media_count = (
+            len(prepared_request.images)
+            + prepared_request.effective_video_frame_count
+            + (
+                len(prepared_request.videos)
+                if prepared_request.videos and prepared_request.effective_video_frame_count <= 0
+                else 0
+            )
+        )
+        cache_advance = (
+            max(0, int(seq_len or 0))
+            if patch_mode not in {"fallback", "not_applicable"}
+            else 0
+        )
+        expected_cache_advance = 0 if patch_mode == "not_applicable" else seq_len
+        expected_contiguous_state_end = (
+            0 if patch_mode == "not_applicable" else seq_len
+        )
+        row = {
+            "row_index": 0,
+            "seq_len": seq_len,
+            "cache_offset": 0,
+            "cache_advance": cache_advance,
+            "expected_cache_advance": expected_cache_advance,
+            "media_count": media_count,
+            "contiguous_state_start": 0,
+            "contiguous_state_end": cache_advance,
+            "expected_contiguous_state_start": 0,
+            "expected_contiguous_state_end": expected_contiguous_state_end,
+            "text_only_rope_mode": "multimodal" if media_count else "text_only",
+        }
+        return build_hybrid_state_patch_receipt(
+            family_id=self._metadata_value(loaded_model, "vision_family_id", "llava-v1"),
+            patch_mode=patch_mode,
+            fallback_reason=fallback_reason,
+            family_fast_path_override_count=family_fast_path_override_count,
+            rows=[row],
         )
 
     def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:

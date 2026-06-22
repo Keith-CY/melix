@@ -1397,6 +1397,9 @@ struct RequestCoordinatorTests {
             response.stats.lastMultimodalDecodeMode = "text_only_batch_generator"
             response.stats.lastMultimodalFallbackReason = ""
             response.stats.lastMultimodalDecodeSyncMode = "executor_batch_generator"
+            response.stats.lastHybridStatePatchMode = "family_scoped"
+            response.stats.lastHybridStateAdvanceCount = 42
+            response.stats.lastFamilyFastPathOverrideCount = 1
             response.stats.textBatchGeneratorSubmittedRequestCount = 2
             response.stats.textBatchGeneratorCompletedRequestCount = 1
             response.stats.textBatchGeneratorStepCount = 16
@@ -1484,6 +1487,9 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.multimodal_decode_mode_code", default: -1] == 7)
         #expect(metrics.values["vision.multimodal_fallback_reason_code", default: -1] == 0)
         #expect(metrics.values["vision.multimodal_decode_sync_mode_code", default: -1] == 4)
+        #expect(metrics.values["vision.hybrid_state_patch_mode", default: -1] == 2)
+        #expect(metrics.values["vision.hybrid_state_advance_count", default: -1] == 42)
+        #expect(metrics.values["vision.family_fast_path_override_count", default: -1] == 1)
         #expect(metrics.values["vision.text_batch_generator.submitted_request_count", default: -1] == 2)
         #expect(metrics.values["vision.text_batch_generator.completed_request_count", default: -1] == 1)
         #expect(metrics.values["vision.text_batch_generator.step_count", default: -1] == 16)

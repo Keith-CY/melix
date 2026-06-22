@@ -38,7 +38,11 @@ from worker.runtime.multimodal_attention_policy import (
     int_metadata as _attention_int_metadata,
 )
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
-from worker.runtime.multimodal_position_receipts import build_position_metadata_receipt
+from worker.runtime.multimodal_position_receipts import (
+    NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT,
+    build_hybrid_state_patch_receipt,
+    build_position_metadata_receipt,
+)
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.runtime_utils import (
     callable_accepts_kwarg as _callable_accepts_kwarg,
@@ -1121,6 +1125,8 @@ def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[boo
     has_audio = False
     for name in weight_names:
         first_character = name[0]
+        if first_character == "l":  # Gemma4 language_model.* weights are non-multimodal.
+            continue
         if first_character == "v":
             if not has_vision and name.startswith("vision_tower."):
                 if has_audio:
@@ -1842,6 +1848,7 @@ class MLXVLMRuntime:
         self._executor = executor
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
         self._last_fast_path_signature: tuple[str, ...] | None = None
+        self._last_fast_path_media_position_count = 0
         self._loaded_models_with_schedulers: list[dict[str, Any]] = []
 
     @property
@@ -1954,7 +1961,7 @@ class MLXVLMRuntime:
                     prompt_text=prompt_text,
                     include_chat_messages=include_chat_messages,
                 )
-        self._record_fast_path_probe(loaded_model, prepared)
+        self._record_fast_path_probe(loaded_model, prepared, family_config=family_config)
         return prepared
 
     def prompt_token_count(
@@ -3024,17 +3031,41 @@ class MLXVLMRuntime:
         signature: tuple[str, ...] | None = None,
         seq_len: int | None = None,
         attention_policy: AttentionPrefillPolicyDecision | None = None,
+        family_config: Any | None = None,
     ) -> None:
+        has_media = bool(prepared_request.images or prepared_request.videos)
         signature = signature or fast_path_probe_signature(
             loaded_model,
             prepared_request,
         )
-        if self._last_fast_path_signature == signature and not prepared_request.images and not prepared_request.videos:
-            receipt = self._last_probe.position_metadata_receipt or {}
-            if int(receipt.get("media_position_count", 0) or 0) == 0:
+        if self._last_fast_path_signature == signature and not has_media:
+            if self._last_fast_path_media_position_count == 0:
                 return
         fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
+        position_metadata_receipt = self._position_metadata_receipt(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            fallback_reason=fast_path.multimodal_fallback_reason,
+            seq_len=seq_len,
+            family_config=family_config,
+        )
+        if fast_path.hybrid_state_patch_mode == "not_applicable" and not has_media:
+            hybrid_state_patch_receipt = NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT
+            hybrid_state_advance_count = 0
+        else:
+            hybrid_state_patch_receipt = self._hybrid_state_patch_receipt(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                patch_mode=fast_path.hybrid_state_patch_mode,
+                fallback_reason=fast_path.multimodal_fallback_reason,
+                family_fast_path_override_count=fast_path.family_fast_path_override_count,
+                seq_len=int(position_metadata_receipt["seq_len"]),
+                family_config=family_config,
+            )
+            hybrid_state_advance_count = int(hybrid_state_patch_receipt["cache_advance_count"])
+        media_position_count = int(position_metadata_receipt.get("media_position_count", 0) or 0)
         self._last_fast_path_signature = signature
+        self._last_fast_path_media_position_count = media_position_count
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,
@@ -3054,6 +3085,9 @@ class MLXVLMRuntime:
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+            hybrid_state_patch_mode=fast_path.hybrid_state_patch_mode,
+            hybrid_state_advance_count=hybrid_state_advance_count,
+            family_fast_path_override_count=fast_path.family_fast_path_override_count,
             attention_budget_receipt=build_attention_budget_receipt(
                 attention_policy
                 if attention_policy is not None
@@ -3063,14 +3097,9 @@ class MLXVLMRuntime:
                     seq_len=seq_len,
                 )
             ),
-            position_metadata_receipt=self._position_metadata_receipt(
-                loaded_model=loaded_model,
-                prepared_request=prepared_request,
-                fallback_reason=fast_path.multimodal_fallback_reason,
-                seq_len=seq_len,
-            ),
+            position_metadata_receipt=position_metadata_receipt,
+            hybrid_state_patch_receipt=hybrid_state_patch_receipt,
         )
-
     def _position_metadata_receipt(
         self,
         *,
@@ -3078,13 +3107,70 @@ class MLXVLMRuntime:
         prepared_request: PreparedVisionRequest,
         fallback_reason: str,
         seq_len: int | None = None,
+        family_config: Any | None = None,
     ) -> dict[str, object]:
         if seq_len is None:
-            seq_len = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+            if family_config is None:
+                seq_len = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+            else:
+                seq_len = family_config.prompt_token_count(prepared_request)
         return build_position_metadata_receipt(
             prepared_request=prepared_request,
             seq_len=seq_len,
             fallback_reason=fallback_reason,
+        )
+
+    def _hybrid_state_patch_receipt(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        patch_mode: str,
+        fallback_reason: str,
+        family_fast_path_override_count: int,
+        seq_len: int,
+        family_config: Any | None = None,
+    ) -> dict[str, object]:
+        if family_config is None:
+            family_config = self._family_config(loaded_model)
+        family_id = str(getattr(family_config, "family_id", "") or "")
+        media_count = (
+            len(prepared_request.images)
+            + prepared_request.effective_video_frame_count
+            + (
+                len(prepared_request.videos)
+                if prepared_request.videos and prepared_request.effective_video_frame_count <= 0
+                else 0
+            )
+        )
+        cache_advance = (
+            max(0, int(seq_len or 0))
+            if patch_mode not in {"fallback", "not_applicable"}
+            else 0
+        )
+        expected_cache_advance = 0 if patch_mode == "not_applicable" else seq_len
+        expected_contiguous_state_end = (
+            0 if patch_mode == "not_applicable" else seq_len
+        )
+        row = {
+            "row_index": 0,
+            "seq_len": seq_len,
+            "cache_offset": 0,
+            "cache_advance": cache_advance,
+            "expected_cache_advance": expected_cache_advance,
+            "media_count": media_count,
+            "contiguous_state_start": 0,
+            "contiguous_state_end": cache_advance,
+            "expected_contiguous_state_start": 0,
+            "expected_contiguous_state_end": expected_contiguous_state_end,
+            "text_only_rope_mode": "multimodal" if media_count else "text_only",
+        }
+        return build_hybrid_state_patch_receipt(
+            family_id=family_id,
+            patch_mode=patch_mode,
+            fallback_reason=fallback_reason,
+            family_fast_path_override_count=family_fast_path_override_count,
+            rows=[row],
         )
 
     def _attention_prefill_policy(

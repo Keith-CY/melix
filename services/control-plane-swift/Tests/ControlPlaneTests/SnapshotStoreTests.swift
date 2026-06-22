@@ -48,6 +48,11 @@ struct SnapshotStoreTests {
         #expect(visionMultimodalDecodeSyncModeMetricValue("executor_step") == 3)
         #expect(visionMultimodalDecodeSyncModeMetricValue("executor_batch_generator") == 4)
         #expect(visionMultimodalDecodeSyncModeMetricValue("future_sync") == -1)
+
+        #expect(visionHybridStatePatchModeMetricValue("not_reported") == 0)
+        #expect(visionHybridStatePatchModeMetricValue("fallback") == 1)
+        #expect(visionHybridStatePatchModeMetricValue("family_scoped") == 2)
+        #expect(visionHybridStatePatchModeMetricValue("future_patch_mode") == -1)
     }
 
     @Test("cache metadata store defaults to an empty typed snapshot")

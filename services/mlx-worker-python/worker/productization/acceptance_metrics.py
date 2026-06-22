@@ -142,6 +142,19 @@ def build_phase6_vision_metrics_report(
             "vision.quantized_load_fallback_reason",
             "not_reported",
         ),
+        "vision.hybrid_state_patch_mode": _metric_text(
+            metrics_snapshot,
+            "vision.hybrid_state_patch_mode",
+            "not_reported",
+        ),
+        "vision.hybrid_state_advance_count": _metric_value(
+            metrics_snapshot,
+            "vision.hybrid_state_advance_count",
+        ),
+        "vision.family_fast_path_override_count": _metric_value(
+            metrics_snapshot,
+            "vision.family_fast_path_override_count",
+        ),
     }
 
     return {
