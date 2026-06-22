@@ -378,23 +378,6 @@ _CODE_EVAL_PAYLOAD_STRING_KEYS = (
     "failure_detail",
 )
 _CODE_EVAL_PAYLOAD_INT_KEYS = ("tests_passed", "tests_total")
-_REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS = (
-    "runtime_status",
-    "timeout_status",
-    "test_status",
-    "failure_detail",
-)
-
-
-def _code_eval_payload_has_required_string_fields(payload: dict[str, object]) -> bool:
-    return (
-        "runtime_status" in payload
-        and "timeout_status" in payload
-        and "test_status" in payload
-        and "failure_detail" in payload
-    )
-
-
 _CODE_EVAL_PAYLOAD_KEY_TOKENS = {
     key: json.dumps(key, separators=(",", ":")).encode("utf-8")
     for key in (*_CODE_EVAL_PAYLOAD_STRING_KEYS, *_CODE_EVAL_PAYLOAD_INT_KEYS)
@@ -483,9 +466,10 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
             return None
         if value_kind == "string":
             value = extract_string(payload_bytes, value_start)
-            if value is not None:
-                payload[key] = value
-                search_start = value_start + len(value) + 1
+            if value is None:
+                return None
+            payload[key] = value
+            search_start = value_start + len(value) + 1
             continue
 
         int_result = extract_int_and_end(payload_bytes, value_start)
@@ -495,9 +479,7 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
         payload[key] = value
         search_start = value_end
 
-    if _code_eval_payload_has_required_string_fields(payload):
-        return payload
-    return None
+    return payload
 
 
 def _json_field_value_start(payload_bytes: bytes, key: str) -> int | None:

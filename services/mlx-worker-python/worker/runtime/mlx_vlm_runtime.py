@@ -1848,6 +1848,7 @@ class MLXVLMRuntime:
         self._executor = executor
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
         self._last_fast_path_signature: tuple[str, ...] | None = None
+        self._last_fast_path_media_position_count = 0
         self._loaded_models_with_schedulers: list[dict[str, Any]] = []
 
     @property
@@ -1960,7 +1961,7 @@ class MLXVLMRuntime:
                     prompt_text=prompt_text,
                     include_chat_messages=include_chat_messages,
                 )
-        self._record_fast_path_probe(loaded_model, prepared)
+        self._record_fast_path_probe(loaded_model, prepared, family_config=family_config)
         return prepared
 
     def prompt_token_count(
@@ -3038,8 +3039,7 @@ class MLXVLMRuntime:
             prepared_request,
         )
         if self._last_fast_path_signature == signature and not has_media:
-            receipt = self._last_probe.position_metadata_receipt or {}
-            if int(receipt.get("media_position_count", 0) or 0) == 0:
+            if self._last_fast_path_media_position_count == 0:
                 return
         fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
         position_metadata_receipt = self._position_metadata_receipt(
@@ -3049,9 +3049,7 @@ class MLXVLMRuntime:
             seq_len=seq_len,
             family_config=family_config,
         )
-        if fast_path.hybrid_state_patch_mode == "not_applicable" and not (
-            prepared_request.images or prepared_request.videos
-        ):
+        if fast_path.hybrid_state_patch_mode == "not_applicable" and not has_media:
             hybrid_state_patch_receipt = NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT
             hybrid_state_advance_count = 0
         else:
@@ -3065,7 +3063,9 @@ class MLXVLMRuntime:
                 family_config=family_config,
             )
             hybrid_state_advance_count = int(hybrid_state_patch_receipt["cache_advance_count"])
+        media_position_count = int(position_metadata_receipt.get("media_position_count", 0) or 0)
         self._last_fast_path_signature = signature
+        self._last_fast_path_media_position_count = media_position_count
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,

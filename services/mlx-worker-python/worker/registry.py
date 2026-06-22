@@ -227,6 +227,7 @@ class WorkerRegistry:
         self._next_model_handle = 1
         self._loaded_models: dict[str, LoadedModel] = {}
         self._sorted_loaded_model_handles: tuple[str, ...] | None = None
+        self._loaded_model_summaries: tuple[runtime_pb2.LoadedModelSummary, ...] | None = None
         self._loaded_model_resident_bytes = 0
         self._reserved_model_resident_bytes = 0
         self._requests: dict[str, RequestState] = {}
@@ -637,6 +638,7 @@ class WorkerRegistry:
 
     def _invalidate_loaded_model_order_locked(self) -> None:
         self._sorted_loaded_model_handles = None
+        self._loaded_model_summaries = None
 
     def _sorted_loaded_model_handles_locked(self) -> tuple[str, ...]:
         cached_handles = self._sorted_loaded_model_handles
@@ -703,11 +705,15 @@ class WorkerRegistry:
 
     def list_loaded_model_summaries(self) -> list[runtime_pb2.LoadedModelSummary]:
         with self._lock:
-            loaded_models = [
-                self._loaded_models[handle] for handle in self._sorted_loaded_model_handles_locked()
-            ]
-        build_summary = self._loaded_model_summary
-        return [build_summary(loaded) for loaded in loaded_models]
+            summaries = self._loaded_model_summaries
+            if summaries is None:
+                build_summary = self._loaded_model_summary
+                summaries = tuple(
+                    build_summary(self._loaded_models[handle])
+                    for handle in self._sorted_loaded_model_handles_locked()
+                )
+                self._loaded_model_summaries = summaries
+        return list(summaries)
 
     def record_loaded_model_throughput(
         self,
@@ -730,6 +736,7 @@ class WorkerRegistry:
                 loaded.prompt_tps = prompt_value
             if generation_value is not None:
                 loaded.generation_tps = generation_value
+            self._loaded_model_summaries = None
 
     def start_request(self, request_id: str, runtime_kind: str = "text") -> RequestState:
         state = RequestState(request_id=request_id, runtime_kind=runtime_kind)

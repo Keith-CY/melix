@@ -617,9 +617,17 @@ def test_worker_registry_reuses_sorted_handles_across_listing_calls(monkeypatch:
     handles = registry.list_loaded_models()
     summaries = registry.list_loaded_model_summaries()
     repeated_handles = registry.list_loaded_models()
+    repeated_summaries = registry.list_loaded_model_summaries()
 
     assert repeated_handles == handles
     assert [summary.model_handle for summary in summaries] == handles
+    assert [summary.model_handle for summary in repeated_summaries] == handles
+    assert sorted_calls == 1
+
+    registry.record_loaded_model_throughput(handles[0], generation_tps=12.5)
+    updated_summaries = registry.list_loaded_model_summaries()
+
+    assert updated_summaries[0].generation_tps == 12.5
     assert sorted_calls == 1
 
     registry.unload_model(handles[0])
