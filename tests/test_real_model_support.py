@@ -325,6 +325,66 @@ def test_hf_cache_snapshot_fallback_does_not_follow_symlinked_directories(
     assert source.source_resolution_mode == "hf_cache_snapshot"
 
 
+def test_hf_cache_snapshot_fallback_skips_stale_names_before_is_dir(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    snapshots_root = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+    )
+    snapshots_root.mkdir(parents=True)
+    latest_snapshot = snapshots_root / "zzz"
+    latest_snapshot.mkdir()
+    is_dir_calls: list[str] = []
+
+    class _FakeEntry:
+        def __init__(self, name: str, is_directory: bool = True) -> None:
+            self.name = name
+            self._is_directory = is_directory
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            if follow_symlinks:
+                raise AssertionError("HF cache snapshot scan should not follow symlinks")
+            is_dir_calls.append(self.name)
+            return self._is_directory
+
+    class _FakeScandir:
+        def __enter__(self):
+            return iter(
+                (
+                    _FakeEntry("zzz"),
+                    _FakeEntry("aaa"),
+                    _FakeEntry("not-a-directory", is_directory=False),
+                    _FakeEntry("mno"),
+                )
+            )
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def fake_scandir(path: Path):
+        assert path == snapshots_root
+        return _FakeScandir()
+
+    monkeypatch.setattr(real_model_support_module.os, "scandir", fake_scandir)
+
+    source = resolve_real_small_text_model_source(
+        environment={"HOME": str(home)},
+        allow_managed_root=False,
+        allow_hf_cache=True,
+    )
+
+    assert source.live is False
+    assert source.local_model_path == str(latest_snapshot.resolve())
+    assert is_dir_calls == ["zzz"]
+
+
 def test_runtime_model_preflight_marks_real_local_weights(tmp_path: Path) -> None:
     model_dir = tmp_path / "qwen-real-small"
     model_dir.mkdir()
