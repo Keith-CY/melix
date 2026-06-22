@@ -897,12 +897,16 @@ def project_local_job_session_followups(
     )
     projections: list[LocalJobSessionFollowupProjection] = []
     followup_messages: list[dict[str, Any]] = []
+    project_claim = _project_local_job_session_followup_claim
+    projections_append = projections.append
+    followup_messages_append = followup_messages.append
 
     for claim in claim_batch.claims:
-        projection = _project_local_job_session_followup_claim(claim)
-        projections.append(projection)
-        if projection.followup_message is not None:
-            followup_messages.append(projection.followup_message)
+        projection = project_claim(claim)
+        projections_append(projection)
+        followup_message = projection.followup_message
+        if followup_message is not None:
+            followup_messages_append(followup_message)
 
     return LocalJobSessionFollowupProjectionBatch(
         claim_batch=claim_batch,
