@@ -532,6 +532,6 @@ def _dict_list(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
     for item in value:
-        if not isinstance(item, dict):
+        if type(item) is not dict and not isinstance(item, dict):
             return [item for item in value if isinstance(item, dict)]
     return cast(list[dict[str, object]], value)
