@@ -114,8 +114,8 @@ Out of scope:
 ## Task 5: Docs And Verification
 
 - [x] Update the Phase 8 local install runbook with the typed protocol projection.
-- [ ] Run focused Python and Swift tests.
-- [ ] Run `make proto-check`.
-- [ ] Run changed-scope coverage and PR-scoped performance if selected.
-- [ ] Run `git diff --check`.
-- [ ] Commit the focused #1258 schema slice and update PR #2271.
+- [x] Run focused Python and Swift tests.
+- [x] Run `make proto-check`.
+- [x] Run changed-scope coverage and PR-scoped performance if selected.
+- [x] Run `git diff --check`.
+- [x] Commit the focused #1258 schema slice and update PR #2271.
