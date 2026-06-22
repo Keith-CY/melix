@@ -188,6 +188,19 @@ materialized when the request lacks immutable digest metadata in
 `last_error=missing_artifact_digest`, and records a failed `artifact_integrity`
 receipt with `policy_present=false`.
 
+Model loads also enforce the model-load trust receipt for executable
+model-provided Python files. For trust-applicable Python text and VLM routes,
+top-level files such as `modeling*.py`, `configuration*.py`,
+`tokenization*.py`, `processing*.py`, `image_processing*.py`,
+`feature_extraction*.py`, and `generation*.py` are treated like custom-loader
+metadata. Default-safe loads refuse activation with `unsafe_load_rejected`,
+`block_reason=custom_loader_requires_trust_remote_code`, and a
+`ModelLoadTrustPolicy.custom_loader_detection_source` beginning with
+`model_files:`. A model-scoped `trust_remote_code` opt-in allows the load and
+records the same detection source in the typed load-trust receipt. This
+model-load trust receipt complements `artifact_integrity`; it does not verify
+file digests or signatures and does not replace strict install digest policy.
+
 For direct worker-owned downloads, strict mode also verifies SHA-256 metadata
 against the staged `*.partial` file before activation. Declarations may use
 `sha256:<64 hex>` or a bare 64-hex value. On match, the terminal

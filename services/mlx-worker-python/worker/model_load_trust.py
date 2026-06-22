@@ -15,8 +15,22 @@ DEFAULT_SAFE_SOURCE = "default_safe"
 MODEL_SETTINGS_SOURCE = "model_settings"
 NOT_APPLICABLE_SOURCE = "not_applicable"
 REQUEST_SOURCE = "request"
+CONFIG_JSON_SOURCE = "config_json"
+CONFIG_JSON_ABSENT_SOURCE = "config_json:absent"
 CONFIG_JSON_AUTO_MAP_SOURCE = "config_json:auto_map"
 BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST = "custom_loader_requires_trust_remote_code"
+CONFIG_JSON_DETECTION = (False, CONFIG_JSON_SOURCE)
+CONFIG_JSON_ABSENT_DETECTION = (False, CONFIG_JSON_ABSENT_SOURCE)
+CONFIG_JSON_AUTO_MAP_DETECTION = (True, CONFIG_JSON_AUTO_MAP_SOURCE)
+EXECUTABLE_MODEL_FILE_PREFIXES = (
+    "configuration",
+    "feature_extraction",
+    "generation",
+    "image_processing",
+    "modeling",
+    "processing",
+    "tokenization",
+)
 TRUST_APPLICABLE_TEXT_LOADERS = frozenset({"mlx_lm", "mlx_lm_unavailable"})
 TRUST_APPLICABLE_TEXT_LOADERS_COMMON = frozenset({"mlx-lm", "mlx_lm", "mlx_lm_unavailable"})
 TRUST_APPLICABLE_VLM_LOADERS = frozenset({"mlx_vlm", "python_vlm", "mlx_vlm_unavailable"})
@@ -229,19 +243,71 @@ def _runtime_name(runtime: Any) -> str:
 def _detect_custom_loader_requirement(model_spec: common_pb2.ModelSpec) -> tuple[bool, str]:
     config_path = _model_config_path(model_spec)
     if config_path is None:
-        return False, "config_json:absent"
+        executable_model_files = _detect_executable_model_files(model_spec)
+        if executable_model_files:
+            return True, _model_files_detection_source(executable_model_files)
+        return CONFIG_JSON_ABSENT_DETECTION
     config_path_text, stat_path = config_path
     try:
         config_stat = os.stat(stat_path)
         if not stat.S_ISREG(config_stat.st_mode):
-            return False, "config_json:absent"
+            executable_model_files = _detect_executable_model_files(model_spec)
+            if executable_model_files:
+                return True, _model_files_detection_source(executable_model_files)
+            return CONFIG_JSON_ABSENT_DETECTION
     except OSError:
-        return False, "config_json:absent"
-    return _detect_custom_loader_requirement_for_stat(
+        executable_model_files = _detect_executable_model_files(model_spec)
+        if executable_model_files:
+            return True, _model_files_detection_source(executable_model_files)
+        return CONFIG_JSON_ABSENT_DETECTION
+    config_detection = _detect_custom_loader_requirement_for_stat(
         config_path_text,
         config_stat.st_mtime_ns,
         config_stat.st_size,
     )
+    if config_detection is CONFIG_JSON_AUTO_MAP_DETECTION:
+        return config_detection
+    executable_model_files = _detect_executable_model_files(model_spec)
+    if executable_model_files:
+        return True, _model_files_detection_source(executable_model_files)
+    return config_detection
+
+
+def _detect_executable_model_files(model_spec: common_pb2.ModelSpec) -> tuple[str, ...]:
+    model_path = str(model_spec.model_path or "").strip()
+    if not model_path:
+        return ()
+    if model_path[0] == "~":
+        scan_path: str | os.PathLike[str] = Path(model_path).expanduser()
+    else:
+        scan_path = model_path
+    try:
+        with os.scandir(scan_path) as entries:
+            return tuple(
+                sorted(
+                    entry.name
+                    for entry in entries
+                    if _is_executable_model_file_entry(entry)
+                )
+            )
+    except OSError:
+        return ()
+
+
+def _is_executable_model_file_entry(entry: os.DirEntry[str]) -> bool:
+    name = entry.name
+    if not name.endswith(".py"):
+        return False
+    if not name.startswith(EXECUTABLE_MODEL_FILE_PREFIXES):
+        return False
+    try:
+        return entry.is_file(follow_symlinks=False)
+    except OSError:
+        return False
+
+
+def _model_files_detection_source(file_names: tuple[str, ...]) -> str:
+    return "model_files:" + ",".join(file_names)
 
 
 def _auto_map_has_custom_loader(auto_map: dict[Any, Any]) -> bool:
@@ -300,11 +366,11 @@ def _detect_custom_loader_requirement_for_stat(
 ) -> tuple[bool, str]:
     config = _read_model_config_for_stat(config_path, mtime_ns, size)
     if not config:
-        return False, "config_json:absent"
+        return CONFIG_JSON_ABSENT_DETECTION
     auto_map = config.get("auto_map")
     if isinstance(auto_map, dict) and _auto_map_has_custom_loader(auto_map):
-        return True, CONFIG_JSON_AUTO_MAP_SOURCE
-    return False, "config_json"
+        return CONFIG_JSON_AUTO_MAP_DETECTION
+    return CONFIG_JSON_DETECTION
 
 
 @lru_cache(maxsize=128)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 import worker.model_load_trust as model_load_trust_module
@@ -38,9 +39,14 @@ def test_worker_rejects_custom_loader_metadata_without_explicit_trust(tmp_path: 
             model_catalog=WorkerModelCatalog(),
         )
     )
+    model = _custom_loader_text_model(tmp_path)
+    (Path(model.model_path) / "modeling_melix_demo.py").write_text(
+        "class MelixDemoModel: pass\n",
+        encoding="utf-8",
+    )
 
     response = service.LoadModel(
-        runtime_pb2.LoadModelRequest(model=_custom_loader_text_model(tmp_path)),
+        runtime_pb2.LoadModelRequest(model=model),
         context=None,
     )
     stats = service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
@@ -55,6 +61,21 @@ def test_worker_rejects_custom_loader_metadata_without_explicit_trust(tmp_path: 
     assert response.load_trust.block_reason == "custom_loader_requires_trust_remote_code"
     assert stats.model_load_trust_blocked_count == 1
     assert stats.last_model_load_trust_policy_resolution_ms >= 0.0
+    assert backend.load_calls == []
+    assert model_load_trust_module._model_files_detection_source(
+        ("configuration_melix_demo.py",)
+    ) == "model_files:configuration_melix_demo.py"
+
+    executable_response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=_executable_file_text_model(tmp_path)),
+        context=None,
+    )
+    assert executable_response.ok is False
+    assert executable_response.error.code == "unsafe_load_rejected"
+    assert executable_response.error.details["block_reason"] == "custom_loader_requires_trust_remote_code"
+    assert executable_response.load_trust.custom_loader_required is True
+    assert executable_response.load_trust.custom_loader_detection_source == "model_files:modeling_melix_demo.py"
+    assert executable_response.load_trust.block_reason == "custom_loader_requires_trust_remote_code"
     assert backend.load_calls == []
 
 
@@ -72,10 +93,15 @@ def test_worker_trusted_custom_loader_receipt_passes_trust_remote_code(tmp_path:
         route_class=common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
         loader_family="mlx-lm",
     )
+    model = _custom_loader_text_model(tmp_path)
+    (Path(model.model_path) / "modeling_melix_demo.py").write_text(
+        "class MelixDemoModel: pass\n",
+        encoding="utf-8",
+    )
 
     response = service.LoadModel(
         runtime_pb2.LoadModelRequest(
-            model=_custom_loader_text_model(tmp_path),
+            model=model,
             load_trust=load_trust,
         ),
         context=None,
@@ -91,6 +117,21 @@ def test_worker_trusted_custom_loader_receipt_passes_trust_remote_code(tmp_path:
     assert response.load_trust.block_reason == ""
     assert backend.load_calls == [True]
     assert stats.model_load_trust_blocked_count == 0
+
+    executable_response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=_executable_file_text_model(tmp_path),
+            load_trust=load_trust,
+        ),
+        context=None,
+    )
+    assert executable_response.ok is True
+    assert executable_response.load_trust.requested_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    assert executable_response.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    assert executable_response.load_trust.custom_loader_required is True
+    assert executable_response.load_trust.custom_loader_detection_source == "model_files:modeling_melix_demo.py"
+    assert executable_response.load_trust.block_reason == ""
+    assert backend.load_calls == [True, True]
 
 
 def test_worker_rejects_trusted_custom_loader_when_backend_cannot_honor_trust(tmp_path: Path) -> None:
@@ -486,6 +527,34 @@ def test_trust_policy_expands_tilde_model_path(
     assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
 
 
+def test_trust_policy_auto_map_detection_does_not_scan_model_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _custom_loader_text_model(tmp_path)
+    unexpected_model_file_scan = Mock(
+        side_effect=AssertionError("auto_map detection should not scan model files")
+    )
+
+    monkeypatch.setattr(
+        model_load_trust_module,
+        "_detect_executable_model_files",
+        unexpected_model_file_scan,
+    )
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+        resolve_model_load_trust_policy(
+            model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=RecordingTextBackend(),
+        )
+
+    assert exc_info.value.policy.custom_loader_required is True
+    assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
+    unexpected_model_file_scan.assert_not_called()
+
+
 def test_trust_policy_treats_missing_config_json_as_absent(tmp_path: Path) -> None:
     model_dir = tmp_path / "plain-model"
     model_dir.mkdir()
@@ -502,6 +571,26 @@ def test_trust_policy_treats_missing_config_json_as_absent(tmp_path: Path) -> No
     assert policy.custom_loader_required is False
     assert policy.custom_loader_detection_source == "config_json:absent"
 
+    executable_model_dir = tmp_path / "executable-no-config-model"
+    executable_model_dir.mkdir()
+    (executable_model_dir / "configuration_melix_demo.py").write_text(
+        "class MelixDemoConfig: pass\n",
+        encoding="utf-8",
+    )
+    executable_model = WorkerModelCatalog.dev_text_model()
+    executable_model.model_path = str(executable_model_dir)
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+        resolve_model_load_trust_policy(
+            executable_model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=RecordingTextBackend(),
+        )
+
+    assert exc_info.value.policy.custom_loader_required is True
+    assert exc_info.value.policy.custom_loader_detection_source == "model_files:configuration_melix_demo.py"
+
 
 def test_trust_policy_treats_blank_model_path_as_absent() -> None:
     model = WorkerModelCatalog.dev_text_model()
@@ -516,6 +605,18 @@ def test_trust_policy_treats_blank_model_path_as_absent() -> None:
 
     assert policy.custom_loader_required is False
     assert policy.custom_loader_detection_source == "config_json:absent"
+
+    missing_path_model = WorkerModelCatalog.dev_text_model()
+    missing_path_model.model_path = "/tmp/melix-missing-model-load-trust-path"
+    missing_path_policy = resolve_model_load_trust_policy(
+        missing_path_model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=RecordingTextBackend(),
+    )
+
+    assert missing_path_policy.custom_loader_required is False
+    assert missing_path_policy.custom_loader_detection_source == "config_json:absent"
 
 
 def test_trust_policy_treats_directory_config_json_as_absent(tmp_path: Path) -> None:
@@ -534,6 +635,27 @@ def test_trust_policy_treats_directory_config_json_as_absent(tmp_path: Path) -> 
 
     assert policy.custom_loader_required is False
     assert policy.custom_loader_detection_source == "config_json:absent"
+
+    executable_model_dir = tmp_path / "executable-directory-config-model"
+    executable_model_dir.mkdir()
+    (executable_model_dir / "config.json").mkdir()
+    (executable_model_dir / "processing_melix_demo.py").write_text(
+        "class MelixDemoProcessor: pass\n",
+        encoding="utf-8",
+    )
+    executable_model = WorkerModelCatalog.dev_text_model()
+    executable_model.model_path = str(executable_model_dir)
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+        resolve_model_load_trust_policy(
+            executable_model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=RecordingTextBackend(),
+        )
+
+    assert exc_info.value.policy.custom_loader_required is True
+    assert exc_info.value.policy.custom_loader_detection_source == "model_files:processing_melix_demo.py"
 
 
 def test_trust_policy_treats_empty_config_json_as_absent(tmp_path: Path) -> None:
@@ -558,6 +680,13 @@ def test_trust_policy_reports_config_json_without_auto_map_loader(tmp_path: Path
     model_dir = tmp_path / "plain-config-model"
     model_dir.mkdir()
     (model_dir / "config.json").write_text(json.dumps({"model_type": "llama"}), encoding="utf-8")
+    (model_dir / "README.py").write_text("NOT_A_LOADER = True\n", encoding="utf-8")
+    nested_dir = model_dir / "nested"
+    nested_dir.mkdir()
+    (nested_dir / "modeling_nested.py").write_text("class NestedModel: pass\n", encoding="utf-8")
+    target = model_dir / "target_loader.py"
+    target.write_text("class TargetLoader: pass\n", encoding="utf-8")
+    (model_dir / "modeling_symlink.py").symlink_to(target)
     model = WorkerModelCatalog.dev_text_model()
     model.model_path = str(model_dir)
 
@@ -570,6 +699,16 @@ def test_trust_policy_reports_config_json_without_auto_map_loader(tmp_path: Path
 
     assert policy.custom_loader_required is False
     assert policy.custom_loader_detection_source == "config_json"
+    assert model_load_trust_module._detect_executable_model_files(model) == ()
+
+    class BrokenEntry:
+        name = "modeling_broken.py"
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            _ = follow_symlinks
+            raise OSError("cannot stat entry")
+
+    assert model_load_trust_module._is_executable_model_file_entry(BrokenEntry()) is False
 
 
 def _custom_loader_text_model(tmp_path: Path) -> common_pb2.ModelSpec:
@@ -577,6 +716,19 @@ def _custom_loader_text_model(tmp_path: Path) -> common_pb2.ModelSpec:
     model_dir.mkdir()
     (model_dir / "config.json").write_text(
         json.dumps({"auto_map": {"AutoModelForCausalLM": "custom.Loader"}}),
+        encoding="utf-8",
+    )
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = str(model_dir)
+    return model
+
+
+def _executable_file_text_model(tmp_path: Path) -> common_pb2.ModelSpec:
+    model_dir = tmp_path / "executable-file-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(json.dumps({"model_type": "llama"}), encoding="utf-8")
+    (model_dir / "modeling_melix_demo.py").write_text(
+        "class MelixDemoModel: pass\n",
         encoding="utf-8",
     )
     model = WorkerModelCatalog.dev_text_model()
