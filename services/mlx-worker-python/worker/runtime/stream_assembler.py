@@ -1451,6 +1451,7 @@ class RequestStreamAssembler:
         )
 
     @staticmethod
+    @lru_cache(maxsize=16)
     def _pipe_channel_name(header: str) -> str:
         stripped = header.strip()
         if not stripped:

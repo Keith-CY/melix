@@ -15,6 +15,21 @@ from worker.runtime.stream_assembler import (
 )
 
 
+def test_pipe_channel_name_caches_repeated_headers() -> None:
+    RequestStreamAssembler._pipe_channel_name.cache_clear()
+
+    assert RequestStreamAssembler._pipe_channel_name(" analysis metadata\n") == "analysis"
+    assert RequestStreamAssembler._pipe_channel_name(" analysis metadata\n") == "analysis"
+    assert RequestStreamAssembler._pipe_channel_name("FINAL metadata") == "final"
+    assert RequestStreamAssembler._pipe_channel_name("   ") == ""
+
+    cache_info = RequestStreamAssembler._pipe_channel_name.cache_info()
+    assert cache_info.hits == 1
+    assert cache_info.misses == 3
+
+    RequestStreamAssembler._pipe_channel_name.cache_clear()
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _token_count_routing_probe() -> None:
     assembler = RequestStreamAssembler(
