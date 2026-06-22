@@ -3081,10 +3081,11 @@ class MaintenanceCore:
     @staticmethod
     def _positive_sorted_values(values, *, default: tuple[int, ...]) -> tuple[int, ...]:
         normalized_values: set[int] = set()
+        add_normalized_value = normalized_values.add
         for value in values:
             parsed = value if type(value) is int else int(value)
             if parsed > 0:
-                normalized_values.add(parsed)
+                add_normalized_value(parsed)
         if not normalized_values:
             return default
         return tuple(sorted(normalized_values))
@@ -3092,11 +3093,13 @@ class MaintenanceCore:
     @staticmethod
     def _normalized_string_values(values, *, default: tuple[str, ...]) -> tuple[str, ...]:
         normalized_values: set[str] = set()
+        add_normalized_value = normalized_values.add
+        strip = str.strip
         for value in values:
             raw_value = value if type(value) is str else str(value)
-            normalized = raw_value.strip()
+            normalized = strip(raw_value)
             if normalized:
-                normalized_values.add(normalized)
+                add_normalized_value(normalized)
         if not normalized_values:
             return default
         return tuple(sorted(normalized_values))
