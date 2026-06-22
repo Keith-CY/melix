@@ -633,9 +633,9 @@ def _recent_user_turns_keyword_context(recent_user_turns: tuple[str, ...]) -> st
 def _keyword_tool_matches(text: str) -> tuple[str, ...]:
     if not text:
         return ()
-    normalized_text = text.casefold()
-    if normalized_text.isspace():
+    if text.isspace():
         return ()
+    normalized_text = text.casefold()
     boundary_text = ""
     matches: list[str] = []
     append_match = matches.append
