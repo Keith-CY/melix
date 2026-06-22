@@ -373,6 +373,18 @@ Executable unit issues:
   route-policy tokens in override receipts, treats transcription, speech, and
   image routes as media-aware before model-modality admission, and avoids
   injecting legacy top-level image fallbacks into assistant-only histories.
+- Unit 2.3.3 proves VLM stream/cache lifecycle invariants at the worker/server
+  boundary before any later real feature-cache or direct-decode promotion. The
+  fixture scope covers drained stream cache reuse, cache-hit replay with a fresh
+  request-local stream boundary, early stream close, backend failure,
+  cancellation, model switch, warmup/wake, and explicit unload. Success is
+  measured by idle request counters, zero leaked multimodal requests, stable
+  model-scoped cache ownership until unload, and cleared cache bytes after the
+  owning model unloads.
+- Unit 2.3.3 uses the existing VLM cache-stat probe surface rather than adding a
+  speed gate. The changed-scope performance report should include the
+  deterministic VLM/cache lifecycle probe or an explicit `N/A` if the scoped PR
+  performance selector does not yet expose a dedicated lifecycle probe.
 
 ## Verification Policy
 
