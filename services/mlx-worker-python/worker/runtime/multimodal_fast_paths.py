@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import logging
 from threading import Lock
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
 
@@ -66,9 +66,24 @@ class ImageFeatureCacheKey:
 
 
 @dataclass(frozen=True, slots=True)
+class ImageFeatureCacheEntry:
+    cache_key: ImageFeatureCacheKey
+    artifact_id: str
+    payload: Any = None
+    feature_byte_length: int = 0
+    source_image_bytes: int = 0
+    encoder_call_count: int = 1
+
+
+@dataclass(frozen=True, slots=True)
 class MultimodalFastPathDecision:
     image_feature_cache_hits: int
     image_feature_cache_misses: int
+    image_feature_cache_artifact_count: int
+    image_feature_cache_bytes: int
+    image_feature_encoder_calls_saved: int
+    image_feature_work_saved_bytes: int
+    image_feature_cache_fallback_reason: str
     multimodal_decode_mode: str
     multimodal_fallback_reason: str
     multimodal_decode_sync_mode: str
@@ -83,6 +98,11 @@ class MultimodalFastPathDecision:
 _NO_MEDIA_FAST_PATH_DECISION = MultimodalFastPathDecision(
     image_feature_cache_hits=0,
     image_feature_cache_misses=0,
+    image_feature_cache_artifact_count=0,
+    image_feature_cache_bytes=0,
+    image_feature_encoder_calls_saved=0,
+    image_feature_work_saved_bytes=0,
+    image_feature_cache_fallback_reason="no_media",
     multimodal_decode_mode=MULTIMODAL_DECODE_BASELINE,
     multimodal_fallback_reason="no_media",
     multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
@@ -98,9 +118,20 @@ _NO_MEDIA_FAST_PATH_DECISION = MultimodalFastPathDecision(
 class MultimodalFastPathController:
     """Tracks Melix-owned VLM fast-path admission without changing request APIs."""
 
-    def __init__(self, *, max_image_feature_cache_entries: int = 1024) -> None:
+    def __init__(
+        self,
+        *,
+        max_image_feature_cache_entries: int = 1024,
+        image_feature_extractor: Callable[
+            [ImageFeatureCacheKey, PreparedImageInput], ImageFeatureCacheEntry
+        ]
+        | None = None,
+    ) -> None:
         self._max_image_feature_cache_entries = max(max_image_feature_cache_entries, 1)
-        self._image_feature_cache: OrderedDict[ImageFeatureCacheKey, None] = OrderedDict()
+        self._image_feature_cache: OrderedDict[ImageFeatureCacheKey, ImageFeatureCacheEntry] = (
+            OrderedDict()
+        )
+        self._image_feature_extractor = image_feature_extractor
         self._image_feature_cache_lock = Lock()
 
     def plan(
@@ -126,6 +157,11 @@ class MultimodalFastPathController:
             return MultimodalFastPathDecision(
                 image_feature_cache_hits=0,
                 image_feature_cache_misses=0,
+                image_feature_cache_artifact_count=0,
+                image_feature_cache_bytes=0,
+                image_feature_encoder_calls_saved=0,
+                image_feature_work_saved_bytes=0,
+                image_feature_cache_fallback_reason="no_media",
                 multimodal_decode_mode=MULTIMODAL_DECODE_BASELINE,
                 multimodal_fallback_reason="no_media",
                 multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
@@ -178,7 +214,7 @@ class MultimodalFastPathController:
                 family_fast_path_override_count=1,
             )
 
-        if prepared_request.videos and not prepared_request.images:
+        if prepared_request.videos:
             return self._fallback_decision(
                 reason="video_fast_path_unimplemented",
                 quantized_load_mode=quantized_load_mode,
@@ -190,6 +226,8 @@ class MultimodalFastPathController:
 
         hits = 0
         misses = 0
+        encoder_calls_saved = 0
+        work_saved_bytes = 0
         adapter_hash = _adapter_hash(metadata)
         cache_key_factory = self._cache_key_factory(
             family_id=family_id,
@@ -204,15 +242,13 @@ class MultimodalFastPathController:
                     continue
                 key = cache_key_factory(image)
                 if key in self._image_feature_cache:
+                    entry = self._image_feature_cache[key]
                     hits += 1
+                    encoder_calls_saved += max(0, int(entry.encoder_call_count))
+                    work_saved_bytes += max(0, int(entry.source_image_bytes))
                     self._image_feature_cache.move_to_end(key)
                     continue
                 misses += 1
-                self._image_feature_cache[key] = None
-                # If one request exceeds the bounded cache size, earlier images in that
-                # request can be evicted before the next request observes them.
-                while len(self._image_feature_cache) > self._max_image_feature_cache_entries:
-                    self._image_feature_cache.popitem(last=False)
 
         if hits > 0:
             decode_mode = MULTIMODAL_DECODE_IMAGE_CACHE_REUSE
@@ -231,6 +267,14 @@ class MultimodalFastPathController:
         return MultimodalFastPathDecision(
             image_feature_cache_hits=hits,
             image_feature_cache_misses=misses,
+            image_feature_cache_artifact_count=len(self._image_feature_cache),
+            image_feature_cache_bytes=sum(
+                max(0, int(entry.feature_byte_length))
+                for entry in self._image_feature_cache.values()
+            ),
+            image_feature_encoder_calls_saved=encoder_calls_saved,
+            image_feature_work_saved_bytes=work_saved_bytes,
+            image_feature_cache_fallback_reason="",
             multimodal_decode_mode=decode_mode,
             multimodal_fallback_reason="",
             multimodal_decode_sync_mode="executor_stream",
@@ -240,6 +284,94 @@ class MultimodalFastPathController:
             hybrid_state_patch_mode=hybrid_state_patch_mode,
             hybrid_state_media_count=hybrid_state_media_count,
             family_fast_path_override_count=0,
+        )
+
+    def image_feature_payloads(
+        self,
+        loaded_model: Any,
+        prepared_request: PreparedVisionRequest,
+    ) -> tuple[Any | None, ...]:
+        keys = self.image_feature_cache_keys(loaded_model, prepared_request)
+        with self._image_feature_cache_lock:
+            payloads: list[Any | None] = []
+            for key in keys:
+                if key is None:
+                    payloads.append(None)
+                    continue
+                entry = self._image_feature_cache.get(key)
+                if entry is None:
+                    payloads.append(None)
+                    continue
+                self._image_feature_cache.move_to_end(key)
+                payloads.append(entry.payload)
+        return tuple(payloads)
+
+    def put_image_feature_payloads(
+        self,
+        loaded_model: Any,
+        prepared_request: PreparedVisionRequest,
+        payloads: Iterable[Any | None],
+    ) -> tuple[bool, ...]:
+        keys = self.image_feature_cache_keys(loaded_model, prepared_request)
+        stored: list[bool] = []
+        with self._image_feature_cache_lock:
+            for key, image, payload in zip(keys, prepared_request.images, payloads, strict=False):
+                if key is None or payload is None:
+                    stored.append(False)
+                    continue
+                stored_entry = self._image_feature_entry(
+                    key=key,
+                    image=image,
+                    payload=payload,
+                )
+                self._image_feature_cache[key] = stored_entry
+                self._image_feature_cache.move_to_end(key)
+                while len(self._image_feature_cache) > self._max_image_feature_cache_entries:
+                    self._image_feature_cache.popitem(last=False)
+                stored.append(self._image_feature_cache.get(key) is stored_entry)
+        if len(stored) < len(keys):
+            stored.extend(False for _ in keys[len(stored):])
+        return tuple(stored)
+
+    def image_feature_cache_summary(self) -> tuple[int, int]:
+        with self._image_feature_cache_lock:
+            return (
+                len(self._image_feature_cache),
+                sum(
+                    max(0, int(entry.feature_byte_length))
+                    for entry in self._image_feature_cache.values()
+                ),
+            )
+
+    def image_feature_cache_keys(
+        self,
+        loaded_model: Any,
+        prepared_request: PreparedVisionRequest,
+    ) -> tuple[ImageFeatureCacheKey | None, ...]:
+        if not prepared_request.images:
+            return ()
+        metadata = _loaded_metadata(loaded_model)
+        family_id = _loaded_value(loaded_model, metadata, "vision_family_id")
+        resolved_execution_mode = (
+            str(metadata.get("melix.vlm.execution_mode", "") or "").strip()
+            or str(metadata.get("execution_mode", "") or "").strip()
+        )
+        if (
+            family_id not in _SUPPORTED_FAST_PATH_FAMILIES
+            or resolved_execution_mode == "text_backed"
+            or prepared_request.videos
+        ):
+            return tuple(None for _ in prepared_request.images)
+        quant_profile_id = _loaded_value(loaded_model, metadata, "quant_profile_id") or "none"
+        cache_key_factory = self._cache_key_factory(
+            family_id=family_id,
+            adapter_hash=_adapter_hash(metadata),
+            quant_profile_id=quant_profile_id,
+            metadata=metadata,
+        )
+        return tuple(
+            cache_key_factory(image) if image.sha256_hex else None
+            for image in prepared_request.images
         )
 
     @staticmethod
@@ -318,6 +450,11 @@ class MultimodalFastPathController:
         return MultimodalFastPathDecision(
             image_feature_cache_hits=0,
             image_feature_cache_misses=0,
+            image_feature_cache_artifact_count=0,
+            image_feature_cache_bytes=0,
+            image_feature_encoder_calls_saved=0,
+            image_feature_work_saved_bytes=0,
+            image_feature_cache_fallback_reason=reason,
             multimodal_decode_mode=MULTIMODAL_DECODE_FALLBACK,
             multimodal_fallback_reason=reason,
             multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
@@ -347,6 +484,55 @@ class MultimodalFastPathController:
         if family_id not in _SUPPORTED_FAST_PATH_FAMILIES:
             return MULTIMODAL_LOAD_FALLBACK, "unsupported_family"
         return MULTIMODAL_LOAD_NATIVE_QUANTIZED, ""
+
+    def _image_feature_entry(
+        self,
+        *,
+        key: ImageFeatureCacheKey,
+        image: PreparedImageInput,
+        payload: Any,
+    ) -> ImageFeatureCacheEntry:
+        if self._image_feature_extractor is not None:
+            extracted = self._image_feature_extractor(key, image)
+            return ImageFeatureCacheEntry(
+                cache_key=extracted.cache_key,
+                artifact_id=extracted.artifact_id,
+                payload=payload,
+                feature_byte_length=extracted.feature_byte_length,
+                source_image_bytes=extracted.source_image_bytes,
+                encoder_call_count=extracted.encoder_call_count,
+            )
+        return ImageFeatureCacheEntry(
+            cache_key=key,
+            artifact_id=_default_image_feature_artifact_id(key, image),
+            payload=payload,
+            feature_byte_length=_estimated_image_feature_bytes(image, payload),
+            source_image_bytes=image.byte_length,
+            encoder_call_count=1,
+        )
+
+
+def _estimated_image_feature_bytes(image: PreparedImageInput, payload: Any) -> int:
+    nbytes = getattr(payload, "nbytes", None)
+    try:
+        if nbytes is not None:
+            return max(1, int(nbytes))
+    except (TypeError, ValueError):
+        pass
+    return max(1, image.byte_length * 2)
+
+
+def _default_image_feature_artifact_id(
+    key: ImageFeatureCacheKey,
+    image: PreparedImageInput,
+) -> str:
+    feature_digest = hashlib.sha256()
+    feature_digest.update(key.preprocessing_fingerprint.encode("utf-8"))
+    feature_digest.update(b"\0")
+    feature_digest.update(image.sha256_hex.encode("utf-8"))
+    feature_digest.update(b"\0")
+    feature_digest.update(str(image.byte_length).encode("ascii"))
+    return f"melix-image-feature:{feature_digest.hexdigest()}"
 
 
 def fast_path_probe_signature(
