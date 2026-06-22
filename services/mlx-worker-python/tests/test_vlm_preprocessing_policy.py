@@ -265,6 +265,21 @@ def test_image_preprocessing_resize_shape_requires_complete_consistent_dimension
         )
         is None
     )
+    assert (
+        image_preprocessing_resize_shape(
+            _prepared_request({"resized_height": 768, "resized_width": 1024}, None).images
+        )
+        is None
+    )
+    assert (
+        image_preprocessing_resize_shape(
+            _prepared_request(
+                {"resized_height": 768, "resized_width": 1024},
+                {"min_pixels": 1024},
+            ).images
+        )
+        is None
+    )
     assert image_preprocessing_resize_shape(_prepared_request({}).images) is None
 
 

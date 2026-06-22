@@ -192,22 +192,29 @@ def prepared_request_preprocessing_policy_receipt(prepared_request: Any) -> dict
 
 def image_preprocessing_resize_shape(images: Iterable[Any]) -> tuple[int, int] | None:
     resize_shape: tuple[int, int] | None = None
+    has_resize_shape = False
+    has_no_resize_shape = False
     for image in images:
         policy = getattr(image, "preprocessing_policy", EMPTY_PREPROCESSING_POLICY)
         if not policy:
+            has_no_resize_shape = True
             continue
         height = policy.get("resized_height")
         width = policy.get("resized_width")
         if height is None and width is None:
+            has_no_resize_shape = True
             continue
         if not isinstance(height, int) or not isinstance(width, int):
             return None
+        has_resize_shape = True
         candidate = (height, width)
         if resize_shape is None:
             resize_shape = candidate
             continue
         if resize_shape != candidate:
             return None
+    if has_resize_shape and has_no_resize_shape:
+        return None
     return resize_shape
 
 

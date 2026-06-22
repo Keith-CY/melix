@@ -417,9 +417,12 @@ Executable unit issues:
   included in the prepared vision request hash and every image-feature cache key;
   the fast-path probe signature observes it through the prepared request hash.
   Identical image bytes may hit only when the normalized preprocessing policy
-  also matches. No protobuf schema change is required for this slice because
-  `MediaMetadata.preprocessing_hints` is already the request-side extension
-  point.
+  also matches. Global `resize_shape` forwarding is only used when every image
+  declares the same explicit `resized_height` and `resized_width`; mixed
+  explicit/no-explicit resize requests stay on the backend default resize path
+  to avoid forcing a shape onto unhinted media. No protobuf schema change is
+  required for this slice because `MediaMetadata.preprocessing_hints` is already
+  the request-side extension point.
 
 ## Verification Policy
 
