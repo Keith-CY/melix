@@ -803,6 +803,9 @@ def test_fast_path_controller_payload_api_handles_partial_payload_lists() -> Non
 
 
 def test_fast_path_controller_payload_byte_length_falls_back_to_len_or_zero() -> None:
+    class BytePayload:
+        nbytes = 11
+
     class LenOnlyPayload:
         def __len__(self) -> int:
             return 7
@@ -819,11 +822,14 @@ def test_fast_path_controller_payload_byte_length_falls_back_to_len_or_zero() ->
     stored = controller.put_image_feature_payloads(
         loaded_model=loaded_model,
         prepared_request=_request([first, second]),
-        payloads=(LenOnlyPayload(), BadLenPayload()),
+        payloads=(
+            [BytePayload(), b"abc"],
+            {"len_only": LenOnlyPayload(), "bad_len": BadLenPayload()},
+        ),
     )
 
     assert stored == (True, True)
-    assert controller.image_feature_cache_summary() == (2, 7)
+    assert controller.image_feature_cache_summary() == (2, 21)
 
 
 def test_fast_path_probe_signature_uses_nested_metadata_precedence() -> None:

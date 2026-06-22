@@ -2196,6 +2196,8 @@ class MLXVLMRuntime:
                         "cached_image_features",
                     )
                 ):
+                    # Treat cached feature reuse as an explicit backend contract, while
+                    # allowing the miss indexes hint to flow through flexible **kwargs.
                     image_feature_payloads = self._fast_path_controller.image_feature_payloads(
                         loaded_model=loaded_model,
                         prepared_request=prepared_request,

@@ -751,6 +751,10 @@ def _payload_byte_length(payload: Any) -> int:
         return len(payload.encode("utf-8"))
     if isinstance(payload, (bytes, bytearray, memoryview)):
         return len(payload)
+    if isinstance(payload, (list, tuple)):
+        return sum(_payload_byte_length(item) for item in payload)
+    if isinstance(payload, dict):
+        return sum(_payload_byte_length(item) for item in payload.values())
     try:
         return max(0, int(len(payload)))  # type: ignore[arg-type]
     except (TypeError, ValueError):
