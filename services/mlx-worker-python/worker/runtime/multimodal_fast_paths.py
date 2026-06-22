@@ -576,15 +576,11 @@ def fast_path_probe_signature(
                 for key in metadata_keys
             )
             metadata_repr = _signature_key_values_repr(metadata_keys, metadata_values)
-    signature = (
+    return (
         prepared_request.multimodal_hash_hex,
         top_level_repr,
         metadata_repr,
     )
-    policy_signature = prepared_request.preprocessing_policy_signature
-    if policy_signature:
-        return (*signature, policy_signature)
-    return signature
 
 
 def _top_level_signature_repr(loaded_model: dict[str, Any]) -> str:

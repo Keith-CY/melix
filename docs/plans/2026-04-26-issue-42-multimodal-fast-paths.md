@@ -414,11 +414,12 @@ Executable unit issues:
   `input_data_format`. Unsupported preprocessing keys fail closed with a typed
   preprocessing error before decode, so requests cannot silently fall back to a
   text-only or default image-processing path. The normalized policy receipt is
-  included in the prepared vision request hash, the fast-path probe signature,
-  and every image-feature cache key; identical image bytes may hit only when the
-  normalized preprocessing policy also matches. No protobuf schema change is
-  required for this slice because `MediaMetadata.preprocessing_hints` is already
-  the request-side extension point.
+  included in the prepared vision request hash and every image-feature cache key;
+  the fast-path probe signature observes it through the prepared request hash.
+  Identical image bytes may hit only when the normalized preprocessing policy
+  also matches. No protobuf schema change is required for this slice because
+  `MediaMetadata.preprocessing_hints` is already the request-side extension
+  point.
 
 ## Verification Policy
 
