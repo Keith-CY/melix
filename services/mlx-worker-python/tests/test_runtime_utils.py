@@ -310,6 +310,26 @@ def test_estimate_model_weight_resident_bytes_falls_back_to_top_level_weights(tm
     assert runtime_utils.estimate_model_weight_resident_bytes(str(bundle)) == len(b"weightsadapter")
 
 
+def test_estimate_model_weight_resident_bytes_skips_missing_index_read(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "flat-model"
+    bundle.mkdir()
+    missing_index = bundle / "model.safetensors.index.json"
+    (bundle / "model.safetensors").write_bytes(b"weights")
+    original_read_text = runtime_utils.Path.read_text
+
+    def tracked_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == missing_index:  # pragma: no cover - regression guard must stay uncalled
+            raise AssertionError("missing safetensors index should not be opened")
+        return original_read_text(self, *args, **kwargs)  # pragma: no cover
+
+    monkeypatch.setattr(runtime_utils.Path, "read_text", tracked_read_text)
+
+    assert runtime_utils.estimate_model_weight_resident_bytes(str(bundle)) == len(b"weights")
+
+
 def test_top_level_weight_file_bytes_streams_iterdir_entries(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
