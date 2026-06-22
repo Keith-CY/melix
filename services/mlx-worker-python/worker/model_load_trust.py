@@ -229,7 +229,7 @@ def _auto_map_has_custom_loader(auto_map: dict[Any, Any]) -> bool:
 
 
 def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | None:
-    model_path = str(getattr(model_spec, "model_path", "") or "").strip()
+    model_path = str(model_spec.model_path or "").strip()
     if not model_path:
         return None
     if model_path[0] == "~":
