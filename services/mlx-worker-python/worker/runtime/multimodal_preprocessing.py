@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import mimetypes
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from math import ceil
 from pathlib import Path
 from time import perf_counter
@@ -13,9 +13,8 @@ from urllib.request import urlopen
 
 from worker.runtime.video_preprocessing import PreparedVideoInput, prepare_video_input
 from worker.runtime.vlm_preprocessing_policy import (
-    empty_preprocessing_policy,
     normalize_image_preprocessing_policy,
-    request_preprocessing_policy_signature_for_known_policy_state,
+    request_preprocessing_policy_signature,
     update_multimodal_image_hashes,
 )
 
@@ -37,9 +36,7 @@ class PreparedImageInput:
     format: str
     filename: str
     sha256_hex: str
-    preprocessing_policy: dict[str, object] | None = field(
-        default_factory=empty_preprocessing_policy
-    )
+    preprocessing_policy: dict[str, object] | None = None
 
     @property
     def byte_length(self) -> int:
@@ -152,9 +149,10 @@ def prepare_vision_request(messages) -> PreparedVisionRequest:
         preprocess_peak_memory_bytes=input_bytes,
         prompt_hash_hex=prompt_hash_hex,
         multimodal_hash_hex=multimodal_hash_hex,
-        preprocessing_policy_signature=request_preprocessing_policy_signature_for_known_policy_state(
-            images,
-            has_preprocessing_policy=has_preprocessing_policy,
+        preprocessing_policy_signature=(
+            request_preprocessing_policy_signature(images)
+            if has_preprocessing_policy
+            else ""
         ),
     )
 
@@ -167,19 +165,24 @@ def _prepare_image_part(
     mime_type = getattr(media, "mime_type", "")
     format_name = getattr(media, "format", "")
     filename = getattr(media, "filename", "")
-    preprocessing_policy = _normalize_image_preprocessing_policy(media)
+    hints = getattr(media, "preprocessing_hints", None)
+    preprocessing_policy = (
+        normalize_image_preprocessing_policy(hints, error_factory=MultimodalPreprocessError)
+        if hints
+        else None
+    )
 
     if part.image_bytes:
         bytes_data = bytes(part.image_bytes)
         return PreparedImageInput(
-            bytes_data=bytes_data,
-            source_kind="inline",
-            reference="inline:image",
-            mime_type=mime_type,
-            format=format_name,
-            filename=filename or "inline-image",
-            sha256_hex=_sha256_hex(bytes_data),
-            preprocessing_policy=preprocessing_policy,
+            bytes_data,
+            "inline",
+            "inline:image",
+            mime_type,
+            format_name,
+            filename or "inline-image",
+            _sha256_hex(bytes_data),
+            preprocessing_policy,
         )
 
     if part.image_uri:
@@ -187,26 +190,17 @@ def _prepare_image_part(
             _cached_image_uri_payload(part.image_uri, image_uri_cache)
         )
         return PreparedImageInput(
-            bytes_data=bytes_data,
-            source_kind="uri",
-            reference=reference,
-            mime_type=mime_type or detected_mime_type,
-            format=format_name or detected_format,
-            filename=filename or detected_filename,
-            sha256_hex=sha256_hex,
-            preprocessing_policy=preprocessing_policy,
+            bytes_data,
+            "uri",
+            reference,
+            mime_type or detected_mime_type,
+            format_name or detected_format,
+            filename or detected_filename,
+            sha256_hex,
+            preprocessing_policy,
         )
 
     raise MultimodalPreprocessError("No image input provided.")
-
-
-def _normalize_image_preprocessing_policy(media) -> dict[str, object] | None:
-    hints = getattr(media, "preprocessing_hints", None)
-    return (
-        normalize_image_preprocessing_policy(hints, error_factory=MultimodalPreprocessError)
-        if hints
-        else None
-    )
 
 
 def _cached_image_uri_payload(
@@ -364,6 +358,10 @@ def _vision_request_hash(
     digest = hashlib.sha256()
     update = digest.update
     update(prompt_hash_hex.encode("ascii"))
+    if has_preprocessing_policy is False and not videos:
+        for image in images:
+            update(image.sha256_hex.encode("ascii"))
+        return digest.hexdigest()
     update_multimodal_image_hashes(
         digest,
         images,

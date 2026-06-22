@@ -14,6 +14,7 @@ from worker.runtime.multimodal_preprocessing import (
     PreparedImageInput,
     PreparedVisionRequest,
     prepare_vision_request,
+    rebuild_multimodal_hash,
 )
 from worker.runtime.vlm_preprocessing_policy import (
     image_preprocessing_resize_shape,
@@ -130,6 +131,7 @@ def test_prepare_vision_request_hash_changes_when_preprocessing_policy_changes()
     assert base.preprocessing_policy_signature
     assert base.preprocessing_policy_signature != changed.preprocessing_policy_signature
     assert base.multimodal_hash_hex != changed.multimodal_hash_hex
+    assert rebuild_multimodal_hash(base, base.prompt_hash_hex) == base.multimodal_hash_hex
 
 
 def test_prepare_vision_request_omits_empty_image_preprocessing_hints() -> None:
