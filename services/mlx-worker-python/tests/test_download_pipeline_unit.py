@@ -956,6 +956,69 @@ def test_strict_managed_download_records_required_companion_artifacts(tmp_path: 
     assert (tmp_path / "output" / "processor.json").read_text(encoding="utf-8") == "{}"
 
 
+def test_directory_companion_receipt_uses_scandir_without_path_rglob(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    primary_artifact = tmp_path / "model.gguf"
+    primary_artifact.write_bytes(b"model")
+    projector_dir = tmp_path / "projector"
+    nested_dir = projector_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    (projector_dir / "config.json").write_bytes(b"{}")
+    (nested_dir / "weights.safetensors").write_bytes(b"weights")
+
+    def fail_rglob(self: Path, pattern: str):
+        raise AssertionError("companion directory receipts should not allocate Path.rglob results")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    receipt = DownloadPipeline._artifact_companions_receipt(
+        primary_artifact=primary_artifact,
+        ext={
+            "melix.companion_manifest": json.dumps(
+                [{"path": "projector", "kind": "directory", "required": True}]
+            )
+        },
+    )
+
+    companion = receipt["companion_artifacts"][0]
+    assert companion["status"] == "present"
+    assert companion["file_count"] == 2
+    assert companion["byte_count"] == len(b"{}") + len(b"weights")
+    assert companion["files"] == sorted(
+        [
+            str(projector_dir / "config.json"),
+            str(nested_dir / "weights.safetensors"),
+        ]
+    )
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink support unavailable")
+def test_directory_companion_receipt_preserves_symlinked_file_behavior(tmp_path: Path) -> None:
+    primary_artifact = tmp_path / "model.gguf"
+    primary_artifact.write_bytes(b"model")
+    projector_dir = tmp_path / "projector"
+    projector_dir.mkdir()
+    outside_file = tmp_path / "outside.safetensors"
+    outside_file.write_bytes(b"outside")
+    os.symlink(outside_file, projector_dir / "linked-file.safetensors")
+
+    receipt = DownloadPipeline._artifact_companions_receipt(
+        primary_artifact=primary_artifact,
+        ext={
+            "melix.companion_manifest": json.dumps(
+                [{"path": "projector", "kind": "directory", "required": True}]
+            )
+        },
+    )
+
+    companion = receipt["companion_artifacts"][0]
+    assert companion["file_count"] == 1
+    assert companion["byte_count"] == len(b"outside")
+    assert companion["files"] == [str(projector_dir / "linked-file.safetensors")]
+
+
 def test_strict_managed_download_rejects_missing_required_companion_before_activation(tmp_path: Path) -> None:
     pipeline = DownloadPipeline()
     artifact_dir = tmp_path / "artifact"
