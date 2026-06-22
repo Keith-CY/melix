@@ -298,6 +298,11 @@ class DownloadPipeline:
                         partial_path=partial_path,
                         ext=ext,
                     )
+                self._raise_if_strict_release_policy_failed(
+                    manifest_payload=completed_payload,
+                    partial_path=partial_path,
+                    ext=ext,
+                )
                 companion_declarations = (
                     self._companion_manifest(ext) if "melix.companion_manifest" in ext else []
                 )
@@ -628,6 +633,11 @@ class DownloadPipeline:
             },
         }
         self._raise_if_strict_integrity_mismatch(
+            manifest_payload=payload,
+            partial_path=Path(""),
+            ext=ext,
+        )
+        self._raise_if_strict_release_policy_failed(
             manifest_payload=payload,
             partial_path=Path(""),
             ext=ext,
@@ -1044,9 +1054,31 @@ class DownloadPipeline:
             "failure_reason": failure_reason,
             "status": status,
         }
+        receipt.update(cls._artifact_release_policy_receipt(ext=ext, status=status))
         if digest:
             receipt["actual_digest"] = normalized_actual_digest
         return receipt
+
+    @classmethod
+    def _artifact_release_policy_receipt(
+        cls,
+        *,
+        ext: dict[str, Any],
+        status: str,
+    ) -> dict[str, str]:
+        activation_decision = "pending"
+        if status == "failed":
+            activation_decision = "blocked"
+        elif status == "passed":
+            activation_decision = "allowed"
+        return {
+            "artifact_id": cls._ext_text(ext, "melix.artifact_id"),
+            "source_ref": cls._ext_text(ext, "melix.source_ref"),
+            "expected_source_ref": cls._ext_text(ext, "melix.expected_source_ref"),
+            "signature_status": cls._ext_text(ext, "melix.signature_status"),
+            "policy_mode": cls._ext_text(ext, "melix.policy_mode"),
+            "activation_decision": activation_decision,
+        }
 
     @classmethod
     def _verified_artifact_integrity_receipt(
@@ -1137,6 +1169,59 @@ class DownloadPipeline:
         )
 
     @classmethod
+    def _raise_if_strict_release_policy_failed(
+        cls,
+        *,
+        manifest_payload: dict[str, Any],
+        partial_path: Path,
+        ext: dict[str, str],
+    ) -> None:
+        if not cls._strict_install_mode(ext):
+            return
+        artifact_integrity = manifest_payload.get("artifact_integrity")
+        if not isinstance(artifact_integrity, dict):
+            return
+        source_ref = str(artifact_integrity.get("source_ref", "")).strip()
+        expected_source_ref = str(artifact_integrity.get("expected_source_ref", "")).strip()
+        # Report release-ref drift before signature policy so one failed install
+        # attempt has a single persisted corrective action.
+        if expected_source_ref and source_ref != expected_source_ref:
+            failure_reason = "release_ref_mismatch"
+            payload = cls._failed_integrity_payload(
+                manifest_payload=manifest_payload,
+                partial_path=partial_path,
+                failure_reason=failure_reason,
+            )
+            state_json = cls._write_manifest_json(Path(str(payload["state_path"])), payload)
+            raise ModelOperationError(
+                code="artifact_release_ref_mismatch",
+                message="Strict managed artifact install release reference policy failed before activation.",
+                details={
+                    "state_json": state_json,
+                    "failure_reason": failure_reason,
+                },
+            )
+
+        policy_mode = str(artifact_integrity.get("policy_mode", "")).strip().lower()
+        signature_status = str(artifact_integrity.get("signature_status", "")).strip().lower()
+        if policy_mode == "signed" and signature_status != "verified":
+            failure_reason = "signature_required"
+            payload = cls._failed_integrity_payload(
+                manifest_payload=manifest_payload,
+                partial_path=partial_path,
+                failure_reason=failure_reason,
+            )
+            state_json = cls._write_manifest_json(Path(str(payload["state_path"])), payload)
+            raise ModelOperationError(
+                code="artifact_signature_required",
+                message="Strict managed artifact installs require a verified signature policy before activation.",
+                details={
+                    "state_json": state_json,
+                    "failure_reason": failure_reason,
+                },
+            )
+
+    @classmethod
     def _failed_integrity_payload(
         cls,
         *,
@@ -1157,6 +1242,7 @@ class DownloadPipeline:
                     **artifact_integrity,
                     "failure_reason": failure_reason,
                     "status": "failed",
+                    "activation_decision": "blocked",
                 },
                 "activated": False,
             }
@@ -1494,8 +1580,9 @@ class DownloadPipeline:
         return files
 
     @staticmethod
-    def _companion_directory_receipt_files(path: Path) -> list[tuple[str, int]]:
-        files: list[tuple[str, int]] = []
+    def _companion_directory_receipt_files(path: Path) -> tuple[list[str], int]:
+        files: list[str] = []
+        byte_count = 0
         append_file = files.append
         stack = [os.fspath(path)]
         append_directory = stack.append
@@ -1512,9 +1599,11 @@ class DownloadPipeline:
                         append_directory(entry.path)
                         continue
                     if is_file(entry):
-                        append_file((entry.path, stat_entry(entry).st_size))
+                        file_size = stat_entry(entry).st_size
+                        byte_count += file_size
+                        append_file(entry.path)
         files.sort()
-        return files
+        return files, byte_count
 
     @staticmethod
     def _utc_now_iso8601() -> str:
@@ -1666,10 +1755,8 @@ class DownloadPipeline:
                         source_path=resolved_path,
                         primary_artifact=primary_artifact,
                     )
-                directory_files = cls._companion_directory_receipt_files(resolved_path)
-                files = [file_path for file_path, _file_size in directory_files]
-                file_count = len(directory_files)
-                byte_count = sum(file_size for _file_path, file_size in directory_files)
+                files, byte_count = cls._companion_directory_receipt_files(resolved_path)
+                file_count = len(files)
                 status = "present"
             elif kind == "file" and resolved_path.is_file():
                 if stage:
@@ -1704,8 +1791,9 @@ class DownloadPipeline:
         ext: dict[str, str],
     ) -> Path | None:
         candidate = Path(declared_path).expanduser()
-        if candidate.is_absolute() and candidate.exists():
-            return candidate.resolve()
+        if candidate.is_absolute():
+            # Preserve operator-declared spelling such as /var on macOS; later stat checks decide presence.
+            return candidate
         search_roots = [companion_search_artifact.parent, primary_artifact.parent]
         managed_root = ext.get("melix.managed_root", "").strip()
         if managed_root:

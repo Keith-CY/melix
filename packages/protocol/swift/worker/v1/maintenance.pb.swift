@@ -211,74 +211,70 @@ public nonisolated struct Melix_Worker_V1_ConvertProgress: Sendable {
   public init() {}
 }
 
-public nonisolated struct Melix_Worker_V1_ConvertManifest: @unchecked Sendable {
+public nonisolated struct Melix_Worker_V1_ConvertManifest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var manifestJson: String {
-    get {_storage._manifestJson}
-    set {_uniqueStorage()._manifestJson = newValue}
-  }
+  public var manifestJson: String = String()
 
   public var quantProfile: Melix_Worker_V1_QuantizationProfile {
-    get {_storage._quantProfile ?? Melix_Worker_V1_QuantizationProfile()}
-    set {_uniqueStorage()._quantProfile = newValue}
+    get {_quantProfile ?? Melix_Worker_V1_QuantizationProfile()}
+    set {_quantProfile = newValue}
   }
   /// Returns true if `quantProfile` has been explicitly set.
-  public var hasQuantProfile: Bool {_storage._quantProfile != nil}
+  public var hasQuantProfile: Bool {self._quantProfile != nil}
   /// Clears the value of `quantProfile`. Subsequent reads from it will return its default value.
-  public mutating func clearQuantProfile() {_uniqueStorage()._quantProfile = nil}
+  public mutating func clearQuantProfile() {self._quantProfile = nil}
 
   public var artifact: Melix_Worker_V1_QuantizedArtifact {
-    get {_storage._artifact ?? Melix_Worker_V1_QuantizedArtifact()}
-    set {_uniqueStorage()._artifact = newValue}
+    get {_artifact ?? Melix_Worker_V1_QuantizedArtifact()}
+    set {_artifact = newValue}
   }
   /// Returns true if `artifact` has been explicitly set.
-  public var hasArtifact: Bool {_storage._artifact != nil}
+  public var hasArtifact: Bool {self._artifact != nil}
   /// Clears the value of `artifact`. Subsequent reads from it will return its default value.
-  public mutating func clearArtifact() {_uniqueStorage()._artifact = nil}
+  public mutating func clearArtifact() {self._artifact = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _storage = _StorageClass.defaultInstance
+  fileprivate var _quantProfile: Melix_Worker_V1_QuantizationProfile? = nil
+  fileprivate var _artifact: Melix_Worker_V1_QuantizedArtifact? = nil
 }
 
-public nonisolated struct Melix_Worker_V1_ConvertCompleted: @unchecked Sendable {
+public nonisolated struct Melix_Worker_V1_ConvertCompleted: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var outputPath: String {
-    get {_storage._outputPath}
-    set {_uniqueStorage()._outputPath = newValue}
-  }
+  public var outputPath: String = String()
 
   public var quantProfile: Melix_Worker_V1_QuantizationProfile {
-    get {_storage._quantProfile ?? Melix_Worker_V1_QuantizationProfile()}
-    set {_uniqueStorage()._quantProfile = newValue}
+    get {_quantProfile ?? Melix_Worker_V1_QuantizationProfile()}
+    set {_quantProfile = newValue}
   }
   /// Returns true if `quantProfile` has been explicitly set.
-  public var hasQuantProfile: Bool {_storage._quantProfile != nil}
+  public var hasQuantProfile: Bool {self._quantProfile != nil}
   /// Clears the value of `quantProfile`. Subsequent reads from it will return its default value.
-  public mutating func clearQuantProfile() {_uniqueStorage()._quantProfile = nil}
+  public mutating func clearQuantProfile() {self._quantProfile = nil}
 
   public var artifact: Melix_Worker_V1_QuantizedArtifact {
-    get {_storage._artifact ?? Melix_Worker_V1_QuantizedArtifact()}
-    set {_uniqueStorage()._artifact = newValue}
+    get {_artifact ?? Melix_Worker_V1_QuantizedArtifact()}
+    set {_artifact = newValue}
   }
   /// Returns true if `artifact` has been explicitly set.
-  public var hasArtifact: Bool {_storage._artifact != nil}
+  public var hasArtifact: Bool {self._artifact != nil}
   /// Clears the value of `artifact`. Subsequent reads from it will return its default value.
-  public mutating func clearArtifact() {_uniqueStorage()._artifact = nil}
+  public mutating func clearArtifact() {self._artifact = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _storage = _StorageClass.defaultInstance
+  fileprivate var _quantProfile: Melix_Worker_V1_QuantizationProfile? = nil
+  fileprivate var _artifact: Melix_Worker_V1_QuantizedArtifact? = nil
 }
 
 public nonisolated struct Melix_Worker_V1_ConvertFailed: Sendable {
@@ -324,30 +320,107 @@ public nonisolated struct Melix_Worker_V1_QuantizationProfile: Sendable {
   public init() {}
 }
 
-public nonisolated struct Melix_Worker_V1_QuantizedArtifact: Sendable {
+public nonisolated struct Melix_Worker_V1_QuantizedArtifact: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var schemaVersion: String = String()
+  public var schemaVersion: String {
+    get {_storage._schemaVersion}
+    set {_uniqueStorage()._schemaVersion = newValue}
+  }
 
-  public var artifactKind: String = String()
+  public var artifactKind: String {
+    get {_storage._artifactKind}
+    set {_uniqueStorage()._artifactKind = newValue}
+  }
 
-  public var manifestPath: String = String()
+  public var manifestPath: String {
+    get {_storage._manifestPath}
+    set {_uniqueStorage()._manifestPath = newValue}
+  }
 
-  public var bundlePath: String = String()
+  public var bundlePath: String {
+    get {_storage._bundlePath}
+    set {_uniqueStorage()._bundlePath = newValue}
+  }
 
-  public var artifactBytes: UInt64 = 0
+  public var artifactBytes: UInt64 {
+    get {_storage._artifactBytes}
+    set {_uniqueStorage()._artifactBytes = newValue}
+  }
 
-  public var manifestBytes: UInt64 = 0
+  public var manifestBytes: UInt64 {
+    get {_storage._manifestBytes}
+    set {_uniqueStorage()._manifestBytes = newValue}
+  }
 
-  public var servingCompatible: Bool = false
+  public var servingCompatible: Bool {
+    get {_storage._servingCompatible}
+    set {_uniqueStorage()._servingCompatible = newValue}
+  }
 
-  public var smokeTestRequested: Bool = false
+  public var smokeTestRequested: Bool {
+    get {_storage._smokeTestRequested}
+    set {_uniqueStorage()._smokeTestRequested = newValue}
+  }
 
-  public var smokeTestPassed: Bool = false
+  public var smokeTestPassed: Bool {
+    get {_storage._smokeTestPassed}
+    set {_uniqueStorage()._smokeTestPassed = newValue}
+  }
 
-  public var runtime: String = String()
+  public var runtime: String {
+    get {_storage._runtime}
+    set {_uniqueStorage()._runtime = newValue}
+  }
+
+  public var artifactIntegrity: Melix_Worker_V1_ArtifactIntegrityReceipt {
+    get {_storage._artifactIntegrity ?? Melix_Worker_V1_ArtifactIntegrityReceipt()}
+    set {_uniqueStorage()._artifactIntegrity = newValue}
+  }
+  /// Returns true if `artifactIntegrity` has been explicitly set.
+  public var hasArtifactIntegrity: Bool {_storage._artifactIntegrity != nil}
+  /// Clears the value of `artifactIntegrity`. Subsequent reads from it will return its default value.
+  public mutating func clearArtifactIntegrity() {_uniqueStorage()._artifactIntegrity = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public nonisolated struct Melix_Worker_V1_ArtifactIntegrityReceipt: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var status: String = String()
+
+  public var verificationMode: String = String()
+
+  public var policyPresent: Bool = false
+
+  public var digest: String = String()
+
+  public var actualDigest: String = String()
+
+  public var checkedAt: String = String()
+
+  public var failureReason: String = String()
+
+  public var artifactID: String = String()
+
+  public var sourceRef: String = String()
+
+  public var expectedSourceRef: String = String()
+
+  public var signatureStatus: String = String()
+
+  public var policyMode: String = String()
+
+  public var activationDecision: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2078,81 +2151,41 @@ nonisolated extension Melix_Worker_V1_ConvertManifest: SwiftProtobuf.Message, Sw
   public static let protoMessageName: String = _protobuf_package + ".ConvertManifest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}manifest_json\0\u{3}quant_profile\0\u{1}artifact\0")
 
-  fileprivate class _StorageClass {
-    var _manifestJson: String = String()
-    var _quantProfile: Melix_Worker_V1_QuantizationProfile? = nil
-    var _artifact: Melix_Worker_V1_QuantizedArtifact? = nil
-
-      // This property is used as the initial default value for new instances of the type.
-      // The type itself is protecting the reference to its storage via CoW semantics.
-      // This will force a copy to be made of this reference when the first mutation occurs;
-      // hence, it is safe to mark this as `nonisolated(unsafe)`.
-      static nonisolated(unsafe) let defaultInstance = _StorageClass()
-
-    private init() {}
-
-    init(copying source: _StorageClass) {
-      _manifestJson = source._manifestJson
-      _quantProfile = source._quantProfile
-      _artifact = source._artifact
-    }
-  }
-
-  fileprivate mutating func _uniqueStorage() -> _StorageClass {
-    if !isKnownUniquelyReferenced(&_storage) {
-      _storage = _StorageClass(copying: _storage)
-    }
-    return _storage
-  }
-
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    _ = _uniqueStorage()
-    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
-      while let fieldNumber = try decoder.nextFieldNumber() {
-        // The use of inline closures is to circumvent an issue where the compiler
-        // allocates stack space for every case branch when no optimizations are
-        // enabled. https://github.com/apple/swift-protobuf/issues/1034
-        switch fieldNumber {
-        case 1: try { try decoder.decodeSingularStringField(value: &_storage._manifestJson) }()
-        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._quantProfile) }()
-        case 3: try { try decoder.decodeSingularMessageField(value: &_storage._artifact) }()
-        default: break
-        }
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.manifestJson) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._quantProfile) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._artifact) }()
+      default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every if/case branch local when no optimizations
-      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-      // https://github.com/apple/swift-protobuf/issues/1182
-      if !_storage._manifestJson.isEmpty {
-        try visitor.visitSingularStringField(value: _storage._manifestJson, fieldNumber: 1)
-      }
-      try { if let v = _storage._quantProfile {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-      } }()
-      try { if let v = _storage._artifact {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
-      } }()
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.manifestJson.isEmpty {
+      try visitor.visitSingularStringField(value: self.manifestJson, fieldNumber: 1)
     }
+    try { if let v = self._quantProfile {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    try { if let v = self._artifact {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_ConvertManifest, rhs: Melix_Worker_V1_ConvertManifest) -> Bool {
-    if lhs._storage !== rhs._storage {
-      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
-        let _storage = _args.0
-        let rhs_storage = _args.1
-        if _storage._manifestJson != rhs_storage._manifestJson {return false}
-        if _storage._quantProfile != rhs_storage._quantProfile {return false}
-        if _storage._artifact != rhs_storage._artifact {return false}
-        return true
-      }
-      if !storagesAreEqual {return false}
-    }
+    if lhs.manifestJson != rhs.manifestJson {return false}
+    if lhs._quantProfile != rhs._quantProfile {return false}
+    if lhs._artifact != rhs._artifact {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2162,81 +2195,41 @@ nonisolated extension Melix_Worker_V1_ConvertCompleted: SwiftProtobuf.Message, S
   public static let protoMessageName: String = _protobuf_package + ".ConvertCompleted"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}output_path\0\u{3}quant_profile\0\u{1}artifact\0")
 
-  fileprivate class _StorageClass {
-    var _outputPath: String = String()
-    var _quantProfile: Melix_Worker_V1_QuantizationProfile? = nil
-    var _artifact: Melix_Worker_V1_QuantizedArtifact? = nil
-
-      // This property is used as the initial default value for new instances of the type.
-      // The type itself is protecting the reference to its storage via CoW semantics.
-      // This will force a copy to be made of this reference when the first mutation occurs;
-      // hence, it is safe to mark this as `nonisolated(unsafe)`.
-      static nonisolated(unsafe) let defaultInstance = _StorageClass()
-
-    private init() {}
-
-    init(copying source: _StorageClass) {
-      _outputPath = source._outputPath
-      _quantProfile = source._quantProfile
-      _artifact = source._artifact
-    }
-  }
-
-  fileprivate mutating func _uniqueStorage() -> _StorageClass {
-    if !isKnownUniquelyReferenced(&_storage) {
-      _storage = _StorageClass(copying: _storage)
-    }
-    return _storage
-  }
-
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    _ = _uniqueStorage()
-    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
-      while let fieldNumber = try decoder.nextFieldNumber() {
-        // The use of inline closures is to circumvent an issue where the compiler
-        // allocates stack space for every case branch when no optimizations are
-        // enabled. https://github.com/apple/swift-protobuf/issues/1034
-        switch fieldNumber {
-        case 1: try { try decoder.decodeSingularStringField(value: &_storage._outputPath) }()
-        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._quantProfile) }()
-        case 3: try { try decoder.decodeSingularMessageField(value: &_storage._artifact) }()
-        default: break
-        }
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.outputPath) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._quantProfile) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._artifact) }()
+      default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every if/case branch local when no optimizations
-      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-      // https://github.com/apple/swift-protobuf/issues/1182
-      if !_storage._outputPath.isEmpty {
-        try visitor.visitSingularStringField(value: _storage._outputPath, fieldNumber: 1)
-      }
-      try { if let v = _storage._quantProfile {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-      } }()
-      try { if let v = _storage._artifact {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
-      } }()
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.outputPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.outputPath, fieldNumber: 1)
     }
+    try { if let v = self._quantProfile {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    try { if let v = self._artifact {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_ConvertCompleted, rhs: Melix_Worker_V1_ConvertCompleted) -> Bool {
-    if lhs._storage !== rhs._storage {
-      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
-        let _storage = _args.0
-        let rhs_storage = _args.1
-        if _storage._outputPath != rhs_storage._outputPath {return false}
-        if _storage._quantProfile != rhs_storage._quantProfile {return false}
-        if _storage._artifact != rhs_storage._artifact {return false}
-        return true
-      }
-      if !storagesAreEqual {return false}
-    }
+    if lhs.outputPath != rhs.outputPath {return false}
+    if lhs._quantProfile != rhs._quantProfile {return false}
+    if lhs._artifact != rhs._artifact {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2333,7 +2326,147 @@ nonisolated extension Melix_Worker_V1_QuantizationProfile: SwiftProtobuf.Message
 
 nonisolated extension Melix_Worker_V1_QuantizedArtifact: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".QuantizedArtifact"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}artifact_kind\0\u{3}manifest_path\0\u{3}bundle_path\0\u{3}artifact_bytes\0\u{3}manifest_bytes\0\u{3}serving_compatible\0\u{3}smoke_test_requested\0\u{3}smoke_test_passed\0\u{1}runtime\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}artifact_kind\0\u{3}manifest_path\0\u{3}bundle_path\0\u{3}artifact_bytes\0\u{3}manifest_bytes\0\u{3}serving_compatible\0\u{3}smoke_test_requested\0\u{3}smoke_test_passed\0\u{1}runtime\0\u{3}artifact_integrity\0")
+
+  fileprivate class _StorageClass {
+    var _schemaVersion: String = String()
+    var _artifactKind: String = String()
+    var _manifestPath: String = String()
+    var _bundlePath: String = String()
+    var _artifactBytes: UInt64 = 0
+    var _manifestBytes: UInt64 = 0
+    var _servingCompatible: Bool = false
+    var _smokeTestRequested: Bool = false
+    var _smokeTestPassed: Bool = false
+    var _runtime: String = String()
+    var _artifactIntegrity: Melix_Worker_V1_ArtifactIntegrityReceipt? = nil
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _schemaVersion = source._schemaVersion
+      _artifactKind = source._artifactKind
+      _manifestPath = source._manifestPath
+      _bundlePath = source._bundlePath
+      _artifactBytes = source._artifactBytes
+      _manifestBytes = source._manifestBytes
+      _servingCompatible = source._servingCompatible
+      _smokeTestRequested = source._smokeTestRequested
+      _smokeTestPassed = source._smokeTestPassed
+      _runtime = source._runtime
+      _artifactIntegrity = source._artifactIntegrity
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._schemaVersion) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._artifactKind) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._manifestPath) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._bundlePath) }()
+        case 5: try { try decoder.decodeSingularUInt64Field(value: &_storage._artifactBytes) }()
+        case 6: try { try decoder.decodeSingularUInt64Field(value: &_storage._manifestBytes) }()
+        case 7: try { try decoder.decodeSingularBoolField(value: &_storage._servingCompatible) }()
+        case 8: try { try decoder.decodeSingularBoolField(value: &_storage._smokeTestRequested) }()
+        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._smokeTestPassed) }()
+        case 10: try { try decoder.decodeSingularStringField(value: &_storage._runtime) }()
+        case 11: try { try decoder.decodeSingularMessageField(value: &_storage._artifactIntegrity) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if !_storage._schemaVersion.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._schemaVersion, fieldNumber: 1)
+      }
+      if !_storage._artifactKind.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._artifactKind, fieldNumber: 2)
+      }
+      if !_storage._manifestPath.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._manifestPath, fieldNumber: 3)
+      }
+      if !_storage._bundlePath.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._bundlePath, fieldNumber: 4)
+      }
+      if _storage._artifactBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._artifactBytes, fieldNumber: 5)
+      }
+      if _storage._manifestBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._manifestBytes, fieldNumber: 6)
+      }
+      if _storage._servingCompatible != false {
+        try visitor.visitSingularBoolField(value: _storage._servingCompatible, fieldNumber: 7)
+      }
+      if _storage._smokeTestRequested != false {
+        try visitor.visitSingularBoolField(value: _storage._smokeTestRequested, fieldNumber: 8)
+      }
+      if _storage._smokeTestPassed != false {
+        try visitor.visitSingularBoolField(value: _storage._smokeTestPassed, fieldNumber: 9)
+      }
+      if !_storage._runtime.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._runtime, fieldNumber: 10)
+      }
+      try { if let v = _storage._artifactIntegrity {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+      } }()
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_QuantizedArtifact, rhs: Melix_Worker_V1_QuantizedArtifact) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._schemaVersion != rhs_storage._schemaVersion {return false}
+        if _storage._artifactKind != rhs_storage._artifactKind {return false}
+        if _storage._manifestPath != rhs_storage._manifestPath {return false}
+        if _storage._bundlePath != rhs_storage._bundlePath {return false}
+        if _storage._artifactBytes != rhs_storage._artifactBytes {return false}
+        if _storage._manifestBytes != rhs_storage._manifestBytes {return false}
+        if _storage._servingCompatible != rhs_storage._servingCompatible {return false}
+        if _storage._smokeTestRequested != rhs_storage._smokeTestRequested {return false}
+        if _storage._smokeTestPassed != rhs_storage._smokeTestPassed {return false}
+        if _storage._runtime != rhs_storage._runtime {return false}
+        if _storage._artifactIntegrity != rhs_storage._artifactIntegrity {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Worker_V1_ArtifactIntegrityReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ArtifactIntegrityReceipt"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}status\0\u{3}verification_mode\0\u{3}policy_present\0\u{1}digest\0\u{3}actual_digest\0\u{3}checked_at\0\u{3}failure_reason\0\u{3}artifact_id\0\u{3}source_ref\0\u{3}expected_source_ref\0\u{3}signature_status\0\u{3}policy_mode\0\u{3}activation_decision\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2341,66 +2474,81 @@ nonisolated extension Melix_Worker_V1_QuantizedArtifact: SwiftProtobuf.Message, 
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.schemaVersion) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.artifactKind) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.manifestPath) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.bundlePath) }()
-      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.artifactBytes) }()
-      case 6: try { try decoder.decodeSingularUInt64Field(value: &self.manifestBytes) }()
-      case 7: try { try decoder.decodeSingularBoolField(value: &self.servingCompatible) }()
-      case 8: try { try decoder.decodeSingularBoolField(value: &self.smokeTestRequested) }()
-      case 9: try { try decoder.decodeSingularBoolField(value: &self.smokeTestPassed) }()
-      case 10: try { try decoder.decodeSingularStringField(value: &self.runtime) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.status) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.verificationMode) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.policyPresent) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.digest) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.actualDigest) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.checkedAt) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.failureReason) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.artifactID) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.sourceRef) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.expectedSourceRef) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.signatureStatus) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.policyMode) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.activationDecision) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.schemaVersion.isEmpty {
-      try visitor.visitSingularStringField(value: self.schemaVersion, fieldNumber: 1)
+    if !self.status.isEmpty {
+      try visitor.visitSingularStringField(value: self.status, fieldNumber: 1)
     }
-    if !self.artifactKind.isEmpty {
-      try visitor.visitSingularStringField(value: self.artifactKind, fieldNumber: 2)
+    if !self.verificationMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.verificationMode, fieldNumber: 2)
     }
-    if !self.manifestPath.isEmpty {
-      try visitor.visitSingularStringField(value: self.manifestPath, fieldNumber: 3)
+    if self.policyPresent != false {
+      try visitor.visitSingularBoolField(value: self.policyPresent, fieldNumber: 3)
     }
-    if !self.bundlePath.isEmpty {
-      try visitor.visitSingularStringField(value: self.bundlePath, fieldNumber: 4)
+    if !self.digest.isEmpty {
+      try visitor.visitSingularStringField(value: self.digest, fieldNumber: 4)
     }
-    if self.artifactBytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.artifactBytes, fieldNumber: 5)
+    if !self.actualDigest.isEmpty {
+      try visitor.visitSingularStringField(value: self.actualDigest, fieldNumber: 5)
     }
-    if self.manifestBytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.manifestBytes, fieldNumber: 6)
+    if !self.checkedAt.isEmpty {
+      try visitor.visitSingularStringField(value: self.checkedAt, fieldNumber: 6)
     }
-    if self.servingCompatible != false {
-      try visitor.visitSingularBoolField(value: self.servingCompatible, fieldNumber: 7)
+    if !self.failureReason.isEmpty {
+      try visitor.visitSingularStringField(value: self.failureReason, fieldNumber: 7)
     }
-    if self.smokeTestRequested != false {
-      try visitor.visitSingularBoolField(value: self.smokeTestRequested, fieldNumber: 8)
+    if !self.artifactID.isEmpty {
+      try visitor.visitSingularStringField(value: self.artifactID, fieldNumber: 8)
     }
-    if self.smokeTestPassed != false {
-      try visitor.visitSingularBoolField(value: self.smokeTestPassed, fieldNumber: 9)
+    if !self.sourceRef.isEmpty {
+      try visitor.visitSingularStringField(value: self.sourceRef, fieldNumber: 9)
     }
-    if !self.runtime.isEmpty {
-      try visitor.visitSingularStringField(value: self.runtime, fieldNumber: 10)
+    if !self.expectedSourceRef.isEmpty {
+      try visitor.visitSingularStringField(value: self.expectedSourceRef, fieldNumber: 10)
+    }
+    if !self.signatureStatus.isEmpty {
+      try visitor.visitSingularStringField(value: self.signatureStatus, fieldNumber: 11)
+    }
+    if !self.policyMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.policyMode, fieldNumber: 12)
+    }
+    if !self.activationDecision.isEmpty {
+      try visitor.visitSingularStringField(value: self.activationDecision, fieldNumber: 13)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Melix_Worker_V1_QuantizedArtifact, rhs: Melix_Worker_V1_QuantizedArtifact) -> Bool {
-    if lhs.schemaVersion != rhs.schemaVersion {return false}
-    if lhs.artifactKind != rhs.artifactKind {return false}
-    if lhs.manifestPath != rhs.manifestPath {return false}
-    if lhs.bundlePath != rhs.bundlePath {return false}
-    if lhs.artifactBytes != rhs.artifactBytes {return false}
-    if lhs.manifestBytes != rhs.manifestBytes {return false}
-    if lhs.servingCompatible != rhs.servingCompatible {return false}
-    if lhs.smokeTestRequested != rhs.smokeTestRequested {return false}
-    if lhs.smokeTestPassed != rhs.smokeTestPassed {return false}
-    if lhs.runtime != rhs.runtime {return false}
+  public static func ==(lhs: Melix_Worker_V1_ArtifactIntegrityReceipt, rhs: Melix_Worker_V1_ArtifactIntegrityReceipt) -> Bool {
+    if lhs.status != rhs.status {return false}
+    if lhs.verificationMode != rhs.verificationMode {return false}
+    if lhs.policyPresent != rhs.policyPresent {return false}
+    if lhs.digest != rhs.digest {return false}
+    if lhs.actualDigest != rhs.actualDigest {return false}
+    if lhs.checkedAt != rhs.checkedAt {return false}
+    if lhs.failureReason != rhs.failureReason {return false}
+    if lhs.artifactID != rhs.artifactID {return false}
+    if lhs.sourceRef != rhs.sourceRef {return false}
+    if lhs.expectedSourceRef != rhs.expectedSourceRef {return false}
+    if lhs.signatureStatus != rhs.signatureStatus {return false}
+    if lhs.policyMode != rhs.policyMode {return false}
+    if lhs.activationDecision != rhs.activationDecision {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

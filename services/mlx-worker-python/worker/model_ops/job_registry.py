@@ -1315,6 +1315,12 @@ class ModelOpsJobRegistry:
             "actual_digest": str(artifact_integrity.get("actual_digest", "")),
             "checked_at": str(artifact_integrity.get("checked_at", "")),
             "failure_reason": str(artifact_integrity.get("failure_reason", "")),
+            "artifact_id": str(artifact_integrity.get("artifact_id", "")),
+            "source_ref": str(artifact_integrity.get("source_ref", "")),
+            "expected_source_ref": str(artifact_integrity.get("expected_source_ref", "")),
+            "signature_status": str(artifact_integrity.get("signature_status", "")),
+            "policy_mode": str(artifact_integrity.get("policy_mode", "")),
+            "activation_decision": str(artifact_integrity.get("activation_decision", "")),
         }
 
     @staticmethod

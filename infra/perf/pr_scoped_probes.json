@@ -1777,7 +1777,7 @@
       {
         "key": "companion_receipt_delta_ms",
         "unit": "ms",
-        "direction": "lower_is_better",
+        "direction": "informational",
         "warn_pct": 5.0
       }
     ]

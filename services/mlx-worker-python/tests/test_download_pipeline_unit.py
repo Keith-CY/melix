@@ -499,6 +499,12 @@ def test_managed_download_manifest_records_operation_receipt_fields(tmp_path: Pa
         "checked_at": "not_recorded",
         "failure_reason": "",
         "status": "passed",
+        "artifact_id": "",
+        "source_ref": "",
+        "expected_source_ref": "",
+        "signature_status": "",
+        "policy_mode": "",
+        "activation_decision": "allowed",
     }
 
 
@@ -728,6 +734,12 @@ def test_strict_managed_download_requires_digest_before_materializing_artifact(t
         "checked_at": "not_recorded",
         "failure_reason": "missing_artifact_digest",
         "status": "failed",
+        "artifact_id": "",
+        "source_ref": "",
+        "expected_source_ref": "",
+        "signature_status": "",
+        "policy_mode": "",
+        "activation_decision": "blocked",
     }
     assert not (output_dir / "download.artifact").exists()
     assert not (output_dir / "download.artifact.partial").exists()
@@ -763,6 +775,12 @@ def test_strict_managed_download_with_digest_materializes_artifact(tmp_path: Pat
         "checked_at": payload["artifact_integrity"]["checked_at"],
         "failure_reason": "",
         "status": "passed",
+        "artifact_id": "",
+        "source_ref": "",
+        "expected_source_ref": "",
+        "signature_status": "",
+        "policy_mode": "",
+        "activation_decision": "allowed",
     }
     assert payload["artifact_integrity"]["checked_at"] != "not_recorded"
     assert payload["activated"] is True
@@ -803,12 +821,162 @@ def test_strict_managed_download_rejects_digest_mismatch_before_activation(tmp_p
         "checked_at": state_payload["artifact_integrity"]["checked_at"],
         "failure_reason": "digest_mismatch",
         "status": "failed",
+        "artifact_id": "",
+        "source_ref": "",
+        "expected_source_ref": "",
+        "signature_status": "",
+        "policy_mode": "",
+        "activation_decision": "blocked",
     }
     assert state_payload["artifact_integrity"]["checked_at"] != "not_recorded"
     assert state_payload["partial_lifecycle"] == "failed_kept_for_resume"
     assert state_payload["activated"] is False
     assert not (output_dir / "download.artifact").exists()
     assert (output_dir / "download.artifact.partial").read_bytes() == source_bytes
+
+
+def test_strict_managed_download_rejects_release_ref_mismatch_before_activation(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_bytes = b"abcdef"
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(source_bytes)
+    digest = hashlib.sha256(source_bytes).hexdigest()
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "melix.target_scope": "hub:mlx-community/demo@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": f"sha256:{digest}",
+            "melix.artifact_id": "artifact-demo",
+            "melix.source_ref": "refs/tags/v1.0.0",
+            "melix.expected_source_ref": "refs/tags/v1.0.1",
+            "melix.policy_mode": "signed",
+            "melix.signature_status": "verified",
+        },
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        pipeline.run(request, job_id="job-release-ref-mismatch", output_dir=output_dir)
+
+    assert exc_info.value.code == "artifact_release_ref_mismatch"
+    state_payload = json.loads(exc_info.value.details["state_json"])
+    assert state_payload["status"] == "failed"
+    assert state_payload["terminal_state"] == "failed"
+    assert state_payload["last_error"] == "release_ref_mismatch"
+    assert state_payload["artifact_integrity"]["failure_reason"] == "release_ref_mismatch"
+    assert state_payload["artifact_integrity"]["artifact_id"] == "artifact-demo"
+    assert state_payload["artifact_integrity"]["source_ref"] == "refs/tags/v1.0.0"
+    assert state_payload["artifact_integrity"]["expected_source_ref"] == "refs/tags/v1.0.1"
+    assert state_payload["artifact_integrity"]["signature_status"] == "verified"
+    assert state_payload["artifact_integrity"]["policy_mode"] == "signed"
+    assert state_payload["artifact_integrity"]["activation_decision"] == "blocked"
+    assert state_payload["activated"] is False
+    assert not (output_dir / "download.artifact").exists()
+    assert (output_dir / "download.artifact.partial").read_bytes() == source_bytes
+
+
+def test_strict_managed_download_rejects_unverified_signature_policy_before_activation(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_bytes = b"abcdef"
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(source_bytes)
+    digest = hashlib.sha256(source_bytes).hexdigest()
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "melix.target_scope": "hub:mlx-community/demo@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": f"sha256:{digest}",
+            "melix.artifact_id": "artifact-demo",
+            "melix.source_ref": "refs/tags/v1.0.0",
+            "melix.expected_source_ref": "refs/tags/v1.0.0",
+            "melix.policy_mode": "signed",
+            "melix.signature_status": "unsigned",
+        },
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        pipeline.run(request, job_id="job-signature-required", output_dir=output_dir)
+
+    assert exc_info.value.code == "artifact_signature_required"
+    state_payload = json.loads(exc_info.value.details["state_json"])
+    assert state_payload["status"] == "failed"
+    assert state_payload["terminal_state"] == "failed"
+    assert state_payload["last_error"] == "signature_required"
+    assert state_payload["artifact_integrity"]["failure_reason"] == "signature_required"
+    assert state_payload["artifact_integrity"]["artifact_id"] == "artifact-demo"
+    assert state_payload["artifact_integrity"]["source_ref"] == "refs/tags/v1.0.0"
+    assert state_payload["artifact_integrity"]["expected_source_ref"] == "refs/tags/v1.0.0"
+    assert state_payload["artifact_integrity"]["signature_status"] == "unsigned"
+    assert state_payload["artifact_integrity"]["policy_mode"] == "signed"
+    assert state_payload["artifact_integrity"]["activation_decision"] == "blocked"
+    assert state_payload["activated"] is False
+    assert not (output_dir / "download.artifact").exists()
+    assert (output_dir / "download.artifact.partial").read_bytes() == source_bytes
+
+
+def test_strict_managed_download_records_verified_release_policy_receipt(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.bin"
+    source_bytes = b"abcdef"
+    source_path.write_bytes(source_bytes)
+    digest = hashlib.sha256(source_bytes).hexdigest()
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "melix.target_scope": "hub:mlx-community/demo@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": f"sha256:{digest}",
+            "melix.artifact_id": "artifact-demo",
+            "melix.source_ref": "refs/tags/v1.0.0",
+            "melix.expected_source_ref": "refs/tags/v1.0.0",
+            "melix.policy_mode": "signed",
+            "melix.signature_status": "verified",
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-release-policy", output_dir=tmp_path / "output")
+
+    payload = json.loads(result.snapshots[-1].manifest_json)
+    assert payload["status"] == "completed"
+    assert payload["activated"] is True
+    assert payload["artifact_integrity"]["status"] == "passed"
+    assert payload["artifact_integrity"]["artifact_id"] == "artifact-demo"
+    assert payload["artifact_integrity"]["source_ref"] == "refs/tags/v1.0.0"
+    assert payload["artifact_integrity"]["expected_source_ref"] == "refs/tags/v1.0.0"
+    assert payload["artifact_integrity"]["signature_status"] == "verified"
+    assert payload["artifact_integrity"]["policy_mode"] == "signed"
+    assert payload["artifact_integrity"]["activation_decision"] == "allowed"
+
+
+def test_release_policy_receipt_ignores_bare_ext_keys() -> None:
+    receipt = DownloadPipeline._artifact_release_policy_receipt(
+        ext={
+            "artifact_id": "bare-artifact",
+            "source_ref": "refs/tags/bare",
+            "expected_source_ref": "refs/tags/bare",
+            "signature_status": "verified",
+            "policy_mode": "signed",
+        },
+        status="passed",
+    )
+
+    assert receipt == {
+        "artifact_id": "",
+        "source_ref": "",
+        "expected_source_ref": "",
+        "signature_status": "",
+        "policy_mode": "",
+        "activation_decision": "allowed",
+    }
 
 
 def test_strict_integrity_rejects_missing_actual_digest_before_activation(tmp_path: Path) -> None:
@@ -1017,6 +1185,43 @@ def test_directory_companion_receipt_preserves_symlinked_file_behavior(tmp_path:
     assert companion["file_count"] == 1
     assert companion["byte_count"] == len(b"outside")
     assert companion["files"] == [str(projector_dir / "linked-file.safetensors")]
+
+
+def test_directory_companion_receipt_preserves_absolute_path_spelling_under_var_alias(
+    tmp_path: Path,
+) -> None:
+    if Path("/var").resolve() == Path("/var"):
+        pytest.skip("/var is not a filesystem alias on this host")  # pragma: no cover
+    primary_artifact = tmp_path / "model.gguf"
+    primary_artifact.write_bytes(b"model")
+    projector_dir = tmp_path / "projector"
+    nested_dir = projector_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    (projector_dir / "config.json").write_bytes(b"{}")
+    (nested_dir / "weights.safetensors").write_bytes(b"weights")
+
+    projector_path = str(projector_dir)
+    declared_path = projector_path.replace("/private/var/", "/var/", 1)
+    if not declared_path.startswith("/var/"):
+        pytest.skip(f"tmp_path is outside the /var alias tree: {projector_path}")  # pragma: no cover
+
+    receipt = DownloadPipeline._artifact_companions_receipt(
+        primary_artifact=primary_artifact,
+        ext={
+            "melix.companion_manifest": json.dumps(
+                [{"path": declared_path, "kind": "directory", "required": True}]
+            )
+        },
+    )
+
+    companion = receipt["companion_artifacts"][0]
+    assert companion["resolved_path"] == declared_path
+    assert companion["files"] == sorted(
+        [
+            str(Path(declared_path) / "config.json"),
+            str(Path(declared_path) / "nested" / "weights.safetensors"),
+        ]
+    )
 
 
 def test_strict_managed_download_rejects_missing_required_companion_before_activation(tmp_path: Path) -> None:
@@ -1243,6 +1448,12 @@ def test_strict_managed_hub_import_with_matching_snapshot_digest_activates(tmp_p
         "checked_at": payload["artifact_integrity"]["checked_at"],
         "failure_reason": "",
         "status": "passed",
+        "artifact_id": "",
+        "source_ref": "",
+        "expected_source_ref": "",
+        "signature_status": "",
+        "policy_mode": "",
+        "activation_decision": "allowed",
     }
     assert payload["artifact_integrity"]["checked_at"] != "not_recorded"
     assert payload["activated"] is True
@@ -1289,12 +1500,63 @@ def test_strict_managed_hub_import_rejects_snapshot_digest_mismatch_before_activ
         "checked_at": state_payload["artifact_integrity"]["checked_at"],
         "failure_reason": "digest_mismatch",
         "status": "failed",
+        "artifact_id": "",
+        "source_ref": "",
+        "expected_source_ref": "",
+        "signature_status": "",
+        "policy_mode": "",
+        "activation_decision": "blocked",
     }
     assert state_payload["artifact_integrity"]["checked_at"] != "not_recorded"
     assert state_payload["partial_path"] == ""
     assert state_payload["partial_bytes"] == 0
     assert state_payload["resume_eligible"] is False
     assert state_payload["partial_lifecycle"] == "none"
+    assert state_payload["activated"] is False
+
+
+def test_strict_managed_hub_import_rejects_release_ref_mismatch_before_activation(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_dir = tmp_path / "managed-snapshot"
+    source_dir.mkdir()
+    (source_dir / "config.json").write_text('{"model_type":"qwen3"}\n', encoding="utf-8")
+    (source_dir / "model.safetensors").write_bytes(b"weights")
+    declared_digest = _expected_directory_snapshot_digest(source_dir)
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_dir),
+            "melix.managed_import": "true",
+            "melix.source_kind": "hub_repo",
+            "melix.hf_repo_id": "mlx-community/demo",
+            "melix.hf_revision": "main",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": declared_digest,
+            "melix.artifact_id": "hub-artifact-demo",
+            "melix.source_ref": "refs/tags/v1.0.0",
+            "melix.expected_source_ref": "refs/tags/v1.0.1",
+            "melix.policy_mode": "signed",
+            "melix.signature_status": "verified",
+        },
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        pipeline.run(request, job_id="job-strict-hub-release-ref", output_dir=output_dir)
+
+    assert exc_info.value.code == "artifact_release_ref_mismatch"
+    state_payload = json.loads((output_dir / "download.state.json").read_text(encoding="utf-8"))
+    assert json.loads(exc_info.value.details["state_json"]) == state_payload
+    assert state_payload["status"] == "failed"
+    assert state_payload["terminal_state"] == "failed"
+    assert state_payload["last_error"] == "release_ref_mismatch"
+    assert state_payload["stage"] == "materialize"
+    assert state_payload["artifact_integrity"]["artifact_id"] == "hub-artifact-demo"
+    assert state_payload["artifact_integrity"]["source_ref"] == "refs/tags/v1.0.0"
+    assert state_payload["artifact_integrity"]["expected_source_ref"] == "refs/tags/v1.0.1"
+    assert state_payload["artifact_integrity"]["signature_status"] == "verified"
+    assert state_payload["artifact_integrity"]["policy_mode"] == "signed"
+    assert state_payload["artifact_integrity"]["activation_decision"] == "blocked"
     assert state_payload["activated"] is False
 
 
