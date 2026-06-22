@@ -5562,6 +5562,7 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
     legacy_signature_path.mkdir()
     _assert_chunked_prompt_auxiliary_slicing_contract()
     _assert_image_feature_cache_helper_contracts()
+    _assert_mlx_vlm_probe_scripts_keep_image_feature_metrics_scoped()
     test_mlx_vlm_runtime_records_repeated_image_fast_path_probe()
     test_mlx_vlm_runtime_records_partial_multi_image_reuse_probe()
     _assert_mlx_vlm_runtime_probe_fixtures_record_position_slice_fallback_count()
@@ -6838,6 +6839,29 @@ def _assert_mlx_vlm_runtime_long_video_probe_records_position_slice_fallback_cou
 def _assert_mlx_vlm_runtime_probe_fixtures_record_position_slice_fallback_count() -> None:
     _assert_mlx_vlm_runtime_repeated_media_probe_records_position_slice_fallback_count()
     _assert_mlx_vlm_runtime_long_video_probe_records_position_slice_fallback_count()
+
+
+def _assert_mlx_vlm_probe_scripts_keep_image_feature_metrics_scoped() -> None:
+    from scripts import mlx_vlm_family_config_probe, mlx_vlm_gemma4_weight_presence_probe
+
+    mlx_vlm_family_config_probe.ITERATION_COUNT = 2
+    mlx_vlm_family_config_probe.SAMPLE_COUNT = 1
+    family_metrics = mlx_vlm_family_config_probe.main.__globals__["_image_feature_cache_metrics"]()
+
+    assert family_metrics["image_feature_cache_artifact_count"] == 1.0
+    assert family_metrics["image_feature_cache_bytes"] > 0.0
+    assert family_metrics["image_feature_encoder_calls_saved"] == 1.0
+    assert family_metrics["image_feature_reuse_hit_count"] == 1.0
+    assert family_metrics["image_feature_work_saved_bytes"] > 0.0
+
+    mlx_vlm_gemma4_weight_presence_probe.WEIGHT_NAME_COUNT = 32
+    mlx_vlm_gemma4_weight_presence_probe.ITERATION_COUNT = 2
+    mlx_vlm_gemma4_weight_presence_probe.SAMPLE_COUNT = 1
+    weight_metrics = mlx_vlm_gemma4_weight_presence_probe.run_probe()
+
+    assert weight_metrics["has_vision"] == 1.0
+    assert weight_metrics["has_audio"] == 1.0
+    assert not any(key.startswith("image_feature_") for key in weight_metrics)
 
 
 test_mlx_vlm_runtime_repeated_media_probe_records_position_slice_fallback_count = (
