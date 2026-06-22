@@ -159,6 +159,11 @@ Performance target:
 - Trust policy resolution must stay below 1 ms p95 in deterministic unit/probe fixtures.
 - Config metadata inspection must avoid loading model weights and must read only existing
   lightweight metadata files.
+- The `model-load-config-json-bytes` PR-scoped probe covers Python trust-policy
+  config reads, stat-keyed JSON caching, and repeated `auto_map` custom-loader
+  detection in the model-load gate. Performance slices in this path should keep
+  focused tests, changed-scope coverage, and this registered probe in the PR
+  evidence.
 
 If a slice only adds protocol or deterministic policy plumbing, runtime throughput metrics may be
 reported as `N/A` with this plan as the reason.
