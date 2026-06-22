@@ -2693,10 +2693,12 @@ def _changed_paths_match_force_all_wildcards(changed_paths: set[str]) -> bool:
 
 
 def _matches_any_glob(path: str, globs: tuple[str, ...]) -> bool:
-    if path in globs:
-        return True
     glob_matches_path = _glob_matches_path
     for glob in globs:
+        if path == glob:
+            return True
+        if not _glob_has_magic(glob):
+            continue
         if glob_matches_path(path, glob):
             return True
     return False
