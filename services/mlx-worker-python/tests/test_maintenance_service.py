@@ -5870,6 +5870,18 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     assert MaintenanceCore._positive_sorted_values([8, 0, 4, 8], default=(32,)) == (4, 8)
     assert MaintenanceCore._positive_sorted_values([False, True, 2], default=(32,)) == (1, 2)
 
+    with monkeypatch.context() as empty_int_context:
+        sorted_calls = 0
+
+        def counted_sorted(values):  # pragma: no cover - must not be called on empty fallback
+            nonlocal sorted_calls
+            sorted_calls += 1
+            return builtins.sorted(values)
+
+        empty_int_context.setattr(maintenance_core_module, "sorted", counted_sorted, raising=False)
+        assert MaintenanceCore._positive_sorted_values([0, -1], default=(32,)) == (32,)
+        assert sorted_calls == 0
+
     class CountedString:
         def __init__(self, value: str) -> None:
             self.value = value
@@ -5889,6 +5901,20 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
         [" warm ", "", "cold"],
         default=("default",),
     ) == ("cold", "warm")
+
+    with monkeypatch.context() as empty_string_context:
+        sorted_calls = 0
+
+        def counted_sorted(values):  # pragma: no cover - must not be called on empty fallback
+            nonlocal sorted_calls
+            sorted_calls += 1
+            return builtins.sorted(values)
+
+        empty_string_context.setattr(maintenance_core_module, "sorted", counted_sorted, raising=False)
+        assert MaintenanceCore._normalized_string_values([" ", ""], default=("default",)) == (
+            "default",
+        )
+        assert sorted_calls == 0
 
     MaintenanceCore._shape_benchmark_prompt.cache_clear()
     MaintenanceCore._benchmark_prompt_token_count.cache_clear()
