@@ -405,6 +405,18 @@ Executable unit issues:
   for cache hits, partial multi-image misses only for new images, changed-line
   coverage at or above 95%, and a PR-scoped deterministic VLM/image-cache
   performance probe with zero regressions.
+- Unit 3.1.2 keeps non-image media fail-closed for feature reuse until a real
+  audio/video feature store exists. Video inputs receive modality-safe cache
+  identity keys that include the video digest, family, adapter, quant profile,
+  processor policy, video capacity metadata, and the effective frame sampling
+  policy so repeated video bytes with different windows or frame budgets cannot
+  collide. Current VLM video feature reuse remains unsupported and reports the
+  stable `video_feature_reuse_unsupported` cache fallback reason while the
+  decode path continues to report `video_fast_path_unimplemented`. Audio media
+  stays outside `PreparedVisionRequest`; VLM feature reuse for audio reports the
+  stable `audio_feature_reuse_unsupported` reason instead of entering the image
+  feature cache. Cross-surface hit/miss/work-saved counter consistency remains
+  in Unit 3.1.3 (#1458).
 
 - Unit 3.1.4 extends the real image-feature cache identity with the
   request-scoped preprocessing policy carried by existing

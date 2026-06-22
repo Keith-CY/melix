@@ -10,11 +10,23 @@ from typing import Any, Callable, Iterable
 
 from worker.runtime.multimodal_preprocessing import (
     PreparedImageInput,
+    PreparedVideoFramePolicy,
     PreparedVisionRequest,
 )
+from worker.runtime.video_preprocessing import PreparedVideoInput
 from worker.runtime.vlm_preprocessing_policy import preprocessing_policy_signature_value
 
 logger = logging.getLogger(__name__)
+
+MEDIA_FEATURE_REUSE_UNSUPPORTED_AUDIO = "audio_feature_reuse_unsupported"
+MEDIA_FEATURE_REUSE_UNSUPPORTED_MEDIA = "media_feature_reuse_unsupported"
+MEDIA_FEATURE_REUSE_UNSUPPORTED_VIDEO = "video_feature_reuse_unsupported"
+_MEDIA_FEATURE_REUSE_UNSUPPORTED_REASONS = {
+    "audio": MEDIA_FEATURE_REUSE_UNSUPPORTED_AUDIO,
+    "input_audio": MEDIA_FEATURE_REUSE_UNSUPPORTED_AUDIO,
+    "video": MEDIA_FEATURE_REUSE_UNSUPPORTED_VIDEO,
+    "input_video": MEDIA_FEATURE_REUSE_UNSUPPORTED_VIDEO,
+}
 
 MULTIMODAL_DECODE_BASELINE = "baseline"
 MULTIMODAL_DECODE_SINGLE_STREAM = "single_stream"
@@ -62,6 +74,15 @@ _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED = tuple(sorted(_FAST_PATH_SIGNATURE_T
 
 @dataclass(frozen=True, slots=True)
 class ImageFeatureCacheKey:
+    family_id: str
+    adapter_hash: str
+    preprocessing_fingerprint: str
+    quant_profile_id: str
+    sha256_hex: str
+
+
+@dataclass(frozen=True, slots=True)
+class VideoFeatureCacheKey:
     family_id: str
     adapter_hash: str
     preprocessing_fingerprint: str
@@ -221,6 +242,7 @@ class MultimodalFastPathController:
         if prepared_request.videos:
             return self._fallback_decision(
                 reason="video_fast_path_unimplemented",
+                image_feature_cache_fallback_reason=media_feature_reuse_unsupported_reason("video"),
                 quantized_load_mode=quantized_load_mode,
                 quantized_load_fallback_reason=quantized_fallback,
                 hybrid_state_patch_mode="fallback",
@@ -379,6 +401,35 @@ class MultimodalFastPathController:
             for image in prepared_request.images
         )
 
+    def video_feature_cache_keys(
+        self,
+        loaded_model: Any,
+        prepared_request: PreparedVisionRequest,
+    ) -> tuple[VideoFeatureCacheKey | None, ...]:
+        if not prepared_request.videos:
+            return ()
+        metadata = _loaded_metadata(loaded_model)
+        family_id = _loaded_value(loaded_model, metadata, "vision_family_id")
+        if family_id not in _SUPPORTED_FAST_PATH_FAMILIES:
+            return tuple(None for _ in prepared_request.videos)
+        quant_profile_id = _loaded_value(loaded_model, metadata, "quant_profile_id") or "none"
+        cache_key_factory = self._video_cache_key_factory(
+            family_id=family_id,
+            adapter_hash=_adapter_hash(metadata),
+            quant_profile_id=quant_profile_id,
+            metadata=metadata,
+        )
+        keys: list[VideoFeatureCacheKey | None] = []
+        for video, policy in zip(
+            prepared_request.videos,
+            prepared_request.video_frame_policies,
+            strict=False,
+        ):
+            keys.append(cache_key_factory(video, policy) if video.sha256_hex else None)
+        if len(keys) < len(prepared_request.videos):
+            keys.extend([None] * (len(prepared_request.videos) - len(keys)))
+        return tuple(keys)
+
     @staticmethod
     def _cache_key_factory(
         *,
@@ -435,6 +486,63 @@ class MultimodalFastPathController:
         return build
 
     @staticmethod
+    def _video_cache_key_factory(
+        *,
+        family_id: str,
+        adapter_hash: str,
+        quant_profile_id: str,
+        metadata: dict[str, str],
+    ) -> Callable[[PreparedVideoInput, PreparedVideoFramePolicy], VideoFeatureCacheKey]:
+        vision_prompt_profile_id = metadata.get("vision_prompt_profile_id", "")
+        vision_tokenization_mode = metadata.get("vision_tokenization_mode", "")
+        vision_max_videos_per_prompt = metadata.get("vision_max_videos_per_prompt", "")
+        vision_processor_policy = metadata.get("vision_processor_policy", "")
+        video_frame_token_cost = metadata.get("vision_video_frame_token_cost", "")
+        preprocessing_fingerprints: dict[tuple[str, str, str, int, int, int, int, int], str] = {}
+
+        def build(
+            video: PreparedVideoInput,
+            policy: PreparedVideoFramePolicy,
+        ) -> VideoFeatureCacheKey:
+            shape = (
+                video.mime_type,
+                video.format,
+                policy.sampling_strategy,
+                policy.requested_frame_budget,
+                policy.effective_frame_count,
+                policy.clip_start_ms,
+                policy.clip_end_ms,
+                policy.clip_duration_ms,
+            )
+            preprocessing_fingerprint = preprocessing_fingerprints.get(shape)
+            if preprocessing_fingerprint is None:
+                preprocessing_fingerprint = _video_preprocessing_fingerprint(
+                    shape[0],
+                    shape[1],
+                    vision_prompt_profile_id,
+                    vision_tokenization_mode,
+                    vision_max_videos_per_prompt,
+                    vision_processor_policy,
+                    video_frame_token_cost,
+                    shape[2],
+                    str(shape[3]),
+                    str(shape[4]),
+                    str(shape[5]),
+                    str(shape[6]),
+                    str(shape[7]),
+                )
+                preprocessing_fingerprints[shape] = preprocessing_fingerprint
+            return VideoFeatureCacheKey(
+                family_id=family_id,
+                adapter_hash=adapter_hash,
+                preprocessing_fingerprint=preprocessing_fingerprint,
+                quant_profile_id=quant_profile_id,
+                sha256_hex=str(getattr(video, "sha256_hex", "") or ""),
+            )
+
+        return build
+
+    @staticmethod
     def _cache_key(
         *,
         image: PreparedImageInput,
@@ -456,6 +564,7 @@ class MultimodalFastPathController:
         reason: str,
         quantized_load_mode: str,
         quantized_load_fallback_reason: str,
+        image_feature_cache_fallback_reason: str | None = None,
         hybrid_state_patch_mode: str = "fallback",
         hybrid_state_media_count: int = 0,
         family_fast_path_override_count: int = 0,
@@ -467,7 +576,7 @@ class MultimodalFastPathController:
             image_feature_cache_bytes=0,
             image_feature_encoder_calls_saved=0,
             image_feature_work_saved_bytes=0,
-            image_feature_cache_fallback_reason=reason,
+            image_feature_cache_fallback_reason=image_feature_cache_fallback_reason or reason,
             multimodal_decode_mode=MULTIMODAL_DECODE_FALLBACK,
             multimodal_fallback_reason=reason,
             multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
@@ -741,6 +850,14 @@ def _signature_pairs_repr(pairs: Any) -> str:
     return "(" + ", ".join(chunks) + ")"
 
 
+def media_feature_reuse_unsupported_reason(media_type: str) -> str:
+    normalized = str(media_type or "").strip().lower()
+    return _MEDIA_FEATURE_REUSE_UNSUPPORTED_REASONS.get(
+        normalized,
+        MEDIA_FEATURE_REUSE_UNSUPPORTED_MEDIA,
+    )
+
+
 def _loaded_metadata(loaded_model: Any) -> dict[str, str]:
     if not isinstance(loaded_model, dict):
         return {}
@@ -751,6 +868,8 @@ def _loaded_metadata(loaded_model: Any) -> dict[str, str]:
         "vision_prompt_profile_id",
         "vision_tokenization_mode",
         "vision_max_images_per_prompt",
+        "vision_max_videos_per_prompt",
+        "vision_video_frame_token_cost",
         "vision_processor_policy",
         "vision_processor_crop_grid",
         "vision_processor_patch_size",
@@ -857,6 +976,44 @@ def _preprocessing_fingerprint(
         vision_processor_max_crop_count,
         vision_prompt_format,
         vision_projected_feature_shape,
+    ):
+        digest.update(str(value or "").encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+@lru_cache(maxsize=256)
+def _video_preprocessing_fingerprint(
+    mime_type: str,
+    video_format: str,
+    vision_prompt_profile_id: str,
+    vision_tokenization_mode: str,
+    vision_max_videos_per_prompt: str,
+    vision_processor_policy: str,
+    video_frame_token_cost: str,
+    sampling_strategy: str,
+    requested_frame_budget: str,
+    effective_frame_count: str,
+    clip_start_ms: str,
+    clip_end_ms: str,
+    clip_duration_ms: str,
+) -> str:
+    digest = hashlib.sha256()
+    for value in (
+        "video",
+        mime_type,
+        video_format,
+        vision_prompt_profile_id,
+        vision_tokenization_mode,
+        vision_max_videos_per_prompt,
+        vision_processor_policy,
+        video_frame_token_cost,
+        sampling_strategy,
+        requested_frame_budget,
+        effective_frame_count,
+        clip_start_ms,
+        clip_end_ms,
+        clip_duration_ms,
     ):
         digest.update(str(value or "").encode("utf-8"))
         digest.update(b"\0")

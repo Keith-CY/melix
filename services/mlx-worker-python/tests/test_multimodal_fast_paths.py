@@ -7,6 +7,8 @@ import pytest
 from worker.runtime.multimodal_fast_paths import (
     ImageFeatureCacheEntry,
     ImageFeatureCacheKey,
+    MEDIA_FEATURE_REUSE_UNSUPPORTED_AUDIO,
+    MEDIA_FEATURE_REUSE_UNSUPPORTED_VIDEO,
     MULTIMODAL_DECODE_BASELINE,
     MULTIMODAL_DECODE_FALLBACK,
     MULTIMODAL_DECODE_IMAGE_CACHE_REUSE,
@@ -15,12 +17,18 @@ from worker.runtime.multimodal_fast_paths import (
     MULTIMODAL_LOAD_NATIVE_QUANTIZED,
     MultimodalFastPathController,
     _preprocessing_fingerprint,
+    _video_preprocessing_fingerprint,
     _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED,
     _signature_pairs_repr,
     fast_path_probe_signature,
+    media_feature_reuse_unsupported_reason,
 )
 from worker.runtime.multimodal_position_receipts import build_mixed_batch_geometry_receipt
-from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
+from worker.runtime.multimodal_preprocessing import (
+    PreparedImageInput,
+    PreparedVideoFramePolicy,
+    PreparedVisionRequest,
+)
 from worker.runtime.video_preprocessing import PreparedVideoInput
 from worker.runtime.vlm_preprocessing_policy import request_preprocessing_policy_signature
 
@@ -69,17 +77,32 @@ def _request(
     images: list[PreparedImageInput] | None = None,
     *,
     videos: list[PreparedVideoInput] | None = None,
+    video_frame_policies: list[PreparedVideoFramePolicy] | None = None,
 ) -> PreparedVisionRequest:
+    videos = list(videos or [])
+    if video_frame_policies is None:
+        video_frame_policies = [
+            PreparedVideoFramePolicy(
+                reference=video.reference,
+                sampling_strategy="uniform_sample",
+                requested_frame_budget=video.frame_budget,
+                effective_frame_count=video.frame_budget or 8,
+                clip_start_ms=video.start_ms,
+                clip_end_ms=video.end_ms,
+                clip_duration_ms=max(0, video.end_ms - video.start_ms) if video.end_ms else 0,
+            )
+            for video in videos
+        ]
     return PreparedVisionRequest(
         prompt_text="Describe the image.",
         images=list(images or []),
-        videos=list(videos or []),
-        video_frame_policies=[],
+        videos=videos,
+        video_frame_policies=list(video_frame_policies),
         preprocess_latency_ms=1.0,
         preprocess_input_bytes=sum(image.byte_length for image in images or [])
-        + sum(video.byte_length for video in videos or []),
+        + sum(video.byte_length for video in videos),
         preprocess_peak_memory_bytes=sum(image.byte_length for image in images or [])
-        + sum(video.byte_length for video in videos or []),
+        + sum(video.byte_length for video in videos),
         prompt_hash_hex="prompt",
         multimodal_hash_hex="multi",
         preprocessing_policy_signature=request_preprocessing_policy_signature(images or []),
@@ -799,8 +822,147 @@ def test_fast_path_falls_back_for_video_only_requests() -> None:
 
     assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
     assert decision.multimodal_fallback_reason == "video_fast_path_unimplemented"
+    assert decision.image_feature_cache_fallback_reason == MEDIA_FEATURE_REUSE_UNSUPPORTED_VIDEO
     assert decision.image_feature_cache_hits == 0
     assert decision.image_feature_cache_misses == 0
+
+
+def test_fast_path_builds_modality_safe_video_feature_cache_identity() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model()
+    metadata = loaded_model["metadata"]
+    assert isinstance(metadata, dict)
+    metadata.update(
+        {
+            "vision_max_videos_per_prompt": "1",
+            "vision_processor_policy": "gemma4-video-uniform-v1",
+            "vision_video_frame_token_cost": "4",
+        }
+    )
+    video = _video(b"same-video")
+    first_policy = PreparedVideoFramePolicy(
+        reference=video.reference,
+        sampling_strategy="uniform_sample",
+        requested_frame_budget=4,
+        effective_frame_count=4,
+        clip_start_ms=0,
+        clip_end_ms=1000,
+        clip_duration_ms=1000,
+    )
+    changed_policy = PreparedVideoFramePolicy(
+        reference=video.reference,
+        sampling_strategy="uniform_sample",
+        requested_frame_budget=8,
+        effective_frame_count=8,
+        clip_start_ms=0,
+        clip_end_ms=1000,
+        clip_duration_ms=1000,
+    )
+
+    same_keys = controller.video_feature_cache_keys(
+        loaded_model,
+        _request(videos=[video], video_frame_policies=[first_policy]),
+    )
+    repeat_keys = controller.video_feature_cache_keys(
+        loaded_model,
+        _request(videos=[video], video_frame_policies=[first_policy]),
+    )
+    changed_keys = controller.video_feature_cache_keys(
+        loaded_model,
+        _request(videos=[video], video_frame_policies=[changed_policy]),
+    )
+
+    assert same_keys == repeat_keys
+    assert same_keys[0] is not None
+    assert changed_keys[0] is not None
+    assert same_keys[0].family_id == "gemma4-v1"
+    assert same_keys[0].adapter_hash == "adapter-a"
+    assert same_keys[0].quant_profile_id == "none"
+    assert same_keys[0].sha256_hex == video.sha256_hex
+    assert same_keys[0].preprocessing_fingerprint == _video_preprocessing_fingerprint(
+        "video/mp4",
+        "mp4",
+        "gemma4-chatml-v1",
+        "interleaved",
+        "1",
+        "gemma4-video-uniform-v1",
+        "4",
+        "uniform_sample",
+        "4",
+        "4",
+        "0",
+        "1000",
+        "1000",
+    )
+    assert changed_keys[0].sha256_hex == same_keys[0].sha256_hex
+    assert changed_keys[0].preprocessing_fingerprint != same_keys[0].preprocessing_fingerprint
+
+
+def test_fast_path_video_feature_cache_keys_are_fail_closed_for_unkeyable_inputs() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model()
+    video = _video(b"video-without-policy")
+    unhashable_video = _video(b"video-without-sha")
+    unhashable_video = PreparedVideoInput(
+        source_kind=unhashable_video.source_kind,
+        reference=unhashable_video.reference,
+        bytes_data=unhashable_video.bytes_data,
+        mime_type=unhashable_video.mime_type,
+        format=unhashable_video.format,
+        filename=unhashable_video.filename,
+        byte_length=unhashable_video.byte_length,
+        duration_ms=unhashable_video.duration_ms,
+        frame_budget=unhashable_video.frame_budget,
+        start_ms=unhashable_video.start_ms,
+        end_ms=unhashable_video.end_ms,
+        sha256_hex="",
+    )
+
+    assert controller.video_feature_cache_keys(loaded_model, _request()) == ()
+    assert controller.video_feature_cache_keys(
+        _loaded_model(family_id="unsupported-v1"),
+        _request(videos=[video]),
+    ) == (None,)
+    assert controller.video_feature_cache_keys(
+        loaded_model,
+        _request(videos=[unhashable_video]),
+    ) == (None,)
+    assert controller.video_feature_cache_keys(
+        loaded_model,
+        _request(videos=[video], video_frame_policies=[]),
+    ) == (None,)
+
+
+def test_fast_path_refuses_video_feature_reuse_without_polluting_image_cache() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model()
+    video = _video(b"repeat-video")
+    request = _request(videos=[video])
+
+    first = controller.plan(loaded_model, request)
+    second = controller.plan(loaded_model, request)
+    stored = controller.put_image_feature_payloads(loaded_model, request, ())
+
+    assert first.multimodal_fallback_reason == "video_fast_path_unimplemented"
+    assert second.multimodal_fallback_reason == "video_fast_path_unimplemented"
+    assert first.image_feature_cache_fallback_reason == MEDIA_FEATURE_REUSE_UNSUPPORTED_VIDEO
+    assert second.image_feature_cache_fallback_reason == MEDIA_FEATURE_REUSE_UNSUPPORTED_VIDEO
+    assert first.image_feature_cache_hits == 0
+    assert first.image_feature_cache_misses == 0
+    assert second.image_feature_cache_hits == 0
+    assert second.image_feature_cache_misses == 0
+    assert first.image_feature_work_saved_bytes == 0
+    assert second.image_feature_work_saved_bytes == 0
+    assert stored == ()
+    assert controller.image_feature_cache_summary() == (0, 0)
+
+
+def test_fast_path_uses_stable_audio_video_feature_reuse_refusal_reasons() -> None:
+    assert media_feature_reuse_unsupported_reason("audio") == MEDIA_FEATURE_REUSE_UNSUPPORTED_AUDIO
+    assert media_feature_reuse_unsupported_reason("input_audio") == MEDIA_FEATURE_REUSE_UNSUPPORTED_AUDIO
+    assert media_feature_reuse_unsupported_reason("video") == MEDIA_FEATURE_REUSE_UNSUPPORTED_VIDEO
+    assert media_feature_reuse_unsupported_reason("input_video") == MEDIA_FEATURE_REUSE_UNSUPPORTED_VIDEO
+    assert media_feature_reuse_unsupported_reason("application/pdf") == "media_feature_reuse_unsupported"
 
 
 def test_fast_path_falls_back_for_mixed_image_video_requests_without_caching_image_payloads() -> None:
@@ -816,6 +978,7 @@ def test_fast_path_falls_back_for_mixed_image_video_requests_without_caching_ima
 
     assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
     assert decision.multimodal_fallback_reason == "video_fast_path_unimplemented"
+    assert decision.image_feature_cache_fallback_reason == MEDIA_FEATURE_REUSE_UNSUPPORTED_VIDEO
     assert decision.image_feature_cache_hits == 0
     assert decision.image_feature_cache_misses == 0
     assert stored == (False,)
