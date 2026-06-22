@@ -18,7 +18,11 @@ REQUEST_SOURCE = "request"
 CONFIG_JSON_AUTO_MAP_SOURCE = "config_json:auto_map"
 BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST = "custom_loader_requires_trust_remote_code"
 TRUST_APPLICABLE_TEXT_LOADERS = frozenset({"mlx_lm", "mlx_lm_unavailable"})
+TRUST_APPLICABLE_TEXT_LOADERS_COMMON = frozenset({"mlx-lm", "mlx_lm", "mlx_lm_unavailable"})
 TRUST_APPLICABLE_VLM_LOADERS = frozenset({"mlx_vlm", "python_vlm", "mlx_vlm_unavailable"})
+TRUST_APPLICABLE_VLM_LOADERS_COMMON = frozenset(
+    {"mlx-vlm", "mlx_vlm", "python_vlm", "mlx_vlm_unavailable"}
+)
 ROUTE_CLASS_BY_RUNTIME_KIND = {
     "text": common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
     "vlm": common_pb2.WORKER_ROUTE_PYTHON_VLM,
@@ -193,6 +197,20 @@ def _is_trust_applicable(
     supports_trust_policy = getattr(runtime, "supports_trust_policy", None)
     if supports_trust_policy is not None:
         return bool(supports_trust_policy)
+    if runtime_kind == "text":
+        if (
+            loader_family in TRUST_APPLICABLE_TEXT_LOADERS_COMMON
+            or runtime_name in TRUST_APPLICABLE_TEXT_LOADERS_COMMON
+        ):
+            return True
+    elif runtime_kind == "vlm":
+        if runtime_name.startswith("deterministic"):
+            return False
+        if (
+            loader_family in TRUST_APPLICABLE_VLM_LOADERS_COMMON
+            or runtime_name in TRUST_APPLICABLE_VLM_LOADERS_COMMON
+        ):
+            return True
     normalized_runtime_name = runtime_name.strip().lower().replace("-", "_")
     family = loader_family.strip().lower().replace("-", "_")
     if runtime_kind == "text":
