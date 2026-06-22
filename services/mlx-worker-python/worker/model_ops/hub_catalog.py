@@ -886,10 +886,14 @@ def _direct_explicit_size_hint_from_text(text: str) -> int:
     while value_start < text_length and text[value_start].isspace():
         value_start += 1
 
+    newline_index = text.find("\n", value_start)
+    if newline_index >= 0:
+        return _direct_size_hint_from_text(text[value_start:newline_index])
+
     value_end = value_start
     while (
         value_end < text_length
-        and text[value_end] not in "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+        and text[value_end] not in "\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
     ):
         value_end += 1
     return _direct_size_hint_from_text(text[value_start:value_end])
