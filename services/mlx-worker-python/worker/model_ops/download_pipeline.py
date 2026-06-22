@@ -1580,8 +1580,9 @@ class DownloadPipeline:
         return files
 
     @staticmethod
-    def _companion_directory_receipt_files(path: Path) -> list[tuple[str, int]]:
+    def _companion_directory_receipt_files(path: Path) -> tuple[list[str], int]:
         files: list[tuple[str, int]] = []
+        byte_count = 0
         append_file = files.append
         stack = [os.fspath(path)]
         append_directory = stack.append
@@ -1598,9 +1599,11 @@ class DownloadPipeline:
                         append_directory(entry.path)
                         continue
                     if is_file(entry):
-                        append_file((entry.path, stat_entry(entry).st_size))
-        files.sort()
-        return files
+                        file_size = stat_entry(entry).st_size
+                        byte_count += file_size
+                        append_file((entry.path, file_size))
+        files.sort(key=lambda item: item[0])
+        return [file_path for file_path, _file_size in files], byte_count
 
     @staticmethod
     def _utc_now_iso8601() -> str:
@@ -1752,10 +1755,8 @@ class DownloadPipeline:
                         source_path=resolved_path,
                         primary_artifact=primary_artifact,
                     )
-                directory_files = cls._companion_directory_receipt_files(resolved_path)
-                files = [file_path for file_path, _file_size in directory_files]
-                file_count = len(directory_files)
-                byte_count = sum(file_size for _file_path, file_size in directory_files)
+                files, byte_count = cls._companion_directory_receipt_files(resolved_path)
+                file_count = len(files)
                 status = "present"
             elif kind == "file" and resolved_path.is_file():
                 if stage:
@@ -1790,8 +1791,8 @@ class DownloadPipeline:
         ext: dict[str, str],
     ) -> Path | None:
         candidate = Path(declared_path).expanduser()
-        if candidate.is_absolute() and candidate.exists():
-            return candidate.resolve()
+        if candidate.is_absolute():
+            return candidate
         search_roots = [companion_search_artifact.parent, primary_artifact.parent]
         managed_root = ext.get("melix.managed_root", "").strip()
         if managed_root:

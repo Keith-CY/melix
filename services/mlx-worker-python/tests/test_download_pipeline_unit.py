@@ -1165,6 +1165,43 @@ def test_directory_companion_receipt_preserves_symlinked_file_behavior(tmp_path:
     assert companion["files"] == [str(projector_dir / "linked-file.safetensors")]
 
 
+def test_directory_companion_receipt_preserves_absolute_path_spelling_under_var_alias(
+    tmp_path: Path,
+) -> None:
+    if Path("/var").resolve() == Path("/var"):
+        pytest.skip("/var is not a filesystem alias on this host")  # pragma: no cover
+    primary_artifact = tmp_path / "model.gguf"
+    primary_artifact.write_bytes(b"model")
+    projector_dir = tmp_path / "projector"
+    nested_dir = projector_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    (projector_dir / "config.json").write_bytes(b"{}")
+    (nested_dir / "weights.safetensors").write_bytes(b"weights")
+
+    projector_path = str(projector_dir)
+    declared_path = projector_path.replace("/private/var/", "/var/", 1)
+    if not declared_path.startswith("/var/"):
+        pytest.skip(f"tmp_path is outside the /var alias tree: {projector_path}")  # pragma: no cover
+
+    receipt = DownloadPipeline._artifact_companions_receipt(
+        primary_artifact=primary_artifact,
+        ext={
+            "melix.companion_manifest": json.dumps(
+                [{"path": declared_path, "kind": "directory", "required": True}]
+            )
+        },
+    )
+
+    companion = receipt["companion_artifacts"][0]
+    assert companion["resolved_path"] == declared_path
+    assert companion["files"] == sorted(
+        [
+            str(Path(declared_path) / "config.json"),
+            str(Path(declared_path) / "nested" / "weights.safetensors"),
+        ]
+    )
+
+
 def test_strict_managed_download_rejects_missing_required_companion_before_activation(tmp_path: Path) -> None:
     pipeline = DownloadPipeline()
     artifact_dir = tmp_path / "artifact"
