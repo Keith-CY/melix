@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 _JSON_LOADS = json.loads
-_PATH_READ_BYTES = Path.read_bytes
+_OPEN = open
 _STR = str
 
 
@@ -309,13 +309,12 @@ def _trajectory_provenance_from_snapshot_manifest(
 def load_trajectory_provenance_from_snapshot_manifest(
     manifest_path: Path | str,
 ) -> dict[str, Any]:
-    read_bytes = _PATH_READ_BYTES
+    open_file = _OPEN
     loads = _JSON_LOADS
     extract_provenance = _trajectory_provenance_from_snapshot_manifest
-    if not isinstance(manifest_path, Path):
-        manifest_path = Path(manifest_path)
     manifest_path_text = _STR(manifest_path)
-    payload = loads(read_bytes(manifest_path))
+    with open_file(manifest_path, "rb") as file:
+        payload = loads(file.read())
     if type(payload) is dict:
         return extract_provenance(
             payload,
