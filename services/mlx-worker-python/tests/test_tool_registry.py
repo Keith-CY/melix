@@ -755,6 +755,24 @@ def test_agentic_tool_selection_uses_keyword_fallback_when_vector_unavailable() 
     ]
 
 
+def test_agentic_tool_selection_whitespace_turn_skips_casefold() -> None:
+    class CasefoldFailingWhitespace(str):
+        def casefold(self) -> str:  # pragma: no cover - must not be called
+            raise AssertionError("whitespace-only turns should skip casefold")
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn=CasefoldFailingWhitespace(" \t\n  "),
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+    assert result.receipt["fallback_reason"] == "no_keyword_match"
+
+
 def test_agentic_tool_selection_skips_empty_context_keyword_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
