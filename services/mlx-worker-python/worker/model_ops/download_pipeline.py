@@ -1183,6 +1183,8 @@ class DownloadPipeline:
             return
         source_ref = str(artifact_integrity.get("source_ref", "")).strip()
         expected_source_ref = str(artifact_integrity.get("expected_source_ref", "")).strip()
+        # Report release-ref drift before signature policy so one failed install
+        # attempt has a single persisted corrective action.
         if expected_source_ref and source_ref != expected_source_ref:
             failure_reason = "release_ref_mismatch"
             payload = cls._failed_integrity_payload(
