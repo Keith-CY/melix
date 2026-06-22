@@ -198,6 +198,67 @@ def test_load_report_input_accepts_batch_run_summary_bundle(tmp_path: Path) -> N
     assert metrics["eval.event_extraction.semantic_f1"]["status"] == "ok"
 
 
+def test_batch_summary_bundle_scans_metric_fields_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class SingleScanMetricFields(dict[str, object]):
+        def __init__(self) -> None:
+            super().__init__(
+                {
+                    "bench.smoke.tokens_per_second": 12.5,
+                    "eval.event_extraction.semantic_f1": 0.9,
+                    "ignored.text": "skip",
+                }
+            )
+            self.item_scans = 0
+
+        def items(self):  # type: ignore[override]
+            self.item_scans += 1
+            if self.item_scans > 1:
+                raise AssertionError("metric_fields items scanned more than once")
+            return super().items()
+
+    metric_fields = SingleScanMetricFields()
+    summary = {
+        "schema_version": "melix.batch.run_summary.v1",
+        "models": [
+            {
+                "model_index": "01",
+                "repo_id": "mlx-community/Smoke-4bit",
+                "status": "succeeded",
+                "benchmark_job_id": "bench-1",
+                "evaluation_job_id": "eval-1",
+                "metric_fields": metric_fields,
+            }
+        ],
+    }
+    (tmp_path / "run-summary.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(benchmark_evaluation_report.json, "loads", lambda _payload: summary)
+
+    bundle = benchmark_evaluation_report._load_batch_run_summary_bundle(tmp_path)
+
+    assert metric_fields.item_scans == 1
+    assert bundle["benchmark_results"] == [
+        {
+            "job_id": "bench-1",
+            "suite": "batch",
+            "model_index": "01",
+            "repo_id": "mlx-community/Smoke-4bit",
+            "metrics": [{"name": "bench.smoke.tokens_per_second", "value": 12.5}],
+        }
+    ]
+    assert bundle["evaluation_summary_rows"] == [
+        {
+            "job_id": "eval-1",
+            "suite_id": "event_extraction",
+            "dataset_id": "batch",
+            "primary_score_name": "semantic_f1",
+            "primary_score_value": 0.9,
+            "sample_size": None,
+            "failure_count": 0,
+            "duration_seconds": None,
+        }
+    ]
+
+
 def test_status_counts_reads_each_row_status_once() -> None:
     class SingleReadStatusRow(dict[str, object]):
         def __init__(self, status: str) -> None:
