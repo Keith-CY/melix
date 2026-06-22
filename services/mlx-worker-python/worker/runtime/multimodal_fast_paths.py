@@ -66,9 +66,20 @@ class ImageFeatureCacheKey:
 
 
 @dataclass(frozen=True, slots=True)
+class ImageFeatureCacheEntry:
+    payload: Any
+    byte_length: int
+
+
+@dataclass(frozen=True, slots=True)
 class MultimodalFastPathDecision:
     image_feature_cache_hits: int
     image_feature_cache_misses: int
+    image_feature_cache_artifact_count: int
+    image_feature_cache_bytes: int
+    image_feature_encoder_calls_saved: int
+    image_feature_work_saved_bytes: int
+    image_feature_cache_fallback_reason: str
     multimodal_decode_mode: str
     multimodal_fallback_reason: str
     multimodal_decode_sync_mode: str
@@ -83,6 +94,11 @@ class MultimodalFastPathDecision:
 _NO_MEDIA_FAST_PATH_DECISION = MultimodalFastPathDecision(
     image_feature_cache_hits=0,
     image_feature_cache_misses=0,
+    image_feature_cache_artifact_count=0,
+    image_feature_cache_bytes=0,
+    image_feature_encoder_calls_saved=0,
+    image_feature_work_saved_bytes=0,
+    image_feature_cache_fallback_reason="",
     multimodal_decode_mode=MULTIMODAL_DECODE_BASELINE,
     multimodal_fallback_reason="no_media",
     multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
@@ -100,7 +116,9 @@ class MultimodalFastPathController:
 
     def __init__(self, *, max_image_feature_cache_entries: int = 1024) -> None:
         self._max_image_feature_cache_entries = max(max_image_feature_cache_entries, 1)
-        self._image_feature_cache: OrderedDict[ImageFeatureCacheKey, None] = OrderedDict()
+        self._image_feature_cache: OrderedDict[ImageFeatureCacheKey, ImageFeatureCacheEntry] = (
+            OrderedDict()
+        )
         self._image_feature_cache_lock = Lock()
 
     def plan(
@@ -126,6 +144,11 @@ class MultimodalFastPathController:
             return MultimodalFastPathDecision(
                 image_feature_cache_hits=0,
                 image_feature_cache_misses=0,
+                image_feature_cache_artifact_count=0,
+                image_feature_cache_bytes=0,
+                image_feature_encoder_calls_saved=0,
+                image_feature_work_saved_bytes=0,
+                image_feature_cache_fallback_reason="",
                 multimodal_decode_mode=MULTIMODAL_DECODE_BASELINE,
                 multimodal_fallback_reason="no_media",
                 multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
@@ -178,7 +201,7 @@ class MultimodalFastPathController:
                 family_fast_path_override_count=1,
             )
 
-        if prepared_request.videos and not prepared_request.images:
+        if prepared_request.videos:
             return self._fallback_decision(
                 reason="video_fast_path_unimplemented",
                 quantized_load_mode=quantized_load_mode,
@@ -190,6 +213,9 @@ class MultimodalFastPathController:
 
         hits = 0
         misses = 0
+        work_saved_bytes = 0
+        artifact_count = 0
+        artifact_bytes = 0
         adapter_hash = _adapter_hash(metadata)
         cache_key_factory = self._cache_key_factory(
             family_id=family_id,
@@ -203,16 +229,14 @@ class MultimodalFastPathController:
                     misses += 1
                     continue
                 key = cache_key_factory(image)
-                if key in self._image_feature_cache:
+                entry = self._image_feature_cache.get(key)
+                if entry is not None:
                     hits += 1
+                    work_saved_bytes += image.byte_length
                     self._image_feature_cache.move_to_end(key)
                     continue
                 misses += 1
-                self._image_feature_cache[key] = None
-                # If one request exceeds the bounded cache size, earlier images in that
-                # request can be evicted before the next request observes them.
-                while len(self._image_feature_cache) > self._max_image_feature_cache_entries:
-                    self._image_feature_cache.popitem(last=False)
+            artifact_count, artifact_bytes = self._image_feature_cache_summary_locked()
 
         if hits > 0:
             decode_mode = MULTIMODAL_DECODE_IMAGE_CACHE_REUSE
@@ -231,15 +255,106 @@ class MultimodalFastPathController:
         return MultimodalFastPathDecision(
             image_feature_cache_hits=hits,
             image_feature_cache_misses=misses,
+            image_feature_cache_artifact_count=artifact_count,
+            image_feature_cache_bytes=artifact_bytes,
+            image_feature_encoder_calls_saved=hits,
+            image_feature_work_saved_bytes=work_saved_bytes,
+            image_feature_cache_fallback_reason="",
             multimodal_decode_mode=decode_mode,
             multimodal_fallback_reason="",
             multimodal_decode_sync_mode="executor_stream",
-            multi_image_scatter_mode="per_sample" if len(prepared_request.images) > 1 else "none",
+            multi_image_scatter_mode="per_sample" if len(prepared_request.images) > 1 else "single",
             quantized_load_mode=quantized_load_mode,
             quantized_load_fallback_reason=quantized_fallback,
             hybrid_state_patch_mode=hybrid_state_patch_mode,
             hybrid_state_media_count=hybrid_state_media_count,
             family_fast_path_override_count=0,
+        )
+
+    def image_feature_payloads(
+        self,
+        *,
+        loaded_model: Any,
+        prepared_request: PreparedVisionRequest,
+    ) -> tuple[Any | None, ...]:
+        if not prepared_request.images:
+            return ()
+        metadata = _loaded_metadata(loaded_model)
+        family_id = _loaded_value(loaded_model, metadata, "vision_family_id")
+        if family_id not in _SUPPORTED_FAST_PATH_FAMILIES:
+            return tuple(None for _ in prepared_request.images)
+        cache_key_factory = self._cache_key_factory(
+            family_id=family_id,
+            adapter_hash=_adapter_hash(metadata),
+            quant_profile_id=_loaded_value(loaded_model, metadata, "quant_profile_id") or "none",
+            metadata=metadata,
+        )
+        payloads: list[Any | None] = []
+        with self._image_feature_cache_lock:
+            for image in prepared_request.images:
+                if not image.sha256_hex:
+                    payloads.append(None)
+                    continue
+                key = cache_key_factory(image)
+                entry = self._image_feature_cache.get(key)
+                if entry is None:
+                    payloads.append(None)
+                    continue
+                self._image_feature_cache.move_to_end(key)
+                payloads.append(entry.payload)
+        return tuple(payloads)
+
+    def put_image_feature_payloads(
+        self,
+        *,
+        loaded_model: Any,
+        prepared_request: PreparedVisionRequest,
+        payloads: tuple[Any | None, ...],
+    ) -> tuple[bool, ...]:
+        image_count = len(prepared_request.images)
+        if image_count <= 0:
+            return ()
+        metadata = _loaded_metadata(loaded_model)
+        family_id = _loaded_value(loaded_model, metadata, "vision_family_id")
+        stored = [False] * image_count
+        if family_id not in _SUPPORTED_FAST_PATH_FAMILIES:
+            return tuple(stored)
+        cache_key_factory = self._cache_key_factory(
+            family_id=family_id,
+            adapter_hash=_adapter_hash(metadata),
+            quant_profile_id=_loaded_value(loaded_model, metadata, "quant_profile_id") or "none",
+            metadata=metadata,
+        )
+        with self._image_feature_cache_lock:
+            for index, image in enumerate(prepared_request.images):
+                if index >= len(payloads):
+                    break
+                payload = payloads[index]
+                if payload is None or not image.sha256_hex:
+                    continue
+                key = cache_key_factory(image)
+                self._image_feature_cache[key] = ImageFeatureCacheEntry(
+                    payload=payload,
+                    byte_length=_payload_byte_length(payload),
+                )
+                self._image_feature_cache.move_to_end(key)
+                stored[index] = True
+            while len(self._image_feature_cache) > self._max_image_feature_cache_entries:
+                self._image_feature_cache.popitem(last=False)
+        return tuple(stored)
+
+    def image_feature_cache_summary(self) -> tuple[int, int]:
+        with self._image_feature_cache_lock:
+            return self._image_feature_cache_summary_locked()
+
+    def image_feature_cache_keys(self) -> tuple[ImageFeatureCacheKey, ...]:
+        with self._image_feature_cache_lock:
+            return tuple(self._image_feature_cache)
+
+    def _image_feature_cache_summary_locked(self) -> tuple[int, int]:
+        return (
+            len(self._image_feature_cache),
+            sum(entry.byte_length for entry in self._image_feature_cache.values()),
         )
 
     @staticmethod
@@ -318,6 +433,11 @@ class MultimodalFastPathController:
         return MultimodalFastPathDecision(
             image_feature_cache_hits=0,
             image_feature_cache_misses=0,
+            image_feature_cache_artifact_count=0,
+            image_feature_cache_bytes=0,
+            image_feature_encoder_calls_saved=0,
+            image_feature_work_saved_bytes=0,
+            image_feature_cache_fallback_reason="",
             multimodal_decode_mode=MULTIMODAL_DECODE_FALLBACK,
             multimodal_fallback_reason=reason,
             multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
@@ -617,6 +737,24 @@ def _adapter_hash(metadata: dict[str, str]) -> str:
         or metadata.get("multimodal_adapter_hash", "").strip()
         or "adapter-unset"
     )
+
+
+def _payload_byte_length(payload: Any) -> int:
+    nbytes = getattr(payload, "nbytes", None)
+    try:
+        byte_length = int(nbytes)
+    except (TypeError, ValueError):
+        byte_length = 0
+    if byte_length > 0:
+        return byte_length
+    if isinstance(payload, str):
+        return len(payload.encode("utf-8"))
+    if isinstance(payload, (bytes, bytearray, memoryview)):
+        return len(payload)
+    try:
+        return max(0, int(len(payload)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
 
 
 @lru_cache(maxsize=256)

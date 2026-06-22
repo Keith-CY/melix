@@ -385,6 +385,14 @@ Executable unit issues:
   speed gate. The changed-scope performance report should include the
   deterministic VLM/cache lifecycle probe or an explicit `N/A` if the scoped PR
   performance selector does not yet expose a dedicated lifecycle probe.
+- Unit 3.1.1 replaces the feature-key-only image cache with a bounded payload
+  cache for supported image families. `plan()` remains read-only and reports a
+  cache hit only when a reusable image-feature payload exists. MLX VLM backends
+  that declare `cached_image_features` receive cached per-image payloads and can
+  return newly encoded image features for cache fill; unsupported video or mixed
+  image+video requests keep the typed `video_fast_path_unimplemented` fallback.
+  The multimodal fast-path probe now reports artifact count, cached bytes,
+  encoder calls saved, and repeated-image input bytes saved.
 
 ## Verification Policy
 

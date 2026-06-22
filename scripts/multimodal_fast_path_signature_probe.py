@@ -57,13 +57,28 @@ def _build_loaded_model() -> dict[str, object]:
     }
 
 
+class _ProbePayload:
+    nbytes = 46
+
+
 def main() -> int:
     _prepare_imports()
-    from worker.runtime.multimodal_fast_paths import fast_path_probe_signature
+    from worker.runtime.multimodal_fast_paths import (
+        MultimodalFastPathController,
+        fast_path_probe_signature,
+    )
 
     loaded_model = _build_loaded_model()
     request = _build_request()
     expected_signature = fast_path_probe_signature(loaded_model, request)
+    controller = MultimodalFastPathController()
+    cold_decision = controller.plan(loaded_model, request)
+    controller.put_image_feature_payloads(
+        loaded_model=loaded_model,
+        prepared_request=request,
+        payloads=(_ProbePayload(),),
+    )
+    warm_decision = controller.plan(loaded_model, request)
 
     iterations = int(os.environ.get("MELIX_MULTIMODAL_SIGNATURE_PROBE_ITERATIONS", "120000"))
     sample_count = int(os.environ.get("MELIX_MULTIMODAL_SIGNATURE_PROBE_SAMPLES", "5"))
@@ -94,6 +109,18 @@ def main() -> int:
                 "iterations_per_sample": float(iterations),
                 "signature_count": float(signature_count),
                 "top_level_item_count": float(expected_signature[1].count("(")) - 1.0,
+                "image_feature_cache_hit_count": float(warm_decision.image_feature_cache_hits),
+                "image_feature_cache_miss_count": float(cold_decision.image_feature_cache_misses),
+                "image_feature_cache_artifact_count": float(
+                    warm_decision.image_feature_cache_artifact_count
+                ),
+                "image_feature_cache_bytes": float(warm_decision.image_feature_cache_bytes),
+                "image_feature_encoder_calls_saved": float(
+                    warm_decision.image_feature_encoder_calls_saved
+                ),
+                "image_feature_work_saved_bytes": float(
+                    warm_decision.image_feature_work_saved_bytes
+                ),
             },
             sort_keys=True,
         )

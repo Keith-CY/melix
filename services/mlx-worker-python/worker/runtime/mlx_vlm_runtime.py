@@ -507,6 +507,70 @@ class _ChunkedPromptModelProxy:
         return self._model(*args, **kwargs)
 
 
+def _response_image_features(response: Any) -> Any | None:
+    for attr in (
+        "image_features",
+        "encoded_image_features",
+        "projected_image_features",
+        "cached_image_features",
+    ):
+        value = getattr(response, attr, None)
+        if value is not None:
+            return value
+    return None
+
+
+def _image_feature_payload_sequence(features: Any, expected_count: int) -> tuple[Any, ...] | None:
+    count = max(0, int(expected_count or 0))
+    if count <= 0:
+        return ()
+    if features is None:
+        return None
+    if isinstance(features, (list, tuple)):
+        return tuple(features) if len(features) == count else None
+    if count == 1:
+        return (features,)
+    shape = getattr(features, "shape", None)
+    if not isinstance(shape, (tuple, list)) or not shape:
+        return None
+    try:
+        if int(shape[0]) != count:
+            return None
+    except (TypeError, ValueError):
+        return None
+    chunks: list[Any] = []
+    for index in range(count):
+        try:
+            chunks.append(features[index : index + 1])
+        except (TypeError, IndexError, KeyError, ValueError):
+            return None
+    return tuple(chunks)
+
+
+def _merge_image_feature_payloads(
+    cached_payloads: tuple[Any | None, ...],
+    missing_image_indexes: list[int],
+    response_features: Any,
+) -> tuple[Any | None, ...]:
+    image_count = len(cached_payloads)
+    payloads_to_store: list[Any | None] = [None] * image_count
+    if image_count == 0 or not missing_image_indexes or response_features is None:
+        return tuple(payloads_to_store)
+    full_payloads = _image_feature_payload_sequence(response_features, image_count)
+    if full_payloads is not None:
+        for index in missing_image_indexes:
+            if 0 <= index < image_count:
+                payloads_to_store[index] = full_payloads[index]
+        return tuple(payloads_to_store)
+    missing_payloads = _image_feature_payload_sequence(response_features, len(missing_image_indexes))
+    if missing_payloads is None:
+        return tuple(payloads_to_store)
+    for index, payload in zip(missing_image_indexes, missing_payloads, strict=False):
+        if 0 <= index < image_count:
+            payloads_to_store[index] = payload
+    return tuple(payloads_to_store)
+
+
 class _TextOnlyBatchRequest:
     def __init__(
         self,
@@ -2121,6 +2185,31 @@ class MLXVLMRuntime:
                     "top_k": int(getattr(sampling, "top_k", 0)),
                     "verbose": False,
                 }
+                image_feature_payloads: tuple[Any | None, ...] = ()
+                missing_image_indexes: list[int] = []
+                if (
+                    image_argument is not None
+                    and not media_paths.video_paths
+                    and isinstance(loaded_model, dict)
+                    and _callable_declares_kwarg(
+                        self._backend.stream_generate_fn,
+                        "cached_image_features",
+                    )
+                ):
+                    image_feature_payloads = self._fast_path_controller.image_feature_payloads(
+                        loaded_model=loaded_model,
+                        prepared_request=prepared_request,
+                    )
+                    missing_image_indexes = [
+                        index for index, payload in enumerate(image_feature_payloads) if payload is None
+                    ]
+                    if any(payload is not None for payload in image_feature_payloads):
+                        stream_kwargs["cached_image_features"] = list(image_feature_payloads)
+                        if _callable_accepts_kwarg(
+                            self._backend.stream_generate_fn,
+                            "missing_image_indexes",
+                        ):
+                            stream_kwargs["missing_image_indexes"] = list(missing_image_indexes)
                 if media_paths.video_paths:
                     if _callable_declares_kwarg(self._backend.stream_generate_fn, "video"):
                         stream_kwargs["video"] = list(media_paths.video_paths)
@@ -2145,6 +2234,7 @@ class MLXVLMRuntime:
                 first_token_at: float | None = None
                 completion_tokens = 0
                 cumulative_raw_text = ""
+                response_image_features: Any | None = None
                 generation_model = (
                     self._wrap_chunked_prompt_model(loaded_model["model"])
                     if selected_prefill_step_size is not None
@@ -2158,6 +2248,9 @@ class MLXVLMRuntime:
                 ):
                     if cancel_event.is_set():
                         return
+                    features = _response_image_features(response)
+                    if features is not None:
+                        response_image_features = features
                     text = str(getattr(response, "text", "") or "")
                     if not text:
                         continue
@@ -2216,6 +2309,33 @@ class MLXVLMRuntime:
                         speculative_fallback_count=1 if speculative_fallback_reason else None,
                         speculative_num_draft_tokens=0 if speculative_fallback_reason else None,
                         speculative_draft_model_configured=False if speculative_fallback_reason else None,
+                    )
+                if missing_image_indexes:
+                    payloads_to_store = _merge_image_feature_payloads(
+                        image_feature_payloads,
+                        missing_image_indexes,
+                        response_image_features,
+                    )
+                    stored = self._fast_path_controller.put_image_feature_payloads(
+                        loaded_model=loaded_model,
+                        prepared_request=prepared_request,
+                        payloads=payloads_to_store,
+                    )
+                    artifact_count, artifact_bytes = (
+                        self._fast_path_controller.image_feature_cache_summary()
+                    )
+                    fallback_reason = (
+                        "image_feature_payload_unavailable"
+                        if response_image_features is None
+                        else "image_feature_payload_unsplittable"
+                    )
+                    self._last_probe = replace(
+                        self._last_probe,
+                        image_feature_cache_artifact_count=artifact_count,
+                        image_feature_cache_bytes=artifact_bytes,
+                        image_feature_cache_fallback_reason=(
+                            "" if any(stored) else fallback_reason
+                        ),
                     )
 
             event_iterable = backend_events() if self._executor is None else self._executor.iterate(backend_events)
@@ -3079,6 +3199,11 @@ class MLXVLMRuntime:
             cache_hit=False,
             image_feature_cache_hits=fast_path.image_feature_cache_hits,
             image_feature_cache_misses=fast_path.image_feature_cache_misses,
+            image_feature_cache_artifact_count=fast_path.image_feature_cache_artifact_count,
+            image_feature_cache_bytes=fast_path.image_feature_cache_bytes,
+            image_feature_encoder_calls_saved=fast_path.image_feature_encoder_calls_saved,
+            image_feature_work_saved_bytes=fast_path.image_feature_work_saved_bytes,
+            image_feature_cache_fallback_reason=fast_path.image_feature_cache_fallback_reason,
             multimodal_decode_mode=fast_path.multimodal_decode_mode,
             multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
             multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,

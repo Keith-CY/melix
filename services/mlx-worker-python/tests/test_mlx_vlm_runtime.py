@@ -39,13 +39,16 @@ from worker.runtime.mlx_vlm_runtime import (
     maybe_apply_native_mtp_preload_patches,
     _patch_gemma4_model_shared_kv_init,
     _patch_gemma4_shared_kv_layers,
+    _image_feature_payload_sequence,
     _text_batch_generator_probe_kwargs,
     _text_only_streaming_decoder,
+    _merge_image_feature_payloads,
     _gemma4_loaded_execution_mode,
     _gemma4_multimodal_weight_presence,
     _isolated_streaming_detokenizer,
     _mlx_peak_memory_gb,
     _patch_gemma4_scaled_linear_quantization,
+    _response_image_features,
 )
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.native_mtp.mlx_lm_loader import (
@@ -102,6 +105,44 @@ class _FakeMLXArray:
         if isinstance(head, slice):
             return [cls._apply_index(item, tuple(tail)) for item in value[head]]
         return cls._apply_index(value[head], tuple(tail))
+
+
+class _FakeFeatureBatch:
+    def __init__(self, rows: list[str]) -> None:
+        self.rows = list(rows)
+        self.shape = (len(self.rows), 1)
+        self.nbytes = max(1, len(self.rows) * 16)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return _FakeFeatureBatch(self.rows[index])
+        if isinstance(index, tuple):
+            head = index[0]
+            if isinstance(head, slice):
+                return _FakeFeatureBatch(self.rows[head])
+            return _FakeFeatureBatch([self.rows[head]])
+        return _FakeFeatureBatch([self.rows[index]])
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _FakeFeatureBatch) and self.rows == other.rows
+
+
+class _TupleIndexedFeatureBatch(_FakeFeatureBatch):
+    def __getitem__(self, index):
+        if isinstance(index, tuple):
+            head = index[0]
+            if isinstance(head, slice):
+                return _FakeFeatureBatch(self.rows[head])
+            return _FakeFeatureBatch([self.rows[head]])
+        return super().__getitem__(index)
+
+
+class _BadFeatureBatch:
+    shape = (2, 1)
+
+    def __getitem__(self, index):
+        _ = index
+        raise TypeError("cannot slice")
 
 
 def _install_fake_mlx_core(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -519,6 +560,74 @@ def imported_gemma4_vlm_model() -> common_pb2.ModelSpec:
     )
 
 
+def _fake_feature_cache_runtime() -> tuple[
+    MLXVLMRuntime,
+    dict[str, object],
+    list[list[str]],
+    list[list[_FakeFeatureBatch | None]],
+]:
+    encode_calls: list[list[str]] = []
+    cache_lookups: list[list[_FakeFeatureBatch | None]] = []
+
+    class FakeModel:
+        config = SimpleNamespace(model_type="gemma4")
+        vision_tower = object()
+        embed_vision = object()
+
+    def fake_stream_generate(
+        model,
+        processor,
+        prompt: str,
+        *,
+        image=None,
+        cached_image_features=None,
+        missing_image_indexes=None,
+        **kwargs,
+    ):
+        _ = model
+        _ = processor
+        _ = prompt
+        _ = kwargs
+        images = list(image or [])
+        cached = list(cached_image_features or [])
+        cache_lookups.append(cached)
+        missing_indexes = (
+            list(missing_image_indexes)
+            if missing_image_indexes is not None
+            else ([] if any(payload is not None for payload in cached) else list(range(len(images))))
+        )
+        encoded_rows = [
+            Path(images[index]).read_bytes().decode("utf-8")
+            for index in missing_indexes
+            if 0 <= index < len(images)
+        ]
+        if encoded_rows:
+            encode_calls.append(encoded_rows)
+        feature_payloads: list[_FakeFeatureBatch | None] = [None] * len(images)
+        for index, payload in enumerate(cached):
+            if index < len(feature_payloads) and payload is not None:
+                feature_payloads[index] = payload
+        for index, row in zip(missing_indexes, encoded_rows, strict=False):
+            if 0 <= index < len(feature_payloads):
+                feature_payloads[index] = _FakeFeatureBatch([f"feature:{row}"])
+        yield SimpleNamespace(
+            text="ok",
+            prompt_tokens=4,
+            generation_tokens=1,
+            image_features=feature_payloads,
+        )
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda model_path, revision="main": (FakeModel(), SimpleNamespace()),
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=lambda *args, **kwargs: "formatted::prompt",
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    return runtime, loaded_model, encode_calls, cache_lookups
+
+
 def _assert_text_only_follow_up_replaces_media_probe_when_signature_repeats() -> None:
     runtime = MLXVLMRuntime()
     loaded_model = {
@@ -718,7 +827,9 @@ def test_mlx_vlm_runtime_streams_backend_tokens_and_records_probe() -> None:
     assert probe.image_feature_cache_hits == 0
     assert probe.multimodal_decode_mode == "native_quantized"
     assert probe.multimodal_decode_sync_mode == "executor_stream"
-    assert probe.multi_image_scatter_mode == "none"
+    assert probe.multi_image_scatter_mode == "single"
+    assert probe.image_feature_cache_artifact_count == 0
+    assert probe.image_feature_cache_fallback_reason == ""
 
 def test_mlx_vlm_runtime_forwards_trust_remote_code_when_loader_supports_it() -> None:
     seen: dict[str, object] = {}
@@ -6249,21 +6360,7 @@ def test_mlx_vlm_runtime_render_prompt_preserves_text_backed_image_inputs_until_
 
 
 def test_mlx_vlm_runtime_records_repeated_image_fast_path_probe() -> None:
-    runtime = MLXVLMRuntime(
-        backend=AutoMLXVLMBackend(
-            load_fn=lambda model_path, revision="main": (
-                SimpleNamespace(
-                    config=SimpleNamespace(model_type="gemma4"),
-                    vision_tower=object(),
-                    embed_vision=object(),
-                ),
-                SimpleNamespace(image_processor=object()),
-            ),
-            stream_generate_fn=lambda *args, **kwargs: iter(()),
-            apply_chat_template_fn=lambda *args, **kwargs: "",
-        )
-    )
-    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    runtime, loaded_model, encode_calls, cache_lookups = _fake_feature_cache_runtime()
     messages = [
         common_pb2.ChatMessage(
             role="user",
@@ -6282,34 +6379,37 @@ def test_mlx_vlm_runtime_records_repeated_image_fast_path_probe() -> None:
         )
     ]
 
-    runtime.render_prompt(messages, loaded_model=loaded_model)
+    first_prepared = runtime.render_prompt(messages, loaded_model=loaded_model)
     first_probe = runtime.last_probe_snapshot()
+    list(
+        runtime.generate_tokens(
+            loaded_model,
+            first_prepared,
+            common_pb2.SamplingConfig(max_output_tokens=4),
+            Event(),
+        )
+    )
+    generated_probe = runtime.last_probe_snapshot()
     runtime.render_prompt(messages, loaded_model=loaded_model)
     second_probe = runtime.last_probe_snapshot()
 
     assert first_probe.multimodal_decode_mode == "native_quantized"
     assert first_probe.image_feature_cache_misses == 1
+    assert first_probe.image_feature_cache_artifact_count == 0
+    assert generated_probe.image_feature_cache_artifact_count == 1
+    assert generated_probe.image_feature_cache_bytes > 0
+    assert encode_calls == [["fake-image-payload"]]
+    assert cache_lookups == [[]]
     assert second_probe.multimodal_decode_mode == "image_cache_reuse"
     assert second_probe.image_feature_cache_hits == 1
     assert second_probe.image_feature_cache_misses == 0
+    assert second_probe.image_feature_cache_artifact_count == 1
+    assert second_probe.image_feature_encoder_calls_saved == 1
+    assert second_probe.image_feature_work_saved_bytes == len(b"fake-image-payload")
 
 
 def test_mlx_vlm_runtime_records_partial_multi_image_reuse_probe() -> None:
-    runtime = MLXVLMRuntime(
-        backend=AutoMLXVLMBackend(
-            load_fn=lambda model_path, revision="main": (
-                SimpleNamespace(
-                    config=SimpleNamespace(model_type="gemma4"),
-                    vision_tower=object(),
-                    embed_vision=object(),
-                ),
-                SimpleNamespace(image_processor=object()),
-            ),
-            stream_generate_fn=lambda *args, **kwargs: iter(()),
-            apply_chat_template_fn=lambda *args, **kwargs: "",
-        )
-    )
-    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    runtime, loaded_model, encode_calls, cache_lookups = _fake_feature_cache_runtime()
     first_image = common_pb2.MessagePart(
         image_bytes=b"fake-image-payload",
         media=common_pb2.MediaMetadata(
@@ -6319,7 +6419,7 @@ def test_mlx_vlm_runtime_records_partial_multi_image_reuse_probe() -> None:
             format="jpg",
         ),
     )
-    runtime.render_prompt(
+    first_prepared = runtime.render_prompt(
         [
             common_pb2.ChatMessage(
                 role="user",
@@ -6328,34 +6428,164 @@ def test_mlx_vlm_runtime_records_partial_multi_image_reuse_probe() -> None:
         ],
         loaded_model=loaded_model,
     )
-
-    runtime.render_prompt(
-        [
-            common_pb2.ChatMessage(
-                role="user",
-                parts=[
-                    common_pb2.MessagePart(text="Compare."),
-                    first_image,
-                    common_pb2.MessagePart(
-                        image_bytes=b"new-image-payload",
-                        media=common_pb2.MediaMetadata(
-                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
-                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
-                            filename="second.jpg",
-                            format="jpg",
-                        ),
-                    ),
-                ],
-            )
-        ],
-        loaded_model=loaded_model,
+    list(
+        runtime.generate_tokens(
+            loaded_model,
+            first_prepared,
+            common_pb2.SamplingConfig(max_output_tokens=4),
+            Event(),
+        )
     )
+
+    second_image = common_pb2.MessagePart(
+        image_bytes=b"new-image-payload",
+        media=common_pb2.MediaMetadata(
+            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+            filename="second.jpg",
+            format="jpg",
+        ),
+    )
+    second_messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[common_pb2.MessagePart(text="Compare."), first_image, second_image],
+        )
+    ]
+    second_prepared = runtime.render_prompt(second_messages, loaded_model=loaded_model)
 
     probe = runtime.last_probe_snapshot()
     assert probe.multimodal_decode_mode == "image_cache_reuse"
     assert probe.image_feature_cache_hits == 1
     assert probe.image_feature_cache_misses == 1
     assert probe.multi_image_scatter_mode == "per_sample"
+    assert probe.image_feature_cache_artifact_count == 1
+
+    list(
+        runtime.generate_tokens(
+            loaded_model,
+            second_prepared,
+            common_pb2.SamplingConfig(max_output_tokens=4),
+            Event(),
+        )
+    )
+    generated_probe = runtime.last_probe_snapshot()
+    runtime.render_prompt(second_messages, loaded_model=loaded_model)
+    followup_probe = runtime.last_probe_snapshot()
+
+    assert encode_calls == [["fake-image-payload"], ["new-image-payload"]]
+    assert cache_lookups[0] == []
+    assert cache_lookups[1][0] == _FakeFeatureBatch(["feature:fake-image-payload"])
+    assert cache_lookups[1][1] is None
+    assert generated_probe.image_feature_cache_artifact_count == 2
+    assert generated_probe.image_feature_cache_bytes > probe.image_feature_cache_bytes
+    assert followup_probe.image_feature_cache_hits == 2
+    assert followup_probe.image_feature_cache_misses == 0
+    assert followup_probe.image_feature_cache_artifact_count == 2
+
+
+def test_mlx_vlm_runtime_passes_cached_image_features_to_capable_backend() -> None:
+    runtime, loaded_model, encode_calls, cache_lookups = _fake_feature_cache_runtime()
+    messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[
+                common_pb2.MessagePart(text="Describe."),
+                common_pb2.MessagePart(
+                    image_bytes=b"repeat-image-payload",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        filename="repeat.jpg",
+                        format="jpg",
+                    ),
+                ),
+            ],
+        )
+    ]
+
+    first_prepared = runtime.render_prompt(messages, loaded_model=loaded_model)
+    list(
+        runtime.generate_tokens(
+            loaded_model,
+            first_prepared,
+            common_pb2.SamplingConfig(max_output_tokens=4),
+            Event(),
+        )
+    )
+    second_prepared = runtime.render_prompt(messages, loaded_model=loaded_model)
+    list(
+        runtime.generate_tokens(
+            loaded_model,
+            second_prepared,
+            common_pb2.SamplingConfig(max_output_tokens=4),
+            Event(),
+        )
+    )
+    probe = runtime.last_probe_snapshot()
+
+    assert encode_calls == [["repeat-image-payload"]]
+    assert cache_lookups[0] == []
+    assert cache_lookups[1] == [_FakeFeatureBatch(["feature:repeat-image-payload"])]
+    assert probe.image_feature_cache_hits == 1
+    assert probe.image_feature_cache_misses == 0
+    assert probe.image_feature_cache_artifact_count == 1
+    assert probe.image_feature_cache_bytes > 0
+
+
+def test_mlx_vlm_runtime_extracts_response_image_features_by_priority() -> None:
+    response = SimpleNamespace(
+        encoded_image_features="encoded",
+        image_features="image",
+        projected_image_features="projected",
+    )
+
+    assert _response_image_features(response) == "image"
+    assert _response_image_features(SimpleNamespace(encoded_image_features="encoded")) == "encoded"
+    assert _response_image_features(SimpleNamespace()) is None
+
+
+def test_mlx_vlm_runtime_splits_image_feature_payload_shapes() -> None:
+    batch = _FakeFeatureBatch(["first", "second"])
+    tuple_batch = _TupleIndexedFeatureBatch(["first", "second"])
+
+    assert _image_feature_payload_sequence(None, 2) is None
+    assert _image_feature_payload_sequence(batch, 0) == ()
+    assert _image_feature_payload_sequence(["a", "b"], 2) == ("a", "b")
+    assert batch[(slice(0, 1),)] == _FakeFeatureBatch(["first"])
+    assert batch[(1,)] == _FakeFeatureBatch(["second"])
+    assert _image_feature_payload_sequence(batch, 2) == (
+        _FakeFeatureBatch(["first"]),
+        _FakeFeatureBatch(["second"]),
+    )
+    assert tuple_batch[(slice(0, 1),)] == _FakeFeatureBatch(["first"])
+    assert tuple_batch[(1,)] == _FakeFeatureBatch(["second"])
+    assert tuple_batch[0] == _FakeFeatureBatch(["first"])
+    assert _image_feature_payload_sequence(batch, 3) is None
+    assert _image_feature_payload_sequence(batch, 1) == (batch,)
+    assert _image_feature_payload_sequence(SimpleNamespace(shape=("bad", 1)), 2) is None
+    assert _image_feature_payload_sequence(_BadFeatureBatch(), 2) is None
+
+
+def test_mlx_vlm_runtime_merges_missing_image_feature_payloads() -> None:
+    cached = (_FakeFeatureBatch(["cached-first"]), None, None)
+    full_response = _FakeFeatureBatch(["cached-first", "second", "third"])
+    missing_response = _FakeFeatureBatch(["second", "third"])
+
+    assert _merge_image_feature_payloads(cached, [1, 2], full_response) == (
+        None,
+        _FakeFeatureBatch(["second"]),
+        _FakeFeatureBatch(["third"]),
+    )
+    assert _merge_image_feature_payloads(cached, [1, 2], missing_response) == (
+        None,
+        _FakeFeatureBatch(["second"]),
+        _FakeFeatureBatch(["third"]),
+    )
+    assert _merge_image_feature_payloads(cached, [1, 2], object()) == (None, None, None)
+    assert _merge_image_feature_payloads((), [0], missing_response) == ()
+    assert _merge_image_feature_payloads(cached, [], missing_response) == (None, None, None)
+    assert _merge_image_feature_payloads(cached, [1], None) == (None, None, None)
 
 
 def _assert_mlx_vlm_runtime_repeated_media_probe_records_position_slice_fallback_count() -> None:
@@ -6392,7 +6622,12 @@ def _assert_mlx_vlm_runtime_repeated_media_probe_records_position_slice_fallback
         )
     ]
 
-    runtime.render_prompt(messages, loaded_model=loaded_model)
+    first_prepared = runtime.render_prompt(messages, loaded_model=loaded_model)
+    runtime._fast_path_controller.put_image_feature_payloads(
+        loaded_model=loaded_model,
+        prepared_request=first_prepared,
+        payloads=(_FakeFeatureBatch(["same-image-payload"]),),
+    )
     runtime.render_prompt(messages, loaded_model=loaded_model)
     runtime._record_multimodal_position_slice_fallback(1)
     probe = runtime.last_probe_snapshot()

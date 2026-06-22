@@ -1773,8 +1773,9 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py"],
     )
 
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "multimodal-fast-path-signature-top-level-key-cache",
         "mlx-vlm-family-config-cache",
         "mlx-vlm-gemma4-weight-presence-single-pass",
     ]
@@ -1789,8 +1790,9 @@ def test_scope_report_selects_deterministic_vlm_completion_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/deterministic_vlm_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
+    assert scope["selected_count"] == 2
     assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "multimodal-fast-path-signature-top-level-key-cache",
         "deterministic-vlm-completion-token-scan"
     ]
 
@@ -2841,6 +2843,12 @@ def test_multimodal_fast_path_signature_probe_script_emits_metrics(
     assert metrics["iterations_per_sample"] == 3.0
     assert metrics["signature_count"] == 3.0
     assert metrics["top_level_item_count"] == 4.0
+    assert metrics["image_feature_cache_hit_count"] == 1.0
+    assert metrics["image_feature_cache_miss_count"] == 1.0
+    assert metrics["image_feature_cache_artifact_count"] == 1.0
+    assert metrics["image_feature_cache_bytes"] == 46.0
+    assert metrics["image_feature_encoder_calls_saved"] == 1.0
+    assert metrics["image_feature_work_saved_bytes"] == len(b"synthetic-image-payload")
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 

@@ -2394,8 +2394,16 @@ def test_vlm_runtime_reuses_cache_for_identical_multimodal_requests() -> None:
     cache_stats = runtime.cache_stats_response()
 
     assert first_probe.cache_hit is False
+    assert first_probe.image_feature_cache_artifact_count == 1
+    assert first_probe.image_feature_cache_bytes > 0
     assert second_probe.cache_hit is True
     assert second_probe.cache_identity == first_probe.cache_identity
+    assert second_probe.multimodal_decode_mode == "image_cache_reuse"
+    assert second_probe.image_feature_cache_hits == 1
+    assert second_probe.image_feature_cache_misses == 0
+    assert second_probe.image_feature_encoder_calls_saved == 1
+    assert second_probe.image_feature_work_saved_bytes == len(b"cacheable image payload")
+    assert second_probe.image_feature_cache_artifact_count == 1
     assert cache_stats.stats.l1_bytes > 0
     assert cache_stats.stats.block_count == 1
     assert cache_stats.stats.l1_hit_rate == 0.5
@@ -2468,8 +2476,81 @@ def test_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:
     assert events[-1].text.startswith("Image content:")
     assert probe.image_feature_cache_hits == 0
     assert probe.image_feature_cache_misses == 1
+    assert probe.image_feature_cache_artifact_count == 1
+    assert probe.image_feature_cache_bytes > 0
     assert probe.multimodal_decode_mode == "native_quantized"
     assert probe.quantized_load_mode == "native_quantized"
+
+
+def test_vlm_runtime_prefill_stores_image_feature_cache_payloads() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[
+                common_pb2.MessagePart(text="Prefill the image."),
+                common_pb2.MessagePart(
+                    image_bytes=b"prefill image payload",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                    ),
+                ),
+            ],
+        )
+    ]
+
+    runtime.prefill("request-1", loaded_model, messages)
+    prefill_probe = runtime.last_probe_snapshot()
+    runtime.render_prompt(messages, loaded_model=loaded_model)
+    reuse_probe = runtime.last_probe_snapshot()
+
+    assert prefill_probe.image_feature_cache_artifact_count == 1
+    assert prefill_probe.image_feature_cache_bytes > 0
+    assert reuse_probe.multimodal_decode_mode == "image_cache_reuse"
+    assert reuse_probe.image_feature_cache_hits == 1
+    assert reuse_probe.image_feature_cache_misses == 0
+    assert reuse_probe.image_feature_cache_artifact_count == 1
+
+
+def test_vlm_runtime_does_not_store_image_feature_payloads_for_mixed_video_requests() -> None:
+    runtime = DeterministicVLMRuntime()
+    loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
+    messages = [
+        common_pb2.ChatMessage(
+            role="user",
+            parts=[
+                common_pb2.MessagePart(text="Describe both."),
+                common_pb2.MessagePart(
+                    image_bytes=b"mixed cache image",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                    ),
+                ),
+                common_pb2.MessagePart(
+                    video_bytes=b"mixed cache video",
+                    media=common_pb2.MediaMetadata(
+                        media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                        source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        filename="mixed.mp4",
+                        format="mp4",
+                    ),
+                ),
+            ],
+        )
+    ]
+
+    prepared = runtime.render_prompt(messages, loaded_model=loaded_model)
+    list(runtime.generate_tokens(loaded_model, prepared, None, Event()))
+    probe = runtime.last_probe_snapshot()
+
+    assert probe.multimodal_decode_mode == "fallback"
+    assert probe.multimodal_fallback_reason == "video_fast_path_unimplemented"
+    assert probe.image_feature_cache_artifact_count == 0
+    assert probe.image_feature_cache_hits == 0
+    assert probe.image_feature_cache_misses == 0
 
 
 def test_vlm_runtime_text_only_fast_path_skips_temp_media_session_and_emits_tool_call() -> None:
