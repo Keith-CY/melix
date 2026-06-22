@@ -617,9 +617,17 @@ def test_worker_registry_reuses_sorted_handles_across_listing_calls(monkeypatch:
     handles = registry.list_loaded_models()
     summaries = registry.list_loaded_model_summaries()
     repeated_handles = registry.list_loaded_models()
+    repeated_summaries = registry.list_loaded_model_summaries()
 
     assert repeated_handles == handles
     assert [summary.model_handle for summary in summaries] == handles
+    assert [summary.model_handle for summary in repeated_summaries] == handles
+    assert sorted_calls == 1
+
+    registry.record_loaded_model_throughput(handles[0], generation_tps=12.5)
+    updated_summaries = registry.list_loaded_model_summaries()
+
+    assert updated_summaries[0].generation_tps == 12.5
     assert sorted_calls == 1
 
     registry.unload_model(handles[0])
@@ -863,6 +871,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
             multimodal_decode_mode="text_only_batch_generator",
             multimodal_fallback_reason="",
             multimodal_decode_sync_mode="executor_batch_generator",
+            hybrid_state_patch_mode="family_scoped",
+            hybrid_state_advance_count=42,
+            family_fast_path_override_count=1,
             text_batch_generator_submitted_request_count=2,
             text_batch_generator_completed_request_count=1,
             text_batch_generator_step_count=16,
@@ -907,6 +918,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert vision_stats.last_multimodal_decode_mode == "text_only_batch_generator"
     assert vision_stats.last_multimodal_fallback_reason == ""
     assert vision_stats.last_multimodal_decode_sync_mode == "executor_batch_generator"
+    assert vision_stats.last_hybrid_state_patch_mode == "family_scoped"
+    assert vision_stats.last_hybrid_state_advance_count == 42
+    assert vision_stats.last_family_fast_path_override_count == 1
     assert vision_stats.text_batch_generator_submitted_request_count == 2
     assert vision_stats.text_batch_generator_completed_request_count == 1
     assert vision_stats.text_batch_generator_step_count == 16

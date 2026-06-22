@@ -69,6 +69,19 @@ func visionMultimodalDecodeSyncModeMetricValue(_ mode: String) -> Double {
     }
 }
 
+func visionHybridStatePatchModeMetricValue(_ mode: String) -> Double {
+    switch mode {
+    case "", "not_reported", "not_applicable":
+        return 0
+    case "fallback":
+        return 1
+    case "family_scoped":
+        return 2
+    default:
+        return -1
+    }
+}
+
 func recordPythonVLMRuntimeProbeMetrics(
     from stats: Melix_Worker_V1_RuntimeStats,
     metricsStore: MetricsStore
@@ -87,6 +100,18 @@ func recordPythonVLMRuntimeProbeMetrics(
     await metricsStore.set(
         visionMultimodalDecodeSyncModeMetricValue(syncMode),
         forKey: "vision.multimodal_decode_sync_mode_code"
+    )
+    await metricsStore.set(
+        visionHybridStatePatchModeMetricValue(stats.lastHybridStatePatchMode),
+        forKey: "vision.hybrid_state_patch_mode"
+    )
+    await metricsStore.set(
+        Double(stats.lastHybridStateAdvanceCount),
+        forKey: "vision.hybrid_state_advance_count"
+    )
+    await metricsStore.set(
+        Double(stats.lastFamilyFastPathOverrideCount),
+        forKey: "vision.family_fast_path_override_count"
     )
     await metricsStore.set(
         Double(stats.textBatchGeneratorSubmittedRequestCount),

@@ -5,6 +5,22 @@ from operator import mul
 from typing import Any, cast
 
 
+NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT: dict[str, object] = {
+    "schema_version": "melix.hybrid_state_patch_receipt.v1",
+    "family_id": "",
+    "patch_mode": "not_applicable",
+    "batch_row_count": 0,
+    "mixed_length_batch": False,
+    "cache_advance_count": 0,
+    "family_fast_path_override_count": 0,
+    "contiguous_state_guard": "aligned",
+    "text_only_rope_guard": "aligned",
+    "row_drift_count": 0,
+    "fallback_reason": "no_media",
+    "rows": [],
+}
+
+
 def build_mixed_batch_geometry_receipt(*, rows: list[dict[str, Any]]) -> dict[str, object]:
     row_receipts: list[dict[str, object]] = []
     total_media_count = 0
@@ -106,6 +122,14 @@ def empty_quantized_kv_mask_receipt() -> dict[str, object]:
     }
 
 
+def empty_hybrid_state_patch_receipt() -> dict[str, object]:
+    return build_hybrid_state_patch_receipt(
+        family_id="",
+        patch_mode="not_reported",
+        rows=[],
+    )
+
+
 def build_quantized_kv_mask_receipt(
     *,
     rows: list[dict[str, Any]],
@@ -143,6 +167,50 @@ def build_quantized_kv_mask_receipt(
             unquantized_logits=unquantized_logits,
             tolerance=tolerance,
         ),
+    }
+
+
+def build_hybrid_state_patch_receipt(
+    *,
+    family_id: str,
+    patch_mode: str,
+    rows: list[dict[str, Any]],
+    fallback_reason: str = "",
+    family_fast_path_override_count: int = 0,
+) -> dict[str, object]:
+    row_receipts: list[dict[str, object]] = []
+    seq_lens: set[int] = set()
+    cache_advance_count = 0
+
+    for expected_row_index, row in enumerate(rows):
+        row_receipt = _hybrid_state_patch_row_receipt(
+            row=row,
+            expected_row_index=expected_row_index,
+        )
+        row_receipts.append(row_receipt)
+        seq_lens.add(int(row_receipt["seq_len"]))
+        cache_advance_count += int(row_receipt["cache_advance"])
+
+    row_drift_count = sum(
+        1 for row_receipt in row_receipts if row_receipt["row_state_guard"] == "row_drift"
+    )
+    text_only_rope_drift = any(
+        "text_only_rope_mode_mismatch" in cast(list[str], row_receipt["row_drift_reasons"])
+        for row_receipt in row_receipts
+    )
+    return {
+        "schema_version": "melix.hybrid_state_patch_receipt.v1",
+        "family_id": str(family_id or ""),
+        "patch_mode": str(patch_mode or "not_reported"),
+        "batch_row_count": len(row_receipts),
+        "mixed_length_batch": len(seq_lens) > 1,
+        "cache_advance_count": cache_advance_count,
+        "family_fast_path_override_count": _non_negative_int(family_fast_path_override_count),
+        "contiguous_state_guard": "row_drift" if row_drift_count else "aligned",
+        "text_only_rope_guard": "row_drift" if text_only_rope_drift else "aligned",
+        "row_drift_count": row_drift_count,
+        "fallback_reason": str(fallback_reason or ""),
+        "rows": row_receipts,
     }
 
 
@@ -218,6 +286,71 @@ def _mixed_batch_row_geometry_receipt(
         "visual_embed_count": visual_embed_count,
         "visual_embed_identity": visual_embed_identity,
         "row_geometry_guard": "row_drift" if drift_reasons else "aligned",
+        "row_drift_reasons": drift_reasons,
+    }
+
+
+def _hybrid_state_patch_row_receipt(
+    *,
+    row: dict[str, Any],
+    expected_row_index: int,
+) -> dict[str, object]:
+    row_index = _non_negative_int(row.get("row_index", expected_row_index))
+    seq_len = _non_negative_int(row.get("seq_len", 0))
+    cache_offset = _non_negative_int(row.get("cache_offset", 0))
+    cache_advance = _non_negative_int(row.get("cache_advance", seq_len))
+    expected_cache_advance = _non_negative_int(
+        row.get("expected_cache_advance", cache_advance)
+    )
+    media_count = _non_negative_int(row.get("media_count", 0))
+    contiguous_state_start = _non_negative_int(
+        row.get("contiguous_state_start", cache_offset)
+    )
+    contiguous_state_end = _non_negative_int(
+        row.get("contiguous_state_end", contiguous_state_start + cache_advance)
+    )
+    expected_contiguous_state_start = _non_negative_int(
+        row.get("expected_contiguous_state_start", cache_offset)
+    )
+    expected_contiguous_state_end = _non_negative_int(
+        row.get(
+            "expected_contiguous_state_end",
+            expected_contiguous_state_start + expected_cache_advance,
+        )
+    )
+    default_rope_mode = "multimodal" if media_count else "text_only"
+    text_only_rope_mode = str(row.get("text_only_rope_mode", default_rope_mode) or "")
+    expected_text_only_rope_mode = str(
+        row.get("expected_text_only_rope_mode", default_rope_mode) or ""
+    )
+
+    drift_reasons: list[str] = []
+    if row_index != expected_row_index:
+        drift_reasons.append("row_index_mismatch")
+    if seq_len <= 0:
+        drift_reasons.append("seq_len_missing")
+    if cache_advance != expected_cache_advance:
+        drift_reasons.append("cache_advance_mismatch")
+    if contiguous_state_start != expected_contiguous_state_start:
+        drift_reasons.append("contiguous_state_start_mismatch")
+    if contiguous_state_end != expected_contiguous_state_end:
+        drift_reasons.append("contiguous_state_end_mismatch")
+    if text_only_rope_mode != expected_text_only_rope_mode:
+        drift_reasons.append("text_only_rope_mode_mismatch")
+
+    return {
+        "row_index": row_index,
+        "seq_len": seq_len,
+        "cache_offset": cache_offset,
+        "cache_advance": cache_advance,
+        "expected_cache_advance": expected_cache_advance,
+        "media_count": media_count,
+        "contiguous_state_start": contiguous_state_start,
+        "contiguous_state_end": contiguous_state_end,
+        "expected_contiguous_state_start": expected_contiguous_state_start,
+        "expected_contiguous_state_end": expected_contiguous_state_end,
+        "text_only_rope_mode": text_only_rope_mode,
+        "row_state_guard": "row_drift" if drift_reasons else "aligned",
         "row_drift_reasons": drift_reasons,
     }
 

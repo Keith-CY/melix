@@ -22,6 +22,7 @@ MULTIMODAL_LOAD_NATIVE_QUANTIZED = "native_quantized"
 MULTIMODAL_LOAD_FALLBACK = "fallback"
 
 _SUPPORTED_FAST_PATH_FAMILIES = frozenset({"gemma4-v1", "llava-v1", "paligemma-v1"})
+_HYBRID_STATE_PATCH_FAMILIES = frozenset({"gemma4-v1", "llava-v1"})
 _NATIVE_QUANTIZED_PROFILES = frozenset({"q4", "q6", "q8", "int4", "int8", "mlx-q4", "mlx-q8"})
 _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS = frozenset(
     {
@@ -55,7 +56,7 @@ _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS = ("model_id", "revision", "tokenizer_hash",
 _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED = tuple(sorted(_FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ImageFeatureCacheKey:
     family_id: str
     adapter_hash: str
@@ -64,7 +65,7 @@ class ImageFeatureCacheKey:
     sha256_hex: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MultimodalFastPathDecision:
     image_feature_cache_hits: int
     image_feature_cache_misses: int
@@ -74,6 +75,24 @@ class MultimodalFastPathDecision:
     multi_image_scatter_mode: str
     quantized_load_mode: str
     quantized_load_fallback_reason: str
+    hybrid_state_patch_mode: str
+    hybrid_state_media_count: int
+    family_fast_path_override_count: int
+
+
+_NO_MEDIA_FAST_PATH_DECISION = MultimodalFastPathDecision(
+    image_feature_cache_hits=0,
+    image_feature_cache_misses=0,
+    multimodal_decode_mode=MULTIMODAL_DECODE_BASELINE,
+    multimodal_fallback_reason="no_media",
+    multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
+    multi_image_scatter_mode="none",
+    quantized_load_mode=MULTIMODAL_LOAD_FALLBACK,
+    quantized_load_fallback_reason="not_quantized",
+    hybrid_state_patch_mode="not_applicable",
+    hybrid_state_media_count=0,
+    family_fast_path_override_count=0,
+)
 
 
 class MultimodalFastPathController:
@@ -102,6 +121,8 @@ class MultimodalFastPathController:
                 execution_mode=execution_mode,
                 quant_profile_id=quant_profile_id,
             )
+            if quantized_load_mode == MULTIMODAL_LOAD_FALLBACK and quantized_fallback == "not_quantized":
+                return _NO_MEDIA_FAST_PATH_DECISION
             return MultimodalFastPathDecision(
                 image_feature_cache_hits=0,
                 image_feature_cache_misses=0,
@@ -111,6 +132,9 @@ class MultimodalFastPathController:
                 multi_image_scatter_mode="none",
                 quantized_load_mode=quantized_load_mode,
                 quantized_load_fallback_reason=quantized_fallback,
+                hybrid_state_patch_mode="not_applicable",
+                hybrid_state_media_count=0,
+                family_fast_path_override_count=0,
             )
 
         metadata = _loaded_metadata(loaded_model)
@@ -149,6 +173,9 @@ class MultimodalFastPathController:
                 reason="unsupported_family",
                 quantized_load_mode=MULTIMODAL_LOAD_FALLBACK,
                 quantized_load_fallback_reason="unsupported_family",
+                hybrid_state_patch_mode="fallback",
+                hybrid_state_media_count=0,
+                family_fast_path_override_count=1,
             )
 
         if prepared_request.videos and not prepared_request.images:
@@ -156,6 +183,9 @@ class MultimodalFastPathController:
                 reason="video_fast_path_unimplemented",
                 quantized_load_mode=quantized_load_mode,
                 quantized_load_fallback_reason=quantized_fallback,
+                hybrid_state_patch_mode="fallback",
+                hybrid_state_media_count=0,
+                family_fast_path_override_count=1,
             )
 
         hits = 0
@@ -190,6 +220,14 @@ class MultimodalFastPathController:
             decode_mode = MULTIMODAL_DECODE_NATIVE_QUANTIZED
         else:
             decode_mode = MULTIMODAL_DECODE_SINGLE_STREAM
+        hybrid_state_patch_mode = (
+            "family_scoped" if family_id in _HYBRID_STATE_PATCH_FAMILIES else "not_applicable"
+        )
+        hybrid_state_media_count = (
+            max(1, len(prepared_request.images) + len(prepared_request.videos))
+            if hybrid_state_patch_mode == "family_scoped"
+            else 0
+        )
         return MultimodalFastPathDecision(
             image_feature_cache_hits=hits,
             image_feature_cache_misses=misses,
@@ -199,6 +237,9 @@ class MultimodalFastPathController:
             multi_image_scatter_mode="per_sample" if len(prepared_request.images) > 1 else "none",
             quantized_load_mode=quantized_load_mode,
             quantized_load_fallback_reason=quantized_fallback,
+            hybrid_state_patch_mode=hybrid_state_patch_mode,
+            hybrid_state_media_count=hybrid_state_media_count,
+            family_fast_path_override_count=0,
         )
 
     @staticmethod
@@ -270,6 +311,9 @@ class MultimodalFastPathController:
         reason: str,
         quantized_load_mode: str,
         quantized_load_fallback_reason: str,
+        hybrid_state_patch_mode: str = "fallback",
+        hybrid_state_media_count: int = 0,
+        family_fast_path_override_count: int = 0,
     ) -> MultimodalFastPathDecision:
         return MultimodalFastPathDecision(
             image_feature_cache_hits=0,
@@ -280,6 +324,9 @@ class MultimodalFastPathController:
             multi_image_scatter_mode="none",
             quantized_load_mode=quantized_load_mode,
             quantized_load_fallback_reason=quantized_load_fallback_reason,
+            hybrid_state_patch_mode=hybrid_state_patch_mode,
+            hybrid_state_media_count=hybrid_state_media_count,
+            family_fast_path_override_count=family_fast_path_override_count,
         )
 
     @staticmethod
@@ -313,16 +360,23 @@ def fast_path_probe_signature(
         metadata_keys = _signature_metadata_keys(loaded_model, prepared_request)
         nested_metadata = loaded_model.get("metadata", {})
         nested_metadata_is_dict = isinstance(nested_metadata, dict)
-        metadata_values = tuple(
-            _signature_metadata_value(
+        if metadata_keys == _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED:
+            metadata_repr = _core_signature_metadata_repr(
                 loaded_model,
                 nested_metadata,
                 nested_metadata_is_dict,
-                key,
             )
-            for key in metadata_keys
-        )
-        metadata_repr = _signature_key_values_repr(metadata_keys, metadata_values)
+        else:
+            metadata_values = tuple(
+                _signature_metadata_value(
+                    loaded_model,
+                    nested_metadata,
+                    nested_metadata_is_dict,
+                    key,
+                )
+                for key in metadata_keys
+            )
+            metadata_repr = _signature_key_values_repr(metadata_keys, metadata_values)
     return (
         prepared_request.multimodal_hash_hex,
         top_level_repr,
@@ -356,6 +410,81 @@ def _top_level_signature_repr_values(
         + "), ('tokenizer_hash', "
         + repr(tokenizer_hash)
         + "))"
+    )
+
+
+def _core_signature_metadata_repr(
+    loaded_model: dict[str, Any],
+    nested_metadata: Any,
+    nested_metadata_is_dict: bool,
+) -> str:
+    return _core_signature_metadata_repr_values(
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[0],
+        ),
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[1],
+        ),
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[2],
+        ),
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[3],
+        ),
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[4],
+        ),
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[5],
+        ),
+        _signature_metadata_value(
+            loaded_model,
+            nested_metadata,
+            nested_metadata_is_dict,
+            _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED[6],
+        ),
+    )
+
+
+@lru_cache(maxsize=2048)
+def _core_signature_metadata_repr_values(
+    melix_adapter_hash: str,
+    execution_mode: str,
+    adapter_hash: str,
+    family_id: str,
+    max_images_per_prompt: str,
+    prompt_profile_id: str,
+    tokenization_mode: str,
+) -> str:
+    return _signature_key_values_repr(
+        _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED,
+        (
+            melix_adapter_hash,
+            execution_mode,
+            adapter_hash,
+            family_id,
+            max_images_per_prompt,
+            prompt_profile_id,
+            tokenization_mode,
+        ),
     )
 
 

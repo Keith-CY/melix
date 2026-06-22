@@ -913,6 +913,8 @@ class EngineCore:
     def _has_media_admission_parts(messages: object) -> bool:
         for message in messages:
             for part in getattr(message, "parts", ()):
+                if part.HasField("text"):
+                    continue
                 part_kind = part.WhichOneof("part")
                 if part_kind is not None and part_kind != "text":
                     return True
@@ -925,6 +927,8 @@ class EngineCore:
         video_count = 0
         for message in messages:
             for part in getattr(message, "parts", ()):
+                if part.HasField("text"):
+                    continue
                 part_kind = part.WhichOneof("part")
                 media = getattr(part, "media", None)
                 media_type = getattr(media, "media_type", common_pb2.MEDIA_TYPE_UNSPECIFIED)
