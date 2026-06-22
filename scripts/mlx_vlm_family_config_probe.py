@@ -21,6 +21,7 @@ from worker.runtime.mlx_vlm_runtime import AutoMLXVLMBackend, MLXVLMRuntime  # n
 from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest  # noqa: E402
 
 ITERATION_COUNT = 200
+TIMED_ITERATION_MULTIPLIER = 20
 SAMPLE_COUNT = 5
 PROMPT_TEXT = "Describe the image"
 
@@ -228,25 +229,34 @@ def main() -> int:
     resolve_samples: list[float] = []
     prompt_token_count = 0
     scheduler_metrics: dict[str, float] = {}
-    for _ in range(SAMPLE_COUNT):
-        runtime, counter = _build_runtime()
-        loaded_model = runtime.load_model(_model_spec())
-        started = time.perf_counter()
-        for _ in range(ITERATION_COUNT):
-            prepared = runtime.render_prompt(_messages(), loaded_model=loaded_model)
-            prompt_token_count = runtime.prompt_token_count(prepared, loaded_model=loaded_model)
-        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
-        resolve_samples.append(float(counter.count))
-        if prompt_token_count != 3:
-            raise SystemExit("unexpected prompt token count")
-        if not scheduler_metrics:
-            scheduler_metrics = _attach_scheduler_stats(runtime, loaded_model)
+    timed_iteration_count = ITERATION_COUNT * TIMED_ITERATION_MULTIPLIER
+    original_resolve = mlx_vlm_runtime_module.resolve_vision_family_config
+    original_installed_package_version = mlx_vlm_runtime_module._installed_package_version
+    try:
+        for _ in range(SAMPLE_COUNT):
+            runtime, counter = _build_runtime()
+            loaded_model = runtime.load_model(_model_spec())
+            started = time.perf_counter()
+            for _ in range(timed_iteration_count):
+                prepared = runtime.render_prompt(_messages(), loaded_model=loaded_model)
+                prompt_token_count = runtime.prompt_token_count(prepared, loaded_model=loaded_model)
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            elapsed_samples.append(elapsed_ms / TIMED_ITERATION_MULTIPLIER)
+            resolve_samples.append(float(counter.count))
+            if prompt_token_count != 3:
+                raise SystemExit("unexpected prompt token count")
+            if not scheduler_metrics:
+                scheduler_metrics = _attach_scheduler_stats(runtime, loaded_model)
+    finally:
+        mlx_vlm_runtime_module.resolve_vision_family_config = original_resolve
+        mlx_vlm_runtime_module._installed_package_version = original_installed_package_version
     metrics = {
         "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
         "iteration_count": float(ITERATION_COUNT),
         "prompt_token_count": float(prompt_token_count),
         "resolve_calls_mean": round(statistics.fmean(resolve_samples), 6),
         "sample_count": float(SAMPLE_COUNT),
+        "timed_iteration_count": float(timed_iteration_count),
     }
     metrics.update(scheduler_metrics)
     metrics.update(_image_feature_cache_metrics())
