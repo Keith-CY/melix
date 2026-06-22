@@ -160,6 +160,8 @@ def estimate_model_weight_resident_bytes(model_path: str) -> int:
 def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
     index_path = model_dir / "model.safetensors.index.json"
     try:
+        if not index_path.is_file():
+            return 0
         payload = json.loads(index_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return 0
