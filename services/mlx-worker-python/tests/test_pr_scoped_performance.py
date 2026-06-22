@@ -3148,6 +3148,8 @@ def test_maintenance_parameter_normalization_probe_script_emits_metrics(
     assert metrics["string_conversion_calls_mean"] == 24.0
     assert metrics["native_checksum"] > 0.0
     assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["empty_default_checksum"] > 0.0
+    assert metrics["empty_default_elapsed_ms_mean"] >= 0
     assert metrics["native_elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 

@@ -105,6 +105,21 @@ def _run_native_sample(value_count: int, iterations: int) -> tuple[float, int]:
     return elapsed_ms, checksum
 
 
+def _run_empty_default_sample(value_count: int, iterations: int) -> tuple[float, int]:
+    empty_ints = [0 for _ in range(value_count)]
+    empty_strings = [" " for _ in range(value_count)]
+    checksum = 0
+    started = time.perf_counter()
+    for _ in range(iterations):
+        positive_values = MaintenanceCore._positive_sorted_values(empty_ints, default=(32,))
+        normalized_strings = MaintenanceCore._normalized_string_values(empty_strings, default=("default",))
+        if positive_values != (32,) or normalized_strings != ("default",):
+            raise SystemExit("unexpected empty-default benchmark parameter normalization output")
+        checksum += len(positive_values) + len(normalized_strings)
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    return elapsed_ms, checksum
+
+
 def main() -> int:
     value_count = int(os.environ.get("MELIX_MAINTENANCE_PARAMETER_PROBE_VALUE_COUNT", "3000"))
     iterations = int(os.environ.get("MELIX_MAINTENANCE_PARAMETER_PROBE_ITERATIONS", "80"))
@@ -115,8 +130,10 @@ def main() -> int:
     string_call_samples: list[float] = []
     calls_per_value_samples: list[float] = []
     native_elapsed_samples: list[float] = []
+    empty_default_elapsed_samples: list[float] = []
     checksum = 0
     native_checksum = 0
+    empty_default_checksum = 0
 
     for _ in range(sample_count):
         tracemalloc.start()
@@ -137,6 +154,11 @@ def main() -> int:
         calls_per_value_samples.append((int_calls + string_calls) / (int_values + string_values))
         native_elapsed_ms, native_checksum = _run_native_sample(value_count, iterations)
         native_elapsed_samples.append(native_elapsed_ms)
+        empty_default_elapsed_ms, empty_default_checksum = _run_empty_default_sample(
+            value_count,
+            iterations,
+        )
+        empty_default_elapsed_samples.append(empty_default_elapsed_ms)
 
     print(
         json.dumps(
@@ -144,6 +166,11 @@ def main() -> int:
                 "calls_per_value_mean": round(statistics.fmean(calls_per_value_samples), 6),
                 "checksum": float(checksum),
                 "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
+                "empty_default_checksum": float(empty_default_checksum),
+                "empty_default_elapsed_ms_mean": round(
+                    statistics.fmean(empty_default_elapsed_samples),
+                    6,
+                ),
                 "int_conversion_calls_mean": round(statistics.fmean(int_call_samples), 6),
                 "iteration_count": float(iterations),
                 "native_checksum": float(native_checksum),
