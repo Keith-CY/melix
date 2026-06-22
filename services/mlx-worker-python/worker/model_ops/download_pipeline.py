@@ -1581,7 +1581,7 @@ class DownloadPipeline:
 
     @staticmethod
     def _companion_directory_receipt_files(path: Path) -> tuple[list[str], int]:
-        files: list[tuple[str, int]] = []
+        files: list[str] = []
         byte_count = 0
         append_file = files.append
         stack = [os.fspath(path)]
@@ -1601,9 +1601,9 @@ class DownloadPipeline:
                     if is_file(entry):
                         file_size = stat_entry(entry).st_size
                         byte_count += file_size
-                        append_file((entry.path, file_size))
-        files.sort(key=lambda item: item[0])
-        return [file_path for file_path, _file_size in files], byte_count
+                        append_file(entry.path)
+        files.sort()
+        return files, byte_count
 
     @staticmethod
     def _utc_now_iso8601() -> str:
