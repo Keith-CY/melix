@@ -46,7 +46,10 @@ from worker.runtime.runtime_utils import (
     installed_package_version as _installed_package_version,
 )
 from worker.runtime.temp_media_lifecycle import TempMediaSession
-from worker.runtime.vision_family_adapters import resolve_vision_family_config
+from worker.runtime.vision_family_adapters import (
+    resolve_vision_family_config,
+    vision_processor_capability_metadata,
+)
 
 logger = logging.getLogger(__name__)
 _GEMMA4_PRESENCE_NONE = (False, False)
@@ -1649,6 +1652,7 @@ class AutoMLXVLMBackend:
         )
         family_config = resolve_vision_family_config(dict(model_spec.ext))
         capability_metadata = family_config.capability_metadata()
+        capability_metadata.update(vision_processor_capability_metadata(dict(model_spec.ext)))
         capability_metadata["melix.vlm.text_only_step_cooperative"] = metadata[
             "melix.vlm.text_only_step_cooperative"
         ]
