@@ -209,13 +209,21 @@ def _runtime_name(runtime: Any) -> str:
 
 
 def _detect_custom_loader_requirement(model_spec: common_pb2.ModelSpec) -> tuple[bool, str]:
-    config = _read_model_config(model_spec)
-    if not config:
+    config_path = _model_config_path(model_spec)
+    if config_path is None:
         return False, "config_json:absent"
-    auto_map = config.get("auto_map")
-    if isinstance(auto_map, dict) and _auto_map_has_custom_loader(auto_map):
-        return True, CONFIG_JSON_AUTO_MAP_SOURCE
-    return False, "config_json"
+    config_path_text, stat_path = config_path
+    try:
+        config_stat = os.stat(stat_path)
+        if not stat.S_ISREG(config_stat.st_mode):
+            return False, "config_json:absent"
+    except OSError:
+        return False, "config_json:absent"
+    return _detect_custom_loader_requirement_for_stat(
+        config_path_text,
+        config_stat.st_mtime_ns,
+        config_stat.st_size,
+    )
 
 
 def _auto_map_has_custom_loader(auto_map: dict[Any, Any]) -> bool:
@@ -229,7 +237,7 @@ def _auto_map_has_custom_loader(auto_map: dict[Any, Any]) -> bool:
 
 
 def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | None:
-    model_path = str(getattr(model_spec, "model_path", "") or "").strip()
+    model_path = str(model_spec.model_path or "").strip()
     if not model_path:
         return None
     if model_path[0] == "~":
@@ -252,6 +260,33 @@ def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | Non
         config_stat.st_size,
     )
     return payload if isinstance(payload, dict) else None
+
+
+def _model_config_path(model_spec: common_pb2.ModelSpec) -> tuple[str, str | os.PathLike[str]] | None:
+    model_path = str(model_spec.model_path or "").strip()
+    if not model_path:
+        return None
+    if model_path[0] == "~":
+        config_path = Path(model_path).expanduser() / "config.json"
+        return str(config_path), config_path
+    separator = "" if model_path[-1] == os.sep else os.sep
+    config_path_text = f"{model_path}{separator}config.json"
+    return config_path_text, config_path_text
+
+
+@lru_cache(maxsize=128)
+def _detect_custom_loader_requirement_for_stat(
+    config_path: str,
+    mtime_ns: int,
+    size: int,
+) -> tuple[bool, str]:
+    config = _read_model_config_for_stat(config_path, mtime_ns, size)
+    if not config:
+        return False, "config_json:absent"
+    auto_map = config.get("auto_map")
+    if isinstance(auto_map, dict) and _auto_map_has_custom_loader(auto_map):
+        return True, CONFIG_JSON_AUTO_MAP_SOURCE
+    return False, "config_json"
 
 
 @lru_cache(maxsize=128)

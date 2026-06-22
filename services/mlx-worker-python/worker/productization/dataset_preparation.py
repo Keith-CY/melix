@@ -482,8 +482,11 @@ def list_dataset_versions(
     json_loads = json.loads
     open_file = open
     for manifest_path in _iter_dataset_version_manifest_paths(versions_root):
-        with open_file(manifest_path, "rb") as handle:
-            version = json_loads(handle.read())
+        try:
+            with open_file(manifest_path, "rb") as handle:
+                version = json_loads(handle.read())
+        except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
+            continue
         version_get = version.get
         versions_append(
             {
@@ -521,15 +524,13 @@ def _dataset_version_list_sort_key(item: dict[str, Any]) -> tuple[str, str]:
 
 
 def _iter_dataset_version_manifest_paths(versions_root: Path) -> Iterable[str]:
-    is_file = os.path.isfile
     try:
         with os.scandir(versions_root) as entries:
             for entry in entries:
                 if not entry.is_dir(follow_symlinks=False):
                     continue
                 manifest_path = f"{entry.path}/dataset-version.json"
-                if is_file(manifest_path):
-                    yield manifest_path
+                yield manifest_path
     except OSError:
         return
 

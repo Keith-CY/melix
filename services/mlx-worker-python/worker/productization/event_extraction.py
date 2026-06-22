@@ -2860,7 +2860,7 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
             raise json.JSONDecodeError("Extra data", response_text, end_index)
         return parsed
 
-    if response_text.startswith(_JSON_FENCE_PREFIX):
+    if response_length and response_text[0] == "`" and response_text.startswith(_JSON_FENCE_PREFIX):
         parsed, end_index = _JSON_RAW_DECODE(
             response_text,
             _JSON_FENCE_PREFIX_LENGTH,
@@ -2874,6 +2874,14 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
     response_start = 0
     while response_start < response_length and response_text[response_start].isspace():
         response_start += 1
+
+    if response_start < response_length and response_text[response_start] == "{":
+        parsed, end_index = _JSON_RAW_DECODE(response_text, response_start)
+        if not _has_only_trailing_whitespace(response_text, end_index, response_length):
+            raise json.JSONDecodeError("Extra data", response_text, end_index)
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM response must be a JSON object")
+        return parsed
 
     if response_text.startswith(_JSON_FENCE_PREFIX, response_start):
         parsed, end_index = _JSON_RAW_DECODE(

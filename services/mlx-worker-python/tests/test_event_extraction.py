@@ -163,6 +163,32 @@ def test_parse_response_json_accepts_unfenced_json_without_pretrim_copy() -> Non
     }
 
 
+def test_parse_response_json_leading_whitespace_object_skips_fence_prefix_checks() -> None:
+    class NoFencePrefixCheck(str):
+        def startswith(self, *args, **kwargs):  # pragma: no cover
+            raise AssertionError("leading object fast path should bypass fence checks")
+
+    response = NoFencePrefixCheck('  {"events": [{"event_type": "pickup"}]}  ')
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "pickup"}]
+    }
+
+
+def test_parse_response_json_leading_whitespace_object_rejects_trailing_text() -> None:
+    response = '  {"events": []} trailing'
+
+    with pytest.raises(json.JSONDecodeError, match="Extra data"):
+        event_extraction_module._parse_response_json(response)
+
+
+def test_parse_response_json_leading_whitespace_rejects_non_object_payload() -> None:
+    response = "  []"
+
+    with pytest.raises(ValueError, match="JSON object"):
+        event_extraction_module._parse_response_json(response)
+
+
 def test_parse_response_json_accepts_direct_object_fast_path() -> None:
     response = '{"events": [{"event_type": "direct"}]}  '
 
