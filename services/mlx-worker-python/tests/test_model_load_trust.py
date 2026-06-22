@@ -287,6 +287,7 @@ def test_trust_policy_caches_config_json_by_file_stat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model_load_trust_module._read_model_config_for_stat.cache_clear()
+    model_load_trust_module._detect_custom_loader_requirement_for_stat.cache_clear()
     model = _custom_loader_text_model(tmp_path)
     read_bytes_calls = 0
     original_read_bytes = model_load_trust_module.Path.read_bytes
@@ -310,6 +311,37 @@ def test_trust_policy_caches_config_json_by_file_stat(
         assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
 
     assert read_bytes_calls == 1
+
+
+def test_trust_policy_caches_auto_map_detection_by_file_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_load_trust_module._read_model_config_for_stat.cache_clear()
+    model_load_trust_module._detect_custom_loader_requirement_for_stat.cache_clear()
+    model = _custom_loader_text_model(tmp_path)
+    scan_calls = 0
+    original_scan = model_load_trust_module._auto_map_has_custom_loader
+
+    def counted_scan(auto_map: dict[object, object]) -> bool:
+        nonlocal scan_calls
+        scan_calls += 1
+        return original_scan(auto_map)
+
+    monkeypatch.setattr(model_load_trust_module, "_auto_map_has_custom_loader", counted_scan)
+
+    for _ in range(2):
+        with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+            resolve_model_load_trust_policy(
+                model,
+                request_policy=None,
+                runtime_kind="text",
+                runtime=RecordingTextBackend(),
+            )
+        assert exc_info.value.policy.custom_loader_required is True
+        assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
+
+    assert scan_calls == 1
 
 
 def test_trust_policy_auto_map_custom_loader_scan_avoids_string_coercion_for_strings() -> None:
@@ -437,6 +469,75 @@ def test_trust_policy_treats_missing_config_json_as_absent(tmp_path: Path) -> No
 
     assert policy.custom_loader_required is False
     assert policy.custom_loader_detection_source == "config_json:absent"
+
+
+def test_trust_policy_treats_blank_model_path_as_absent() -> None:
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = "  "
+
+    policy = resolve_model_load_trust_policy(
+        model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=RecordingTextBackend(),
+    )
+
+    assert policy.custom_loader_required is False
+    assert policy.custom_loader_detection_source == "config_json:absent"
+
+
+def test_trust_policy_treats_directory_config_json_as_absent(tmp_path: Path) -> None:
+    model_dir = tmp_path / "directory-config-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").mkdir()
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = str(model_dir)
+
+    policy = resolve_model_load_trust_policy(
+        model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=RecordingTextBackend(),
+    )
+
+    assert policy.custom_loader_required is False
+    assert policy.custom_loader_detection_source == "config_json:absent"
+
+
+def test_trust_policy_treats_empty_config_json_as_absent(tmp_path: Path) -> None:
+    model_dir = tmp_path / "empty-config-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = str(model_dir)
+
+    policy = resolve_model_load_trust_policy(
+        model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=RecordingTextBackend(),
+    )
+
+    assert policy.custom_loader_required is False
+    assert policy.custom_loader_detection_source == "config_json:absent"
+
+
+def test_trust_policy_reports_config_json_without_auto_map_loader(tmp_path: Path) -> None:
+    model_dir = tmp_path / "plain-config-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(json.dumps({"model_type": "llama"}), encoding="utf-8")
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = str(model_dir)
+
+    policy = resolve_model_load_trust_policy(
+        model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=RecordingTextBackend(),
+    )
+
+    assert policy.custom_loader_required is False
+    assert policy.custom_loader_detection_source == "config_json"
 
 
 def _custom_loader_text_model(tmp_path: Path) -> common_pb2.ModelSpec:
