@@ -141,6 +141,26 @@ def pre_commit_base_ref(root: Path) -> str | None:
     return value or None
 
 
+def performance_probe_git_identity_env(root: Path) -> dict[str, str]:
+    try:
+        commit = run_git(root, ["rev-parse", "HEAD"]).strip()
+    except subprocess.CalledProcessError:
+        commit = "unknown"
+    try:
+        branch = run_git(root, ["branch", "--show-current"]).strip() or "detached"
+    except subprocess.CalledProcessError:
+        branch = "unknown"
+    try:
+        dirty = "true" if staged_changed_files(root, base_ref=pre_commit_base_ref(root)) else "false"
+    except subprocess.CalledProcessError:
+        dirty = "true"
+    return {
+        "MELIX_GIT_COMMIT": commit,
+        "MELIX_GIT_BRANCH": branch,
+        "MELIX_GIT_DIRTY": dirty,
+    }
+
+
 def staged_changed_files(root: Path, *, base_ref: str | None = "HEAD") -> list[str]:
     args = ["diff", "--cached", "--name-only", "--diff-filter=ACDMRTUXB"]
     if base_ref is not None:
@@ -408,6 +428,7 @@ def run_performance_report(root: Path, changed_files: list[str], *, base_ref: st
             else:
                 export_base_snapshot(root, base_repo, base_ref, env=scrubbed_git_environment())
             probes = {probe.probe_id: probe for probe in load_probe_registry(registry_path)}
+            probe_env = performance_probe_git_identity_env(root)
             for probe_entry in selected_probes:
                 if not isinstance(probe_entry, dict):
                     continue
@@ -431,6 +452,7 @@ def run_performance_report(root: Path, changed_files: list[str], *, base_ref: st
                         head_repo=head_repo,
                         env=scrubbed_git_environment(
                             {
+                                **probe_env,
                                 "MELIX_CHANGED_SCOPE_BASE_ROOT": os.fspath(base_repo),
                                 "MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": json.dumps(coverage_paths),
                             }

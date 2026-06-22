@@ -664,8 +664,9 @@ class MaintenanceCore:
         smoke_test_requested: bool,
         smoke_test_passed: bool,
         runtime: str,
+        artifact_integrity: dict[str, Any] | None = None,
     ) -> maintenance_pb2.QuantizedArtifact:
-        return maintenance_pb2.QuantizedArtifact(
+        message = maintenance_pb2.QuantizedArtifact(
             schema_version=schema_version,
             artifact_kind=artifact_kind,
             manifest_path=str(manifest_path),
@@ -676,6 +677,69 @@ class MaintenanceCore:
             smoke_test_requested=smoke_test_requested,
             smoke_test_passed=smoke_test_passed,
             runtime=runtime,
+        )
+        if isinstance(artifact_integrity, dict):
+            message.artifact_integrity.CopyFrom(
+                MaintenanceCore._worker_artifact_integrity_receipt(artifact_integrity)
+            )
+        return message
+
+    @staticmethod
+    def _worker_artifact_integrity_receipt(
+        artifact_integrity: dict[str, Any],
+    ) -> maintenance_pb2.ArtifactIntegrityReceipt:
+        return maintenance_pb2.ArtifactIntegrityReceipt(
+            status=str(artifact_integrity.get("status", "")),
+            verification_mode=str(artifact_integrity.get("verification_mode", "")),
+            policy_present=bool(artifact_integrity.get("policy_present", False)),
+            digest=str(artifact_integrity.get("digest", "")),
+            actual_digest=str(artifact_integrity.get("actual_digest", "")),
+            checked_at=str(artifact_integrity.get("checked_at", "")),
+            failure_reason=str(artifact_integrity.get("failure_reason", "")),
+            artifact_id=str(artifact_integrity.get("artifact_id", "")),
+            source_ref=str(artifact_integrity.get("source_ref", "")),
+            expected_source_ref=str(artifact_integrity.get("expected_source_ref", "")),
+            signature_status=str(artifact_integrity.get("signature_status", "")),
+            policy_mode=str(artifact_integrity.get("policy_mode", "")),
+            activation_decision=str(artifact_integrity.get("activation_decision", "")),
+        )
+
+    @staticmethod
+    def _json_payload(payload_json: str) -> dict[str, Any]:
+        try:
+            payload = json.loads(payload_json)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @classmethod
+    def _worker_managed_artifact(
+        cls,
+        *,
+        output_path: Path,
+        manifest_json: str,
+        manifest_payload: dict[str, Any],
+        runtime: str,
+    ) -> maintenance_pb2.QuantizedArtifact:
+        artifact_integrity = manifest_payload.get("artifact_integrity")
+        path = Path(output_path)
+        artifact_bytes = manifest_payload.get("total_bytes", 0)
+        if not isinstance(artifact_bytes, int):
+            artifact_bytes = 0
+        if artifact_bytes <= 0 and path.is_file():
+            artifact_bytes = path.stat().st_size
+        return cls._worker_artifact(
+            schema_version="melix.managed_artifact.v1",
+            artifact_kind="managed_artifact",
+            bundle_path=path,
+            manifest_path=Path(str(manifest_payload.get("state_path", "")) or path),
+            artifact_bytes=artifact_bytes,
+            manifest_bytes=len(manifest_json.encode("utf-8")),
+            serving_compatible=True,
+            smoke_test_requested=False,
+            smoke_test_passed=False,
+            runtime=runtime,
+            artifact_integrity=artifact_integrity if isinstance(artifact_integrity, dict) else None,
         )
 
     @staticmethod
@@ -1049,7 +1113,11 @@ class MaintenanceCore:
                 if operation in {"download", "local_import"}:
                     self._registry.model_catalog.registry_snapshot(rescan=True)
 
+                latest_manifest_payload: dict[str, Any] = {}
+                latest_manifest_json = ""
                 for snapshot in result.snapshots:
+                    latest_manifest_json = snapshot.manifest_json
+                    latest_manifest_payload = self._json_payload(snapshot.manifest_json)
                     self._job_registry.progress(job.job_id, snapshot.stage, snapshot.pct)
                     self._job_registry.attach_manifest(job.job_id, snapshot.manifest_json)
                     yield maintenance_pb2.ConvertModelEvent(
@@ -1064,8 +1132,17 @@ class MaintenanceCore:
                         )
 
                 self._job_registry.complete(job.job_id, str(result.output_path))
+                worker_artifact = self._worker_managed_artifact(
+                    output_path=result.output_path,
+                    manifest_json=latest_manifest_json,
+                    manifest_payload=latest_manifest_payload,
+                    runtime=request.ext.get("runtime", ""),
+                )
                 yield maintenance_pb2.ConvertModelEvent(
-                    completed=maintenance_pb2.ConvertCompleted(output_path=str(result.output_path))
+                    completed=maintenance_pb2.ConvertCompleted(
+                        output_path=str(result.output_path),
+                        artifact=worker_artifact,
+                    )
                 )
                 return
 

@@ -234,6 +234,14 @@ machine-readable reporting. The summary always includes `status`,
 missing receipt payloads use empty-string defaults and `policy_present=false`
 rather than omitting the fields.
 
+Managed artifact download/import completions also project the same integrity
+receipt through the typed worker and control-plane `ModelOperationArtifact`
+schema as `artifact_integrity`. This lets CLI, desktop, and API consumers read
+the install trust decision from protocol fields without reparsing raw
+`manifest_json`. The typed projection is a copy of the worker-owned receipt; it
+does not add a second verification path and does not replace the persisted
+`download.state.json` source of truth.
+
 Managed artifact requests may also declare companion artifacts with
 `melix.companion_manifest`, encoded as a JSON array. Each entry has:
 

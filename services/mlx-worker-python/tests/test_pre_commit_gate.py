@@ -324,12 +324,15 @@ def test_performance_probe_runs_with_scrubbed_git_environment(monkeypatch, tmp_p
     observed_base_root: str | None = None
     observed_base_root_exists = False
     observed_coverage_paths: str | None = None
+    observed_git_identity_env: dict[str, str | None] = {}
 
     def run_probe(**kwargs):
         nonlocal observed_base_root, observed_base_root_exists, observed_coverage_paths
         env = kwargs["env"]
         for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
             observed_env[name] = env.get(name)
+        for name in ("MELIX_GIT_COMMIT", "MELIX_GIT_BRANCH", "MELIX_GIT_DIRTY"):
+            observed_git_identity_env[name] = env.get(name)
         observed_base_root = env.get("MELIX_CHANGED_SCOPE_BASE_ROOT")
         observed_coverage_paths = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON")
         observed_base_root_exists = (
@@ -354,6 +357,11 @@ def test_performance_probe_runs_with_scrubbed_git_environment(monkeypatch, tmp_p
 
     assert outcome.status == "ok"
     assert observed_env == {"GIT_DIR": None, "GIT_WORK_TREE": None, "GIT_INDEX_FILE": None}
+    assert observed_git_identity_env == {
+        "MELIX_GIT_COMMIT": "unknown",
+        "MELIX_GIT_BRANCH": "unknown",
+        "MELIX_GIT_DIRTY": "true",
+    }
     assert observed_base_root is not None
     assert Path(observed_base_root).name == "base"
     assert observed_base_root_exists is True

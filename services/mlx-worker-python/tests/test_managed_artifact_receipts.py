@@ -192,6 +192,64 @@ def test_strict_managed_download_failure_emits_integrity_receipt(tmp_path: Path)
     assert service._core._job_registry.snapshot()["downloads"][0]["artifact_integrity_status"] == "failed"
 
 
+def test_strict_managed_download_completed_artifact_carries_typed_integrity_receipt(
+    tmp_path: Path,
+) -> None:
+    source_path, source_bytes = _write_download_source_file(tmp_path, size=1024)
+    source_digest = "sha256:" + hashlib.sha256(source_bytes).hexdigest()
+    output_dir = tmp_path / "strict-download-completed-artifact"
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/strict-completed-demo",
+                output_dir=str(output_dir),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "source_path": str(source_path),
+                    "melix.target_scope": "hub:mlx-community/strict-completed-demo@main",
+                    "melix.operation_kind": "managed_model_install",
+                    "melix.strict_install_mode": "true",
+                    "melix.artifact_digest": source_digest,
+                    "melix.artifact_id": "strict-completed-demo",
+                    "melix.source_ref": "refs/tags/v1.0.0",
+                    "melix.expected_source_ref": "refs/tags/v1.0.0",
+                    "melix.signature_status": "verified",
+                    "melix.policy_mode": "signed",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    completed_event = events[-1]
+    manifest_payload = json.loads(
+        [event.manifest.manifest_json for event in events if event.HasField("manifest")][-1]
+    )
+    receipt = completed_event.completed.artifact.artifact_integrity
+
+    assert completed_event.HasField("completed")
+    assert completed_event.completed.HasField("artifact")
+    assert completed_event.completed.artifact.artifact_kind == "managed_artifact"
+    assert completed_event.completed.artifact.bundle_path == completed_event.completed.output_path
+    assert receipt.status == manifest_payload["artifact_integrity"]["status"] == "passed"
+    assert receipt.verification_mode == "sha256"
+    assert receipt.policy_present is True
+    assert receipt.digest == source_digest
+    assert receipt.actual_digest == source_digest
+    assert receipt.checked_at == manifest_payload["artifact_integrity"]["checked_at"]
+    assert receipt.checked_at != "not_recorded"
+    assert receipt.failure_reason == ""
+    assert receipt.artifact_id == "strict-completed-demo"
+    assert receipt.source_ref == "refs/tags/v1.0.0"
+    assert receipt.expected_source_ref == "refs/tags/v1.0.0"
+    assert receipt.signature_status == "verified"
+    assert receipt.policy_mode == "signed"
+    assert receipt.activation_decision == "allowed"
+
+
 def test_strict_managed_hub_download_failure_emits_snapshot_digest_receipt(tmp_path: Path) -> None:
     source_dir = tmp_path / "hub-source"
     source_dir.mkdir(parents=True, exist_ok=True)

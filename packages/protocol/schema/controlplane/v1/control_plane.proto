@@ -1490,6 +1490,23 @@ message ModelOperationArtifact {
   bool smoke_test_requested = 8;
   bool smoke_test_passed = 9;
   string runtime = 10;
+  ArtifactIntegrityReceipt artifact_integrity = 11;
+}
+
+message ArtifactIntegrityReceipt {
+  string status = 1;
+  string verification_mode = 2;
+  bool policy_present = 3;
+  string digest = 4;
+  string actual_digest = 5;
+  string checked_at = 6;
+  string failure_reason = 7;
+  string artifact_id = 8;
+  string source_ref = 9;
+  string expected_source_ref = 10;
+  string signature_status = 11;
+  string policy_mode = 12;
+  string activation_decision = 13;
 }
 
 message QueueSummary {
