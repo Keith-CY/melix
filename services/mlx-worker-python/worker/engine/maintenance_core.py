@@ -3008,7 +3008,9 @@ class MaintenanceCore:
             parsed = value if type(value) is int else int(value)
             if parsed > 0:
                 normalized_values.add(parsed)
-        return tuple(sorted(normalized_values)) or default
+        if not normalized_values:
+            return default
+        return tuple(sorted(normalized_values))
 
     @staticmethod
     def _normalized_string_values(values, *, default: tuple[str, ...]) -> tuple[str, ...]:
@@ -3018,7 +3020,9 @@ class MaintenanceCore:
             normalized = raw_value.strip()
             if normalized:
                 normalized_values.add(normalized)
-        return tuple(sorted(normalized_values)) or default
+        if not normalized_values:
+            return default
+        return tuple(sorted(normalized_values))
 
     @staticmethod
     def _benchmark_matrix_request_count(
