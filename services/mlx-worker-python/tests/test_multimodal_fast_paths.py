@@ -319,7 +319,7 @@ def test_fast_path_records_hybrid_state_patch_mode_for_supported_family() -> Non
 
     assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
     assert decision.hybrid_state_patch_mode == "family_scoped"
-    assert decision.hybrid_state_advance_count == 1
+    assert decision.hybrid_state_media_count == 1
     assert decision.family_fast_path_override_count == 0
 
 
@@ -336,7 +336,7 @@ def test_fast_path_records_not_applicable_hybrid_state_for_supported_family_with
     assert decision.image_feature_cache_hits == 0
     assert decision.image_feature_cache_misses == 1
     assert decision.hybrid_state_patch_mode == "not_applicable"
-    assert decision.hybrid_state_advance_count == 0
+    assert decision.hybrid_state_media_count == 0
     assert decision.family_fast_path_override_count == 0
 
 

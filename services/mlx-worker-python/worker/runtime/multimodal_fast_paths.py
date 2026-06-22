@@ -76,7 +76,7 @@ class MultimodalFastPathDecision:
     quantized_load_mode: str
     quantized_load_fallback_reason: str
     hybrid_state_patch_mode: str
-    hybrid_state_advance_count: int
+    hybrid_state_media_count: int
     family_fast_path_override_count: int
 
 
@@ -90,7 +90,7 @@ _NO_MEDIA_FAST_PATH_DECISION = MultimodalFastPathDecision(
     quantized_load_mode=MULTIMODAL_LOAD_FALLBACK,
     quantized_load_fallback_reason="not_quantized",
     hybrid_state_patch_mode="not_applicable",
-    hybrid_state_advance_count=0,
+    hybrid_state_media_count=0,
     family_fast_path_override_count=0,
 )
 
@@ -133,7 +133,7 @@ class MultimodalFastPathController:
                 quantized_load_mode=quantized_load_mode,
                 quantized_load_fallback_reason=quantized_fallback,
                 hybrid_state_patch_mode="not_applicable",
-                hybrid_state_advance_count=0,
+                hybrid_state_media_count=0,
                 family_fast_path_override_count=0,
             )
 
@@ -174,7 +174,7 @@ class MultimodalFastPathController:
                 quantized_load_mode=MULTIMODAL_LOAD_FALLBACK,
                 quantized_load_fallback_reason="unsupported_family",
                 hybrid_state_patch_mode="fallback",
-                hybrid_state_advance_count=0,
+                hybrid_state_media_count=0,
                 family_fast_path_override_count=1,
             )
 
@@ -184,7 +184,7 @@ class MultimodalFastPathController:
                 quantized_load_mode=quantized_load_mode,
                 quantized_load_fallback_reason=quantized_fallback,
                 hybrid_state_patch_mode="fallback",
-                hybrid_state_advance_count=0,
+                hybrid_state_media_count=0,
                 family_fast_path_override_count=1,
             )
 
@@ -223,7 +223,7 @@ class MultimodalFastPathController:
         hybrid_state_patch_mode = (
             "family_scoped" if family_id in _HYBRID_STATE_PATCH_FAMILIES else "not_applicable"
         )
-        hybrid_state_advance_count = (
+        hybrid_state_media_count = (
             max(1, len(prepared_request.images) + len(prepared_request.videos))
             if hybrid_state_patch_mode == "family_scoped"
             else 0
@@ -238,7 +238,7 @@ class MultimodalFastPathController:
             quantized_load_mode=quantized_load_mode,
             quantized_load_fallback_reason=quantized_fallback,
             hybrid_state_patch_mode=hybrid_state_patch_mode,
-            hybrid_state_advance_count=hybrid_state_advance_count,
+            hybrid_state_media_count=hybrid_state_media_count,
             family_fast_path_override_count=0,
         )
 
@@ -312,7 +312,7 @@ class MultimodalFastPathController:
         quantized_load_mode: str,
         quantized_load_fallback_reason: str,
         hybrid_state_patch_mode: str = "fallback",
-        hybrid_state_advance_count: int = 0,
+        hybrid_state_media_count: int = 0,
         family_fast_path_override_count: int = 0,
     ) -> MultimodalFastPathDecision:
         return MultimodalFastPathDecision(
@@ -325,7 +325,7 @@ class MultimodalFastPathController:
             quantized_load_mode=quantized_load_mode,
             quantized_load_fallback_reason=quantized_load_fallback_reason,
             hybrid_state_patch_mode=hybrid_state_patch_mode,
-            hybrid_state_advance_count=hybrid_state_advance_count,
+            hybrid_state_media_count=hybrid_state_media_count,
             family_fast_path_override_count=family_fast_path_override_count,
         )
 
