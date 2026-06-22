@@ -698,6 +698,27 @@ def test_agentic_tool_selection_compiles_keyword_hint_rules_once_per_hint() -> N
     )
 
 
+def test_agentic_tool_selection_precomputes_keyword_rule_items_in_match_order() -> None:
+    assert tool_registry_module._BUILTIN_TOOL_KEYWORD_RULE_ITEMS == tuple(
+        (
+            tool_name,
+            tool_registry_module._BUILTIN_TOOL_KEYWORD_HINT_RULES.get(tool_name, ()),
+        )
+        for tool_name in tool_registry_module._KEYWORD_MATCHABLE_TOOL_NAMES
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search local evidence, then visit the cited page.",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search", "visit")
+    assert result.receipt["selection_mode"] == "keyword"
+
+
 def test_agentic_tool_selection_max_always_only_skips_optional_routing_scans(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

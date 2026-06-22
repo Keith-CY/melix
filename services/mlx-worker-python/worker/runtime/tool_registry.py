@@ -639,10 +639,8 @@ def _keyword_tool_matches(text: str) -> tuple[str, ...]:
     boundary_text = ""
     matches: list[str] = []
     append_match = matches.append
-    keyword_hint_rules = _BUILTIN_TOOL_KEYWORD_HINT_RULES
     keyword_boundary_text = _keyword_boundary_text
-    for tool_name in _KEYWORD_MATCHABLE_TOOL_NAMES:
-        rules = keyword_hint_rules.get(tool_name, ())
+    for tool_name, rules in _BUILTIN_TOOL_KEYWORD_RULE_ITEMS:
         for hint, literal in rules:
             if literal:
                 if hint in normalized_text:
@@ -866,6 +864,10 @@ _BUILTIN_TOOL_KEYWORD_HINTS = {
     ),
 }
 _BUILTIN_TOOL_KEYWORD_HINT_RULES = _compile_keyword_hint_rules(_BUILTIN_TOOL_KEYWORD_HINTS)
+_BUILTIN_TOOL_KEYWORD_RULE_ITEMS = tuple(
+    (tool_name, _BUILTIN_TOOL_KEYWORD_HINT_RULES.get(tool_name, ()))
+    for tool_name in _KEYWORD_MATCHABLE_TOOL_NAMES
+)
 
 
 _BUILTIN_TOOL_NAME_SET = frozenset(BUILTIN_AGENTIC_TOOL_NAMES)
