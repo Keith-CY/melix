@@ -17,6 +17,8 @@ from worker.runtime.mlx_vlm_runtime import MLXVLMRuntime, _gemma4_multimodal_wei
 
 WEIGHT_NAME_COUNT = 50000
 ITERATION_COUNT = 40
+TIMED_ITERATION_MULTIPLIER = 4
+WARMUP_COUNT = 3
 SAMPLE_COUNT = 5
 
 
@@ -34,19 +36,27 @@ def measure_once(weight_names: Iterable[str]) -> tuple[float, int, int, bool, bo
     checksum = 0
     has_vision = False
     has_audio = False
+    timed_iteration_count = ITERATION_COUNT * TIMED_ITERATION_MULTIPLIER
     started = time.perf_counter()
-    for _ in range(ITERATION_COUNT):
+    for _ in range(timed_iteration_count):
         has_vision, has_audio = _gemma4_multimodal_weight_presence(weight_names)
         if not has_vision or not has_audio:
             raise RuntimeError("expected multimodal weight names")
         visited += WEIGHT_NAME_COUNT - 1
         checksum += int(has_vision) + int(has_audio)
-    elapsed_ms = (time.perf_counter() - started) * 1000.0
-    return elapsed_ms, visited, checksum, has_vision, has_audio
+    elapsed_ms = (time.perf_counter() - started) * 1000.0 / TIMED_ITERATION_MULTIPLIER
+    return (
+        elapsed_ms,
+        visited // TIMED_ITERATION_MULTIPLIER,
+        checksum // TIMED_ITERATION_MULTIPLIER,
+        has_vision,
+        has_audio,
+    )
 
 
 def warm_up(weight_names: Iterable[str]) -> None:
-    measure_once(weight_names)
+    for _ in range(WARMUP_COUNT):
+        measure_once(weight_names)
 
 
 def run_probe() -> dict[str, float]:
@@ -93,7 +103,9 @@ def run_probe() -> dict[str, float]:
         "live_prefill_step_count": float(probe.text_batch_generator_prefill_step_count),
         "peak_bytes_mean": round(statistics.fmean(peak_samples), 6),
         "sample_count": float(SAMPLE_COUNT),
+        "timed_iteration_count": float(ITERATION_COUNT * TIMED_ITERATION_MULTIPLIER),
         "visited_names_mean": round(statistics.fmean(visited_samples), 6),
+        "warmup_count": float(WARMUP_COUNT),
         "weight_name_count": float(len(weights)),
     }
 
