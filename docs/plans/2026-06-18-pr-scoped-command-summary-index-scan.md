@@ -11,8 +11,9 @@ The affected path is already covered by the registered `pr-scoped-performance-sc
 ## Implementation plan
 
 - Preserve the existing compact single-line summary semantics.
-- Keep the existing single whole-command `strip()` before first-line selection so trailing blank heredoc lines are eliminated.
-- Replace tuple-producing `partition("\n")` with a direct newline index lookup so the summary path does not allocate the unused remaining payload.
+- Preserve the existing whole-command `strip()` before first-line selection so trailing blank heredoc lines are eliminated.
+- Keep the direct newline index lookup and use simple string concatenation for the summary suffix/truncation suffix to avoid f-string formatting overhead in the hot heartbeat loop.
+- Guard very small `max_length` values before suffix concatenation so the helper never uses negative slicing for compact custom limits.
 - Keep the behavior tests under `test_command_summary_keeps_ci_heartbeats_compact` as the regression guard.
 
 ## Verification plan

@@ -5322,12 +5322,15 @@ def test_command_and_verification_helpers_cover_skip_and_failure_paths(
 def test_command_summary_keeps_ci_heartbeats_compact() -> None:
     assert _summarize_command("python3 - <<'PY'\nprint('x')\nPY") == "python3 - <<'PY' ..."
     assert _summarize_command(" \n  python3 - <<'PY'  \nprint('x')") == "python3 - <<'PY' ..."
+    assert _summarize_command(" \n  python3 - <<'PY'  \n" + "print('x')\n" * 1000) == "python3 - <<'PY' ..."
     assert _summarize_command(" \n ") == "<empty command>"
     assert _summarize_command("python3 -m pytest\n \t\n") == "python3 -m pytest"
 
     long_summary = _summarize_command("python3 -c " + "x" * 300, max_length=80)
     assert len(long_summary) <= 80
     assert long_summary.endswith(" ...")
+    assert _summarize_command("python3 -c " + "x" * 300, max_length=4) == "pyth"
+    assert _summarize_command("python3 -c " + "x" * 300, max_length=0) == ""
 
 
 def test_run_command_emits_heartbeat_for_silent_command(

@@ -82,9 +82,13 @@ def _summarize_command(command: str, *, max_length: int = 180) -> str:
     if newline_index < 0:
         summary = command
     else:
-        summary = f"{command[:newline_index].rstrip()} ..."
+        summary = command[:newline_index].rstrip() + " ..."
     if len(summary) > max_length:
-        return f"{summary[: max_length - 4]} ..."
+        if max_length <= 0:
+            return ""
+        if max_length <= 4:
+            return summary[:max_length]
+        return summary[: max_length - 4] + " ..."
     return summary
 
 
