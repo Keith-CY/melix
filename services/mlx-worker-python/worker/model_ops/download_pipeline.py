@@ -1494,6 +1494,29 @@ class DownloadPipeline:
         return files
 
     @staticmethod
+    def _companion_directory_receipt_files(path: Path) -> list[tuple[str, int]]:
+        files: list[tuple[str, int]] = []
+        append_file = files.append
+        stack = [os.fspath(path)]
+        append_directory = stack.append
+        pop_directory = stack.pop
+        scandir = os.scandir
+        is_dir = os.DirEntry.is_dir
+        is_file = os.DirEntry.is_file
+        stat_entry = os.DirEntry.stat
+        while stack:
+            current = pop_directory()
+            with scandir(current) as entries:
+                for entry in entries:
+                    if is_dir(entry, follow_symlinks=False):
+                        append_directory(entry.path)
+                        continue
+                    if is_file(entry):
+                        append_file((entry.path, stat_entry(entry).st_size))
+        files.sort()
+        return files
+
+    @staticmethod
     def _utc_now_iso8601() -> str:
         return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -1643,10 +1666,10 @@ class DownloadPipeline:
                         source_path=resolved_path,
                         primary_artifact=primary_artifact,
                     )
-                file_paths = sorted(path for path in resolved_path.rglob("*") if path.is_file())
-                files = [str(path) for path in file_paths]
-                file_count = len(file_paths)
-                byte_count = sum(path.stat().st_size for path in file_paths)
+                directory_files = cls._companion_directory_receipt_files(resolved_path)
+                files = [file_path for file_path, _file_size in directory_files]
+                file_count = len(directory_files)
+                byte_count = sum(file_size for _file_path, file_size in directory_files)
                 status = "present"
             elif kind == "file" and resolved_path.is_file():
                 if stage:
