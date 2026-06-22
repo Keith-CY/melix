@@ -345,25 +345,16 @@ def _load_batch_run_summary_bundle(bundle_root: Path) -> dict[str, object]:
         metrics = model.get("metric_fields", {})
         if not isinstance(metrics, dict):
             metrics = {}
-        benchmark_metrics = [
-            {"name": str(name), "value": value}
-            for name, value in metrics.items()
-            if str(name).startswith("bench.") and _float_or_none(value) is not None
-        ]
-        if benchmark_metrics:
-            benchmark_results.append(
-                {
-                    "job_id": model.get("benchmark_job_id", ""),
-                    "suite": "batch",
-                    "model_index": model.get("model_index", ""),
-                    "repo_id": model.get("repo_id", ""),
-                    "metrics": benchmark_metrics,
-                }
-            )
+        benchmark_metrics: list[dict[str, object]] = []
         for name, value in metrics.items():
             metric_name = str(name)
             metric_value = _float_or_none(value)
-            if not metric_name.startswith("eval.") or metric_value is None:
+            if metric_value is None:
+                continue
+            if metric_name.startswith("bench."):
+                benchmark_metrics.append({"name": metric_name, "value": value})
+                continue
+            if not metric_name.startswith("eval."):
                 continue
             parts = metric_name.split(".")
             suite_id = parts[1] if len(parts) > 2 else "batch"
@@ -378,6 +369,16 @@ def _load_batch_run_summary_bundle(bundle_root: Path) -> dict[str, object]:
                     "sample_size": None,
                     "failure_count": 1 if model.get("status") == "failed" else 0,
                     "duration_seconds": model.get("duration_seconds"),
+                }
+            )
+        if benchmark_metrics:
+            benchmark_results.append(
+                {
+                    "job_id": model.get("benchmark_job_id", ""),
+                    "suite": "batch",
+                    "model_index": model.get("model_index", ""),
+                    "repo_id": model.get("repo_id", ""),
+                    "metrics": benchmark_metrics,
                 }
             )
     return {
