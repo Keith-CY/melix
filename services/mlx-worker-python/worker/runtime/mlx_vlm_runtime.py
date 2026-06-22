@@ -507,6 +507,163 @@ class _ChunkedPromptModelProxy:
         return self._model(*args, **kwargs)
 
 
+def _image_argument_paths(image_source: Any) -> tuple[str, ...]:
+    if image_source is None:
+        return ()
+    if isinstance(image_source, str):
+        return (image_source,)
+    if isinstance(image_source, Iterable) and not isinstance(image_source, bytes | bytearray):
+        paths: list[str] = []
+        for image in image_source:
+            if isinstance(image, str):
+                paths.append(image)
+        return tuple(paths)
+    return ()
+
+
+def _split_image_feature_payloads(features: Any, expected_count: int) -> tuple[Any, ...] | None:
+    count = max(0, int(expected_count or 0))
+    if count <= 0:
+        return ()
+    if features is None:
+        return None
+    if isinstance(features, list | tuple):
+        return tuple(features) if len(features) == count else None
+    if count == 1:
+        return (features,)
+    shape = getattr(features, "shape", None)
+    if not isinstance(shape, tuple | list) or not shape:
+        return None
+    try:
+        if int(shape[0]) != count:
+            return None
+    except (TypeError, ValueError):
+        return None
+    chunks: list[Any] = []
+    for index in range(count):
+        try:
+            chunks.append(features[index : index + 1])
+        except (TypeError, IndexError, KeyError, ValueError):
+            return None
+    return tuple(chunks)
+
+
+def _combine_image_feature_payloads(payloads: tuple[Any, ...]) -> Any | None:
+    if not payloads:
+        return ()
+    if len(payloads) == 1:
+        return payloads[0]
+    try:
+        import mlx.core as mx
+
+        return mx.concatenate(list(payloads), axis=0)
+    except Exception:
+        return None
+
+
+def _select_image_feature_rows(pixel_values: Any, indexes: list[int]) -> Any | None:
+    if not indexes:
+        return None
+    try:
+        return pixel_values[indexes]
+    except (TypeError, IndexError, KeyError, ValueError):
+        try:
+            return pixel_values[tuple(indexes)]
+        except (TypeError, IndexError, KeyError, ValueError):
+            return None
+
+
+class _MelixImageFeatureVisionCache:
+    def __init__(
+        self,
+        *,
+        loaded_model: dict[str, Any],
+        prepared_request: PreparedVisionRequest,
+        fast_path_controller: MultimodalFastPathController,
+    ) -> None:
+        self._loaded_model = loaded_model
+        self._prepared_request = prepared_request
+        self._fast_path_controller = fast_path_controller
+        self.payloads: tuple[Any | None, ...] = ()
+        self.missing_indexes: list[int] = []
+        self.unsplittable_payload = False
+
+    def get(self, image_source: Any) -> Any | None:
+        image_paths = _image_argument_paths(image_source)
+        expected_count = len(image_paths) or len(self._prepared_request.images)
+        self.payloads = self._fast_path_controller.image_feature_payloads(
+            loaded_model=self._loaded_model,
+            prepared_request=self._prepared_request,
+        )
+        if expected_count > 0 and len(self.payloads) != expected_count:
+            self.payloads = tuple(None for _ in range(expected_count))
+        self.missing_indexes = [
+            index for index, payload in enumerate(self.payloads) if payload is None
+        ]
+        cached_payloads = tuple(payload for payload in self.payloads if payload is not None)
+        if not cached_payloads:
+            return None
+        if len(cached_payloads) != len(self.payloads):
+            return None
+        return _combine_image_feature_payloads(cached_payloads)
+
+    def put(self, image_source: Any, features: Any) -> None:
+        image_paths = _image_argument_paths(image_source)
+        expected_count = len(image_paths) or len(self._prepared_request.images)
+        payloads = _split_image_feature_payloads(features, expected_count)
+        if payloads is None:
+            self.unsplittable_payload = True
+            return
+        stored = self._fast_path_controller.put_image_feature_payloads(
+            self._loaded_model,
+            self._prepared_request,
+            payloads,
+        )
+        if payloads and not any(stored) and any(payload is not None for payload in payloads):
+            self.unsplittable_payload = True
+
+    def cache_summary(self) -> tuple[int, int]:
+        return self._fast_path_controller.image_feature_cache_summary()
+
+
+class _ImageFeatureCacheModelProxy:
+    def __init__(self, model: Any, vision_cache: _MelixImageFeatureVisionCache) -> None:
+        self._model = model
+        self._vision_cache = vision_cache
+
+    def __getattr__(self, attr: str) -> Any:
+        return getattr(self._model, attr)
+
+    def encode_image(self, pixel_values: Any) -> Any:
+        cached_payloads = self._vision_cache.payloads
+        missing_indexes = self._vision_cache.missing_indexes
+        if not cached_payloads or not missing_indexes:
+            return self._model.encode_image(pixel_values)
+        if len(missing_indexes) == len(cached_payloads):
+            return self._model.encode_image(pixel_values)
+
+        missing_pixel_values = _select_image_feature_rows(pixel_values, missing_indexes)
+        if missing_pixel_values is None:
+            self._vision_cache.unsplittable_payload = True
+            return self._model.encode_image(pixel_values)
+        missing_features = self._model.encode_image(missing_pixel_values)
+        missing_payloads = _split_image_feature_payloads(missing_features, len(missing_indexes))
+        if missing_payloads is None:
+            self._vision_cache.unsplittable_payload = True
+            return self._model.encode_image(pixel_values)
+        merged_payloads: list[Any | None] = list(cached_payloads)
+        for index, payload in zip(missing_indexes, missing_payloads, strict=False):
+            if 0 <= index < len(merged_payloads):
+                merged_payloads[index] = payload
+        if any(payload is None for payload in merged_payloads):
+            self._vision_cache.unsplittable_payload = True
+            return self._model.encode_image(pixel_values)
+        combined = _combine_image_feature_payloads(tuple(merged_payloads))
+        if combined is None:
+            self._vision_cache.unsplittable_payload = True
+            return self._model.encode_image(pixel_values)
+        return combined
+
 class _TextOnlyBatchRequest:
     def __init__(
         self,
@@ -2121,6 +2278,22 @@ class MLXVLMRuntime:
                     "top_k": int(getattr(sampling, "top_k", 0)),
                     "verbose": False,
                 }
+                image_feature_vision_cache: _MelixImageFeatureVisionCache | None = None
+                if (
+                    image_argument is not None
+                    and not media_paths.video_paths
+                    and isinstance(loaded_model, dict)
+                    and _callable_accepts_kwarg(
+                        self._backend.stream_generate_fn,
+                        "vision_cache",
+                    )
+                ):
+                    image_feature_vision_cache = _MelixImageFeatureVisionCache(
+                        loaded_model=loaded_model,
+                        prepared_request=prepared_request,
+                        fast_path_controller=self._fast_path_controller,
+                    )
+                    stream_kwargs["vision_cache"] = image_feature_vision_cache
                 if media_paths.video_paths:
                     if _callable_declares_kwarg(self._backend.stream_generate_fn, "video"):
                         stream_kwargs["video"] = list(media_paths.video_paths)
@@ -2150,6 +2323,11 @@ class MLXVLMRuntime:
                     if selected_prefill_step_size is not None
                     else loaded_model["model"]
                 )
+                if image_feature_vision_cache is not None and hasattr(generation_model, "encode_image"):
+                    generation_model = _ImageFeatureCacheModelProxy(
+                        generation_model,
+                        image_feature_vision_cache,
+                    )
                 for response in self._backend.stream_generate_fn(
                     generation_model,
                     loaded_model["processor"],
@@ -2216,6 +2394,18 @@ class MLXVLMRuntime:
                         speculative_fallback_count=1 if speculative_fallback_reason else None,
                         speculative_num_draft_tokens=0 if speculative_fallback_reason else None,
                         speculative_draft_model_configured=False if speculative_fallback_reason else None,
+                    )
+                if image_feature_vision_cache is not None:
+                    artifact_count, artifact_bytes = image_feature_vision_cache.cache_summary()
+                    self._last_probe = replace(
+                        self._last_probe,
+                        image_feature_cache_artifact_count=artifact_count,
+                        image_feature_cache_bytes=artifact_bytes,
+                        image_feature_cache_fallback_reason=(
+                            "image_feature_payload_unsplittable"
+                            if image_feature_vision_cache.unsplittable_payload
+                            else ""
+                        ),
                     )
 
             event_iterable = backend_events() if self._executor is None else self._executor.iterate(backend_events)
@@ -3079,6 +3269,11 @@ class MLXVLMRuntime:
             cache_hit=False,
             image_feature_cache_hits=fast_path.image_feature_cache_hits,
             image_feature_cache_misses=fast_path.image_feature_cache_misses,
+            image_feature_cache_artifact_count=fast_path.image_feature_cache_artifact_count,
+            image_feature_cache_bytes=fast_path.image_feature_cache_bytes,
+            image_feature_encoder_calls_saved=fast_path.image_feature_encoder_calls_saved,
+            image_feature_work_saved_bytes=fast_path.image_feature_work_saved_bytes,
+            image_feature_cache_fallback_reason=fast_path.image_feature_cache_fallback_reason,
             multimodal_decode_mode=fast_path.multimodal_decode_mode,
             multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
             multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,
