@@ -226,6 +226,69 @@ def test_fast_path_uses_baseline_for_text_only_turns() -> None:
     assert decision.multi_image_scatter_mode == "none"
 
 
+def test_fast_path_text_only_plan_uses_lightweight_metadata_lookup() -> None:
+    class FixedKeyMetadata(dict):
+        def items(self):  # type: ignore[override]  # pragma: no cover
+            raise AssertionError("text-only plan should not scan arbitrary metadata items")
+
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model(quant_profile_id="q8")
+    loaded_model["metadata"] = FixedKeyMetadata(
+        {
+            "melix.vlm.execution_mode": "multimodal",
+            "vision_family_id": "gemma4-v1",
+            "vision_prompt_profile_id": "gemma4-chatml-v1",
+            **{"unrelated." + str(index): "ignored" for index in range(1000)},
+        }
+    )
+
+    decision = controller.plan(loaded_model, _request([]))
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_BASELINE
+    assert decision.multimodal_fallback_reason == "no_media"
+    assert decision.quantized_load_mode == MULTIMODAL_LOAD_NATIVE_QUANTIZED
+
+
+def test_fast_path_text_only_plan_handles_non_dict_loaded_models() -> None:
+    controller = MultimodalFastPathController()
+
+    decision = controller.plan(object(), _request([]))
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_BASELINE
+    assert decision.multimodal_fallback_reason == "no_media"
+    assert decision.quantized_load_mode == MULTIMODAL_LOAD_FALLBACK
+    assert decision.quantized_load_fallback_reason == "not_quantized"
+
+
+def test_fast_path_text_only_plan_falls_back_when_metadata_value_is_blank() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model(quant_profile_id="q8")
+    metadata = loaded_model["metadata"]
+    assert isinstance(metadata, dict)
+    metadata["melix.vlm.execution_mode"] = "  "
+
+    decision = controller.plan(loaded_model, _request([]))
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_BASELINE
+    assert decision.multimodal_fallback_reason == "no_media"
+    assert decision.quantized_load_mode == MULTIMODAL_LOAD_NATIVE_QUANTIZED
+
+
+def test_fast_path_text_only_plan_falls_back_when_metadata_value_is_none() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model(quant_profile_id="q8")
+    loaded_model["melix.vlm.execution_mode"] = "multimodal"
+    metadata = loaded_model["metadata"]
+    assert isinstance(metadata, dict)
+    metadata["melix.vlm.execution_mode"] = None
+
+    decision = controller.plan(loaded_model, _request([]))
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_BASELINE
+    assert decision.multimodal_fallback_reason == "no_media"
+    assert decision.quantized_load_mode == MULTIMODAL_LOAD_NATIVE_QUANTIZED
+
+
 def test_fast_path_admits_native_quantized_supported_multimodal_family() -> None:
     controller = MultimodalFastPathController()
 
@@ -260,7 +323,7 @@ def test_fast_path_records_hybrid_state_patch_mode_for_supported_family() -> Non
     assert decision.family_fast_path_override_count == 0
 
 
-def test_fast_path_gates_unsupported_hybrid_state_before_default_route() -> None:
+def test_fast_path_records_not_applicable_hybrid_state_for_supported_family_without_patch() -> None:
     controller = MultimodalFastPathController()
 
     decision = controller.plan(
@@ -268,11 +331,13 @@ def test_fast_path_gates_unsupported_hybrid_state_before_default_route() -> None
         _request([_image(b"image")]),
     )
 
-    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
-    assert decision.multimodal_fallback_reason == "unsupported_hybrid_state_family"
-    assert decision.hybrid_state_patch_mode == "fallback"
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
+    assert decision.multimodal_fallback_reason == ""
+    assert decision.image_feature_cache_hits == 0
+    assert decision.image_feature_cache_misses == 1
+    assert decision.hybrid_state_patch_mode == "not_applicable"
     assert decision.hybrid_state_advance_count == 0
-    assert decision.family_fast_path_override_count == 1
+    assert decision.family_fast_path_override_count == 0
 
 
 def test_fast_path_warns_and_falls_back_when_family_metadata_is_missing(caplog) -> None:
@@ -391,6 +456,48 @@ def test_fast_path_avoids_repeating_preprocessing_fingerprint_lookups_for_same_r
         _preprocessing_fingerprint.cache_clear()
 
 
+def test_fast_path_cache_misses_when_processor_shape_metadata_changes() -> None:
+    controller = MultimodalFastPathController()
+    first_model = _loaded_model()
+    second_model = _loaded_model()
+    first_metadata = first_model["metadata"]
+    second_metadata = second_model["metadata"]
+    assert isinstance(first_metadata, dict)
+    assert isinstance(second_metadata, dict)
+    first_metadata.update(
+        {
+            "vision_processor_policy": "gemma4-multicrop-v1",
+            "vision_processor_crop_grid": "2x2",
+            "vision_processor_patch_size": "14",
+            "vision_processor_max_crop_count": "4",
+            "vision_prompt_format": "interleaved-image-text",
+            "vision_projected_feature_shape": "4x256x4096",
+        }
+    )
+    second_metadata.update(
+        {
+            "vision_processor_policy": "gemma4-multicrop-v2",
+            "vision_processor_crop_grid": "3x3",
+            "vision_processor_patch_size": "14",
+            "vision_processor_max_crop_count": "9",
+            "vision_prompt_format": "interleaved-image-text",
+            "vision_projected_feature_shape": "9x256x4096",
+        }
+    )
+    image = _image(b"same-processor-sensitive-image")
+
+    first = controller.plan(first_model, _request([image]))
+    same_shape = controller.plan(first_model, _request([image]))
+    changed_shape = controller.plan(second_model, _request([image]))
+
+    assert first.image_feature_cache_hits == 0
+    assert first.image_feature_cache_misses == 1
+    assert same_shape.image_feature_cache_hits == 1
+    assert same_shape.image_feature_cache_misses == 0
+    assert changed_shape.image_feature_cache_hits == 0
+    assert changed_shape.image_feature_cache_misses == 1
+
+
 def test_fast_path_builds_request_scoped_cache_keys_with_one_fingerprint_per_media_shape(monkeypatch) -> None:
     controller = MultimodalFastPathController()
     loaded_model = _loaded_model()
@@ -398,7 +505,7 @@ def test_fast_path_builds_request_scoped_cache_keys_with_one_fingerprint_per_med
     assert isinstance(metadata, dict)
     first_image = _image(b"first-image", filename="first.jpg")
     second_image = _image(b"second-image", filename="second.jpg")
-    fingerprint_calls: list[tuple[str, str, str, str, str]] = []
+    fingerprint_calls: list[tuple[str, str, str, str, str, str, str, str, str, str, str]] = []
 
     def fake_fingerprint(
         mime_type: str,
@@ -406,6 +513,12 @@ def test_fast_path_builds_request_scoped_cache_keys_with_one_fingerprint_per_med
         vision_prompt_profile_id: str,
         vision_tokenization_mode: str,
         vision_max_images_per_prompt: str,
+        vision_processor_policy: str,
+        vision_processor_crop_grid: str,
+        vision_processor_patch_size: str,
+        vision_processor_max_crop_count: str,
+        vision_prompt_format: str,
+        vision_projected_feature_shape: str,
     ) -> str:
         fingerprint_calls.append(
             (
@@ -414,6 +527,12 @@ def test_fast_path_builds_request_scoped_cache_keys_with_one_fingerprint_per_med
                 vision_prompt_profile_id,
                 vision_tokenization_mode,
                 vision_max_images_per_prompt,
+                vision_processor_policy,
+                vision_processor_crop_grid,
+                vision_processor_patch_size,
+                vision_processor_max_crop_count,
+                vision_prompt_format,
+                vision_projected_feature_shape,
             )
         )
         return "fake-fingerprint"
@@ -451,6 +570,12 @@ def test_fast_path_builds_request_scoped_cache_keys_with_one_fingerprint_per_med
             "gemma4-chatml-v1",
             "interleaved",
             "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
         )
     ]
 
@@ -477,6 +602,12 @@ def test_fast_path_cache_key_wrapper_preserves_existing_key_shape() -> None:
             "jpg",
             "gemma4-chatml-v1",
             "interleaved",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
             "",
         ),
         quant_profile_id="none",
@@ -533,6 +664,28 @@ def test_fast_path_probe_signature_reuses_pre_sorted_top_level_keys() -> None:
         "(('model_id', 'melix-dev-vlm'), ('quant_profile_id', 'q8'), "
         "('revision', 'main'), ('tokenizer_hash', 'tok'))"
     )
+
+
+def test_fast_path_probe_signature_only_expands_processor_keys_when_present() -> None:
+    loaded_model = _loaded_model()
+
+    text_signature = fast_path_probe_signature(loaded_model, _request([]))
+    assert "vision_processor_policy" not in text_signature[2]
+    assert "vision_projected_feature_shape" not in text_signature[2]
+
+    legacy_signature = fast_path_probe_signature(loaded_model, _request([_image(b"image")]))
+    assert "vision_processor_policy" not in legacy_signature[2]
+    assert "vision_projected_feature_shape" not in legacy_signature[2]
+
+    metadata = loaded_model["metadata"]
+    assert isinstance(metadata, dict)
+    metadata["vision_processor_policy"] = "gemma4-multicrop-v1"
+    metadata["vision_projected_feature_shape"] = "4x256x4096"
+
+    processor_signature = fast_path_probe_signature(loaded_model, _request([_image(b"image")]))
+    assert "('vision_processor_policy', 'gemma4-multicrop-v1')" in processor_signature[2]
+    assert "('vision_projected_feature_shape', '4x256x4096')" in processor_signature[2]
+
 
 def test_fast_path_probe_signature_serializes_pairs_like_tuple_repr() -> None:
     pairs = [("vision_family_id", "gemma4-v1"), ("quoted", "value'with\\nnewline")]

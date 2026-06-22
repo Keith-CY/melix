@@ -50,7 +50,10 @@ from worker.runtime.runtime_utils import (
     installed_package_version as _installed_package_version,
 )
 from worker.runtime.temp_media_lifecycle import TempMediaSession
-from worker.runtime.vision_family_adapters import resolve_vision_family_config
+from worker.runtime.vision_family_adapters import (
+    resolve_vision_family_config,
+    vision_processor_capability_metadata,
+)
 
 logger = logging.getLogger(__name__)
 _GEMMA4_PRESENCE_NONE = (False, False)
@@ -1655,6 +1658,7 @@ class AutoMLXVLMBackend:
         )
         family_config = resolve_vision_family_config(dict(model_spec.ext))
         capability_metadata = family_config.capability_metadata()
+        capability_metadata.update(vision_processor_capability_metadata(dict(model_spec.ext)))
         capability_metadata["melix.vlm.text_only_step_cooperative"] = metadata[
             "melix.vlm.text_only_step_cooperative"
         ]
@@ -3028,11 +3032,12 @@ class MLXVLMRuntime:
         attention_policy: AttentionPrefillPolicyDecision | None = None,
         family_config: Any | None = None,
     ) -> None:
+        has_media = bool(prepared_request.images or prepared_request.videos)
         signature = signature or fast_path_probe_signature(
             loaded_model,
             prepared_request,
         )
-        if self._last_fast_path_signature == signature and not prepared_request.images and not prepared_request.videos:
+        if self._last_fast_path_signature == signature and not has_media:
             receipt = self._last_probe.position_metadata_receipt or {}
             if int(receipt.get("media_position_count", 0) or 0) == 0:
                 return
@@ -3044,7 +3049,9 @@ class MLXVLMRuntime:
             seq_len=seq_len,
             family_config=family_config,
         )
-        if fast_path.hybrid_state_patch_mode == "not_applicable":
+        if fast_path.hybrid_state_patch_mode == "not_applicable" and not (
+            prepared_request.images or prepared_request.videos
+        ):
             hybrid_state_patch_receipt = NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT
             hybrid_state_advance_count = 0
         else:
@@ -3093,7 +3100,6 @@ class MLXVLMRuntime:
             position_metadata_receipt=position_metadata_receipt,
             hybrid_state_patch_receipt=hybrid_state_patch_receipt,
         )
-
     def _position_metadata_receipt(
         self,
         *,
@@ -3137,18 +3143,26 @@ class MLXVLMRuntime:
                 else 0
             )
         )
-        cache_advance = 0 if patch_mode == "fallback" else max(0, int(seq_len or 0))
+        cache_advance = (
+            max(0, int(seq_len or 0))
+            if patch_mode not in {"fallback", "not_applicable"}
+            else 0
+        )
+        expected_cache_advance = 0 if patch_mode == "not_applicable" else seq_len
+        expected_contiguous_state_end = (
+            0 if patch_mode == "not_applicable" else seq_len
+        )
         row = {
             "row_index": 0,
             "seq_len": seq_len,
             "cache_offset": 0,
             "cache_advance": cache_advance,
-            "expected_cache_advance": seq_len,
+            "expected_cache_advance": expected_cache_advance,
             "media_count": media_count,
             "contiguous_state_start": 0,
             "contiguous_state_end": cache_advance,
             "expected_contiguous_state_start": 0,
-            "expected_contiguous_state_end": seq_len,
+            "expected_contiguous_state_end": expected_contiguous_state_end,
             "text_only_rope_mode": "multimodal" if media_count else "text_only",
         }
         return build_hybrid_state_patch_receipt(

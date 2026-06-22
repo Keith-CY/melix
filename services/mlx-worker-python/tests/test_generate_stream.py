@@ -553,6 +553,47 @@ def build_usage_counting_services(runtime: UsageCountingRuntime):
     return inference_service, load_response.model_handle
 
 
+def media_rejection_request(model_handle: str) -> inference_pb2.GenerateRequest:
+    return inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-text-media-rejected"),
+            model_handle=model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Summarize the media."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"image payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        ),
+                    ),
+                    common_pb2.MessagePart(
+                        audio_bytes=b"audio payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_AUDIO,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        ),
+                    ),
+                    common_pb2.MessagePart(
+                        video_bytes=b"video payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                        ),
+                    ),
+                ],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+        stream=True,
+        return_usage=False,
+    )
+
+
 def generate_usage_request(model_handle: str, *, return_usage: bool) -> inference_pb2.GenerateRequest:
     return inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
@@ -571,15 +612,58 @@ def generate_usage_request(model_handle: str, *, return_usage: bool) -> inferenc
     )
 
 
-def test_generate_without_usage_skips_prompt_token_count_fallback() -> None:
+def test_generate_without_usage_skips_prompt_token_count_fallback(monkeypatch) -> None:
     runtime = UsageCountingRuntime(prompt_tokens=0)
     inference_service, model_handle = build_usage_counting_services(runtime)
 
+    summary_calls = 0
+    original_summary = EngineCore._media_admission_summary
+
+    def counted_media_summary(messages):
+        nonlocal summary_calls
+        summary_calls += 1
+        return original_summary(messages)
+
+    monkeypatch.setattr(EngineCore, "_media_admission_summary", staticmethod(counted_media_summary))
+
     events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=False), context=None))
+    rejected_events = list(inference_service.Generate(media_rejection_request(model_handle), context=None))
 
     assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
     assert not any(event.HasField("usage_delta") for event in events)
     assert runtime.prompt_token_count_calls == 0
+    assert summary_calls == 1
+    assert len(rejected_events) == 1
+    assert rejected_events[0].HasField("error")
+    assert rejected_events[0].error.error.code == "unsupported_media"
+    assert rejected_events[0].error.error.details["reason"] == "text_runtime_media_unsupported"
+    assert rejected_events[0].error.error.details["runtime_kind"] == "text"
+    assert rejected_events[0].error.error.details["media_count"] == "3"
+    assert rejected_events[0].error.error.details["media_types"] == "image,audio,video"
+    assert rejected_events[0].error.error.details["image_count"] == "1"
+    assert rejected_events[0].error.error.details["audio_count"] == "1"
+    assert rejected_events[0].error.error.details["video_count"] == "1"
+    assert (
+        EngineCore._runtime_supports_media(
+            "text",
+            engine_core_module._MediaAdmissionSummary(audio_count=1),
+        )
+        is False
+    )
+    assert (
+        EngineCore._runtime_supports_media(
+            "image",
+            engine_core_module._MediaAdmissionSummary(video_count=1),
+        )
+        is False
+    )
+    assert (
+        EngineCore._runtime_supports_media(
+            "vlm",
+            engine_core_module._MediaAdmissionSummary(image_count=1, video_count=1),
+        )
+        is True
+    )
 
 
 def test_generate_empty_completion_skips_empty_parser_metric_assembly() -> None:

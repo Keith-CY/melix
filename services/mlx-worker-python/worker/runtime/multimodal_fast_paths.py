@@ -24,7 +24,7 @@ MULTIMODAL_LOAD_FALLBACK = "fallback"
 _SUPPORTED_FAST_PATH_FAMILIES = frozenset({"gemma4-v1", "llava-v1", "paligemma-v1"})
 _HYBRID_STATE_PATCH_FAMILIES = frozenset({"gemma4-v1", "llava-v1"})
 _NATIVE_QUANTIZED_PROFILES = frozenset({"q4", "q6", "q8", "int4", "int8", "mlx-q4", "mlx-q8"})
-_FAST_PATH_SIGNATURE_METADATA_KEYS = frozenset(
+_FAST_PATH_SIGNATURE_CORE_METADATA_KEYS = frozenset(
     {
         "melix.vlm.execution_mode",
         "vision_family_id",
@@ -35,7 +35,23 @@ _FAST_PATH_SIGNATURE_METADATA_KEYS = frozenset(
         "multimodal_adapter_hash",
     }
 )
+_FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS = frozenset(
+    {
+        "vision_processor_policy",
+        "vision_processor_crop_grid",
+        "vision_processor_patch_size",
+        "vision_processor_max_crop_count",
+        "vision_prompt_format",
+        "vision_projected_feature_shape",
+    }
+)
+_FAST_PATH_SIGNATURE_METADATA_KEYS = (
+    _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS | _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS
+)
 _FAST_PATH_SIGNATURE_METADATA_KEYS_SORTED = tuple(sorted(_FAST_PATH_SIGNATURE_METADATA_KEYS))
+_FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED = tuple(
+    sorted(_FAST_PATH_SIGNATURE_CORE_METADATA_KEYS)
+)
 _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS = ("model_id", "revision", "tokenizer_hash", "quant_profile_id")
 _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED = tuple(sorted(_FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS))
 
@@ -92,6 +108,35 @@ class MultimodalFastPathController:
         loaded_model: Any,
         prepared_request: PreparedVisionRequest,
     ) -> MultimodalFastPathDecision:
+        if not prepared_request.images and not prepared_request.videos:
+            family_id = _loaded_metadata_value(loaded_model, "vision_family_id")
+            resolved_execution_mode = (
+                _loaded_metadata_value(loaded_model, "melix.vlm.execution_mode")
+                or _loaded_metadata_value(loaded_model, "execution_mode")
+            )
+            execution_mode = resolved_execution_mode or "multimodal"
+            quant_profile_id = _loaded_metadata_value(loaded_model, "quant_profile_id") or "none"
+            quantized_load_mode, quantized_fallback = self._quantized_load_admission(
+                family_id=family_id,
+                execution_mode=execution_mode,
+                quant_profile_id=quant_profile_id,
+            )
+            if quantized_load_mode == MULTIMODAL_LOAD_FALLBACK and quantized_fallback == "not_quantized":
+                return _NO_MEDIA_FAST_PATH_DECISION
+            return MultimodalFastPathDecision(
+                image_feature_cache_hits=0,
+                image_feature_cache_misses=0,
+                multimodal_decode_mode=MULTIMODAL_DECODE_BASELINE,
+                multimodal_fallback_reason="no_media",
+                multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
+                multi_image_scatter_mode="none",
+                quantized_load_mode=quantized_load_mode,
+                quantized_load_fallback_reason=quantized_fallback,
+                hybrid_state_patch_mode="not_applicable",
+                hybrid_state_advance_count=0,
+                family_fast_path_override_count=0,
+            )
+
         metadata = _loaded_metadata(loaded_model)
         family_id = _loaded_value(loaded_model, metadata, "vision_family_id")
         resolved_execution_mode = (
@@ -108,23 +153,6 @@ class MultimodalFastPathController:
             execution_mode=execution_mode,
             quant_profile_id=quant_profile_id,
         )
-
-        if not prepared_request.images and not prepared_request.videos:
-            if quantized_load_mode == MULTIMODAL_LOAD_FALLBACK and quantized_fallback == "not_quantized":
-                return _NO_MEDIA_FAST_PATH_DECISION
-            return MultimodalFastPathDecision(
-                image_feature_cache_hits=0,
-                image_feature_cache_misses=0,
-                multimodal_decode_mode=MULTIMODAL_DECODE_BASELINE,
-                multimodal_fallback_reason="no_media",
-                multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
-                multi_image_scatter_mode="none",
-                quantized_load_mode=quantized_load_mode,
-                quantized_load_fallback_reason=quantized_fallback,
-                hybrid_state_patch_mode="not_applicable",
-                hybrid_state_advance_count=0,
-                family_fast_path_override_count=0,
-            )
 
         if execution_mode == "text_backed":
             return self._fallback_decision(
@@ -145,16 +173,6 @@ class MultimodalFastPathController:
                 reason="unsupported_family",
                 quantized_load_mode=MULTIMODAL_LOAD_FALLBACK,
                 quantized_load_fallback_reason="unsupported_family",
-                hybrid_state_patch_mode="fallback",
-                hybrid_state_advance_count=0,
-                family_fast_path_override_count=1,
-            )
-
-        if family_id not in _HYBRID_STATE_PATCH_FAMILIES:
-            return self._fallback_decision(
-                reason="unsupported_hybrid_state_family",
-                quantized_load_mode=quantized_load_mode,
-                quantized_load_fallback_reason=quantized_fallback,
                 hybrid_state_patch_mode="fallback",
                 hybrid_state_advance_count=0,
                 family_fast_path_override_count=1,
@@ -202,6 +220,14 @@ class MultimodalFastPathController:
             decode_mode = MULTIMODAL_DECODE_NATIVE_QUANTIZED
         else:
             decode_mode = MULTIMODAL_DECODE_SINGLE_STREAM
+        hybrid_state_patch_mode = (
+            "family_scoped" if family_id in _HYBRID_STATE_PATCH_FAMILIES else "not_applicable"
+        )
+        hybrid_state_advance_count = (
+            max(1, len(prepared_request.images) + len(prepared_request.videos))
+            if hybrid_state_patch_mode == "family_scoped"
+            else 0
+        )
         return MultimodalFastPathDecision(
             image_feature_cache_hits=hits,
             image_feature_cache_misses=misses,
@@ -211,8 +237,8 @@ class MultimodalFastPathController:
             multi_image_scatter_mode="per_sample" if len(prepared_request.images) > 1 else "none",
             quantized_load_mode=quantized_load_mode,
             quantized_load_fallback_reason=quantized_fallback,
-            hybrid_state_patch_mode="family_scoped",
-            hybrid_state_advance_count=max(1, len(prepared_request.images) + len(prepared_request.videos)),
+            hybrid_state_patch_mode=hybrid_state_patch_mode,
+            hybrid_state_advance_count=hybrid_state_advance_count,
             family_fast_path_override_count=0,
         )
 
@@ -227,6 +253,12 @@ class MultimodalFastPathController:
         vision_prompt_profile_id = metadata.get("vision_prompt_profile_id", "")
         vision_tokenization_mode = metadata.get("vision_tokenization_mode", "")
         vision_max_images_per_prompt = metadata.get("vision_max_images_per_prompt", "")
+        vision_processor_policy = metadata.get("vision_processor_policy", "")
+        vision_processor_crop_grid = metadata.get("vision_processor_crop_grid", "")
+        vision_processor_patch_size = metadata.get("vision_processor_patch_size", "")
+        vision_processor_max_crop_count = metadata.get("vision_processor_max_crop_count", "")
+        vision_prompt_format = metadata.get("vision_prompt_format", "")
+        vision_projected_feature_shape = metadata.get("vision_projected_feature_shape", "")
         preprocessing_fingerprints: dict[tuple[str, str], str] = {}
 
         def build(image: PreparedImageInput) -> ImageFeatureCacheKey:
@@ -239,6 +271,12 @@ class MultimodalFastPathController:
                     vision_prompt_profile_id,
                     vision_tokenization_mode,
                     vision_max_images_per_prompt,
+                    vision_processor_policy,
+                    vision_processor_crop_grid,
+                    vision_processor_patch_size,
+                    vision_processor_max_crop_count,
+                    vision_prompt_format,
+                    vision_projected_feature_shape,
                 )
                 preprocessing_fingerprints[shape] = preprocessing_fingerprint
             return ImageFeatureCacheKey(
@@ -319,24 +357,19 @@ def fast_path_probe_signature(
     metadata_repr = "()"
     if isinstance(loaded_model, dict):
         top_level_repr = _top_level_signature_repr(loaded_model)
-        metadata_pairs: list[tuple[str, str]] = []
+        metadata_keys = _signature_metadata_keys(loaded_model, prepared_request)
         nested_metadata = loaded_model.get("metadata", {})
         nested_metadata_is_dict = isinstance(nested_metadata, dict)
-        for key in _FAST_PATH_SIGNATURE_METADATA_KEYS_SORTED:
-            normalized = ""
-            value = loaded_model.get(key)
-            if isinstance(value, str) and value.strip():
-                normalized = value.strip()
-            if nested_metadata_is_dict and key in nested_metadata:
-                # Nested runtime metadata is authoritative over import-time top-level copies.
-                # The accepted key set is fixed, so probe those keys directly instead of
-                # scanning and sorting arbitrary metadata payloads on every signature call.
-                nested_normalized = str(nested_metadata[key]).strip()
-                if nested_normalized:
-                    normalized = nested_normalized
-            if normalized:
-                metadata_pairs.append((key, normalized))
-        metadata_repr = _signature_pairs_repr(metadata_pairs)
+        metadata_values = tuple(
+            _signature_metadata_value(
+                loaded_model,
+                nested_metadata,
+                nested_metadata_is_dict,
+                key,
+            )
+            for key in metadata_keys
+        )
+        metadata_repr = _signature_key_values_repr(metadata_keys, metadata_values)
     return (
         prepared_request.multimodal_hash_hex,
         top_level_repr,
@@ -345,10 +378,21 @@ def fast_path_probe_signature(
 
 
 def _top_level_signature_repr(loaded_model: dict[str, Any]) -> str:
-    model_id = str(loaded_model.get("model_id", ""))
-    quant_profile_id = str(loaded_model.get("quant_profile_id", ""))
-    revision = str(loaded_model.get("revision", ""))
-    tokenizer_hash = str(loaded_model.get("tokenizer_hash", ""))
+    return _top_level_signature_repr_values(
+        str(loaded_model.get("model_id", "")),
+        str(loaded_model.get("quant_profile_id", "")),
+        str(loaded_model.get("revision", "")),
+        str(loaded_model.get("tokenizer_hash", "")),
+    )
+
+
+@lru_cache(maxsize=1024)
+def _top_level_signature_repr_values(
+    model_id: str,
+    quant_profile_id: str,
+    revision: str,
+    tokenizer_hash: str,
+) -> str:
     return (
         "(('model_id', "
         + repr(model_id)
@@ -360,6 +404,51 @@ def _top_level_signature_repr(loaded_model: dict[str, Any]) -> str:
         + repr(tokenizer_hash)
         + "))"
     )
+
+
+def _signature_metadata_value(
+    loaded_model: dict[str, Any],
+    nested_metadata: Any,
+    nested_metadata_is_dict: bool,
+    key: str,
+) -> str:
+    normalized = ""
+    value = loaded_model.get(key)
+    if isinstance(value, str) and value.strip():
+        normalized = value.strip()
+    if nested_metadata_is_dict and key in nested_metadata:
+        # Nested runtime metadata is authoritative over import-time top-level copies.
+        # The accepted key set is fixed, so probe those keys directly instead of
+        # scanning and sorting arbitrary metadata payloads on every signature call.
+        nested_normalized = str(nested_metadata[key]).strip()
+        if nested_normalized:
+            normalized = nested_normalized
+    return normalized
+
+
+def _signature_metadata_keys(
+    loaded_model: dict[str, Any],
+    prepared_request: PreparedVisionRequest,
+) -> tuple[str, ...]:
+    if not prepared_request.images and not prepared_request.videos:
+        return _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED
+    if _has_any_loaded_metadata(loaded_model, _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS):
+        return _FAST_PATH_SIGNATURE_METADATA_KEYS_SORTED
+    return _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS_SORTED
+
+
+@lru_cache(maxsize=2048)
+def _signature_key_values_repr(keys: tuple[str, ...], values: tuple[str, ...]) -> str:
+    chunks = [
+        f"({key!r}, {value!r})"
+        for key, value in zip(keys, values, strict=True)
+        if value
+    ]
+    if not chunks:
+        return "()"
+    if len(chunks) == 1:
+        return f"({chunks[0]},)"
+    return "(" + ", ".join(chunks) + ")"
 
 
 def _signature_pairs_repr(pairs: Any) -> str:
@@ -381,6 +470,12 @@ def _loaded_metadata(loaded_model: Any) -> dict[str, str]:
         "vision_prompt_profile_id",
         "vision_tokenization_mode",
         "vision_max_images_per_prompt",
+        "vision_processor_policy",
+        "vision_processor_crop_grid",
+        "vision_processor_patch_size",
+        "vision_processor_max_crop_count",
+        "vision_prompt_format",
+        "vision_projected_feature_shape",
         "melix.multimodal_adapter_hash",
         "multimodal_adapter_hash",
     ):
@@ -395,6 +490,33 @@ def _loaded_metadata(loaded_model: Any) -> dict[str, str]:
             if normalized:
                 combined[str(key)] = normalized
     return combined
+
+
+def _loaded_metadata_value(loaded_model: Any, key: str) -> str:
+    if not isinstance(loaded_model, dict):
+        return ""
+    metadata = loaded_model.get("metadata", {})
+    if isinstance(metadata, dict) and key in metadata:
+        value = metadata[key]
+        if value is not None:
+            normalized = str(value).strip()
+            if normalized:
+                return normalized
+    value = loaded_model.get(key, "")
+    if value:
+        return str(value).strip()
+    return ""
+
+
+def _has_any_loaded_metadata(loaded_model: dict[str, Any], keys: frozenset[str]) -> bool:
+    for source in (loaded_model, loaded_model.get("metadata", {})):
+        if not isinstance(source, dict) or keys.isdisjoint(source):
+            continue
+        for key in keys:
+            value = source.get(key, "")
+            if value and str(value).strip():
+                return True
+    return False
 
 
 def _loaded_value(loaded_model: Any, metadata: dict[str, str], key: str) -> str:
@@ -422,6 +544,12 @@ def _preprocessing_fingerprint(
     vision_prompt_profile_id: str,
     vision_tokenization_mode: str,
     vision_max_images_per_prompt: str,
+    vision_processor_policy: str,
+    vision_processor_crop_grid: str,
+    vision_processor_patch_size: str,
+    vision_processor_max_crop_count: str,
+    vision_prompt_format: str,
+    vision_projected_feature_shape: str,
 ) -> str:
     digest = hashlib.sha256()
     for value in (
@@ -430,6 +558,12 @@ def _preprocessing_fingerprint(
         vision_prompt_profile_id,
         vision_tokenization_mode,
         vision_max_images_per_prompt,
+        vision_processor_policy,
+        vision_processor_crop_grid,
+        vision_processor_patch_size,
+        vision_processor_max_crop_count,
+        vision_prompt_format,
+        vision_projected_feature_shape,
     ):
         digest.update(str(value or "").encode("utf-8"))
         digest.update(b"\0")

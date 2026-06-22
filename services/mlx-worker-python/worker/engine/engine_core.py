@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 import json
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
@@ -51,11 +52,36 @@ _DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON = _COMPACT_SORTED_JSON_ENCODER.encod
         "tool_source_ids": [],
     }
 )
+_IMAGE_GENERATE_RUNTIME_KINDS = frozenset({"ocr", "vlm", "image"})
+_VIDEO_GENERATE_RUNTIME_KINDS = frozenset({"vlm"})
+_AUDIO_GENERATE_RUNTIME_KINDS = frozenset({"transcription", "speech"})
 _PROMPT_CONTEXT_RECEIPT_METRIC_KEYS = {
     "melix.prompt_context.receipt_schema": "prompt_context_receipt_schema",
     "melix.prompt_context.receipt_count": "prompt_context_receipt_count",
     "melix.prompt_context.receipts_json": "prompt_context_receipts_json",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class _MediaAdmissionSummary:
+    image_count: int = 0
+    audio_count: int = 0
+    video_count: int = 0
+
+    @property
+    def media_count(self) -> int:
+        return self.image_count + self.audio_count + self.video_count
+
+    @property
+    def media_types(self) -> tuple[str, ...]:
+        media_types: list[str] = []
+        if self.image_count:
+            media_types.append("image")
+        if self.audio_count:
+            media_types.append("audio")
+        if self.video_count:
+            media_types.append("video")
+        return tuple(media_types)
 
 
 def _canonical_json_schema_key(schema: str) -> str:
@@ -212,6 +238,24 @@ class EngineCore:
         if loaded_model is None:
             yield self._error_event(request_id, 1, "not_found", "Unknown model handle.")
             return
+
+        if self._has_media_admission_parts(request.messages):
+            media_admission_summary = self._media_admission_summary(request.messages)
+            if media_admission_summary.media_count and not self._runtime_supports_media(
+                loaded_model.runtime_kind,
+                media_admission_summary,
+            ):
+                yield self._error_event(
+                    request_id,
+                    1,
+                    "unsupported_media",
+                    "The selected model route does not support media-bearing generate requests.",
+                    details=self._unsupported_media_details(
+                        loaded_model,
+                        media_admission_summary,
+                    ),
+                )
+                return
 
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         generate_tokens = runtime.generate_tokens
@@ -864,6 +908,74 @@ class EngineCore:
                 error=common_pb2.ErrorStatus(code=code, message=message, details=details or {})
             ),
         )
+
+    @staticmethod
+    def _has_media_admission_parts(messages: object) -> bool:
+        for message in messages:
+            for part in getattr(message, "parts", ()):
+                if part.HasField("text"):
+                    continue
+                part_kind = part.WhichOneof("part")
+                if part_kind is not None and part_kind != "text":
+                    return True
+        return False
+
+    @staticmethod
+    def _media_admission_summary(messages: object) -> _MediaAdmissionSummary:
+        image_count = 0
+        audio_count = 0
+        video_count = 0
+        for message in messages:
+            for part in getattr(message, "parts", ()):
+                if part.HasField("text"):
+                    continue
+                part_kind = part.WhichOneof("part")
+                media = getattr(part, "media", None)
+                media_type = getattr(media, "media_type", common_pb2.MEDIA_TYPE_UNSPECIFIED)
+                if part_kind in {"image_uri", "image_bytes"} or media_type == common_pb2.MEDIA_TYPE_IMAGE:
+                    image_count += 1
+                elif part_kind in {"audio_uri", "audio_bytes"} or media_type == common_pb2.MEDIA_TYPE_AUDIO:
+                    audio_count += 1
+                elif part_kind in {"video_uri", "video_bytes"} or media_type == common_pb2.MEDIA_TYPE_VIDEO:
+                    video_count += 1
+        return _MediaAdmissionSummary(
+            image_count=image_count,
+            audio_count=audio_count,
+            video_count=video_count,
+        )
+
+    @staticmethod
+    def _runtime_supports_media(
+        runtime_kind: str,
+        summary: _MediaAdmissionSummary,
+    ) -> bool:
+        if summary.image_count and runtime_kind not in _IMAGE_GENERATE_RUNTIME_KINDS:
+            return False
+        if summary.audio_count and runtime_kind not in _AUDIO_GENERATE_RUNTIME_KINDS:
+            return False
+        if summary.video_count and runtime_kind not in _VIDEO_GENERATE_RUNTIME_KINDS:
+            return False
+        return True
+
+    @staticmethod
+    def _unsupported_media_details(
+        loaded_model: object,
+        summary: _MediaAdmissionSummary,
+    ) -> dict[str, str]:
+        runtime_kind = str(getattr(loaded_model, "runtime_kind", "") or "")
+        spec = getattr(loaded_model, "spec", None)
+        model_id = str(getattr(spec, "model_id", "") or "")
+        reason = "text_runtime_media_unsupported" if runtime_kind == "text" else "runtime_media_unsupported"
+        return {
+            "reason": reason,
+            "model_id": model_id,
+            "runtime_kind": runtime_kind,
+            "media_count": str(summary.media_count),
+            "media_types": ",".join(summary.media_types),
+            "image_count": str(summary.image_count),
+            "audio_count": str(summary.audio_count),
+            "video_count": str(summary.video_count),
+        }
 
     @staticmethod
     def _plain_text_fast_path(request: inference_pb2.GenerateRequest) -> bool:

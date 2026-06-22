@@ -914,39 +914,52 @@ class WorkerRegistry:
                 peak_allocation_bytes = 0
                 memory_headroom_bytes = self._memory_headroom_bytes
                 resident_bytes = model_resident_bytes + cache_resident_bytes + kv_cache_bytes
-                last_probe_kind = self._last_probe_kind
-                last_preprocess_latency_ms = self._last_preprocess_latency_ms
-                last_preprocess_input_bytes = self._last_preprocess_input_bytes
-                last_preprocess_peak_memory_bytes = self._last_preprocess_peak_memory_bytes
-                last_first_token_latency_ms = self._last_first_token_latency_ms
-                last_transcription_latency_ms = self._last_transcription_latency_ms
-                last_speech_latency_ms = self._last_speech_latency_ms
-                last_audio_duration_seconds = self._last_audio_duration_seconds
-                last_audio_chunk_count = self._last_audio_chunk_count
-                last_audio_output_bytes = self._last_audio_output_bytes
-                last_speech_streaming_enabled = self._last_speech_streaming_enabled
-                last_speech_streaming_interval_ms = self._last_speech_streaming_interval_ms
-                last_speech_first_audio_latency_ms = self._last_speech_first_audio_latency_ms
-                multimodal_decode_probe = (
-                    self._multimodal_decode_probe_locked() if self._has_multimodal_decode_probe else None
+                has_probe_receipts = bool(
+                    self._last_probe_kind
+                    or self._has_multimodal_decode_probe
+                    or self._last_audio_model_load_latency_ms
+                    or self._last_audio_backend_unavailable_count
+                    or self._last_model_load_trust_policy_resolution_ms
+                    or self._model_load_trust_blocked_count
                 )
-                last_audio_model_load_latency_ms = self._last_audio_model_load_latency_ms
-                last_audio_backend_unavailable_count = self._last_audio_backend_unavailable_count
-                last_voice_fallback_count = self._last_voice_fallback_count
-                last_language_fallback_count = self._last_language_fallback_count
-                last_video_effective_frame_count = self._last_video_effective_frame_count
-                last_video_requested_frame_budget = self._last_video_requested_frame_budget
-                last_video_window_ms = self._last_video_window_ms
-                last_temp_media_artifact_count = self._last_temp_media_artifact_count
-                last_temp_media_artifact_bytes = self._last_temp_media_artifact_bytes
-                last_temp_media_cleanup_latency_ms = self._last_temp_media_cleanup_latency_ms
-                last_temp_media_cleanup_failure_count = self._last_temp_media_cleanup_failure_count
-                last_image_job_latency_ms = self._last_image_job_latency_ms
-                last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
-                last_image_output_bytes = self._last_image_output_bytes
-                last_image_peak_memory_bytes = self._last_image_peak_memory_bytes
-                last_model_load_trust_policy_resolution_ms = self._last_model_load_trust_policy_resolution_ms
-                model_load_trust_blocked_count = self._model_load_trust_blocked_count
+                if has_probe_receipts:
+                    last_probe_kind = self._last_probe_kind
+                    last_preprocess_latency_ms = self._last_preprocess_latency_ms
+                    last_preprocess_input_bytes = self._last_preprocess_input_bytes
+                    last_preprocess_peak_memory_bytes = self._last_preprocess_peak_memory_bytes
+                    last_first_token_latency_ms = self._last_first_token_latency_ms
+                    last_transcription_latency_ms = self._last_transcription_latency_ms
+                    last_speech_latency_ms = self._last_speech_latency_ms
+                    last_audio_duration_seconds = self._last_audio_duration_seconds
+                    last_audio_chunk_count = self._last_audio_chunk_count
+                    last_audio_output_bytes = self._last_audio_output_bytes
+                    last_speech_streaming_enabled = self._last_speech_streaming_enabled
+                    last_speech_streaming_interval_ms = self._last_speech_streaming_interval_ms
+                    last_speech_first_audio_latency_ms = self._last_speech_first_audio_latency_ms
+                    multimodal_decode_probe = (
+                        self._multimodal_decode_probe_locked() if self._has_multimodal_decode_probe else None
+                    )
+                    last_audio_model_load_latency_ms = self._last_audio_model_load_latency_ms
+                    last_audio_backend_unavailable_count = self._last_audio_backend_unavailable_count
+                    last_voice_fallback_count = self._last_voice_fallback_count
+                    last_language_fallback_count = self._last_language_fallback_count
+                    last_video_effective_frame_count = self._last_video_effective_frame_count
+                    last_video_requested_frame_budget = self._last_video_requested_frame_budget
+                    last_video_window_ms = self._last_video_window_ms
+                    last_temp_media_artifact_count = self._last_temp_media_artifact_count
+                    last_temp_media_artifact_bytes = self._last_temp_media_artifact_bytes
+                    last_temp_media_cleanup_latency_ms = self._last_temp_media_cleanup_latency_ms
+                    last_temp_media_cleanup_failure_count = self._last_temp_media_cleanup_failure_count
+                    last_image_job_latency_ms = self._last_image_job_latency_ms
+                    last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
+                    last_image_output_bytes = self._last_image_output_bytes
+                    last_image_peak_memory_bytes = self._last_image_peak_memory_bytes
+                    last_model_load_trust_policy_resolution_ms = (
+                        self._last_model_load_trust_policy_resolution_ms
+                    )
+                    model_load_trust_blocked_count = self._model_load_trust_blocked_count
+                else:
+                    multimodal_decode_probe = None
             if (
                 active_vlm_requests <= 0
                 or refreshed_live_vlm_probe
@@ -967,42 +980,43 @@ class WorkerRegistry:
             l1_hit_rate=cache_stats.l1_hit_rate,
             l2_hit_rate=cache_stats.l2_hit_rate,
             active_multimodal_requests=active_multimodal_requests,
-            last_probe_kind=last_probe_kind,
-            last_preprocess_latency_ms=last_preprocess_latency_ms,
-            last_preprocess_input_bytes=last_preprocess_input_bytes,
-            last_preprocess_peak_memory_bytes=last_preprocess_peak_memory_bytes,
-            last_first_token_latency_ms=last_first_token_latency_ms,
-            last_transcription_latency_ms=last_transcription_latency_ms,
-            last_speech_latency_ms=last_speech_latency_ms,
-            last_audio_duration_seconds=last_audio_duration_seconds,
-            last_audio_chunk_count=last_audio_chunk_count,
-            last_audio_output_bytes=last_audio_output_bytes,
-            last_speech_streaming_enabled=last_speech_streaming_enabled,
-            last_speech_streaming_interval_ms=last_speech_streaming_interval_ms,
-            last_speech_first_audio_latency_ms=last_speech_first_audio_latency_ms,
-            last_audio_model_load_latency_ms=last_audio_model_load_latency_ms,
-            last_audio_backend_unavailable_count=last_audio_backend_unavailable_count,
-            last_voice_fallback_count=last_voice_fallback_count,
-            last_language_fallback_count=last_language_fallback_count,
-            last_video_effective_frame_count=last_video_effective_frame_count,
-            last_video_requested_frame_budget=last_video_requested_frame_budget,
-            last_video_window_ms=last_video_window_ms,
-            last_temp_media_artifact_count=last_temp_media_artifact_count,
-            last_temp_media_artifact_bytes=last_temp_media_artifact_bytes,
-            last_temp_media_cleanup_latency_ms=last_temp_media_cleanup_latency_ms,
-            last_temp_media_cleanup_failure_count=last_temp_media_cleanup_failure_count,
-            last_image_job_latency_ms=last_image_job_latency_ms,
-            last_image_artifact_publish_ms=last_image_artifact_publish_ms,
-            last_image_output_bytes=last_image_output_bytes,
-            last_image_peak_memory_bytes=last_image_peak_memory_bytes,
             generation_stream_owner_mode=mlx_executor_snapshot.generation_stream_owner_mode,
             worker_thread_init_latency_ms=mlx_executor_snapshot.worker_thread_init_latency_ms,
             stream_sync_fallback_count=mlx_executor_snapshot.stream_sync_fallback_count,
         )
-        if last_model_load_trust_policy_resolution_ms:
-            stats.last_model_load_trust_policy_resolution_ms = last_model_load_trust_policy_resolution_ms
-        if model_load_trust_blocked_count:
-            stats.model_load_trust_blocked_count = model_load_trust_blocked_count
+        if has_probe_receipts:
+            stats.last_probe_kind = last_probe_kind
+            stats.last_preprocess_latency_ms = last_preprocess_latency_ms
+            stats.last_preprocess_input_bytes = last_preprocess_input_bytes
+            stats.last_preprocess_peak_memory_bytes = last_preprocess_peak_memory_bytes
+            stats.last_first_token_latency_ms = last_first_token_latency_ms
+            stats.last_transcription_latency_ms = last_transcription_latency_ms
+            stats.last_speech_latency_ms = last_speech_latency_ms
+            stats.last_audio_duration_seconds = last_audio_duration_seconds
+            stats.last_audio_chunk_count = last_audio_chunk_count
+            stats.last_audio_output_bytes = last_audio_output_bytes
+            stats.last_speech_streaming_enabled = last_speech_streaming_enabled
+            stats.last_speech_streaming_interval_ms = last_speech_streaming_interval_ms
+            stats.last_speech_first_audio_latency_ms = last_speech_first_audio_latency_ms
+            stats.last_audio_model_load_latency_ms = last_audio_model_load_latency_ms
+            stats.last_audio_backend_unavailable_count = last_audio_backend_unavailable_count
+            stats.last_voice_fallback_count = last_voice_fallback_count
+            stats.last_language_fallback_count = last_language_fallback_count
+            stats.last_video_effective_frame_count = last_video_effective_frame_count
+            stats.last_video_requested_frame_budget = last_video_requested_frame_budget
+            stats.last_video_window_ms = last_video_window_ms
+            stats.last_temp_media_artifact_count = last_temp_media_artifact_count
+            stats.last_temp_media_artifact_bytes = last_temp_media_artifact_bytes
+            stats.last_temp_media_cleanup_latency_ms = last_temp_media_cleanup_latency_ms
+            stats.last_temp_media_cleanup_failure_count = last_temp_media_cleanup_failure_count
+            stats.last_image_job_latency_ms = last_image_job_latency_ms
+            stats.last_image_artifact_publish_ms = last_image_artifact_publish_ms
+            stats.last_image_output_bytes = last_image_output_bytes
+            stats.last_image_peak_memory_bytes = last_image_peak_memory_bytes
+            if last_model_load_trust_policy_resolution_ms:
+                stats.last_model_load_trust_policy_resolution_ms = last_model_load_trust_policy_resolution_ms
+            if model_load_trust_blocked_count:
+                stats.model_load_trust_blocked_count = model_load_trust_blocked_count
         if multimodal_decode_probe is not None:
             self._apply_multimodal_decode_probe(stats, multimodal_decode_probe)
         stats.model_resident_bytes = model_resident_bytes
