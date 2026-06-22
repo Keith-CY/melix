@@ -299,6 +299,13 @@ def test_dataset_version_listing_uses_scandir_without_path_glob(
 
     monkeypatch.setattr(Path, "glob", fail_glob)
 
+    def fail_isfile(path: str):  # pragma: no cover - exercised only on regression
+        raise AssertionError(
+            f"list_dataset_versions() should skip pre-open os.path.isfile({path!s}) probes"
+        )
+
+    monkeypatch.setattr("worker.productization.dataset_preparation.os.path.isfile", fail_isfile)
+
     def fail_read_json(path: Path):  # pragma: no cover - exercised only on regression
         raise AssertionError(
             f"list_dataset_versions() should read manifest bytes directly without Path.read_bytes({path!s})"
@@ -316,6 +323,37 @@ def test_dataset_version_listing_uses_scandir_without_path_glob(
     listing = list_dataset_versions(
         workspace_manifest_path=tmp_path / "workspace-manifest.json",
         output_root=output_root,
+        dataset_id="support-chat",
+    )
+
+    assert [item["version_id"] for item in listing["versions"]] == ["support-chat-v1"]
+    assert listing["metrics"]["dataset_version_count"] == 1
+
+
+def test_dataset_version_listing_skips_missing_or_directory_manifests(tmp_path: Path) -> None:
+    versions_root = tmp_path / "datasets" / "support-chat" / "versions"
+    valid_version_dir = versions_root / "support-chat-v1"
+    missing_manifest_dir = versions_root / "support-chat-v2"
+    directory_manifest_dir = versions_root / "support-chat-v3"
+    valid_version_dir.mkdir(parents=True)
+    missing_manifest_dir.mkdir()
+    directory_manifest_dir.mkdir()
+    (directory_manifest_dir / "dataset-version.json").mkdir()
+    (valid_version_dir / "dataset-version.json").write_text(
+        json.dumps(
+            {
+                "dataset_id": "support-chat",
+                "version_id": "support-chat-v1",
+                "created_at": "2026-05-24T01:00:00Z",
+                "status": "ready",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    listing = list_dataset_versions(
+        workspace_manifest_path=tmp_path / "workspace-manifest.json",
+        output_root=tmp_path / "datasets",
         dataset_id="support-chat",
     )
 
