@@ -215,6 +215,19 @@ def test_compare_versions_does_not_allocate_streaming_part_generators(
     assert compare_versions("3.0-alpha", "2.99.99") == 1
 
 
+def test_compare_versions_differing_values_skip_part_tuple_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_next_part(value: str, index: int):  # pragma: no cover - sentinel
+        raise AssertionError(f"compare_versions allocated part tuple for {value} at {index}")
+
+    monkeypatch.setattr(startup_signals_module, "_next_normalized_version_part", fail_next_part)
+
+    assert compare_versions("v3.2.1+build", "v3.2.0+build") == 1
+    assert compare_versions("2.9.99", "2.10.0") == -1
+    assert compare_versions(" v2.10rc1.0-beta+build ", "2.9.99") == 1
+
+
 def test_compare_versions_identical_raw_values_skip_normalization() -> None:
     class StripForbiddenVersion(str):
         def strip(self, chars: str | None = None) -> str:  # pragma: no cover - sentinel

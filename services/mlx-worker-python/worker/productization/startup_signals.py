@@ -208,16 +208,7 @@ def compare_versions(left: str, right: str) -> int:
     ):
         left_index = 1 if left[0] == "v" else 0
         right_index = 1 if right[0] == "v" else 0
-        next_normalized_version_part = _next_normalized_version_part
-        while True:
-            left_value, left_index, left_done = next_normalized_version_part(left, left_index)
-            right_value, right_index, right_done = next_normalized_version_part(right, right_index)
-            if left_done and right_done:
-                return 0
-            if left_value < right_value:
-                return -1
-            if left_value > right_value:
-                return 1
+        return _compare_normalized_version_parts(left, right, left_index, right_index)
 
     left_cleaned = left.strip()
     right_cleaned = right.strip()
@@ -232,20 +223,83 @@ def compare_versions(left: str, right: str) -> int:
             return 0
         if right_index and right_length == left_length + 1 and right_cleaned.startswith(left_cleaned, 1):
             return 0
-    next_normalized_version_part = _next_normalized_version_part
+    return _compare_normalized_version_parts(
+        left_cleaned,
+        right_cleaned,
+        left_index,
+        right_index,
+    )
+
+
+def normalized_version_parts(value: str) -> list[int]:
+    return list(_iter_normalized_version_parts(value)) or [0]
+
+
+def _compare_normalized_version_parts(
+    left: str,
+    right: str,
+    left_index: int,
+    right_index: int,
+) -> int:
+    left_length = len(left)
+    right_length = len(right)
+    ord_ = _ORD
+
     while True:
-        left_value, left_index, left_done = next_normalized_version_part(left_cleaned, left_index)
-        right_value, right_index, right_done = next_normalized_version_part(right_cleaned, right_index)
+        left_value = 0
+        left_digit_seen = False
+        left_digit_prefix_active = True
+        left_part_has_chars = False
+        while left_index < left_length:
+            character_code = ord_(left[left_index])
+            left_index += 1
+            if character_code == 43 or character_code == 45:
+                left_index = left_length
+                break
+            if character_code == 46:
+                if left_part_has_chars:
+                    break
+                continue
+            left_part_has_chars = True
+            if left_digit_prefix_active and 48 <= character_code <= 57:
+                left_value = left_value * 10 + (character_code - 48)
+                left_digit_seen = True
+            else:
+                left_digit_prefix_active = False
+        left_done = not left_part_has_chars
+        if not left_digit_seen:
+            left_value = 0
+
+        right_value = 0
+        right_digit_seen = False
+        right_digit_prefix_active = True
+        right_part_has_chars = False
+        while right_index < right_length:
+            character_code = ord_(right[right_index])
+            right_index += 1
+            if character_code == 43 or character_code == 45:
+                right_index = right_length
+                break
+            if character_code == 46:
+                if right_part_has_chars:
+                    break
+                continue
+            right_part_has_chars = True
+            if right_digit_prefix_active and 48 <= character_code <= 57:
+                right_value = right_value * 10 + (character_code - 48)
+                right_digit_seen = True
+            else:
+                right_digit_prefix_active = False
+        right_done = not right_part_has_chars
+        if not right_digit_seen:
+            right_value = 0
+
         if left_done and right_done:
             return 0
         if left_value < right_value:
             return -1
         if left_value > right_value:
             return 1
-
-
-def normalized_version_parts(value: str) -> list[int]:
-    return list(_iter_normalized_version_parts(value)) or [0]
 
 
 def _next_normalized_version_part(value: str, index: int) -> tuple[int, int, bool]:

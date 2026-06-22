@@ -580,6 +580,31 @@ def test_measurable_changed_lines_handles_large_measured_sets_without_union(tmp_
     assert missed == [2]
 
 
+def test_measurable_changed_lines_keeps_reversed_coverage_fallback(tmp_path: Path) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 6)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [5, 3, 1],
+                "missing_lines": [4, 2],
+            }
+        }
+    }
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {2, 3, 6},
+    )
+
+    assert measurable == [2, 3]
+    assert covered == [3]
+    assert missed == [2]
+    assert changed_scope_coverage._sorted_line_list_contains([1, 3, 5], 4) is False
+
+
 def test_changed_scope_coverage_probe_emits_empty_path_metrics() -> None:
     metrics = changed_scope_coverage_probe.run_probe(Path(__file__).resolve().parents[1], path_count=5, samples=2)
 

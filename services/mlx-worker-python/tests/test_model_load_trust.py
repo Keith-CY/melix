@@ -247,6 +247,38 @@ def test_trust_policy_falls_back_to_vlm_loader_family_without_runtime_contract(t
     assert policy.loader_family == "mlx-vlm"
 
 
+def test_trust_policy_common_loader_fast_path_skips_normalized_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model_load_trust_module, "TRUST_APPLICABLE_TEXT_LOADERS", frozenset())
+    monkeypatch.setattr(model_load_trust_module, "TRUST_APPLICABLE_VLM_LOADERS", frozenset())
+
+    assert model_load_trust_module._is_trust_applicable(
+        "text",
+        "mlx-lm",
+        "mlx-lm",
+        RecordingTextBackend(),
+    ) is True
+    assert model_load_trust_module._is_trust_applicable(
+        "text",
+        "wrapped-text",
+        "mlx-lm",
+        RecordingTextBackend(),
+    ) is True
+    assert model_load_trust_module._is_trust_applicable(
+        "vlm",
+        "custom-vlm",
+        "deterministic-vlm",
+        NamedRuntime("deterministic-vlm"),
+    ) is False
+    assert model_load_trust_module._is_trust_applicable(
+        "vlm",
+        "mlx-vlm",
+        "wrapped-vlm",
+        NamedRuntime("wrapped-vlm"),
+    ) is True
+
+
 def test_trust_policy_reads_config_json_bytes_without_text_decode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
