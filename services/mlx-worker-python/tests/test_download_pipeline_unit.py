@@ -957,6 +957,28 @@ def test_strict_managed_download_records_verified_release_policy_receipt(tmp_pat
     assert payload["artifact_integrity"]["activation_decision"] == "allowed"
 
 
+def test_release_policy_receipt_ignores_bare_ext_keys() -> None:
+    receipt = DownloadPipeline._artifact_release_policy_receipt(
+        ext={
+            "artifact_id": "bare-artifact",
+            "source_ref": "refs/tags/bare",
+            "expected_source_ref": "refs/tags/bare",
+            "signature_status": "verified",
+            "policy_mode": "signed",
+        },
+        status="passed",
+    )
+
+    assert receipt == {
+        "artifact_id": "",
+        "source_ref": "",
+        "expected_source_ref": "",
+        "signature_status": "",
+        "policy_mode": "",
+        "activation_decision": "allowed",
+    }
+
+
 def test_strict_integrity_rejects_missing_actual_digest_before_activation(tmp_path: Path) -> None:
     partial_path = tmp_path / "download.artifact.partial"
     partial_path.write_bytes(b"abcdef")

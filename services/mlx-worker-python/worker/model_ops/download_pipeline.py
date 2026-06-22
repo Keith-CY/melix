@@ -1072,13 +1072,11 @@ class DownloadPipeline:
         elif status == "passed":
             activation_decision = "allowed"
         return {
-            "artifact_id": cls._ext_text(ext, "melix.artifact_id") or cls._ext_text(ext, "artifact_id"),
-            "source_ref": cls._ext_text(ext, "melix.source_ref") or cls._ext_text(ext, "source_ref"),
-            "expected_source_ref": cls._ext_text(ext, "melix.expected_source_ref")
-            or cls._ext_text(ext, "expected_source_ref"),
-            "signature_status": cls._ext_text(ext, "melix.signature_status")
-            or cls._ext_text(ext, "signature_status"),
-            "policy_mode": cls._ext_text(ext, "melix.policy_mode") or cls._ext_text(ext, "policy_mode"),
+            "artifact_id": cls._ext_text(ext, "melix.artifact_id"),
+            "source_ref": cls._ext_text(ext, "melix.source_ref"),
+            "expected_source_ref": cls._ext_text(ext, "melix.expected_source_ref"),
+            "signature_status": cls._ext_text(ext, "melix.signature_status"),
+            "policy_mode": cls._ext_text(ext, "melix.policy_mode"),
             "activation_decision": activation_decision,
         }
 
@@ -1792,6 +1790,7 @@ class DownloadPipeline:
     ) -> Path | None:
         candidate = Path(declared_path).expanduser()
         if candidate.is_absolute():
+            # Preserve operator-declared spelling such as /var on macOS; later stat checks decide presence.
             return candidate
         search_roots = [companion_search_artifact.parent, primary_artifact.parent]
         managed_root = ext.get("melix.managed_root", "").strip()
