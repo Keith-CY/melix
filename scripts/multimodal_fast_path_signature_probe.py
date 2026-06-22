@@ -85,6 +85,17 @@ def main() -> int:
         elapsed_samples.append(elapsed_ms)
         peak_samples.append(float(peak))
 
+    from worker.runtime.multimodal_fast_paths import MultimodalFastPathController
+
+    feature_controller = MultimodalFastPathController()
+    first_cache_decision = feature_controller.plan(loaded_model, request)
+    feature_controller.put_image_feature_payloads(
+        loaded_model,
+        request,
+        ("synthetic-image-feature-payload",),
+    )
+    second_cache_decision = feature_controller.plan(loaded_model, request)
+
     print(
         json.dumps(
             {
@@ -94,6 +105,22 @@ def main() -> int:
                 "iterations_per_sample": float(iterations),
                 "signature_count": float(signature_count),
                 "top_level_item_count": float(expected_signature[1].count("(")) - 1.0,
+                "image_feature_cache_artifact_count": float(
+                    second_cache_decision.image_feature_cache_artifact_count
+                ),
+                "image_feature_cache_bytes": float(second_cache_decision.image_feature_cache_bytes),
+                "image_feature_encoder_calls_saved": float(
+                    second_cache_decision.image_feature_encoder_calls_saved
+                ),
+                "image_feature_work_saved_bytes": float(
+                    second_cache_decision.image_feature_work_saved_bytes
+                ),
+                "image_feature_cache_miss_count": float(
+                    first_cache_decision.image_feature_cache_misses
+                ),
+                "image_feature_cache_hit_count": float(
+                    second_cache_decision.image_feature_cache_hits
+                ),
             },
             sort_keys=True,
         )

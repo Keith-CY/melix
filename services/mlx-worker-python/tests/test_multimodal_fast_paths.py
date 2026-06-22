@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+
 from worker.runtime.multimodal_fast_paths import (
+    ImageFeatureCacheEntry,
     ImageFeatureCacheKey,
     MULTIMODAL_DECODE_BASELINE,
     MULTIMODAL_DECODE_FALLBACK,
@@ -105,35 +108,133 @@ def _loaded_model(
 
 
 def test_fast_path_records_cache_miss_then_hit_for_repeated_image() -> None:
-    controller = MultimodalFastPathController()
+    extractor_calls: list[str] = []
+
+    def extractor(key: ImageFeatureCacheKey, image: PreparedImageInput) -> ImageFeatureCacheEntry:
+        extractor_calls.append(image.sha256_hex)
+        return ImageFeatureCacheEntry(
+            cache_key=key,
+            artifact_id=f"feature:{image.sha256_hex}",
+            payload=None,
+            feature_byte_length=image.byte_length * 4,
+            source_image_bytes=image.byte_length,
+            encoder_call_count=1,
+        )
+
+    controller = MultimodalFastPathController(image_feature_extractor=extractor)
     loaded_model = _loaded_model()
-    request = _request([_image(b"same-image")])
+    image = _image(b"same-image")
+    request = _request([image])
 
     first = controller.plan(loaded_model, request)
     second = controller.plan(loaded_model, request)
+    stored = controller.put_image_feature_payloads(loaded_model, request, ("feature-payload",))
+    third = controller.plan(loaded_model, request)
 
+    assert extractor_calls == [image.sha256_hex]
+    assert stored == (True,)
     assert first.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
     assert first.image_feature_cache_hits == 0
     assert first.image_feature_cache_misses == 1
-    assert second.multimodal_decode_mode == MULTIMODAL_DECODE_IMAGE_CACHE_REUSE
-    assert second.image_feature_cache_hits == 1
-    assert second.image_feature_cache_misses == 0
-    assert second.multimodal_decode_sync_mode == "executor_stream"
+    assert first.image_feature_cache_artifact_count == 0
+    assert first.image_feature_cache_bytes == 0
+    assert first.image_feature_encoder_calls_saved == 0
+    assert first.image_feature_work_saved_bytes == 0
+    assert first.image_feature_cache_fallback_reason == ""
+    assert second.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
+    assert second.image_feature_cache_hits == 0
+    assert second.image_feature_cache_misses == 1
+    assert second.image_feature_cache_artifact_count == 0
+    assert third.multimodal_decode_mode == MULTIMODAL_DECODE_IMAGE_CACHE_REUSE
+    assert third.image_feature_cache_hits == 1
+    assert third.image_feature_cache_misses == 0
+    assert third.image_feature_cache_artifact_count == 1
+    assert third.image_feature_cache_bytes == image.byte_length * 4
+    assert third.image_feature_encoder_calls_saved == 1
+    assert third.image_feature_work_saved_bytes == image.byte_length
+    assert third.image_feature_cache_fallback_reason == ""
+    assert third.multimodal_decode_sync_mode == "executor_stream"
 
 
 def test_fast_path_records_partial_reuse_for_multi_image_turns() -> None:
-    controller = MultimodalFastPathController()
+    extractor_calls: list[str] = []
+
+    def extractor(key: ImageFeatureCacheKey, image: PreparedImageInput) -> ImageFeatureCacheEntry:
+        extractor_calls.append(image.sha256_hex)
+        return ImageFeatureCacheEntry(
+            cache_key=key,
+            artifact_id=f"feature:{image.sha256_hex}",
+            payload=None,
+            feature_byte_length=image.byte_length * 2,
+            source_image_bytes=image.byte_length,
+            encoder_call_count=1,
+        )
+
+    controller = MultimodalFastPathController(image_feature_extractor=extractor)
     loaded_model = _loaded_model()
     first_image = _image(b"first-image", filename="first.jpg")
     second_image = _image(b"second-image", filename="second.jpg")
 
-    controller.plan(loaded_model, _request([first_image]))
+    assert controller.plan(loaded_model, _request([first_image])).image_feature_cache_misses == 1
+    controller.put_image_feature_payloads(loaded_model, _request([first_image]), ("first-payload",))
     decision = controller.plan(loaded_model, _request([first_image, second_image]))
 
+    assert extractor_calls == [first_image.sha256_hex]
     assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_IMAGE_CACHE_REUSE
     assert decision.image_feature_cache_hits == 1
     assert decision.image_feature_cache_misses == 1
+    assert decision.image_feature_cache_artifact_count == 1
+    assert decision.image_feature_cache_bytes == first_image.byte_length * 2
+    assert decision.image_feature_encoder_calls_saved == 1
+    assert decision.image_feature_work_saved_bytes == first_image.byte_length
     assert decision.multi_image_scatter_mode == "per_sample"
+
+
+def test_fast_path_returns_stable_image_feature_payloads_after_store() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model()
+    image = _image(b"same-image")
+    request = _request([image])
+
+    assert controller.image_feature_payloads(loaded_model, request) == (None,)
+    assert controller.put_image_feature_payloads(loaded_model, request, ("projected-features",)) == (
+        True,
+    )
+
+    assert controller.image_feature_payloads(loaded_model, request) == ("projected-features",)
+    repeat = controller.plan(loaded_model, request)
+    assert repeat.image_feature_cache_hits == 1
+    assert repeat.image_feature_cache_misses == 0
+    assert repeat.image_feature_cache_artifact_count == 1
+
+
+def test_fast_path_rejects_mismatched_image_feature_payload_count() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model()
+    images = [
+        _image(b"first-image", filename="first.jpg"),
+        _image(b"second-image", filename="second.jpg"),
+    ]
+    request = _request(images)
+
+    assert controller.put_image_feature_payloads(loaded_model, request, ("only-first",)) == (
+        False,
+        False,
+    )
+    assert controller.put_image_feature_payloads(
+        loaded_model,
+        request,
+        ("first", "second", "extra"),
+    ) == (
+        False,
+        False,
+    )
+
+    assert controller.image_feature_payloads(loaded_model, request) == (None, None)
+    decision = controller.plan(loaded_model, request)
+    assert decision.image_feature_cache_hits == 0
+    assert decision.image_feature_cache_misses == 2
+    assert decision.image_feature_cache_artifact_count == 0
 
 
 def test_fast_path_records_row_local_per_sample_scatter_for_heterogeneous_multi_image_rows() -> None:
@@ -188,17 +289,26 @@ def test_fast_path_records_row_local_per_sample_scatter_for_heterogeneous_multi_
 
 
 def test_fast_path_falls_back_for_text_backed_image_models() -> None:
-    controller = MultimodalFastPathController()
+    extractor_calls = 0
+
+    def extractor(key: ImageFeatureCacheKey, image: PreparedImageInput) -> ImageFeatureCacheEntry:
+        nonlocal extractor_calls
+        pytest.fail("text-backed routes must not extract image features")  # pragma: no cover
+
+    controller = MultimodalFastPathController(image_feature_extractor=extractor)
 
     decision = controller.plan(
         _loaded_model(execution_mode="text_backed"),
         _request([_image(b"image")]),
     )
 
+    assert extractor_calls == 0
     assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
     assert decision.multimodal_fallback_reason == "text_backed_no_vision_weights"
     assert decision.image_feature_cache_hits == 0
     assert decision.image_feature_cache_misses == 0
+    assert decision.image_feature_cache_artifact_count == 0
+    assert decision.image_feature_cache_fallback_reason == "text_backed_no_vision_weights"
 
 
 def test_fast_path_does_not_warn_for_text_backed_models_without_family_metadata(caplog) -> None:
@@ -309,6 +419,29 @@ def test_fast_path_admits_native_quantized_supported_multimodal_family() -> None
     assert unsupported.quantized_load_fallback_reason == "unsupported_family"
 
 
+def test_fast_path_fails_closed_without_extracting_features_for_unsupported_family() -> None:
+    extractor_calls = 0
+
+    def extractor(key: ImageFeatureCacheKey, image: PreparedImageInput) -> ImageFeatureCacheEntry:
+        nonlocal extractor_calls
+        pytest.fail("unsupported families must not extract image features")  # pragma: no cover
+
+    controller = MultimodalFastPathController(image_feature_extractor=extractor)
+
+    decision = controller.plan(
+        _loaded_model(family_id="unknown-vlm"),
+        _request([_image(b"image")]),
+    )
+
+    assert extractor_calls == 0
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
+    assert decision.multimodal_fallback_reason == "unsupported_family"
+    assert decision.image_feature_cache_fallback_reason == "unsupported_family"
+    assert decision.image_feature_cache_artifact_count == 0
+    assert decision.image_feature_cache_bytes == 0
+    assert decision.image_feature_encoder_calls_saved == 0
+
+
 def test_fast_path_records_hybrid_state_patch_mode_for_supported_family() -> None:
     controller = MultimodalFastPathController()
 
@@ -399,8 +532,8 @@ def test_fast_path_evicts_oldest_image_feature_key_when_cache_is_full() -> None:
     first_image = _image(b"first-image", filename="first.jpg")
     second_image = _image(b"second-image", filename="second.jpg")
 
-    controller.plan(loaded_model, _request([first_image]))
-    controller.plan(loaded_model, _request([second_image]))
+    controller.put_image_feature_payloads(loaded_model, _request([first_image]), ("first",))
+    controller.put_image_feature_payloads(loaded_model, _request([second_image]), ("second",))
     decision = controller.plan(loaded_model, _request([first_image]))
 
     assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
@@ -427,11 +560,17 @@ def test_fast_path_documents_within_request_eviction_when_request_exceeds_cache_
     first_image = _image(b"first-image", filename="first.jpg")
     second_image = _image(b"second-image", filename="second.jpg")
 
+    stored = controller.put_image_feature_payloads(
+        loaded_model,
+        _request([first_image, second_image]),
+        ("first", "second"),
+    )
     decision = controller.plan(loaded_model, _request([first_image, second_image]))
     repeat_first = controller.plan(loaded_model, _request([first_image]))
 
-    assert decision.image_feature_cache_hits == 0
-    assert decision.image_feature_cache_misses == 2
+    assert stored == (True, True)
+    assert decision.image_feature_cache_hits == 1
+    assert decision.image_feature_cache_misses == 1
     assert repeat_first.image_feature_cache_hits == 0
     assert repeat_first.image_feature_cache_misses == 1
 
@@ -487,6 +626,7 @@ def test_fast_path_cache_misses_when_processor_shape_metadata_changes() -> None:
     image = _image(b"same-processor-sensitive-image")
 
     first = controller.plan(first_model, _request([image]))
+    controller.put_image_feature_payloads(first_model, _request([image]), ("shape-v1",))
     same_shape = controller.plan(first_model, _request([image]))
     changed_shape = controller.plan(second_model, _request([image]))
 
@@ -624,6 +764,24 @@ def test_fast_path_falls_back_for_video_only_requests() -> None:
     assert decision.multimodal_fallback_reason == "video_fast_path_unimplemented"
     assert decision.image_feature_cache_hits == 0
     assert decision.image_feature_cache_misses == 0
+
+
+def test_fast_path_falls_back_for_mixed_image_video_requests_without_caching_image_payloads() -> None:
+    controller = MultimodalFastPathController()
+    image = _image(b"image")
+
+    decision = controller.plan(_loaded_model(), _request([image], videos=[_video()]))
+    stored = controller.put_image_feature_payloads(
+        _loaded_model(),
+        _request([image], videos=[_video()]),
+        ("feature",),
+    )
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
+    assert decision.multimodal_fallback_reason == "video_fast_path_unimplemented"
+    assert decision.image_feature_cache_hits == 0
+    assert decision.image_feature_cache_misses == 0
+    assert stored == (False,)
 
 
 def test_fast_path_probe_signature_uses_nested_metadata_precedence() -> None:

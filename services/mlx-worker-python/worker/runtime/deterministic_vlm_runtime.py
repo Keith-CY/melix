@@ -67,6 +67,11 @@ class VisionProbeSnapshot:
     cache_hit: bool = False
     image_feature_cache_hits: int = 0
     image_feature_cache_misses: int = 0
+    image_feature_cache_artifact_count: int = 0
+    image_feature_cache_bytes: int = 0
+    image_feature_encoder_calls_saved: int = 0
+    image_feature_work_saved_bytes: int = 0
+    image_feature_cache_fallback_reason: str = ""
     multimodal_decode_mode: str = "baseline"
     multimodal_fallback_reason: str = "not_reported"
     multimodal_decode_sync_mode: str = "baseline"
@@ -371,6 +376,8 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             cache_scope_id=scope_id,
             cache_hit=cache_hit,
         )
+        if prepared_request.images and not prepared_request.videos:
+            self._store_deterministic_image_features(loaded_model, prepared_request)
         return session
 
     def decode_tokens(
@@ -512,6 +519,8 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                 finish_reason="stop",
             )
             return
+        if prepared_request.images and not prepared_request.videos:
+            self._store_deterministic_image_features(loaded_model, prepared_request)
         temp_media_session = self._temp_media_session_factory(
             temp_root=self._temp_root,
             prefix="melix-vlm-",
@@ -546,6 +555,29 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                 temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
             )
 
+    def _store_deterministic_image_features(
+        self,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+    ) -> None:
+        payloads = tuple(
+            f"deterministic-image-feature:{image.sha256_hex}:{image.byte_length}"
+            if image.sha256_hex
+            else None
+            for image in prepared_request.images
+        )
+        self._fast_path_controller.put_image_feature_payloads(
+            loaded_model,
+            prepared_request,
+            payloads,
+        )
+        artifact_count, artifact_bytes = self._fast_path_controller.image_feature_cache_summary()
+        self._last_probe = replace(
+            self._last_probe,
+            image_feature_cache_artifact_count=artifact_count,
+            image_feature_cache_bytes=artifact_bytes,
+        )
+
     def _completion_token_count(self, response_text: str) -> int:
         if response_text == self._last_completion_token_text:
             return self._last_completion_token_count
@@ -562,7 +594,11 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         seq_len: int | None = None,
         attention_policy: AttentionPrefillPolicyDecision | None = None,
     ) -> None:
-        signature = self._fast_path_probe_signature(loaded_model, prepared_request)
+        signature = self._fast_path_probe_signature(
+            loaded_model,
+            prepared_request,
+            seq_len=seq_len,
+        )
         if self._last_fast_path_signature == signature:
             return
         self._record_fast_path_probe(
@@ -623,6 +659,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         self._last_fast_path_signature = signature or self._fast_path_probe_signature(
             loaded_model,
             prepared_request,
+            seq_len=seq_len,
         )
         processor_shape_receipt = (
             self._processor_shape_receipt(
@@ -646,6 +683,11 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             cache_hit=False,
             image_feature_cache_hits=fast_path.image_feature_cache_hits,
             image_feature_cache_misses=fast_path.image_feature_cache_misses,
+            image_feature_cache_artifact_count=fast_path.image_feature_cache_artifact_count,
+            image_feature_cache_bytes=fast_path.image_feature_cache_bytes,
+            image_feature_encoder_calls_saved=fast_path.image_feature_encoder_calls_saved,
+            image_feature_work_saved_bytes=fast_path.image_feature_work_saved_bytes,
+            image_feature_cache_fallback_reason=fast_path.image_feature_cache_fallback_reason,
             multimodal_decode_mode=fast_path.multimodal_decode_mode,
             multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
             multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,
@@ -669,14 +711,21 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
     def _fast_path_probe_signature(
         loaded_model,
         prepared_request: PreparedVisionRequest,
+        *,
+        seq_len: int | None = None,
     ) -> tuple[str, ...]:
         if (
             not prepared_request.images
             and not prepared_request.videos
             and _has_only_internal_fast_path_signature_metadata(loaded_model)
         ):
+            media_signature = (
+                f"text_only_seq_len:{max(0, int(seq_len))}"
+                if seq_len is not None
+                else prepared_request.multimodal_hash_hex
+            )
             return (
-                prepared_request.multimodal_hash_hex,
+                media_signature,
                 _TEXT_ONLY_EMPTY_MODEL_FAST_PATH_SIGNATURE,
                 "()",
             )

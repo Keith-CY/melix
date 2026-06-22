@@ -385,6 +385,26 @@ Executable unit issues:
   speed gate. The changed-scope performance report should include the
   deterministic VLM/cache lifecycle probe or an explicit `N/A` if the scoped PR
   performance selector does not yet expose a dedicated lifecycle probe.
+- Unit 3.1.1 upgrades image cache receipts from key-only admission evidence to
+  a real projected-feature payload cache on the VLM generation path. The
+  controller must only report image-feature hits for payloads that have already
+  been encoded and stored; a cache miss no longer inserts an empty key during
+  prompt rendering. MLX-VLM generation should precompute stable image-feature
+  cache keys from Melix request identity, reuse cached projected features when
+  the same image bytes and preprocessing contract repeat under a different temp
+  path, count only new images as misses when a mixed image request partially
+  reuses prior media, and provide those payloads through mlx-vlm's native
+  `vision_cache` hook when the backend accepts it. The Melix model proxy may
+  encode only missing image rows, then recombine cached and newly encoded
+  feature rows before returning to mlx-vlm. Unsupported families, text-backed
+  models, videos, and unsupported mixed media must stay on the baseline path
+  with typed fallback receipts instead of corrupting cache contents. Request
+  pixel-policy cache identity belongs to Unit 3.1.4 (#1552), while cross-surface
+  CLI/server/benchmark counter consistency belongs to Unit 3.1.3 (#1458).
+  Success is measured by repeated-image fixtures that show saved encoder calls
+  for cache hits, partial multi-image misses only for new images, changed-line
+  coverage at or above 95%, and a PR-scoped deterministic VLM/image-cache
+  performance probe with zero regressions.
 
 ## Verification Policy
 
