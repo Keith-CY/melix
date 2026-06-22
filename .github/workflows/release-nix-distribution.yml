@@ -54,7 +54,7 @@ jobs:
           fi
 
       - name: Checkout Melix renderer
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Resolve release archive name
         id: archive
@@ -101,7 +101,7 @@ jobs:
             --json
 
       - name: Checkout Nix repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ vars.MELIX_NIX_REPOSITORY }}
           token: ${{ secrets.MELIX_NIX_REPOSITORY_TOKEN }}
