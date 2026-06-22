@@ -2176,6 +2176,17 @@ def test_scope_report_selects_download_pipeline_probe() -> None:
     assert "companion_receipt_elapsed_ms_mean" in metric_keys
 
 
+def test_download_pipeline_probe_delta_metrics_are_informational() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "download-pipeline-directory-size-single-stat"
+    )
+    metric_directions = {metric.key: metric.direction for metric in probe.metrics}
+
+    assert metric_directions["companion_receipt_delta_ms"] == "informational"
+
+
 def test_scope_report_selects_performance_report_results_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
