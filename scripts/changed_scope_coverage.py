@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left
 from collections.abc import Mapping
 from functools import lru_cache
 import json
@@ -205,6 +206,11 @@ def _line_ranges_may_overlap(
     return False
 
 
+def _sorted_line_list_contains(lines: list[int], line_no: int) -> bool:
+    index = bisect_left(lines, line_no)
+    return index < len(lines) and lines[index] == line_no
+
+
 def _measurable_changed_lines(
     repo_root: Path,
     coverage_payload: dict[str, object],
@@ -232,13 +238,27 @@ def _measurable_changed_lines(
     else:
         if not _line_ranges_may_overlap(changed, executed_lines, missing_lines):
             return [], [], []
-        executed = set(executed_lines)
-        missing = set(missing_lines)
-        measured_changed = [
-            line_no for line_no in changed if line_no in executed or line_no in missing
-        ]
-        executed_lookup = executed
-        missing_lookup = missing
+        if executed_lines and executed_lines[0] > executed_lines[-1]:
+            executed_lookup = set(executed_lines)
+        else:
+            executed_lookup = executed_lines
+        if missing_lines and missing_lines[0] > missing_lines[-1]:
+            missing_lookup = set(missing_lines)
+        else:
+            missing_lookup = missing_lines
+        if isinstance(executed_lookup, list) and isinstance(missing_lookup, list):
+            measured_changed = [
+                line_no
+                for line_no in changed
+                if _sorted_line_list_contains(executed_lookup, line_no)
+                or _sorted_line_list_contains(missing_lookup, line_no)
+            ]
+        else:
+            measured_changed = [
+                line_no
+                for line_no in changed
+                if line_no in executed_lookup or line_no in missing_lookup
+            ]
     if not measured_changed:
         return [], [], []
 
@@ -248,8 +268,20 @@ def _measurable_changed_lines(
         stripped = source_lines[line_no - 1].strip()
         if stripped and not stripped.startswith("#"):
             measurable.append(line_no)
-    covered = [line_no for line_no in measurable if line_no in executed_lookup]
-    missed = [line_no for line_no in measurable if line_no in missing_lookup]
+    if isinstance(executed_lookup, list) and isinstance(missing_lookup, list):
+        covered = [
+            line_no
+            for line_no in measurable
+            if _sorted_line_list_contains(executed_lookup, line_no)
+        ]
+        missed = [
+            line_no
+            for line_no in measurable
+            if _sorted_line_list_contains(missing_lookup, line_no)
+        ]
+    else:
+        covered = [line_no for line_no in measurable if line_no in executed_lookup]
+        missed = [line_no for line_no in measurable if line_no in missing_lookup]
     return measurable, covered, missed
 
 
