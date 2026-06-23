@@ -388,6 +388,19 @@ def _cursor_query_value(url: str, start: int, end: int) -> str:
 def _unquote_plus_ascii_cursor(value: str) -> str:
     if "%" not in value and "+" not in value:
         return value
+    if "%" not in value:
+        return value.replace("+", " ")
+
+    common_cursor = (
+        value.replace("+", " ")
+        .replace("%2F", "/")
+        .replace("%2f", "/")
+        .replace("%2B", "+")
+        .replace("%2b", "+")
+    )
+    if "%" not in common_cursor:
+        return common_cursor
+
     hex_digits = _URL_HEX_DIGITS
     output: list[str] = []
     append = output.append
