@@ -89,6 +89,9 @@ class VisionProbeSnapshot:
     multimodal_decode_sync_mode: str = "baseline"
     multi_image_scatter_mode: str = "none"
     image_batch1_step_admission_reason: str = ""
+    image_batch1_step_decode_token_counter_start: int = 0
+    image_batch1_step_decode_token_counter_end: int = 0
+    image_batch1_step_decode_token_counter_advance: int = 0
     multimodal_position_slice_fallback_count: int = 0
     quantized_load_mode: str = "fallback"
     quantized_load_fallback_reason: str = "not_reported"

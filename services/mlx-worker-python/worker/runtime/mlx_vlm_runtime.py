@@ -304,6 +304,15 @@ class MaterializedMediaPaths:
     video_paths: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _ImageBatch1StepInputs:
+    media_paths: MaterializedMediaPaths
+    inputs: dict[str, Any]
+    prompt_tokens: int
+    position_metadata_receipt: dict[str, object]
+    started_at: float
+
+
 class _Gemma4TextBackedModelShim:
     def __init__(self, language_model: Any) -> None:
         self.language_model = language_model
@@ -2183,17 +2192,6 @@ class MLXVLMRuntime:
             prepared_request=prepared_request,
             execution_ext=execution_ext,
         )
-        self._ensure_fast_path_probe(
-            loaded_model,
-            prepared_request,
-            attention_policy=attention_policy,
-            image_batch1_step_supported=self._backend.generate_step_fn is not None,
-            image_batch1_step_greedy_sampling=self._sampling_is_greedy(sampling),
-        )
-        enforce_attention_prefill_policy(attention_policy)
-        if cancel_event.is_set():
-            return
-
         prompt_tokens = (
             attention_policy.prompt_tokens
             if attention_policy is not None
@@ -2204,62 +2202,163 @@ class MLXVLMRuntime:
             if attention_policy is not None and attention_policy.prefill_chunk_mode == "auto_chunk"
             else None
         )
-        text_only_batch_generator_unsupported_reason = (
-            self._text_only_batch_generator_unsupported_reason(
+        image_batch1_temp_media_session: TempMediaSession | None = None
+        image_batch1_step_inputs: _ImageBatch1StepInputs | None = None
+
+        def cleanup_image_batch1_temp_media_session(session: TempMediaSession) -> None:
+            cleanup_report = session.cleanup()
+            self._last_probe = replace(
+                self._last_probe,
+                temp_media_artifact_count=cleanup_report.artifact_count,
+                temp_media_artifact_bytes=cleanup_report.artifact_bytes,
+                temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
+                temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
+            )
+
+        if self._should_prepare_image_batch1_step_inputs(
+            prepared_request=prepared_request,
+            sampling=sampling,
+        ):
+            image_batch1_temp_media_session = self._temp_media_session_factory(
+                temp_root=self._temp_root,
+                prefix="melix-vlm-",
+            )
+            try:
+                image_batch1_step_inputs = self._prepare_image_batch1_step_inputs(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    temp_media_session=image_batch1_temp_media_session,
+                    prompt_tokens=prompt_tokens,
+                )
+                prompt_tokens = image_batch1_step_inputs.prompt_tokens
+            except Exception:
+                cleanup_image_batch1_temp_media_session(image_batch1_temp_media_session)
+                image_batch1_temp_media_session = None
+        try:
+            self._ensure_fast_path_probe(
+                loaded_model,
+                prepared_request,
+                attention_policy=attention_policy,
+                seq_len=(
+                    image_batch1_step_inputs.prompt_tokens
+                    if image_batch1_step_inputs is not None
+                    else None
+                ),
+                position_ids=(
+                    image_batch1_step_inputs.inputs.get("position_ids")
+                    if image_batch1_step_inputs is not None
+                    else None
+                ),
+                rope_deltas=(
+                    image_batch1_step_inputs.inputs.get("rope_deltas")
+                    if image_batch1_step_inputs is not None
+                    else None
+                ),
+                image_batch1_step_supported=self._backend.generate_step_fn is not None,
+                image_batch1_step_greedy_sampling=self._sampling_is_greedy(sampling),
+            )
+        except Exception:
+            if image_batch1_temp_media_session is not None:
+                cleanup_image_batch1_temp_media_session(image_batch1_temp_media_session)
+                image_batch1_temp_media_session = None
+            raise
+        enforce_attention_prefill_policy(attention_policy)
+        try:
+            if cancel_event.is_set():
+                return
+
+            text_only_batch_generator_unsupported_reason = (
+                self._text_only_batch_generator_unsupported_reason(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    sampling=sampling,
+                    execution_ext=execution_ext,
+                )
+            )
+            if self._can_use_text_only_batch_generator(
                 loaded_model=loaded_model,
                 prepared_request=prepared_request,
                 sampling=sampling,
                 execution_ext=execution_ext,
-            )
-        )
-        if self._can_use_text_only_batch_generator(
-            loaded_model=loaded_model,
-            prepared_request=prepared_request,
-            sampling=sampling,
-            execution_ext=execution_ext,
-        ):
-            yield from self._generate_text_only_batch_generator_events(
-                loaded_model=loaded_model,
-                prepared_request=prepared_request,
-                sampling=sampling,
-                cancel_event=cancel_event,
-                prompt_tokens=prompt_tokens,
-                prefill_step_size=selected_prefill_step_size,
-            )
-            return
-        if self._can_use_text_only_step_fast_path(
-            loaded_model=loaded_model,
-            prepared_request=prepared_request,
-        ):
-
-            def text_only_backend_events():
-                # Must run on the executor-owned thread so the MLX runtime is
-                # initialized inside the same stream ownership context used for
-                # the subsequent token generation work.
-                self._backend._ensure_runtime()
-                if cancel_event.is_set():
-                    return
-                yield from self._generate_text_only_step_events(
+            ):
+                yield from self._generate_text_only_batch_generator_events(
                     loaded_model=loaded_model,
                     prepared_request=prepared_request,
                     sampling=sampling,
                     cancel_event=cancel_event,
                     prompt_tokens=prompt_tokens,
                     prefill_step_size=selected_prefill_step_size,
-                    speculative_fallback_reason=speculative_fallback_reason,
-                    text_only_batch_generator_unsupported_reason=(
-                        text_only_batch_generator_unsupported_reason
-                    ),
                 )
+                return
+            if self._can_use_text_only_step_fast_path(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+            ):
 
-            event_iterable = (
-                text_only_backend_events()
-                if self._executor is None
-                else self._executor.iterate_cooperatively(text_only_backend_events)
-            )
-            for event in event_iterable:
-                yield event
-            return
+                def text_only_backend_events():
+                    # Must run on the executor-owned thread so the MLX runtime is
+                    # initialized inside the same stream ownership context used for
+                    # the subsequent token generation work.
+                    self._backend._ensure_runtime()
+                    if cancel_event.is_set():
+                        return
+                    yield from self._generate_text_only_step_events(
+                        loaded_model=loaded_model,
+                        prepared_request=prepared_request,
+                        sampling=sampling,
+                        cancel_event=cancel_event,
+                        prompt_tokens=prompt_tokens,
+                        prefill_step_size=selected_prefill_step_size,
+                        speculative_fallback_reason=speculative_fallback_reason,
+                        text_only_batch_generator_unsupported_reason=(
+                            text_only_batch_generator_unsupported_reason
+                        ),
+                    )
+
+                event_iterable = (
+                    text_only_backend_events()
+                    if self._executor is None
+                    else self._executor.iterate_cooperatively(text_only_backend_events)
+                )
+                for event in event_iterable:
+                    yield event
+                return
+
+            if self._can_use_image_batch1_step_fast_path(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                step_inputs=image_batch1_step_inputs,
+            ):
+                assert image_batch1_step_inputs is not None
+
+                def image_batch1_backend_events():
+                    # Must run on the executor-owned thread so the MLX runtime,
+                    # VLM input preparation, and token loop share the same stream.
+                    self._backend._ensure_runtime()
+                    if cancel_event.is_set():
+                        return
+                    yield from self._generate_image_batch1_step_events(
+                        loaded_model=loaded_model,
+                        prepared_request=prepared_request,
+                        step_inputs=image_batch1_step_inputs,
+                        sampling=sampling,
+                        cancel_event=cancel_event,
+                        prompt_tokens=prompt_tokens,
+                        prefill_step_size=selected_prefill_step_size,
+                        speculative_fallback_reason=speculative_fallback_reason,
+                    )
+
+                event_iterable = (
+                    image_batch1_backend_events()
+                    if self._executor is None
+                    else self._executor.iterate_cooperatively(image_batch1_backend_events)
+                )
+                for event in event_iterable:
+                    yield event
+                return
+        finally:
+            if image_batch1_temp_media_session is not None:
+                cleanup_image_batch1_temp_media_session(image_batch1_temp_media_session)
 
         temp_media_session = self._temp_media_session_factory(
             temp_root=self._temp_root,
@@ -2820,6 +2919,223 @@ class MLXVLMRuntime:
         if event is not None:
             yield event
 
+    def _generate_image_batch1_step_events(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        step_inputs: _ImageBatch1StepInputs,
+        sampling,
+        cancel_event: Event,
+        prompt_tokens: int,
+        prefill_step_size: int | None,
+        speculative_fallback_reason: str,
+    ):
+        import mlx.core as mx
+
+        started_at = step_inputs.started_at
+        inputs = step_inputs.inputs
+        input_ids = inputs["input_ids"]
+        mask = inputs.get("attention_mask")
+        pixel_values = inputs.get("pixel_values")
+        prompt_tokens = step_inputs.prompt_tokens or int(
+            getattr(input_ids, "shape", [0, prompt_tokens])[-1] or prompt_tokens
+        )
+        position_receipt = step_inputs.position_metadata_receipt
+
+        detokenizer = _isolated_streaming_detokenizer(loaded_model["processor"])
+        if detokenizer is None:
+            raise RuntimeError("The VLM processor does not expose an isolated streaming detokenizer.")
+        tokenizer = (
+            loaded_model["processor"].tokenizer
+            if hasattr(loaded_model["processor"], "tokenizer")
+            else loaded_model["processor"]
+        )
+        stopping_criteria = getattr(tokenizer, "stopping_criteria", None)
+        first_token_at: float | None = None
+        completion_tokens = 0
+        cumulative_raw_text = ""
+        peak_memory_gb: float | None = None
+
+        def cached_peak_memory_gb() -> float:
+            nonlocal peak_memory_gb
+            if peak_memory_gb is None:
+                peak_memory_gb = _mlx_peak_memory_gb(mx)
+            return peak_memory_gb
+
+        def finalized_text_event():
+            nonlocal cumulative_raw_text
+            detokenizer.finalize()
+            text = str(getattr(detokenizer, "last_segment", "") or "")
+            if not text:
+                return None
+            cumulative_raw_text += text
+            finished_at = time.perf_counter()
+            generation_elapsed = max(0.0, finished_at - (first_token_at or finished_at))
+            return RuntimeTokenEvent(
+                text=text,
+                raw_text=cumulative_raw_text,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                prompt_tps=0.0,
+                generation_tps=(completion_tokens / generation_elapsed) if generation_elapsed > 0 else 0.0,
+                peak_memory=cached_peak_memory_gb(),
+                finish_reason="stop",
+                speculative_fallback_count=1 if speculative_fallback_reason else None,
+                speculative_num_draft_tokens=0 if speculative_fallback_reason else None,
+                speculative_draft_model_configured=False if speculative_fallback_reason else None,
+            )
+
+        step_kwargs: dict[str, Any] = {
+            "max_tokens": int(getattr(sampling, "max_output_tokens", 0) or 64),
+            "temperature": float(getattr(sampling, "temperature", 0.0)),
+            "top_p": float(getattr(sampling, "top_p", 1.0)),
+            "top_k": int(getattr(sampling, "top_k", 0)),
+        }
+        if _callable_accepts_kwarg(
+            self._backend.generate_step_fn,
+            "prefill_step_size",
+        ):
+            step_kwargs["prefill_step_size"] = prefill_step_size
+        step_kwargs.update(
+            {
+                key: value
+                for key, value in inputs.items()
+                if key not in {"input_ids", "pixel_values", "attention_mask"}
+            }
+        )
+
+        for token, logprobs in self._backend.generate_step_fn(
+            input_ids,
+            loaded_model["model"],
+            pixel_values,
+            mask,
+            **step_kwargs,
+        ):
+            if cancel_event.is_set():
+                return
+            if first_token_at is None:
+                first_token_at = time.perf_counter()
+                self._last_probe = replace(
+                    self._last_probe,
+                    preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+                    preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+                    preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+                    first_token_latency_ms=max(0.0, (first_token_at - started_at) * 1000.0),
+                    video_effective_frame_count=prepared_request.effective_video_frame_count,
+                    video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+                    video_window_ms=prepared_request.effective_video_window_ms,
+                    cache_identity="",
+                    cache_scope_id="",
+                    cache_hit=False,
+                    multimodal_decode_mode="image_batch1_step",
+                    multimodal_fallback_reason="",
+                    multimodal_decode_sync_mode="executor_step",
+                    position_metadata_receipt=position_receipt,
+                    image_batch1_step_decode_token_counter_start=prompt_tokens,
+                    image_batch1_step_decode_token_counter_end=prompt_tokens,
+                    image_batch1_step_decode_token_counter_advance=0,
+                )
+
+            token_values = token if isinstance(token, list) else [token]
+            for token_value in token_values:
+                try:
+                    token_id = int(token_value)
+                except (TypeError, ValueError):
+                    continue
+                if callable(stopping_criteria) and stopping_criteria(token_id):
+                    event = finalized_text_event()
+                    if event is not None:
+                        yield event
+                    return
+                decode_position = prompt_tokens + completion_tokens
+                completion_tokens += 1
+                detokenizer.add_token(token_id)
+                self._last_probe = replace(
+                    self._last_probe,
+                    image_batch1_step_decode_token_counter_end=decode_position + 1,
+                    image_batch1_step_decode_token_counter_advance=completion_tokens,
+                )
+                text = str(getattr(detokenizer, "last_segment", "") or "")
+                if not text:
+                    continue
+                cumulative_raw_text += text
+                now = time.perf_counter()
+                generation_elapsed = max(0.0, now - (first_token_at or now))
+                yield RuntimeTokenEvent(
+                    text=text,
+                    raw_text=cumulative_raw_text,
+                    token_ids=(token_id,),
+                    token_logprobs=_float_tuple(logprobs),
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    prompt_tps=0.0,
+                    generation_tps=(completion_tokens / generation_elapsed) if generation_elapsed > 0 else 0.0,
+                    peak_memory=cached_peak_memory_gb(),
+                    finish_reason="stop",
+                    speculative_fallback_count=1 if speculative_fallback_reason else None,
+                    speculative_num_draft_tokens=0 if speculative_fallback_reason else None,
+                    speculative_draft_model_configured=False if speculative_fallback_reason else None,
+                )
+
+        event = finalized_text_event()
+        if event is not None:
+            yield event
+
+    def _prepare_image_batch1_step_inputs(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        temp_media_session: TempMediaSession,
+        prompt_tokens: int,
+    ) -> _ImageBatch1StepInputs:
+        from mlx_vlm.utils import prepare_inputs
+
+        started_at = time.perf_counter()
+        media_paths = self._materialize_media(prepared_request, temp_media_session)
+        formatted_prompt = self._backend.apply_chat_template_fn(
+            loaded_model["processor"],
+            loaded_model["model"].config,
+            prepared_request.prompt_text,
+            num_images=len(media_paths.image_paths),
+        )
+        add_special_tokens = (
+            getattr(loaded_model["processor"], "chat_template", None) is None
+            if getattr(loaded_model["model"].config, "model_type", "") in _GEMMA_CHAT_TEMPLATE_MODEL_TYPES
+            else True
+        )
+        input_kwargs: dict[str, Any] = {
+            "images": list(media_paths.image_paths),
+            "prompts": [formatted_prompt],
+            "image_token_index": getattr(loaded_model["model"].config, "image_token_index", None),
+            "add_special_tokens": add_special_tokens,
+            "return_tensors": "mlx",
+        }
+        apply_resize_shape_to_stream_kwargs(input_kwargs, prepared_request)
+
+        def prepare_on_executor() -> dict[str, Any]:
+            self._backend._ensure_runtime()
+            return prepare_inputs(loaded_model["processor"], **input_kwargs)
+
+        inputs = self._run_on_executor(prepare_on_executor)
+        prompt_tokens = int(getattr(inputs["input_ids"], "shape", [0, prompt_tokens])[-1] or prompt_tokens)
+        position_receipt = self._position_metadata_receipt(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            fallback_reason="",
+            seq_len=prompt_tokens,
+            position_ids=inputs.get("position_ids"),
+            rope_deltas=inputs.get("rope_deltas"),
+        )
+        return _ImageBatch1StepInputs(
+            media_paths=media_paths,
+            inputs=inputs,
+            prompt_tokens=prompt_tokens,
+            position_metadata_receipt=position_receipt,
+            started_at=started_at,
+        )
+
     def _can_use_text_only_step_fast_path(
         self,
         *,
@@ -2831,6 +3147,41 @@ class MLXVLMRuntime:
             and not prepared_request.images
             and not prepared_request.videos
             and _supports_isolated_streaming_detokenizer(loaded_model["processor"])
+        )
+
+    def _can_use_image_batch1_step_fast_path(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        step_inputs: _ImageBatch1StepInputs | None,
+    ) -> bool:
+        _ = loaded_model
+        probe = self._last_probe
+        return (
+            step_inputs is not None
+            and self._backend.generate_step_fn is not None
+            and len(prepared_request.images) == 1
+            and not prepared_request.videos
+            and probe.multimodal_decode_mode == "image_batch1_step_admission"
+            and probe.image_batch1_step_admission_reason == ""
+        )
+
+    @staticmethod
+    def _is_image_batch1_step_candidate(prepared_request: PreparedVisionRequest) -> bool:
+        return len(prepared_request.images) == 1 and not prepared_request.videos
+
+    def _should_prepare_image_batch1_step_inputs(
+        self,
+        *,
+        prepared_request: PreparedVisionRequest,
+        sampling,
+    ) -> bool:
+        return (
+            self._is_image_batch1_step_candidate(prepared_request)
+            and self._backend.generate_step_fn is not None
+            and self._sampling_is_greedy(sampling)
+            and all(str(getattr(image, "sha256_hex", "") or "") for image in prepared_request.images)
         )
 
     def _can_use_text_only_batch_generator(
@@ -3202,6 +3553,9 @@ class MLXVLMRuntime:
         prepared_request: PreparedVisionRequest,
         *,
         attention_policy: AttentionPrefillPolicyDecision | None = None,
+        seq_len: int | None = None,
+        position_ids: object | None = None,
+        rope_deltas: object | None = None,
         image_batch1_step_supported: bool | None = None,
         image_batch1_step_greedy_sampling: bool | None = None,
     ) -> None:
@@ -3230,7 +3584,10 @@ class MLXVLMRuntime:
             loaded_model,
             prepared_request,
             signature=signature,
+            seq_len=seq_len,
             attention_policy=attention_policy,
+            position_ids=position_ids,
+            rope_deltas=rope_deltas,
             image_batch1_step_supported=image_batch1_step_supported,
             image_batch1_step_greedy_sampling=image_batch1_step_greedy_sampling,
         )

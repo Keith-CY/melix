@@ -896,7 +896,7 @@ def test_mlx_vlm_runtime_uses_generate_step_fast_path_for_text_only_requests(
         _ = revision
         return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), FakeProcessor()
 
-    def fake_stream_generate(*args, **kwargs):
+    def fake_stream_generate(*args, **kwargs):  # pragma: no cover - failure guard
         _ = args
         _ = kwargs
         nonlocal stream_calls
@@ -1416,6 +1416,778 @@ def test_mlx_vlm_runtime_text_only_step_fast_path_releases_executor_between_toke
         ("step-1", owner_thread_id),
         ("step-2", owner_thread_id),
     ]
+
+
+def test_mlx_vlm_runtime_image_batch1_step_uses_executor_stream_and_token_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_vlm_prepare_inputs(monkeypatch)
+    sys.modules["mlx_vlm.utils"].prepare_inputs = lambda processor, **kwargs: vars(
+        processor(
+            kwargs["prompts"],
+            **{key: value for key, value in kwargs.items() if key != "prompts"},
+        )
+    )
+    checkpoints: list[tuple[str, int]] = []
+    apply_calls: list[tuple[str, int]] = []
+    prepare_calls: list[dict[str, object]] = []
+    generate_step_calls: list[dict[str, object]] = []
+    stream_generate_calls = 0
+    release_seen = Event()
+
+    class FakeDetokenizer:
+        def __init__(self) -> None:
+            self.text = ""
+            self.last_segment = ""
+
+        def __copy__(self):
+            copy = FakeDetokenizer()
+            copy.text = self.text
+            copy.last_segment = self.last_segment
+            return copy
+
+        def reset(self) -> None:
+            self.text = ""
+            self.last_segment = ""
+
+        def add_token(self, token: int) -> None:
+            self.last_segment = {201: "Image ", 202: "step"}.get(token, "")
+            self.text += self.last_segment
+
+        def finalize(self) -> None:
+            self.last_segment = ""
+
+    class FakeProcessor:
+        chat_template = "{{ prompt }}"
+        eos_token = "<eos>"
+        pad_token = None
+
+        def __init__(self) -> None:
+            self.detokenizer = FakeDetokenizer()
+            self.image_processor = object()
+
+        def __call__(self, prompts, **kwargs):
+            import mlx.core as mx
+
+            prepare_calls.append({"prompts": prompts, **dict(kwargs)})
+            assert prompts == ["formatted::Describe."]
+            assert kwargs["images"]
+            assert kwargs["return_tensors"] == "mlx"
+            return SimpleNamespace(
+                input_ids=mx.array([[1, 2, 3, 4, 5, 6]]),
+                attention_mask=mx.array([[1, 1, 1, 1, 1, 1]]),
+                pixel_values=mx.array([[[9]]]),
+                position_ids=mx.array([[0, 1, 2, 3, 4, 5]]),
+                rope_deltas=mx.array([[0]]),
+            )
+
+        def stopping_criteria(self, token: int) -> bool:
+            return token == 0
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return (
+            SimpleNamespace(config=SimpleNamespace(model_type="gemma4", image_token_index=256)),
+            FakeProcessor(),
+        )
+
+    def fake_apply_chat_template(_processor, _config, prompt, **kwargs):
+        apply_calls.append((prompt, kwargs.get("num_images", -1)))
+        return f"formatted::{prompt}"
+
+    def fake_stream_generate(*args, **kwargs):
+        _ = args
+        _ = kwargs
+        nonlocal stream_generate_calls
+        stream_generate_calls += 1
+        raise AssertionError("admitted image batch-1 step path should not call stream_generate")
+
+    def fake_generate_step(input_ids, model, pixel_values, mask, **kwargs):
+        checkpoints.append(("step-1", get_ident()))
+        generate_step_calls.append(
+            {
+                "input_ids_shape": tuple(input_ids.shape),
+                "model": model,
+                "pixel_values_shape": tuple(pixel_values.shape),
+                "mask_shape": tuple(mask.shape),
+                "position_ids_shape": tuple(kwargs["position_ids"].shape),
+                "rope_deltas_shape": tuple(kwargs["rope_deltas"].shape),
+                "max_tokens": kwargs["max_tokens"],
+                "temperature": kwargs["temperature"],
+                "top_p": kwargs["top_p"],
+                "top_k": kwargs["top_k"],
+                "prefill_step_size": kwargs["prefill_step_size"],
+            }
+        )
+        yield 201, [-0.1]
+        assert release_seen.is_set()
+        checkpoints.append(("step-2", get_ident()))
+        yield 202, [-0.2]
+
+    monkeypatch.setattr(mlx_vlm_runtime_module, "_installed_package_version", lambda name: f"{name}-version")
+    monkeypatch.setattr(mlx_vlm_runtime_module, "_mlx_peak_memory_gb", lambda _mx_module: 7.0)
+    executor = MLXRuntimeExecutor(stream_factory=lambda: object())
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=fake_apply_chat_template,
+            generate_step_fn=fake_generate_step,
+        ),
+        executor=executor,
+    )
+
+    try:
+        loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+        prepared = runtime.render_prompt(
+            [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[
+                        common_pb2.MessagePart(text="Describe."),
+                        common_pb2.MessagePart(
+                            image_bytes=b"fake-image-payload",
+                            media=common_pb2.MediaMetadata(
+                                media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                                filename="sample.jpg",
+                                format="jpg",
+                            ),
+                        ),
+                    ],
+                )
+            ],
+            loaded_model=loaded_model,
+        )
+        iterator = runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=0,
+                max_output_tokens=8,
+            ),
+            Event(),
+        )
+
+        first_event = next(iterator)
+        owner_thread_id = checkpoints[-1][1]
+        assert first_event.text == "Image "
+        assert executor.run(lambda: release_seen.set()) is None
+        remaining_events = list(iterator)
+    finally:
+        executor.shutdown()
+
+    assert [event.text for event in remaining_events] == ["step"]
+    assert stream_generate_calls == 0
+    assert apply_calls == [("Describe.", 1)]
+    assert len(prepare_calls) == 1
+    assert generate_step_calls == [
+        {
+            "input_ids_shape": (1, 6),
+            "model": loaded_model["model"],
+            "pixel_values_shape": (1, 1, 1),
+            "mask_shape": (1, 6),
+            "position_ids_shape": (1, 6),
+            "rope_deltas_shape": (1, 1),
+            "max_tokens": 8,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": 0,
+            "prefill_step_size": None,
+        }
+    ]
+    assert checkpoints == [
+        ("step-1", owner_thread_id),
+        ("step-2", owner_thread_id),
+    ]
+    probe = runtime.last_probe_snapshot()
+    assert probe.multimodal_decode_mode == "image_batch1_step"
+    assert probe.multimodal_decode_sync_mode == "executor_step"
+    assert probe.image_batch1_step_admission_reason == ""
+    assert probe.position_metadata_receipt["vision_metadata_guard"] == "aligned"
+    assert probe.position_metadata_receipt["vision_metadata_reuse_allowed"] is True
+    assert probe.image_batch1_step_decode_token_counter_start == 6
+    assert probe.image_batch1_step_decode_token_counter_end == 8
+    assert probe.image_batch1_step_decode_token_counter_advance == 2
+    assert probe.temp_media_artifact_count == 1
+    assert probe.temp_media_artifact_bytes == len(b"fake-image-payload")
+
+
+def test_mlx_vlm_runtime_image_batch1_step_keeps_non_greedy_requests_on_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_vlm_prepare_inputs(monkeypatch)
+    sys.modules["mlx_vlm.utils"].prepare_inputs = lambda processor, **kwargs: vars(
+        processor(
+            kwargs["prompts"],
+            **{key: value for key, value in kwargs.items() if key != "prompts"},
+        )
+    )
+    stream_calls: list[dict[str, object]] = []
+    generate_step_calls = 0
+
+    class FakeDetokenizer:
+        def __copy__(self):
+            return FakeDetokenizer()
+
+        def reset(self) -> None:
+            pass
+
+        def add_token(self, token: int) -> None:  # pragma: no cover - stream fallback does not detokenize
+            _ = token
+
+        def finalize(self) -> None:  # pragma: no cover - stream fallback does not detokenize
+            pass
+
+    class FakeProcessor:
+        chat_template = "{{ prompt }}"
+        eos_token = "<eos>"
+        pad_token = None
+
+        def __init__(self) -> None:
+            self.detokenizer = FakeDetokenizer()
+            self.image_processor = object()
+
+        def __call__(self, prompts, **kwargs):  # pragma: no cover - non-greedy must not pre-prepare inputs
+            import mlx.core as mx
+
+            _ = prompts
+            _ = kwargs
+            return SimpleNamespace(
+                input_ids=mx.array([[1, 2, 3, 4, 5, 6]]),
+                attention_mask=mx.array([[1, 1, 1, 1, 1, 1]]),
+                pixel_values=mx.array([[[9]]]),
+                position_ids=mx.array([[0, 1, 2, 3, 4, 5]]),
+                rope_deltas=mx.array([[0]]),
+            )
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return (
+            SimpleNamespace(config=SimpleNamespace(model_type="gemma4", image_token_index=256)),
+            FakeProcessor(),
+        )
+
+    def fake_stream_generate(*args, **kwargs):
+        _ = args
+        stream_calls.append(dict(kwargs))
+        yield SimpleNamespace(text="stream", prompt_tokens=6, generation_tokens=1)
+
+    def fake_generate_step(*args, **kwargs):  # pragma: no cover - failure guard
+        _ = args
+        _ = kwargs
+        nonlocal generate_step_calls
+        generate_step_calls += 1
+        raise AssertionError("non-greedy image batch-1 requests should stay on stream path")
+
+    monkeypatch.setattr(mlx_vlm_runtime_module, "_installed_package_version", lambda name: f"{name}-version")
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=lambda *_args, **_kwargs: "formatted::Describe.",
+            generate_step_fn=fake_generate_step,
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"fake-image-payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="sample.jpg",
+                            format="jpg",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(
+                temperature=0.7,
+                top_p=0.9,
+                top_k=8,
+                max_output_tokens=8,
+            ),
+            Event(),
+        )
+    )
+
+    assert [event.text for event in events] == ["stream"]
+    assert len(stream_calls) == 1
+    assert generate_step_calls == 0
+    probe = runtime.last_probe_snapshot()
+    assert probe.multimodal_decode_mode == "native_quantized"
+    assert probe.multimodal_decode_sync_mode == "executor_stream"
+    assert probe.multimodal_fallback_reason == "image_batch1_step_non_greedy_sampling"
+    assert probe.image_batch1_step_admission_reason == "image_batch1_step_non_greedy_sampling"
+
+
+def test_mlx_vlm_runtime_image_batch1_step_prepare_failure_cleans_and_streams(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_vlm_prepare_inputs(monkeypatch)
+    prepare_calls: list[dict[str, object]] = []
+    stream_image_paths: list[str] = []
+    sessions: list[TempMediaSession] = []
+    generate_step_calls = 0
+
+    def failing_prepare_inputs(_processor, **kwargs):
+        prepare_calls.append(dict(kwargs))
+        raise RuntimeError("image step prepare failed")
+
+    sys.modules["mlx_vlm.utils"].prepare_inputs = failing_prepare_inputs
+
+    class FakeProcessor:
+        chat_template = "{{ prompt }}"
+        eos_token = "<eos>"
+        pad_token = None
+
+        def __init__(self) -> None:
+            self.image_processor = object()
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return (
+            SimpleNamespace(config=SimpleNamespace(model_type="gemma4", image_token_index=256)),
+            FakeProcessor(),
+        )
+
+    def fake_stream_generate(*args, **kwargs):
+        _ = args
+        image_paths = list(kwargs["image"])
+        assert len(image_paths) == 1
+        assert Path(image_paths[0]).exists()
+        stream_image_paths.extend(image_paths)
+        yield SimpleNamespace(text="stream", prompt_tokens=6, generation_tokens=1)
+
+    def fake_generate_step(*args, **kwargs):
+        _ = args
+        _ = kwargs
+        nonlocal generate_step_calls
+        generate_step_calls += 1
+        raise AssertionError("prepare failures should keep image batch-1 requests on stream path")
+
+    def session_factory(**kwargs) -> TempMediaSession:
+        session = TempMediaSession(**kwargs)
+        sessions.append(session)
+        return session
+
+    monkeypatch.setattr(mlx_vlm_runtime_module, "_installed_package_version", lambda name: f"{name}-version")
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=lambda *_args, **_kwargs: "formatted::Describe.",
+            generate_step_fn=fake_generate_step,
+        ),
+        temp_root=tmp_path,
+        temp_media_session_factory=session_factory,
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"fake-image-payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="sample.jpg",
+                            format="jpg",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=0,
+                max_output_tokens=8,
+            ),
+            Event(),
+        )
+    )
+
+    assert [event.text for event in events] == ["stream"]
+    assert len(prepare_calls) == 1
+    assert generate_step_calls == 0
+    assert len(stream_image_paths) == 1
+    assert not Path(stream_image_paths[0]).exists()
+    assert len(sessions) == 2
+    for session in sessions:
+        assert session.session_root is not None
+        assert not session.session_root.exists()
+        cleanup_report = session.cleanup()
+        assert cleanup_report.artifact_count == 1
+        assert cleanup_report.artifact_bytes == len(b"fake-image-payload")
+        assert cleanup_report.cleanup_failure_count == 0
+    probe = runtime.last_probe_snapshot()
+    assert probe.multimodal_decode_mode == "native_quantized"
+    assert probe.multimodal_decode_sync_mode == "executor_stream"
+    assert probe.multimodal_fallback_reason == "image_batch1_step_position_receipt_unaligned"
+    assert probe.image_batch1_step_admission_reason == "image_batch1_step_position_receipt_unaligned"
+    assert probe.position_metadata_receipt["vision_metadata_guard"] == "missing_position_metadata"
+    assert probe.position_metadata_receipt["vision_metadata_reuse_allowed"] is False
+    assert probe.temp_media_artifact_count == 1
+    assert probe.temp_media_artifact_bytes == len(b"fake-image-payload")
+
+
+def test_mlx_vlm_runtime_image_batch1_step_probe_failure_cleans_temp_media(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_vlm_prepare_inputs(monkeypatch)
+    sys.modules["mlx_vlm.utils"].prepare_inputs = lambda processor, **kwargs: vars(
+        processor(
+            kwargs["prompts"],
+            **{key: value for key, value in kwargs.items() if key != "prompts"},
+        )
+    )
+    sessions: list[TempMediaSession] = []
+
+    class FakeDetokenizer:
+        def __copy__(self):  # pragma: no cover - probe fails before decode
+            return FakeDetokenizer()
+
+        def reset(self) -> None:  # pragma: no cover - no-op fake
+            pass
+
+        def add_token(self, token: int) -> None:
+            _ = token
+
+        def finalize(self) -> None:
+            pass
+
+    class FakeProcessor:
+        chat_template = "{{ prompt }}"
+        eos_token = "<eos>"
+        pad_token = None
+
+        def __init__(self) -> None:
+            self.detokenizer = FakeDetokenizer()
+            self.image_processor = object()
+
+        def __call__(self, prompts, **kwargs):
+            import mlx.core as mx
+
+            _ = prompts
+            _ = kwargs
+            return SimpleNamespace(
+                input_ids=mx.array([[1, 2, 3, 4, 5, 6]]),
+                attention_mask=mx.array([[1, 1, 1, 1, 1, 1]]),
+                pixel_values=mx.array([[[9]]]),
+                position_ids=mx.array([[0, 1, 2, 3, 4, 5]]),
+                rope_deltas=mx.array([[0]]),
+            )
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return (
+            SimpleNamespace(config=SimpleNamespace(model_type="gemma4", image_token_index=256)),
+            FakeProcessor(),
+        )
+
+    def session_factory(**kwargs) -> TempMediaSession:
+        session = TempMediaSession(**kwargs)
+        sessions.append(session)
+        return session
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *_args, **_kwargs: "formatted::Describe.",
+            generate_step_fn=lambda *args, **kwargs: iter(()),
+        ),
+        temp_root=tmp_path,
+        temp_media_session_factory=session_factory,
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"fake-image-payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="sample.jpg",
+                            format="jpg",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    def raise_probe(*args, **kwargs):
+        _ = args
+        _ = kwargs
+        raise RuntimeError("probe failed")
+
+    monkeypatch.setattr(runtime, "_record_fast_path_probe", raise_probe)
+
+    with pytest.raises(RuntimeError, match="probe failed"):
+        list(
+            runtime.generate_tokens(
+                loaded_model,
+                prepared,
+                common_pb2.SamplingConfig(
+                    temperature=0.0,
+                    top_p=1.0,
+                    top_k=0,
+                    max_output_tokens=8,
+                ),
+                Event(),
+            )
+        )
+
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session.session_root is not None
+    assert not session.session_root.exists()
+    probe = runtime.last_probe_snapshot()
+    assert probe.temp_media_artifact_count == 1
+    assert probe.temp_media_artifact_bytes == len(b"fake-image-payload")
+    assert probe.temp_media_cleanup_failure_count == 0
+
+
+def test_mlx_vlm_runtime_image_batch1_step_decode_handles_tail_and_empty_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_mlx_core(monkeypatch)
+
+    class FakeDetokenizer:
+        def __init__(self) -> None:
+            self.text = ""
+            self.last_segment = ""
+
+        def __copy__(self):
+            return FakeDetokenizer()
+
+        def reset(self) -> None:
+            self.text = ""
+            self.last_segment = ""
+
+        def add_token(self, token: int) -> None:
+            self.last_segment = {201: "Image ", 202: "", 203: "step"}.get(token, "")
+            self.text += self.last_segment
+
+        def finalize(self) -> None:
+            self.last_segment = " tail"
+
+    class FakeProcessor:
+        def __init__(self) -> None:
+            self.detokenizer = FakeDetokenizer()
+
+        def stopping_criteria(self, token: int) -> bool:
+            return token == 0
+
+    def fake_generate_step(*args, **kwargs):
+        _ = args
+        _ = kwargs
+        yield ["bad", 201, 202], [-0.1, -0.2]
+        yield 0, [-0.3]
+
+    monkeypatch.setattr(mlx_vlm_runtime_module, "_mlx_peak_memory_gb", lambda _mx_module: 7.0)
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda *args, **kwargs: None,
+            generate_step_fn=fake_generate_step,
+        )
+    )
+    loaded_model = {
+        "model": SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+        "processor": FakeProcessor(),
+    }
+    prepared_request = PreparedVisionRequest(
+        prompt_text="Describe.",
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+        multimodal_hash_hex="image-step-decode-tail",
+    )
+    import mlx.core as mx
+
+    step_inputs = mlx_vlm_runtime_module._ImageBatch1StepInputs(
+        media_paths=mlx_vlm_runtime_module.MaterializedMediaPaths(
+            image_paths=("/tmp/image.jpg",),
+            video_paths=(),
+        ),
+        inputs={
+            "input_ids": mx.array([[1, 2, 3, 4, 5, 6]]),
+            "attention_mask": mx.array([[1, 1, 1, 1, 1, 1]]),
+            "pixel_values": mx.array([[[9]]]),
+            "position_ids": mx.array([[0, 1, 2, 3, 4, 5]]),
+            "rope_deltas": mx.array([[0]]),
+        },
+        prompt_tokens=6,
+        position_metadata_receipt={
+            "vision_metadata_guard": "aligned",
+            "vision_metadata_reuse_allowed": True,
+        },
+        started_at=time.perf_counter(),
+    )
+
+    events = list(
+        runtime._generate_image_batch1_step_events(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            step_inputs=step_inputs,
+            sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+            cancel_event=Event(),
+            prompt_tokens=6,
+            prefill_step_size=None,
+            speculative_fallback_reason="",
+        )
+    )
+
+    assert [event.text for event in events] == ["Image ", " tail"]
+    assert events[0].token_ids == (201,)
+    assert events[0].token_logprobs == (-0.1, -0.2)
+    assert events[-1].raw_text == "Image  tail"
+    assert events[-1].completion_tokens == 2
+    assert [event.peak_memory for event in events] == [7.0, 7.0]
+    probe = runtime.last_probe_snapshot()
+    assert probe.multimodal_decode_mode == "image_batch1_step"
+    assert probe.image_batch1_step_decode_token_counter_start == 6
+    assert probe.image_batch1_step_decode_token_counter_end == 8
+    assert probe.image_batch1_step_decode_token_counter_advance == 2
+
+
+def test_mlx_vlm_runtime_image_batch1_step_decode_cancel_and_missing_detokenizer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_mlx_core(monkeypatch)
+
+    class FakeDetokenizer:
+        def __copy__(self):
+            return FakeDetokenizer()
+
+        def reset(self) -> None:
+            pass
+
+        def add_token(self, token: int) -> None:
+            _ = token
+
+        def finalize(self) -> None:
+            pass
+
+    def fake_generate_step(*args, **kwargs):
+        _ = args
+        _ = kwargs
+        yield 201, [-0.1]
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda *args, **kwargs: None,
+            generate_step_fn=fake_generate_step,
+        )
+    )
+    import mlx.core as mx
+
+    step_inputs = mlx_vlm_runtime_module._ImageBatch1StepInputs(
+        media_paths=mlx_vlm_runtime_module.MaterializedMediaPaths(
+            image_paths=("/tmp/image.jpg",),
+            video_paths=(),
+        ),
+        inputs={
+            "input_ids": mx.array([[1, 2, 3, 4, 5, 6]]),
+            "attention_mask": mx.array([[1, 1, 1, 1, 1, 1]]),
+            "pixel_values": mx.array([[[9]]]),
+        },
+        prompt_tokens=6,
+        position_metadata_receipt={},
+        started_at=time.perf_counter(),
+    )
+    prepared_request = PreparedVisionRequest(
+        prompt_text="Describe.",
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+        multimodal_hash_hex="image-step-decode-cancel",
+    )
+    cancel_event = Event()
+    cancel_event.set()
+
+    events = list(
+        runtime._generate_image_batch1_step_events(
+            loaded_model={
+                "model": SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+                "processor": SimpleNamespace(detokenizer=FakeDetokenizer()),
+            },
+            prepared_request=prepared_request,
+            step_inputs=step_inputs,
+            sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+            cancel_event=cancel_event,
+            prompt_tokens=6,
+            prefill_step_size=None,
+            speculative_fallback_reason="",
+        )
+    )
+    assert events == []
+
+    with pytest.raises(RuntimeError, match="isolated streaming detokenizer"):
+        list(
+            runtime._generate_image_batch1_step_events(
+                loaded_model={
+                    "model": SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+                    "processor": SimpleNamespace(),
+                },
+                prepared_request=prepared_request,
+                step_inputs=step_inputs,
+                sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+                cancel_event=Event(),
+                prompt_tokens=6,
+                prefill_step_size=None,
+                speculative_fallback_reason="",
+            )
+        )
 
 
 def test_mlx_vlm_runtime_text_only_step_uses_isolated_detokenizer() -> None:
@@ -5427,7 +6199,8 @@ def _assert_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
         )
     )
 
-    assert apply_calls == ["Describe.", "Say hello."]
+    assert apply_calls[0] == "Describe."
+    assert apply_calls[-1] == "Say hello."
     assert [event.text for event in stream_events] == ["stream"]
     assert stream_generate_calls[0]["prefill_step_size"] == stream_attention_receipt["selected_prefill_step_size"]
     assert stream_generate_calls[0]["model"] is not loaded_model["model"]
