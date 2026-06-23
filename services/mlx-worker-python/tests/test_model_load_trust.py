@@ -320,18 +320,20 @@ def test_trust_policy_common_loader_fast_path_skips_normalized_membership(
     ) is True
 
 
-def test_trust_policy_reads_config_json_bytes_without_text_decode(
+def test_trust_policy_reads_config_json_bytes_with_direct_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_load_trust_module._read_model_config_for_stat.cache_clear()
+    model_load_trust_module._detect_custom_loader_requirement_for_stat.cache_clear()
     model = _custom_loader_text_model(tmp_path)
-    read_bytes_calls = 0
-    original_read_bytes = model_load_trust_module.Path.read_bytes
+    open_calls = 0
+    original_open = open
 
-    def counted_read_bytes(path: Path) -> bytes:
-        nonlocal read_bytes_calls
-        read_bytes_calls += 1
-        return original_read_bytes(path)
+    def counted_open(*args, **kwargs):
+        nonlocal open_calls
+        open_calls += 1
+        return original_open(*args, **kwargs)
 
     def fail_read_text(
         path: Path, *args, **kwargs
@@ -339,7 +341,11 @@ def test_trust_policy_reads_config_json_bytes_without_text_decode(
         _ = path, args, kwargs
         raise AssertionError("config.json should be parsed from bytes")
 
-    monkeypatch.setattr(model_load_trust_module.Path, "read_bytes", counted_read_bytes)
+    def fail_read_bytes(path: Path) -> bytes:  # pragma: no cover - only runs on regression.
+        raise AssertionError(f"config.json should use direct open(), not Path.read_bytes(): {path}")
+
+    monkeypatch.setattr(model_load_trust_module, "open", counted_open, raising=False)
+    monkeypatch.setattr(model_load_trust_module.Path, "read_bytes", fail_read_bytes)
     monkeypatch.setattr(model_load_trust_module.Path, "read_text", fail_read_text)
 
     with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
@@ -350,7 +356,7 @@ def test_trust_policy_reads_config_json_bytes_without_text_decode(
             runtime=RecordingTextBackend(),
         )
 
-    assert read_bytes_calls == 1
+    assert open_calls == 1
     assert exc_info.value.policy.custom_loader_required is True
     assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
 
@@ -362,15 +368,15 @@ def test_trust_policy_caches_config_json_by_file_stat(
     model_load_trust_module._read_model_config_for_stat.cache_clear()
     model_load_trust_module._detect_custom_loader_requirement_for_stat.cache_clear()
     model = _custom_loader_text_model(tmp_path)
-    read_bytes_calls = 0
-    original_read_bytes = model_load_trust_module.Path.read_bytes
+    open_calls = 0
+    original_open = open
 
-    def counted_read_bytes(path: Path) -> bytes:
-        nonlocal read_bytes_calls
-        read_bytes_calls += 1
-        return original_read_bytes(path)
+    def counted_open(*args, **kwargs):
+        nonlocal open_calls
+        open_calls += 1
+        return original_open(*args, **kwargs)
 
-    monkeypatch.setattr(model_load_trust_module.Path, "read_bytes", counted_read_bytes)
+    monkeypatch.setattr(model_load_trust_module, "open", counted_open, raising=False)
 
     for _ in range(2):
         with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
@@ -383,7 +389,7 @@ def test_trust_policy_caches_config_json_by_file_stat(
         assert exc_info.value.policy.custom_loader_required is True
         assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
 
-    assert read_bytes_calls == 1
+    assert open_calls == 1
 
 
 def test_trust_policy_caches_auto_map_detection_by_file_stat(

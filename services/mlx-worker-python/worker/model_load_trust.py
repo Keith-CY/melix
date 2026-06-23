@@ -371,7 +371,8 @@ def _read_model_config_for_stat(
 ) -> dict[str, Any] | None:
     _ = (mtime_ns, size)
     try:
-        payload = json.loads(Path(config_path).read_bytes())
+        with open(config_path, "rb") as handle:
+            payload = json.loads(handle.read())
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
