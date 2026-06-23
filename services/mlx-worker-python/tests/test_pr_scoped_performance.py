@@ -1773,12 +1773,14 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py"],
     )
 
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "vlm-batch1-comparison-artifact",
         "mlx-vlm-family-config-cache",
         "mlx-vlm-gemma4-weight-presence-single-pass",
     ]
     coverage_commands = " ".join(str(probe["coverage_command"]) for probe in scope["selected_probes"])
+    assert "test_mlx_vlm_runtime_image_batch1_step_keeps_ineligible_requests_on_stream" in coverage_commands
     assert "test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available" in coverage_commands
     assert "test_mtp_drafter_acceptance_stats_ignore_unusable_accept_lens" in coverage_commands
 
@@ -3602,6 +3604,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "maintenance-prompt-shape-vector-repeat",
         "maintenance-benchmark-parameter-normalization-single-convert",
         "maintenance-capability-split-single-strip",
+        "vlm-batch1-comparison-artifact",
         "phase8-metrics-closure-audit-reuse",
         "pr-scoped-performance-registry-cache",
         "real-model-support-hf-cache-latest-snapshot",
@@ -3887,6 +3890,32 @@ def test_scope_report_selects_serving_diagnostics_queue_probe() -> None:
     }
 
 
+def test_scope_report_selects_vlm_batch1_comparison_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/engine/maintenance_core.py",
+            "scripts/vlm_batch1_comparison_probe.py",
+        ],
+    )
+
+    assert "vlm-batch1-comparison-artifact" in {
+        probe["id"] for probe in scope["selected_probes"]
+    }
+
+
+def test_vlm_batch1_comparison_probe_command_has_base_fallback() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "vlm-batch1-comparison-artifact"
+    )
+
+    assert "if [ -f scripts/vlm_batch1_comparison_probe.py ]" in probe.probe_command
+    assert "valid_status_count" in probe.probe_command
+    assert "blocked_status_count" in probe.probe_command
+
+
 def test_probe_policy_noop_overhead_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -3933,6 +3962,27 @@ def test_serving_diagnostics_queue_probe_script_emits_metrics(
     assert metrics["dropped_count"] == 6.0
     assert "serialization_elapsed_ms_mean" in metrics
     assert metrics["serialization_checksum"] == 30.0
+
+
+def test_vlm_batch1_comparison_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["vlm_batch1_comparison_probe.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/vlm_batch1_comparison_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["valid_status_count"] == 5.0
+    assert metrics["blocked_status_count"] == 5.0
+    assert metrics["identity_match_count"] == 0.0
+    assert metrics["route_stability_count"] == 5.0
+    assert metrics["valid_payload_bytes"] > 0.0
+    assert metrics["baseline_ttft_ms"] == 20.0
+    assert metrics["fast_path_decode_tokens_per_second"] == 166.7
 
 
 def test_load_probe_registry_uses_absolute_cache_key_without_resolving(

@@ -472,6 +472,19 @@ Executable unit issues:
   values. Non-greedy or otherwise ineligible batch-1 image requests keep their
   existing stream path with the typed admission fallback reason.
 
+- Unit 3.2.3 adds matched baseline-vs-fast-path benchmark evidence for the
+  image batch-1 decode route. VLM benchmarks can run the same prompt/model tuple
+  twice with an internal request-local `melix.vlm.image_batch1_step.enabled`
+  override: `false` records the baseline stream route and `true` admits the
+  accelerated `image_batch1_step` route when all receipts pass. The comparison
+  artifact reuses the serving-diagnostics baseline-vs-accelerated evidence
+  contract, so public speed claims are blocked unless the model id, prompt
+  protocol, prompt digest, prompt template digest, task kind, generation config,
+  greedy sampler, and route-stability status match. The artifact records TTFT,
+  decode tokens/sec, fallback reason, and route stability for both legs; if the
+  fast path is not actually selected or identity differs, benchmark metrics mark
+  `vlm_batch1_comparison_claim_blocked=1` instead of emitting an eligible claim.
+
 ## Verification Policy
 
 Per milestone:
