@@ -3964,6 +3964,13 @@ button.primary:active {
             if let workerError = aggregate.error {
                 return workerErrorResponse(workerError)
             }
+            if let violation = Self.toolChoiceViolation(
+                for: Self.toolChoiceContract(from: workerRequest),
+                observedToolNames: aggregate.toolCallNames,
+                finishReason: aggregate.finishReason
+            ) {
+                return toolChoiceFailureResponse(violation)
+            }
 
             await metricsStore.increment("http.chat_completions_non_stream_request_count")
             await metricsStore.set(
@@ -4015,6 +4022,7 @@ button.primary:active {
         var error: Melix_Worker_V1_ErrorStatus?
         var tokenLogprobs: [TokenLogprob] = []
         var hasIncompleteLogprobEvidence = false
+        var toolCallNames: [String] = []
     }
 
     private func aggregateChatCompletion(
@@ -4062,6 +4070,10 @@ button.primary:active {
             case .error(let error):
                 aggregate.error = error.error
                 return aggregate
+            case .toolCallDelta(let toolCall):
+                if !toolCall.toolName.isEmpty {
+                    aggregate.toolCallNames.append(toolCall.toolName)
+                }
             default:
                 continue
             }
@@ -4116,6 +4128,138 @@ button.primary:active {
         }
 
         return payload
+    }
+
+    private enum ToolChoiceContract: Equatable, Sendable {
+        case none
+        case required(String)
+        case named(String)
+    }
+
+    private struct ToolChoiceContractViolation: Sendable {
+        let requestedToolChoice: String
+        let observedToolNames: [String]
+        let finishReason: String
+
+        var details: [String: String] {
+            [
+                "field": "tool_choice",
+                "phase": "response_finalization",
+                "requested_tool_choice": requestedToolChoice,
+                "observed_tool_calls": observedToolNames.joined(separator: ","),
+                "finish_reason": finishReason,
+            ]
+        }
+    }
+
+    private static func toolChoiceContract(
+        from request: Melix_Worker_V1_GenerateRequest
+    ) -> ToolChoiceContract {
+        guard request.execution.hasToolConfig,
+              !request.execution.toolConfig.tools.isEmpty
+        else {
+            return .none
+        }
+
+        let raw = request.execution.toolConfig.toolChoice.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else {
+            return .none
+        }
+
+        switch raw.lowercased() {
+        case "required":
+            return .required(raw)
+        case "auto", "none":
+            return .none
+        default:
+            guard let name = namedToolChoiceName(from: raw) else {
+                return .none
+            }
+            return .named(name)
+        }
+    }
+
+    private static func namedToolChoiceName(from raw: String) -> String? {
+        guard let data = raw.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        if let function = object["function"] as? [String: Any],
+           let name = function["name"] as? String {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let name = object["name"] as? String {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return nil
+    }
+
+    private static func toolChoiceViolation(
+        for contract: ToolChoiceContract,
+        observedToolNames: [String],
+        finishReason: String
+    ) -> ToolChoiceContractViolation? {
+        switch contract {
+        case .none:
+            return nil
+        case .required(let requested):
+            guard observedToolNames.isEmpty else {
+                return nil
+            }
+            return ToolChoiceContractViolation(
+                requestedToolChoice: requested,
+                observedToolNames: observedToolNames,
+                finishReason: finishReason
+            )
+        case .named(let name):
+            guard !observedToolNames.isEmpty,
+                  observedToolNames.allSatisfy({ $0 == name })
+            else {
+                return ToolChoiceContractViolation(
+                    requestedToolChoice: name,
+                    observedToolNames: observedToolNames,
+                    finishReason: finishReason
+                )
+            }
+            return nil
+        }
+    }
+
+    private func toolChoiceFailureResponse(_ violation: ToolChoiceContractViolation) -> HTTPResponse {
+        jsonResponse(
+            statusCode: 502,
+            payload: [
+                "error": [
+                    "code": "tool_choice_not_satisfied",
+                    "field": "tool_choice",
+                    "phase": "response_finalization",
+                    "message": "Model response did not satisfy the requested tool_choice.",
+                    "requested_tool_choice": violation.requestedToolChoice,
+                    "observed_tool_calls": violation.observedToolNames,
+                    "finish_reason": violation.finishReason,
+                ],
+            ]
+        )
+    }
+
+    private static func toolChoiceErrorEvent(
+        requestID: String,
+        seq: UInt64,
+        violation: ToolChoiceContractViolation
+    ) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.seq = seq
+        event.error = Melix_Worker_V1_ErrorEvent()
+        event.error.error.code = "tool_choice_not_satisfied"
+        event.error.error.message = "Model response did not satisfy the requested tool_choice."
+        event.error.error.details = violation.details
+        return event
     }
 
     private static func chatUsagePayload(_ usage: NonStreamChatCompletionAggregate.Usage) -> [String: Any] {
@@ -4273,8 +4417,14 @@ button.primary:active {
             workerStream = execution.stream
         }
 
+        let outputStream = Self.toolChoiceValidatedStream(
+            workerStream,
+            request: translated.workerRequest,
+            requestID: execution.requestID,
+            shape: shape
+        )
         let stream = sseWriter.encode(
-            stream: workerStream,
+            stream: outputStream,
             requestID: execution.requestID,
             modelID: translated.responseModelID ?? execution.modelID,
             shape: shape,
@@ -4297,6 +4447,104 @@ button.primary:active {
             ],
             body: .stream(stream)
         )
+    }
+
+    private static func toolChoiceValidatedStream(
+        _ stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>,
+        request: Melix_Worker_V1_GenerateRequest,
+        requestID: String,
+        shape: SSEStreamWriter.StreamShape
+    ) -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        let contract = toolChoiceContract(from: request)
+        guard shape == .chatCompletions, contract != .none else {
+            return stream
+        }
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                var bufferedEvents: [Melix_Worker_V1_ExecuteEvent] = []
+                var observedToolNames: [String] = []
+                var finishReason = "stop"
+                var lastSeq: UInt64 = 0
+                var isSatisfied = false
+
+                do {
+                    for try await event in stream {
+                        lastSeq = max(lastSeq, event.seq)
+                        switch event.payload {
+                        case .toolCallDelta(let toolCall):
+                            if !toolCall.toolName.isEmpty {
+                                observedToolNames.append(toolCall.toolName)
+                            }
+                        case .completed(let completed):
+                            finishReason = completed.finishReason.isEmpty ? "stop" : completed.finishReason
+                        case .error:
+                            continuation.yield(event)
+                            continuation.finish()
+                            return
+                        default:
+                            break
+                        }
+
+                        if isSatisfied {
+                            continuation.yield(event)
+                            continue
+                        }
+
+                        bufferedEvents.append(event)
+                        isSatisfied = toolChoiceContractIsSatisfied(
+                            contract,
+                            observedToolNames: observedToolNames
+                        )
+                        if isSatisfied {
+                            for bufferedEvent in bufferedEvents {
+                                continuation.yield(bufferedEvent)
+                            }
+                            bufferedEvents.removeAll()
+                        }
+                    }
+
+                    if !isSatisfied, let violation = toolChoiceViolation(
+                        for: contract,
+                        observedToolNames: observedToolNames,
+                        finishReason: finishReason
+                    ) {
+                        continuation.yield(
+                            toolChoiceErrorEvent(
+                                requestID: requestID,
+                                seq: lastSeq + 1,
+                                violation: violation
+                            )
+                        )
+                    } else {
+                        for event in bufferedEvents {
+                            continuation.yield(event)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    private static func toolChoiceContractIsSatisfied(
+        _ contract: ToolChoiceContract,
+        observedToolNames: [String]
+    ) -> Bool {
+        switch contract {
+        case .none:
+            return true
+        case .required:
+            return !observedToolNames.isEmpty
+        case .named(let name):
+            return observedToolNames.contains(name)
+        }
     }
 
     private func shouldInspectFirstStreamEventForPreSSEAdmission(_ translated: TranslatedChatRequest) -> Bool {
