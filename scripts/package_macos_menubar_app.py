@@ -29,12 +29,17 @@ _DEBUG_BUILD_CONFIGURATION = "debug"
 
 
 def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
-    build_root_path = os.fspath(build_root)
-    direct_release_candidate = os.path.join(build_root_path, _RELEASE_BUILD_CONFIGURATION, product_name)
-    if os.path.isfile(direct_release_candidate):
-        return Path(direct_release_candidate)
+    is_dir = os.path.isdir
+    is_file = os.path.isfile
+    join = os.path.join
+    path_type = Path
 
-    direct_debug_candidate = os.path.join(build_root_path, _DEBUG_BUILD_CONFIGURATION, product_name)
+    build_root_path = os.fspath(build_root)
+    direct_release_candidate = join(build_root_path, _RELEASE_BUILD_CONFIGURATION, product_name)
+    if is_file(direct_release_candidate):
+        return path_type(direct_release_candidate)
+
+    direct_debug_candidate = join(build_root_path, _DEBUG_BUILD_CONFIGURATION, product_name)
     lex_first_triple_name: str | None = None
     triple_names: list[str] = []
     try:
@@ -45,46 +50,53 @@ def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
                         continue
                 except OSError:
                     continue
-                triple_names.append(entry.name)
-                if lex_first_triple_name is None or entry.name < lex_first_triple_name:
-                    lex_first_triple_name = entry.name
+                triple_name = entry.name
+                triple_names.append(triple_name)
+                if lex_first_triple_name is None or triple_name < lex_first_triple_name:
+                    lex_first_triple_name = triple_name
     except OSError:
-        if os.path.isfile(direct_debug_candidate):
-            return Path(direct_debug_candidate)
+        if is_file(direct_debug_candidate):
+            return path_type(direct_debug_candidate)
         return None
 
     if lex_first_triple_name is None:
         return None
 
-    lex_first_triple_path = os.path.join(build_root_path, lex_first_triple_name)
-    lex_first_release_dir = os.path.join(lex_first_triple_path, _RELEASE_BUILD_CONFIGURATION)
-    if os.path.isdir(lex_first_release_dir):
-        lex_first_release_candidate = os.path.join(lex_first_release_dir, product_name)
-        if os.path.isfile(lex_first_release_candidate):
-            return Path(lex_first_release_candidate)
+    lex_first_triple_path = join(build_root_path, lex_first_triple_name)
+    lex_first_release_dir = join(lex_first_triple_path, _RELEASE_BUILD_CONFIGURATION)
+    if is_dir(lex_first_release_dir):
+        lex_first_release_candidate = join(lex_first_release_dir, product_name)
+        if is_file(lex_first_release_candidate):
+            return path_type(lex_first_release_candidate)
 
-    if os.path.isfile(direct_debug_candidate):
-        return Path(direct_debug_candidate)
+    if is_file(direct_debug_candidate):
+        return path_type(direct_debug_candidate)
 
-    lex_first_debug_candidate = os.path.join(
+    lex_first_debug_candidate = join(
         lex_first_triple_path,
         _DEBUG_BUILD_CONFIGURATION,
         product_name,
     )
-    if os.path.isfile(lex_first_debug_candidate):
-        return Path(lex_first_debug_candidate)
+    if is_file(lex_first_debug_candidate):
+        return path_type(lex_first_debug_candidate)
 
-    remaining_triple_names = [name for name in triple_names if name != lex_first_triple_name]
-    remaining_triple_names.sort()
+    remaining_triple_names = sorted(name for name in triple_names if name != lex_first_triple_name)
+    remaining_debug_candidate: str | None = None
+    build_root_prefix = build_root_path + os.sep
+    release_candidate_suffix = os.sep + _RELEASE_BUILD_CONFIGURATION + os.sep + product_name
+    debug_candidate_suffix = os.sep + _DEBUG_BUILD_CONFIGURATION + os.sep + product_name
     for triple_name in remaining_triple_names:
-        candidate = os.path.join(build_root_path, triple_name, _RELEASE_BUILD_CONFIGURATION, product_name)
-        if os.path.isfile(candidate):
-            return Path(candidate)
+        triple_candidate_prefix = build_root_prefix + triple_name
+        candidate = triple_candidate_prefix + release_candidate_suffix
+        if is_file(candidate):
+            return path_type(candidate)
+        if remaining_debug_candidate is None:
+            candidate = triple_candidate_prefix + debug_candidate_suffix
+            if is_file(candidate):
+                remaining_debug_candidate = candidate
 
-    for triple_name in remaining_triple_names:
-        candidate = os.path.join(build_root_path, triple_name, _DEBUG_BUILD_CONFIGURATION, product_name)
-        if os.path.isfile(candidate):
-            return Path(candidate)
+    if remaining_debug_candidate is not None:
+        return path_type(remaining_debug_candidate)
     return None
 
 
