@@ -368,7 +368,14 @@ class DownloadPipeline:
             )
         revision = self._ext_text(ext, "melix.hf_revision") or "main"
 
-        source_dir = self._resolve_managed_hub_source_path(output_dir=output_dir, ext=ext, repo_id=repo_id, revision=revision)
+        cache_root = self._huggingface_cache_root(ext)
+        source_dir = self._resolve_managed_hub_source_path(
+            output_dir=output_dir,
+            ext=ext,
+            repo_id=repo_id,
+            revision=revision,
+            cache_root=cache_root,
+        )
         total_bytes = self._directory_size(source_dir)
         state_path = output_dir / "download.state.json"
         manifest_json = self._build_managed_import_manifest_json(
@@ -381,6 +388,7 @@ class DownloadPipeline:
             repo_id=repo_id,
             revision=revision,
             total_bytes=total_bytes,
+            cache_root=cache_root,
         )
         return DownloadPipelineResult(
             output_path=source_dir,
@@ -496,6 +504,7 @@ class DownloadPipeline:
         ext: dict[str, Any],
         repo_id: str,
         revision: str,
+        cache_root: Path | None = None,
     ) -> Path:
         source_path_raw = self._ext_text(ext, "source_path")
         if source_path_raw:
@@ -515,10 +524,12 @@ class DownloadPipeline:
                 message="huggingface_hub is required for managed hub imports.",
             ) from exc
 
+        if cache_root is None:
+            cache_root = self._huggingface_cache_root(ext)
         kwargs: dict[str, object] = {
             "repo_id": repo_id,
             "revision": revision.strip() or None,
-            "cache_dir": os.fspath(self._default_huggingface_cache_root()),
+            "cache_dir": os.fspath(cache_root),
         }
         token = self._huggingface_token(ext)
         if token:
@@ -552,6 +563,7 @@ class DownloadPipeline:
         repo_id: str,
         revision: str,
         total_bytes: int,
+        cache_root: Path,
     ) -> str:
         ext = dict(request.ext)
         public_ext = self._public_ext(request.ext)
@@ -624,6 +636,7 @@ class DownloadPipeline:
                 "melix.source_locator": repo_id,
                 "melix.managed_import": "true",
                 "melix.model_path": str(runtime_model_path),
+                "melix.effective_hf_cache_root": str(cache_root),
                 **draft_metadata,
             },
             "metrics": {
@@ -1860,6 +1873,26 @@ class DownloadPipeline:
     @staticmethod
     def _default_huggingface_cache_root() -> Path:
         return (Path.home() / ".cache" / "huggingface" / "hub").resolve()
+
+    @staticmethod
+    def _huggingface_cache_root(ext: dict[str, Any]) -> Path:
+        explicit = (
+            DownloadPipeline._ext_text(ext, "melix.hf_cache_root")
+            or DownloadPipeline._ext_text(ext, "hf_cache_root")
+            or DownloadPipeline._ext_text(ext, "HUGGINGFACE_HUB_CACHE")
+        )
+        if explicit:
+            return Path(explicit).expanduser().resolve()
+        hf_home = DownloadPipeline._ext_text(ext, "HF_HOME")
+        if hf_home:
+            return (Path(hf_home).expanduser() / "hub").resolve()
+        env_cache = os.environ.get("HUGGINGFACE_HUB_CACHE", "").strip()
+        if env_cache:
+            return Path(env_cache).expanduser().resolve()
+        env_hf_home = os.environ.get("HF_HOME", "").strip()
+        if env_hf_home:
+            return (Path(env_hf_home).expanduser() / "hub").resolve()
+        return DownloadPipeline._default_huggingface_cache_root()
 
     @staticmethod
     def _huggingface_token(ext: dict[str, Any]) -> str:

@@ -4,6 +4,7 @@ import json
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Callable
 from pathlib import Path
@@ -19,6 +20,8 @@ from packages.protocol.python.worker.v1 import (
 )
 from tests.integration.helpers import LiveMelixStack, get_cache_stats, read_metrics_export
 from worker.model_registry.catalog import WorkerModelCatalog
+
+_READY_MODEL_STATES = {"pinned", "warm"}
 
 
 def measure_cold_boot_to_ready(repo_root: Path) -> dict[str, float]:
@@ -787,7 +790,7 @@ def _collect_multi_model_coexistence_evidence(repo_root: Path) -> dict[str, Any]
         stack.wait_for_models(required_models, timeout_seconds=30)
         model_states = _read_model_states(stack.models_url())
         ready_model_ids = [
-            model_id for model_id in required_models if model_states.get(model_id) in {"warm", "pinned"}
+            model_id for model_id in required_models if _model_state_is_ready(model_states.get(model_id))
         ]
 
         return {
@@ -877,9 +880,68 @@ def _post_json(url: str, payload: dict[str, object]) -> tuple[int, Any]:
 
 
 def _read_model_states(models_url: str) -> dict[str, str]:
+    states: dict[str, str] = {}
     with urllib.request.urlopen(models_url, timeout=10) as response:
         payload = json.loads(response.read().decode("utf-8"))
-    return {item["id"]: item["melix_state"] for item in payload["data"]}
+    states.update(_model_states_from_payload(payload))
+
+    try:
+        with urllib.request.urlopen(_capabilities_url_from_models_url(models_url), timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError):
+        return states
+    states.update(_model_states_from_payload(payload))
+    return states
+
+
+def _model_state_is_ready(state: str | None) -> bool:
+    return state is not None and state.strip().lower() in _READY_MODEL_STATES
+
+
+def _model_states_from_payload(payload: Any) -> dict[str, str]:
+    if not isinstance(payload, dict):
+        return {}
+
+    states: dict[str, str] = {}
+    openai_models = payload.get("data")
+    if isinstance(openai_models, list):
+        for item in openai_models:
+            if not isinstance(item, dict):
+                continue
+            model_id = item.get("id")
+            state = _model_state_from_item(item)
+            if isinstance(model_id, str) and isinstance(state, str):
+                states[model_id] = state
+
+    discovery_models = payload.get("models")
+    if isinstance(discovery_models, list):
+        for item in discovery_models:
+            if not isinstance(item, dict):
+                continue
+            model_id = item.get("model_id")
+            state = _model_state_from_item(item)
+            if isinstance(model_id, str) and isinstance(state, str):
+                states[model_id] = state
+
+    return states
+
+
+def _model_state_from_item(item: dict[str, Any]) -> str | None:
+    for key in ("melix_state", "state", "readiness", "status"):
+        state = item.get(key)
+        if isinstance(state, str) and state.strip():
+            return state
+    return None
+
+
+def _capabilities_url_from_models_url(models_url: str) -> str:
+    parts = urllib.parse.urlsplit(models_url)
+    path = parts.path.rstrip("/")
+    if path.endswith("/v1/models"):
+        path = f"{path[:-len('/v1/models')]}/api/capabilities"
+    else:
+        path = f"{path}/api/capabilities"
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
 def _run_prefill_memory_guard_probe(stack: LiveMelixStack) -> dict[str, Any]:
