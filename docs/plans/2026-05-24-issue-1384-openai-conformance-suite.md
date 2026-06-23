@@ -12,7 +12,7 @@
 
 ## Scope
 
-This PR implements the first issue #1384 conformance slice:
+The original issue #1384 conformance slice implemented:
 
 - `/v1/chat/completions` request-shape conformance for compatibility fields that often drift:
   - `max_completion_tokens`
@@ -30,13 +30,30 @@ This PR implements the first issue #1384 conformance slice:
   - usage payloads carry completion token counts while logprob requests are explicitly marked unsupported at the request boundary
 - A machine-readable report builder for the table rows so future CI or operator harnesses can write JSON artifacts without duplicating fixture logic.
 
-This PR does not:
+That slice did not:
 
 - implement third-party proxy network calls,
 - add vendor-specific undocumented behavior,
 - expand protobuf schemas,
 - replace the separate SSE/prefill child issue #1392,
 - claim worker-side token logprobs exist when the backend does not report them.
+
+The 2026-06-23 forced-tool closure slice for issue #1384 adds the conformance
+coverage needed for the hard `tool_choice` contract while the parent issue
+continues tracking the remaining open children:
+
+- hard `tool_choice=required` and named `tool_choice` response contracts at the
+  OpenAI Chat Completions boundary,
+- typed compatibility errors when the backend completes without a required tool
+  call or emits a tool call that does not satisfy the named tool request,
+- stream and non-stream leak scans proving failed forced-tool responses do not
+  expose Melix compatibility receipts, parser metadata, routing scratch text, or
+  orphan tool-call markup on the OpenAI wire,
+- removal of the chat-completions-only completed-chunk `melix.assistant_text`
+  payload from OpenAI-compatible SSE frames.
+
+Future watch-log findings outside the existing child issues should be filed as
+new children or follow-up issues instead of expanding this forced-tool slice.
 
 ## Success Metrics
 
@@ -111,3 +128,16 @@ The pre-commit gate writes the PR-scoped performance report under `.runtime/pre-
 - Anthropic/protocol parity, disabled-tool prompt guards, oversized payload
   truncation metadata, and backend token logprob propagation remain separate
   issue #1384 slices.
+
+## 2026-06-23 Closure Tasks
+
+- [x] Add failing conformance rows for `tool_choice=required` and named
+  `tool_choice` mismatch failures.
+- [x] Enforce forced-tool response contracts before returning non-stream Chat
+  Completions payloads.
+- [x] Buffer forced-tool Chat Completions streams until the contract is
+  satisfied, then emit either the OpenAI-compatible chunks or a typed SSE error.
+- [x] Scrub OpenAI Chat Completions completed chunks so internal Melix assistant
+  text mirrors do not cross the wire.
+- [x] Verify focused tests, full local gate, changed-scope coverage, and
+  PR-scoped performance before opening the forced-tool slice PR.
