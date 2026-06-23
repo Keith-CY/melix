@@ -43,7 +43,11 @@ from worker.runtime.multimodal_position_receipts import (
     build_hybrid_state_patch_receipt,
     build_position_metadata_receipt,
 )
-from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
+from worker.runtime.multimodal_preprocessing import (
+    PreparedVisionRequest,
+    prepare_vision_request,
+    rebuild_multimodal_hash,
+)
 from worker.runtime.runtime_utils import (
     callable_accepts_kwarg as _callable_accepts_kwarg,
     callable_declares_kwarg as _callable_declares_kwarg,
@@ -53,6 +57,10 @@ from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import (
     resolve_vision_family_config,
     vision_processor_capability_metadata,
+)
+from worker.runtime.vlm_preprocessing_policy import (
+    apply_resize_shape_to_stream_kwargs,
+    prepared_request_preprocessing_policy_receipt,
 )
 
 logger = logging.getLogger(__name__)
@@ -2278,6 +2286,7 @@ class MLXVLMRuntime:
                     "top_k": int(getattr(sampling, "top_k", 0)),
                     "verbose": False,
                 }
+                apply_resize_shape_to_stream_kwargs(stream_kwargs, prepared_request)
                 image_feature_vision_cache: _MelixImageFeatureVisionCache | None = None
                 if (
                     image_argument is not None
@@ -3283,6 +3292,9 @@ class MLXVLMRuntime:
             hybrid_state_patch_mode=fast_path.hybrid_state_patch_mode,
             hybrid_state_advance_count=hybrid_state_advance_count,
             family_fast_path_override_count=fast_path.family_fast_path_override_count,
+            preprocessing_policy_receipt=prepared_request_preprocessing_policy_receipt(
+                prepared_request
+            ),
             attention_budget_receipt=build_attention_budget_receipt(
                 attention_policy
                 if attention_policy is not None

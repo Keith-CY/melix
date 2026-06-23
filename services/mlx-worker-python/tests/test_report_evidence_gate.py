@@ -258,8 +258,12 @@ def test_report_evidence_gate_run_kind_tuple_rules_reuse_normalized_set() -> Non
     )
 
     cache_info = report_evidence_gate_module._string_frozenset_from_tuple.cache_info()
-    assert cache_info.hits >= 1
+    assert cache_info.hits == 0
     assert cache_info.misses == 1
+    assert rule["_melix_cached_run_kinds"] is rule["run_kinds"]
+    assert rule["_melix_cached_run_kind_set"] == frozenset(
+        {"evaluation", "serving_benchmark"}
+    )
 
 
 def test_report_evidence_gate_run_kind_non_string_values_still_match_by_string() -> None:
@@ -270,6 +274,30 @@ def test_report_evidence_gate_run_kind_non_string_values_still_match_by_string()
         metrics=[],
         probe_phases=set(),
     )
+
+
+def test_report_evidence_gate_run_kind_tuple_rules_cache_on_rule() -> None:
+    report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
+    rule: dict[str, object] = {"run_kinds": ("7",)}
+
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[{"run_kind": "7"}],
+        targets=[],
+        metrics=[],
+        probe_phases=set(),
+    )
+    assert rule["_melix_cached_run_kinds"] is rule["run_kinds"]
+    assert rule["_melix_cached_run_kind_set"] == frozenset({"7"})
+
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[{"run_kind": "7"}],
+        targets=[],
+        metrics=[],
+        probe_phases=set(),
+    )
+    assert report_evidence_gate_module._string_frozenset_from_tuple.cache_info().misses == 1
 
 
 def test_report_evidence_gate_matrix_roles_keep_non_string_run_kind_match() -> None:

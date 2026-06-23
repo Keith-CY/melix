@@ -1282,7 +1282,9 @@ def _qat_fake_quant_source_stats(source_files: list[Path], *, q_bits: int) -> di
     _qat_fake_quant_error_table(q_bits)
     error_byte_table = _qat_fake_quant_error_byte_table(q_bits)
     error_max_possible = max(error_byte_table)
-    chunk_size = 1024 * 1024
+    # QAT source artifacts are large tensor/config files; a 4 MiB chunk reduces
+    # Python loop overhead while keeping transient memory bounded for scans.
+    chunk_size = 4 * 1024 * 1024
     sum_errors = sum
     max_errors = max
     for source_file in source_files:
