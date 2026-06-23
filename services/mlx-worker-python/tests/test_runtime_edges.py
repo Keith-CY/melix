@@ -143,6 +143,11 @@ class FailingAudioRuntime(StubAudioRuntime):
         raise RuntimeError("mlx-audio speech backend failed to load model")
 
 
+class NoneCacheStatsVLMRuntime:
+    def cache_stats_response(self):
+        return None
+
+
 class FakeBenchmarkHFDatasetFetcher:
     def __call__(self, endpoint: str, params: dict[str, str]) -> dict[str, object]:
         dataset = params.get("dataset", "")
@@ -960,6 +965,52 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert vision_stats.last_image_feature_cache_misses == 2
     assert vision_stats.last_image_feature_encoder_calls_saved == 5
     assert vision_stats.last_image_feature_work_saved_bytes == 8192
+
+    registry.record_vision_probe(
+        "ocr",
+        SimpleNamespace(
+            media_feature_cache_hits=-1,
+            media_feature_cache_misses=None,
+            media_feature_encoder_calls_saved=-1,
+            media_feature_work_saved_bytes=None,
+            image_feature_cache_hits=7,
+            image_feature_cache_misses=3,
+            image_feature_encoder_calls_saved=6,
+            image_feature_work_saved_bytes=16384,
+        ),
+    )
+    alias_stats = registry.runtime_stats()
+    assert alias_stats.last_media_feature_cache_hits == 7
+    assert alias_stats.last_image_feature_cache_hits == 7
+    assert alias_stats.last_media_feature_cache_misses == 3
+    assert alias_stats.last_image_feature_cache_misses == 3
+    assert alias_stats.last_media_feature_encoder_calls_saved == 6
+    assert alias_stats.last_image_feature_encoder_calls_saved == 6
+    assert alias_stats.last_media_feature_work_saved_bytes == 16384
+    assert alias_stats.last_image_feature_work_saved_bytes == 16384
+
+    registry.record_vision_probe(
+        "ocr",
+        SimpleNamespace(
+            media_feature_cache_hits=11,
+            media_feature_cache_misses=4,
+            media_feature_encoder_calls_saved=8,
+            media_feature_work_saved_bytes=32768,
+            image_feature_cache_hits=-1,
+            image_feature_cache_misses=-1,
+            image_feature_encoder_calls_saved=-1,
+            image_feature_work_saved_bytes=-1,
+        ),
+    )
+    media_stats = registry.runtime_stats()
+    assert media_stats.last_media_feature_cache_hits == 11
+    assert media_stats.last_image_feature_cache_hits == 11
+    assert media_stats.last_media_feature_cache_misses == 4
+    assert media_stats.last_image_feature_cache_misses == 4
+    assert media_stats.last_media_feature_encoder_calls_saved == 8
+    assert media_stats.last_image_feature_encoder_calls_saved == 8
+    assert media_stats.last_media_feature_work_saved_bytes == 32768
+    assert media_stats.last_image_feature_work_saved_bytes == 32768
     assert vision_stats.last_hybrid_state_patch_mode == "family_scoped"
     assert vision_stats.last_hybrid_state_advance_count == 42
     assert vision_stats.last_family_fast_path_override_count == 1
@@ -1205,6 +1256,16 @@ def test_registry_runtime_stats_include_vlm_cache_bytes_after_generation() -> No
     assert runtime_stats.l1_cache_bytes == cache_stats.stats.l1_bytes
     assert runtime_stats.cache_resident_bytes == cache_stats.stats.l1_bytes
     assert runtime_stats.l1_hit_rate == cache_stats.stats.l1_hit_rate
+
+
+def test_registry_runtime_stats_handles_none_vlm_cache_stats_response() -> None:
+    registry = build_registry(mlx_vlm_runtime=NoneCacheStatsVLMRuntime())
+
+    runtime_stats = registry.runtime_stats()
+
+    assert runtime_stats.l1_cache_bytes == 0
+    assert runtime_stats.l2_cache_bytes == 0
+    assert runtime_stats.cache_resident_bytes == 0
 
 
 def test_text_generate_completed_metrics_include_native_mtp_batch_stats() -> None:

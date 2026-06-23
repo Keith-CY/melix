@@ -170,44 +170,30 @@ def _cached_prompt_tokens_from_event(event: RuntimeTokenEvent | None) -> int:
     return _non_negative_int(event.recovered_prefix_tokens)
 
 
+def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> int:
+    value = getattr(probe, primary_key, None)
+    if value is None or value == -1:
+        value = getattr(probe, legacy_key, 0)
+    return _non_negative_int(value)
+
+
 def _media_feature_usage_from_probe(probe: object | None) -> dict[str, int]:
-    if probe is None:
-        return {
-            "media_feature_cache_hits": 0,
-            "media_feature_cache_misses": 0,
-            "media_feature_encoder_calls_saved": 0,
-            "media_feature_work_saved_bytes": 0,
-        }
-    return {
-        "media_feature_cache_hits": _non_negative_int(
-            getattr(
-                probe,
-                "media_feature_cache_hits",
-                getattr(probe, "image_feature_cache_hits", 0),
-            )
-        ),
-        "media_feature_cache_misses": _non_negative_int(
-            getattr(
-                probe,
-                "media_feature_cache_misses",
-                getattr(probe, "image_feature_cache_misses", 0),
-            )
-        ),
-        "media_feature_encoder_calls_saved": _non_negative_int(
-            getattr(
-                probe,
-                "media_feature_encoder_calls_saved",
-                getattr(probe, "image_feature_encoder_calls_saved", 0),
-            )
-        ),
-        "media_feature_work_saved_bytes": _non_negative_int(
-            getattr(
-                probe,
-                "media_feature_work_saved_bytes",
-                getattr(probe, "image_feature_work_saved_bytes", 0),
-            )
-        ),
+    usage = {
+        "media_feature_cache_hits": 0,
+        "media_feature_cache_misses": 0,
+        "media_feature_encoder_calls_saved": 0,
+        "media_feature_work_saved_bytes": 0,
     }
+    if probe is None:
+        return usage
+
+    for key in usage:
+        usage[key] = _probe_counter_value(
+            probe,
+            key,
+            key.replace("media_feature_", "image_feature_"),
+        )
+    return usage
 
 
 def _last_media_feature_probe(runtime: object, runtime_kind: str) -> object | None:
@@ -608,7 +594,7 @@ class EngineCore:
                 finalized_completion_tokens = completion_tokens
                 finalized_cached_prompt_tokens = _cached_prompt_tokens_from_event(last_token_event)
                 finalized_media_usage = _media_feature_usage_from_probe(
-                    _last_media_feature_probe(runtime, loaded_model.runtime_kind)
+                    _last_media_feature_probe(runtime, getattr(loaded_model, "runtime_kind", ""))
                 )
                 usage_trailer_emitted = bool(request.stream)
                 yield inference_pb2.ExecuteEvent(
@@ -937,7 +923,7 @@ class EngineCore:
                 )
                 cached_prompt_tokens = _cached_prompt_tokens_from_event(last_token_event)
                 media_usage = _media_feature_usage_from_probe(
-                    _last_media_feature_probe(runtime, loaded_model.runtime_kind)
+                    _last_media_feature_probe(runtime, getattr(loaded_model, "runtime_kind", ""))
                 )
                 yield inference_pb2.ExecuteEvent(
                     request_id=request_id,

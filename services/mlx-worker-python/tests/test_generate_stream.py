@@ -113,6 +113,23 @@ def test_text_native_mtp_parser_metrics_fast_paths_empty_events() -> None:
         "media_feature_encoder_calls_saved": 0,
         "media_feature_work_saved_bytes": 0,
     }
+    assert engine_core_module._media_feature_usage_from_probe(
+        SimpleNamespace(
+            media_feature_cache_hits=-1,
+            media_feature_cache_misses=None,
+            media_feature_encoder_calls_saved=-1,
+            media_feature_work_saved_bytes=None,
+            image_feature_cache_hits=3,
+            image_feature_cache_misses=4,
+            image_feature_encoder_calls_saved=5,
+            image_feature_work_saved_bytes=4096,
+        )
+    ) == {
+        "media_feature_cache_hits": 3,
+        "media_feature_cache_misses": 4,
+        "media_feature_encoder_calls_saved": 5,
+        "media_feature_work_saved_bytes": 4096,
+    }
     assert engine_core_module._last_media_feature_probe(BrokenProbeRuntime(), "vlm") is None
 
 

@@ -87,6 +87,13 @@ def _non_negative_int(value: object) -> int:
         return 0
 
 
+def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> int:
+    value = getattr(probe, primary_key, None)
+    if value is None or value == -1:
+        value = getattr(probe, legacy_key, 0)
+    return _non_negative_int(value)
+
+
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -932,7 +939,8 @@ class WorkerRegistry:
         if hasattr(runtime, "_cache_lookups") and not getattr(runtime, "_cache_lookups", 0):
             cache_stats = None
         elif hasattr(runtime, "cache_stats_response"):
-            cache_stats = runtime.cache_stats_response().stats
+            response = runtime.cache_stats_response()
+            cache_stats = response.stats if response is not None else None
         else:
             cache_stats = None
         refreshed_live_vlm_probe = False
@@ -1271,46 +1279,34 @@ class WorkerRegistry:
             self._last_cached_prompt_tokens = _non_negative_int(
                 getattr(probe, "cached_prompt_tokens", 0)
             )
-            self._last_image_feature_cache_hits = _non_negative_int(
-                getattr(probe, "image_feature_cache_hits", getattr(probe, "media_feature_cache_hits", 0))
+            cache_hits = _probe_counter_value(
+                probe,
+                "media_feature_cache_hits",
+                "image_feature_cache_hits",
             )
-            self._last_image_feature_cache_misses = _non_negative_int(
-                getattr(probe, "image_feature_cache_misses", getattr(probe, "media_feature_cache_misses", 0))
+            cache_misses = _probe_counter_value(
+                probe,
+                "media_feature_cache_misses",
+                "image_feature_cache_misses",
             )
-            self._last_image_feature_encoder_calls_saved = _non_negative_int(
-                getattr(
-                    probe,
-                    "image_feature_encoder_calls_saved",
-                    getattr(probe, "media_feature_encoder_calls_saved", 0),
-                )
+            encoder_calls_saved = _probe_counter_value(
+                probe,
+                "media_feature_encoder_calls_saved",
+                "image_feature_encoder_calls_saved",
             )
-            self._last_image_feature_work_saved_bytes = _non_negative_int(
-                getattr(
-                    probe,
-                    "image_feature_work_saved_bytes",
-                    getattr(probe, "media_feature_work_saved_bytes", 0),
-                )
+            work_saved_bytes = _probe_counter_value(
+                probe,
+                "media_feature_work_saved_bytes",
+                "image_feature_work_saved_bytes",
             )
-            self._last_media_feature_cache_hits = _non_negative_int(
-                getattr(probe, "media_feature_cache_hits", self._last_image_feature_cache_hits)
-            )
-            self._last_media_feature_cache_misses = _non_negative_int(
-                getattr(probe, "media_feature_cache_misses", self._last_image_feature_cache_misses)
-            )
-            self._last_media_feature_encoder_calls_saved = _non_negative_int(
-                getattr(
-                    probe,
-                    "media_feature_encoder_calls_saved",
-                    self._last_image_feature_encoder_calls_saved,
-                )
-            )
-            self._last_media_feature_work_saved_bytes = _non_negative_int(
-                getattr(
-                    probe,
-                    "media_feature_work_saved_bytes",
-                    self._last_image_feature_work_saved_bytes,
-                )
-            )
+            self._last_media_feature_cache_hits = cache_hits
+            self._last_image_feature_cache_hits = cache_hits
+            self._last_media_feature_cache_misses = cache_misses
+            self._last_image_feature_cache_misses = cache_misses
+            self._last_media_feature_encoder_calls_saved = encoder_calls_saved
+            self._last_image_feature_encoder_calls_saved = encoder_calls_saved
+            self._last_media_feature_work_saved_bytes = work_saved_bytes
+            self._last_image_feature_work_saved_bytes = work_saved_bytes
             self._last_hybrid_state_probe = (
                 str(getattr(probe, "hybrid_state_patch_mode", "not_reported")),
                 int(getattr(probe, "hybrid_state_advance_count", 0)),
