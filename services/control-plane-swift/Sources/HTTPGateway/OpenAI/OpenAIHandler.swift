@@ -4610,13 +4610,16 @@ button.primary:active {
 
     private func localServerSecurityRejectionResponse(
         reason: LocalServerSecurityPolicy.RejectionReason,
-        headerValue: String
+        headerValue _: String
     ) async -> HTTPResponse {
         await metricsStore.increment("local_server_security.rejected_request_count")
+        let rejectedHeaderName: String
         switch reason {
         case .hostNotAllowed:
+            rejectedHeaderName = "host"
             await metricsStore.increment("local_server_security.rejected_host_count")
         case .originNotAllowed:
+            rejectedHeaderName = "origin"
             await metricsStore.increment("local_server_security.rejected_origin_count")
         }
         return jsonResponse(
@@ -4625,13 +4628,36 @@ button.primary:active {
                 "error": [
                     "code": reason.errorCode,
                     "message": reason.message,
-                    "header_value": headerValue,
-                    "local_server_security": (
-                        try? localServerSecurityPolicy.receipt.jsonObject(encoder: encoder)
-                    ) ?? [:],
+                    "privacy_receipt": localServerSecurityPrivacyReceipt(
+                        rejectedHeaderName: rejectedHeaderName,
+                        rejectionReason: reason.errorCode
+                    ),
                 ],
             ]
         )
+    }
+
+    private func localServerSecurityPrivacyReceipt(
+        rejectedHeaderName: String,
+        rejectionReason: String
+    ) -> [String: Any] {
+        let policyReceipt = localServerSecurityPolicy.receipt
+        return [
+            "schema_version": "melix.privacy_envelope.v1",
+            "surface": "local_proxy_security_rejection",
+            "rejected_header": rejectedHeaderName,
+            "rejection_reason": rejectionReason,
+            "redacted": true,
+            "redaction_policy": "raw_header_value_omitted",
+            "local_server_security": [
+                "schema_version": policyReceipt.schemaVersion,
+                "bind_host": policyReceipt.bindHost,
+                "allowed_hosts": policyReceipt.allowedHosts,
+                "allowed_origins": policyReceipt.allowedOrigins,
+                "loopback_only_host_policy": policyReceipt.loopbackOnlyHostPolicy,
+                "browser_cors_policy": policyReceipt.browserCorsPolicy,
+            ],
+        ]
     }
 
     private func jsonData(_ payload: [String: Any]) -> Data {
