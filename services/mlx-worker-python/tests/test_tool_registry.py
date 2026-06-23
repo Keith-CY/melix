@@ -41,18 +41,100 @@ def test_agentic_tool_catalog_exposes_opt_in_skill_and_memory_lookup_tools() -> 
     catalog = tool_registry_module.agentic_tool_catalog_registry()
 
     assert catalog.names() == tool_registry_module.SELECTABLE_AGENTIC_TOOL_NAMES
-    assert catalog.metrics().tool_count == 8
+    assert catalog.metrics().tool_count == 9
     assert "skill_lookup" in catalog.names()
     assert "memory_lookup" in catalog.names()
+    assert "workspace_file" in catalog.names()
 
-    selected = catalog.select(("skill_lookup", "memory_lookup"))
+    selected = catalog.select(("skill_lookup", "memory_lookup", "workspace_file"))
 
-    assert selected.names() == ("skill_lookup", "memory_lookup")
-    assert [tool.tool_kind for tool in selected.tools] == ["skill.lookup", "memory.lookup"]
+    assert selected.names() == ("skill_lookup", "memory_lookup", "workspace_file")
+    assert [tool.tool_kind for tool in selected.tools] == [
+        "skill.lookup",
+        "memory.lookup",
+        "workspace_file.operation",
+    ]
 
-    config = built_in_tool_config(("skill_lookup", "memory_lookup"))
+    config = built_in_tool_config(("skill_lookup", "memory_lookup", "workspace_file"))
 
-    assert [tool.name for tool in config.tools] == ["skill_lookup", "memory_lookup"]
+    assert [tool.name for tool in config.tools] == [
+        "skill_lookup",
+        "memory_lookup",
+        "workspace_file",
+    ]
+
+
+def test_selectable_tool_schemas_have_index_metadata_parity() -> None:
+    catalog = tool_registry_module.agentic_tool_catalog_registry()
+    index_metadata = tool_registry_module.agentic_tool_index_metadata()
+
+    schema_names = set(catalog.names())
+    index_names = set(index_metadata)
+    keyword_names = set(tool_registry_module._BUILTIN_TOOL_KEYWORD_HINTS)
+
+    assert index_names == schema_names
+    assert keyword_names == schema_names - set(
+        tool_registry_module.ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES
+    )
+    for tool_name in schema_names:
+        metadata = index_metadata[tool_name]
+        assert metadata.tool_id == tool_name
+        assert metadata.retrieval_description
+        assert metadata.routing_hints or tool_name in tool_registry_module.ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES
+        schema = catalog.select((tool_name,)).as_openai_tools()[0]
+        assert metadata.retrieval_description == schema["function"]["description"]
+
+
+def test_workspace_file_integration_intent_routes_schema_without_greeting_bleed() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn=(
+                "Read workspace file docs/plans/notes.md and edit the local file if the "
+                "fixture says it is stale."
+            ),
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+    greeting = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Hello, can you answer briefly?",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "workspace_file")
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "workspace_file", "source": "keyword"},
+    ]
+    assert [schema["function"]["name"] for schema in result.registry.as_openai_tools()] == [
+        "local_compute",
+        "workspace_file",
+    ]
+    assert greeting.registry.names() == ("local_compute",)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        (
+            {"tool_id": "bad-name", "retrieval_description": "Bad metadata."},
+            "Invalid tool index metadata id",
+        ),
+        (
+            {"tool_id": "valid_tool", "retrieval_description": " "},
+            "Tool index metadata valid_tool must include a retrieval description.",
+        ),
+    ],
+)
+def test_tool_index_metadata_rejects_incomplete_fields(
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ToolRegistryError, match=message):
+        tool_registry_module.ToolIndexMetadata(**kwargs)
 
 
 def test_built_in_tool_registry_reuses_singleton_snapshot() -> None:
@@ -623,7 +705,7 @@ def test_agentic_tool_selection_preserves_always_available_tools_with_vector_hit
             {"tool_id": "local_compute", "source": "always"},
             {"tool_id": "text_search", "source": "vector"},
         ],
-        "dropped_tool_count": 6,
+        "dropped_tool_count": 7,
         "full_schema_bytes": tool_registry_module.agentic_tool_catalog_registry()
         .metrics()
         .schema_bytes,
@@ -728,7 +810,7 @@ def test_agentic_tool_selection_max_always_only_skips_optional_routing_scans(
         "vector_available": True,
         "fallback_reason": "no_keyword_match",
         "selected_tools": [{"tool_id": "local_compute", "source": "always"}],
-        "dropped_tool_count": 7,
+        "dropped_tool_count": 8,
         "full_schema_bytes": tool_registry_module.agentic_tool_catalog_registry()
         .metrics()
         .schema_bytes,

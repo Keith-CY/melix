@@ -251,6 +251,12 @@ class DeterministicAgenticToolRuntime:
                 fixture_context=self._fixture_context,
                 tool_call_id=tool_call_id,
             )
+        if tool_name == "workspace_file":
+            return _workspace_file_payload(
+                arguments=arguments,
+                fixture_context=self._fixture_context,
+                tool_call_id=tool_call_id,
+            )
         if tool_name == "layout_parse":
             return _layout_parse_payload(
                 arguments=arguments,
@@ -685,6 +691,83 @@ def _workspace_root_text(fixture_context: dict[str, Any]) -> str:
     raw_root = fixture_context.get("workspace_root", "")
     return raw_root.strip() if isinstance(raw_root, str) else ""
 
+
+def _workspace_file_payload(
+    *,
+    arguments: dict[str, Any],
+    fixture_context: dict[str, Any],
+    tool_call_id: str,
+) -> dict[str, Any]:
+    workspace_root = _workspace_root_text(fixture_context)
+    if not workspace_root:
+        raise AgenticToolRuntimeError(
+            "workspace_file requires fixture_context.workspace_root.",
+            details={
+                "reason": "workspace_file_unavailable",
+                "source_type": "workspace_file",
+                "source_id": "workspace_root",
+                "error": "missing workspace root",
+                "corrective_action": "Provide an active workspace root before executing workspace_file.",
+            },
+        )
+
+    operation = _tool_argument_text(arguments, "operation", tool_call_id=tool_call_id).lower()
+    requested_path = _tool_argument_text(arguments, "path", tool_call_id=tool_call_id)
+    tools = WorkspaceFileTools(workspace_root)
+    if operation == "read":
+        result = tools.read_text(requested_path)
+    elif operation == "write":
+        content = _optional_untrusted_text(
+            arguments.get("content", ""),
+            field="arguments.content",
+            source_type="tool_argument",
+            source_id=tool_call_id,
+            strip=False,
+        )
+        result = tools.write_text(requested_path, content, create_parent_dirs=True)
+    elif operation == "edit":
+        old_text = _optional_untrusted_text(
+            arguments.get("old_text", ""),
+            field="arguments.old_text",
+            source_type="tool_argument",
+            source_id=tool_call_id,
+            strip=False,
+        )
+        new_text = _optional_untrusted_text(
+            arguments.get("new_text", ""),
+            field="arguments.new_text",
+            source_type="tool_argument",
+            source_id=tool_call_id,
+            strip=False,
+        )
+        result = tools.edit_text(
+            requested_path,
+            old_text=old_text,
+            new_text=new_text,
+            expected_replacements=_optional_positive_int(arguments.get("expected_replacements")),
+        )
+    else:
+        raise AgenticToolRuntimeError(
+            f"Unsupported workspace_file operation: {operation or '<empty>'}."
+        )
+
+    payload: dict[str, Any] = {
+        "operation": operation,
+        "path": requested_path,
+        "workspace_path_receipt": result.resolution.receipt_fields(),
+        "bytes_read": result.bytes_read,
+        "bytes_written": result.bytes_written,
+        "replacement_count": result.replacement_count,
+    }
+    if result.content:
+        payload["content"] = result.content
+    if result.error:
+        payload["error"] = result.error
+    if not result.resolution.allowed:
+        payload["reason"] = "workspace_path_refused"
+    if result.status != "completed":
+        payload["_status"] = "failed"
+    return payload
 
 def _local_visit_requested_path(url: str) -> str | None:
     parsed = urlparse(url)
@@ -1431,6 +1514,15 @@ def _positive_int(value: object, *, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(parsed, 1)
+
+
+def _optional_positive_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return max(int(value), 1)
+    except (TypeError, ValueError):
+        return None
 
 
 __all__ = [

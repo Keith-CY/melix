@@ -26,6 +26,7 @@ _BUILT_IN_TOOL_CALLS = (
     ("skill_lookup", {"query": "repo"}),
     ("memory_lookup", {"query": "preference"}),
     ("visit", {"url": "fixture://page-1"}),
+    ("workspace_file", {"operation": "read", "path": "notes.md"}),
     ("local_compute", {"code": "2 + 3 * 4"}),
 )
 _PUBLIC_SOURCE_ID_CHARS = frozenset(
@@ -74,7 +75,11 @@ def test_agentic_tool_runtime_refusal_receipt_mapper_skips_incomplete_metadata(
     assert agentic_tools_module._runtime_error_refusal_receipts(details) == ()
 
 
-def test_agentic_tool_runtime_executes_all_builtin_tools_with_shared_observation_shape() -> None:
+def test_agentic_tool_runtime_executes_all_builtin_tools_with_shared_observation_shape(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "notes.md").write_text("Workspace note.\n", encoding="utf-8")
+
     run = execute_agentic_tool_calls(
         [
             {"id": "crop-1", "name": "image_crop", "arguments": {"media_ref": "img-1", "region": "sign"}},
@@ -84,9 +89,15 @@ def test_agentic_tool_runtime_executes_all_builtin_tools_with_shared_observation
             {"id": "skill-1", "name": "skill_lookup", "arguments": {"query": "repo"}},
             {"id": "memory-1", "name": "memory_lookup", "arguments": {"query": "preference"}},
             {"id": "visit-1", "name": "visit", "arguments": {"url": "fixture://page-1"}},
+            {
+                "id": "workspace-file-1",
+                "name": "workspace_file",
+                "arguments": {"operation": "read", "path": "notes.md"},
+            },
             {"id": "compute-1", "name": "local_compute", "arguments": {"code": "2 + 3 * 4"}},
         ],
         fixture_context={
+            "workspace_root": str(tmp_path),
             "crops": {"img-1#sign": {"text": "MELIX LABS"}},
             "layouts": {"img-1": [{"kind": "text", "text": "MELIX LABS"}]},
             "text_corpus": [{"id": "doc-1", "text": "Melix local tool runtime."}],
@@ -98,12 +109,12 @@ def test_agentic_tool_runtime_executes_all_builtin_tools_with_shared_observation
     )
 
     assert run.registry_receipt["toolset_version"] == "melix.agentic_tools.builtin.v1"
-    assert run.metrics["agentic_tool.call_count"] == 8.0
-    assert run.metrics["agentic_tool.completed_count"] == 8.0
+    assert run.metrics["agentic_tool.call_count"] == 9.0
+    assert run.metrics["agentic_tool.completed_count"] == 9.0
     assert run.metrics["agentic_tool.latency_ms"] >= 0.0
-    assert [observation["status"] for observation in run.observations] == ["completed"] * 8
+    assert [observation["status"] for observation in run.observations] == ["completed"] * 9
     assert run.observations[-1]["payload"]["result"] == 14
-    assert len(run.trace_turns) == 16
+    assert len(run.trace_turns) == 18
     assert "melix.agentic_tool_observation.v1" in json.dumps(run.to_sample_evidence())
 
 
@@ -244,7 +255,7 @@ def test_agentic_tool_runtime_records_selection_receipt_for_selected_registry() 
         {"tool_id": "local_compute", "source": "always"},
         {"tool_id": "text_search", "source": "vector"},
     ]
-    assert selection_receipt["dropped_tool_count"] == 6
+    assert selection_receipt["dropped_tool_count"] == 7
     assert selection_receipt["selected_schema_bytes"] < selection_receipt["full_schema_bytes"]
     assert "Melix local runtime" not in json.dumps(selection_receipt)
     assert run.metrics["agentic_tool.completed_count"] == 1.0
@@ -2102,6 +2113,190 @@ def test_agentic_tool_runtime_visit_reads_workspace_local_file_with_receipt(tmp_
         "allowed": True,
         "refusal_reason": "",
     }
+
+
+def test_agentic_tool_runtime_workspace_file_read_uses_resolver_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    note_path = workspace / "notes.md"
+    note_path.write_text("# Melix\n\nWorkspace note.\n", encoding="utf-8")
+
+    run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "workspace-file-read",
+                "name": "workspace_file",
+                "arguments": {"operation": "read", "path": "notes.md"},
+            }
+        ],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+
+    observation = run.observations[0]
+    assert observation["status"] == "completed"
+    assert observation["payload"]["operation"] == "read"
+    assert observation["payload"]["path"] == "notes.md"
+    assert observation["payload"]["content"] == "# Melix\n\nWorkspace note.\n"
+    assert observation["payload"]["workspace_path_receipt"] == {
+        "operation": "read",
+        "workspace_root": str(workspace.resolve()),
+        "requested_path": "notes.md",
+        "resolved_path": str(note_path.resolve()),
+        "allowed": True,
+        "refusal_reason": "",
+    }
+
+
+def test_agentic_tool_runtime_workspace_file_write_and_edit_use_resolver(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    write_run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "workspace-file-write",
+                "name": "workspace_file",
+                "arguments": {
+                    "operation": "write",
+                    "path": "notes.md",
+                    "content": "alpha alpha\n",
+                },
+            }
+        ],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+    edit_run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "workspace-file-edit",
+                "name": "workspace_file",
+                "arguments": {
+                    "operation": "edit",
+                    "path": "notes.md",
+                    "old_text": "alpha",
+                    "new_text": "beta",
+                    "expected_replacements": 2,
+                },
+            }
+        ],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+
+    assert (workspace / "notes.md").read_text(encoding="utf-8") == "beta beta\n"
+    assert write_run.observations[0]["status"] == "completed"
+    assert write_run.observations[0]["payload"]["bytes_written"] == len(
+        "alpha alpha\n".encode("utf-8")
+    )
+    assert edit_run.observations[0]["status"] == "completed"
+    assert edit_run.observations[0]["payload"]["bytes_read"] == len(
+        "alpha alpha\n".encode("utf-8")
+    )
+    assert edit_run.observations[0]["payload"]["bytes_written"] == len(
+        "beta beta\n".encode("utf-8")
+    )
+    assert edit_run.observations[0]["payload"]["replacement_count"] == 2
+
+
+def test_agentic_tool_runtime_workspace_file_failures_are_typed(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "notes.md").write_text("alpha alpha\n", encoding="utf-8")
+    (workspace / "mismatch.md").write_text("alpha alpha\n", encoding="utf-8")
+    (workspace / "no-expected-count.md").write_text("alpha alpha\n", encoding="utf-8")
+
+    missing_root_run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "workspace-file-missing-root",
+                "name": "workspace_file",
+                "arguments": {"operation": "read", "path": "notes.md"},
+            }
+        ]
+    )
+    bad_operation_run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "workspace-file-bad-operation",
+                "name": "workspace_file",
+                "arguments": {"operation": "delete", "path": "notes.md"},
+            }
+        ],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+    refused_run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "workspace-file-refused",
+                "name": "workspace_file",
+                "arguments": {"operation": "read", "path": "config/.env"},
+            }
+        ],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+    mismatch_run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "workspace-file-mismatch",
+                "name": "workspace_file",
+                "arguments": {
+                    "operation": "edit",
+                    "path": "no-expected-count.md",
+                    "old_text": "alpha",
+                    "new_text": "beta",
+                    "expected_replacements": "not-an-int",
+                },
+            }
+        ],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+    exact_mismatch_run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "workspace-file-exact-mismatch",
+                "name": "workspace_file",
+                "arguments": {
+                    "operation": "edit",
+                    "path": "mismatch.md",
+                    "old_text": "alpha",
+                    "new_text": "beta",
+                    "expected_replacements": 1,
+                },
+            }
+        ],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+    no_expected_count_run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "workspace-file-no-expected-count",
+                "name": "workspace_file",
+                "arguments": {
+                    "operation": "edit",
+                    "path": "notes.md",
+                    "old_text": "alpha",
+                    "new_text": "beta",
+                },
+            }
+        ],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+
+    assert missing_root_run.observations[0]["status"] == "failed"
+    assert missing_root_run.observations[0]["payload"]["reason"] == "workspace_file_unavailable"
+    assert bad_operation_run.observations[0]["status"] == "failed"
+    assert "Unsupported workspace_file operation" in bad_operation_run.observations[0]["payload"]["error"]
+    assert refused_run.observations[0]["status"] == "failed"
+    assert refused_run.observations[0]["payload"]["reason"] == "workspace_path_refused"
+    assert refused_run.observations[0]["payload"]["workspace_path_receipt"]["allowed"] is False
+    assert mismatch_run.observations[0]["status"] == "completed"
+    assert mismatch_run.observations[0]["payload"]["replacement_count"] == 2
+    assert exact_mismatch_run.observations[0]["status"] == "failed"
+    assert "replacement count mismatch" in exact_mismatch_run.observations[0]["payload"]["error"]
+    assert no_expected_count_run.observations[0]["status"] == "completed"
 
 
 def test_agentic_tool_runtime_visit_workspace_file_emits_source_receipt(tmp_path: Path) -> None:

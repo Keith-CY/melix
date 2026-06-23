@@ -66,6 +66,7 @@ SELECTABLE_AGENTIC_TOOL_NAMES = (
     "skill_lookup",
     "memory_lookup",
     "visit",
+    "workspace_file",
     "local_compute",
 )
 _BUILTIN_AGENTIC_TOOL_NAME_SET = frozenset(SELECTABLE_AGENTIC_TOOL_NAMES)
@@ -220,6 +221,29 @@ class ToolSelectionInput:
 class ToolSelectionResult:
     registry: ToolRegistry
     receipt: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolIndexMetadata:
+    tool_id: str
+    retrieval_description: str
+    routing_hints: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        tool_id = self.tool_id.strip()
+        retrieval_description = self.retrieval_description.strip()
+        routing_hints = tuple(
+            hint.strip() for hint in self.routing_hints if hint.strip()
+        )
+        if not _TOOL_NAME_RE.fullmatch(tool_id):
+            raise ToolRegistryError(f"Invalid tool index metadata id: {self.tool_id}")
+        if not retrieval_description:
+            raise ToolRegistryError(
+                f"Tool index metadata {tool_id} must include a retrieval description."
+            )
+        object.__setattr__(self, "tool_id", tool_id)
+        object.__setattr__(self, "retrieval_description", retrieval_description)
+        object.__setattr__(self, "routing_hints", routing_hints)
 
 
 class ToolRegistry:
@@ -456,6 +480,10 @@ def built_in_tool_registry() -> ToolRegistry:
 
 def agentic_tool_catalog_registry() -> ToolRegistry:
     return _AGENTIC_TOOL_CATALOG_REGISTRY
+
+
+def agentic_tool_index_metadata() -> dict[str, ToolIndexMetadata]:
+    return dict(_BUILTIN_TOOL_INDEX_METADATA)
 
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
@@ -797,6 +825,25 @@ _AGENTIC_TOOL_CATALOG_TOOLS = (
         ),
     ),
     ToolDescriptor(
+        name="workspace_file",
+        description="Read, write, or edit files inside the active workspace after path-policy checks.",
+        tool_kind="workspace_file.operation",
+        observation_kind="workspace_file_result",
+        arguments=(
+            _arg("operation", "string", "Workspace file operation: read, write, or edit."),
+            _arg("path", "string", "Workspace-relative or admitted absolute file path."),
+            _arg("content", "string", "Text content for write operations.", required=False),
+            _arg("old_text", "string", "Exact text to replace for edit operations.", required=False),
+            _arg("new_text", "string", "Replacement text for edit operations.", required=False),
+            _arg(
+                "expected_replacements",
+                "integer",
+                "Optional exact replacement count for edit operations.",
+                required=False,
+            ),
+        ),
+    ),
+    ToolDescriptor(
         name="local_compute",
         description="Run deterministic local compute for parsing, arithmetic, or data shaping.",
         tool_kind="compute.local",
@@ -808,62 +855,114 @@ _AGENTIC_TOOL_CATALOG_TOOLS = (
     ),
 )
 
+_BUILTIN_TOOL_INDEX_METADATA = {
+    "image_crop": ToolIndexMetadata(
+        tool_id="image_crop",
+        retrieval_description="Crop or inspect a bounded region from a referenced image.",
+        routing_hints=(
+            "crop",
+            "cropped",
+            "crop_",
+            "region",
+            "image region",
+            "inspect image",
+        ),
+    ),
+    "layout_parse": ToolIndexMetadata(
+        tool_id="layout_parse",
+        retrieval_description="Extract visual layout elements from an image or document page.",
+        routing_hints=(
+            "layout",
+            "table",
+            "tables",
+            "ocr",
+            "document layout",
+            "page layout",
+        ),
+    ),
+    "text_search": ToolIndexMetadata(
+        tool_id="text_search",
+        retrieval_description="Search a local text corpus or fixture-backed index.",
+        routing_hints=(
+            "search",
+            "text evidence",
+            "local corpus",
+            "corpus",
+            "documents",
+            "retrieve",
+            "retrieval",
+        ),
+    ),
+    "image_search": ToolIndexMetadata(
+        tool_id="image_search",
+        retrieval_description="Search local image evidence or fixture-backed image indexes.",
+        routing_hints=(
+            "image search",
+            "search images",
+            "visual search",
+            "find images",
+            "image evidence",
+        ),
+    ),
+    "skill_lookup": ToolIndexMetadata(
+        tool_id="skill_lookup",
+        retrieval_description="Look up local agent skills from a fixture-backed skill store.",
+        routing_hints=(
+            "skill lookup",
+            "repo skill",
+            "agent skill",
+            "skill search",
+            "find skill",
+        ),
+    ),
+    "memory_lookup": ToolIndexMetadata(
+        tool_id="memory_lookup",
+        retrieval_description="Look up pinned or retrieved memories from a fixture-backed memory store.",
+        routing_hints=(
+            "memory lookup",
+            "pinned memory",
+            "retrieved memory",
+            "remembered preference",
+            "operator preference",
+        ),
+    ),
+    "visit": ToolIndexMetadata(
+        tool_id="visit",
+        retrieval_description="Visit a local URL or fixture-backed page and return extracted content.",
+        routing_hints=(
+            "visit",
+            "open",
+            "read fixture://",
+            "fixture://",
+            "page",
+            "url",
+            "fetch",
+        ),
+    ),
+    "workspace_file": ToolIndexMetadata(
+        tool_id="workspace_file",
+        retrieval_description=(
+            "Read, write, or edit files inside the active workspace after path-policy checks."
+        ),
+        routing_hints=(
+            "workspace file",
+            "local file",
+            "read file",
+            "write file",
+            "edit file",
+            "file path",
+            "workspace-local",
+        ),
+    ),
+    "local_compute": ToolIndexMetadata(
+        tool_id="local_compute",
+        retrieval_description="Run deterministic local compute for parsing, arithmetic, or data shaping.",
+    ),
+}
 _BUILTIN_TOOL_KEYWORD_HINTS = {
-    "image_crop": (
-        "crop",
-        "cropped",
-        "crop_",
-        "region",
-        "image region",
-        "inspect image",
-    ),
-    "layout_parse": (
-        "layout",
-        "table",
-        "tables",
-        "ocr",
-        "document layout",
-        "page layout",
-    ),
-    "text_search": (
-        "search",
-        "text evidence",
-        "local corpus",
-        "corpus",
-        "documents",
-        "retrieve",
-        "retrieval",
-    ),
-    "image_search": (
-        "image search",
-        "search images",
-        "visual search",
-        "find images",
-        "image evidence",
-    ),
-    "skill_lookup": (
-        "skill lookup",
-        "repo skill",
-        "agent skill",
-        "skill search",
-        "find skill",
-    ),
-    "memory_lookup": (
-        "memory lookup",
-        "pinned memory",
-        "retrieved memory",
-        "remembered preference",
-        "operator preference",
-    ),
-    "visit": (
-        "visit",
-        "open",
-        "read fixture://",
-        "fixture://",
-        "page",
-        "url",
-        "fetch",
-    ),
+    tool_name: metadata.routing_hints
+    for tool_name, metadata in _BUILTIN_TOOL_INDEX_METADATA.items()
+    if tool_name not in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES
 }
 _BUILTIN_TOOL_KEYWORD_HINT_RULES = _compile_keyword_hint_rules(_BUILTIN_TOOL_KEYWORD_HINTS)
 
@@ -896,9 +995,11 @@ __all__ = [
     "ToolDescriptor",
     "ToolRegistry",
     "ToolRegistryError",
+    "ToolIndexMetadata",
     "ToolRegistryMetrics",
     "ToolSelectionInput",
     "ToolSelectionResult",
+    "agentic_tool_index_metadata",
     "agentic_tool_catalog_registry",
     "built_in_tool_config",
     "built_in_tool_registry",
