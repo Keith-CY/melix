@@ -231,6 +231,14 @@ def test_prepared_request_preprocessing_policy_receipt_skips_empty_policy_reques
     assert prepared_request_preprocessing_policy_receipt(_prepared_request(None)) == {}
 
 
+def test_empty_preprocessing_policy_receipt_does_not_share_mutable_state() -> None:
+    receipt = prepared_request_preprocessing_policy_receipt(_prepared_request())
+    receipt["unexpected"] = True
+
+    assert prepared_request_preprocessing_policy_receipt(_prepared_request()) == {}
+    assert preprocessing_policy_receipt_value(_prepared_request(None).images) == {}
+
+
 def test_prepared_request_preprocessing_policy_receipt_uses_request_signature_gate() -> None:
     request = _prepared_request({"min_pixels": 1024})
 
