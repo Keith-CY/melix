@@ -30,6 +30,12 @@ class RecordingTextBackend:
         return 4096
 
 
+def test_trust_policy_non_empty_source_fast_path_preserves_blank_fallback() -> None:
+    assert model_load_trust_module._non_empty("request", "fallback") == "request"
+    assert model_load_trust_module._non_empty("", "fallback") == "fallback"
+    assert model_load_trust_module._non_empty(" \t\n", "fallback") == "fallback"
+
+
 def test_worker_rejects_custom_loader_metadata_without_explicit_trust(tmp_path: Path) -> None:
     backend = RecordingTextBackend()
     service = WorkerRuntimeService(
