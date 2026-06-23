@@ -2204,6 +2204,17 @@ class MLXVLMRuntime:
         )
         image_batch1_temp_media_session: TempMediaSession | None = None
         image_batch1_step_inputs: _ImageBatch1StepInputs | None = None
+
+        def cleanup_image_batch1_temp_media_session(session: TempMediaSession) -> None:
+            cleanup_report = session.cleanup()
+            self._last_probe = replace(
+                self._last_probe,
+                temp_media_artifact_count=cleanup_report.artifact_count,
+                temp_media_artifact_bytes=cleanup_report.artifact_bytes,
+                temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
+                temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
+            )
+
         if self._should_prepare_image_batch1_step_inputs(
             prepared_request=prepared_request,
             sampling=sampling,
@@ -2221,14 +2232,7 @@ class MLXVLMRuntime:
                 )
                 prompt_tokens = image_batch1_step_inputs.prompt_tokens
             except Exception:
-                cleanup_report = image_batch1_temp_media_session.cleanup()
-                self._last_probe = replace(
-                    self._last_probe,
-                    temp_media_artifact_count=cleanup_report.artifact_count,
-                    temp_media_artifact_bytes=cleanup_report.artifact_bytes,
-                    temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
-                    temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
-                )
+                cleanup_image_batch1_temp_media_session(image_batch1_temp_media_session)
                 image_batch1_temp_media_session = None
         try:
             self._ensure_fast_path_probe(
@@ -2255,14 +2259,7 @@ class MLXVLMRuntime:
             )
         except Exception:
             if image_batch1_temp_media_session is not None:
-                cleanup_report = image_batch1_temp_media_session.cleanup()
-                self._last_probe = replace(
-                    self._last_probe,
-                    temp_media_artifact_count=cleanup_report.artifact_count,
-                    temp_media_artifact_bytes=cleanup_report.artifact_bytes,
-                    temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
-                    temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
-                )
+                cleanup_image_batch1_temp_media_session(image_batch1_temp_media_session)
                 image_batch1_temp_media_session = None
             raise
         enforce_attention_prefill_policy(attention_policy)
@@ -2361,14 +2358,7 @@ class MLXVLMRuntime:
                 return
         finally:
             if image_batch1_temp_media_session is not None:
-                cleanup_report = image_batch1_temp_media_session.cleanup()
-                self._last_probe = replace(
-                    self._last_probe,
-                    temp_media_artifact_count=cleanup_report.artifact_count,
-                    temp_media_artifact_bytes=cleanup_report.artifact_bytes,
-                    temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
-                    temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
-                )
+                cleanup_image_batch1_temp_media_session(image_batch1_temp_media_session)
 
         temp_media_session = self._temp_media_session_factory(
             temp_root=self._temp_root,
