@@ -4235,9 +4235,17 @@ class MaintenanceCore:
             acceleration_mode=acceleration_mode,
             acceleration_admitted=sample.multimodal_fallback_reason in {"", "not_reported"},
             fallback_reason=sample.multimodal_fallback_reason,
-            effective_temperature=float(generation_config.get("temperature", 0.0) or 0.0),
-            effective_top_p=float(generation_config.get("top_p", 1.0) or 1.0),
-            effective_top_k=int(generation_config.get("top_k", 1) or 1),
+            effective_temperature=float(
+                generation_config["temperature"]
+                if generation_config.get("temperature") is not None
+                else 0.0
+            ),
+            effective_top_p=float(
+                generation_config["top_p"] if generation_config.get("top_p") is not None else 1.0
+            ),
+            effective_top_k=int(
+                generation_config["top_k"] if generation_config.get("top_k") is not None else 1
+            ),
             tier_stability_status=sample.route_stability_status or "stable",
             metrics={
                 "ttft_ms": sample.ttft_ms,
@@ -4411,7 +4419,7 @@ class MaintenanceCore:
             "prompt": str(getattr(case, "prompt", "") or ""),
             "image_uris": [
                 str(image_uri)
-                for image_uri in getattr(case, "image_uris", ())
+                for image_uri in (getattr(case, "image_uris", ()) or ())
             ],
         }
         return "sha256:" + MaintenanceCore._stable_json_digest(payload)
@@ -4419,7 +4427,8 @@ class MaintenanceCore:
     @staticmethod
     def _vlm_benchmark_prompt_template_digest(*, loaded_model) -> str:
         runtime_model = getattr(loaded_model, "runtime_model", None)
-        metadata = runtime_model.get("metadata", {}) if isinstance(runtime_model, dict) else {}
+        raw_metadata = runtime_model.get("metadata") if isinstance(runtime_model, dict) else None
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
         payload = {
             "prompt_protocol_id": _VLM_BATCH1_COMPARISON_PROMPT_PROTOCOL,
             "model_id": (getattr(loaded_model, "handle", "") or "").split("::", 1)[0],

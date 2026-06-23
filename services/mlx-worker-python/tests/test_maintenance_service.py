@@ -5983,6 +5983,37 @@ def test_vlm_sample_evidence_run_treats_invalid_generation_config_as_empty() -> 
     assert run.effective_top_p == 1.0
     assert run.effective_top_k == 1
 
+    zero_top_k_sample = replace(
+        _vlm_batch1_comparison_sample(),
+        generation_config_json=json.dumps(
+            {"temperature": 0.0, "top_p": 1.0, "top_k": 0, "max_output_tokens": 8},
+            sort_keys=True,
+        ),
+    )
+    zero_top_k_run = MaintenanceCore._vlm_sample_evidence_run(
+        sample=zero_top_k_sample,
+        acceleration_mode="image_batch1_step",
+    )
+    assert zero_top_k_run.effective_top_k == 0
+
+    prompt_digest = MaintenanceCore._vlm_benchmark_prompt_digest(
+        case=SimpleNamespace(prompt="what is this?", image_uris=None),
+        source_repo="repo",
+    )
+    assert prompt_digest.startswith("sha256:")
+    assert prompt_digest == MaintenanceCore._vlm_benchmark_prompt_digest(
+        case=SimpleNamespace(prompt="what is this?", image_uris=()),
+        source_repo="repo",
+    )
+
+    template_digest = MaintenanceCore._vlm_benchmark_prompt_template_digest(
+        loaded_model=SimpleNamespace(handle="melix-dev-vlm::loaded", runtime_model={"metadata": None}),
+    )
+    assert template_digest.startswith("sha256:")
+    assert template_digest == MaintenanceCore._vlm_benchmark_prompt_template_digest(
+        loaded_model=SimpleNamespace(handle="melix-dev-vlm::loaded", runtime_model={}),
+    )
+
 
 def test_vlm_fast_path_bench_metrics_warns_for_unmapped_decode_mode(caplog) -> None:
     caplog.set_level(logging.WARNING, logger="worker.engine.maintenance_core")

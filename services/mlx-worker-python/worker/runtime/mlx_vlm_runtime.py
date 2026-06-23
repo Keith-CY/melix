@@ -2216,9 +2216,7 @@ class MLXVLMRuntime:
                 temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
             )
 
-        image_batch1_step_enabled = True
-        if execution_ext and _IMAGE_BATCH1_STEP_EXT_KEY in execution_ext:
-            image_batch1_step_enabled = self._image_batch1_step_enabled(execution_ext)
+        image_batch1_step_enabled = self._image_batch1_step_enabled(execution_ext)
         if image_batch1_step_enabled and self._should_prepare_image_batch1_step_inputs(
             prepared_request=prepared_request,
             sampling=sampling,
