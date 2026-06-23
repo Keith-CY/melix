@@ -106,6 +106,10 @@ Browser CORS is default-denied. Requests with an `Origin` header return
 `403 origin_not_allowed` unless the origin is explicitly allowlisted. Melix does
 not emit wildcard `Access-Control-Allow-Origin`.
 
+Host and Origin rejection bodies do not echo the raw rejected header value. They
+include a `privacy_receipt` with the rejected header name, rejection reason,
+redaction policy, and effective `local_server_security` policy receipt.
+
 For a trusted browser client, prefer durable server-session controls so the
 policy follows the operator session rather than a shell environment:
 
