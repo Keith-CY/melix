@@ -40,6 +40,11 @@ from worker.model_ops.training_dataset import build_training_dataset_artifact
 from worker.model_ops.upload_receipt_pipeline import UploadReceiptPipeline
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog, ResolvedBenchmarkSuite
+from worker.productization.serving_diagnostics import (
+    ServingDiagnosticsComparisonError,
+    ServingEvidenceRun,
+    write_baseline_accelerated_evidence,
+)
 from worker.productization.synthetic_dataset_generation import (
     SourceConstructionMetadata,
     SyntheticColumnSpec,
@@ -56,6 +61,9 @@ from worker.runtime.multimodal_preprocessing import PreparedVisionRequest
 _CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
 _CAPABILITY_SUPPORTED_TASKS_KEY = "melix.capability.supported_tasks"
 _CAPABILITY_SUPPORTED_PARSERS_KEY = "melix.capability.supported_parsers"
+_VLM_BATCH1_COMPARISON_PROMPT_PROTOCOL = "melix.vlm.benchmark.v1"
+_VLM_BATCH1_BASELINE_EXT = {"melix.vlm.image_batch1_step.enabled": "false"}
+_VLM_BATCH1_FAST_PATH_EXT = {"melix.vlm.image_batch1_step.enabled": "true"}
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +183,15 @@ class BenchSample:
     dflash_block_size: int = 0
     dflash_rollback_count: int = 0
     dflash_target_hidden_layers: int = 0
+    model_id: str = ""
+    task_kind: str = ""
+    prompt_protocol_id: str = ""
+    prompt_digest: str = ""
+    prompt_template_digest: str = ""
+    generation_config_digest: str = ""
+    generation_config_json: str = ""
+    route_stability_status: str = ""
+    acceleration_mode: str = ""
 
     @property
     def cached_prompt_tokens(self) -> int:
@@ -1913,6 +1930,10 @@ class MaintenanceCore:
                         loaded_model=loaded_model,
                         suite=resolved_suite,
                         parameters=parameters,
+                        job_id=job.job_id,
+                        source_repo=request.source_repo,
+                        task_kind=task_kind,
+                        output_dir=output_dir,
                     )
                 elif task_kind == "text-to-image":
                     suite_metrics = self._measure_image_generation_bench_metrics(
@@ -3024,6 +3045,11 @@ class MaintenanceCore:
         return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
+    def _falsey_parameter(parameters: dict[str, str], key: str) -> bool:
+        raw_value = parameters.get(key, parameters.get(f"melix.{key}", ""))
+        return str(raw_value).strip().lower() in {"0", "false", "no", "off", "disabled"}
+
+    @staticmethod
     def _runtime_evidence_for_loaded_model(loaded_model) -> dict[str, str]:
         if loaded_model is None:
             return {
@@ -3823,6 +3849,10 @@ class MaintenanceCore:
         loaded_model,
         suite: ResolvedBenchmarkSuite,
         parameters: dict[str, str],
+        job_id: str = "",
+        source_repo: str = "",
+        task_kind: str = "image-text-to-text",
+        output_dir: Path | None = None,
     ) -> list[BenchMetricSpec]:
         samples = [
             self._measure_vlm_bench_sample(
@@ -3830,12 +3860,23 @@ class MaintenanceCore:
                 suite=suite,
                 case=case,
                 parameters=parameters,
+                source_repo=source_repo,
+                task_kind=task_kind,
             )
             for case in suite.cases
         ]
         fast_path_metrics = self._vlm_fast_path_bench_metrics(
             suite_id=suite.suite_id,
             samples=samples,
+        )
+        comparison_metrics = self._vlm_batch1_comparison_metrics(
+            loaded_model=loaded_model,
+            suite=suite,
+            parameters=parameters,
+            job_id=job_id,
+            source_repo=source_repo,
+            task_kind=task_kind,
+            output_dir=output_dir,
         )
         if suite.suite_id == "latency":
             total_latencies = [sample.total_latency_ms for sample in samples]
@@ -3853,7 +3894,7 @@ class MaintenanceCore:
                     value=image_p95_ms,
                     unit="ms",
                 ),
-            ] + fast_path_metrics
+            ] + fast_path_metrics + comparison_metrics
 
         ttft_avg = sum(sample.ttft_ms for sample in samples) / max(len(samples), 1)
         throughput_values = [
@@ -3875,7 +3916,7 @@ class MaintenanceCore:
                 value=tokens_per_second,
                 unit="tok/s",
             ),
-        ] + fast_path_metrics
+        ] + fast_path_metrics + comparison_metrics
 
     def _measure_vlm_bench_sample(
         self,
@@ -3884,6 +3925,10 @@ class MaintenanceCore:
         suite: ResolvedBenchmarkSuite,
         case,
         parameters: dict[str, str],
+        execution_ext: dict[str, str] | None = None,
+        source_repo: str = "",
+        task_kind: str = "image-text-to-text",
+        route_label: str = "",
     ) -> BenchSample:
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         parts = [
@@ -3906,7 +3951,7 @@ class MaintenanceCore:
             prepared = runtime.render_prompt(
                 messages,
                 loaded_model=loaded_model.runtime_model,
-                execution_ext={},
+                execution_ext=execution_ext or {},
             )
         except Exception as exc:
             self._raise_benchmark_error_with_stage(exc, "prompt_render")
@@ -3928,12 +3973,13 @@ class MaintenanceCore:
                 top_k=1,
                 max_output_tokens=self._benchmark_max_output_tokens(parameters),
             )
+            generation_config = self._vlm_benchmark_generation_config(sampling)
             for runtime_event in runtime.generate_tokens(
                 loaded_model.runtime_model,
                 prepared,
                 sampling,
                 cancel_event,
-                execution_ext={},
+                execution_ext=execution_ext or {},
             ):
                 text = getattr(runtime_event, "text", "")
                 if not text:
@@ -4049,7 +4095,362 @@ class MaintenanceCore:
                     else "not_reported"
                 )
             ),
+            model_id=(getattr(loaded_model, "handle", "") or "").split("::", 1)[0],
+            task_kind=task_kind,
+            prompt_protocol_id=_VLM_BATCH1_COMPARISON_PROMPT_PROTOCOL,
+            prompt_digest=self._vlm_benchmark_prompt_digest(
+                case=case,
+                source_repo=source_repo,
+            ),
+            prompt_template_digest=self._vlm_benchmark_prompt_template_digest(
+                loaded_model=loaded_model,
+            ),
+            generation_config_digest=self._stable_json_digest(generation_config),
+            generation_config_json=json.dumps(generation_config, sort_keys=True),
+            route_stability_status=self._vlm_route_stability_status(
+                getattr(probe, "multimodal_decode_mode", "") if probe is not None else ""
+            ),
+            acceleration_mode=(
+                route_label
+                or str(
+                    getattr(probe, "multimodal_decode_mode", "baseline")
+                    if probe is not None
+                    else "not_reported"
+                )
+            ),
         )
+
+    def _vlm_batch1_comparison_metrics(
+        self,
+        *,
+        loaded_model,
+        suite: ResolvedBenchmarkSuite,
+        parameters: dict[str, str],
+        job_id: str,
+        source_repo: str,
+        task_kind: str,
+        output_dir: Path | None,
+    ) -> list[BenchMetricSpec]:
+        if self._falsey_parameter(parameters, "vlm_batch1_compare"):
+            return []
+        if output_dir is None or not job_id or not suite.cases:
+            return self._vlm_batch1_comparison_status_metrics(
+                suite_id=suite.suite_id,
+                valid=False,
+                blocked=True,
+                reason="comparison_artifact_context_missing",
+            )
+        case = suite.cases[0]
+        baseline = self._measure_vlm_bench_sample(
+            loaded_model=loaded_model,
+            suite=suite,
+            case=case,
+            parameters=parameters,
+            execution_ext=_VLM_BATCH1_BASELINE_EXT,
+            source_repo=source_repo,
+            task_kind=task_kind,
+            route_label="baseline",
+        )
+        fast_path = self._measure_vlm_bench_sample(
+            loaded_model=loaded_model,
+            suite=suite,
+            case=case,
+            parameters=parameters,
+            execution_ext=_VLM_BATCH1_FAST_PATH_EXT,
+            source_repo=source_repo,
+            task_kind=task_kind,
+            route_label="image_batch1_step",
+        )
+        if fast_path.multimodal_decode_mode != "image_batch1_step":
+            return self._vlm_batch1_comparison_status_metrics(
+                suite_id=suite.suite_id,
+                valid=False,
+                blocked=True,
+                reason="fast_path_route_not_selected",
+                baseline=baseline,
+                fast_path=fast_path,
+            )
+        try:
+            paths = self._write_vlm_batch1_comparison_artifact(
+                output_dir=output_dir,
+                comparison_id=f"{job_id}-{suite.suite_id}-vlm-batch1-step",
+                baseline=baseline,
+                fast_path=fast_path,
+            )
+        except ServingDiagnosticsComparisonError as exc:
+            return self._vlm_batch1_comparison_status_metrics(
+                suite_id=suite.suite_id,
+                valid=False,
+                blocked=True,
+                reason=str(exc),
+                baseline=baseline,
+                fast_path=fast_path,
+            )
+        return self._vlm_batch1_comparison_status_metrics(
+            suite_id=suite.suite_id,
+            valid=True,
+            blocked=False,
+            reason="",
+            baseline=baseline,
+            fast_path=fast_path,
+            comparison_path=str(paths["comparison"]),
+        )
+
+    @staticmethod
+    def _write_vlm_batch1_comparison_artifact(
+        *,
+        output_dir: Path,
+        comparison_id: str,
+        baseline: BenchSample,
+        fast_path: BenchSample,
+    ) -> dict[str, Path]:
+        return write_baseline_accelerated_evidence(
+            output_root=output_dir,
+            comparison_id=comparison_id,
+            baseline=MaintenanceCore._vlm_sample_evidence_run(
+                sample=baseline,
+                acceleration_mode="baseline",
+            ),
+            accelerated=MaintenanceCore._vlm_sample_evidence_run(
+                sample=fast_path,
+                acceleration_mode=fast_path.acceleration_mode or "image_batch1_step",
+            ),
+        )
+
+    @staticmethod
+    def _vlm_sample_evidence_run(
+        *,
+        sample: BenchSample,
+        acceleration_mode: str,
+    ) -> ServingEvidenceRun:
+        generation_config = MaintenanceCore._json_object(sample.generation_config_json)
+        return ServingEvidenceRun(
+            run_id=f"{sample.model_id}:{sample.prompt_digest}:{acceleration_mode}",
+            model_id=sample.model_id,
+            task_kind=sample.task_kind,
+            prompt_protocol_id=sample.prompt_protocol_id,
+            prompt_digest=sample.prompt_digest,
+            prompt_template_digest=sample.prompt_template_digest,
+            generation_config=generation_config,
+            acceleration_mode=acceleration_mode,
+            acceleration_admitted=sample.multimodal_fallback_reason in {"", "not_reported"},
+            fallback_reason=sample.multimodal_fallback_reason,
+            effective_temperature=float(generation_config.get("temperature", 0.0) or 0.0),
+            effective_top_p=float(generation_config.get("top_p", 1.0) or 1.0),
+            effective_top_k=int(generation_config.get("top_k", 1) or 1),
+            tier_stability_status=sample.route_stability_status or "stable",
+            metrics={
+                "ttft_ms": sample.ttft_ms,
+                "decode_tokens_per_second": sample.decode_tokens_per_second
+                or round(
+                    sample.completion_tokens
+                    / max((sample.total_latency_ms - sample.ttft_ms) / 1_000.0, 0.001),
+                    4,
+                ),
+                "prefill_ms": sample.prefill_ms or sample.ttft_ms,
+                "decode_ms": sample.decode_ms or max(sample.total_latency_ms - sample.ttft_ms, 0.0),
+                "completion_tokens": float(sample.completion_tokens),
+            },
+        )
+
+    @staticmethod
+    def _vlm_batch1_comparison_status_metrics(
+        *,
+        suite_id: str,
+        valid: bool,
+        blocked: bool,
+        reason: str,
+        baseline: BenchSample | None = None,
+        fast_path: BenchSample | None = None,
+        comparison_path: str = "",
+    ) -> list[BenchMetricSpec]:
+        metrics = [
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_batch1_comparison_valid",
+                value=1.0 if valid else 0.0,
+                unit="bool",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_batch1_comparison_claim_blocked",
+                value=1.0 if blocked else 0.0,
+                unit="bool",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_batch1_comparison_identity_match",
+                value=1.0
+                if baseline is not None
+                and fast_path is not None
+                and MaintenanceCore._vlm_sample_identity(baseline)
+                == MaintenanceCore._vlm_sample_identity(fast_path)
+                else 0.0,
+                unit="bool",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_batch1_route_stability",
+                value=1.0
+                if baseline is not None
+                and fast_path is not None
+                and baseline.route_stability_status == fast_path.route_stability_status == "stable"
+                else 0.0,
+                unit="bool",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_batch1_comparison_reason_code",
+                value=MaintenanceCore._vlm_batch1_comparison_reason_code(reason),
+                unit="code",
+            ),
+        ]
+        if baseline is not None:
+            metrics.extend(
+                [
+                    BenchMetricSpec(
+                        suite=suite_id,
+                        name=f"bench.{suite_id}.vlm_batch1_baseline_ttft_ms",
+                        value=baseline.ttft_ms,
+                        unit="ms",
+                    ),
+                    BenchMetricSpec(
+                        suite=suite_id,
+                        name=f"bench.{suite_id}.vlm_batch1_baseline_decode_tokens_per_second",
+                        value=baseline.decode_tokens_per_second
+                        or round(
+                            baseline.completion_tokens
+                            / max((baseline.total_latency_ms - baseline.ttft_ms) / 1_000.0, 0.001),
+                            4,
+                        ),
+                        unit="tok/s",
+                    ),
+                ]
+            )
+        if fast_path is not None:
+            metrics.extend(
+                [
+                    BenchMetricSpec(
+                        suite=suite_id,
+                        name=f"bench.{suite_id}.vlm_batch1_fast_path_ttft_ms",
+                        value=fast_path.ttft_ms,
+                        unit="ms",
+                    ),
+                    BenchMetricSpec(
+                        suite=suite_id,
+                        name=f"bench.{suite_id}.vlm_batch1_fast_path_decode_tokens_per_second",
+                        value=fast_path.decode_tokens_per_second
+                        or round(
+                            fast_path.completion_tokens
+                            / max((fast_path.total_latency_ms - fast_path.ttft_ms) / 1_000.0, 0.001),
+                            4,
+                        ),
+                        unit="tok/s",
+                    ),
+                ]
+            )
+        if comparison_path:
+            metrics.append(
+                BenchMetricSpec(
+                    suite=suite_id,
+                    name=f"bench.{suite_id}.vlm_batch1_comparison_artifact_present",
+                    value=1.0,
+                    unit="bool",
+                )
+            )
+        return metrics
+
+    @staticmethod
+    def _vlm_sample_identity(sample: BenchSample) -> tuple[str, str, str, str, str, str]:
+        return (
+            sample.model_id,
+            sample.prompt_protocol_id,
+            sample.prompt_digest,
+            sample.prompt_template_digest,
+            sample.task_kind,
+            sample.generation_config_digest,
+        )
+
+    @staticmethod
+    def _vlm_batch1_comparison_reason_code(reason: str) -> float:
+        if not reason:
+            return 0.0
+        if "prompt_protocol_id" in reason:
+            return 1.0
+        if "prompt_digest" in reason:
+            return 2.0
+        if "prompt_template_digest" in reason:
+            return 3.0
+        if "model_id" in reason:
+            return 4.0
+        if "task_kind" in reason:
+            return 5.0
+        if "generation_config" in reason:
+            return 6.0
+        if "greedy deterministic sampling" in reason:
+            return 7.0
+        if "tier_stability_status" in reason:
+            return 8.0
+        if reason == "fast_path_route_not_selected":
+            return 9.0
+        return 99.0
+
+    @staticmethod
+    def _vlm_benchmark_generation_config(sampling: common_pb2.SamplingConfig) -> dict[str, object]:
+        return {
+            "temperature": float(getattr(sampling, "temperature", 0.0) or 0.0),
+            "top_p": float(getattr(sampling, "top_p", 1.0) or 1.0),
+            "top_k": int(getattr(sampling, "top_k", 0) or 0),
+            "max_output_tokens": int(getattr(sampling, "max_output_tokens", 0) or 0),
+        }
+
+    @staticmethod
+    def _vlm_benchmark_prompt_digest(*, case, source_repo: str) -> str:
+        payload = {
+            "source_repo": source_repo,
+            "prompt": str(getattr(case, "prompt", "") or ""),
+            "image_uris": [
+                str(image_uri)
+                for image_uri in getattr(case, "image_uris", ())
+            ],
+        }
+        return "sha256:" + MaintenanceCore._stable_json_digest(payload)
+
+    @staticmethod
+    def _vlm_benchmark_prompt_template_digest(*, loaded_model) -> str:
+        runtime_model = getattr(loaded_model, "runtime_model", None)
+        metadata = runtime_model.get("metadata", {}) if isinstance(runtime_model, dict) else {}
+        payload = {
+            "prompt_protocol_id": _VLM_BATCH1_COMPARISON_PROMPT_PROTOCOL,
+            "model_id": (getattr(loaded_model, "handle", "") or "").split("::", 1)[0],
+            "vision_prompt_format": str(metadata.get("vision_prompt_format", "") or ""),
+            "vision_prompt_profile_id": str(metadata.get("vision_prompt_profile_id", "") or ""),
+            "vision_tokenization_mode": str(metadata.get("vision_tokenization_mode", "") or ""),
+        }
+        return "sha256:" + MaintenanceCore._stable_json_digest(payload)
+
+    @staticmethod
+    def _vlm_route_stability_status(mode: str) -> str:
+        return (
+            "stable"
+            if str(mode or "").strip()
+            in {"baseline", "single_stream", "image_cache_reuse", "native_quantized", "image_batch1_step"}
+            else "unstable"
+        )
+
+    @staticmethod
+    def _stable_json_digest(payload: dict[str, object]) -> str:
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+    @staticmethod
+    def _json_object(payload_json: str) -> dict[str, object]:
+        try:
+            payload = json.loads(payload_json)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
     @staticmethod
     def _vlm_fast_path_bench_metrics(

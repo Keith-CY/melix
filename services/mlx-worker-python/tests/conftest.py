@@ -13,7 +13,7 @@ _IMAGE_BATCH1_STEP_VLM_COVERAGE_NODEIDS = (
     "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_text_only_step_fast_path_releases_executor_between_tokens",
     "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_text_only_batch_generator_requires_opt_in",
     "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_image_batch1_step_uses_executor_stream_and_token_counter",
-    "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_image_batch1_step_keeps_non_greedy_requests_on_stream",
+    "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_image_batch1_step_keeps_ineligible_requests_on_stream",
     "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_image_batch1_step_decode_handles_tail_and_empty_tokens",
     "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_image_batch1_step_decode_cancel_and_missing_detokenizer",
     "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_image_batch1_step_prepare_failure_cleans_and_streams",

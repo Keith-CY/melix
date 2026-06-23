@@ -1617,8 +1617,51 @@ def test_mlx_vlm_runtime_image_batch1_step_uses_executor_stream_and_token_counte
     assert probe.temp_media_artifact_bytes == len(b"fake-image-payload")
 
 
-def test_mlx_vlm_runtime_image_batch1_step_keeps_non_greedy_requests_on_stream(
+def test_mlx_vlm_runtime_image_batch1_step_ext_flag_defaults_enabled() -> None:
+    assert MLXVLMRuntime._image_batch1_step_enabled(None) is True
+    assert MLXVLMRuntime._image_batch1_step_enabled({}) is True
+    assert (
+        MLXVLMRuntime._image_batch1_step_enabled(
+            {"melix.vlm.image_batch1_step.enabled": "off"}
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "sampling",
+        "execution_ext",
+        "expected_fallback_reason",
+    ),
+    (
+        (
+            common_pb2.SamplingConfig(
+                temperature=0.7,
+                top_p=0.9,
+                top_k=8,
+                max_output_tokens=8,
+            ),
+            None,
+            "image_batch1_step_non_greedy_sampling",
+        ),
+        (
+            common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=0,
+                max_output_tokens=8,
+            ),
+            {"melix.vlm.image_batch1_step.enabled": "false"},
+            "image_batch1_step_backend_unsupported",
+        ),
+    ),
+)
+def test_mlx_vlm_runtime_image_batch1_step_keeps_ineligible_requests_on_stream(
     monkeypatch: pytest.MonkeyPatch,
+    sampling: common_pb2.SamplingConfig,
+    execution_ext: dict[str, str] | None,
+    expected_fallback_reason: str,
 ) -> None:
     _install_fake_mlx_core(monkeypatch)
     _install_fake_mlx_vlm_prepare_inputs(monkeypatch)
@@ -1653,7 +1696,7 @@ def test_mlx_vlm_runtime_image_batch1_step_keeps_non_greedy_requests_on_stream(
             self.detokenizer = FakeDetokenizer()
             self.image_processor = object()
 
-        def __call__(self, prompts, **kwargs):  # pragma: no cover - non-greedy must not pre-prepare inputs
+        def __call__(self, prompts, **kwargs):  # pragma: no cover - ineligible path must not pre-prepare inputs
             import mlx.core as mx
 
             _ = prompts
@@ -1684,7 +1727,7 @@ def test_mlx_vlm_runtime_image_batch1_step_keeps_non_greedy_requests_on_stream(
         _ = kwargs
         nonlocal generate_step_calls
         generate_step_calls += 1
-        raise AssertionError("non-greedy image batch-1 requests should stay on stream path")
+        raise AssertionError("ineligible image batch-1 requests should stay on stream path")
 
     monkeypatch.setattr(mlx_vlm_runtime_module, "_installed_package_version", lambda name: f"{name}-version")
     runtime = MLXVLMRuntime(
@@ -1721,13 +1764,9 @@ def test_mlx_vlm_runtime_image_batch1_step_keeps_non_greedy_requests_on_stream(
         runtime.generate_tokens(
             loaded_model,
             prepared,
-            common_pb2.SamplingConfig(
-                temperature=0.7,
-                top_p=0.9,
-                top_k=8,
-                max_output_tokens=8,
-            ),
+            sampling,
             Event(),
+            execution_ext=execution_ext,
         )
     )
 
@@ -1737,8 +1776,8 @@ def test_mlx_vlm_runtime_image_batch1_step_keeps_non_greedy_requests_on_stream(
     probe = runtime.last_probe_snapshot()
     assert probe.multimodal_decode_mode == "native_quantized"
     assert probe.multimodal_decode_sync_mode == "executor_stream"
-    assert probe.multimodal_fallback_reason == "image_batch1_step_non_greedy_sampling"
-    assert probe.image_batch1_step_admission_reason == "image_batch1_step_non_greedy_sampling"
+    assert probe.multimodal_fallback_reason == expected_fallback_reason
+    assert probe.image_batch1_step_admission_reason == expected_fallback_reason
 
 
 def test_mlx_vlm_runtime_image_batch1_step_prepare_failure_cleans_and_streams(

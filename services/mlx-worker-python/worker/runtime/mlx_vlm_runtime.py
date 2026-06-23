@@ -77,6 +77,7 @@ _GEMMA_CHAT_TEMPLATE_MODEL_TYPES = frozenset(("gemma3", "gemma3n", "gemma4"))
 
 _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY = "melix.vlm.text_only_batch_generator"
 _TEXT_ONLY_STEP_COOPERATIVE_EXT_KEY = "melix.vlm.text_only_step_cooperative"
+_IMAGE_BATCH1_STEP_EXT_KEY = "melix.vlm.image_batch1_step.enabled"
 _NATIVE_MTP_ENABLED_EXT_KEY = "melix.native_mtp.enabled"
 _TEXT_ONLY_BATCH_PREFILL_STEP_SIZE_ENV = "MELIX_VLM_TEXT_BATCH_PREFILL_STEP_SIZE"
 _TEXT_ONLY_BATCH_DEFAULT_PREFILL_STEP_SIZE = 512
@@ -2215,7 +2216,10 @@ class MLXVLMRuntime:
                 temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
             )
 
-        if self._should_prepare_image_batch1_step_inputs(
+        image_batch1_step_enabled = True
+        if execution_ext and _IMAGE_BATCH1_STEP_EXT_KEY in execution_ext:
+            image_batch1_step_enabled = self._image_batch1_step_enabled(execution_ext)
+        if image_batch1_step_enabled and self._should_prepare_image_batch1_step_inputs(
             prepared_request=prepared_request,
             sampling=sampling,
         ):
@@ -2254,7 +2258,11 @@ class MLXVLMRuntime:
                     if image_batch1_step_inputs is not None
                     else None
                 ),
-                image_batch1_step_supported=self._backend.generate_step_fn is not None,
+                image_batch1_step_supported=(
+                    self._backend.generate_step_fn is not None
+                    if image_batch1_step_enabled
+                    else False
+                ),
                 image_batch1_step_greedy_sampling=self._sampling_is_greedy(sampling),
             )
         except Exception:
@@ -3183,6 +3191,13 @@ class MLXVLMRuntime:
             and self._sampling_is_greedy(sampling)
             and all(str(getattr(image, "sha256_hex", "") or "") for image in prepared_request.images)
         )
+
+    @staticmethod
+    def _image_batch1_step_enabled(execution_ext: dict[str, str] | None) -> bool:
+        if not execution_ext:
+            return True
+        value = str(execution_ext.get(_IMAGE_BATCH1_STEP_EXT_KEY, "") or "").strip().lower()
+        return value not in {"0", "false", "no", "off", "disabled"}
 
     def _can_use_text_only_batch_generator(
         self,
