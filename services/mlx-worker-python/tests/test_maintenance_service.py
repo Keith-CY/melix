@@ -5609,6 +5609,56 @@ def test_vlm_fast_path_bench_metrics_encode_text_only_batch_generator() -> None:
     assert metrics_by_name["bench.smoke.multimodal_decode_sync_mode"].value == 4.0
 
 
+def test_vlm_fast_path_bench_metrics_encode_image_batch1_step_counters() -> None:
+    metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
+        suite_id="smoke",
+        samples=[
+            maintenance_core_module.BenchSample(
+                ttft_ms=10.0,
+                total_latency_ms=20.0,
+                completion_tokens=2,
+                multimodal_decode_mode="image_batch1_step",
+                multimodal_decode_sync_mode="executor_step",
+                image_batch1_step_decode_token_counter_start=6,
+                image_batch1_step_decode_token_counter_end=8,
+                image_batch1_step_decode_token_counter_advance=2,
+            ),
+            maintenance_core_module.BenchSample(
+                ttft_ms=12.0,
+                total_latency_ms=24.0,
+                completion_tokens=3,
+                multimodal_decode_mode="image_batch1_step",
+                multimodal_decode_sync_mode="executor_step",
+                image_batch1_step_decode_token_counter_start=10,
+                image_batch1_step_decode_token_counter_end=13,
+                image_batch1_step_decode_token_counter_advance=3,
+            ),
+        ],
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == 9.0
+    assert metrics_by_name["bench.smoke.multimodal_decode_sync_mode"].value == 3.0
+    assert (
+        metrics_by_name[
+            "bench.smoke.image_batch1_step_decode_token_counter_start"
+        ].value
+        == 10.0
+    )
+    assert (
+        metrics_by_name[
+            "bench.smoke.image_batch1_step_decode_token_counter_end"
+        ].value
+        == 13.0
+    )
+    assert (
+        metrics_by_name[
+            "bench.smoke.image_batch1_step_decode_token_counter_advance"
+        ].value
+        == 5.0
+    )
+
+
 def test_vlm_fast_path_bench_metrics_warns_for_unmapped_decode_mode(caplog) -> None:
     caplog.set_level(logging.WARNING, logger="worker.engine.maintenance_core")
 
@@ -5747,6 +5797,65 @@ def test_vlm_bench_sample_preserves_empty_success_fallback_reasons() -> None:
 
     assert sample.multimodal_fallback_reason == ""
     assert sample.quantized_load_fallback_reason == ""
+
+
+def test_vlm_bench_sample_carries_image_batch1_step_token_counters() -> None:
+    class RuntimeWithStepProbe:
+        def render_prompt(self, *_args, **_kwargs):
+            return "rendered"
+
+        def generate_tokens(self, *_args, **_kwargs):
+            yield SimpleNamespace(text="ok", completion_tokens=2)
+
+        def last_probe_snapshot(self):
+            return SimpleNamespace(
+                image_feature_cache_hits=1,
+                image_feature_cache_misses=0,
+                image_feature_encoder_calls_saved=1,
+                image_feature_work_saved_bytes=128,
+                multimodal_decode_mode="image_batch1_step",
+                multimodal_fallback_reason="",
+                multimodal_decode_sync_mode="executor_step",
+                multi_image_scatter_mode="none",
+                quantized_load_mode="native_quantized",
+                quantized_load_fallback_reason="",
+                image_batch1_step_decode_token_counter_start=6,
+                image_batch1_step_decode_token_counter_end=8,
+                image_batch1_step_decode_token_counter_advance=2,
+            )
+
+    class Registry:
+        def __init__(self) -> None:
+            self.runtime = RuntimeWithStepProbe()
+
+        def runtime_for_loaded_model(self, _loaded_model):
+            return self.runtime
+
+        def start_request(self, **_kwargs):
+            return SimpleNamespace(cancel_event=threading.Event())
+
+        def finish_request(self, _request_id):
+            return None
+
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    core._registry = Registry()
+
+    sample = core._measure_vlm_bench_sample(
+        loaded_model=SimpleNamespace(
+            handle="melix-dev-vlm::1",
+            runtime_kind="vlm",
+            runtime_model={},
+        ),
+        suite=SimpleNamespace(suite_id="smoke"),
+        case=SimpleNamespace(prompt="what is this?", image_uris=("image.png",)),
+        parameters={},
+    )
+
+    assert sample.multimodal_decode_mode == "image_batch1_step"
+    assert sample.multimodal_decode_sync_mode == "executor_step"
+    assert sample.image_batch1_step_decode_token_counter_start == 6
+    assert sample.image_batch1_step_decode_token_counter_end == 8
+    assert sample.image_batch1_step_decode_token_counter_advance == 2
 
 
 def test_benchmark_partial_prefix_cache_profile_uses_a_shorter_warmup_prompt(tmp_path: Path) -> None:

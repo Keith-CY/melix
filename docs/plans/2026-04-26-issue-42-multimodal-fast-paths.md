@@ -459,6 +459,19 @@ Executable unit issues:
   the admitted mode and fallback reason, while Unit 3.2.2 owns threading the
   actual executor stream and integer token counters through decode.
 
+- Unit 3.2.2 promotes admitted image-bearing batch-1 requests onto the real
+  `generate_step` decode path. The worker materializes the single image,
+  prepares media-aware MLX inputs, and records the aligned position metadata
+  receipt on the executor-owned stream before admission. Admitted greedy requests
+  then use cooperative executor iteration around `generate_step`, bypass
+  `stream_generate`, keep per-sample image inputs and auxiliary position kwargs
+  together, and maintain Melix decode progress from an integer prompt-token plus
+  completion-token counter. Runtime probes report
+  `multimodal_decode_mode=image_batch1_step`,
+  `multimodal_decode_sync_mode=executor_step`, and the counter start/end/advance
+  values. Non-greedy or otherwise ineligible batch-1 image requests keep their
+  existing stream path with the typed admission fallback reason.
+
 ## Verification Policy
 
 Per milestone:
