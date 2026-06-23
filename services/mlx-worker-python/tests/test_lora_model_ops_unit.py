@@ -2032,6 +2032,70 @@ def test_training_metrics_serializes_absent_preference_fields_as_null(tmp_path: 
     assert restored.metrics.win_rate_proxy is None
 
 
+def test_training_metrics_serializes_training_log_events(tmp_path: Path) -> None:
+    metrics = mlx_lm_runner_module.TrainingMetrics(
+        job_duration_ms=10.0,
+        tokens_seen=4,
+        examples_seen=2,
+        loss_final=0.4,
+        loss_best=0.3,
+        learning_rate_final=1e-4,
+        training_log_events={
+            "schema_version": "melix.training_log_events.v1",
+            "parsed_row_count": 1,
+            "alert_row_count": 0,
+        },
+        training_log_event_preview_limit=1,
+        training_log_event_preview=[
+            {
+                "event_type": "loss",
+                "severity": "info",
+                "source": "test",
+                "line_number": 1,
+                "loss": 0.4,
+            }
+        ],
+    )
+    result = mlx_lm_runner_module.TrainingResult(
+        weights_path=tmp_path / "adapters.safetensors",
+        adapter_config_path=tmp_path / "adapter_config.json",
+        metrics=metrics,
+        execution_backend="native",
+    )
+
+    payload = mlx_lm_runner_module._serialize_training_result(result)
+    restored = mlx_lm_runner_module._deserialize_training_result(payload)
+
+    assert restored.metrics.training_log_events["schema_version"] == "melix.training_log_events.v1"
+    assert restored.metrics.training_log_event_preview_limit == 1
+    assert restored.metrics.training_log_event_preview[0]["event_type"] == "loss"
+
+
+def test_training_info_log_line_projects_callback_fields() -> None:
+    assert mlx_lm_runner_module._training_info_log_line(
+        {
+            "iteration": 3,
+            "total_iterations": 7,
+            "train_loss": 0.25,
+            "learning_rate": 2e-5,
+            "trained_tokens": 512,
+            "trained_examples": 4,
+        },
+        loss_key="train_loss",
+    ) == "step 3/7 loss=0.25 lr=2e-05 trained_tokens=512 examples_seen=4"
+    assert mlx_lm_runner_module._training_info_log_line(
+        {
+            "step": 2,
+            "val_loss": 0.19,
+            "lr": 1e-5,
+            "tokens_seen": 256,
+            "examples_seen": 2,
+        },
+        loss_key="val_loss",
+    ) == "step 2 validation_loss=0.19 lr=1e-05 trained_tokens=256 examples_seen=2"
+    assert mlx_lm_runner_module._training_info_log_line({}, loss_key="train_loss") == ""
+
+
 def test_preference_training_loads_preference_pairs(tmp_path: Path) -> None:
     from worker.model_ops.preference_training import load_preference_pairs
 
@@ -2699,6 +2763,13 @@ def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
     monkeypatch.setattr(mlx_lm_runner_module.subprocess, "run", fake_run)
 
     assert runner._run_subprocess("train", payload_path, error_code="backend_training_failure") == structured_payload
+    test_training_metrics_serializes_training_log_events(tmp_path)
+    test_training_info_log_line_projects_callback_fields()
+    with monkeypatch.context() as training_monkeypatch:
+        test_mlx_lm_runner_train_native_collects_checkpoint_throughput_and_peak_memory(
+            tmp_path,
+            training_monkeypatch,
+        )
 
     metrics = TrainingMetrics(
         job_duration_ms=10.0,
@@ -4326,6 +4397,15 @@ def test_mlx_lm_runner_train_native_collects_checkpoint_throughput_and_peak_memo
     assert result.metrics.resume_ready is True
     assert result.metrics.tokens_per_second == pytest.approx(60.0)
     assert result.metrics.peak_memory_gb == pytest.approx(3.0)
+    assert result.metrics.training_log_events["schema_version"] == "melix.training_log_events.v1"
+    assert result.metrics.training_log_events["parsed_row_count"] == 2
+    assert result.metrics.training_log_events["final_loss"] == pytest.approx(0.8)
+    assert result.metrics.training_log_events["best_validation_loss"] == pytest.approx(0.2)
+    assert result.metrics.training_log_event_preview_limit == 50
+    assert [row["event_type"] for row in result.metrics.training_log_event_preview] == [
+        "loss",
+        "validation_loss",
+    ]
 
 
 def test_mlx_lm_runner_train_native_fails_when_response_only_labels_are_truncated(

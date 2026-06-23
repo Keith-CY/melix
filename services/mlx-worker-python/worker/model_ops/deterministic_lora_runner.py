@@ -13,6 +13,7 @@ from worker.model_ops.mlx_lm_runner import (
     TrainingRequest,
     TrainingResult,
 )
+from worker.model_ops.training_log_events import parse_training_log_events
 
 
 class DeterministicLoRARunner(MLXLMRunner):
@@ -45,6 +46,14 @@ class DeterministicLoRARunner(MLXLMRunner):
             + "\n",
             encoding="utf-8",
         )
+        training_log_fields = parse_training_log_events(
+            [
+                "step 1/2 loss=0.55 lr=1e-4 trained_tokens=512 examples_seen=1",
+                "step 2/2 validation_loss=0.37",
+                "training complete step 2/2 loss=0.42 lr=1e-4 duration=1.234s",
+            ],
+            source="deterministic_lora_runner",
+        ).manifest_fields(preview_limit=10)
         return TrainingResult(
             weights_path=weights_path,
             adapter_config_path=adapter_config_path,
@@ -59,6 +68,11 @@ class DeterministicLoRARunner(MLXLMRunner):
                 resume_ready=True,
                 tokens_per_second=96.0,
                 peak_memory_gb=2.5,
+                training_log_events=dict(training_log_fields["training_log_events"]),
+                training_log_event_preview_limit=int(
+                    training_log_fields["training_log_event_preview_limit"]
+                ),
+                training_log_event_preview=list(training_log_fields["training_log_event_preview"]),
             ),
             execution_backend="native",
         )
