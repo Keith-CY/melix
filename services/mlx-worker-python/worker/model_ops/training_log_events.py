@@ -386,7 +386,10 @@ def _duration_seconds(value: str) -> float | None:
     if not text:
         return None
     if ":" in text:
-        parts = [float(part) for part in text.split(":")]
+        try:
+            parts = [float(part) for part in text.split(":")]
+        except ValueError:
+            return None
         if len(parts) == 2:
             return parts[0] * 60 + parts[1]
         if len(parts) == 3:
@@ -418,7 +421,8 @@ def _operator_message_for(event_type: str) -> str:
 
 
 def _redacted_line(line: str) -> str:
-    redacted = re.sub(r"(?i)(token|secret|password|api[_-]?key)=\S+", r"\1=<redacted>", line)
+    truncated = line[:1024]
+    redacted = re.sub(r"(?i)(token|secret|password|api[_-]?key)=\S+", r"\1=<redacted>", truncated)
     redacted = re.sub(r"(?i)(https?://[^/\s]+)[^\s]*", r"\1/<redacted>", redacted)
     redacted = re.sub(r"(?<![\w.-])/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+", "<path:redacted>", redacted)
     return redacted[:512]

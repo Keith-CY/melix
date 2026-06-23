@@ -99,6 +99,7 @@ def test_training_log_parser_covers_progress_warnings_and_duration_edges(monkeyp
             "step=4 eta=2 min",
             "warning: rising loss detected step=5 loss=nan",
             "training complete step 6/9 loss=0.8 duration=01:02:03",
+            "step 7 eta=12:3a loss=0.7",
             "step 7 eta=5 parsecs",
             "step 8 eta=not-a-duration",
             "force parser error",
@@ -116,7 +117,23 @@ def test_training_log_parser_covers_progress_warnings_and_duration_edges(monkeyp
     assert result.events[1].loss is None
     assert result.events[2].duration_ms == pytest.approx(3_723_000.0)
     assert result.events[3].eta_seconds is None
+    assert result.events[3].loss == pytest.approx(0.7)
     assert result.events[4].eta_seconds is None
+    assert result.events[5].eta_seconds is None
+
+
+def test_training_log_redaction_bounds_extremely_long_lines() -> None:
+    line = "error: out of memory token=secret " + ("/private/path/" + ("x" * 2000))
+
+    result = parse_training_log_events([line], source="stdout")
+
+    assert result.summary.parser_error_count == 0
+    assert result.summary.alert_row_count == 1
+    assert result.events[0].event_type == "oom"
+    assert result.events[0].raw_line_redacted.startswith("error: out of memory token=<redacted>")
+    assert len(result.events[0].raw_line_redacted) <= 512
+    assert "secret" not in result.events[0].raw_line_redacted
+    assert "/private/path" not in result.events[0].raw_line_redacted
 
 
 def test_safe_training_log_manifest_fields_bounds_parser_failures() -> None:
