@@ -14,7 +14,17 @@ struct SSEStreamWriterTests {
         let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
             continuation.yield(makeTokenEvent(requestID: "req-1", seq: 1, text: "A"))
             continuation.yield(makeHeartbeatEvent(requestID: "req-1", seq: 2, unixMs: 99))
-            continuation.yield(makeUsageEvent(requestID: "req-1", seq: 3, promptTokens: 3, completionTokens: 1))
+            continuation.yield(makeUsageEvent(
+                requestID: "req-1",
+                seq: 3,
+                promptTokens: 3,
+                completionTokens: 1,
+                cachedPromptTokens: 2,
+                mediaFeatureCacheHits: 1,
+                mediaFeatureCacheMisses: 1,
+                mediaFeatureEncoderCallsSaved: 1,
+                mediaFeatureWorkSavedBytes: 512
+            ))
             continuation.yield(makeCompletedEvent(requestID: "req-1", seq: 4, finishReason: "stop", assistantText: "A"))
             continuation.finish()
         }
@@ -28,6 +38,9 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("event: heartbeat"))
         #expect(payload.contains("\"unix_ms\":99"))
         #expect(payload.contains("\"prompt_tokens\":3"))
+        #expect(payload.contains("\"cached_tokens\":2"))
+        #expect(payload.contains("\"media_feature_cache\""))
+        #expect(payload.contains("\"work_saved_bytes\":512"))
         #expect(payload.contains("\"finish_reason\":\"stop\""))
         #expect(payload.contains("data: [DONE]"))
         #expect(orderedRanges(in: payload, needles: [
@@ -432,7 +445,17 @@ struct SSEStreamWriterTests {
 
         let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
             continuation.yield(makeTokenEvent(requestID: "resp-1", seq: 1, text: "A"))
-            continuation.yield(makeUsageEvent(requestID: "resp-1", seq: 2, promptTokens: 3, completionTokens: 1))
+            continuation.yield(makeUsageEvent(
+                requestID: "resp-1",
+                seq: 2,
+                promptTokens: 3,
+                completionTokens: 1,
+                cachedPromptTokens: 2,
+                mediaFeatureCacheHits: 1,
+                mediaFeatureCacheMisses: 1,
+                mediaFeatureEncoderCallsSaved: 1,
+                mediaFeatureWorkSavedBytes: 256
+            ))
             continuation.yield(makeCompletedEvent(requestID: "resp-1", seq: 3, finishReason: "stop", assistantText: "A"))
             continuation.finish()
         }
@@ -452,6 +475,9 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("\"delta\":\"A\""))
         #expect(payload.contains("event: response.usage"))
         #expect(payload.contains("\"input_tokens\":3"))
+        #expect(payload.contains("\"cached_tokens\":2"))
+        #expect(payload.contains("\"media_feature_cache\""))
+        #expect(payload.contains("\"work_saved_bytes\":256"))
         #expect(payload.contains("event: response.completed"))
         #expect(payload.contains("\"finish_reason\":\"stop\""))
         #expect(payload.contains("data: [DONE]"))
@@ -504,7 +530,17 @@ struct SSEStreamWriterTests {
 
         let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
             continuation.yield(makeTokenEvent(requestID: "cmp-1", seq: 1, text: "A"))
-            continuation.yield(makeUsageEvent(requestID: "cmp-1", seq: 2, promptTokens: 4, completionTokens: 1))
+            continuation.yield(makeUsageEvent(
+                requestID: "cmp-1",
+                seq: 2,
+                promptTokens: 4,
+                completionTokens: 1,
+                cachedPromptTokens: 2,
+                mediaFeatureCacheHits: 1,
+                mediaFeatureCacheMisses: 1,
+                mediaFeatureEncoderCallsSaved: 1,
+                mediaFeatureWorkSavedBytes: 128
+            ))
             continuation.yield(makeCompletedEvent(requestID: "cmp-1", seq: 3, finishReason: "stop", assistantText: "A"))
             continuation.finish()
         }
@@ -523,6 +559,8 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("event: usage") == false)
         #expect(payload.contains("\"prompt_tokens\":4"))
         #expect(payload.contains("\"total_tokens\":5"))
+        #expect(payload.contains("\"cached_tokens\":2"))
+        #expect(payload.contains("\"work_saved_bytes\":128"))
         #expect(payload.contains("\"finish_reason\":\"stop\""))
         #expect(payload.contains("data: [DONE]"))
         #expect(orderedRanges(in: payload, needles: [
@@ -612,7 +650,17 @@ struct SSEStreamWriterTests {
         let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
 
         let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
-            continuation.yield(makeUsageEvent(requestID: "msg-usage", seq: 1, promptTokens: 8, completionTokens: 2))
+            continuation.yield(makeUsageEvent(
+                requestID: "msg-usage",
+                seq: 1,
+                promptTokens: 8,
+                completionTokens: 2,
+                cachedPromptTokens: 4,
+                mediaFeatureCacheHits: 2,
+                mediaFeatureCacheMisses: 1,
+                mediaFeatureEncoderCallsSaved: 2,
+                mediaFeatureWorkSavedBytes: 1024
+            ))
             continuation.yield(makeErrorEvent(requestID: "msg-usage", seq: 2, code: "runtime_error", message: "boom"))
             continuation.finish()
         }
@@ -630,6 +678,9 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("\"type\":\"message.usage\""))
         #expect(payload.contains("\"input_tokens\":8"))
         #expect(payload.contains("\"output_tokens\":2"))
+        #expect(payload.contains("\"cached_tokens\":4"))
+        #expect(payload.contains("\"media_feature_cache\""))
+        #expect(payload.contains("\"work_saved_bytes\":1024"))
         #expect(payload.contains("event: error"))
         #expect(payload.contains("\"code\":\"runtime_error\""))
         #expect(payload.contains("data: [DONE]"))

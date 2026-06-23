@@ -157,6 +157,77 @@ def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str
     return {key: str(value) for key, value in metric_fields.items() if value is not None}
 
 
+def _non_negative_int(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _cached_prompt_tokens_from_event(event: RuntimeTokenEvent | None) -> int:
+    if event is None:
+        return 0
+    return _non_negative_int(event.recovered_prefix_tokens)
+
+
+def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> int:
+    value = getattr(probe, primary_key, None)
+    if value is None or value == -1:
+        value = getattr(probe, legacy_key, 0)
+    return _non_negative_int(value)
+
+
+def _media_feature_usage_from_probe(probe: object | None) -> dict[str, int]:
+    usage = {
+        "media_feature_cache_hits": 0,
+        "media_feature_cache_misses": 0,
+        "media_feature_encoder_calls_saved": 0,
+        "media_feature_work_saved_bytes": 0,
+    }
+    if probe is None:
+        return usage
+
+    for key in usage:
+        usage[key] = _probe_counter_value(
+            probe,
+            key,
+            key.replace("media_feature_", "image_feature_"),
+        )
+    return usage
+
+
+def _last_media_feature_probe(runtime: object, runtime_kind: str) -> object | None:
+    if runtime_kind not in {"ocr", "vlm"} or not hasattr(runtime, "last_probe_snapshot"):
+        return None
+    try:
+        return runtime.last_probe_snapshot()
+    except Exception:
+        return None
+
+
+def _usage_delta(
+    *,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cached_prompt_tokens: int = 0,
+    media_usage: dict[str, int] | None = None,
+) -> inference_pb2.UsageDelta:
+    media_usage = media_usage or {}
+    return inference_pb2.UsageDelta(
+        prompt_tokens=_non_negative_int(prompt_tokens),
+        completion_tokens=_non_negative_int(completion_tokens),
+        cached_prompt_tokens=_non_negative_int(cached_prompt_tokens),
+        media_feature_cache_hits=_non_negative_int(media_usage.get("media_feature_cache_hits", 0)),
+        media_feature_cache_misses=_non_negative_int(media_usage.get("media_feature_cache_misses", 0)),
+        media_feature_encoder_calls_saved=_non_negative_int(
+            media_usage.get("media_feature_encoder_calls_saved", 0)
+        ),
+        media_feature_work_saved_bytes=_non_negative_int(
+            media_usage.get("media_feature_work_saved_bytes", 0)
+        ),
+    )
+
+
 def _resolve_generate_stop_contract(
     loaded_model: object,
     sampling: common_pb2.SamplingConfig,
@@ -285,6 +356,8 @@ class EngineCore:
         completion_token_count = 0
         finalized_prompt_tokens = 0
         finalized_completion_tokens = 0
+        finalized_cached_prompt_tokens = 0
+        finalized_media_usage = _media_feature_usage_from_probe(None)
         usage_trailer_emitted = False
         last_token_event: RuntimeTokenEvent | None = None
         last_finish_reason = ""
@@ -519,14 +592,20 @@ class EngineCore:
                     completion_tokens = int(last_token_event.completion_tokens or completion_tokens)
                 finalized_prompt_tokens = prompt_tokens
                 finalized_completion_tokens = completion_tokens
+                finalized_cached_prompt_tokens = _cached_prompt_tokens_from_event(last_token_event)
+                finalized_media_usage = _media_feature_usage_from_probe(
+                    _last_media_feature_probe(runtime, getattr(loaded_model, "runtime_kind", ""))
+                )
                 usage_trailer_emitted = bool(request.stream)
                 yield inference_pb2.ExecuteEvent(
                     request_id=request_id,
                     execution_kind="generate",
                     seq=allocate_seq(),
-                    usage_delta=inference_pb2.UsageDelta(
+                    usage_delta=_usage_delta(
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
+                        cached_prompt_tokens=finalized_cached_prompt_tokens,
+                        media_usage=finalized_media_usage,
                     ),
                 )
 
@@ -620,6 +699,8 @@ class EngineCore:
                 usage=TextFinalizationUsage(
                     prompt_tokens=finalized_prompt_tokens,
                     completion_tokens=finalized_completion_tokens,
+                    cached_prompt_tokens=finalized_cached_prompt_tokens,
+                    **finalized_media_usage,
                 ),
                 usage_trailer_emitted=usage_trailer_emitted,
                 reasoning_text=assembled.reasoning_text,
@@ -834,19 +915,27 @@ class EngineCore:
                     )
 
             if request.return_usage and not state.cancel_event.is_set():
+                prompt_tokens = int(last_token_event.prompt_tokens or 0) if last_token_event is not None else 0
+                completion_tokens = (
+                    int(last_token_event.completion_tokens or len(state.emitted_tokens))
+                    if last_token_event is not None
+                    else len(state.emitted_tokens)
+                )
+                cached_prompt_tokens = _cached_prompt_tokens_from_event(last_token_event)
+                media_usage = _media_feature_usage_from_probe(
+                    _last_media_feature_probe(runtime, getattr(loaded_model, "runtime_kind", ""))
+                )
                 yield inference_pb2.ExecuteEvent(
                     request_id=request_id,
                     execution_kind="decode",
                     seq=state.allocate_seq(),
                     phase=common_pb2.EXECUTION_DECODING,
                     admission_state=common_pb2.ADMISSION_ADMITTED,
-                    usage_delta=inference_pb2.UsageDelta(
-                        prompt_tokens=int(last_token_event.prompt_tokens or 0) if last_token_event is not None else 0,
-                        completion_tokens=(
-                            int(last_token_event.completion_tokens or len(state.emitted_tokens))
-                            if last_token_event is not None
-                            else len(state.emitted_tokens)
-                        ),
+                    usage_delta=_usage_delta(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        cached_prompt_tokens=cached_prompt_tokens,
+                        media_usage=media_usage,
                     ),
                 )
 

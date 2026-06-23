@@ -149,6 +149,15 @@ message RuntimeStats {
   string last_hybrid_state_patch_mode = 77;
   uint64 last_hybrid_state_advance_count = 78;
   uint64 last_family_fast_path_override_count = 79;
+  uint64 last_cached_prompt_tokens = 80;
+  uint64 last_media_feature_cache_hits = 81;
+  uint64 last_media_feature_cache_misses = 82;
+  uint64 last_media_feature_encoder_calls_saved = 83;
+  uint64 last_media_feature_work_saved_bytes = 84;
+  uint64 last_image_feature_cache_hits = 85;
+  uint64 last_image_feature_cache_misses = 86;
+  uint64 last_image_feature_encoder_calls_saved = 87;
+  uint64 last_image_feature_work_saved_bytes = 88;
 }
 
 message GetRuntimeStatsRequest {}
