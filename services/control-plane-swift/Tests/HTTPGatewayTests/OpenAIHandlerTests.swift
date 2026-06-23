@@ -72,6 +72,66 @@ struct OpenAIHandlerTests {
         #expect(await metricsStore.value(forKey: "local_server_security.rejected_origin_count") == 1)
     }
 
+    @Test("local server security rejection envelopes do not echo private header values")
+    func localServerSecurityRejectionEnvelopesDoNotEchoPrivateHeaderValues() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 12_436)
+        )
+        let sentinelFragments = [
+            "operator@example.test",
+            "hf_secret_token",
+            "/Users/operator/private",
+            "token=abc123",
+            "frag-secret",
+        ]
+
+        let rejectedHost = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/health",
+                headers: [
+                    "host": "operator@example.test:12436?token=abc123#/Users/operator/private",
+                ],
+                body: Data()
+            )
+        )
+        let rejectedOrigin = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/health",
+                headers: [
+                    "host": "127.0.0.1:12436",
+                    "origin": "https://operator@example.test/workspace/hf_secret_token?token=abc123#frag-secret",
+                ],
+                body: Data()
+            )
+        )
+
+        for response in [rejectedHost, rejectedOrigin] {
+            let bodyData = try await collectBodyData(response.body)
+            let body = try #require(String(data: bodyData, encoding: .utf8))
+            let payload = try jsonPayload(from: bodyData)
+            let error = try #require(payload["error"] as? [String: Any])
+            let receipt = try #require(error["privacy_receipt"] as? [String: Any])
+            let policy = try #require(receipt["local_server_security"] as? [String: Any])
+
+            #expect(response.statusCode == 403)
+            #expect(error["header_value"] == nil)
+            #expect(receipt["schema_version"] as? String == "melix.privacy_envelope.v1")
+            #expect(receipt["surface"] as? String == "local_proxy_security_rejection")
+            #expect(receipt["redacted"] as? Bool == true)
+            #expect(policy["schema_version"] as? String == "melix.local_server_security.v1")
+            for fragment in sentinelFragments {
+                #expect(body.contains(fragment) == false, "privacy envelope leak: \(fragment)")
+            }
+        }
+    }
+
     @Test("local server security allows explicit browser origin with exact CORS echo")
     func localServerSecurityAllowsExplicitBrowserOriginWithExactCORSEcho() async throws {
         let metricsStore = MetricsStore()
@@ -14471,6 +14531,10 @@ private func jsonObject(from body: HTTPBody) async throws -> (errorCode: String,
 
 private func jsonPayload(from body: HTTPBody) async throws -> [String: Any] {
     let data = try await collectBodyData(body)
+    return try jsonPayload(from: data)
+}
+
+private func jsonPayload(from data: Data) throws -> [String: Any] {
     return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 }
 
