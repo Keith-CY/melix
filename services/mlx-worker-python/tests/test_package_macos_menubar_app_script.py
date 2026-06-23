@@ -12,7 +12,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MODULE_PATH = REPO_ROOT / "scripts" / "package_macos_menubar_app.py"
 PACKAGE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "package-self-contained-app.yml"
-CHECKOUT_ACTION_VERSION = "actions/checkout@v7"
 PACKAGING_RUNBOOK_PATH = REPO_ROOT / "docs" / "runbooks" / "platform-packaging-targets.md"
 
 
@@ -551,12 +550,12 @@ def test_package_workflow_manual_dispatch_defaults_to_main_checkout() -> None:
 
     manual_checkout = find_workflow_step(workflow, "Checkout manual package source")
     assert "if: github.event_name == 'workflow_dispatch'" in manual_checkout
-    assert f"uses: {CHECKOUT_ACTION_VERSION}" in manual_checkout
+    assert "uses: actions/checkout@v7" in manual_checkout
     assert "ref: ${{ inputs.source_ref }}" in manual_checkout
 
     event_checkout = find_workflow_step(workflow, "Checkout event source")
     assert "if: github.event_name != 'workflow_dispatch'" in event_checkout
-    assert f"uses: {CHECKOUT_ACTION_VERSION}" in event_checkout
+    assert "uses: actions/checkout@v7" in event_checkout
     assert "ref:" not in event_checkout
 
 
@@ -615,7 +614,7 @@ def test_package_workflow_detects_scheduled_main_updates_before_packaging() -> N
     assert "should_package: ${{ steps.detect-main-update.outputs.should_package }}" in workflow
     preflight_job = find_workflow_job(workflow, "detect-main-update")
     assert "if: github.event_name == 'schedule'" in preflight_job
-    assert CHECKOUT_ACTION_VERSION in preflight_job
+    assert "actions/checkout@v7" in preflight_job
     assert "ref: main" in preflight_job
     assert "github.rest.actions.listWorkflowRuns" in preflight_job
     assert "event: 'schedule'" in preflight_job
