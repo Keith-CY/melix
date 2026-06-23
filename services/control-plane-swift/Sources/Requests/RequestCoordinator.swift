@@ -1122,12 +1122,12 @@ public actor RequestCoordinator {
                         )
                         await metricsStore.flushExport()
                         await hub.emitLifecycle(.completed)
-                        await hub.finish()
                         await self.finishRequestTracking(requestID: requestID, phase: terminalPhase)
+                        await hub.finish()
                     } else {
                         await hub.emitLifecycle(.completed)
-                        await hub.finish()
                         await self.finishRequestTracking(requestID: requestID, phase: terminalPhase)
+                        await hub.finish()
                         Task {
                             _ = await self.refreshWorkerCacheObservability(using: workerClient)
                             await self.refreshWorkerRuntimeObservability(
