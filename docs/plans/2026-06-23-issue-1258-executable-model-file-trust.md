@@ -128,8 +128,18 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --projec
 - [x] Run changed-scope coverage and verify `>=95%` for the touched Python scope.
 - [x] Run PR-scoped performance report and require `Status: ok`.
 - [x] Run `git diff --check`.
-- [ ] Run the repository gates relevant to this slice: `make py-test`, `make swift-test`, and `make integration-test`.
-- [ ] Re-run the full pre-commit hook after the performance fix and registry update.
+- [x] Run the repository gates relevant to this slice: `make py-test`, `make swift-test`, and `make integration-test`.
+- [x] Re-run the full pre-commit hook after the performance fix and registry update.
+
+Final verification notes:
+
+- Full pre-commit hook passed after the executable-file trust fix:
+  - `make swift-test`: pass.
+  - `make py-test`: pass, `4246 passed, 14 skipped, 2 warnings`.
+  - `make integration-test`: pass, `122 passed, 1 skipped`.
+  - PR-scoped performance report: `Status: ok`, direct probe `model-load-config-json-bytes` passed with changed-scope coverage `98%`.
+- After merging current `origin/main` (`38695982abd9ff51d540040bb3a1e6d81ed0779b`), the focused model-load trust selection passed again: `30 passed`.
+- After merging current `origin/main`, the direct `model-load-config-json-bytes` probe passed against a fresh `origin/main` baseline: elapsed mean `3.392571ms -> 3.789506ms`, delta `+0.396934ms`, peak bytes unchanged, rejection count unchanged.
 
 ## Self-Review
 
