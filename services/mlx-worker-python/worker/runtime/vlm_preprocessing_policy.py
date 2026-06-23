@@ -24,15 +24,10 @@ _IMAGE_PREPROCESSING_INT_HINTS = frozenset(
 )
 _IMAGE_PREPROCESSING_LAYOUT_VALUES = frozenset({"channels_first", "channels_last"})
 EMPTY_PREPROCESSING_POLICY: None = None
-EMPTY_PREPROCESSING_POLICY_RECEIPT: dict[str, object] = {}
-
-
-def empty_preprocessing_policy() -> None:
-    return EMPTY_PREPROCESSING_POLICY
 
 
 def empty_preprocessing_policy_receipt() -> dict[str, object]:
-    return EMPTY_PREPROCESSING_POLICY_RECEIPT
+    return {}
 
 
 def normalize_image_preprocessing_policy(
@@ -174,7 +169,7 @@ def preprocessing_policy_receipt_value(images: Iterable[Any]) -> dict[str, objec
             }
         )
     if not policies:
-        return EMPTY_PREPROCESSING_POLICY_RECEIPT
+        return empty_preprocessing_policy_receipt()
     return {
         "image_count": image_count,
         "policy_count": len(policies),
@@ -186,7 +181,7 @@ def preprocessing_policy_receipt_value(images: Iterable[Any]) -> dict[str, objec
 
 def prepared_request_preprocessing_policy_receipt(prepared_request: Any) -> dict[str, object]:
     if not getattr(prepared_request, "preprocessing_policy_signature", ""):
-        return EMPTY_PREPROCESSING_POLICY_RECEIPT
+        return empty_preprocessing_policy_receipt()
     return preprocessing_policy_receipt_value(getattr(prepared_request, "images", ()))
 
 

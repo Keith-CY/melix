@@ -810,6 +810,18 @@ def test_next_cursor_from_link_accepts_cursor_at_query_start() -> None:
     assert hub_catalog_module._next_cursor_from_link(link_header) == "page/start"
 
 
+def test_next_cursor_from_link_decodes_plus_space_cursor_without_percent_escape() -> None:
+    link_header = '<https://huggingface.co/api/models?cursor=page+start&limit=10>; rel="next"'
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "page start"
+
+
+def test_next_cursor_from_link_decodes_common_lowercase_cursor_escapes() -> None:
+    link_header = '<https://huggingface.co/api/models?cursor=page%2fstart%2bbatch+ok>; rel="next"'
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "page/start+batch ok"
+
+
 def test_next_cursor_from_link_preserves_utf8_and_malformed_percent_decoding() -> None:
     unicode_header = '<https://huggingface.co/api/models?cursor=page%E2%9C%93+ok>; rel="next"'
     malformed_header = '<https://huggingface.co/api/models?cursor=page%ZZ+ok>; rel="next"'
