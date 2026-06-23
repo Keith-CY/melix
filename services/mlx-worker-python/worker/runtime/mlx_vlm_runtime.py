@@ -18,7 +18,10 @@ from threading import Thread
 from typing import Any, Callable, Iterable
 
 from packages.protocol.python.worker.v1 import common_pb2
-from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
+from worker.runtime.deterministic_vlm_runtime import (
+    VisionProbeSnapshot,
+    probe_receipt_fallback_reason,
+)
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import (
     RuntimeTokenEvent,
@@ -2184,6 +2187,8 @@ class MLXVLMRuntime:
             loaded_model,
             prepared_request,
             attention_policy=attention_policy,
+            image_batch1_step_supported=self._backend.generate_step_fn is not None,
+            image_batch1_step_greedy_sampling=self._sampling_is_greedy(sampling),
         )
         enforce_attention_prefill_policy(attention_policy)
         if cancel_event.is_set():
@@ -3197,6 +3202,8 @@ class MLXVLMRuntime:
         prepared_request: PreparedVisionRequest,
         *,
         attention_policy: AttentionPrefillPolicyDecision | None = None,
+        image_batch1_step_supported: bool | None = None,
+        image_batch1_step_greedy_sampling: bool | None = None,
     ) -> None:
         """Call plan() when generate_tokens() did not follow render_prompt().
 
@@ -3208,7 +3215,11 @@ class MLXVLMRuntime:
         metrics-only and does not affect generated data.
         """
         signature = fast_path_probe_signature(loaded_model, prepared_request)
-        if self._last_fast_path_signature == signature:
+        force_admission_refresh = (
+            image_batch1_step_supported is not None
+            or image_batch1_step_greedy_sampling is not None
+        )
+        if self._last_fast_path_signature == signature and not force_admission_refresh:
             if attention_policy is not None:
                 self._last_probe = replace(
                     self._last_probe,
@@ -3220,6 +3231,8 @@ class MLXVLMRuntime:
             prepared_request,
             signature=signature,
             attention_policy=attention_policy,
+            image_batch1_step_supported=image_batch1_step_supported,
+            image_batch1_step_greedy_sampling=image_batch1_step_greedy_sampling,
         )
 
     def _record_fast_path_probe(
@@ -3231,6 +3244,10 @@ class MLXVLMRuntime:
         seq_len: int | None = None,
         attention_policy: AttentionPrefillPolicyDecision | None = None,
         family_config: Any | None = None,
+        position_ids: object | None = None,
+        rope_deltas: object | None = None,
+        image_batch1_step_supported: bool | None = None,
+        image_batch1_step_greedy_sampling: bool | None = None,
     ) -> None:
         has_media = bool(prepared_request.images or prepared_request.videos)
         signature = signature or fast_path_probe_signature(
@@ -3240,14 +3257,35 @@ class MLXVLMRuntime:
         if self._last_fast_path_signature == signature and not has_media:
             if self._last_fast_path_media_position_count == 0:
                 return
-        fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
         position_metadata_receipt = self._position_metadata_receipt(
             loaded_model=loaded_model,
             prepared_request=prepared_request,
-            fallback_reason=fast_path.multimodal_fallback_reason,
+            fallback_reason="",
             seq_len=seq_len,
             family_config=family_config,
+            position_ids=position_ids,
+            rope_deltas=rope_deltas,
         )
+        fast_path = self._fast_path_controller.plan(
+            loaded_model,
+            prepared_request,
+            image_batch1_step_position_receipt=position_metadata_receipt,
+            image_batch1_step_supported=image_batch1_step_supported,
+            image_batch1_step_greedy_sampling=image_batch1_step_greedy_sampling,
+        )
+        receipt_fallback_reason = probe_receipt_fallback_reason(
+            fast_path.multimodal_fallback_reason
+        )
+        if receipt_fallback_reason:
+            position_metadata_receipt = self._position_metadata_receipt(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                fallback_reason=receipt_fallback_reason,
+                seq_len=seq_len,
+                family_config=family_config,
+                position_ids=position_ids,
+                rope_deltas=rope_deltas,
+            )
         if fast_path.hybrid_state_patch_mode == "not_applicable" and not has_media:
             hybrid_state_patch_receipt = NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT
             hybrid_state_advance_count = 0
@@ -3256,7 +3294,7 @@ class MLXVLMRuntime:
                 loaded_model=loaded_model,
                 prepared_request=prepared_request,
                 patch_mode=fast_path.hybrid_state_patch_mode,
-                fallback_reason=fast_path.multimodal_fallback_reason,
+                fallback_reason=receipt_fallback_reason,
                 family_fast_path_override_count=fast_path.family_fast_path_override_count,
                 seq_len=int(position_metadata_receipt["seq_len"]),
                 family_config=family_config,
@@ -3287,6 +3325,7 @@ class MLXVLMRuntime:
             multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
             multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
+            image_batch1_step_admission_reason=fast_path.image_batch1_step_admission_reason,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
             hybrid_state_patch_mode=fast_path.hybrid_state_patch_mode,
@@ -3315,6 +3354,8 @@ class MLXVLMRuntime:
         fallback_reason: str,
         seq_len: int | None = None,
         family_config: Any | None = None,
+        position_ids: object | None = None,
+        rope_deltas: object | None = None,
     ) -> dict[str, object]:
         if seq_len is None:
             if family_config is None:
@@ -3325,6 +3366,8 @@ class MLXVLMRuntime:
             prepared_request=prepared_request,
             seq_len=seq_len,
             fallback_reason=fallback_reason,
+            position_ids=position_ids,
+            rope_deltas=rope_deltas,
         )
 
     def _hybrid_state_patch_receipt(
