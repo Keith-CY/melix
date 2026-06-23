@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
+from worker.productization.log_privacy import redact_log_text
+
 
 RECEIPT_SCHEMA_VERSION = "melix.local_job_remediation_receipt.v1"
 DEFAULT_EXCERPT_BYTES = 16 * 1024
@@ -13,10 +15,6 @@ _TOKEN_ARGUMENTS = {
     "--huggingface-token",
     "--token",
 }
-_ENV_TOKEN_PATTERN = re.compile(
-    r"\b(HF_TOKEN|HUGGINGFACE_HUB_TOKEN|MELIX_HF_TOKEN|MELIX_HUGGINGFACE_TOKEN)=([^\s]+)",
-    flags=re.IGNORECASE,
-)
 _HF_TOKEN_PATTERN = re.compile(r"\bhf_[A-Za-z0-9][A-Za-z0-9_\-=]{5,}")
 
 
@@ -287,7 +285,7 @@ def _redacted_command(command: Sequence[str]) -> list[str]:
         if _HF_TOKEN_PATTERN.search(part):
             redacted.append(_HF_TOKEN_PATTERN.sub("[REDACTED]", part))
             continue
-        redacted.append(part)
+        redacted.append(redact_log_text(part))
     return redacted
 
 
@@ -308,8 +306,7 @@ def _bounded_tail(value: str, *, max_bytes: int) -> str:
 
 
 def _redact_log_text(value: str) -> str:
-    value = _ENV_TOKEN_PATTERN.sub(r"\1=[REDACTED]", value)
-    return _HF_TOKEN_PATTERN.sub("[REDACTED]", value)
+    return redact_log_text(value)
 
 
 def _normalized_text(value: str) -> str:
