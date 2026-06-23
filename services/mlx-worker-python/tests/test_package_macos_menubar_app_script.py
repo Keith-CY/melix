@@ -369,6 +369,21 @@ def test_resolve_built_product_uses_lex_debug_without_missing_release_file_probe
     assert module._resolve_built_product(build_root, "melix") == expected
 
 
+def test_resolve_built_product_keeps_remaining_release_priority_after_debug_candidate(
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    build_root = tmp_path / ".build"
+    (build_root / "arch-0000").mkdir(parents=True)
+    debug = build_root / "arch-0001/debug/melix"
+    release = build_root / "arch-0002/release/melix"
+    for binary in (debug, release):
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    assert module._resolve_built_product(build_root, "melix") == release
+
+
 def test_resolve_built_product_returns_debug_candidate_when_scandir_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
