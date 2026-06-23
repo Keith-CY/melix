@@ -113,8 +113,9 @@ struct OpenAIHandlerTests {
         )
 
         for response in [rejectedHost, rejectedOrigin] {
-            let body = try await collectBody(response.body)
-            let payload = try await jsonPayload(from: response.body)
+            let bodyData = try await collectBodyData(response.body)
+            let body = try #require(String(data: bodyData, encoding: .utf8))
+            let payload = try jsonPayload(from: bodyData)
             let error = try #require(payload["error"] as? [String: Any])
             let receipt = try #require(error["privacy_receipt"] as? [String: Any])
             let policy = try #require(receipt["local_server_security"] as? [String: Any])
@@ -14530,6 +14531,10 @@ private func jsonObject(from body: HTTPBody) async throws -> (errorCode: String,
 
 private func jsonPayload(from body: HTTPBody) async throws -> [String: Any] {
     let data = try await collectBodyData(body)
+    return try jsonPayload(from: data)
+}
+
+private func jsonPayload(from data: Data) throws -> [String: Any] {
     return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 }
 
