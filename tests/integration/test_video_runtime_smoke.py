@@ -12,6 +12,23 @@ m16_video_runtime_smoke = importlib.util.module_from_spec(MODULE_SPEC)
 MODULE_SPEC.loader.exec_module(m16_video_runtime_smoke)
 
 
+def test_video_runtime_smoke_extracts_split_sse_delta_content() -> None:
+    response_text = "\n".join(
+        [
+            ": keepalive",
+            "data: {malformed",
+            'data: {"choices": {}}',
+            'data: {"choices": [null]}',
+            'data: {"choices": [{"delta": null}]}',
+            'data: {"choices": [{"delta": {"content": "Echo: "}}]}',
+            'data:{"choices": [{"delta": {"content": "hello"}}]}',
+            "data: [DONE]",
+        ]
+    )
+
+    assert m16_video_runtime_smoke._assistant_delta_text(response_text) == "Echo: hello"
+
+
 def test_video_runtime_smoke_records_live_video_operator_evidence() -> None:
     payload = m16_video_runtime_smoke.run_smoke(Path(__file__).resolve().parents[2])
 

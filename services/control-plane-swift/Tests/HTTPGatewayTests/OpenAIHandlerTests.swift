@@ -12768,12 +12768,24 @@ struct OpenAIHandlerTests {
     @Test("chat stream and non-stream requests emit the same compatibility policy receipt shape")
     func chatStreamAndNonStreamRequestsEmitSameCompatibilityPolicyReceiptShape() async throws {
         let streamWorkerClient = ScriptedWorkerClient(events: [
-            makeTokenEvent(requestID: "req-compat-stream", seq: 1, text: "{}"),
-            makeCompletedEvent(requestID: "req-compat-stream", seq: 2, finishReason: "stop", assistantText: "{}"),
+            makeToolCallEvent(
+                requestID: "req-compat-stream",
+                seq: 1,
+                callID: "tool-1",
+                toolName: "search",
+                argumentsJSONFragment: #"{"query":"melix"}"#
+            ),
+            makeCompletedEvent(requestID: "req-compat-stream", seq: 2, finishReason: "tool_calls", assistantText: ""),
         ])
         let nonStreamWorkerClient = ScriptedWorkerClient(events: [
-            makeTokenEvent(requestID: "req-compat-non-stream", seq: 1, text: "{}"),
-            makeCompletedEvent(requestID: "req-compat-non-stream", seq: 2, finishReason: "stop", assistantText: "{}"),
+            makeToolCallEvent(
+                requestID: "req-compat-non-stream",
+                seq: 1,
+                callID: "tool-1",
+                toolName: "search",
+                argumentsJSONFragment: #"{"query":"melix"}"#
+            ),
+            makeCompletedEvent(requestID: "req-compat-non-stream", seq: 2, finishReason: "tool_calls", assistantText: ""),
         ])
         let streamHandler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),

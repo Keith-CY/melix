@@ -14,6 +14,7 @@ struct OpenAIConformanceMatrixTests {
         let requestBody: String
         let workerCanDispatch: Bool
         let model: Melix_Controlplane_V1_ModelSummary?
+        let events: [Melix_Worker_V1_ExecuteEvent]?
         let assertion: @Sendable (HTTPResponse, Melix_Worker_V1_GenerateRequest?) async throws -> OpenAIConformanceObservedStatus
 
         init(
@@ -23,6 +24,7 @@ struct OpenAIConformanceMatrixTests {
             requestBody: String,
             workerCanDispatch: Bool = true,
             model: Melix_Controlplane_V1_ModelSummary? = nil,
+            events: [Melix_Worker_V1_ExecuteEvent]? = nil,
             assertion: @escaping @Sendable (HTTPResponse, Melix_Worker_V1_GenerateRequest?) async throws -> OpenAIConformanceObservedStatus
         ) {
             self.field = field
@@ -31,6 +33,7 @@ struct OpenAIConformanceMatrixTests {
             self.requestBody = requestBody
             self.workerCanDispatch = workerCanDispatch
             self.model = model
+            self.events = events
             self.assertion = assertion
         }
     }
@@ -177,7 +180,22 @@ struct OpenAIConformanceMatrixTests {
                 field: "function_call",
                 route: "/v1/chat/completions -> tool_config.tool_choice",
                 expectedBehavior: "legacy function_call normalizes into forced worker tool-choice metadata.",
-                requestBody: Self.body(extra: #""functions": [\#(weatherFunctionJSON)], "function_call": { "name": "get_weather" }"#)
+                requestBody: Self.body(extra: #""functions": [\#(weatherFunctionJSON)], "function_call": { "name": "get_weather" }"#),
+                events: [
+                    makeToolCallEvent(
+                        requestID: "req-function_call",
+                        seq: 1,
+                        callID: "tool-1",
+                        toolName: "get_weather",
+                        argumentsJSONFragment: #"{"city":"Tokyo"}"#
+                    ),
+                    makeCompletedEvent(
+                        requestID: "req-function_call",
+                        seq: 2,
+                        finishReason: "tool_calls",
+                        assistantText: ""
+                    ),
+                ]
             ) { response, request in
                 #expect(response.statusCode == 200)
                 let generated = try #require(request)
@@ -242,6 +260,7 @@ struct OpenAIConformanceMatrixTests {
         for row in rows {
             let worker = RecordingConformanceWorker(
                 requestID: "req-\(row.field)",
+                events: row.events,
                 canDispatchRequests: row.workerCanDispatch
             )
             let handler = Self.handler(worker: worker, model: row.model)
@@ -701,6 +720,167 @@ struct OpenAIConformanceMatrixTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("named tool_choice streams once matching tool call satisfies contract")
+    func namedToolChoiceStreamsOnceMatchingToolCallSatisfiesContract() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-named-tool-choice-early-flush",
+            events: [
+                makeTokenEvent(
+                    requestID: "req-named-tool-choice-early-flush",
+                    seq: 1,
+                    text: "buffered before tool"
+                ),
+                makeToolCallEvent(
+                    requestID: "req-named-tool-choice-early-flush",
+                    seq: 2,
+                    callID: "tool-1",
+                    toolName: "get_weather",
+                    argumentsJSONFragment: #"{"city":"Tokyo"}"#,
+                    fragmentIndex: 0
+                ),
+            ],
+            heldCompletionEvent: makeCompletedEvent(
+                requestID: "req-named-tool-choice-early-flush",
+                seq: 3,
+                finishReason: "tool_calls",
+                assistantText: ""
+            )
+        )
+        let response = try await Self.handler(
+            worker: worker,
+            requestID: "req-named-tool-choice-early-flush"
+        ).handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    Self.body(
+                        extra: #""stream": true, "tools": [\#(weatherToolJSON)], "tool_choice": { "type": "function", "function": { "name": "get_weather" } }"#
+                    ).utf8
+                )
+            )
+        )
+
+        #expect(response.statusCode == 200)
+        let capture = StreamPayloadCapture()
+        let collectTask = Task {
+            try await collectConformanceBody(response.body, capture: capture)
+        }
+
+        try await waitForConformancePayload(capture) { payload in
+            payload.contains("\"name\":\"get_weather\"")
+        }
+        let payloadBeforeCompletion = await capture.payload()
+        #expect(payloadBeforeCompletion.contains("\"name\":\"get_weather\""))
+        #expect(payloadBeforeCompletion.contains("\"finish_reason\":\"tool_calls\"") == false)
+        #expect(payloadBeforeCompletion.contains("data: [DONE]") == false)
+
+        await worker.completeHeldStream()
+        let finalPayload = try await collectTask.value
+        #expect(finalPayload.contains("\"finish_reason\":\"tool_calls\""))
+        #expect(finalPayload.contains("data: [DONE]"))
+    }
+
+    @Test("required tool_choice failures return typed errors without wire leaks")
+    func requiredToolChoiceFailuresReturnTypedErrorsWithoutWireLeaks() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-required-tool-choice-failure",
+            events: [
+                makeTokenEvent(
+                    requestID: "req-required-tool-choice-failure",
+                    seq: 1,
+                    text: "Plain answer with melix.compat.tool_choice_resolved and parser_mode"
+                ),
+                makeCompletedEvent(
+                    requestID: "req-required-tool-choice-failure",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: #"Plain answer <tool_call>{"name":"ghost","arguments":{}}</tool_call>"#
+                ),
+            ]
+        )
+        let response = try await Self.handler(worker: worker).handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    Self.body(
+                        extra: #""tools": [\#(weatherToolJSON)], "tool_choice": "required""#
+                    ).utf8
+                )
+            )
+        )
+        let payload = try await collectConformanceBody(response.body)
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
+        let request = try #require(await worker.lastGenerateRequest)
+
+        #expect(response.statusCode == 502)
+        #expect(request.execution.toolConfig.toolChoice == "required")
+        #expect(error["code"] as? String == "tool_choice_not_satisfied")
+        #expect(error["field"] as? String == "tool_choice")
+        #expect(error["phase"] as? String == "response_finalization")
+        #expect(error["requested_tool_choice"] as? String == "required")
+        #expect(error["observed_tool_calls"] as? [String] == [])
+        #expect(payload.contains("Plain answer") == false)
+        expectNoOpenAIWireLeaks(payload)
+    }
+
+    @Test("named tool_choice mismatches stream typed errors without wire leaks")
+    func namedToolChoiceMismatchesStreamTypedErrorsWithoutWireLeaks() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-named-tool-choice-mismatch",
+            events: [
+                makeToolCallEvent(
+                    requestID: "req-named-tool-choice-mismatch",
+                    seq: 1,
+                    callID: "tool-1",
+                    toolName: "search_web",
+                    argumentsJSONFragment: #"{"q":"Tokyo weather"}"#,
+                    fragmentIndex: 1
+                ),
+                makeCompletedEvent(
+                    requestID: "req-named-tool-choice-mismatch",
+                    seq: 2,
+                    finishReason: "tool_calls",
+                    assistantText: ""
+                ),
+            ]
+        )
+        let response = try await Self.handler(worker: worker).handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    Self.body(
+                        extra: #""stream": true, "tools": [\#(weatherToolJSON)], "tool_choice": { "type": "function", "function": { "name": "get_weather" } }"#
+                    ).utf8
+                )
+            )
+        )
+        let payload = try await collectConformanceBody(response.body)
+        let records = parseSSERecords(payload)
+        let errorRecord = try #require(records.first { $0.event == "error" })
+        let error = try #require(try JSONSerialization.jsonObject(with: Data(errorRecord.data.utf8)) as? [String: Any])
+        let details = try #require(error["details"] as? [String: Any])
+        let request = try #require(await worker.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(request.execution.toolConfig.toolChoice.contains("get_weather"))
+        #expect(error["code"] as? String == "tool_choice_not_satisfied")
+        #expect(details["field"] as? String == "tool_choice")
+        #expect(details["phase"] as? String == "response_finalization")
+        #expect(details["requested_tool_choice"] as? String == "get_weather")
+        #expect(details["observed_tool_calls"] as? String == "search_web")
+        #expect(records.filter { $0.event == nil && $0.data != "[DONE]" }.isEmpty)
+        #expect(payload.contains("\"name\":\"search_web\"") == false)
+        #expect(payload.contains("data: [DONE]"))
+        expectNoOpenAIWireLeaks(payload)
+    }
+
     @Test("streaming chat usage trailer uses OpenAI chunk shape")
     func streamingChatUsageTrailerUsesOpenAIChunkShape() async throws {
         let worker = RecordingConformanceWorker(
@@ -1038,6 +1218,14 @@ struct OpenAIConformanceMatrixTests {
         worker: RecordingConformanceWorker,
         model: Melix_Controlplane_V1_ModelSummary? = nil
     ) -> OpenAIHandler {
+        handler(worker: worker, requestID: worker.requestID, model: model)
+    }
+
+    private static func handler(
+        worker: any WorkerRoutingClient & PhaseAwareWorkerClientProtocol & RuntimeIntrospectingWorkerClientProtocol,
+        requestID: String? = nil,
+        model: Melix_Controlplane_V1_ModelSummary? = nil
+    ) -> OpenAIHandler {
         let catalog = ModelCatalog(seedModels: [model ?? warmConformanceModel(id: "melix-dev-text")])
         let registry = WorkerRegistry(defaultTextClient: worker, modelCatalog: catalog)
         return OpenAIHandler(
@@ -1048,7 +1236,7 @@ struct OpenAIConformanceMatrixTests {
                 modelCatalog: catalog
             ),
             workerRegistry: registry,
-            translator: ChatRequestTranslator(requestIDGenerator: { worker.requestID }),
+            translator: ChatRequestTranslator(requestIDGenerator: { requestID ?? "req-conformance" }),
             sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
         )
     }
@@ -1095,12 +1283,19 @@ private func warmConformanceModel(id: String) -> Melix_Controlplane_V1_ModelSumm
 }
 
 private func collectConformanceBody(_ body: HTTPBody) async throws -> String {
+    try await collectConformanceBody(body, capture: nil)
+}
+
+private func collectConformanceBody(_ body: HTTPBody, capture: StreamPayloadCapture?) async throws -> String {
     switch body {
     case .data(let data):
         return try #require(String(data: data, encoding: .utf8))
     case .stream(let stream):
         var data = Data()
         for try await chunk in stream {
+            if let text = String(data: chunk, encoding: .utf8) {
+                await capture?.append(text)
+            }
             data.append(chunk)
         }
         return try #require(String(data: data, encoding: .utf8))
@@ -1112,6 +1307,33 @@ private func conformanceErrorPayload(from body: HTTPBody) async throws -> [Strin
     let data = try #require(payload.data(using: .utf8))
     let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     return try #require(object["error"] as? [String: Any])
+}
+
+private actor StreamPayloadCapture {
+    private var text = ""
+
+    func append(_ chunk: String) {
+        text += chunk
+    }
+
+    func payload() -> String {
+        text
+    }
+}
+
+private func waitForConformancePayload(
+    _ capture: StreamPayloadCapture,
+    timeout: Duration = .milliseconds(500),
+    predicate: @escaping @Sendable (String) -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await predicate(capture.payload()) {
+            return
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("timed out waiting for streaming payload")
 }
 
 private func collectConformanceEvents(
@@ -1135,6 +1357,25 @@ private func orderedConformanceRanges(in payload: String, needles: [String]) -> 
     return true
 }
 
+private func expectNoOpenAIWireLeaks(_ payload: String) {
+    for needle in [
+        "melix.compat",
+        "melix.tool_parser",
+        "melix.openai",
+        "\"melix\"",
+        "\"assistant_text\"",
+        "parser_mode",
+        "parser_namespaces",
+        "parser_fallback_mode",
+        "mcp_source_ids",
+        "internal_routing",
+        "<tool_call>",
+        "<|tool_call>",
+    ] {
+        #expect(payload.contains(needle) == false, "wire leak: \(needle)")
+    }
+}
+
 private actor RecordingConformanceWorker:
     WorkerRoutingClient,
     PhaseAwareWorkerClientProtocol,
@@ -1142,13 +1383,16 @@ private actor RecordingConformanceWorker:
 {
     let requestID: String
     private let events: [Melix_Worker_V1_ExecuteEvent]
+    private let heldCompletionEvent: Melix_Worker_V1_ExecuteEvent?
     private let loadModelHandle: String
     private let dispatchAvailable: Bool
+    private var heldContinuation: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation?
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
 
     init(
         requestID: String,
         events: [Melix_Worker_V1_ExecuteEvent]? = nil,
+        heldCompletionEvent: Melix_Worker_V1_ExecuteEvent? = nil,
         loadModelHandle: String = "melix-dev-text::swift",
         canDispatchRequests: Bool = true
     ) {
@@ -1156,6 +1400,7 @@ private actor RecordingConformanceWorker:
         self.events = events ?? [
             makeCompletedEvent(requestID: requestID, seq: 1, finishReason: "stop", assistantText: "ok"),
         ]
+        self.heldCompletionEvent = heldCompletionEvent
         self.loadModelHandle = loadModelHandle
         self.dispatchAvailable = canDispatchRequests
     }
@@ -1169,12 +1414,32 @@ private actor RecordingConformanceWorker:
     ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
         lastGenerateRequest = request
         let events = self.events
+        if heldCompletionEvent != nil {
+            let pair = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.makeStream()
+            heldContinuation = pair.continuation
+            for event in events {
+                pair.continuation.yield(event)
+            }
+            return pair.stream
+        }
+
         return AsyncThrowingStream { continuation in
             for event in events {
                 continuation.yield(event)
             }
             continuation.finish()
         }
+    }
+
+    func completeHeldStream() {
+        guard let continuation = heldContinuation else {
+            return
+        }
+        heldContinuation = nil
+        if let heldCompletionEvent {
+            continuation.yield(heldCompletionEvent)
+        }
+        continuation.finish()
     }
 
     func abort(requestID: String) async throws -> Bool {
