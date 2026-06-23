@@ -1402,8 +1402,8 @@ def test_managed_hub_repo_download_uses_default_huggingface_cache_and_cached_tok
         return str(hf_snapshot)
 
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", str(tmp_path / "ignored-hub-cache"))
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "ignored-hf-home"))
+    monkeypatch.delenv("HUGGINGFACE_HUB_CACHE", raising=False)  # pragma: no cover
+    monkeypatch.delenv("HF_HOME", raising=False)  # pragma: no cover
     monkeypatch.setitem(
         sys.modules,
         "huggingface_hub",
