@@ -61,14 +61,18 @@ def find_run_workflow_step(workflow: str, name: str, command: str) -> re.Match[s
 
 
 def workflow_step_uses(step: str) -> str:
-    match = re.search(r"^[ \t]*uses:[ \t]+(?P<uses>\S+)[ \t]*$", step, flags=re.MULTILINE)
+    match = re.search(
+        r"^[ \t]*uses:[ \t]+['\"]?(?P<uses>[^'\"\s]+)['\"]?[ \t]*$",
+        step,
+        flags=re.MULTILINE,
+    )
     assert match is not None, "Workflow step missing uses:"
     return match.group("uses")
 
 
 def checkout_action_ref(step: str) -> str:
     action_ref = workflow_step_uses(step)
-    match = re.fullmatch(r"actions/checkout@v(?P<major>[0-9]+)", action_ref)
+    match = re.fullmatch(r"actions/checkout@v(?P<major>[0-9]+)(?:\.[0-9]+)*", action_ref)
     assert match is not None, f"Workflow step should use actions/checkout, got: {action_ref}"
     assert int(match.group("major")) >= 7
     return action_ref

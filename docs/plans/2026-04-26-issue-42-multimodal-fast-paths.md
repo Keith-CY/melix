@@ -447,6 +447,18 @@ Executable unit issues:
   required for this slice because `MediaMetadata.preprocessing_hints` is already
   the request-side extension point.
 
+- Unit 3.2.1 adds image-bearing batch-1 step-decode admission as a receipt-only
+  gate before the executor-owned decode loop exists. Admission requires an
+  eligible VLM load route, exactly one image and no video, aligned reusable
+  position metadata, a cache-identifiable image receipt, greedy sampling, and a
+  backend step function. Eligible requests report
+  `multimodal_decode_mode=image_batch1_step_admission` and
+  `multimodal_decode_sync_mode=executor_step_admission`; ineligible requests
+  remain on their existing baseline, cache-reuse, or native-quantized path with a
+  typed `multimodal_fallback_reason`. Runtime probes and benchmark metrics expose
+  the admitted mode and fallback reason, while Unit 3.2.2 owns threading the
+  actual executor stream and integer token counters through decode.
+
 ## Verification Policy
 
 Per milestone:
