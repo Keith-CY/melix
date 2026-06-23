@@ -1,6 +1,12 @@
 import Foundation
 
 public enum UISinkEscaper {
+    private static let allowedURLComponentCharacters: CharacterSet = {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/?#[]@!$&'()*+,;=\"")
+        return allowed
+    }()
+
     public static func htmlText(_ value: String) -> String {
         htmlEscaped(value)
     }
@@ -22,12 +28,6 @@ public enum UISinkEscaper {
                 output += #"\22 "#
             case "\\":
                 output += #"\5c "#
-            case "\n":
-                output += #"\a "#
-            case "\r":
-                output += #"\d "#
-            case "\u{000C}":
-                output += #"\c "#
             case "<":
                 output += #"\3c "#
             case ">":
@@ -52,9 +52,7 @@ public enum UISinkEscaper {
     }
 
     public static func urlComponent(_ value: String) -> String {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "/?#[]@!$&'()*+,;=\"")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+        value.addingPercentEncoding(withAllowedCharacters: allowedURLComponentCharacters) ?? ""
     }
 
     private static func htmlEscaped(_ value: String) -> String {
@@ -76,12 +74,6 @@ public enum UISinkEscaper {
                 output += "&quot;"
             case "'":
                 output += "&#39;"
-            case "\n":
-                output += "&#10;"
-            case "\r":
-                output += "&#13;"
-            case "\u{0009}":
-                output += "&#9;"
             default:
                 if scalar.value < 0x20 || scalar.value == 0x7f {
                     output += "&#\(scalar.value);"
@@ -105,7 +97,41 @@ public enum UISinkEscaper {
         guard let colonIndex = value.firstIndex(of: ":") else {
             return true
         }
-        let scheme = value[..<colonIndex].lowercased()
+
+        if let firstRelativeDelimiter = value.firstIndex(where: { character in
+            character == "/" || character == "?" || character == "#"
+        }), firstRelativeDelimiter < colonIndex {
+            return true
+        }
+
+        let schemeCandidate = value[..<colonIndex]
+        guard isURISchemeCandidate(schemeCandidate) else {
+            return true
+        }
+
+        let scheme = schemeCandidate.lowercased()
         return scheme == "http" || scheme == "https"
+    }
+
+    private static func isURISchemeCandidate(_ value: Substring) -> Bool {
+        guard let first = value.unicodeScalars.first, isASCIIAlpha(first) else {
+            return false
+        }
+
+        return value.unicodeScalars.dropFirst().allSatisfy { scalar in
+            isASCIIAlpha(scalar)
+                || isASCIIDigit(scalar)
+                || scalar == "+"
+                || scalar == "-"
+                || scalar == "."
+        }
+    }
+
+    private static func isASCIIAlpha(_ scalar: Unicode.Scalar) -> Bool {
+        (0x41...0x5a).contains(scalar.value) || (0x61...0x7a).contains(scalar.value)
+    }
+
+    private static func isASCIIDigit(_ scalar: Unicode.Scalar) -> Bool {
+        (0x30...0x39).contains(scalar.value)
     }
 }
