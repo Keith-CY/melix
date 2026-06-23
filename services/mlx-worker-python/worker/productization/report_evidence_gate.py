@@ -361,7 +361,19 @@ def _rule_matches_report(
 ) -> bool:
     run_kinds = rule.get("run_kinds", ())
     if run_kinds:
-        run_kind_set = _string_frozenset(run_kinds)
+        if isinstance(run_kinds, tuple):
+            cached_run_kind_set = rule.get("_melix_cached_run_kind_set")
+            if rule.get("_melix_cached_run_kinds") is run_kinds and isinstance(
+                cached_run_kind_set,
+                frozenset,
+            ):
+                run_kind_set = cached_run_kind_set
+            else:
+                run_kind_set = _string_frozenset_from_tuple(run_kinds)
+                rule["_melix_cached_run_kinds"] = run_kinds
+                rule["_melix_cached_run_kind_set"] = run_kind_set
+        else:
+            run_kind_set = _string_frozenset(run_kinds)
         run_kind_key = "run_kind"
         for run in runs:
             run_kind = run.get(run_kind_key, "")
