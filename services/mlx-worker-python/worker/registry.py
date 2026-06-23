@@ -80,6 +80,20 @@ def _bool_text(value: bool) -> str:
     return "true" if value else "false"
 
 
+def _non_negative_int(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> int:
+    value = getattr(probe, primary_key, None)
+    if value is None or value == -1:
+        value = getattr(probe, legacy_key, 0)
+    return _non_negative_int(value)
+
+
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -260,6 +274,16 @@ class WorkerRegistry:
         self._last_multimodal_fallback_reason = ""
         self._last_multimodal_decode_sync_mode = ""
         self._has_multimodal_decode_probe = False
+        self._has_runtime_probe_receipts = False
+        self._last_cached_prompt_tokens = 0
+        self._last_media_feature_cache_hits = 0
+        self._last_media_feature_cache_misses = 0
+        self._last_media_feature_encoder_calls_saved = 0
+        self._last_media_feature_work_saved_bytes = 0
+        self._last_image_feature_cache_hits = 0
+        self._last_image_feature_cache_misses = 0
+        self._last_image_feature_encoder_calls_saved = 0
+        self._last_image_feature_work_saved_bytes = 0
         self._text_batch_generator_submitted_request_count = 0
         self._text_batch_generator_completed_request_count = 0
         self._text_batch_generator_step_count = 0
@@ -403,12 +427,14 @@ class WorkerRegistry:
             except ModelLoadTrustRejection:
                 with self._lock:
                     self._model_load_trust_blocked_count += 1
+                    self._has_runtime_probe_receipts = True
                 raise
             finally:
                 if record_trust_latency:
                     latency_ms = (time.monotonic() - trust_started_at) * 1000.0
                     with self._lock:
                         self._last_model_load_trust_policy_resolution_ms = latency_ms
+                        self._has_runtime_probe_receipts = True
         estimated = runtime.estimate_resident_bytes(resolved)
         with self._lock:
             existing_resident_bytes = self._loaded_model_resident_bytes + self._reserved_model_resident_bytes
@@ -475,7 +501,10 @@ class WorkerRegistry:
             self._invalidate_loaded_model_order_locked()
             self._loaded_model_resident_bytes += estimated
             if runtime_kind == "transcription" or runtime_kind == "speech":
-                self._last_audio_model_load_latency_ms = float(getattr(runtime_model, "load_latency_ms", 0.0))
+                load_latency_ms = float(getattr(runtime_model, "load_latency_ms", 0.0))
+                self._last_audio_model_load_latency_ms = load_latency_ms
+                if load_latency_ms:
+                    self._has_runtime_probe_receipts = True
             return loaded
 
     def _resolved_model_spec(self, requested: common_pb2.ModelSpec) -> common_pb2.ModelSpec:
@@ -906,7 +935,14 @@ class WorkerRegistry:
         self.record_vision_probe("vlm", probe)
 
     def runtime_stats(self) -> runtime_pb2.RuntimeStats:
-        cache_stats = self.cache_stats_response().stats
+        runtime = self.vlm_runtime
+        if hasattr(runtime, "_cache_lookups") and not getattr(runtime, "_cache_lookups", 0):
+            cache_stats = None
+        elif hasattr(runtime, "cache_stats_response"):
+            response = runtime.cache_stats_response()
+            cache_stats = response.stats if response is not None else None
+        else:
+            cache_stats = None
         refreshed_live_vlm_probe = False
         while True:
             with self._lock:
@@ -916,19 +952,14 @@ class WorkerRegistry:
                 active_decodes = self._active_decode_count
                 active_multimodal_requests = self._active_multimodal_request_count
                 model_resident_bytes = self._loaded_model_resident_bytes
-                cache_resident_bytes = cache_stats.l1_bytes + cache_stats.l2_bytes
+                l1_cache_bytes = cache_stats.l1_bytes if cache_stats is not None else 0
+                l2_cache_bytes = cache_stats.l2_bytes if cache_stats is not None else 0
+                cache_resident_bytes = l1_cache_bytes + l2_cache_bytes
                 kv_cache_bytes = 0
                 peak_allocation_bytes = 0
                 memory_headroom_bytes = self._memory_headroom_bytes
                 resident_bytes = model_resident_bytes + cache_resident_bytes + kv_cache_bytes
-                has_probe_receipts = bool(
-                    self._last_probe_kind
-                    or self._has_multimodal_decode_probe
-                    or self._last_audio_model_load_latency_ms
-                    or self._last_audio_backend_unavailable_count
-                    or self._last_model_load_trust_policy_resolution_ms
-                    or self._model_load_trust_blocked_count
-                )
+                has_probe_receipts = self._has_runtime_probe_receipts
                 if has_probe_receipts:
                     last_probe_kind = self._last_probe_kind
                     last_preprocess_latency_ms = self._last_preprocess_latency_ms
@@ -961,6 +992,15 @@ class WorkerRegistry:
                     last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
                     last_image_output_bytes = self._last_image_output_bytes
                     last_image_peak_memory_bytes = self._last_image_peak_memory_bytes
+                    last_cached_prompt_tokens = self._last_cached_prompt_tokens
+                    last_media_feature_cache_hits = self._last_media_feature_cache_hits
+                    last_media_feature_cache_misses = self._last_media_feature_cache_misses
+                    last_media_feature_encoder_calls_saved = self._last_media_feature_encoder_calls_saved
+                    last_media_feature_work_saved_bytes = self._last_media_feature_work_saved_bytes
+                    last_image_feature_cache_hits = self._last_image_feature_cache_hits
+                    last_image_feature_cache_misses = self._last_image_feature_cache_misses
+                    last_image_feature_encoder_calls_saved = self._last_image_feature_encoder_calls_saved
+                    last_image_feature_work_saved_bytes = self._last_image_feature_work_saved_bytes
                     last_model_load_trust_policy_resolution_ms = (
                         self._last_model_load_trust_policy_resolution_ms
                     )
@@ -982,10 +1022,10 @@ class WorkerRegistry:
             active_requests=active_requests,
             active_prefills=active_prefills,
             active_decodes=active_decodes,
-            l1_cache_bytes=cache_stats.l1_bytes,
-            l2_cache_bytes=cache_stats.l2_bytes,
-            l1_hit_rate=cache_stats.l1_hit_rate,
-            l2_hit_rate=cache_stats.l2_hit_rate,
+            l1_cache_bytes=l1_cache_bytes,
+            l2_cache_bytes=l2_cache_bytes,
+            l1_hit_rate=cache_stats.l1_hit_rate if cache_stats is not None else 0.0,
+            l2_hit_rate=cache_stats.l2_hit_rate if cache_stats is not None else 0.0,
             active_multimodal_requests=active_multimodal_requests,
             generation_stream_owner_mode=mlx_executor_snapshot.generation_stream_owner_mode,
             worker_thread_init_latency_ms=mlx_executor_snapshot.worker_thread_init_latency_ms,
@@ -1020,6 +1060,15 @@ class WorkerRegistry:
             stats.last_image_artifact_publish_ms = last_image_artifact_publish_ms
             stats.last_image_output_bytes = last_image_output_bytes
             stats.last_image_peak_memory_bytes = last_image_peak_memory_bytes
+            stats.last_cached_prompt_tokens = last_cached_prompt_tokens
+            stats.last_media_feature_cache_hits = last_media_feature_cache_hits
+            stats.last_media_feature_cache_misses = last_media_feature_cache_misses
+            stats.last_media_feature_encoder_calls_saved = last_media_feature_encoder_calls_saved
+            stats.last_media_feature_work_saved_bytes = last_media_feature_work_saved_bytes
+            stats.last_image_feature_cache_hits = last_image_feature_cache_hits
+            stats.last_image_feature_cache_misses = last_image_feature_cache_misses
+            stats.last_image_feature_encoder_calls_saved = last_image_feature_encoder_calls_saved
+            stats.last_image_feature_work_saved_bytes = last_image_feature_work_saved_bytes
             if last_model_load_trust_policy_resolution_ms:
                 stats.last_model_load_trust_policy_resolution_ms = last_model_load_trust_policy_resolution_ms
             if model_load_trust_blocked_count:
@@ -1082,6 +1131,15 @@ class WorkerRegistry:
             self._last_multimodal_decode_mode,
             self._last_multimodal_fallback_reason,
             self._last_multimodal_decode_sync_mode,
+            self._last_cached_prompt_tokens,
+            self._last_media_feature_cache_hits,
+            self._last_media_feature_cache_misses,
+            self._last_media_feature_encoder_calls_saved,
+            self._last_media_feature_work_saved_bytes,
+            self._last_image_feature_cache_hits,
+            self._last_image_feature_cache_misses,
+            self._last_image_feature_encoder_calls_saved,
+            self._last_image_feature_work_saved_bytes,
             self._text_batch_generator_submitted_request_count,
             self._text_batch_generator_completed_request_count,
             self._text_batch_generator_step_count,
@@ -1119,6 +1177,15 @@ class WorkerRegistry:
             stats.last_multimodal_decode_mode,
             stats.last_multimodal_fallback_reason,
             stats.last_multimodal_decode_sync_mode,
+            stats.last_cached_prompt_tokens,
+            stats.last_media_feature_cache_hits,
+            stats.last_media_feature_cache_misses,
+            stats.last_media_feature_encoder_calls_saved,
+            stats.last_media_feature_work_saved_bytes,
+            stats.last_image_feature_cache_hits,
+            stats.last_image_feature_cache_misses,
+            stats.last_image_feature_encoder_calls_saved,
+            stats.last_image_feature_work_saved_bytes,
             stats.text_batch_generator_submitted_request_count,
             stats.text_batch_generator_completed_request_count,
             stats.text_batch_generator_step_count,
@@ -1176,6 +1243,17 @@ class WorkerRegistry:
         self._text_batch_generator_speculative_sample_ms_total = 0.0
         self._text_batch_generator_speculative_cache_ops_ms_total = 0.0
 
+    def _clear_media_feature_probe_locked(self) -> None:
+        self._last_cached_prompt_tokens = 0
+        self._last_media_feature_cache_hits = 0
+        self._last_media_feature_cache_misses = 0
+        self._last_media_feature_encoder_calls_saved = 0
+        self._last_media_feature_work_saved_bytes = 0
+        self._last_image_feature_cache_hits = 0
+        self._last_image_feature_cache_misses = 0
+        self._last_image_feature_encoder_calls_saved = 0
+        self._last_image_feature_work_saved_bytes = 0
+
     def record_vision_probe(self, runtime_kind: str, probe: Any) -> None:
         with self._lock:
             self._last_probe_kind = runtime_kind
@@ -1198,6 +1276,37 @@ class WorkerRegistry:
             self._last_multimodal_decode_sync_mode = str(
                 getattr(probe, "multimodal_decode_sync_mode", "baseline")
             )
+            self._last_cached_prompt_tokens = _non_negative_int(
+                getattr(probe, "cached_prompt_tokens", 0)
+            )
+            cache_hits = _probe_counter_value(
+                probe,
+                "media_feature_cache_hits",
+                "image_feature_cache_hits",
+            )
+            cache_misses = _probe_counter_value(
+                probe,
+                "media_feature_cache_misses",
+                "image_feature_cache_misses",
+            )
+            encoder_calls_saved = _probe_counter_value(
+                probe,
+                "media_feature_encoder_calls_saved",
+                "image_feature_encoder_calls_saved",
+            )
+            work_saved_bytes = _probe_counter_value(
+                probe,
+                "media_feature_work_saved_bytes",
+                "image_feature_work_saved_bytes",
+            )
+            self._last_media_feature_cache_hits = cache_hits
+            self._last_image_feature_cache_hits = cache_hits
+            self._last_media_feature_cache_misses = cache_misses
+            self._last_image_feature_cache_misses = cache_misses
+            self._last_media_feature_encoder_calls_saved = encoder_calls_saved
+            self._last_image_feature_encoder_calls_saved = encoder_calls_saved
+            self._last_media_feature_work_saved_bytes = work_saved_bytes
+            self._last_image_feature_work_saved_bytes = work_saved_bytes
             self._last_hybrid_state_probe = (
                 str(getattr(probe, "hybrid_state_patch_mode", "not_reported")),
                 int(getattr(probe, "hybrid_state_advance_count", 0)),
@@ -1290,6 +1399,7 @@ class WorkerRegistry:
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
             self._last_image_peak_memory_bytes = 0
+            self._has_runtime_probe_receipts = True
 
     def record_transcription_probe(self, probe: Any) -> None:
         with self._lock:
@@ -1311,6 +1421,7 @@ class WorkerRegistry:
             self._last_multimodal_decode_sync_mode = ""
             self._has_multimodal_decode_probe = False
             self._clear_text_batch_generator_probe_locked()
+            self._clear_media_feature_probe_locked()
             self._last_language_fallback_count = int(getattr(probe, "language_fallback_count", 0))
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
@@ -1323,6 +1434,7 @@ class WorkerRegistry:
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
             self._last_image_peak_memory_bytes = 0
+            self._has_runtime_probe_receipts = True
 
     def record_speech_probe(self, probe: Any) -> None:
         with self._lock:
@@ -1346,6 +1458,7 @@ class WorkerRegistry:
             self._last_multimodal_decode_sync_mode = ""
             self._has_multimodal_decode_probe = False
             self._clear_text_batch_generator_probe_locked()
+            self._clear_media_feature_probe_locked()
             self._last_voice_fallback_count = int(getattr(probe, "voice_fallback_count", 0))
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
@@ -1358,14 +1471,18 @@ class WorkerRegistry:
             self._last_image_artifact_publish_ms = 0.0
             self._last_image_output_bytes = 0
             self._last_image_peak_memory_bytes = 0
+            self._has_runtime_probe_receipts = True
 
     def record_audio_model_load_probe(self, load_latency_ms: float) -> None:
         with self._lock:
             self._last_audio_model_load_latency_ms = float(load_latency_ms)
+            if self._last_audio_model_load_latency_ms:
+                self._has_runtime_probe_receipts = True
 
     def increment_audio_backend_unavailable(self) -> None:
         with self._lock:
             self._last_audio_backend_unavailable_count += 1
+            self._has_runtime_probe_receipts = True
 
     def record_image_probe(self, probe: Any) -> None:
         with self._lock:
@@ -1387,6 +1504,7 @@ class WorkerRegistry:
             self._last_multimodal_decode_sync_mode = ""
             self._has_multimodal_decode_probe = False
             self._clear_text_batch_generator_probe_locked()
+            self._clear_media_feature_probe_locked()
             self._last_video_effective_frame_count = 0
             self._last_video_requested_frame_budget = 0
             self._last_video_window_ms = 0
@@ -1398,6 +1516,7 @@ class WorkerRegistry:
             self._last_image_artifact_publish_ms = float(getattr(probe, "artifact_publish_ms", 0.0))
             self._last_image_output_bytes = int(getattr(probe, "output_bytes", 0))
             self._last_image_peak_memory_bytes = int(getattr(probe, "peak_memory_bytes", 0))
+            self._has_runtime_probe_receipts = True
 
     def _runtime_for_model(self, model_spec: common_pb2.ModelSpec) -> tuple[str, Any]:
         if model_spec.model_kind == "embedding":

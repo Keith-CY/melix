@@ -932,6 +932,16 @@ public nonisolated struct Melix_Worker_V1_UsageDelta: Sendable {
 
   public var completionTokens: UInt32 = 0
 
+  public var cachedPromptTokens: UInt32 = 0
+
+  public var mediaFeatureCacheHits: UInt64 = 0
+
+  public var mediaFeatureCacheMisses: UInt64 = 0
+
+  public var mediaFeatureEncoderCallsSaved: UInt64 = 0
+
+  public var mediaFeatureWorkSavedBytes: UInt64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3310,7 +3320,7 @@ nonisolated extension Melix_Worker_V1_ToolResultDelta: SwiftProtobuf.Message, Sw
 
 nonisolated extension Melix_Worker_V1_UsageDelta: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UsageDelta"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}prompt_tokens\0\u{3}completion_tokens\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}prompt_tokens\0\u{3}completion_tokens\0\u{3}cached_prompt_tokens\0\u{3}media_feature_cache_hits\0\u{3}media_feature_cache_misses\0\u{3}media_feature_encoder_calls_saved\0\u{3}media_feature_work_saved_bytes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3320,6 +3330,11 @@ nonisolated extension Melix_Worker_V1_UsageDelta: SwiftProtobuf.Message, SwiftPr
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularUInt32Field(value: &self.promptTokens) }()
       case 2: try { try decoder.decodeSingularUInt32Field(value: &self.completionTokens) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.cachedPromptTokens) }()
+      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.mediaFeatureCacheHits) }()
+      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.mediaFeatureCacheMisses) }()
+      case 6: try { try decoder.decodeSingularUInt64Field(value: &self.mediaFeatureEncoderCallsSaved) }()
+      case 7: try { try decoder.decodeSingularUInt64Field(value: &self.mediaFeatureWorkSavedBytes) }()
       default: break
       }
     }
@@ -3332,12 +3347,32 @@ nonisolated extension Melix_Worker_V1_UsageDelta: SwiftProtobuf.Message, SwiftPr
     if self.completionTokens != 0 {
       try visitor.visitSingularUInt32Field(value: self.completionTokens, fieldNumber: 2)
     }
+    if self.cachedPromptTokens != 0 {
+      try visitor.visitSingularUInt32Field(value: self.cachedPromptTokens, fieldNumber: 3)
+    }
+    if self.mediaFeatureCacheHits != 0 {
+      try visitor.visitSingularUInt64Field(value: self.mediaFeatureCacheHits, fieldNumber: 4)
+    }
+    if self.mediaFeatureCacheMisses != 0 {
+      try visitor.visitSingularUInt64Field(value: self.mediaFeatureCacheMisses, fieldNumber: 5)
+    }
+    if self.mediaFeatureEncoderCallsSaved != 0 {
+      try visitor.visitSingularUInt64Field(value: self.mediaFeatureEncoderCallsSaved, fieldNumber: 6)
+    }
+    if self.mediaFeatureWorkSavedBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.mediaFeatureWorkSavedBytes, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_UsageDelta, rhs: Melix_Worker_V1_UsageDelta) -> Bool {
     if lhs.promptTokens != rhs.promptTokens {return false}
     if lhs.completionTokens != rhs.completionTokens {return false}
+    if lhs.cachedPromptTokens != rhs.cachedPromptTokens {return false}
+    if lhs.mediaFeatureCacheHits != rhs.mediaFeatureCacheHits {return false}
+    if lhs.mediaFeatureCacheMisses != rhs.mediaFeatureCacheMisses {return false}
+    if lhs.mediaFeatureEncoderCallsSaved != rhs.mediaFeatureEncoderCallsSaved {return false}
+    if lhs.mediaFeatureWorkSavedBytes != rhs.mediaFeatureWorkSavedBytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

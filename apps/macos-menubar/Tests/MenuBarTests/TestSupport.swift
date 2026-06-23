@@ -2069,7 +2069,15 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             .tokenDelta("Assistant response"),
             .reasoningDelta("Reasoning trace"),
             .toolCallDelta(callID: "tool-1", toolName: "search", argumentsFragment: #"{"q":"melix"}"#),
-            .usage(promptTokens: 12, completionTokens: 24),
+            .usage(
+                promptTokens: 12,
+                completionTokens: 24,
+                cachedPromptTokens: 0,
+                mediaFeatureCacheHits: 0,
+                mediaFeatureCacheMisses: 0,
+                mediaFeatureEncoderCallsSaved: 0,
+                mediaFeatureWorkSavedBytes: 0
+            ),
             .completed(finishReason: "stop", assistantText: "Assistant response", reasoningText: "Reasoning trace"),
         ]
     }

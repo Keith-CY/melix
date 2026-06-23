@@ -345,11 +345,7 @@ public struct SSEStreamWriter: Sendable {
                     "created": Int(now().timeIntervalSince1970),
                     "model": modelID,
                     "choices": [],
-                    "usage": [
-                        "prompt_tokens": Int(usage.promptTokens),
-                        "completion_tokens": Int(usage.completionTokens),
-                        "total_tokens": Int(usage.promptTokens) + Int(usage.completionTokens),
-                    ],
+                    "usage": OpenAIHandler.chatUsagePayload(usage),
                 ]
             )
         case .prefillStarted, .prefillProgress:
@@ -475,11 +471,7 @@ public struct SSEStreamWriter: Sendable {
                     "created": Int(now().timeIntervalSince1970),
                     "model": modelID,
                     "choices": [],
-                    "usage": [
-                        "prompt_tokens": Int(usage.promptTokens),
-                        "completion_tokens": Int(usage.completionTokens),
-                        "total_tokens": Int(usage.promptTokens) + Int(usage.completionTokens),
-                    ],
+                    "usage": OpenAIHandler.chatUsagePayload(usage),
                 ]
             )
         case .reasoningDelta(let reasoning):
@@ -620,10 +612,7 @@ public struct SSEStreamWriter: Sendable {
                 json: [
                     "type": "response.usage",
                     "response_id": requestID,
-                    "usage": [
-                        "input_tokens": Int(usage.promptTokens),
-                        "output_tokens": Int(usage.completionTokens),
-                    ],
+                    "usage": responseUsagePayload(usage),
                 ]
             )
         case .reasoningDelta(let reasoning):
@@ -800,10 +789,7 @@ public struct SSEStreamWriter: Sendable {
                 json: [
                     "type": "message.usage",
                     "message_id": requestID,
-                    "usage": [
-                        "input_tokens": Int(usage.promptTokens),
-                        "output_tokens": Int(usage.completionTokens),
-                    ],
+                    "usage": responseUsagePayload(usage),
                 ]
             )
         case .heartbeat(let heartbeat):
@@ -959,6 +945,24 @@ public struct SSEStreamWriter: Sendable {
             "call_id": toolResult.callID,
             "status": toolResult.status,
             "result_json": toolResult.resultJson,
+        ]
+    }
+
+    private func responseUsagePayload(_ usage: Melix_Worker_V1_UsageDelta) -> [String: Any] {
+        let mediaFeatureCache: [String: Any] = [
+            "hits": Int(usage.mediaFeatureCacheHits),
+            "misses": Int(usage.mediaFeatureCacheMisses),
+            "encoder_calls_saved": Int(usage.mediaFeatureEncoderCallsSaved),
+            "work_saved_bytes": Int(usage.mediaFeatureWorkSavedBytes),
+        ]
+        return [
+            "input_tokens": Int(usage.promptTokens),
+            "output_tokens": Int(usage.completionTokens),
+            "input_tokens_details": [
+                "cached_tokens": Int(usage.cachedPromptTokens),
+            ],
+            "media_feature_cache": mediaFeatureCache,
+            "image_feature_cache": mediaFeatureCache,
         ]
     }
 

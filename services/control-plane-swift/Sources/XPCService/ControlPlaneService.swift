@@ -528,7 +528,17 @@ public actor ControlPlaneService {
                         case .tokenDelta(let text):
                             continuation.yield(.tokenDelta(text))
                         case .usage(let promptTokens, let completionTokens):
-                            continuation.yield(.usage(promptTokens: promptTokens, completionTokens: completionTokens))
+                            continuation.yield(
+                                .usage(
+                                    promptTokens: promptTokens,
+                                    completionTokens: completionTokens,
+                                    cachedPromptTokens: 0,
+                                    mediaFeatureCacheHits: 0,
+                                    mediaFeatureCacheMisses: 0,
+                                    mediaFeatureEncoderCallsSaved: 0,
+                                    mediaFeatureWorkSavedBytes: 0
+                                )
+                            )
                         case .completed(let finishReason, let assistantText):
                             continuation.yield(
                                 .completed(

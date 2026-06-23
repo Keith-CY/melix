@@ -3997,6 +3997,11 @@ button.primary:active {
         struct Usage {
             let promptTokens: UInt32
             let completionTokens: UInt32
+            let cachedPromptTokens: UInt32
+            let mediaFeatureCacheHits: UInt64
+            let mediaFeatureCacheMisses: UInt64
+            let mediaFeatureEncoderCallsSaved: UInt64
+            let mediaFeatureWorkSavedBytes: UInt64
         }
 
         struct TokenLogprob {
@@ -4044,7 +4049,12 @@ button.primary:active {
                 // latest event is authoritative if a runtime emits more than one.
                 aggregate.usage = NonStreamChatCompletionAggregate.Usage(
                     promptTokens: usage.promptTokens,
-                    completionTokens: usage.completionTokens
+                    completionTokens: usage.completionTokens,
+                    cachedPromptTokens: usage.cachedPromptTokens,
+                    mediaFeatureCacheHits: usage.mediaFeatureCacheHits,
+                    mediaFeatureCacheMisses: usage.mediaFeatureCacheMisses,
+                    mediaFeatureEncoderCallsSaved: usage.mediaFeatureEncoderCallsSaved,
+                    mediaFeatureWorkSavedBytes: usage.mediaFeatureWorkSavedBytes
                 )
             case .completed(let completed):
                 aggregate.finishReason = completed.finishReason.isEmpty ? "stop" : completed.finishReason
@@ -4102,14 +4112,61 @@ button.primary:active {
         ]
 
         if let usage = aggregate.usage {
-            payload["usage"] = [
-                "prompt_tokens": Int(usage.promptTokens),
-                "completion_tokens": Int(usage.completionTokens),
-                "total_tokens": Int(usage.promptTokens) + Int(usage.completionTokens),
-            ]
+            payload["usage"] = Self.chatUsagePayload(usage)
         }
 
         return payload
+    }
+
+    private static func chatUsagePayload(_ usage: NonStreamChatCompletionAggregate.Usage) -> [String: Any] {
+        chatUsagePayload(
+            promptTokens: usage.promptTokens,
+            completionTokens: usage.completionTokens,
+            cachedPromptTokens: usage.cachedPromptTokens,
+            mediaFeatureCacheHits: usage.mediaFeatureCacheHits,
+            mediaFeatureCacheMisses: usage.mediaFeatureCacheMisses,
+            mediaFeatureEncoderCallsSaved: usage.mediaFeatureEncoderCallsSaved,
+            mediaFeatureWorkSavedBytes: usage.mediaFeatureWorkSavedBytes
+        )
+    }
+
+    static func chatUsagePayload(_ usage: Melix_Worker_V1_UsageDelta) -> [String: Any] {
+        chatUsagePayload(
+            promptTokens: usage.promptTokens,
+            completionTokens: usage.completionTokens,
+            cachedPromptTokens: usage.cachedPromptTokens,
+            mediaFeatureCacheHits: usage.mediaFeatureCacheHits,
+            mediaFeatureCacheMisses: usage.mediaFeatureCacheMisses,
+            mediaFeatureEncoderCallsSaved: usage.mediaFeatureEncoderCallsSaved,
+            mediaFeatureWorkSavedBytes: usage.mediaFeatureWorkSavedBytes
+        )
+    }
+
+    private static func chatUsagePayload(
+        promptTokens: UInt32,
+        completionTokens: UInt32,
+        cachedPromptTokens: UInt32,
+        mediaFeatureCacheHits: UInt64,
+        mediaFeatureCacheMisses: UInt64,
+        mediaFeatureEncoderCallsSaved: UInt64,
+        mediaFeatureWorkSavedBytes: UInt64
+    ) -> [String: Any] {
+        let mediaFeatureCache: [String: Any] = [
+            "hits": Int(mediaFeatureCacheHits),
+            "misses": Int(mediaFeatureCacheMisses),
+            "encoder_calls_saved": Int(mediaFeatureEncoderCallsSaved),
+            "work_saved_bytes": Int(mediaFeatureWorkSavedBytes),
+        ]
+        return [
+            "prompt_tokens": Int(promptTokens),
+            "completion_tokens": Int(completionTokens),
+            "total_tokens": Int(promptTokens) + Int(completionTokens),
+            "prompt_tokens_details": [
+                "cached_tokens": Int(cachedPromptTokens),
+            ],
+            "media_feature_cache": mediaFeatureCache,
+            "image_feature_cache": mediaFeatureCache,
+        ]
     }
 
     private func recordShapingMetrics(
