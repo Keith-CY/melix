@@ -242,31 +242,21 @@ def _runtime_name(runtime: Any) -> str:
 
 def _detect_custom_loader_requirement(model_spec: common_pb2.ModelSpec) -> tuple[bool, str]:
     config_path = _model_config_path(model_spec)
-    if config_path is None:
-        executable_model_files = _detect_executable_model_files(model_spec)
-        if executable_model_files:
-            return True, _model_files_detection_source(executable_model_files)
-        return CONFIG_JSON_ABSENT_DETECTION
-    config_path_text, stat_path = config_path
-    try:
-        config_stat = os.stat(stat_path)
-        if not stat.S_ISREG(config_stat.st_mode):
-            executable_model_files = _detect_executable_model_files(model_spec)
-            if executable_model_files:
-                return True, _model_files_detection_source(executable_model_files)
-            return CONFIG_JSON_ABSENT_DETECTION
-    except OSError:
-        executable_model_files = _detect_executable_model_files(model_spec)
-        if executable_model_files:
-            return True, _model_files_detection_source(executable_model_files)
-        return CONFIG_JSON_ABSENT_DETECTION
-    config_detection = _detect_custom_loader_requirement_for_stat(
-        config_path_text,
-        config_stat.st_mtime_ns,
-        config_stat.st_size,
-    )
-    if config_detection is CONFIG_JSON_AUTO_MAP_DETECTION:
-        return config_detection
+    config_detection = CONFIG_JSON_ABSENT_DETECTION
+    if config_path is not None:
+        config_path_text, stat_path = config_path
+        try:
+            config_stat = os.stat(stat_path)
+        except OSError:
+            config_stat = None
+        if config_stat is not None and stat.S_ISREG(config_stat.st_mode):
+            config_detection = _detect_custom_loader_requirement_for_stat(
+                config_path_text,
+                config_stat.st_mtime_ns,
+                config_stat.st_size,
+            )
+            if config_detection is CONFIG_JSON_AUTO_MAP_DETECTION:
+                return config_detection
     executable_model_files = _detect_executable_model_files(model_spec)
     if executable_model_files:
         return True, _model_files_detection_source(executable_model_files)

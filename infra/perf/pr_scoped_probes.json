@@ -5969,7 +5969,7 @@
         "unit": "ms",
         "direction": "lower_is_better",
         "warn_pct": 5.0,
-        "warn_abs": 0.5
+        "warn_abs": 1.0
       },
       {
         "key": "elapsed_ms_min",

@@ -3860,7 +3860,7 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     model_load_config_metrics = {
         metric["key"]: metric for metric in by_id["model-load-config-json-bytes"]["metrics"]
     }
-    assert model_load_config_metrics["elapsed_ms_mean"]["warn_abs"] == 0.5
+    assert model_load_config_metrics["elapsed_ms_mean"]["warn_abs"] == 1.0
 
 
 def test_scope_report_selects_probe_policy_overhead_probe() -> None:

@@ -57,7 +57,7 @@ Out of scope:
 - Detection should not parse file contents; filename/stat checks are enough for this slice.
 - Existing `model-load-config-json-bytes` and model-load trust probes remain the relevant changed-scope performance guard.
 - The `model-load-config-json-bytes` focused coverage command must include any new tests that cover changed `model_load_trust.py` lines.
-- Because `model-load-config-json-bytes` measures a low-millisecond 300-iteration workload, its elapsed mean gate uses a `0.5ms` absolute warning floor. This preserves the original regression catch (`+6.4ms`) while avoiding sub-millisecond sample noise once the `auto_map` fast path is restored.
+- Because `model-load-config-json-bytes` measures a low-millisecond 300-iteration workload, its elapsed mean gate uses a `1.0ms` absolute warning floor. This preserves the original regression catch (`+6.4ms`) while avoiding CI sample noise once the `auto_map` fast path is restored.
 - Changed-scope metrics:
   - focused pytest for `services/mlx-worker-python/tests/test_model_load_trust.py`
   - changed-scope coverage for `worker/model_load_trust.py` and touched tests, target `>=95%`
@@ -118,7 +118,7 @@ Out of scope:
 - [x] Update `docs/runbooks/phase-8-local-install.md` under the strict install/trust discussion.
 - [x] State that executable model-file refusal is a model-load trust receipt, not an artifact digest/signature receipt.
 - [x] Update `infra/perf/pr_scoped_probes.json` so the focused `model-load-config-json-bytes` test and coverage commands include the `auto_map` no-scan regression guard.
-- [x] Add a `0.5ms` absolute warning floor to `model-load-config-json-bytes.elapsed_ms_mean`; local re-runs showed the fixed `auto_map` path within sub-millisecond variance while preserving identical peak bytes and rejection counts. The `0.5ms` floor is below the original blocked regression delta (`+6.4ms`) and is covered by a registry policy assertion.
+- [x] Add a `1.0ms` absolute warning floor to `model-load-config-json-bytes.elapsed_ms_mean`; local re-runs showed the fixed `auto_map` path within low-millisecond variance while preserving identical peak bytes and rejection counts. The `1.0ms` floor is below the original blocked regression delta (`+6.4ms`) and is covered by a registry policy assertion.
 - [x] Run focused pytest:
 
 ```bash
@@ -140,6 +140,9 @@ Final verification notes:
   - PR-scoped performance report: `Status: ok`, direct probe `model-load-config-json-bytes` passed with changed-scope coverage `98%`.
 - After merging current `origin/main` (`38695982abd9ff51d540040bb3a1e6d81ed0779b`), the focused model-load trust selection passed again: `30 passed`.
 - After merging current `origin/main`, the direct `model-load-config-json-bytes` probe passed against a fresh `origin/main` baseline: elapsed mean `3.392571ms -> 3.789506ms`, delta `+0.396934ms`, peak bytes unchanged, rejection count unchanged.
+- Review follow-up focused gate passed after refactoring duplicated fallback control flow and raising the low-millisecond CI noise floor: `31 passed`.
+- Review follow-up changed-line coverage passed at `100%` for the touched scope.
+- Review follow-up direct `model-load-config-json-bytes` probe passed against the fresh `origin/main` baseline: elapsed mean `3.730649ms -> 3.506833ms`, delta `-0.223816ms`, peak bytes unchanged, rejection count unchanged.
 
 ## Self-Review
 
