@@ -645,6 +645,10 @@ class MultimodalFastPathController:
             return "image_batch1_step_media_route_ineligible"
         if any(not str(getattr(image, "sha256_hex", "") or "") for image in prepared_request.images):
             return "image_batch1_step_cache_receipt_missing"
+        if greedy_sampling is False:
+            return "image_batch1_step_non_greedy_sampling"
+        if backend_step_supported is False:
+            return "image_batch1_step_backend_unsupported"
         if not isinstance(position_receipt, dict):
             return "image_batch1_step_position_receipt_missing"
         if (
@@ -652,10 +656,6 @@ class MultimodalFastPathController:
             or not bool(position_receipt.get("vision_metadata_reuse_allowed"))
         ):
             return "image_batch1_step_position_receipt_unaligned"
-        if greedy_sampling is False:
-            return "image_batch1_step_non_greedy_sampling"
-        if backend_step_supported is False:
-            return "image_batch1_step_backend_unsupported"
         return ""
 
     def _image_feature_entry(

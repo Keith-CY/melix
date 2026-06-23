@@ -147,6 +147,9 @@ class BenchSample:
     multimodal_decode_mode: str = "baseline"
     multimodal_fallback_reason: str = "not_reported"
     multimodal_decode_sync_mode: str = "baseline"
+    image_batch1_step_decode_token_counter_start: int = 0
+    image_batch1_step_decode_token_counter_end: int = 0
+    image_batch1_step_decode_token_counter_advance: int = 0
     multi_image_scatter_mode: str = "none"
     quantized_load_mode: str = "fallback"
     quantized_load_fallback_reason: str = "not_reported"
@@ -4014,6 +4017,21 @@ class MaintenanceCore:
                 if probe is not None
                 else "not_reported"
             ),
+            image_batch1_step_decode_token_counter_start=self._probe_counter(
+                probe,
+                "image_batch1_step_decode_token_counter_start",
+                0,
+            ),
+            image_batch1_step_decode_token_counter_end=self._probe_counter(
+                probe,
+                "image_batch1_step_decode_token_counter_end",
+                0,
+            ),
+            image_batch1_step_decode_token_counter_advance=self._probe_counter(
+                probe,
+                "image_batch1_step_decode_token_counter_advance",
+                0,
+            ),
             multi_image_scatter_mode=str(
                 getattr(probe, "multi_image_scatter_mode", "none")
                 if probe is not None
@@ -4165,6 +4183,7 @@ class MaintenanceCore:
                         "text_only_step": 6.0,
                         "text_only_batch_generator": 7.0,
                         "image_batch1_step_admission": 8.0,
+                        "image_batch1_step": 9.0,
                     },
                 ),
                 unit="code",
@@ -4213,6 +4232,45 @@ class MaintenanceCore:
                     },
                 ),
                 unit="code",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.image_batch1_step_decode_token_counter_start",
+                value=float(
+                    max(
+                        (
+                            sample.image_batch1_step_decode_token_counter_start
+                            for sample in samples
+                        ),
+                        default=0,
+                    )
+                ),
+                unit="tok",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.image_batch1_step_decode_token_counter_end",
+                value=float(
+                    max(
+                        (
+                            sample.image_batch1_step_decode_token_counter_end
+                            for sample in samples
+                        ),
+                        default=0,
+                    )
+                ),
+                unit="tok",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.image_batch1_step_decode_token_counter_advance",
+                value=float(
+                    sum(
+                        sample.image_batch1_step_decode_token_counter_advance
+                        for sample in samples
+                    )
+                ),
+                unit="tok",
             ),
             BenchMetricSpec(
                 suite=suite_id,

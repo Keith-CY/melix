@@ -2,10 +2,28 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import hashlib
 
 import pytest
+
+
+_IMAGE_BATCH1_STEP_VLM_COVERAGE_NODEIDS = (
+    "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_uses_generate_step_fast_path_for_text_only_requests",
+    "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_text_only_step_fast_path_releases_executor_between_tokens",
+    "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_text_only_batch_generator_requires_opt_in",
+    "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_image_batch1_step_uses_executor_stream_and_token_counter",
+    "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_image_batch1_step_keeps_non_greedy_requests_on_stream",
+    "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_image_batch1_step_decode_handles_tail_and_empty_tokens",
+    "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_image_batch1_step_decode_cancel_and_missing_detokenizer",
+    "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_image_batch1_step_prepare_failure_cleans_and_streams",
+    "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_image_batch1_step_probe_failure_cleans_temp_media",
+)
+
+_IMAGE_BATCH1_STEP_MAINTENANCE_COVERAGE_NODEIDS = (
+    "services/mlx-worker-python/tests/test_maintenance_service.py::test_vlm_fast_path_bench_metrics_encode_image_batch1_step_counters",
+    "services/mlx-worker-python/tests/test_maintenance_service.py::test_vlm_bench_sample_carries_image_batch1_step_token_counters",
+)
 
 
 def _changed_scope_coverage_paths() -> set[str]:
@@ -21,6 +39,54 @@ def _changed_scope_coverage_paths() -> set[str]:
     if not isinstance(payload, list):
         return set()
     return {str(path) for path in payload if str(path)}
+
+
+def _selection_covers_nodeid(args: list[str], nodeid: str) -> bool:
+    node_path = nodeid.split("::", 1)[0]
+    node_parts = PurePosixPath(node_path).parts
+    for raw_arg in args:
+        raw_arg = str(raw_arg)
+        if not raw_arg or raw_arg.startswith("-"):
+            continue
+        if raw_arg == nodeid:
+            return True
+        if "::" in raw_arg:
+            continue
+        arg_path = raw_arg.rstrip("/")
+        if not arg_path:
+            continue
+        arg_parts = PurePosixPath(arg_path).parts
+        if arg_parts == node_parts[: len(arg_parts)]:
+            return True
+    return False
+
+
+def _append_changed_scope_coverage_nodeids(config, nodeids: tuple[str, ...]) -> None:
+    args = [str(arg) for arg in getattr(config, "args", [])]
+    for nodeid in nodeids:
+        if not _selection_covers_nodeid(args, nodeid):
+            args.append(nodeid)
+    config.args = args
+
+
+def pytest_configure(config) -> None:
+    coverage_paths = _changed_scope_coverage_paths()
+    if (
+        "services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py" in coverage_paths
+        or "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py" in coverage_paths
+    ):
+        _append_changed_scope_coverage_nodeids(
+            config,
+            _IMAGE_BATCH1_STEP_VLM_COVERAGE_NODEIDS,
+        )
+    if (
+        "services/mlx-worker-python/worker/engine/maintenance_core.py" in coverage_paths
+        or "services/mlx-worker-python/tests/test_maintenance_service.py" in coverage_paths
+    ):
+        _append_changed_scope_coverage_nodeids(
+            config,
+            _IMAGE_BATCH1_STEP_MAINTENANCE_COVERAGE_NODEIDS,
+        )
 
 
 def _write_download_source_file(tmp_path: Path, *, size: int) -> tuple[Path, bytes]:
