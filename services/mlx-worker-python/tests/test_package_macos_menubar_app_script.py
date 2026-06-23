@@ -550,12 +550,12 @@ def test_package_workflow_manual_dispatch_defaults_to_main_checkout() -> None:
 
     manual_checkout = find_workflow_step(workflow, "Checkout manual package source")
     assert "if: github.event_name == 'workflow_dispatch'" in manual_checkout
-    assert "uses: actions/checkout@v6" in manual_checkout
+    assert "uses: actions/checkout@v7" in manual_checkout
     assert "ref: ${{ inputs.source_ref }}" in manual_checkout
 
     event_checkout = find_workflow_step(workflow, "Checkout event source")
     assert "if: github.event_name != 'workflow_dispatch'" in event_checkout
-    assert "uses: actions/checkout@v6" in event_checkout
+    assert "uses: actions/checkout@v7" in event_checkout
     assert "ref:" not in event_checkout
 
 
@@ -614,7 +614,7 @@ def test_package_workflow_detects_scheduled_main_updates_before_packaging() -> N
     assert "should_package: ${{ steps.detect-main-update.outputs.should_package }}" in workflow
     preflight_job = find_workflow_job(workflow, "detect-main-update")
     assert "if: github.event_name == 'schedule'" in preflight_job
-    assert "actions/checkout@v6" in preflight_job
+    assert "actions/checkout@v7" in preflight_job
     assert "ref: main" in preflight_job
     assert "github.rest.actions.listWorkflowRuns" in preflight_job
     assert "event: 'schedule'" in preflight_job
