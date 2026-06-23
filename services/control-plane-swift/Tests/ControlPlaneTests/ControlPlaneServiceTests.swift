@@ -8803,6 +8803,7 @@ struct ControlPlaneServiceTests {
     func startChatRoutesRemoteServerTargetsThroughTheRemoteProviderClient() async throws {
         let remoteClient = ScriptedRemoteProviderChatClient(events: [
             .tokenDelta("remote"),
+            .usage(promptTokens: 11, completionTokens: 3),
             .completed(finishReason: "stop", assistantText: "remote"),
         ])
         let service = ControlPlaneService(remoteProviderClient: remoteClient)
@@ -8835,6 +8836,15 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.modelID == "gemini-2.5-flash")
         #expect(events == [
             .tokenDelta("remote"),
+            .usage(
+                promptTokens: 11,
+                completionTokens: 3,
+                cachedPromptTokens: 0,
+                mediaFeatureCacheHits: 0,
+                mediaFeatureCacheMisses: 0,
+                mediaFeatureEncoderCallsSaved: 0,
+                mediaFeatureWorkSavedBytes: 0
+            ),
             .completed(finishReason: "stop", assistantText: "remote", reasoningText: ""),
         ])
     }

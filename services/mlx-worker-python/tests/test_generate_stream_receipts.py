@@ -5,6 +5,7 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
 from worker.engine import engine_core as engine_core_module
+from worker.engine.text_finalizer import TextFinalizationUsage
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
@@ -267,6 +268,39 @@ def test_plain_fast_path_finalizes_through_shared_text_receipt_state(monkeypatch
     assert [receipt.usage_trailer_emitted for receipt in receipts] == [True, False]
     assert all(receipt.usage.prompt_tokens == 7 for receipt in receipts)
     assert all(receipt.usage.completion_tokens == 2 for receipt in receipts)
+
+
+def test_text_finalization_usage_parser_metrics_include_cache_work_saved_fields() -> None:
+    usage = TextFinalizationUsage(
+        prompt_tokens=10,
+        completion_tokens=2,
+        cached_prompt_tokens=6,
+        media_feature_cache_hits=3,
+        media_feature_cache_misses=1,
+        media_feature_encoder_calls_saved=3,
+        media_feature_work_saved_bytes=1234,
+    )
+
+    receipt = engine_core_module.finalize_text_response(
+        response_id="req-cache-fields",
+        created="1716500003",
+        stream_mode=True,
+        finish_reason="stop",
+        usage=usage,
+        usage_trailer_emitted=True,
+        reasoning_text="",
+        tool_call_count=0,
+        parser_metrics={},
+    )
+
+    metrics = receipt.parser_metrics()
+    assert metrics["usage_cached_prompt_tokens"] == "6"
+    assert metrics["usage_media_feature_cache_hits"] == "3"
+    assert metrics["usage_media_feature_cache_misses"] == "1"
+    assert metrics["usage_media_feature_encoder_calls_saved"] == "3"
+    assert metrics["usage_media_feature_work_saved_bytes"] == "1234"
+    assert metrics["usage_image_feature_cache_hits"] == "3"
+    assert metrics["usage_image_feature_work_saved_bytes"] == "1234"
 
 
 def test_structured_tool_calls_finalize_through_shared_text_receipt_state(monkeypatch) -> None:

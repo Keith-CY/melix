@@ -8011,7 +8011,7 @@ public final class RuntimeViewModel {
                     await Task.yield()
                 case .annotationDelta, .toolResultDelta:
                     shouldNotifyAfterEvent = false
-                case .usage(let promptTokens, let completionTokens):
+                case .usage(let promptTokens, let completionTokens, _, _, _, _, _):
                     lastChatUsageText = "\(promptTokens) prompt • \(completionTokens) completion"
                 case .completed(let finishReason, let assistantText, let reasoningText):
                     flushPendingChatPresentation()

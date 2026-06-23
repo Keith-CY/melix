@@ -107,7 +107,15 @@ public enum ControlPlaneChatStreamEvent: Sendable, Equatable {
     case toolCallDelta(callID: String, toolName: String, argumentsFragment: String)
     case annotationDelta(annotationID: String, kind: String, startOffset: UInt32, endOffset: UInt32, payloadJSON: String)
     case toolResultDelta(callID: String, status: String, resultJSON: String)
-    case usage(promptTokens: UInt32, completionTokens: UInt32)
+    case usage(
+        promptTokens: UInt32,
+        completionTokens: UInt32,
+        cachedPromptTokens: UInt32,
+        mediaFeatureCacheHits: UInt64,
+        mediaFeatureCacheMisses: UInt64,
+        mediaFeatureEncoderCallsSaved: UInt64,
+        mediaFeatureWorkSavedBytes: UInt64
+    )
     case completed(finishReason: String, assistantText: String, reasoningText: String)
     case failed(code: String, message: String)
     case heartbeat
@@ -160,7 +168,12 @@ public enum ControlPlaneChatStreamEvent: Sendable, Equatable {
         case .usageDelta(let usageDelta):
             self = .usage(
                 promptTokens: usageDelta.promptTokens,
-                completionTokens: usageDelta.completionTokens
+                completionTokens: usageDelta.completionTokens,
+                cachedPromptTokens: usageDelta.cachedPromptTokens,
+                mediaFeatureCacheHits: usageDelta.mediaFeatureCacheHits,
+                mediaFeatureCacheMisses: usageDelta.mediaFeatureCacheMisses,
+                mediaFeatureEncoderCallsSaved: usageDelta.mediaFeatureEncoderCallsSaved,
+                mediaFeatureWorkSavedBytes: usageDelta.mediaFeatureWorkSavedBytes
             )
         case .completed(let completed):
             self = .completed(
