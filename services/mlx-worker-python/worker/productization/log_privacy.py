@@ -26,7 +26,7 @@ class LogPrivacyRedactor:
     """Canonical redactor for operator-facing log excerpts."""
 
     def redact(self, value: str) -> str:
-        text = str(value)
+        text = value
         if _has_no_sensitive_markers(text):
             return text
         if "://" in text:
