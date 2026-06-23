@@ -4641,16 +4641,22 @@ button.primary:active {
         rejectedHeaderName: String,
         rejectionReason: String
     ) -> [String: Any] {
-        [
+        let policyReceipt = localServerSecurityPolicy.receipt
+        return [
             "schema_version": "melix.privacy_envelope.v1",
             "surface": "local_proxy_security_rejection",
             "rejected_header": rejectedHeaderName,
             "rejection_reason": rejectionReason,
             "redacted": true,
             "redaction_policy": "raw_header_value_omitted",
-            "local_server_security": (
-                try? localServerSecurityPolicy.receipt.jsonObject(encoder: encoder)
-            ) ?? [:],
+            "local_server_security": [
+                "schema_version": policyReceipt.schemaVersion,
+                "bind_host": policyReceipt.bindHost,
+                "allowed_hosts": policyReceipt.allowedHosts,
+                "allowed_origins": policyReceipt.allowedOrigins,
+                "loopback_only_host_policy": policyReceipt.loopbackOnlyHostPolicy,
+                "browser_cors_policy": policyReceipt.browserCorsPolicy,
+            ],
         ]
     }
 
