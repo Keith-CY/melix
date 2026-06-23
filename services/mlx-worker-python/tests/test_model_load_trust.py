@@ -592,7 +592,7 @@ def test_trust_policy_treats_missing_config_json_as_absent(tmp_path: Path) -> No
     assert exc_info.value.policy.custom_loader_detection_source == "model_files:configuration_melix_demo.py"
 
 
-def test_trust_policy_treats_blank_model_path_as_absent() -> None:
+def test_trust_policy_treats_blank_model_path_as_absent(tmp_path: Path) -> None:
     model = WorkerModelCatalog.dev_text_model()
     model.model_path = "  "
 
@@ -607,7 +607,7 @@ def test_trust_policy_treats_blank_model_path_as_absent() -> None:
     assert policy.custom_loader_detection_source == "config_json:absent"
 
     missing_path_model = WorkerModelCatalog.dev_text_model()
-    missing_path_model.model_path = "/tmp/melix-missing-model-load-trust-path"
+    missing_path_model.model_path = str(tmp_path / "nonexistent-subdir")
     missing_path_policy = resolve_model_load_trust_policy(
         missing_path_model,
         request_policy=None,
