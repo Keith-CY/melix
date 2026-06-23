@@ -95,7 +95,15 @@ struct ControlPlaneChatExecutionTests {
         )
         #expect(
             ControlPlaneChatStreamEvent(executeEvent: makeUsageExecuteEvent()) ==
-                .usage(promptTokens: 21, completionTokens: 34)
+                .usage(
+                    promptTokens: 21,
+                    completionTokens: 34,
+                    cachedPromptTokens: 13,
+                    mediaFeatureCacheHits: 2,
+                    mediaFeatureCacheMisses: 1,
+                    mediaFeatureEncoderCallsSaved: 2,
+                    mediaFeatureWorkSavedBytes: 2048
+                )
         )
         #expect(
             ControlPlaneChatStreamEvent(executeEvent: makeCompletedExecuteEvent()) ==
@@ -254,6 +262,11 @@ private func makeUsageExecuteEvent() -> Melix_Worker_V1_ExecuteEvent {
     event.usageDelta = Melix_Worker_V1_UsageDelta()
     event.usageDelta.promptTokens = 21
     event.usageDelta.completionTokens = 34
+    event.usageDelta.cachedPromptTokens = 13
+    event.usageDelta.mediaFeatureCacheHits = 2
+    event.usageDelta.mediaFeatureCacheMisses = 1
+    event.usageDelta.mediaFeatureEncoderCallsSaved = 2
+    event.usageDelta.mediaFeatureWorkSavedBytes = 2048
     return event
 }
 

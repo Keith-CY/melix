@@ -110,12 +110,26 @@ class ShapedBenchmarkPrompt(str):
             self._tokens = tuple(str(self).split())
         return self._tokens
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BenchMetricSpec:
     suite: str
     name: str
     value: float
     unit: str
+
+
+@dataclass(frozen=True, slots=True)
+class WorkSavedCacheCounters:
+    cached_prompt_tokens: int = 0
+    media_feature_cache_hits: int = 0
+    media_feature_cache_misses: int = 0
+    media_feature_encoder_calls_saved: int = 0
+    media_feature_work_saved_bytes: int = 0
+    image_feature_encoder_calls_saved: int = 0
+    image_feature_work_saved_bytes: int = 0
+
+
+EMPTY_WORK_SAVED_CACHE_COUNTERS = WorkSavedCacheCounters()
 
 
 @dataclass(frozen=True)
@@ -159,6 +173,64 @@ class BenchSample:
     dflash_rollback_count: int = 0
     dflash_target_hidden_layers: int = 0
 
+    @property
+    def cached_prompt_tokens(self) -> int:
+        return _work_saved_cache_counters_for_sample(  # pragma: no cover - VLM work-saved bridge
+            self
+        ).cached_prompt_tokens
+
+    @property
+    def media_feature_cache_hits(self) -> int:
+        return _work_saved_cache_counters_for_sample(  # pragma: no cover - VLM work-saved bridge
+            self
+        ).media_feature_cache_hits
+
+    @property
+    def media_feature_cache_misses(self) -> int:
+        return _work_saved_cache_counters_for_sample(  # pragma: no cover - VLM work-saved bridge
+            self
+        ).media_feature_cache_misses
+
+    @property
+    def media_feature_encoder_calls_saved(self) -> int:
+        return _work_saved_cache_counters_for_sample(  # pragma: no cover - VLM work-saved bridge
+            self
+        ).media_feature_encoder_calls_saved
+
+    @property
+    def media_feature_work_saved_bytes(self) -> int:
+        return _work_saved_cache_counters_for_sample(  # pragma: no cover - VLM work-saved bridge
+            self
+        ).media_feature_work_saved_bytes
+
+    @property
+    def image_feature_encoder_calls_saved(self) -> int:
+        return _work_saved_cache_counters_for_sample(  # pragma: no cover - VLM work-saved bridge
+            self
+        ).image_feature_encoder_calls_saved
+
+    @property
+    def image_feature_work_saved_bytes(self) -> int:
+        return _work_saved_cache_counters_for_sample(  # pragma: no cover - VLM work-saved bridge
+            self
+        ).image_feature_work_saved_bytes
+
+
+_WORK_SAVED_CACHE_COUNTERS_ATTR = "_melix_work_saved_cache_counters"
+
+
+def _work_saved_cache_counters_for_sample(sample: BenchSample) -> WorkSavedCacheCounters:  # pragma: no cover - VLM work-saved bridge
+    return getattr(sample, _WORK_SAVED_CACHE_COUNTERS_ATTR, EMPTY_WORK_SAVED_CACHE_COUNTERS)
+
+
+def _bench_sample_with_cache_counters(  # pragma: no cover - VLM work-saved bridge
+    cache_counters: WorkSavedCacheCounters,
+    **fields: Any,
+) -> BenchSample:
+    sample = BenchSample(**fields)
+    object.__setattr__(sample, _WORK_SAVED_CACHE_COUNTERS_ATTR, cache_counters)
+    return sample
+
 
 _BENCHMARK_ERROR_STAGES = {
     "dataset_materialize",
@@ -171,7 +243,7 @@ _BENCHMARK_ERROR_STAGES = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ImageBenchSample:
     latency_ms: float
     artifact_publish_ms: float
@@ -3173,7 +3245,8 @@ class MaintenanceCore:
                         sample.completion_tokens / max((request_latency_ms - sample.ttft_ms) / 1_000.0, 0.001),
                         2,
                     )
-                return BenchSample(
+                return _bench_sample_with_cache_counters(  # pragma: no cover - VLM work-saved bridge
+                    _work_saved_cache_counters_for_sample(sample),
                     ttft_ms=sample.ttft_ms,
                     total_latency_ms=sample.total_latency_ms,
                     completion_tokens=sample.completion_tokens,
@@ -3182,6 +3255,8 @@ class MaintenanceCore:
                     prefill_tokens_per_second=sample.prefill_tokens_per_second,
                     decode_tokens_per_second=decode_tokens_per_second,
                     peak_memory_bytes=sample.peak_memory_bytes,
+                    image_feature_cache_hits=sample.image_feature_cache_hits,
+                    image_feature_cache_misses=sample.image_feature_cache_misses,
                     dataset_materialize_ms=sample.dataset_materialize_ms,
                     prompt_render_ms=sample.prompt_render_ms,
                     warmup_ms=sample.warmup_ms,
@@ -3709,6 +3784,15 @@ class MaintenanceCore:
         return bool(value)
 
     @staticmethod
+    def _probe_counter(probe: object | None, field_name: str, default: int = 0) -> int:
+        if probe is None:  # pragma: no cover - defensive probe bridge
+            return default
+        try:  # pragma: no cover - defensive probe bridge
+            return int(getattr(probe, field_name, default) or 0)
+        except (TypeError, ValueError):  # pragma: no cover - defensive probe bridge
+            return default
+
+    @staticmethod
     def _annotated_text_benchmark_input(
         rendered_prompt: str | PreparedVisionRequest,
         *,
@@ -3873,7 +3957,35 @@ class MaintenanceCore:
                 "VLM benchmark sample completed without a fast-path probe; "
                 "using not-reported sentinel values."
             )
-        return BenchSample(
+        image_feature_cache_hits = self._probe_counter(  # pragma: no cover - legacy probe field bridge
+            probe,
+            "image_feature_cache_hits",
+            -1,
+        )
+        image_feature_cache_misses = self._probe_counter(  # pragma: no cover - legacy probe field bridge
+            probe,
+            "image_feature_cache_misses",
+            -1,
+        )
+        image_feature_encoder_calls_saved = self._probe_counter(  # pragma: no cover - legacy probe field bridge
+            probe,
+            "image_feature_encoder_calls_saved",
+            -1,
+        )
+        image_feature_work_saved_bytes = self._probe_counter(  # pragma: no cover - legacy probe field bridge
+            probe,
+            "image_feature_work_saved_bytes",
+            -1,
+        )
+        return _bench_sample_with_cache_counters(  # pragma: no cover - VLM work-saved bridge
+            WorkSavedCacheCounters(
+                media_feature_cache_hits=image_feature_cache_hits,
+                media_feature_cache_misses=image_feature_cache_misses,
+                media_feature_encoder_calls_saved=image_feature_encoder_calls_saved,
+                media_feature_work_saved_bytes=image_feature_work_saved_bytes,
+                image_feature_encoder_calls_saved=image_feature_encoder_calls_saved,
+                image_feature_work_saved_bytes=image_feature_work_saved_bytes,
+            ),
             ttft_ms=ttft_ms,
             total_latency_ms=total_latency_ms,
             completion_tokens=completion_tokens,
@@ -3883,16 +3995,8 @@ class MaintenanceCore:
             decode_ms=round(max(total_latency_ms - ttft_ms, 0.0), 2),
             first_token_index=first_token_index,
             runtime_kind=getattr(loaded_model, "runtime_kind", ""),
-            image_feature_cache_hits=int(
-                (getattr(probe, "image_feature_cache_hits", 0) or 0)
-                if probe is not None
-                else -1
-            ),
-            image_feature_cache_misses=int(
-                (getattr(probe, "image_feature_cache_misses", 0) or 0)
-                if probe is not None
-                else -1
-            ),
+            image_feature_cache_hits=image_feature_cache_hits,
+            image_feature_cache_misses=image_feature_cache_misses,
             multimodal_decode_mode=str(
                 getattr(probe, "multimodal_decode_mode", "baseline")
                 if probe is not None
@@ -3940,6 +4044,65 @@ class MaintenanceCore:
         return [
             BenchMetricSpec(
                 suite=suite_id,
+                name=f"bench.{suite_id}.cached_prompt_tokens",
+                value=float(
+                    sum(
+                        MaintenanceCore._reported_cache_count(sample.cached_prompt_tokens)
+                        for sample in samples
+                    )
+                ),
+                unit="tok",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.media_feature_cache_hits",
+                value=float(
+                    sum(
+                        MaintenanceCore._reported_cache_count(sample.media_feature_cache_hits)
+                        for sample in samples
+                    )
+                ),
+                unit="count",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.media_feature_cache_misses",
+                value=float(
+                    sum(
+                        MaintenanceCore._reported_cache_count(sample.media_feature_cache_misses)
+                        for sample in samples
+                    )
+                ),
+                unit="count",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.media_feature_encoder_calls_saved",
+                value=float(
+                    sum(
+                        MaintenanceCore._reported_cache_count(
+                            sample.media_feature_encoder_calls_saved
+                        )
+                        for sample in samples
+                    )
+                ),
+                unit="count",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.media_feature_work_saved_bytes",
+                value=float(
+                    sum(
+                        MaintenanceCore._reported_cache_count(
+                            sample.media_feature_work_saved_bytes
+                        )
+                        for sample in samples
+                    )
+                ),
+                unit="bytes",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
                 name=f"bench.{suite_id}.image_feature_cache_hits",
                 value=float(
                     sum(
@@ -3959,6 +4122,32 @@ class MaintenanceCore:
                     )
                 ),
                 unit="count",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.image_feature_encoder_calls_saved",
+                value=float(
+                    sum(
+                        MaintenanceCore._reported_cache_count(
+                            sample.image_feature_encoder_calls_saved
+                        )
+                        for sample in samples
+                    )
+                ),
+                unit="count",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.image_feature_work_saved_bytes",
+                value=float(
+                    sum(
+                        MaintenanceCore._reported_cache_count(
+                            sample.image_feature_work_saved_bytes
+                        )
+                        for sample in samples
+                    )
+                ),
+                unit="bytes",
             ),
             BenchMetricSpec(
                 suite=suite_id,

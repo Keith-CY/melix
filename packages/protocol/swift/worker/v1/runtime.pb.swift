@@ -654,6 +654,51 @@ public nonisolated struct Melix_Worker_V1_RuntimeStats: @unchecked Sendable {
     set {_uniqueStorage()._lastFamilyFastPathOverrideCount = newValue}
   }
 
+  public var lastCachedPromptTokens: UInt64 {
+    get {_storage._lastCachedPromptTokens}
+    set {_uniqueStorage()._lastCachedPromptTokens = newValue}
+  }
+
+  public var lastMediaFeatureCacheHits: UInt64 {
+    get {_storage._lastMediaFeatureCacheHits}
+    set {_uniqueStorage()._lastMediaFeatureCacheHits = newValue}
+  }
+
+  public var lastMediaFeatureCacheMisses: UInt64 {
+    get {_storage._lastMediaFeatureCacheMisses}
+    set {_uniqueStorage()._lastMediaFeatureCacheMisses = newValue}
+  }
+
+  public var lastMediaFeatureEncoderCallsSaved: UInt64 {
+    get {_storage._lastMediaFeatureEncoderCallsSaved}
+    set {_uniqueStorage()._lastMediaFeatureEncoderCallsSaved = newValue}
+  }
+
+  public var lastMediaFeatureWorkSavedBytes: UInt64 {
+    get {_storage._lastMediaFeatureWorkSavedBytes}
+    set {_uniqueStorage()._lastMediaFeatureWorkSavedBytes = newValue}
+  }
+
+  public var lastImageFeatureCacheHits: UInt64 {
+    get {_storage._lastImageFeatureCacheHits}
+    set {_uniqueStorage()._lastImageFeatureCacheHits = newValue}
+  }
+
+  public var lastImageFeatureCacheMisses: UInt64 {
+    get {_storage._lastImageFeatureCacheMisses}
+    set {_uniqueStorage()._lastImageFeatureCacheMisses = newValue}
+  }
+
+  public var lastImageFeatureEncoderCallsSaved: UInt64 {
+    get {_storage._lastImageFeatureEncoderCallsSaved}
+    set {_uniqueStorage()._lastImageFeatureEncoderCallsSaved = newValue}
+  }
+
+  public var lastImageFeatureWorkSavedBytes: UInt64 {
+    get {_storage._lastImageFeatureWorkSavedBytes}
+    set {_uniqueStorage()._lastImageFeatureWorkSavedBytes = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1284,7 +1329,7 @@ nonisolated extension Melix_Worker_V1_WarmupModelResponse: SwiftProtobuf.Message
 
 nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RuntimeStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0\u{3}last_video_effective_frame_count\0\u{3}last_video_requested_frame_budget\0\u{3}last_video_window_ms\0\u{3}last_temp_media_artifact_count\0\u{3}last_temp_media_artifact_bytes\0\u{3}last_temp_media_cleanup_latency_ms\0\u{3}last_temp_media_cleanup_failure_count\0\u{3}generation_stream_owner_mode\0\u{3}worker_thread_init_latency_ms\0\u{3}stream_sync_fallback_count\0\u{3}last_speech_streaming_enabled\0\u{3}last_speech_streaming_interval_ms\0\u{3}last_speech_first_audio_latency_ms\0\u{3}last_multimodal_decode_mode\0\u{3}last_multimodal_fallback_reason\0\u{3}last_multimodal_decode_sync_mode\0\u{3}text_batch_generator_submitted_request_count\0\u{3}text_batch_generator_completed_request_count\0\u{3}text_batch_generator_step_count\0\u{3}text_batch_generator_generated_token_count\0\u{3}text_batch_generator_peak_active_batch_size\0\u{3}text_batch_generator_queue_wait_ms_total\0\u{3}text_batch_generator_insert_ms_total\0\u{3}text_batch_generator_executor_step_ms_total\0\u{3}text_batch_generator_next_ms_total\0\u{3}text_batch_generator_emit_ms_total\0\u{3}text_batch_generator_active_batch_size\0\u{3}text_batch_generator_generated_response_count\0\u{3}text_batch_generator_failed_request_count\0\u{3}text_batch_generator_prepare_ms_total\0\u{3}text_batch_generator_first_response_ms_total\0\u{3}text_batch_generator_first_visible_ms_total\0\u{3}text_batch_generator_first_visible_token_index_total\0\u{3}text_batch_generator_first_empty_segment_count\0\u{3}last_model_load_trust_policy_resolution_ms\0\u{3}model_load_trust_blocked_count\0\u{3}text_batch_generator_speculative_cycle_count_total\0\u{3}text_batch_generator_speculative_accepted_count_total\0\u{3}text_batch_generator_speculative_rejected_count_total\0\u{3}text_batch_generator_speculative_backbone_ms_total\0\u{3}text_batch_generator_speculative_mtp_head_ms_total\0\u{3}text_batch_generator_speculative_sample_ms_total\0\u{3}text_batch_generator_speculative_cache_ops_ms_total\0\u{3}last_hybrid_state_patch_mode\0\u{3}last_hybrid_state_advance_count\0\u{3}last_family_fast_path_override_count\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0\u{3}last_video_effective_frame_count\0\u{3}last_video_requested_frame_budget\0\u{3}last_video_window_ms\0\u{3}last_temp_media_artifact_count\0\u{3}last_temp_media_artifact_bytes\0\u{3}last_temp_media_cleanup_latency_ms\0\u{3}last_temp_media_cleanup_failure_count\0\u{3}generation_stream_owner_mode\0\u{3}worker_thread_init_latency_ms\0\u{3}stream_sync_fallback_count\0\u{3}last_speech_streaming_enabled\0\u{3}last_speech_streaming_interval_ms\0\u{3}last_speech_first_audio_latency_ms\0\u{3}last_multimodal_decode_mode\0\u{3}last_multimodal_fallback_reason\0\u{3}last_multimodal_decode_sync_mode\0\u{3}text_batch_generator_submitted_request_count\0\u{3}text_batch_generator_completed_request_count\0\u{3}text_batch_generator_step_count\0\u{3}text_batch_generator_generated_token_count\0\u{3}text_batch_generator_peak_active_batch_size\0\u{3}text_batch_generator_queue_wait_ms_total\0\u{3}text_batch_generator_insert_ms_total\0\u{3}text_batch_generator_executor_step_ms_total\0\u{3}text_batch_generator_next_ms_total\0\u{3}text_batch_generator_emit_ms_total\0\u{3}text_batch_generator_active_batch_size\0\u{3}text_batch_generator_generated_response_count\0\u{3}text_batch_generator_failed_request_count\0\u{3}text_batch_generator_prepare_ms_total\0\u{3}text_batch_generator_first_response_ms_total\0\u{3}text_batch_generator_first_visible_ms_total\0\u{3}text_batch_generator_first_visible_token_index_total\0\u{3}text_batch_generator_first_empty_segment_count\0\u{3}last_model_load_trust_policy_resolution_ms\0\u{3}model_load_trust_blocked_count\0\u{3}text_batch_generator_speculative_cycle_count_total\0\u{3}text_batch_generator_speculative_accepted_count_total\0\u{3}text_batch_generator_speculative_rejected_count_total\0\u{3}text_batch_generator_speculative_backbone_ms_total\0\u{3}text_batch_generator_speculative_mtp_head_ms_total\0\u{3}text_batch_generator_speculative_sample_ms_total\0\u{3}text_batch_generator_speculative_cache_ops_ms_total\0\u{3}last_hybrid_state_patch_mode\0\u{3}last_hybrid_state_advance_count\0\u{3}last_family_fast_path_override_count\0\u{3}last_cached_prompt_tokens\0\u{3}last_media_feature_cache_hits\0\u{3}last_media_feature_cache_misses\0\u{3}last_media_feature_encoder_calls_saved\0\u{3}last_media_feature_work_saved_bytes\0\u{3}last_image_feature_cache_hits\0\u{3}last_image_feature_cache_misses\0\u{3}last_image_feature_encoder_calls_saved\0\u{3}last_image_feature_work_saved_bytes\0")
 
   fileprivate class _StorageClass {
     var _workerState: String = String()
@@ -1366,6 +1411,15 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
     var _lastHybridStatePatchMode: String = String()
     var _lastHybridStateAdvanceCount: UInt64 = 0
     var _lastFamilyFastPathOverrideCount: UInt64 = 0
+    var _lastCachedPromptTokens: UInt64 = 0
+    var _lastMediaFeatureCacheHits: UInt64 = 0
+    var _lastMediaFeatureCacheMisses: UInt64 = 0
+    var _lastMediaFeatureEncoderCallsSaved: UInt64 = 0
+    var _lastMediaFeatureWorkSavedBytes: UInt64 = 0
+    var _lastImageFeatureCacheHits: UInt64 = 0
+    var _lastImageFeatureCacheMisses: UInt64 = 0
+    var _lastImageFeatureEncoderCallsSaved: UInt64 = 0
+    var _lastImageFeatureWorkSavedBytes: UInt64 = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -1455,6 +1509,15 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
       _lastHybridStatePatchMode = source._lastHybridStatePatchMode
       _lastHybridStateAdvanceCount = source._lastHybridStateAdvanceCount
       _lastFamilyFastPathOverrideCount = source._lastFamilyFastPathOverrideCount
+      _lastCachedPromptTokens = source._lastCachedPromptTokens
+      _lastMediaFeatureCacheHits = source._lastMediaFeatureCacheHits
+      _lastMediaFeatureCacheMisses = source._lastMediaFeatureCacheMisses
+      _lastMediaFeatureEncoderCallsSaved = source._lastMediaFeatureEncoderCallsSaved
+      _lastMediaFeatureWorkSavedBytes = source._lastMediaFeatureWorkSavedBytes
+      _lastImageFeatureCacheHits = source._lastImageFeatureCacheHits
+      _lastImageFeatureCacheMisses = source._lastImageFeatureCacheMisses
+      _lastImageFeatureEncoderCallsSaved = source._lastImageFeatureEncoderCallsSaved
+      _lastImageFeatureWorkSavedBytes = source._lastImageFeatureWorkSavedBytes
     }
   }
 
@@ -1552,6 +1615,15 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
         case 77: try { try decoder.decodeSingularStringField(value: &_storage._lastHybridStatePatchMode) }()
         case 78: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastHybridStateAdvanceCount) }()
         case 79: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastFamilyFastPathOverrideCount) }()
+        case 80: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastCachedPromptTokens) }()
+        case 81: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastMediaFeatureCacheHits) }()
+        case 82: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastMediaFeatureCacheMisses) }()
+        case 83: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastMediaFeatureEncoderCallsSaved) }()
+        case 84: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastMediaFeatureWorkSavedBytes) }()
+        case 85: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastImageFeatureCacheHits) }()
+        case 86: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastImageFeatureCacheMisses) }()
+        case 87: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastImageFeatureEncoderCallsSaved) }()
+        case 88: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastImageFeatureWorkSavedBytes) }()
         default: break
         }
       }
@@ -1797,6 +1869,33 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
       if _storage._lastFamilyFastPathOverrideCount != 0 {
         try visitor.visitSingularUInt64Field(value: _storage._lastFamilyFastPathOverrideCount, fieldNumber: 79)
       }
+      if _storage._lastCachedPromptTokens != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastCachedPromptTokens, fieldNumber: 80)
+      }
+      if _storage._lastMediaFeatureCacheHits != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastMediaFeatureCacheHits, fieldNumber: 81)
+      }
+      if _storage._lastMediaFeatureCacheMisses != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastMediaFeatureCacheMisses, fieldNumber: 82)
+      }
+      if _storage._lastMediaFeatureEncoderCallsSaved != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastMediaFeatureEncoderCallsSaved, fieldNumber: 83)
+      }
+      if _storage._lastMediaFeatureWorkSavedBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastMediaFeatureWorkSavedBytes, fieldNumber: 84)
+      }
+      if _storage._lastImageFeatureCacheHits != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastImageFeatureCacheHits, fieldNumber: 85)
+      }
+      if _storage._lastImageFeatureCacheMisses != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastImageFeatureCacheMisses, fieldNumber: 86)
+      }
+      if _storage._lastImageFeatureEncoderCallsSaved != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastImageFeatureEncoderCallsSaved, fieldNumber: 87)
+      }
+      if _storage._lastImageFeatureWorkSavedBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._lastImageFeatureWorkSavedBytes, fieldNumber: 88)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1885,6 +1984,15 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
         if _storage._lastHybridStatePatchMode != rhs_storage._lastHybridStatePatchMode {return false}
         if _storage._lastHybridStateAdvanceCount != rhs_storage._lastHybridStateAdvanceCount {return false}
         if _storage._lastFamilyFastPathOverrideCount != rhs_storage._lastFamilyFastPathOverrideCount {return false}
+        if _storage._lastCachedPromptTokens != rhs_storage._lastCachedPromptTokens {return false}
+        if _storage._lastMediaFeatureCacheHits != rhs_storage._lastMediaFeatureCacheHits {return false}
+        if _storage._lastMediaFeatureCacheMisses != rhs_storage._lastMediaFeatureCacheMisses {return false}
+        if _storage._lastMediaFeatureEncoderCallsSaved != rhs_storage._lastMediaFeatureEncoderCallsSaved {return false}
+        if _storage._lastMediaFeatureWorkSavedBytes != rhs_storage._lastMediaFeatureWorkSavedBytes {return false}
+        if _storage._lastImageFeatureCacheHits != rhs_storage._lastImageFeatureCacheHits {return false}
+        if _storage._lastImageFeatureCacheMisses != rhs_storage._lastImageFeatureCacheMisses {return false}
+        if _storage._lastImageFeatureEncoderCallsSaved != rhs_storage._lastImageFeatureEncoderCallsSaved {return false}
+        if _storage._lastImageFeatureWorkSavedBytes != rhs_storage._lastImageFeatureWorkSavedBytes {return false}
         return true
       }
       if !storagesAreEqual {return false}

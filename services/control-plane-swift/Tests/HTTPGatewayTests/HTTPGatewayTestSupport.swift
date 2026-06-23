@@ -36,7 +36,12 @@ func makeUsageEvent(
     requestID: String,
     seq: UInt64,
     promptTokens: UInt32,
-    completionTokens: UInt32
+    completionTokens: UInt32,
+    cachedPromptTokens: UInt32 = 0,
+    mediaFeatureCacheHits: UInt64 = 0,
+    mediaFeatureCacheMisses: UInt64 = 0,
+    mediaFeatureEncoderCallsSaved: UInt64 = 0,
+    mediaFeatureWorkSavedBytes: UInt64 = 0
 ) -> Melix_Worker_V1_ExecuteEvent {
     var event = Melix_Worker_V1_ExecuteEvent()
     event.requestID = requestID
@@ -45,6 +50,11 @@ func makeUsageEvent(
     event.usageDelta = Melix_Worker_V1_UsageDelta()
     event.usageDelta.promptTokens = promptTokens
     event.usageDelta.completionTokens = completionTokens
+    event.usageDelta.cachedPromptTokens = cachedPromptTokens
+    event.usageDelta.mediaFeatureCacheHits = mediaFeatureCacheHits
+    event.usageDelta.mediaFeatureCacheMisses = mediaFeatureCacheMisses
+    event.usageDelta.mediaFeatureEncoderCallsSaved = mediaFeatureEncoderCallsSaved
+    event.usageDelta.mediaFeatureWorkSavedBytes = mediaFeatureWorkSavedBytes
     return event
 }
 

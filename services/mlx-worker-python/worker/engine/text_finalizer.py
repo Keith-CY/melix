@@ -7,6 +7,11 @@ from dataclasses import dataclass
 class TextFinalizationUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cached_prompt_tokens: int = 0
+    media_feature_cache_hits: int = 0
+    media_feature_cache_misses: int = 0
+    media_feature_encoder_calls_saved: int = 0
+    media_feature_work_saved_bytes: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -35,6 +40,19 @@ class TextFinalizationReceipt:
             "usage_prompt_tokens": str(self.usage.prompt_tokens),
             "usage_completion_tokens": str(self.usage.completion_tokens),
             "usage_total_tokens": str(self.usage.total_tokens),
+            "usage_cached_prompt_tokens": str(self.usage.cached_prompt_tokens),
+            "usage_media_feature_cache_hits": str(self.usage.media_feature_cache_hits),
+            "usage_media_feature_cache_misses": str(self.usage.media_feature_cache_misses),
+            "usage_media_feature_encoder_calls_saved": str(
+                self.usage.media_feature_encoder_calls_saved
+            ),
+            "usage_media_feature_work_saved_bytes": str(self.usage.media_feature_work_saved_bytes),
+            "usage_image_feature_cache_hits": str(self.usage.media_feature_cache_hits),
+            "usage_image_feature_cache_misses": str(self.usage.media_feature_cache_misses),
+            "usage_image_feature_encoder_calls_saved": str(
+                self.usage.media_feature_encoder_calls_saved
+            ),
+            "usage_image_feature_work_saved_bytes": str(self.usage.media_feature_work_saved_bytes),
             "usage_trailer_emitted": _bool_text(self.usage_trailer_emitted),
             "reasoning_finalized": _bool_text(self.reasoning_finalized),
             "tool_calls_finalized": _bool_text(self.tool_calls_finalized),

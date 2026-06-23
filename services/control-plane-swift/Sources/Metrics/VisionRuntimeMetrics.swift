@@ -114,6 +114,42 @@ func recordPythonVLMRuntimeProbeMetrics(
         forKey: "vision.family_fast_path_override_count"
     )
     await metricsStore.set(
+        Double(stats.lastCachedPromptTokens),
+        forKey: "vision.cached_prompt_tokens"
+    )
+    await metricsStore.set(
+        Double(stats.lastMediaFeatureCacheHits),
+        forKey: "vision.media_feature_cache_hits"
+    )
+    await metricsStore.set(
+        Double(stats.lastMediaFeatureCacheMisses),
+        forKey: "vision.media_feature_cache_misses"
+    )
+    await metricsStore.set(
+        Double(stats.lastMediaFeatureEncoderCallsSaved),
+        forKey: "vision.media_feature_encoder_calls_saved"
+    )
+    await metricsStore.set(
+        Double(stats.lastMediaFeatureWorkSavedBytes),
+        forKey: "vision.media_feature_work_saved_bytes"
+    )
+    await metricsStore.set(
+        Double(stats.lastImageFeatureCacheHits),
+        forKey: "vision.image_feature_cache_hits"
+    )
+    await metricsStore.set(
+        Double(stats.lastImageFeatureCacheMisses),
+        forKey: "vision.image_feature_cache_misses"
+    )
+    await metricsStore.set(
+        Double(stats.lastImageFeatureEncoderCallsSaved),
+        forKey: "vision.image_feature_encoder_calls_saved"
+    )
+    await metricsStore.set(
+        Double(stats.lastImageFeatureWorkSavedBytes),
+        forKey: "vision.image_feature_work_saved_bytes"
+    )
+    await metricsStore.set(
         Double(stats.textBatchGeneratorSubmittedRequestCount),
         forKey: "vision.text_batch_generator.submitted_request_count"
     )

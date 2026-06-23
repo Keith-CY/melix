@@ -4919,7 +4919,17 @@ struct OpenAIHandlerTests {
         let workerClient = ScriptedWorkerClient(events: [
             makeTokenEvent(requestID: "req-json", seq: 1, text: "Hel"),
             makeTokenEvent(requestID: "req-json", seq: 2, text: "lo"),
-            makeUsageEvent(requestID: "req-json", seq: 3, promptTokens: 1, completionTokens: 2),
+            makeUsageEvent(
+                requestID: "req-json",
+                seq: 3,
+                promptTokens: 1,
+                completionTokens: 2,
+                cachedPromptTokens: 4,
+                mediaFeatureCacheHits: 2,
+                mediaFeatureCacheMisses: 1,
+                mediaFeatureEncoderCallsSaved: 2,
+                mediaFeatureWorkSavedBytes: 1024
+            ),
             makeCompletedEvent(requestID: "req-json", seq: 4, finishReason: "stop", assistantText: "Hello"),
         ])
         let coordinator = RequestCoordinator(
@@ -4963,6 +4973,9 @@ struct OpenAIHandlerTests {
         let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
         let message = try #require(choice["message"] as? [String: Any])
         let usage = try #require(payload["usage"] as? [String: Any])
+        let promptTokensDetails = try #require(usage["prompt_tokens_details"] as? [String: Any])
+        let mediaFeatureCache = try #require(usage["media_feature_cache"] as? [String: Any])
+        let imageFeatureCache = try #require(usage["image_feature_cache"] as? [String: Any])
         let metrics = await metricsStore.snapshot()
 
         #expect(response.statusCode == 200)
@@ -4977,6 +4990,12 @@ struct OpenAIHandlerTests {
         #expect(usage["prompt_tokens"] as? Int == 1)
         #expect(usage["completion_tokens"] as? Int == 2)
         #expect(usage["total_tokens"] as? Int == 3)
+        #expect(promptTokensDetails["cached_tokens"] as? Int == 4)
+        #expect(mediaFeatureCache["hits"] as? Int == 2)
+        #expect(mediaFeatureCache["misses"] as? Int == 1)
+        #expect(mediaFeatureCache["encoder_calls_saved"] as? Int == 2)
+        #expect(mediaFeatureCache["work_saved_bytes"] as? Int == 1024)
+        #expect(imageFeatureCache["hits"] as? Int == 2)
         #expect(request.stream)
         #expect(request.returnUsage)
         #expect(request.execution.ext["melix.stream.include_usage"] == "true")
@@ -6706,6 +6725,15 @@ struct OpenAIHandlerTests {
             response.stats.lastMultimodalDecodeMode = "native_quantized"
             response.stats.lastMultimodalFallbackReason = ""
             response.stats.lastMultimodalDecodeSyncMode = "executor_stream"
+            response.stats.lastCachedPromptTokens = 0
+            response.stats.lastMediaFeatureCacheHits = 3
+            response.stats.lastMediaFeatureCacheMisses = 1
+            response.stats.lastMediaFeatureEncoderCallsSaved = 3
+            response.stats.lastMediaFeatureWorkSavedBytes = 4096
+            response.stats.lastImageFeatureCacheHits = 3
+            response.stats.lastImageFeatureCacheMisses = 1
+            response.stats.lastImageFeatureEncoderCallsSaved = 3
+            response.stats.lastImageFeatureWorkSavedBytes = 4096
             return response
         }()
         let vlmClient = ScriptedWorkerClient(
@@ -6821,6 +6849,15 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["vision.multimodal_decode_mode_code", default: -1] == 3)
         #expect(metrics.values["vision.multimodal_fallback_reason_code", default: -1] == 0)
         #expect(metrics.values["vision.multimodal_decode_sync_mode_code", default: -1] == 1)
+        #expect(metrics.values["vision.cached_prompt_tokens", default: -1] == 0)
+        #expect(metrics.values["vision.media_feature_cache_hits", default: -1] == 3)
+        #expect(metrics.values["vision.media_feature_cache_misses", default: -1] == 1)
+        #expect(metrics.values["vision.media_feature_encoder_calls_saved", default: -1] == 3)
+        #expect(metrics.values["vision.media_feature_work_saved_bytes", default: -1] == 4096)
+        #expect(metrics.values["vision.image_feature_cache_hits", default: -1] == 3)
+        #expect(metrics.values["vision.image_feature_cache_misses", default: -1] == 1)
+        #expect(metrics.values["vision.image_feature_encoder_calls_saved", default: -1] == 3)
+        #expect(metrics.values["vision.image_feature_work_saved_bytes", default: -1] == 4096)
         #expect(metrics.values["vision.text_batch_generator.step_count", default: -1] == 0)
     }
 

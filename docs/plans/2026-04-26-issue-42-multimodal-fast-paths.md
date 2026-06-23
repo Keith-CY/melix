@@ -417,6 +417,17 @@ Executable unit issues:
   stable `audio_feature_reuse_unsupported` reason instead of entering the image
   feature cache. Cross-surface hit/miss/work-saved counter consistency remains
   in Unit 3.1.3 (#1458).
+- Unit 3.1.3 promotes cache reuse counters from runtime-only probe fields to
+  shared request and diagnostics receipts. Worker `UsageDelta` emits
+  `cached_prompt_tokens`, `media_feature_cache_hits`,
+  `media_feature_cache_misses`, `media_feature_encoder_calls_saved`, and
+  `media_feature_work_saved_bytes` for both streaming and non-streaming chat
+  completions. The same counters are mirrored through runtime stats, server
+  `vision.*` metrics, benchmark metrics, and text finalizer parser metrics.
+  Existing `image_feature_*` names remain available as compatibility aliases
+  while `media_feature_*` is the cross-surface contract. Missing probe sentinel
+  values such as `-1` must be clamped to zero before aggregate hit/miss or
+  work-saved totals are computed.
 
 ## Verification Policy
 

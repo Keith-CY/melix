@@ -101,6 +101,20 @@ def test_text_native_mtp_parser_metrics_fast_paths_empty_events() -> None:
     engine_core_module._apply_prompt_context_receipt_metrics(metrics, object())
     assert metrics == {}
 
+    class BrokenProbeRuntime:
+        def last_probe_snapshot(self) -> object:
+            raise RuntimeError("probe failed")
+
+    assert engine_core_module._non_negative_int("invalid") == 0
+    assert engine_core_module._cached_prompt_tokens_from_event(None) == 0
+    assert engine_core_module._media_feature_usage_from_probe(None) == {
+        "media_feature_cache_hits": 0,
+        "media_feature_cache_misses": 0,
+        "media_feature_encoder_calls_saved": 0,
+        "media_feature_work_saved_bytes": 0,
+    }
+    assert engine_core_module._last_media_feature_probe(BrokenProbeRuntime(), "vlm") is None
+
 
 def test_text_native_mtp_parser_metrics_preserves_speculative_and_timing_values() -> None:
     metrics = engine_core_module._text_native_mtp_parser_metrics(
@@ -311,6 +325,10 @@ class DecodeThroughputVLMRuntime:
             preprocess_input_bytes=0,
             preprocess_peak_memory_bytes=0,
             first_token_latency_ms=0.0,
+            image_feature_cache_hits=4,
+            image_feature_cache_misses=1,
+            image_feature_encoder_calls_saved=4,
+            image_feature_work_saved_bytes=2048,
         )
 
     def prefill(self, request_id, loaded_model, messages, execution_ext=None):
@@ -338,6 +356,7 @@ class DecodeThroughputVLMRuntime:
             text="vision",
             prompt_tokens=9,
             completion_tokens=1,
+            recovered_prefix_tokens=5,
             prompt_tps=88.5,
             generation_tps=17.25,
             finish_reason="stop",
@@ -420,8 +439,9 @@ class AccelerationCapturingRuntime:
 class UsageCountingRuntime:
     runtime_name = "fake-usage-counting-runtime"
 
-    def __init__(self, *, prompt_tokens: int = 0) -> None:
+    def __init__(self, *, prompt_tokens: int = 0, recovered_prefix_tokens: int | None = None) -> None:
         self.prompt_tokens = prompt_tokens
+        self.recovered_prefix_tokens = recovered_prefix_tokens
         self.prompt_token_count_calls = 0
         self.execution_exts: list[dict[str, str]] = []
 
@@ -454,9 +474,9 @@ class UsageCountingRuntime:
             text="counted",
             prompt_tokens=self.prompt_tokens,
             completion_tokens=1,
+            recovered_prefix_tokens=self.recovered_prefix_tokens,
             finish_reason="stop",
         )
-
 
 class AttentionBudgetFailingRuntime:
     runtime_name = "fake-attention-budget-runtime"
@@ -853,14 +873,21 @@ def test_sampling_with_resolved_stop_clones_when_stop_sequences_change() -> None
 
 
 def test_generate_usage_reuses_runtime_event_prompt_tokens_without_fallback_count() -> None:
-    runtime = UsageCountingRuntime(prompt_tokens=7)
+    runtime = UsageCountingRuntime(prompt_tokens=7, recovered_prefix_tokens=64)
     inference_service, model_handle = build_usage_counting_services(runtime)
 
     events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None))
 
     usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
+    completed = next(event.completed for event in events if event.HasField("completed"))
     assert usage.prompt_tokens == 7
     assert usage.completion_tokens == 1
+    assert usage.cached_prompt_tokens == 64
+    assert usage.media_feature_cache_hits == 0
+    assert completed.parser_metrics["recovered_prefix_tokens"] == "64"
+    assert completed.parser_metrics["usage_cached_prompt_tokens"] == "64"
+    assert completed.parser_metrics["usage_media_feature_cache_hits"] == "0"
+    assert completed.parser_metrics["usage_media_feature_cache_misses"] == "0"
     assert runtime.prompt_token_count_calls == 0
 
 
@@ -873,6 +900,7 @@ def test_generate_usage_counts_prompt_tokens_only_for_missing_event_total() -> N
     usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
     assert usage.prompt_tokens == 1024
     assert usage.completion_tokens == 1
+    assert usage.cached_prompt_tokens == 0
     assert runtime.prompt_token_count_calls == 1
 
 
@@ -981,6 +1009,56 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
     assert usage.prompt_tokens == 5
     assert usage.completion_tokens == 2
+
+    decode_registry = WorkerRegistry(
+        vlm_runtime=DecodeThroughputVLMRuntime(),  # type: ignore[arg-type]
+        model_catalog=WorkerModelCatalog(),
+    )
+    decode_runtime_service = WorkerRuntimeService(decode_registry)
+    decode_inference_service = WorkerInferenceService(decode_registry)
+    decode_load_response = decode_runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_vlm_model()),
+        context=None,
+    )
+    prefill = decode_inference_service.Prefill(
+        inference_pb2.PrefillRequest(
+            execution=inference_pb2.ExecutionMetadata(
+                id=common_pb2.RequestIdentity(request_id="req-vlm-usage"),
+                model_handle=decode_load_response.model_handle,
+            ),
+            messages=[
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(text="Describe the image")],
+                )
+            ],
+            return_decode_handle=True,
+            prefill_step_size=16,
+        ),
+        context=None,
+    )
+    decode_events = list(
+        decode_inference_service.Decode(
+            inference_pb2.DecodeRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id="req-vlm-usage"),
+                    model_handle=decode_load_response.model_handle,
+                ),
+                decode_handle=prefill.decode_handle,
+                sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+                return_usage=True,
+            ),
+            context=None,
+        )
+    )
+    decode_usage = next(event.usage_delta for event in decode_events if event.HasField("usage_delta"))
+    assert decode_usage.prompt_tokens == 9
+    assert decode_usage.completion_tokens == 1
+    assert decode_usage.cached_prompt_tokens == 5
+    assert decode_usage.media_feature_cache_hits == 4
+    assert decode_usage.media_feature_cache_misses == 1
+    assert decode_usage.media_feature_encoder_calls_saved == 4
+    assert decode_usage.media_feature_work_saved_bytes == 2048
 
     tool_schema_request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(

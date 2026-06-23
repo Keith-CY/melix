@@ -32,6 +32,7 @@ from worker.model_ops.mlx_lm_runner import ActivationRequest, TrainingRequest
 from worker.model_ops.training_config import LoRATrainingConfig
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
+from worker import registry as registry_module
 from worker.registry import LoadedModel, MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_delay import configured_delay_ms
@@ -122,7 +123,11 @@ class StubAudioRuntime:
         self.runtime_name = runtime_name
 
     def load_model(self, model_spec):
-        return {"runtime_name": self.runtime_name, "model_id": model_spec.model_id}
+        return SimpleNamespace(
+            runtime_name=self.runtime_name,
+            model_id=model_spec.model_id,
+            load_latency_ms=12.5,
+        )
 
     def estimate_resident_bytes(self, model_spec):
         return 2048
@@ -349,6 +354,8 @@ def load_default_model(runtime_service: WorkerRuntimeService) -> str:
 
 
 def test_runtime_service_handles_failures_and_state_transitions() -> None:
+    assert registry_module._non_negative_int("invalid") == 0
+
     failing_registry, failing_runtime_service, _ = build_services(backend=FailingBackend())
     _ = failing_registry
 
@@ -644,6 +651,12 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert capabilities.cache.kv_quant_profiles == ["q4"]
     assert capabilities.execution.supports_continuous_batching is False
     assert capabilities.execution.supports_disk_streaming is False
+    assert registry.runtime_stats().l1_cache_bytes == 0
+    registry.vlm_runtime._cache_lookups = 1
+    registry.vlm_runtime._cache_l1_bytes = 32
+    assert registry.runtime_stats().l1_cache_bytes == 32
+    registry.vlm_runtime._cache_lookups = 0
+    registry.vlm_runtime._cache_l1_bytes = 0
 
     state = registry.start_request("req-1")
     assert registry.get_request("req-1") is state
@@ -735,6 +748,22 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
 
     assert registry.abort_request("req-stream") is False
     assert registry.unload_model(stream_loaded.handle) is True
+
+    audio_registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=FakeBackend()),
+        transcription_runtime=StubAudioRuntime("deterministic-transcription"),
+        model_catalog=WorkerModelCatalog(),
+    )
+    audio_loaded = audio_registry.load_model(WorkerModelCatalog.dev_transcription_model())
+    audio_stats = audio_registry.runtime_stats()
+    assert audio_loaded.runtime_model.load_latency_ms == 12.5
+    assert audio_stats.last_audio_model_load_latency_ms == 12.5
+    audio_registry.record_audio_model_load_probe(7.5)
+    audio_registry.increment_audio_backend_unavailable()
+    audio_stats = audio_registry.runtime_stats()
+    assert audio_stats.last_audio_model_load_latency_ms == 7.5
+    assert audio_stats.last_audio_backend_unavailable_count == 1
+    assert audio_registry.unload_model(audio_loaded.handle) is True
 
     pending_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
     direct_loaded = registry.load_model(WorkerModelCatalog.dev_text_model())
@@ -871,6 +900,10 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
             multimodal_decode_mode="text_only_batch_generator",
             multimodal_fallback_reason="",
             multimodal_decode_sync_mode="executor_batch_generator",
+            image_feature_cache_hits=5,
+            image_feature_cache_misses=2,
+            image_feature_encoder_calls_saved=5,
+            image_feature_work_saved_bytes=8192,
             hybrid_state_patch_mode="family_scoped",
             hybrid_state_advance_count=42,
             family_fast_path_override_count=1,
@@ -918,6 +951,15 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert vision_stats.last_multimodal_decode_mode == "text_only_batch_generator"
     assert vision_stats.last_multimodal_fallback_reason == ""
     assert vision_stats.last_multimodal_decode_sync_mode == "executor_batch_generator"
+    assert vision_stats.last_cached_prompt_tokens == 0
+    assert vision_stats.last_media_feature_cache_hits == 5
+    assert vision_stats.last_media_feature_cache_misses == 2
+    assert vision_stats.last_media_feature_encoder_calls_saved == 5
+    assert vision_stats.last_media_feature_work_saved_bytes == 8192
+    assert vision_stats.last_image_feature_cache_hits == 5
+    assert vision_stats.last_image_feature_cache_misses == 2
+    assert vision_stats.last_image_feature_encoder_calls_saved == 5
+    assert vision_stats.last_image_feature_work_saved_bytes == 8192
     assert vision_stats.last_hybrid_state_patch_mode == "family_scoped"
     assert vision_stats.last_hybrid_state_advance_count == 42
     assert vision_stats.last_family_fast_path_override_count == 1
