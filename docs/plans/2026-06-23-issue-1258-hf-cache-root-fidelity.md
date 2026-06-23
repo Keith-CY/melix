@@ -26,6 +26,8 @@ In scope:
   is supplied, including roots that do not exist yet.
 - Pass the resolved cache root to `snapshot_download(cache_dir=...)`.
 - Record `melix.effective_hf_cache_root` in the download receipt `ext`.
+- Reuse the same resolved cache root for `snapshot_download` and the terminal receipt so mutable
+  environment state cannot make the receipt drift from the actual download cache.
 - Use the same effective cache root as the implicit Hugging Face registry root so detection and
   load metadata point at the operator-selected cache.
 - Preserve the default cache root when no explicit cache root or environment override exists.
@@ -50,9 +52,10 @@ Focused commands:
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --project services/mlx-worker-python --extra mlx pytest -q \
   services/mlx-worker-python/tests/test_download_pipeline_unit.py::test_managed_hub_import_honors_explicit_hf_cache_root \
   services/mlx-worker-python/tests/test_download_pipeline_unit.py::test_managed_hub_import_honors_hf_home_environment \
+  services/mlx-worker-python/tests/test_download_pipeline_unit.py::test_managed_hub_import_receipt_uses_download_cache_root_when_environment_changes \
   services/mlx-worker-python/tests/test_download_pipeline_unit.py::test_managed_hub_cache_root_honors_request_hf_home \
   services/mlx-worker-python/tests/test_download_pipeline_unit.py::test_managed_hub_cache_root_honors_huggingface_hub_cache_environment \
-  services/mlx-worker-python/tests/test_download_pipeline_unit.py::test_managed_hub_cache_root_ignores_missing_huggingface_environment \
+  services/mlx-worker-python/tests/test_download_pipeline_unit.py::test_managed_hub_cache_root_honors_missing_huggingface_environment \
   services/mlx-worker-python/tests/test_model_registry_catalog.py::test_registry_snapshot_reuses_hf_cache_config_payload
 ```
 
@@ -62,6 +65,7 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --projec
 - Managed Hub imports with `HF_HOME` and no request override call `snapshot_download` with
   `<HF_HOME>/hub`.
 - The terminal receipt records `melix.effective_hf_cache_root`.
+- The terminal receipt records the same effective cache root that was passed to the download call.
 - Registry discovery uses `HUGGINGFACE_HUB_CACHE` or `<HF_HOME>/hub` as the implicit Hugging Face
   cache root and reports missing configured roots as inaccessible.
 - Default behavior remains `~/.cache/huggingface/hub` when no cache root is configured.

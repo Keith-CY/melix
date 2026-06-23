@@ -785,6 +785,48 @@ def test_managed_hub_import_honors_hf_home_environment(
     assert payload["ext"]["melix.effective_hf_cache_root"] == str((hf_home / "hub").resolve())
 
 
+def test_managed_hub_import_receipt_uses_download_cache_root_when_environment_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pipeline = DownloadPipeline()
+    hf_home = tmp_path / "hf-home"
+    changed_hf_home = tmp_path / "changed-hf-home"
+    expected_cache_root = hf_home / "hub"
+    snapshot_dir = expected_cache_root / "models--mlx-community--demo" / "snapshots" / "main"
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "config.json").write_text("{}", encoding="utf-8")
+    (snapshot_dir / "weights.safetensors").write_bytes(b"weights")
+    observed_kwargs: dict[str, object] = {}
+
+    fake_hub = types.ModuleType("huggingface_hub")
+
+    def snapshot_download(**kwargs: object) -> str:
+        observed_kwargs.update(kwargs)
+        monkeypatch.setenv("HF_HOME", str(changed_hf_home))
+        return str(snapshot_dir)
+
+    fake_hub.snapshot_download = snapshot_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+    monkeypatch.delenv("HUGGINGFACE_HUB_CACHE", raising=False)
+    monkeypatch.setenv("HF_HOME", str(hf_home))
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "melix.managed_import": "true",
+            "melix.source_kind": "hub_repo",
+            "melix.hf_repo_id": "mlx-community/demo",
+            "melix.hf_revision": "main",
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-hf-home-change", output_dir=tmp_path / "output")
+
+    payload = json.loads(result.snapshots[-1].manifest_json)
+    assert observed_kwargs["cache_dir"] == str(expected_cache_root.resolve())
+    assert payload["ext"]["melix.effective_hf_cache_root"] == str(expected_cache_root.resolve())
+
+
 def test_managed_hub_cache_root_honors_request_hf_home(tmp_path: Path) -> None:
     hf_home = tmp_path / "request-hf-home"
 
