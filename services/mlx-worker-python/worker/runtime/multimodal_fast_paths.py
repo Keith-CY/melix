@@ -32,6 +32,7 @@ MULTIMODAL_DECODE_BASELINE = "baseline"
 MULTIMODAL_DECODE_SINGLE_STREAM = "single_stream"
 MULTIMODAL_DECODE_IMAGE_CACHE_REUSE = "image_cache_reuse"
 MULTIMODAL_DECODE_NATIVE_QUANTIZED = "native_quantized"
+MULTIMODAL_DECODE_IMAGE_BATCH1_STEP_ADMISSION = "image_batch1_step_admission"
 MULTIMODAL_DECODE_FALLBACK = "fallback"
 
 MULTIMODAL_LOAD_NATIVE_QUANTIZED = "native_quantized"
@@ -113,6 +114,7 @@ class MultimodalFastPathDecision:
     multimodal_fallback_reason: str
     multimodal_decode_sync_mode: str
     multi_image_scatter_mode: str
+    image_batch1_step_admission_reason: str
     quantized_load_mode: str
     quantized_load_fallback_reason: str
     hybrid_state_patch_mode: str
@@ -132,6 +134,7 @@ _NO_MEDIA_FAST_PATH_DECISION = MultimodalFastPathDecision(
     multimodal_fallback_reason="no_media",
     multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
     multi_image_scatter_mode="none",
+    image_batch1_step_admission_reason="",
     quantized_load_mode=MULTIMODAL_LOAD_FALLBACK,
     quantized_load_fallback_reason="not_quantized",
     hybrid_state_patch_mode="not_applicable",
@@ -163,6 +166,10 @@ class MultimodalFastPathController:
         self,
         loaded_model: Any,
         prepared_request: PreparedVisionRequest,
+        *,
+        image_batch1_step_position_receipt: dict[str, object] | None = None,
+        image_batch1_step_supported: bool | None = None,
+        image_batch1_step_greedy_sampling: bool | None = None,
     ) -> MultimodalFastPathDecision:
         if not prepared_request.images and not prepared_request.videos:
             family_id = _loaded_metadata_value(loaded_model, "vision_family_id")
@@ -191,6 +198,7 @@ class MultimodalFastPathController:
                 multimodal_fallback_reason="no_media",
                 multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
                 multi_image_scatter_mode="none",
+                image_batch1_step_admission_reason="",
                 quantized_load_mode=quantized_load_mode,
                 quantized_load_fallback_reason=quantized_fallback,
                 hybrid_state_patch_mode="not_applicable",
@@ -282,6 +290,20 @@ class MultimodalFastPathController:
             decode_mode = MULTIMODAL_DECODE_NATIVE_QUANTIZED
         else:
             decode_mode = MULTIMODAL_DECODE_SINGLE_STREAM
+        sync_mode = "executor_stream"
+        fallback_reason = ""
+        image_batch1_step_admission_reason = self._image_batch1_step_admission_reason(
+            prepared_request=prepared_request,
+            position_receipt=image_batch1_step_position_receipt,
+            backend_step_supported=image_batch1_step_supported,
+            greedy_sampling=image_batch1_step_greedy_sampling,
+        )
+        if image_batch1_step_admission_reason is not None:
+            if image_batch1_step_admission_reason:
+                fallback_reason = image_batch1_step_admission_reason
+            else:
+                decode_mode = MULTIMODAL_DECODE_IMAGE_BATCH1_STEP_ADMISSION
+                sync_mode = "executor_step_admission"
         hybrid_state_patch_mode = (
             "family_scoped" if family_id in _HYBRID_STATE_PATCH_FAMILIES else "not_applicable"
         )
@@ -302,9 +324,10 @@ class MultimodalFastPathController:
             image_feature_work_saved_bytes=work_saved_bytes,
             image_feature_cache_fallback_reason="",
             multimodal_decode_mode=decode_mode,
-            multimodal_fallback_reason="",
-            multimodal_decode_sync_mode="executor_stream",
+            multimodal_fallback_reason=fallback_reason,
+            multimodal_decode_sync_mode=sync_mode,
             multi_image_scatter_mode="per_sample" if len(prepared_request.images) > 1 else "none",
+            image_batch1_step_admission_reason=image_batch1_step_admission_reason or "",
             quantized_load_mode=quantized_load_mode,
             quantized_load_fallback_reason=quantized_fallback,
             hybrid_state_patch_mode=hybrid_state_patch_mode,
@@ -581,6 +604,7 @@ class MultimodalFastPathController:
             multimodal_fallback_reason=reason,
             multimodal_decode_sync_mode=MULTIMODAL_DECODE_BASELINE,
             multi_image_scatter_mode="none",
+            image_batch1_step_admission_reason=reason,
             quantized_load_mode=quantized_load_mode,
             quantized_load_fallback_reason=quantized_load_fallback_reason,
             hybrid_state_patch_mode=hybrid_state_patch_mode,
@@ -606,6 +630,33 @@ class MultimodalFastPathController:
         if family_id not in _SUPPORTED_FAST_PATH_FAMILIES:
             return MULTIMODAL_LOAD_FALLBACK, "unsupported_family"
         return MULTIMODAL_LOAD_NATIVE_QUANTIZED, ""
+
+    @staticmethod
+    def _image_batch1_step_admission_reason(
+        *,
+        prepared_request: PreparedVisionRequest,
+        position_receipt: dict[str, object] | None,
+        backend_step_supported: bool | None,
+        greedy_sampling: bool | None,
+    ) -> str | None:
+        if backend_step_supported is None and greedy_sampling is None:
+            return None
+        if len(prepared_request.images) != 1 or prepared_request.videos:
+            return "image_batch1_step_media_route_ineligible"
+        if any(not str(getattr(image, "sha256_hex", "") or "") for image in prepared_request.images):
+            return "image_batch1_step_cache_receipt_missing"
+        if not isinstance(position_receipt, dict):
+            return "image_batch1_step_position_receipt_missing"
+        if (
+            str(position_receipt.get("vision_metadata_guard") or "") != "aligned"
+            or not bool(position_receipt.get("vision_metadata_reuse_allowed"))
+        ):
+            return "image_batch1_step_position_receipt_unaligned"
+        if greedy_sampling is False:
+            return "image_batch1_step_non_greedy_sampling"
+        if backend_step_supported is False:
+            return "image_batch1_step_backend_unsupported"
+        return ""
 
     def _image_feature_entry(
         self,
