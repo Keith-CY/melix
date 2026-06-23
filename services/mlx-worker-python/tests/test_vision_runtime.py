@@ -27,6 +27,7 @@ from worker.runtime.multimodal_preprocessing import (
     _path_from_uri,
     _prepare_image_part,
     prepare_vision_request,
+    rebuild_multimodal_hash,
 )
 from worker.runtime.token_counting import whitespace_token_count
 from worker.runtime.vision_family_adapters import ResolvedVisionFamilyConfig, resolve_vision_family_config
@@ -1857,6 +1858,33 @@ def test_prepare_vision_request_parses_each_image_uri_once(
     )
 
     assert [prepared.filename for prepared in request.images] == [image.name, image.name]
+    assert parse_calls == []
+
+    policy_request = prepare_vision_request(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Read this image."),
+                    common_pb2.MessagePart(
+                        image_uri=image.as_uri(),
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_URI,
+                            preprocessing_hints={"min_pixels": "1024"},
+                        ),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    assert policy_request.images[0].preprocessing_policy == {"min_pixels": 1024}
+    assert policy_request.preprocessing_policy_signature
+    assert (
+        rebuild_multimodal_hash(policy_request, policy_request.prompt_hash_hex)
+        == policy_request.multimodal_hash_hex
+    )
     assert parse_calls == []
 
     runtime = DeterministicVLMRuntime()

@@ -27,7 +27,14 @@ from worker.runtime.multimodal_position_receipts import (
     empty_hybrid_state_patch_receipt,
     empty_quantized_kv_mask_receipt,
 )
-from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
+from worker.runtime.multimodal_preprocessing import (
+    PreparedVisionRequest,
+    prepare_vision_request,
+)
+from worker.runtime.vlm_preprocessing_policy import (
+    empty_preprocessing_policy_receipt,
+    prepared_request_preprocessing_policy_receipt,
+)
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
 from worker.runtime.vision_family_adapters import (
@@ -91,6 +98,9 @@ class VisionProbeSnapshot:
     )
     hybrid_state_patch_receipt: dict[str, object] = field(
         default_factory=empty_hybrid_state_patch_receipt
+    )
+    preprocessing_policy_receipt: dict[str, object] = field(
+        default_factory=empty_preprocessing_policy_receipt
     )
     text_batch_generator_submitted_request_count: int = 0
     text_batch_generator_completed_request_count: int = 0
@@ -705,6 +715,9 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             position_metadata_receipt=position_metadata_receipt,
             quantized_kv_mask_receipt=empty_quantized_kv_mask_receipt(),
             hybrid_state_patch_receipt=hybrid_state_patch_receipt,
+            preprocessing_policy_receipt=prepared_request_preprocessing_policy_receipt(
+                prepared_request
+            ),
         )
 
     @staticmethod

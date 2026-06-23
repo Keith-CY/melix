@@ -418,6 +418,24 @@ Executable unit issues:
   feature cache. Cross-surface hit/miss/work-saved counter consistency remains
   in Unit 3.1.3 (#1458).
 
+- Unit 3.1.4 extends the real image-feature cache identity with the
+  request-scoped preprocessing policy carried by existing
+  `MediaMetadata.preprocessing_hints`. The worker normalizes supported pixel and
+  processor-layout controls before image processing: `min_pixels`,
+  `max_pixels`, `resized_height`, `resized_width`, `layout`, and
+  `input_data_format`. Unsupported preprocessing keys fail closed with a typed
+  preprocessing error before decode, so requests cannot silently fall back to a
+  text-only or default image-processing path. The normalized policy receipt is
+  included in the prepared vision request hash and every image-feature cache key;
+  the fast-path probe signature observes it through the prepared request hash.
+  Identical image bytes may hit only when the normalized preprocessing policy
+  also matches. Global `resize_shape` forwarding is only used when every image
+  declares the same explicit `resized_height` and `resized_width`; mixed
+  explicit/no-explicit resize requests stay on the backend default resize path
+  to avoid forcing a shape onto unhinted media. No protobuf schema change is
+  required for this slice because `MediaMetadata.preprocessing_hints` is already
+  the request-side extension point.
+
 ## Verification Policy
 
 Per milestone:
