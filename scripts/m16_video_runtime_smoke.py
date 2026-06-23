@@ -72,6 +72,37 @@ def _metric_value(snapshot: dict[str, object], key: str) -> float:
     return round(float(value), 2)
 
 
+def _assistant_delta_text(response_text: str) -> str:
+    content: list[str] = []
+    for raw_line in response_text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line.removeprefix("data:")
+        if payload.startswith(" "):
+            payload = payload[1:]
+        payload = payload.strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        choices = event.get("choices")
+        if not isinstance(choices, list):
+            continue
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            text = delta.get("content")
+            if isinstance(text, str):
+                content.append(text)
+    return "".join(content)
+
+
 def _video_chat_payload(
     *,
     reference: str | None = None,
@@ -192,12 +223,14 @@ def _capture_routing_scenario(stack: LiveMelixStack) -> dict[str, Any]:
     metrics_snapshot = read_metrics_export(stack.control_plane_metrics_path)
     text_response = text_body.decode("utf-8") if isinstance(text_body, bytes) else json.dumps(text_body)
     video_response = str(video_result["body"])
+    text_content = _assistant_delta_text(text_response)
+    video_content = _assistant_delta_text(video_response)
 
     return {
         "text_protection_success": text_status == 200
-        and "Echo: measure text under video load" in text_response
+        and "Echo: measure text under video load" in text_content
         and video_result["status"] == 200
-        and "Video content: routing-smoke.mp4" in video_response,
+        and "Video content: routing-smoke.mp4" in video_content,
         "video_request_latency_ms": video_result["latency_ms"],
         "text_request_latency_ms": round(text_elapsed_ms, 2),
         "scheduler_text_ttft_under_multimodal_ms": _metric_value(
@@ -208,6 +241,8 @@ def _capture_routing_scenario(stack: LiveMelixStack) -> dict[str, Any]:
         ),
         "text_response_excerpt": text_response[:600],
         "video_response_excerpt": video_response[:600],
+        "text_content_excerpt": text_content[:600],
+        "video_content_excerpt": video_content[:600],
     }
 
 
