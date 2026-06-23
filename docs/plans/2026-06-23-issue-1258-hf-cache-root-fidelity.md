@@ -22,8 +22,8 @@ the effective root auditable.
 In scope:
 
 - Respect `melix.hf_cache_root` and `hf_cache_root` request metadata for managed Hub imports.
-- Respect existing process-level `HUGGINGFACE_HUB_CACHE` and `HF_HOME` roots when no
-  request-level cache root is supplied.
+- Respect process-level `HUGGINGFACE_HUB_CACHE` and `HF_HOME` roots when no request-level cache root
+  is supplied, including roots that do not exist yet.
 - Pass the resolved cache root to `snapshot_download(cache_dir=...)`.
 - Record `melix.effective_hf_cache_root` in the download receipt `ext`.
 - Use the same effective cache root as the implicit Hugging Face registry root so detection and
@@ -62,6 +62,6 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --projec
 - Managed Hub imports with `HF_HOME` and no request override call `snapshot_download` with
   `<HF_HOME>/hub`.
 - The terminal receipt records `melix.effective_hf_cache_root`.
-- Registry discovery uses an existing `HUGGINGFACE_HUB_CACHE` or `<HF_HOME>/hub` as the implicit
-  Hugging Face cache root when present.
+- Registry discovery uses `HUGGINGFACE_HUB_CACHE` or `<HF_HOME>/hub` as the implicit Hugging Face
+  cache root and reports missing configured roots as inaccessible.
 - Default behavior remains `~/.cache/huggingface/hub` when no cache root is configured.

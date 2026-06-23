@@ -1451,6 +1451,31 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
 
     assert [root.root_path for root in hf_home_registry_snapshot.roots] == [str((hf_home / "hub").resolve())]
     assert [model.model_id for model in hf_home_registry_snapshot.models] == ["mlx-community/HomeTiny"]
+
+    missing_operator_cache = tmp_path / "missing-operator-hf-cache"
+    missing_operator_catalog = WorkerModelCatalog(
+        environment={
+            "HOME": str(tmp_path / "missing-operator-home"),
+            "HUGGINGFACE_HUB_CACHE": str(missing_operator_cache),
+        }
+    )
+
+    missing_operator_snapshot = missing_operator_catalog.registry_snapshot()
+
+    assert [root.root_path for root in missing_operator_snapshot.roots] == [str(missing_operator_cache.resolve())]
+    assert missing_operator_snapshot.roots[0].accessible is False
+    assert missing_operator_snapshot.roots[0].error_code == "not_found"
+    assert list(missing_operator_snapshot.models) == []
+
+    missing_hf_home = tmp_path / "missing-hf-home"
+    missing_hf_home_catalog = WorkerModelCatalog(environment={"HF_HOME": str(missing_hf_home)})
+
+    missing_hf_home_snapshot = missing_hf_home_catalog.registry_snapshot()
+
+    assert [root.root_path for root in missing_hf_home_snapshot.roots] == [str((missing_hf_home / "hub").resolve())]
+    assert missing_hf_home_snapshot.roots[0].accessible is False
+    assert missing_hf_home_snapshot.roots[0].error_code == "not_found"
+    assert list(missing_hf_home_snapshot.models) == []
     assert (
         catalog_module._gemma4_qat_source_model(
             "base_model:\nbase_model: google/gemma-4-E2B-it-qat-q4_0-unquantized",

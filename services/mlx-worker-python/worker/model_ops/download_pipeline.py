@@ -1877,14 +1877,10 @@ class DownloadPipeline:
             return (Path(hf_home).expanduser() / "hub").resolve()
         env_cache = os.environ.get("HUGGINGFACE_HUB_CACHE", "").strip()
         if env_cache:
-            resolved = Path(env_cache).expanduser().resolve()
-            if resolved.is_dir():
-                return resolved
+            return Path(env_cache).expanduser().resolve()
         env_hf_home = os.environ.get("HF_HOME", "").strip()
         if env_hf_home:
-            resolved = (Path(env_hf_home).expanduser() / "hub").resolve()
-            if resolved.is_dir():
-                return resolved
+            return (Path(env_hf_home).expanduser() / "hub").resolve()
         return DownloadPipeline._default_huggingface_cache_root()
 
     @staticmethod

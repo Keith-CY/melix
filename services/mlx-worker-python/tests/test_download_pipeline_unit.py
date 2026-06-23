@@ -803,17 +803,16 @@ def test_managed_hub_cache_root_honors_huggingface_hub_cache_environment(
     assert DownloadPipeline._huggingface_cache_root({}) == cache_root.resolve()
 
 
-def test_managed_hub_cache_root_ignores_missing_huggingface_environment(
+def test_managed_hub_cache_root_honors_missing_huggingface_environment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", str(tmp_path / "missing-hub-cache"))
+    missing_cache_root = tmp_path / "missing-hub-cache"
+    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", str(missing_cache_root))
     monkeypatch.setenv("HF_HOME", str(tmp_path / "missing-hf-home"))
 
-    assert DownloadPipeline._huggingface_cache_root({}) == (
-        tmp_path / "home" / ".cache" / "huggingface" / "hub"
-    ).resolve()
+    assert DownloadPipeline._huggingface_cache_root({}) == missing_cache_root.resolve()
 
 
 def test_strict_managed_download_requires_digest_before_materializing_artifact(tmp_path: Path) -> None:
