@@ -2283,6 +2283,16 @@ class WorkerModelCatalog:
         return self._normalized_registry_roots(requested_roots)
 
     def _default_huggingface_cache_root(self) -> Path | None:
+        env_cache = self._environment.get("HUGGINGFACE_HUB_CACHE", "").strip()
+        if env_cache:
+            resolved = Path(env_cache).expanduser().resolve()
+            return resolved if resolved.is_dir() else None
+
+        env_hf_home = self._environment.get("HF_HOME", "").strip()
+        if env_hf_home:
+            resolved = (Path(env_hf_home).expanduser() / "hub").resolve()
+            return resolved if resolved.is_dir() else None
+
         if self._uses_explicit_environment and "HOME" not in self._environment:
             return None
         home = self._environment.get("HOME", "").strip()

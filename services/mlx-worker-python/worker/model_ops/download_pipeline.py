@@ -515,10 +515,11 @@ class DownloadPipeline:
                 message="huggingface_hub is required for managed hub imports.",
             ) from exc
 
+        cache_root = self._huggingface_cache_root(ext)
         kwargs: dict[str, object] = {
             "repo_id": repo_id,
             "revision": revision.strip() or None,
-            "cache_dir": os.fspath(self._default_huggingface_cache_root()),
+            "cache_dir": os.fspath(cache_root),
         }
         token = self._huggingface_token(ext)
         if token:
@@ -624,6 +625,7 @@ class DownloadPipeline:
                 "melix.source_locator": repo_id,
                 "melix.managed_import": "true",
                 "melix.model_path": str(runtime_model_path),
+                "melix.effective_hf_cache_root": str(self._huggingface_cache_root(ext)),
                 **draft_metadata,
             },
             "metrics": {
@@ -1860,6 +1862,30 @@ class DownloadPipeline:
     @staticmethod
     def _default_huggingface_cache_root() -> Path:
         return (Path.home() / ".cache" / "huggingface" / "hub").resolve()
+
+    @staticmethod
+    def _huggingface_cache_root(ext: dict[str, Any]) -> Path:
+        explicit = (
+            DownloadPipeline._ext_text(ext, "melix.hf_cache_root")
+            or DownloadPipeline._ext_text(ext, "hf_cache_root")
+            or DownloadPipeline._ext_text(ext, "HUGGINGFACE_HUB_CACHE")
+        )
+        if explicit:
+            return Path(explicit).expanduser().resolve()
+        hf_home = DownloadPipeline._ext_text(ext, "HF_HOME")
+        if hf_home:
+            return (Path(hf_home).expanduser() / "hub").resolve()
+        env_cache = os.environ.get("HUGGINGFACE_HUB_CACHE", "").strip()
+        if env_cache:
+            resolved = Path(env_cache).expanduser().resolve()
+            if resolved.is_dir():
+                return resolved
+        env_hf_home = os.environ.get("HF_HOME", "").strip()
+        if env_hf_home:
+            resolved = (Path(env_hf_home).expanduser() / "hub").resolve()
+            if resolved.is_dir():
+                return resolved
+        return DownloadPipeline._default_huggingface_cache_root()
 
     @staticmethod
     def _huggingface_token(ext: dict[str, Any]) -> str:

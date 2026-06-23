@@ -1424,6 +1424,33 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
         )
         == "google/gemma-4-E2B-it-qat-q4_0-unquantized"
     )
+
+    operator_cache = tmp_path / "operator-hf-cache"
+    operator_snapshot = operator_cache / "models--mlx-community--OperatorTiny" / "snapshots" / "abc123"
+    _write_model_config(operator_snapshot, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    _write_weights(operator_snapshot)
+    env_catalog = WorkerModelCatalog(
+        environment={
+            "HOME": str(tmp_path / "operator-home"),
+            "HUGGINGFACE_HUB_CACHE": str(operator_cache),
+        }
+    )
+
+    env_snapshot = env_catalog.registry_snapshot()
+
+    assert [root.root_path for root in env_snapshot.roots] == [str(operator_cache.resolve())]
+    assert [model.model_id for model in env_snapshot.models] == ["mlx-community/OperatorTiny"]
+
+    hf_home = tmp_path / "hf-home"
+    hf_home_snapshot = hf_home / "hub" / "models--mlx-community--HomeTiny" / "snapshots" / "abc123"
+    _write_model_config(hf_home_snapshot, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    _write_weights(hf_home_snapshot)
+    hf_home_catalog = WorkerModelCatalog(environment={"HF_HOME": str(hf_home)})
+
+    hf_home_registry_snapshot = hf_home_catalog.registry_snapshot()
+
+    assert [root.root_path for root in hf_home_registry_snapshot.roots] == [str((hf_home / "hub").resolve())]
+    assert [model.model_id for model in hf_home_registry_snapshot.models] == ["mlx-community/HomeTiny"]
     assert (
         catalog_module._gemma4_qat_source_model(
             "base_model:\nbase_model: google/gemma-4-E2B-it-qat-q4_0-unquantized",
