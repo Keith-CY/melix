@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import re
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
@@ -15,7 +13,6 @@ _TOKEN_ARGUMENTS = {
     "--huggingface-token",
     "--token",
 }
-_HF_TOKEN_PATTERN = re.compile(r"\bhf_[A-Za-z0-9][A-Za-z0-9_\-=]{5,}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,9 +278,6 @@ def _redacted_command(command: Sequence[str]) -> list[str]:
             else:
                 redacted.append(part)
                 redact_next = True
-            continue
-        if _HF_TOKEN_PATTERN.search(part):
-            redacted.append(_HF_TOKEN_PATTERN.sub("[REDACTED]", part))
             continue
         redacted.append(redact_log_text(part))
     return redacted

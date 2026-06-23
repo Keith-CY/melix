@@ -44,6 +44,21 @@ def test_redact_log_text_removes_common_token_assignments_and_hf_tokens() -> Non
     assert "hf_bare" not in redacted
 
 
+def test_redact_log_text_removes_prefixed_secret_assignments() -> None:
+    redacted = redact_log_text(
+        "DB_PASSWORD=db-secret STRIPE_API_KEY=sk-stripe-123 "
+        "custom_client_secret=client-secret"
+    )
+
+    assert redacted == (
+        "DB_PASSWORD=[REDACTED] STRIPE_API_KEY=[REDACTED] "
+        "custom_client_secret=[REDACTED]"
+    )
+    assert "db-secret" not in redacted
+    assert "sk-stripe" not in redacted
+    assert "client-secret" not in redacted
+
+
 def test_redact_log_text_preserves_safe_url_shape_and_trailing_punctuation() -> None:
     redacted = redact_log_text("GET https://example.test/v1/models.)")
 

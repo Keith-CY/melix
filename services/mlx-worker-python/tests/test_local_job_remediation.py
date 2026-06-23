@@ -97,6 +97,28 @@ def test_remediation_receipt_redacts_url_credentials_query_fragment_and_email() 
     assert "[REDACTED_EMAIL]" in receipt["redacted_log_excerpt"]
 
 
+def test_remediation_receipt_redacts_mixed_sensitive_command_argument() -> None:
+    receipt = local_job_remediation_receipt(
+        command=[
+            "melix",
+            "serve",
+            "https://alice:secret@example.test/models?token=hf_query_abcdef#frag hf_bare_abcdef",
+        ],
+        log_text="RuntimeError: failed",
+        policy=LocalJobRemediationPolicy(max_retries=1),
+        attempt_index=0,
+        outcome="blocked",
+    )
+
+    rendered = repr(receipt["command"])
+    assert "alice" not in rendered
+    assert "secret" not in rendered
+    assert "token" not in rendered
+    assert "hf_query" not in rendered
+    assert "hf_bare" not in rendered
+    assert "frag" not in rendered
+
+
 def test_retry_budget_dry_run_and_disabled_auto_remediation_stop_execution() -> None:
     log_text = "RuntimeError: CUDA out of memory. Tried to allocate 2.00 GiB"
 

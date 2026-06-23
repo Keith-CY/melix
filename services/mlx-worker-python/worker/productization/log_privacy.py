@@ -12,12 +12,12 @@ _EMAIL_PATTERN = re.compile(
 )
 _HF_TOKEN_PATTERN = re.compile(r"\bhf_[A-Za-z0-9][A-Za-z0-9_\-=]{5,}")
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
-    r"\b("
+    r"\b([A-Za-z0-9_]*(?:"
     r"HF_TOKEN|HUGGINGFACE_HUB_TOKEN|MELIX_HF_TOKEN|MELIX_HUGGINGFACE_TOKEN|"
     r"MELIX_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|"
     r"API_KEY|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN|SECRET_KEY|CLIENT_SECRET|"
     r"PASSWORD"
-    r")=([^\s]+)",
+    r"))=([^\s]+)",
     flags=re.IGNORECASE,
 )
 
