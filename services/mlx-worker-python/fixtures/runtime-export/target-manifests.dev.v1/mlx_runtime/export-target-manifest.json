@@ -1,0 +1,131 @@
+{
+  "schema_version": "melix.export_target_manifest.v1",
+  "export_id": "support-chat-export-v1",
+  "target_id": "support-chat-mlx-runtime",
+  "target_type": "EXPORT_TARGET_TYPE_MLX_RUNTIME",
+  "target_runtime": "mlx-lm",
+  "target_runtime_version": "0.27.0",
+  "workspace_project_id": "support-chat",
+  "workspace_manifest_path": "workspace-manifest.json",
+  "source_adapter_manifest_path": "jobs/train_lora/train_lora.adapter.json",
+  "source_derived_model_manifest_path": "jobs/activate_adapter/activate_adapter.derived_model.json",
+  "source_training_dataset_manifest_path": "dataset/20260624T000000Z/manifest.json",
+  "base_model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+  "base_model_revision": "main",
+  "adapter_id": "support-chat-adapter-v1",
+  "adapter_snapshot": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "activation_mode": "EXPORT_ACTIVATION_MODE_FUSED_DERIVED_MODEL",
+  "quantization": {
+    "quantization_profile_id": "mlx-q4",
+    "quantization_method": "mlx_lm_convert",
+    "weight_bits": 4,
+    "source_precision": "fp16",
+    "target_precision": "int4",
+    "kv_cache_quantization": "none",
+    "requires_requantization": false
+  },
+  "generated_files": [
+    {
+      "path": "artifacts/config.json",
+      "role": "EXPORT_TARGET_FILE_ROLE_MODEL_CONFIG",
+      "media_type": "application/json",
+      "byte_size": 2048,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "retention_class": "EXPORT_RETENTION_CLASS_REQUIRED",
+      "source_provenance": "derived_model:support-chat-derived-v1",
+      "redaction_class": "EXPORT_REDACTION_CLASS_PUBLIC_METADATA"
+    },
+    {
+      "path": "artifacts/model.safetensors",
+      "role": "EXPORT_TARGET_FILE_ROLE_MODEL_WEIGHTS",
+      "media_type": "application/octet-stream",
+      "byte_size": 4194304,
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "retention_class": "EXPORT_RETENTION_CLASS_REQUIRED",
+      "source_provenance": "derived_model:support-chat-derived-v1",
+      "redaction_class": "EXPORT_REDACTION_CLASS_RELATIVE_PATH"
+    }
+  ],
+  "required_files": [
+    {
+      "path": "artifacts/tokenizer.json",
+      "role": "EXPORT_TARGET_FILE_ROLE_TOKENIZER",
+      "media_type": "application/json",
+      "byte_size": 65536,
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "retention_class": "EXPORT_RETENTION_CLASS_REQUIRED",
+      "source_provenance": "base_model:mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+      "redaction_class": "EXPORT_REDACTION_CLASS_PUBLIC_METADATA"
+    }
+  ],
+  "intermediate_files": [
+    {
+      "path": "intermediates/merge.tmp.safetensors",
+      "role": "EXPORT_TARGET_FILE_ROLE_INTERMEDIATE",
+      "media_type": "application/octet-stream",
+      "byte_size": 524288,
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "retention_class": "EXPORT_RETENTION_CLASS_INTERMEDIATE",
+      "source_provenance": "export:support-chat-export-v1",
+      "redaction_class": "EXPORT_REDACTION_CLASS_RELATIVE_PATH"
+    }
+  ],
+  "runtime_requirements": {
+    "runtime_name": "mlx-lm",
+    "min_runtime_version": "0.27.0",
+    "local_runtime_required": true,
+    "runtime_binary_required": true,
+    "runtime_binary_name": "mlx_lm.generate",
+    "compatible_runtime_ids": ["mlx-lm", "melix-mlx-worker"],
+    "required_capabilities": ["local_path_preflight", "mlx_metadata", "bounded_generation"]
+  },
+  "verification_policy": {
+    "policy_id": "bounded-local-v1",
+    "metadata_check_required": true,
+    "load_check_required": true,
+    "generation_check_required": true,
+    "timeout_ms": 45000,
+    "preview_byte_limit": 4096,
+    "waiver_allowed": true,
+    "allowed_waiver_reasons": ["EXPORT_WAIVER_REASON_RUNTIME_INCOMPATIBLE_HOST"]
+  },
+  "verification_status": {
+    "state": "EXPORT_VERIFICATION_STATE_PENDING",
+    "metadata_check": "EXPORT_CHECK_STATUS_PENDING",
+    "load_check": "EXPORT_CHECK_STATUS_PENDING",
+    "generation_check": "EXPORT_CHECK_STATUS_PENDING",
+    "smoke_receipt_path": "smoke/smoke-receipt.json",
+    "diagnostics_receipt_path": "diagnostics/diagnostics-receipt.json"
+  },
+  "retention_policy": {
+    "policy_id": "runtime-export-retention-v1",
+    "required_default_decision": "EXPORT_RETENTION_DECISION_RETAIN",
+    "evidence_default_decision": "EXPORT_RETENTION_DECISION_RETAIN",
+    "runtime_log_default_decision": "EXPORT_RETENTION_DECISION_DELETE_AFTER_TTL",
+    "intermediate_default_decision": "EXPORT_RETENTION_DECISION_CLEANABLE",
+    "cache_default_decision": "EXPORT_RETENTION_DECISION_CLEANABLE",
+    "temporary_default_decision": "EXPORT_RETENTION_DECISION_DELETE_AFTER_SUCCESS",
+    "runtime_log_ttl_seconds": 604800
+  },
+  "diagnostic_policy": {
+    "policy_id": "runtime-export-diagnostics-v1",
+    "parser_policy_id": "mlx-runtime-log-v1",
+    "bounded_log_excerpt_bytes": 8192,
+    "required_diagnosis_codes": ["runtime_load_failed", "insufficient_memory", "runtime_timeout"]
+  },
+  "evidence": {
+    "export_report_path": "export-report.json",
+    "retention_report_path": "retention/retention-report.json",
+    "smoke_receipt_path": "smoke/smoke-receipt.json",
+    "diagnostics_receipt_path": "diagnostics/diagnostics-receipt.json",
+    "redaction_policy_id": "export-relative-paths-v1"
+  },
+  "metrics": {
+    "generated_file_count": 2,
+    "required_file_count": 1,
+    "intermediate_file_count": 1,
+    "artifact_byte_size": 4196352,
+    "required_byte_size": 65536,
+    "evidence_byte_size": 0
+  }
+}

@@ -47,7 +47,7 @@ The v1 contract represents these workspace artifact categories:
 | `WORKSPACE_ARTIFACT_TYPE_DATASET_VERSION` | Versioned training, evaluation, or benchmark dataset package manifests and sample roots. |
 | `WORKSPACE_ARTIFACT_TYPE_ADAPTER` | LoRA, QLoRA, DoRA, preference, or component-scoped adapter package manifests and weights. |
 | `WORKSPACE_ARTIFACT_TYPE_LOG` | Training, evaluation, export, or runtime logs that are kept as workspace evidence. |
-| `WORKSPACE_ARTIFACT_TYPE_EXPORT` | Adapter-only, merged model, runtime target, or future GGUF/Ollama/MLX export manifests. |
+| `WORKSPACE_ARTIFACT_TYPE_EXPORT` | Adapter-only, merged model, runtime target, GGUF/Ollama/MLX export manifests, and export target validation reports. |
 | `WORKSPACE_ARTIFACT_TYPE_REPORT` | Operator-facing or machine-readable benchmark, evaluation, training, or export reports. |
 | `WORKSPACE_ARTIFACT_TYPE_EVIDENCE_BUNDLE` | Release, compare, diagnostics, or run evidence bundles that support claims. |
 
