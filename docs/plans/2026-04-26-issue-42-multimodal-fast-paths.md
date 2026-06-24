@@ -519,6 +519,16 @@ Executable unit issues:
   `bridge_quantized_fallback_count`, and surface the same counts through the
   worker `RuntimeStats`, control-plane `vision.*` metrics, phase-6 acceptance
   report, benchmark samples, and focused supported/unsupported fixtures.
+- Unit 4.1.1 adds a verification-only speculative probe receipt for
+  media-bearing VLM requests behind `melix.vlm.speculative_probe.enabled` (or
+  `melix.multimodal.speculative_probe.enabled`). The probe runs before any
+  drafter load or target speculative decode when `ACCELERATION_MODE_SPECULATIVE_DECODE`
+  is requested, records the requested draft model, media counts, position/cache
+  alignment, and typed fallback reason, and then leaves generation on the
+  existing baseline path. If baseline fallback is disabled, the receipt is still
+  recorded before the typed runtime refusal. Unit 4.1.2 owns per-sequence
+  accepted/rejected token and rollback counters; Unit 4.1.3 owns full
+  single-request and concurrent parity fixtures.
 
 ## Verification Policy
 

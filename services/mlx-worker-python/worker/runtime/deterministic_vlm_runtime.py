@@ -31,6 +31,9 @@ from worker.runtime.multimodal_preprocessing import (
     PreparedVisionRequest,
     prepare_vision_request,
 )
+from worker.runtime.multimodal_speculative_probe import (
+    empty_speculative_probe_receipt,
+)
 from worker.runtime.vlm_preprocessing_policy import (
     empty_preprocessing_policy_receipt,
     prepared_request_preprocessing_policy_receipt,
@@ -110,6 +113,9 @@ class VisionProbeSnapshot:
     )
     preprocessing_policy_receipt: dict[str, object] = field(
         default_factory=empty_preprocessing_policy_receipt
+    )
+    speculative_probe_receipt: dict[str, object] = field(
+        default_factory=empty_speculative_probe_receipt
     )
     text_batch_generator_submitted_request_count: int = 0
     text_batch_generator_completed_request_count: int = 0

@@ -714,6 +714,26 @@ public nonisolated struct Melix_Worker_V1_RuntimeStats: @unchecked Sendable {
     set {_uniqueStorage()._crossShardMetadataFixupCount = newValue}
   }
 
+  public var speculativeProbeEnabledCount: UInt64 {
+    get {_storage._speculativeProbeEnabledCount}
+    set {_uniqueStorage()._speculativeProbeEnabledCount = newValue}
+  }
+
+  public var speculativeProbeFallbackCount: UInt64 {
+    get {_storage._speculativeProbeFallbackCount}
+    set {_uniqueStorage()._speculativeProbeFallbackCount = newValue}
+  }
+
+  public var speculativeProbePositionAlignedCount: UInt64 {
+    get {_storage._speculativeProbePositionAlignedCount}
+    set {_uniqueStorage()._speculativeProbePositionAlignedCount = newValue}
+  }
+
+  public var speculativeProbeCacheAlignedCount: UInt64 {
+    get {_storage._speculativeProbeCacheAlignedCount}
+    set {_uniqueStorage()._speculativeProbeCacheAlignedCount = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1344,7 +1364,7 @@ nonisolated extension Melix_Worker_V1_WarmupModelResponse: SwiftProtobuf.Message
 
 nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RuntimeStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0\u{3}last_video_effective_frame_count\0\u{3}last_video_requested_frame_budget\0\u{3}last_video_window_ms\0\u{3}last_temp_media_artifact_count\0\u{3}last_temp_media_artifact_bytes\0\u{3}last_temp_media_cleanup_latency_ms\0\u{3}last_temp_media_cleanup_failure_count\0\u{3}generation_stream_owner_mode\0\u{3}worker_thread_init_latency_ms\0\u{3}stream_sync_fallback_count\0\u{3}last_speech_streaming_enabled\0\u{3}last_speech_streaming_interval_ms\0\u{3}last_speech_first_audio_latency_ms\0\u{3}last_multimodal_decode_mode\0\u{3}last_multimodal_fallback_reason\0\u{3}last_multimodal_decode_sync_mode\0\u{3}text_batch_generator_submitted_request_count\0\u{3}text_batch_generator_completed_request_count\0\u{3}text_batch_generator_step_count\0\u{3}text_batch_generator_generated_token_count\0\u{3}text_batch_generator_peak_active_batch_size\0\u{3}text_batch_generator_queue_wait_ms_total\0\u{3}text_batch_generator_insert_ms_total\0\u{3}text_batch_generator_executor_step_ms_total\0\u{3}text_batch_generator_next_ms_total\0\u{3}text_batch_generator_emit_ms_total\0\u{3}text_batch_generator_active_batch_size\0\u{3}text_batch_generator_generated_response_count\0\u{3}text_batch_generator_failed_request_count\0\u{3}text_batch_generator_prepare_ms_total\0\u{3}text_batch_generator_first_response_ms_total\0\u{3}text_batch_generator_first_visible_ms_total\0\u{3}text_batch_generator_first_visible_token_index_total\0\u{3}text_batch_generator_first_empty_segment_count\0\u{3}last_model_load_trust_policy_resolution_ms\0\u{3}model_load_trust_blocked_count\0\u{3}text_batch_generator_speculative_cycle_count_total\0\u{3}text_batch_generator_speculative_accepted_count_total\0\u{3}text_batch_generator_speculative_rejected_count_total\0\u{3}text_batch_generator_speculative_backbone_ms_total\0\u{3}text_batch_generator_speculative_mtp_head_ms_total\0\u{3}text_batch_generator_speculative_sample_ms_total\0\u{3}text_batch_generator_speculative_cache_ops_ms_total\0\u{3}last_hybrid_state_patch_mode\0\u{3}last_hybrid_state_advance_count\0\u{3}last_family_fast_path_override_count\0\u{3}last_cached_prompt_tokens\0\u{3}last_media_feature_cache_hits\0\u{3}last_media_feature_cache_misses\0\u{3}last_media_feature_encoder_calls_saved\0\u{3}last_media_feature_work_saved_bytes\0\u{3}last_image_feature_cache_hits\0\u{3}last_image_feature_cache_misses\0\u{3}last_image_feature_encoder_calls_saved\0\u{3}last_image_feature_work_saved_bytes\0\u{3}native_quantized_load_count\0\u{3}bridge_quantized_fallback_count\0\u{3}cross_shard_metadata_fixup_count\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0\u{3}last_video_effective_frame_count\0\u{3}last_video_requested_frame_budget\0\u{3}last_video_window_ms\0\u{3}last_temp_media_artifact_count\0\u{3}last_temp_media_artifact_bytes\0\u{3}last_temp_media_cleanup_latency_ms\0\u{3}last_temp_media_cleanup_failure_count\0\u{3}generation_stream_owner_mode\0\u{3}worker_thread_init_latency_ms\0\u{3}stream_sync_fallback_count\0\u{3}last_speech_streaming_enabled\0\u{3}last_speech_streaming_interval_ms\0\u{3}last_speech_first_audio_latency_ms\0\u{3}last_multimodal_decode_mode\0\u{3}last_multimodal_fallback_reason\0\u{3}last_multimodal_decode_sync_mode\0\u{3}text_batch_generator_submitted_request_count\0\u{3}text_batch_generator_completed_request_count\0\u{3}text_batch_generator_step_count\0\u{3}text_batch_generator_generated_token_count\0\u{3}text_batch_generator_peak_active_batch_size\0\u{3}text_batch_generator_queue_wait_ms_total\0\u{3}text_batch_generator_insert_ms_total\0\u{3}text_batch_generator_executor_step_ms_total\0\u{3}text_batch_generator_next_ms_total\0\u{3}text_batch_generator_emit_ms_total\0\u{3}text_batch_generator_active_batch_size\0\u{3}text_batch_generator_generated_response_count\0\u{3}text_batch_generator_failed_request_count\0\u{3}text_batch_generator_prepare_ms_total\0\u{3}text_batch_generator_first_response_ms_total\0\u{3}text_batch_generator_first_visible_ms_total\0\u{3}text_batch_generator_first_visible_token_index_total\0\u{3}text_batch_generator_first_empty_segment_count\0\u{3}last_model_load_trust_policy_resolution_ms\0\u{3}model_load_trust_blocked_count\0\u{3}text_batch_generator_speculative_cycle_count_total\0\u{3}text_batch_generator_speculative_accepted_count_total\0\u{3}text_batch_generator_speculative_rejected_count_total\0\u{3}text_batch_generator_speculative_backbone_ms_total\0\u{3}text_batch_generator_speculative_mtp_head_ms_total\0\u{3}text_batch_generator_speculative_sample_ms_total\0\u{3}text_batch_generator_speculative_cache_ops_ms_total\0\u{3}last_hybrid_state_patch_mode\0\u{3}last_hybrid_state_advance_count\0\u{3}last_family_fast_path_override_count\0\u{3}last_cached_prompt_tokens\0\u{3}last_media_feature_cache_hits\0\u{3}last_media_feature_cache_misses\0\u{3}last_media_feature_encoder_calls_saved\0\u{3}last_media_feature_work_saved_bytes\0\u{3}last_image_feature_cache_hits\0\u{3}last_image_feature_cache_misses\0\u{3}last_image_feature_encoder_calls_saved\0\u{3}last_image_feature_work_saved_bytes\0\u{3}native_quantized_load_count\0\u{3}bridge_quantized_fallback_count\0\u{3}cross_shard_metadata_fixup_count\0\u{3}speculative_probe_enabled_count\0\u{3}speculative_probe_fallback_count\0\u{3}speculative_probe_position_aligned_count\0\u{3}speculative_probe_cache_aligned_count\0")
 
   fileprivate class _StorageClass {
     var _workerState: String = String()
@@ -1438,6 +1458,10 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
     var _nativeQuantizedLoadCount: UInt64 = 0
     var _bridgeQuantizedFallbackCount: UInt64 = 0
     var _crossShardMetadataFixupCount: UInt64 = 0
+    var _speculativeProbeEnabledCount: UInt64 = 0
+    var _speculativeProbeFallbackCount: UInt64 = 0
+    var _speculativeProbePositionAlignedCount: UInt64 = 0
+    var _speculativeProbeCacheAlignedCount: UInt64 = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -1539,6 +1563,10 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
       _nativeQuantizedLoadCount = source._nativeQuantizedLoadCount
       _bridgeQuantizedFallbackCount = source._bridgeQuantizedFallbackCount
       _crossShardMetadataFixupCount = source._crossShardMetadataFixupCount
+      _speculativeProbeEnabledCount = source._speculativeProbeEnabledCount
+      _speculativeProbeFallbackCount = source._speculativeProbeFallbackCount
+      _speculativeProbePositionAlignedCount = source._speculativeProbePositionAlignedCount
+      _speculativeProbeCacheAlignedCount = source._speculativeProbeCacheAlignedCount
     }
   }
 
@@ -1648,6 +1676,10 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
         case 89: try { try decoder.decodeSingularUInt64Field(value: &_storage._nativeQuantizedLoadCount) }()
         case 90: try { try decoder.decodeSingularUInt64Field(value: &_storage._bridgeQuantizedFallbackCount) }()
         case 91: try { try decoder.decodeSingularUInt64Field(value: &_storage._crossShardMetadataFixupCount) }()
+        case 92: try { try decoder.decodeSingularUInt64Field(value: &_storage._speculativeProbeEnabledCount) }()
+        case 93: try { try decoder.decodeSingularUInt64Field(value: &_storage._speculativeProbeFallbackCount) }()
+        case 94: try { try decoder.decodeSingularUInt64Field(value: &_storage._speculativeProbePositionAlignedCount) }()
+        case 95: try { try decoder.decodeSingularUInt64Field(value: &_storage._speculativeProbeCacheAlignedCount) }()
         default: break
         }
       }
@@ -1929,6 +1961,18 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
       if _storage._crossShardMetadataFixupCount != 0 {
         try visitor.visitSingularUInt64Field(value: _storage._crossShardMetadataFixupCount, fieldNumber: 91)
       }
+      if _storage._speculativeProbeEnabledCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._speculativeProbeEnabledCount, fieldNumber: 92)
+      }
+      if _storage._speculativeProbeFallbackCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._speculativeProbeFallbackCount, fieldNumber: 93)
+      }
+      if _storage._speculativeProbePositionAlignedCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._speculativeProbePositionAlignedCount, fieldNumber: 94)
+      }
+      if _storage._speculativeProbeCacheAlignedCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._speculativeProbeCacheAlignedCount, fieldNumber: 95)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -2029,6 +2073,10 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
         if _storage._nativeQuantizedLoadCount != rhs_storage._nativeQuantizedLoadCount {return false}
         if _storage._bridgeQuantizedFallbackCount != rhs_storage._bridgeQuantizedFallbackCount {return false}
         if _storage._crossShardMetadataFixupCount != rhs_storage._crossShardMetadataFixupCount {return false}
+        if _storage._speculativeProbeEnabledCount != rhs_storage._speculativeProbeEnabledCount {return false}
+        if _storage._speculativeProbeFallbackCount != rhs_storage._speculativeProbeFallbackCount {return false}
+        if _storage._speculativeProbePositionAlignedCount != rhs_storage._speculativeProbePositionAlignedCount {return false}
+        if _storage._speculativeProbeCacheAlignedCount != rhs_storage._speculativeProbeCacheAlignedCount {return false}
         return true
       }
       if !storagesAreEqual {return false}

@@ -162,6 +162,22 @@ func recordPythonVLMRuntimeProbeMetrics(
         forKey: "vision.cross_shard_metadata_fixup_count"
     )
     await metricsStore.set(
+        Double(stats.speculativeProbeEnabledCount),
+        forKey: "vision.speculative_probe.enabled_count"
+    )
+    await metricsStore.set(
+        Double(stats.speculativeProbeFallbackCount),
+        forKey: "vision.speculative_probe.fallback_count"
+    )
+    await metricsStore.set(
+        Double(stats.speculativeProbePositionAlignedCount),
+        forKey: "vision.speculative_probe.position_aligned_count"
+    )
+    await metricsStore.set(
+        Double(stats.speculativeProbeCacheAlignedCount),
+        forKey: "vision.speculative_probe.cache_aligned_count"
+    )
+    await metricsStore.set(
         Double(stats.textBatchGeneratorSubmittedRequestCount),
         forKey: "vision.text_batch_generator.submitted_request_count"
     )

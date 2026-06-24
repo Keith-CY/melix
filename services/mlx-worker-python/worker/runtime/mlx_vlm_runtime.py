@@ -51,6 +51,10 @@ from worker.runtime.multimodal_preprocessing import (
     prepare_vision_request,
     rebuild_multimodal_hash,
 )
+from worker.runtime.multimodal_speculative_probe import (
+    speculative_probe_admission,
+    speculative_probe_enabled,
+)
 from worker.runtime.runtime_utils import (
     callable_accepts_kwarg as _callable_accepts_kwarg,
     callable_declares_kwarg as _callable_declares_kwarg,
@@ -2282,6 +2286,7 @@ class MLXVLMRuntime:
         metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
         execution_mode = str(metadata.get("melix.vlm.execution_mode", "") or "").strip() or "multimodal"
         speculative_fallback_reason = ""
+        speculative_probe_enabled_for_request = False
         if self._mtp_speculative_requested(acceleration_policy):
             speculative_fallback_reason = self._mtp_speculative_unsupported_reason(
                 loaded_model=loaded_model,
@@ -2300,6 +2305,21 @@ class MLXVLMRuntime:
                     execution_ext=execution_ext,
                 )
                 return
+            speculative_probe_enabled_for_request = speculative_probe_enabled(execution_ext)
+            if speculative_probe_enabled_for_request:
+                self._ensure_fast_path_probe(loaded_model, prepared_request)
+                speculative_probe = speculative_probe_admission(
+                    enabled=True,
+                    fallback_reason=speculative_fallback_reason,
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    acceleration_policy=acceleration_policy,
+                    position_metadata_receipt=self._last_probe.position_metadata_receipt,
+                )
+                self._last_probe = replace(
+                    self._last_probe,
+                    speculative_probe_receipt=speculative_probe.receipt,
+                )
             if not bool(getattr(acceleration_policy, "allow_baseline_fallback", False)):
                 raise RuntimeError(
                     f"MTP speculative decode is unavailable for this request: {speculative_fallback_reason}."
@@ -2384,6 +2404,19 @@ class MLXVLMRuntime:
                 ),
                 image_batch1_step_greedy_sampling=self._sampling_is_greedy(sampling),
             )
+            if speculative_fallback_reason and speculative_probe_enabled_for_request:
+                speculative_probe = speculative_probe_admission(
+                    enabled=True,
+                    fallback_reason=speculative_fallback_reason,
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    acceleration_policy=acceleration_policy,
+                    position_metadata_receipt=self._last_probe.position_metadata_receipt,
+                )
+                self._last_probe = replace(
+                    self._last_probe,
+                    speculative_probe_receipt=speculative_probe.receipt,
+                )
         except Exception:
             if image_batch1_temp_media_session is not None:
                 cleanup_image_batch1_temp_media_session(image_batch1_temp_media_session)

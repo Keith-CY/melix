@@ -6797,6 +6797,10 @@ struct OpenAIHandlerTests {
             response.stats.nativeQuantizedLoadCount = 1
             response.stats.bridgeQuantizedFallbackCount = 0
             response.stats.crossShardMetadataFixupCount = 2
+            response.stats.speculativeProbeEnabledCount = 1
+            response.stats.speculativeProbeFallbackCount = 1
+            response.stats.speculativeProbePositionAlignedCount = 1
+            response.stats.speculativeProbeCacheAlignedCount = 1
             return response
         }()
         let vlmClient = ScriptedWorkerClient(
@@ -6924,6 +6928,10 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["vision.native_quantized_load_count", default: -1] == 1)
         #expect(metrics.values["vision.bridge_quantized_fallback_count", default: -1] == 0)
         #expect(metrics.values["vision.cross_shard_metadata_fixup_count", default: -1] == 2)
+        #expect(metrics.values["vision.speculative_probe.enabled_count", default: -1] == 1)
+        #expect(metrics.values["vision.speculative_probe.fallback_count", default: -1] == 1)
+        #expect(metrics.values["vision.speculative_probe.position_aligned_count", default: -1] == 1)
+        #expect(metrics.values["vision.speculative_probe.cache_aligned_count", default: -1] == 1)
         #expect(metrics.values["vision.text_batch_generator.step_count", default: -1] == 0)
     }
 
