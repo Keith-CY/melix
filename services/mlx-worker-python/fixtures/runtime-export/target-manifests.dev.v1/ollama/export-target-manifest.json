@@ -1,0 +1,131 @@
+{
+  "schema_version": "melix.export_target_manifest.v1",
+  "export_id": "support-chat-export-v1",
+  "target_id": "support-chat-ollama",
+  "target_type": "EXPORT_TARGET_TYPE_OLLAMA",
+  "target_runtime": "ollama",
+  "target_runtime_version": "0.9.0",
+  "workspace_project_id": "support-chat",
+  "workspace_manifest_path": "workspace-manifest.json",
+  "source_adapter_manifest_path": "jobs/train_lora/train_lora.adapter.json",
+  "source_derived_model_manifest_path": "jobs/activate_adapter/activate_adapter.derived_model.json",
+  "source_training_dataset_manifest_path": "dataset/20260624T000000Z/manifest.json",
+  "base_model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+  "base_model_revision": "main",
+  "adapter_id": "support-chat-adapter-v1",
+  "adapter_snapshot": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "activation_mode": "EXPORT_ACTIVATION_MODE_FUSED_DERIVED_MODEL",
+  "quantization": {
+    "quantization_profile_id": "q4_k_m",
+    "quantization_method": "gguf_import",
+    "weight_bits": 4,
+    "source_precision": "fp16",
+    "target_precision": "q4_k_m",
+    "kv_cache_quantization": "runtime_default",
+    "requires_requantization": true
+  },
+  "generated_files": [
+    {
+      "path": "artifacts/Modelfile",
+      "role": "EXPORT_TARGET_FILE_ROLE_MODEFILE",
+      "media_type": "text/plain",
+      "byte_size": 512,
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "retention_class": "EXPORT_RETENTION_CLASS_REQUIRED",
+      "source_provenance": "export:support-chat-export-v1",
+      "redaction_class": "EXPORT_REDACTION_CLASS_PUBLIC_METADATA"
+    },
+    {
+      "path": "artifacts/blobs/sha256-666666",
+      "role": "EXPORT_TARGET_FILE_ROLE_RUNTIME_BLOB",
+      "media_type": "application/octet-stream",
+      "byte_size": 2097152,
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "retention_class": "EXPORT_RETENTION_CLASS_REQUIRED",
+      "source_provenance": "derived_model:support-chat-derived-v1",
+      "redaction_class": "EXPORT_REDACTION_CLASS_RELATIVE_PATH"
+    }
+  ],
+  "required_files": [
+    {
+      "path": "artifacts/blobs/sha256-777777",
+      "role": "EXPORT_TARGET_FILE_ROLE_RUNTIME_BLOB",
+      "media_type": "application/octet-stream",
+      "byte_size": 1048576,
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "retention_class": "EXPORT_RETENTION_CLASS_REQUIRED",
+      "source_provenance": "base_model:mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+      "redaction_class": "EXPORT_REDACTION_CLASS_RELATIVE_PATH"
+    }
+  ],
+  "intermediate_files": [
+    {
+      "path": "logs/ollama-create.log",
+      "role": "EXPORT_TARGET_FILE_ROLE_RUNTIME_LOG",
+      "media_type": "text/plain",
+      "byte_size": 2048,
+      "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "retention_class": "EXPORT_RETENTION_CLASS_RUNTIME_LOG",
+      "source_provenance": "runtime:ollama",
+      "redaction_class": "EXPORT_REDACTION_CLASS_LOCAL_PATH_REDACTED"
+    }
+  ],
+  "runtime_requirements": {
+    "runtime_name": "ollama",
+    "min_runtime_version": "0.9.0",
+    "local_runtime_required": true,
+    "runtime_binary_required": true,
+    "runtime_binary_name": "ollama",
+    "compatible_runtime_ids": ["ollama"],
+    "required_capabilities": ["runtime_binary", "model_registration", "bounded_generation"]
+  },
+  "verification_policy": {
+    "policy_id": "bounded-local-v1",
+    "metadata_check_required": true,
+    "load_check_required": true,
+    "generation_check_required": true,
+    "timeout_ms": 45000,
+    "preview_byte_limit": 4096,
+    "waiver_allowed": true,
+    "allowed_waiver_reasons": ["EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED"]
+  },
+  "verification_status": {
+    "state": "EXPORT_VERIFICATION_STATE_PENDING",
+    "metadata_check": "EXPORT_CHECK_STATUS_PENDING",
+    "load_check": "EXPORT_CHECK_STATUS_PENDING",
+    "generation_check": "EXPORT_CHECK_STATUS_PENDING",
+    "smoke_receipt_path": "smoke/smoke-receipt.json",
+    "diagnostics_receipt_path": "diagnostics/diagnostics-receipt.json"
+  },
+  "retention_policy": {
+    "policy_id": "runtime-export-retention-v1",
+    "required_default_decision": "EXPORT_RETENTION_DECISION_RETAIN",
+    "evidence_default_decision": "EXPORT_RETENTION_DECISION_RETAIN",
+    "runtime_log_default_decision": "EXPORT_RETENTION_DECISION_DELETE_AFTER_TTL",
+    "intermediate_default_decision": "EXPORT_RETENTION_DECISION_CLEANABLE",
+    "cache_default_decision": "EXPORT_RETENTION_DECISION_CLEANABLE",
+    "temporary_default_decision": "EXPORT_RETENTION_DECISION_DELETE_AFTER_SUCCESS",
+    "runtime_log_ttl_seconds": 604800
+  },
+  "diagnostic_policy": {
+    "policy_id": "runtime-export-diagnostics-v1",
+    "parser_policy_id": "ollama-log-v1",
+    "bounded_log_excerpt_bytes": 8192,
+    "required_diagnosis_codes": ["missing_blob", "runtime_timeout", "runtime_load_failed"]
+  },
+  "evidence": {
+    "export_report_path": "export-report.json",
+    "retention_report_path": "retention/retention-report.json",
+    "smoke_receipt_path": "smoke/smoke-receipt.json",
+    "diagnostics_receipt_path": "diagnostics/diagnostics-receipt.json",
+    "redaction_policy_id": "export-relative-paths-v1"
+  },
+  "metrics": {
+    "generated_file_count": 2,
+    "required_file_count": 1,
+    "intermediate_file_count": 1,
+    "artifact_byte_size": 2097664,
+    "required_byte_size": 1048576,
+    "evidence_byte_size": 0
+  }
+}
