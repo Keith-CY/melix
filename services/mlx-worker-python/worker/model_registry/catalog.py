@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import threading
 import time
@@ -62,6 +63,8 @@ _SOURCE_KIND_HUGGINGFACE_CACHE = "huggingface_cache"
 _SOURCE_KIND_MODELSCOPE_CACHE = "modelscope_cache"
 _SOURCE_KIND_OLLAMA_STORE = "ollama_store"
 _SOURCE_KIND_LM_STUDIO_STORE = "lm_studio_store"
+_MODEL_INVENTORY_SCAN_RECEIPT_SCHEMA = "melix.model_inventory_scan_receipt.v1"
+_MODEL_INVENTORY_CLASSIFICATION_SCHEMA = "melix.model_inventory_classification.v1"
 _MODEL_INVENTORY_SOURCE_KINDS = (
     _SOURCE_KIND_MELIX_MANAGED_ROOT,
     _SOURCE_KIND_HUGGINGFACE_CACHE,
@@ -70,6 +73,9 @@ _MODEL_INVENTORY_SOURCE_KINDS = (
     _SOURCE_KIND_LM_STUDIO_STORE,
 )
 _MODEL_WEIGHT_FILE_SUFFIXES = (".safetensors", ".npz")
+_SECRET_LIKE_PATTERN = re.compile(
+    r"(?i)(?:token|secret|api[_-]?key|authorization|bearer|hf_[a-z0-9]{8,})"
+)
 _GEMMA4_QAT_AUTOMATIC_ORG = "mlx-community"
 _GEMMA4_QAT_AUTOMATIC_SCOPE = "mlx-community-gemma4-q4"
 _GEMMA4_QAT_BASE_MODEL_MARKER = "base_model:"
@@ -136,11 +142,145 @@ class ModelInventorySourceDescriptor:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelInventoryClassification:
+    source_kind: str
+    source_descriptor_id: str
+    source_model_id: str
+    model_id: str
+    model_path: str
+    file_layout: str
+    family_signal: str
+    mlx_compatibility: str
+    trainability: str
+    exportability: str
+    missing_file_state: str
+    estimated_size_bytes: int
+    artifact_state: str
+    usable_state: str
+    operator_message: str
+    remediation: str
+    metrics: Mapping[str, object] = field(default_factory=dict)
+    schema_version: str = _MODEL_INVENTORY_CLASSIFICATION_SCHEMA
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "source_kind": self.source_kind,
+            "source_descriptor_id": self.source_descriptor_id,
+            "source_model_id": self.source_model_id,
+            "model_id": self.model_id,
+            "model_path": self.model_path,
+            "file_layout": self.file_layout,
+            "family_signal": self.family_signal,
+            "mlx_compatibility": self.mlx_compatibility,
+            "trainability": self.trainability,
+            "exportability": self.exportability,
+            "missing_file_state": self.missing_file_state,
+            "estimated_size_bytes": self.estimated_size_bytes,
+            "artifact_state": self.artifact_state,
+            "usable_state": self.usable_state,
+            "operator_message": self.operator_message,
+            "remediation": self.remediation,
+            "metrics": dict(self.metrics),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ModelInventorySourceScanReceipt:
+    descriptor_id: str
+    source_kind: str
+    requested_root: str
+    effective_root: str
+    root_redaction: Mapping[str, object]
+    root_path_digest: str
+    accessible: bool
+    scan_status: str
+    failure_code: str
+    failure_message: str
+    discovered_model_count: int
+    usable_model_count: int
+    unsupported_model_count: int
+    incomplete_model_count: int
+    ambiguous_model_count: int
+    invalid_entry_count: int
+    redaction_count: int
+    scan_latency_ms: float
+    payload_byte_size: int = 0
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "descriptor_id": self.descriptor_id,
+            "source_kind": self.source_kind,
+            "requested_root": self.requested_root,
+            "effective_root": self.effective_root,
+            "root_redaction": dict(self.root_redaction),
+            "root_path_digest": self.root_path_digest,
+            "accessible": self.accessible,
+            "scan_status": self.scan_status,
+            "failure_code": self.failure_code,
+            "failure_message": self.failure_message,
+            "discovered_model_count": self.discovered_model_count,
+            "usable_model_count": self.usable_model_count,
+            "unsupported_model_count": self.unsupported_model_count,
+            "incomplete_model_count": self.incomplete_model_count,
+            "ambiguous_model_count": self.ambiguous_model_count,
+            "invalid_entry_count": self.invalid_entry_count,
+            "redaction_count": self.redaction_count,
+            "scan_latency_ms": round(self.scan_latency_ms, 3),
+            "payload_byte_size": self.payload_byte_size,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ModelInventoryScanReceipt:
+    scan_id: str
+    started_at_unix_ms: int
+    completed_at_unix_ms: int
+    requested_sources: tuple[Mapping[str, object], ...]
+    effective_sources: tuple[Mapping[str, object], ...]
+    source_receipts: tuple[ModelInventorySourceScanReceipt, ...]
+    discovered_models: tuple[ModelInventoryClassification, ...]
+    summary: Mapping[str, object]
+    redaction_summary: Mapping[str, object]
+    metrics: Mapping[str, object]
+    schema_version: str = _MODEL_INVENTORY_SCAN_RECEIPT_SCHEMA
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "scan_id": self.scan_id,
+            "started_at_unix_ms": self.started_at_unix_ms,
+            "completed_at_unix_ms": self.completed_at_unix_ms,
+            "requested_sources": [dict(source) for source in self.requested_sources],
+            "effective_sources": [dict(source) for source in self.effective_sources],
+            "source_receipts": [
+                source_receipt.to_payload()
+                for source_receipt in self.source_receipts
+            ],
+            "discovered_models": [
+                classification.to_payload()
+                for classification in self.discovered_models
+            ],
+            "summary": dict(self.summary),
+            "redaction_summary": dict(self.redaction_summary),
+            "metrics": dict(self.metrics),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RegistrySnapshot:
     roots: tuple[RegistryRootSnapshot, ...]
     models: tuple[common_pb2.ModelSpec, ...]
     scanned_at_unix_ms: int
     source_descriptors: tuple[ModelInventorySourceDescriptor, ...] = ()
+    scan_started_at_unix_ms: int = 0
+    scan_id: str = ""
+    hf_cache_roots: frozenset[str] = frozenset()
+    candidate_findings: tuple[_InventoryScanCandidate, ...] = ()
+    aggregated_invalid_entry_counts: Mapping[str, int] = field(default_factory=dict)
+    root_scan_latency_ms: Mapping[str, float] = field(default_factory=dict)
+    scan_receipt: ModelInventoryScanReceipt | None = None
+    model_classifications: Mapping[str, ModelInventoryClassification] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +289,44 @@ class _PlainLocalModelScan:
     has_model_weight_files: bool
     has_generation_config: bool
     has_tokenizer_config: bool
+    estimated_size_bytes: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _InventoryScanCandidate:
+    root_path: str
+    model_id: str
+    source_model_id: str
+    model_path: str
+    file_layout: str
+    family_signal: str
+    mlx_compatibility: str
+    trainability: str
+    exportability: str
+    missing_file_state: str
+    estimated_size_bytes: int
+    artifact_state: str
+    usable_state: str
+    operator_message: str
+    remediation: str
+    metrics: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class _InventoryClassificationRecord:
+    root_path: str
+    invalid_entry: bool
+    classification: ModelInventoryClassification
+
+
+@dataclass(slots=True)
+class _RegistryScanResult:
+    roots: list[RegistryRootSnapshot]
+    discovered_models: dict[str, common_pb2.ModelSpec]
+    hf_cache_roots: frozenset[str]
+    candidate_findings: list[_InventoryScanCandidate]
+    aggregated_invalid_entry_counts: dict[str, int]
+    root_scan_latency_ms: dict[str, float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -715,6 +893,242 @@ def _inventory_metrics_policy() -> dict[str, object]:
             "catalog_result_count",
         ],
     }
+
+
+def _source_descriptor_id_for_kind(source_kind: str) -> str:
+    if source_kind == _SOURCE_KIND_HUGGINGFACE_CACHE:
+        return "huggingface-cache"
+    if source_kind == _SOURCE_KIND_MODELSCOPE_CACHE:
+        return "modelscope-cache"
+    if source_kind == _SOURCE_KIND_OLLAMA_STORE:
+        return "ollama-store"
+    if source_kind == _SOURCE_KIND_LM_STUDIO_STORE:
+        return "lm-studio-store"
+    return "melix-managed-root"
+
+
+def _inventory_path_digest(path: str) -> str:
+    return hashlib.sha256(path.encode("utf-8")).hexdigest()[:16]
+
+
+def _redacted_inventory_path(path: str) -> tuple[dict[str, object], int, str]:
+    normalized = path.strip()
+    digest = _inventory_path_digest(normalized)
+    if not normalized:
+        return {"strategy": "empty", "display": "", "redacted": False}, 0, digest
+    basename = Path(normalized).name or normalized
+    redacted = os.path.isabs(normalized)
+    if _SECRET_LIKE_PATTERN.search(normalized):
+        basename = "<secret-redacted>"
+        redacted = True
+    display = f"{basename}#{digest}" if redacted else normalized
+    return {
+        "strategy": "basename_sha256_16" if redacted else "unchanged",
+        "display": display,
+        "redacted": redacted,
+    }, 1 if redacted else 0, digest
+
+
+def _inventory_redacted_value(value: str) -> tuple[str, int]:
+    redaction, count, _ = _redacted_inventory_path(value)
+    return str(redaction["display"]), count
+
+
+def _inventory_nonnegative_int(value: object) -> int:
+    try:
+        return max(0, int(_normalized(str(value))))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _family_signal_from_config(config_payload: Mapping[str, object] | None) -> str:
+    if not isinstance(config_payload, Mapping):
+        return "unknown"
+    model_type = _normalized(str(config_payload.get("model_type", "")))
+    if model_type:
+        return model_type
+    text_config = config_payload.get("text_config")
+    if isinstance(text_config, Mapping):
+        text_model_type = _normalized(str(text_config.get("model_type", "")))
+        if text_model_type:
+            return text_model_type
+    architectures = config_payload.get("architectures")
+    if isinstance(architectures, (list, tuple)) and architectures:
+        first = _normalized(str(architectures[0]))
+        if first:
+            return first
+    return "unknown"
+
+
+def _file_layout_for_model(model: common_pb2.ModelSpec) -> str:
+    source_kind = _normalized(model.ext.get("melix.source_kind"))
+    if source_kind == "hf_cache_snapshot":
+        return "huggingface_snapshot"
+    if source_kind == "local_mlx_directory":
+        return "plain_mlx_directory"
+    if _normalized(model.ext.get("melix.registry_descriptor_path")):
+        return "melix_manifest"
+    return "unknown"
+
+
+def _source_kind_for_model(model: common_pb2.ModelSpec) -> str:
+    source_kind = _normalized(model.ext.get("melix.source_kind"))
+    if source_kind == "hf_cache_snapshot":
+        return _SOURCE_KIND_HUGGINGFACE_CACHE
+    return _SOURCE_KIND_MELIX_MANAGED_ROOT
+
+
+def _source_model_id_for_model(model: common_pb2.ModelSpec) -> str:
+    source_kind = _normalized(model.ext.get("melix.source_kind"))
+    if source_kind == "hf_cache_snapshot":
+        revision = _normalized(model.ext.get("melix.hf_revision")) or model.revision
+        return f"{model.model_id}@{revision}"
+    relative_path = _normalized(model.ext.get("melix.registry_relative_path"))
+    return relative_path or model.model_id
+
+
+def _classification_for_admitted_model(model: common_pb2.ModelSpec) -> ModelInventoryClassification:
+    source_kind = _source_kind_for_model(model)
+    model_path = model.model_path or model.ext.get("melix.model_path", "")
+    redacted_model_path, model_path_redaction_count = _inventory_redacted_value(model_path)
+    redacted_source_model_id, source_model_redaction_count = _inventory_redacted_value(
+        _source_model_id_for_model(model)
+    )
+    family_signal = (
+        _normalized(model.ext.get("detected_family_id"))
+        or _normalized(model.ext.get("text_family_id"))
+        or _normalized(model.ext.get("vision_family_id"))
+        or _normalized(model.ext.get("embedding_family_id"))
+        or _normalized(model.ext.get("rerank_family_id"))
+        or _normalized(model.ext.get("melix.audio.family_id"))
+        or model.model_kind
+        or "unknown"
+    )
+    missing_file_state = "complete"
+    artifact_state = "ready"
+    usable_state = "usable"
+    mlx_compatibility = "compatible"
+    operator_message = "Model is usable by Melix."
+    remediation = ""
+    if model.ext.get("melix.model_path_missing") == "true":
+        missing_file_state = "missing_companion"
+        artifact_state = "incomplete"
+        usable_state = "incomplete"
+        mlx_compatibility = "unknown"
+        operator_message = "Model manifest points at a missing runtime path."
+        remediation = "Restore the missing model path or remove the stale manifest."
+    pull_state = _normalized(model.ext.get("melix.pull_state"))
+    if pull_state == "cancelled":
+        artifact_state = "cancelled_pull"
+        usable_state = "incomplete"
+        operator_message = "Model pull was cancelled before admission completed."
+        remediation = "Restart the pull or remove the cancelled artifact receipt."
+    elif pull_state in {"partial_cleanup_pending", "partial_cleanup_done"}:
+        artifact_state = pull_state
+        usable_state = "incomplete"
+        operator_message = "Model pull left partial artifacts."
+        remediation = "Review cleanup evidence before retrying the pull."
+
+    training_ready = _normalized(model.ext.get("melix.lora.training_ready"))
+    if training_ready == "true":
+        trainability = "trainable"
+    elif model.model_kind in {"text", "vlm"}:
+        trainability = "adapter_only"
+    elif training_ready == "false":
+        trainability = "not_trainable"
+    else:
+        trainability = "unknown"
+
+    exportability = "exportable" if usable_state == "usable" else "unknown"
+
+    return ModelInventoryClassification(
+        source_kind=source_kind,
+        source_descriptor_id=_source_descriptor_id_for_kind(source_kind),
+        source_model_id=redacted_source_model_id,
+        model_id=model.model_id,
+        model_path=redacted_model_path,
+        file_layout=_file_layout_for_model(model),
+        family_signal=family_signal,
+        mlx_compatibility=mlx_compatibility,
+        trainability=trainability,
+        exportability=exportability,
+        missing_file_state=missing_file_state,
+        estimated_size_bytes=_inventory_nonnegative_int(model.ext.get("melix.estimated_size_bytes")),
+        artifact_state=artifact_state,
+        usable_state=usable_state,
+        operator_message=operator_message,
+        remediation=remediation,
+        metrics={
+            "classification_latency_ms": 0.0,
+            "max_context": model.max_context,
+            "redaction_count": model_path_redaction_count + source_model_redaction_count,
+        },
+    )
+
+
+def _classification_record_from_candidate(
+    candidate: _InventoryScanCandidate,
+    *,
+    source_kind: str,
+    invalid_entry: bool = False,
+) -> _InventoryClassificationRecord:
+    redacted_model_path, model_path_redaction_count = _inventory_redacted_value(candidate.model_path)
+    redacted_source_model_id, source_model_redaction_count = _inventory_redacted_value(
+        candidate.source_model_id
+    )
+    metrics = dict(candidate.metrics)
+    metrics["redaction_count"] = (
+        int(metrics.get("redaction_count", 0) or 0)
+        + model_path_redaction_count
+        + source_model_redaction_count
+    )
+    classification = ModelInventoryClassification(
+        source_kind=source_kind,
+        source_descriptor_id=_source_descriptor_id_for_kind(source_kind),
+        source_model_id=redacted_source_model_id,
+        model_id=candidate.model_id,
+        model_path=redacted_model_path,
+        file_layout=candidate.file_layout,
+        family_signal=candidate.family_signal,
+        mlx_compatibility=candidate.mlx_compatibility,
+        trainability=candidate.trainability,
+        exportability=candidate.exportability,
+        missing_file_state=candidate.missing_file_state,
+        estimated_size_bytes=candidate.estimated_size_bytes,
+        artifact_state=candidate.artifact_state,
+        usable_state=candidate.usable_state,
+        operator_message=candidate.operator_message,
+        remediation=candidate.remediation,
+        metrics=metrics,
+    )
+    return _InventoryClassificationRecord(
+        root_path=candidate.root_path,
+        invalid_entry=invalid_entry,
+        classification=classification,
+    )
+
+
+def _scan_status_for_counts(
+    *,
+    accessible: bool,
+    failure_code: str,
+    unsupported_model_count: int,
+    incomplete_model_count: int,
+    ambiguous_model_count: int,
+    invalid_entry_count: int,
+) -> str:
+    if not accessible:
+        return "failed" if failure_code else "skipped"
+    if unsupported_model_count or incomplete_model_count or ambiguous_model_count or invalid_entry_count:
+        return "completed_with_warnings"
+    return "completed"
+
+
+def _payload_size_bytes(payload: Mapping[str, object]) -> int:
+    try:
+        return len(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _iter_relative_file_paths_sorted(root: Path, *, prefix: str = "") -> Iterable[tuple[Path, str]]:
@@ -2263,12 +2677,34 @@ class WorkerModelCatalog:
         registry_roots: Iterable[str] | None = None,
     ) -> dict[str, object]:
         snapshot = self.registry_snapshot(rescan=rescan, registry_roots=registry_roots)
+        discovered_models = {model.model_id: model for model in snapshot.models}
+        model_classifications = (
+            snapshot.model_classifications
+            or {
+                model_id: _classification_for_admitted_model(model)
+                for model_id, model in discovered_models.items()
+            }
+        )
+        scan_receipt = snapshot.scan_receipt or self._build_scan_receipt(
+            scan_id=snapshot.scan_id,
+            started_at_unix_ms=snapshot.scan_started_at_unix_ms,
+            completed_at_unix_ms=snapshot.scanned_at_unix_ms,
+            source_descriptors=snapshot.source_descriptors,
+            roots=snapshot.roots,
+            discovered_models=discovered_models,
+            model_classifications=model_classifications,
+            candidate_findings=snapshot.candidate_findings,
+            aggregated_invalid_entry_counts=snapshot.aggregated_invalid_entry_counts,
+            hf_cache_roots=snapshot.hf_cache_roots,
+            root_scan_latency_ms=snapshot.root_scan_latency_ms,
+        )
         return {
             "scanned_at_unix_ms": snapshot.scanned_at_unix_ms,
             "source_descriptors": [
                 descriptor.to_payload()
                 for descriptor in snapshot.source_descriptors
             ],
+            "scan_receipt": scan_receipt.to_payload(),
             "roots": [
                 {
                     "root_id": root.root_id,
@@ -2282,34 +2718,61 @@ class WorkerModelCatalog:
                 for root in snapshot.roots
             ],
             "models": [
-                {
-                    "model_id": model.model_id,
-                    "model_path": model.model_path,
-                    "model_kind": model.model_kind,
-                    "revision": model.revision,
-                    "tokenizer_hash": model.tokenizer_hash,
-                    "quant_profile_id": model.quant_profile_id,
-                    "parser_mode": model.parser_mode,
-                    "reasoning_mode": model.reasoning_mode,
-                    "max_context": model.max_context,
-                    "ext": dict(model.ext),
-                }
+                self._registry_model_payload(model, model_classifications=model_classifications)
                 for model in snapshot.models
             ],
         }
 
+    def _registry_model_payload(
+        self,
+        model: common_pb2.ModelSpec,
+        *,
+        model_classifications: Mapping[str, ModelInventoryClassification],
+    ) -> dict[str, object]:
+        payload = {
+            "model_id": model.model_id,
+            "model_path": model.model_path,
+            "model_kind": model.model_kind,
+            "revision": model.revision,
+            "tokenizer_hash": model.tokenizer_hash,
+            "quant_profile_id": model.quant_profile_id,
+            "parser_mode": model.parser_mode,
+            "reasoning_mode": model.reasoning_mode,
+            "max_context": model.max_context,
+            "ext": dict(model.ext),
+        }
+        classification = model_classifications.get(model.model_id)
+        if classification is not None:
+            payload["classification"] = classification.to_payload()
+        return payload
+
     def _refresh_registry_snapshot(self, registry_roots: tuple[str, ...]) -> RegistrySnapshot:
         self._prune_text_prefix_cache()
-        roots, discovered_models, hf_cache_roots = self._scan_registry_roots(registry_roots)
+        started_at_unix_ms = int(time.time() * 1000)
+        scan_result = self._scan_registry_roots(registry_roots)
+        roots = scan_result.roots
+        discovered_models = scan_result.discovered_models
+        hf_cache_roots = scan_result.hf_cache_roots
         _apply_gemma4_qat_companion_metadata(discovered_models.values())
+        source_descriptors = self._source_descriptors_for_registry_roots(
+            registry_roots,
+            hf_cache_roots=hf_cache_roots,
+        )
+        completed_at_unix_ms = int(time.time() * 1000)
         return RegistrySnapshot(
             roots=tuple(roots),
             models=tuple(discovered_models[model_id] for model_id in sorted(discovered_models)),
-            scanned_at_unix_ms=int(time.time() * 1000),
-            source_descriptors=self._source_descriptors_for_registry_roots(
-                registry_roots,
-                hf_cache_roots=hf_cache_roots,
+            scanned_at_unix_ms=completed_at_unix_ms,
+            source_descriptors=source_descriptors,
+            scan_started_at_unix_ms=started_at_unix_ms,
+            scan_id=_stable_inventory_scan_id(
+                registry_roots=registry_roots,
+                started_at_unix_ms=started_at_unix_ms,
             ),
+            hf_cache_roots=hf_cache_roots,
+            candidate_findings=tuple(scan_result.candidate_findings),
+            aggregated_invalid_entry_counts=scan_result.aggregated_invalid_entry_counts,
+            root_scan_latency_ms=scan_result.root_scan_latency_ms,
         )
 
     def _source_descriptors_for_registry_roots(
@@ -2368,6 +2831,282 @@ class WorkerModelCatalog:
                 store_layout="LM Studio local model directories",
             ),
         )
+
+    def _build_scan_receipt(
+        self,
+        *,
+        scan_id: str,
+        started_at_unix_ms: int,
+        completed_at_unix_ms: int,
+        source_descriptors: tuple[ModelInventorySourceDescriptor, ...],
+        roots: tuple[RegistryRootSnapshot, ...],
+        discovered_models: Mapping[str, common_pb2.ModelSpec],
+        model_classifications: Mapping[str, ModelInventoryClassification],
+        candidate_findings: tuple[_InventoryScanCandidate, ...],
+        aggregated_invalid_entry_counts: Mapping[str, int],
+        hf_cache_roots: frozenset[str],
+        root_scan_latency_ms: Mapping[str, float],
+    ) -> ModelInventoryScanReceipt:
+        records: list[_InventoryClassificationRecord] = [
+            _InventoryClassificationRecord(
+                root_path=_normalized(model.ext.get("melix.registry_root_path")),
+                invalid_entry=False,
+                classification=classification,
+            )
+            for model_id, classification in model_classifications.items()
+            for model in (discovered_models.get(model_id),)
+            if model is not None
+        ]
+        for candidate in candidate_findings:
+            source_kind = self._source_kind_for_registry_root(
+                candidate.root_path,
+                hf_cache_roots=hf_cache_roots,
+            )
+            records.append(
+                _classification_record_from_candidate(
+                    candidate,
+                    source_kind=source_kind,
+                    invalid_entry=bool(candidate.metrics.get("invalid_entry")),
+                )
+            )
+
+        records_by_root: dict[str, list[_InventoryClassificationRecord]] = {}
+        for record in records:
+            records_by_root.setdefault(_canonical_registry_root_path(record.root_path), []).append(record)
+
+        source_receipts: list[ModelInventorySourceScanReceipt] = []
+        source_receipt_keys: set[tuple[str, str]] = set()
+        redaction_count = 0
+        for root in roots:
+            source_kind = self._source_kind_for_registry_root(
+                root.root_path,
+                hf_cache_roots=hf_cache_roots,
+            )
+            root_records = records_by_root.get(_canonical_registry_root_path(root.root_path), [])
+            source_receipt, receipt_redaction_count = self._source_receipt_for_root(
+                root,
+                source_kind=source_kind,
+                root_records=root_records,
+                aggregated_invalid_entry_count=aggregated_invalid_entry_counts.get(
+                    _canonical_registry_root_path(root.root_path),
+                    0,
+                ),
+                scan_latency_ms=root_scan_latency_ms.get(root.root_path, 0.0),
+            )
+            redaction_count += receipt_redaction_count
+            source_receipt_keys.add((source_kind, _canonical_registry_root_path(root.root_path)))
+            source_receipts.append(source_receipt)
+
+        for descriptor in source_descriptors:
+            for requested_root in descriptor.requested_roots:
+                root_key = (descriptor.source_kind, _canonical_registry_root_path(requested_root))
+                if root_key in source_receipt_keys:
+                    continue
+                source_receipt, receipt_redaction_count = self._source_receipt_for_requested_only_root(
+                    descriptor,
+                    requested_root=requested_root,
+                )
+                redaction_count += receipt_redaction_count
+                source_receipt_keys.add(root_key)
+                source_receipts.append(source_receipt)
+
+        classifications = tuple(record.classification for record in records)
+        classification_redaction_count = sum(
+            int(classification.metrics.get("redaction_count", 0) or 0)
+            for classification in classifications
+        )
+        redaction_count += classification_redaction_count
+        usable_count = sum(1 for record in records if record.classification.usable_state == "usable")
+        unsupported_count = sum(1 for record in records if record.classification.usable_state == "unsupported")
+        incomplete_count = sum(1 for record in records if record.classification.usable_state == "incomplete")
+        ambiguous_count = sum(1 for record in records if record.classification.usable_state == "ambiguous")
+        sampled_invalid_entry_count = sum(1 for record in records if record.invalid_entry)
+        aggregated_invalid_entry_count = sum(max(0, int(count)) for count in aggregated_invalid_entry_counts.values())
+        invalid_entry_count = sampled_invalid_entry_count + aggregated_invalid_entry_count
+        requested_source_count = sum(len(descriptor.requested_roots) for descriptor in source_descriptors)
+        effective_source_count = sum(len(descriptor.effective_roots) for descriptor in source_descriptors)
+        payload_probe = {
+            "scan_id": scan_id,
+            "source_receipts": [receipt.to_payload() for receipt in source_receipts],
+            "discovered_models": [classification.to_payload() for classification in classifications],
+        }
+        scan_payload_byte_size = _payload_size_bytes(payload_probe)
+        summary = {
+            "scan_status": (
+                "completed_with_warnings"
+                if unsupported_count or incomplete_count or ambiguous_count or invalid_entry_count
+                else "completed"
+            ),
+            "source_count": len(source_descriptors),
+            "requested_source_count": requested_source_count,
+            "effective_source_count": effective_source_count,
+            "invalid_source_count": sum(
+                1
+                for receipt in source_receipts
+                if not receipt.accessible and receipt.failure_code != "scanner_not_implemented"
+            ),
+            "discovered_model_count": len(records) + aggregated_invalid_entry_count,
+            "usable_model_count": usable_count,
+            "unsupported_model_count": unsupported_count,
+            "incomplete_model_count": incomplete_count,
+            "ambiguous_model_count": ambiguous_count + aggregated_invalid_entry_count,
+            "invalid_entry_count": invalid_entry_count,
+        }
+        metrics = {
+            "inventory_scan_latency_ms": float(max(0, completed_at_unix_ms - started_at_unix_ms)),
+            "scan_payload_byte_size": scan_payload_byte_size,
+            "source_count": len(source_descriptors),
+            "requested_source_count": requested_source_count,
+            "effective_source_count": effective_source_count,
+            "invalid_source_count": summary["invalid_source_count"],
+            "discovered_model_count": len(records) + aggregated_invalid_entry_count,
+            "usable_model_count": usable_count,
+            "unsupported_model_count": unsupported_count,
+            "incomplete_model_count": incomplete_count,
+            "ambiguous_model_count": ambiguous_count + aggregated_invalid_entry_count,
+            "classification_latency_ms": 0.0,
+            "redaction_count": redaction_count,
+            "catalog_scan_latency_ms": 0.0,
+            "catalog_result_count": 0,
+            "pull_cancel_latency_ms": 0.0,
+            "partial_artifact_cleanup_latency_ms": 0.0,
+        }
+        return ModelInventoryScanReceipt(
+            scan_id=scan_id,
+            started_at_unix_ms=started_at_unix_ms,
+            completed_at_unix_ms=completed_at_unix_ms,
+            requested_sources=tuple(
+                self._receipt_source_roots(descriptor, roots_attr="requested_roots")
+                for descriptor in source_descriptors
+            ),
+            effective_sources=tuple(
+                self._receipt_source_roots(descriptor, roots_attr="effective_roots")
+                for descriptor in source_descriptors
+            ),
+            source_receipts=tuple(source_receipts),
+            discovered_models=classifications,
+            summary=summary,
+            redaction_summary={
+                "strategy": "basename_sha256_16",
+                "redaction_count": redaction_count,
+                "path_fields": [
+                    "requested_root",
+                    "effective_root",
+                    "model_path",
+                    "source_model_id",
+                ],
+                "secret_like_values_redacted": redaction_count,
+            },
+            metrics=metrics,
+        )
+
+    def _receipt_source_roots(
+        self,
+        descriptor: ModelInventorySourceDescriptor,
+        *,
+        roots_attr: str,
+    ) -> dict[str, object]:
+        roots = getattr(descriptor, roots_attr)
+        redacted_roots = [_inventory_redacted_value(root)[0] for root in roots]
+        return {
+            "descriptor_id": descriptor.descriptor_id,
+            "source_kind": descriptor.source_kind,
+            "roots": redacted_roots,
+            "root_count": len(redacted_roots),
+        }
+
+    def _source_receipt_for_root(
+        self,
+        root: RegistryRootSnapshot,
+        *,
+        source_kind: str,
+        root_records: list[_InventoryClassificationRecord],
+        aggregated_invalid_entry_count: int,
+        scan_latency_ms: float,
+    ) -> tuple[ModelInventorySourceScanReceipt, int]:
+        redacted_effective_root, effective_redaction_count = _inventory_redacted_value(root.root_path)
+        root_redaction, root_redaction_count, root_digest = _redacted_inventory_path(root.root_path)
+        usable_count = sum(1 for record in root_records if record.classification.usable_state == "usable")
+        unsupported_count = sum(1 for record in root_records if record.classification.usable_state == "unsupported")
+        incomplete_count = sum(1 for record in root_records if record.classification.usable_state == "incomplete")
+        ambiguous_count = (
+            sum(1 for record in root_records if record.classification.usable_state == "ambiguous")
+            + max(0, aggregated_invalid_entry_count)
+        )
+        invalid_entry_count = (
+            sum(1 for record in root_records if record.invalid_entry)
+            + max(0, aggregated_invalid_entry_count)
+        )
+        receipt = ModelInventorySourceScanReceipt(
+            descriptor_id=_source_descriptor_id_for_kind(source_kind),
+            source_kind=source_kind,
+            requested_root=redacted_effective_root,
+            effective_root=redacted_effective_root,
+            root_redaction=root_redaction,
+            root_path_digest=root_digest,
+            accessible=root.accessible,
+            scan_status=_scan_status_for_counts(
+                accessible=root.accessible,
+                failure_code=root.error_code,
+                unsupported_model_count=unsupported_count,
+                incomplete_model_count=incomplete_count,
+                ambiguous_model_count=ambiguous_count,
+                invalid_entry_count=invalid_entry_count,
+            ),
+            failure_code=root.error_code,
+            failure_message=_redacted_inventory_path(root.error_message)[0]["display"] if root.error_message else "",
+            discovered_model_count=len(root_records) + max(0, aggregated_invalid_entry_count),
+            usable_model_count=usable_count,
+            unsupported_model_count=unsupported_count,
+            incomplete_model_count=incomplete_count,
+            ambiguous_model_count=ambiguous_count,
+            invalid_entry_count=invalid_entry_count,
+            redaction_count=effective_redaction_count + root_redaction_count,
+            scan_latency_ms=scan_latency_ms,
+        )
+        receipt = replace(receipt, payload_byte_size=_payload_size_bytes(receipt.to_payload()))
+        return receipt, receipt.redaction_count
+
+    def _source_receipt_for_requested_only_root(
+        self,
+        descriptor: ModelInventorySourceDescriptor,
+        *,
+        requested_root: str,
+    ) -> tuple[ModelInventorySourceScanReceipt, int]:
+        redacted_requested_root, requested_redaction_count = _inventory_redacted_value(requested_root)
+        root_redaction, root_redaction_count, root_digest = _redacted_inventory_path(requested_root)
+        failure_code = (
+            "scanner_not_implemented"
+            if descriptor.discovery_policy.get("scanner") == "descriptor_only_until_source_specific_scanner_lands"
+            else "not_found"
+        )
+        failure_message = (
+            "Source scanner is descriptor-only in this implementation slice."
+            if failure_code == "scanner_not_implemented"
+            else "Requested source root was not scanned."
+        )
+        receipt = ModelInventorySourceScanReceipt(
+            descriptor_id=descriptor.descriptor_id,
+            source_kind=descriptor.source_kind,
+            requested_root=redacted_requested_root,
+            effective_root="",
+            root_redaction=root_redaction,
+            root_path_digest=root_digest,
+            accessible=False,
+            scan_status="skipped",
+            failure_code=failure_code,
+            failure_message=failure_message,
+            discovered_model_count=0,
+            usable_model_count=0,
+            unsupported_model_count=0,
+            incomplete_model_count=0,
+            ambiguous_model_count=0,
+            invalid_entry_count=0,
+            redaction_count=requested_redaction_count + root_redaction_count,
+            scan_latency_ms=0.0,
+        )
+        receipt = replace(receipt, payload_byte_size=_payload_size_bytes(receipt.to_payload()))
+        return receipt, receipt.redaction_count
 
     def _source_kind_for_registry_root(
         self,
@@ -2676,10 +3415,13 @@ class WorkerModelCatalog:
     def _scan_registry_roots(
         self,
         registry_roots: tuple[str, ...],
-    ) -> tuple[list[RegistryRootSnapshot], dict[str, common_pb2.ModelSpec], frozenset[str]]:
+    ) -> _RegistryScanResult:
         roots: list[RegistryRootSnapshot] = []
         discovered_models: dict[str, common_pb2.ModelSpec] = {}
         hf_cache_roots: set[str] = set()
+        candidate_findings: list[_InventoryScanCandidate] = []
+        aggregated_invalid_entry_counts: dict[str, int] = {}
+        root_scan_latency_ms: dict[str, float] = {}
 
         for index, root_path in enumerate(registry_roots, start=1):
             root_id = _stable_registry_root_id(root_path)
@@ -2701,12 +3443,33 @@ class WorkerModelCatalog:
             manifest_paths, plain_local_model_dirs, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
             if hf_cache_repo_dirs:
                 hf_cache_roots.add(root_path)
+            root_key = _canonical_registry_root_path(root_path)
             for manifest_path in manifest_paths:
                 relative_path = manifest_path.parent.relative_to(root)
                 if _path_derived_registry_identity(relative_path.parts) is None:
+                    aggregated_invalid_entry_counts[root_key] = (
+                        aggregated_invalid_entry_counts.get(root_key, 0) + 1
+                    )
                     continue
                 parsed = self._parse_registry_manifest(manifest_path)
                 if parsed is None:
+                    candidate_findings.append(
+                        _inventory_candidate_for_path(
+                            root_path=root_path,
+                            model_id=relative_path.name or os.fspath(relative_path),
+                            source_model_id=os.fspath(relative_path),
+                            model_path=manifest_path.parent,
+                            file_layout="melix_manifest",
+                            config_payload={},
+                            mlx_compatibility="unknown",
+                            missing_file_state="unknown",
+                            artifact_state="incomplete",
+                            usable_state="ambiguous",
+                            operator_message="Registry manifest is invalid or missing a model id.",
+                            remediation="Repair or remove the manifest before using this model.",
+                            invalid_entry=True,
+                        )
+                    )
                     continue
                 model_id, model = parsed
                 if model_id in discovered_models or model_id in self._seed_models:
@@ -2715,6 +3478,22 @@ class WorkerModelCatalog:
                     model,
                     relative_parts=relative_path.parts,
                 ):
+                    candidate_findings.append(
+                        _inventory_candidate_for_path(
+                            root_path=root_path,
+                            model_id=model_id,
+                            source_model_id=os.fspath(relative_path),
+                            model_path=manifest_path.parent,
+                            file_layout="melix_manifest",
+                            config_payload={},
+                            mlx_compatibility="unknown",
+                            missing_file_state="unknown",
+                            artifact_state="ready",
+                            usable_state="ambiguous",
+                            operator_message="Registry manifest path does not provide a stable Melix identity.",
+                            remediation="Move the manifest under <provider>/<organization>/<model>/<variant> or add identity metadata.",
+                        )
+                    )
                     continue
                 model.ext["melix.registry_root_id"] = root_id
                 model.ext["melix.registry_root_path"] = str(root)
@@ -2732,6 +3511,7 @@ class WorkerModelCatalog:
                 hf_cache_repo_dirs=hf_cache_repo_dirs,
                 discovered_models=discovered_models,
                 accepted_model_ids=accepted_model_ids,
+                candidate_findings=candidate_findings,
             )
 
             roots.append(
@@ -2744,7 +3524,14 @@ class WorkerModelCatalog:
                 )
             )
 
-        return roots, discovered_models, frozenset(hf_cache_roots)
+        return _RegistryScanResult(
+            roots=roots,
+            discovered_models=discovered_models,
+            hf_cache_roots=frozenset(hf_cache_roots),
+            candidate_findings=candidate_findings,
+            aggregated_invalid_entry_counts=aggregated_invalid_entry_counts,
+            root_scan_latency_ms=root_scan_latency_ms,
+        )
 
     def _configured_registry_roots(self) -> list[str]:
         configured: list[str] = []
@@ -2837,6 +3624,7 @@ class WorkerModelCatalog:
         plain_local_model_dirs: Iterable[_PlainLocalModelScan],
         discovered_models: dict[str, common_pb2.ModelSpec],
         accepted_model_ids: list[str],
+        candidate_findings: list[_InventoryScanCandidate],
         hf_cache_repo_dirs: Iterable[Path] | None = None,
     ) -> None:
         root_resolved = root.resolve()
@@ -2857,6 +3645,14 @@ class WorkerModelCatalog:
             discovered_models[model.model_id] = model
             accepted_model_ids.append(model.model_id)
 
+        if hf_cache_repo_dirs:
+            self._record_huggingface_cache_findings(
+                root=root_resolved,
+                cache_repo_dirs=hf_cache_repo_dirs,
+                admitted_model_paths=seen_paths,
+                candidate_findings=candidate_findings,
+            )
+
         for plain_local_model in plain_local_model_dirs:
             resolved_path = plain_local_model.model_dir
             if resolved_path in seen_paths or _is_hf_cache_snapshot_dir(root_resolved, resolved_path):
@@ -2865,6 +3661,23 @@ class WorkerModelCatalog:
             if model_id in discovered_models or model_id in self._seed_models:
                 continue
             if not plain_local_model.has_model_weight_files:
+                candidate_findings.append(
+                    _inventory_candidate_for_path(
+                        root_path=os.fspath(root),
+                        model_id=model_id,
+                        source_model_id=model_id,
+                        model_path=resolved_path,
+                        file_layout="plain_mlx_directory",
+                        config_payload={},
+                        mlx_compatibility="unknown",
+                        missing_file_state="missing_weights",
+                        artifact_state="incomplete",
+                        usable_state="incomplete",
+                        operator_message="Local model directory has config metadata but no complete model weights.",
+                        remediation="Add model weights or remove the incomplete directory.",
+                        estimated_size_bytes=plain_local_model.estimated_size_bytes,
+                    )
+                )
                 continue
             config_payload = _load_model_config_payload(resolved_path, json_cache=json_cache)
             if not _has_mlx_signal(
@@ -2873,6 +3686,32 @@ class WorkerModelCatalog:
                 text_prefix_cache=self._text_prefix_cache,
                 config_payload=config_payload,
             ):
+                family_signal = _family_signal_from_config(config_payload)
+                candidate_findings.append(
+                    _inventory_candidate_for_path(
+                        root_path=os.fspath(root),
+                        model_id=model_id,
+                        source_model_id=model_id,
+                        model_path=resolved_path,
+                        file_layout="plain_mlx_directory",
+                        config_payload=config_payload,
+                        mlx_compatibility="incompatible" if family_signal != "unknown" else "unknown",
+                        missing_file_state="complete",
+                        artifact_state="external_runtime_only",
+                        usable_state="unsupported" if family_signal != "unknown" else "ambiguous",
+                        operator_message=(
+                            "Local model directory does not advertise an MLX-compatible signal."
+                            if family_signal != "unknown"
+                            else "Local model directory has weights but no stable family or MLX signal."
+                        ),
+                        remediation=(
+                            "Import or convert the model into an MLX-compatible layout."
+                            if family_signal != "unknown"
+                            else "Add model metadata that identifies the family and MLX compatibility."
+                        ),
+                        estimated_size_bytes=plain_local_model.estimated_size_bytes,
+                    )
+                )
                 continue
             model = self._raw_model_spec(
                 model_id=model_id,
@@ -2943,6 +3782,124 @@ class WorkerModelCatalog:
                         "melix.hf_revision": revision,
                     },
                     config_payload=config_payload,
+                )
+
+    def _record_huggingface_cache_findings(
+        self,
+        *,
+        root: Path,
+        cache_repo_dirs: Iterable[Path] | None,
+        admitted_model_paths: set[Path],
+        candidate_findings: list[_InventoryScanCandidate],
+    ) -> None:
+        json_cache = getattr(self, "_json_file_cache", None)
+        if json_cache is None:
+            json_cache = {}
+            self._json_file_cache = json_cache
+        resolved_cache_repo_dirs = (
+            tuple(cache_repo_dirs)
+            if cache_repo_dirs is not None
+            else _sorted_child_directories(root, name_prefix="models--")
+        )
+        for cache_repo_dir in resolved_cache_repo_dirs:
+            repo_id = _hf_cache_repo_id(cache_repo_dir)
+            if repo_id is None:
+                continue
+            snapshots_dir = cache_repo_dir / "snapshots"
+            if not snapshots_dir.is_dir():
+                candidate_findings.append(
+                    _inventory_candidate_for_path(
+                        root_path=os.fspath(root),
+                        model_id=repo_id,
+                        source_model_id=repo_id,
+                        model_path=cache_repo_dir,
+                        file_layout="huggingface_snapshot",
+                        config_payload={},
+                        mlx_compatibility="unknown",
+                        missing_file_state="missing_companion",
+                        artifact_state="incomplete",
+                        usable_state="incomplete",
+                        operator_message="Hugging Face cache repo has no snapshots directory.",
+                        remediation="Re-download the model or remove the incomplete cache entry.",
+                    )
+                )
+                continue
+            snapshot_dirs = tuple(_sorted_child_directories(snapshots_dir))
+            revision_map = _hf_cache_revision_map(
+                cache_repo_dir,
+                snapshot_ids={snapshot_dir.name for snapshot_dir in snapshot_dirs},
+            )
+            if not snapshot_dirs:
+                candidate_findings.append(
+                    _inventory_candidate_for_path(
+                        root_path=os.fspath(root),
+                        model_id=repo_id,
+                        source_model_id=repo_id,
+                        model_path=snapshots_dir,
+                        file_layout="huggingface_snapshot",
+                        config_payload={},
+                        mlx_compatibility="unknown",
+                        missing_file_state="missing_companion",
+                        artifact_state="incomplete",
+                        usable_state="incomplete",
+                        operator_message="Hugging Face cache repo has no snapshot payloads.",
+                        remediation="Re-download the model or remove the empty cache entry.",
+                    )
+                )
+                continue
+            for snapshot_dir in snapshot_dirs:
+                resolved_snapshot = snapshot_dir.resolve()
+                if resolved_snapshot in admitted_model_paths:
+                    continue
+                revision = _hf_cache_revision(cache_repo_dir, snapshot_dir.name, revision_map=revision_map)
+                has_config = (snapshot_dir / "config.json").is_file()
+                has_weights = _has_model_weight_files(snapshot_dir)
+                config_payload = _load_model_config_payload(snapshot_dir, json_cache=json_cache) if has_config else {}
+                if not has_config:
+                    missing_file_state = "missing_config"
+                    usable_state = "incomplete"
+                    artifact_state = "incomplete"
+                    mlx_compatibility = "unknown"
+                    message = "Hugging Face snapshot is missing config.json."
+                    remediation = "Re-download or repair the snapshot before using it."
+                elif not has_weights:
+                    missing_file_state = "missing_weights"
+                    usable_state = "incomplete"
+                    artifact_state = "incomplete"
+                    mlx_compatibility = "unknown"
+                    message = "Hugging Face snapshot has no complete model weights."
+                    remediation = "Re-download or repair the snapshot before using it."
+                else:
+                    family_signal = _family_signal_from_config(config_payload)
+                    missing_file_state = "complete"
+                    artifact_state = "external_runtime_only"
+                    usable_state = "unsupported" if family_signal != "unknown" else "ambiguous"
+                    mlx_compatibility = "incompatible" if family_signal != "unknown" else "unknown"
+                    message = (
+                        "Hugging Face snapshot does not advertise an MLX-compatible signal."
+                        if family_signal != "unknown"
+                        else "Hugging Face snapshot has weights but no stable family or MLX signal."
+                    )
+                    remediation = (
+                        "Choose an MLX-compatible revision or import the model through a conversion flow."
+                        if family_signal != "unknown"
+                        else "Add metadata that identifies the family and MLX compatibility."
+                    )
+                candidate_findings.append(
+                    _inventory_candidate_for_path(
+                        root_path=os.fspath(root),
+                        model_id=repo_id,
+                        source_model_id=f"{repo_id}@{revision}",
+                        model_path=resolved_snapshot,
+                        file_layout="huggingface_snapshot",
+                        config_payload=config_payload,
+                        mlx_compatibility=mlx_compatibility,
+                        missing_file_state=missing_file_state,
+                        artifact_state=artifact_state,
+                        usable_state=usable_state,
+                        operator_message=message,
+                        remediation=remediation,
+                    )
                 )
 
     @staticmethod
@@ -3055,6 +4012,7 @@ class WorkerModelCatalog:
         config_payload: Mapping[str, object] | None = None,
         has_generation_config: bool | None = None,
         has_tokenizer_config: bool | None = None,
+        estimated_size_bytes: int | None = None,
     ) -> common_pb2.ModelSpec:
         json_cache = getattr(self, "_json_file_cache", None)
         if json_cache is None:
@@ -3066,6 +4024,8 @@ class WorkerModelCatalog:
             "melix.source_kind": source_kind,
             "melix.model_path": runtime_model_path,
         }
+        if estimated_size_bytes is not None:
+            ext["melix.estimated_size_bytes"] = str(max(0, estimated_size_bytes))
         if config_payload is None:
             config_payload = _load_model_config_payload(model_dir, json_cache=json_cache)
         max_context, max_context_source = _model_context_window(
@@ -3673,3 +4633,64 @@ def _canonical_registry_root_path(raw_path: str) -> str:
 def _stable_registry_root_id(root_path: str) -> str:
     digest = hashlib.sha1(root_path.encode("utf-8")).hexdigest()[:12]
     return f"root-{digest}"
+
+
+def _stable_inventory_scan_id(
+    *,
+    registry_roots: tuple[str, ...],
+    started_at_unix_ms: int,
+) -> str:
+    digest = hashlib.sha1(
+        ("\0".join(registry_roots) + f"\0{started_at_unix_ms}").encode("utf-8")
+    ).hexdigest()[:16]
+    return f"scan-{digest}"
+
+
+def _inventory_candidate_for_path(
+    *,
+    root_path: str,
+    model_id: str,
+    source_model_id: str,
+    model_path: Path,
+    file_layout: str,
+    config_payload: Mapping[str, object] | None,
+    mlx_compatibility: str,
+    missing_file_state: str,
+    artifact_state: str,
+    usable_state: str,
+    operator_message: str,
+    remediation: str,
+    estimated_size_bytes: int = 0,
+    invalid_entry: bool = False,
+) -> _InventoryScanCandidate:
+    family_signal = _family_signal_from_config(config_payload)
+    if usable_state == "usable":
+        trainability = "adapter_only"
+        exportability = "exportable"
+    elif mlx_compatibility == "incompatible":
+        trainability = "not_trainable"
+        exportability = "not_exportable"
+    else:
+        trainability = "unknown"
+        exportability = "unknown"
+    return _InventoryScanCandidate(
+        root_path=root_path,
+        model_id=model_id,
+        source_model_id=source_model_id,
+        model_path=os.fspath(model_path),
+        file_layout=file_layout,
+        family_signal=family_signal,
+        mlx_compatibility=mlx_compatibility,
+        trainability=trainability,
+        exportability=exportability,
+        missing_file_state=missing_file_state,
+        estimated_size_bytes=max(0, estimated_size_bytes),
+        artifact_state=artifact_state,
+        usable_state=usable_state,
+        operator_message=operator_message,
+        remediation=remediation,
+        metrics={
+            "classification_latency_ms": 0.0,
+            "invalid_entry": invalid_entry,
+        },
+    )
