@@ -499,6 +499,16 @@ Executable unit issues:
   fixtures cover cross-shard index and header metadata, native MTP
   sanitize-before-load, Gemma4 text-only exports, and text-backed fallback
   loads.
+- Unit 3.3.2 keeps native quantized multimodal loads conservative around
+  precision-sensitive non-language tensors. The native MTP and Gemma4 loader
+  predicates share the same preservation policy: vision towers, projectors, and
+  decode/output heads stay high precision unless the artifact explicitly marks
+  the module as quantized. Image batch-1 step decode casts prepared
+  `pixel_values` to the vision patch-embed dtype when that dtype is available,
+  avoiding accidental coupling to quantized language embedding dtype. Focused
+  fixtures pin projector/output skip behavior, explicit quantized metadata
+  override behavior, optional-head weight preservation after sanitize, and the
+  pixel dtype selection contract.
 
 ## Verification Policy
 
