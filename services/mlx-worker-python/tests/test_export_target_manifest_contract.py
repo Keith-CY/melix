@@ -227,6 +227,34 @@ def test_export_target_manifest_rejects_file_row_contract_violations(
     assert any("duplicates another file row" in error for error in report.errors)
 
 
+def test_export_target_manifest_rejects_duplicate_paths_across_file_sections(
+    tmp_path: Path,
+) -> None:
+    def mutate(manifest: dict[str, object]) -> None:
+        generated_files = manifest["generated_files"]
+        required_files = manifest["required_files"]
+        intermediate_files = manifest["intermediate_files"]
+        assert isinstance(generated_files, list)
+        assert isinstance(required_files, list)
+        assert isinstance(intermediate_files, list)
+        required_files[0]["path"] = generated_files[0]["path"]
+        intermediate_files[0]["path"] = generated_files[1]["path"]
+
+    manifest_path = _write_manifest(tmp_path, "melix_managed", mutate)
+
+    report = validate_export_target_manifest_file(manifest_path)
+
+    assert report.ok is False
+    assert any(
+        error.startswith("required_files[0].path duplicates another file row")
+        for error in report.errors
+    )
+    assert any(
+        error.startswith("intermediate_files[0].path duplicates another file row")
+        for error in report.errors
+    )
+
+
 def test_export_target_manifest_rejects_missing_required_file_digest(
     tmp_path: Path,
 ) -> None:
