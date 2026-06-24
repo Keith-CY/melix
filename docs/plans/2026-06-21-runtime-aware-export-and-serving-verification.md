@@ -535,14 +535,14 @@ IDs should be scoped to the changed unit:
 |---|---|
 | #1505 | Documentation-only planning slice; runtime metrics are `N/A`, with measurement points specified for the executable units. |
 | #1506 | Manifest validation latency, fixture count, schema error count, manifest byte size. |
-| #1507 | Export duration, artifact byte size, cleanable bytes, retention decision count. |
+| #1507 | Layout materialization latency, retained bytes, cleanable bytes, deleted file count, retention decision count. |
 | #1509 | Load smoke latency, generation latency, preview bytes, timeout count, waiver count. |
 | #1510 | Diagnostic parser coverage, unknown failure count, redaction count, latency. |
 
 Candidate PR-scoped probe names:
 
 - `runtime-export-manifest-validation`
-- `runtime-export-retention-accounting`
+- `runtime-export-layout-retention`
 - `runtime-export-smoke-policy`
 - `runtime-export-diagnostic-parser`
 
@@ -581,6 +581,17 @@ fixture count, schema error count, and manifest byte size.
   intermediates, caches, and temporary files.
 - Cleanup dry-run and apply tests proving required files and evidence survive.
 - Metrics tests for retained and cleanable byte counts.
+
+#1507 implementation lands the worker-owned layout and retention module
+described in
+[`2026-06-24-export-artifact-layout-retention.md`](2026-06-24-export-artifact-layout-retention.md).
+The registered PR-scoped probe for this unit is
+`runtime-export-layout-retention`, measuring layout materialization latency,
+target count, retained bytes, cleanable bytes, deleted file count, and retention
+decision count. This unit does not run real conversion or post-export smoke;
+it consumes valid target manifests and produces the layout, export report,
+retention report, cleanup dry-run, and cleanup apply behavior that later smoke
+and diagnostics units use.
 
 ### #1509 Smoke Unit
 

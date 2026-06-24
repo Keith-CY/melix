@@ -1621,6 +1621,35 @@ def test_phase8_metrics_report_main_emits_split_bootstrap_metrics(
     assert metrics["release_gate.m9_required_probe_count"] == 23.0
     assert metrics["release_gate.m9_missing_probe_count"] == 0.0
     assert metrics["release_gate.m9_failed_threshold_count"] == 0.0
+    _assert_model_states_from_payload_keeps_capabilities_readiness_explicit()
+
+
+def _assert_model_states_from_payload_keeps_capabilities_readiness_explicit() -> None:
+    assert phase8_runtime_probes._model_states_from_payload(
+        {
+            "data": [
+                {"id": "melix-dev-text", "melix_state": "warm"},
+                {"id": "melix-dev-rerank", "status": "pinned"},
+            ]
+        }
+    ) == {
+        "melix-dev-text": "warm",
+        "melix-dev-rerank": "pinned",
+    }
+    assert phase8_runtime_probes._model_states_from_payload(
+        {
+            "models": [
+                {"model_id": "melix-dev-text", "readiness": "pinned"},
+                {"model_id": "melix-dev-rerank", "status": "healthy"},
+            ]
+        }
+    ) == {
+        "melix-dev-text": "pinned",
+    }
+
+
+def test_model_states_from_payload_keeps_capabilities_readiness_explicit() -> None:
+    _assert_model_states_from_payload_keeps_capabilities_readiness_explicit()  # pragma: no cover
 
 
 def test_phase8_metrics_report_main_reuses_embedded_closure_audit(

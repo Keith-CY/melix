@@ -117,3 +117,43 @@ Operators should inspect a manifest in this order:
 
 If a target cannot be represented without side channels, treat that as a schema
 gap. Do not ship ad hoc manifest keys.
+
+## Layout And Retention
+
+The #1507 layout implementation consumes valid export target manifests and
+materializes target directories under:
+
+```text
+exports/adapters/<adapter-id>/<adapter-snapshot>/<export-id>/targets/<target-type>/<target-id>/
+```
+
+The target directory contains the manifest, `artifacts/`, `intermediates/`,
+`logs/`, `smoke/`, `diagnostics/`, and `retention/retention-report.json`.
+Manifest file paths stay relative to this target directory.
+
+Retention reports classify every file row before cleanup:
+
+- required artifacts and evidence are retained;
+- intermediates, caches, and temporary files are cleanable only after target
+  verification has passed or been explicitly waived;
+- runtime logs are retained until the manifest retention TTL expires.
+
+Run the layout and retention report over the checked-in fixtures:
+
+```bash
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" \
+  uv run --project services/mlx-worker-python \
+  python3 scripts/export_target_layout_retention_report.py \
+  --output .runtime/export-target-layout-retention.json
+```
+
+Run the PR-scoped performance probe:
+
+```bash
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" \
+  uv run --project services/mlx-worker-python \
+  python3 scripts/runtime_export_layout_retention_probe.py
+```
+
+The probe reports layout materialization latency, target count, retained bytes,
+cleanable bytes, deleted file count, and retention decision count.
