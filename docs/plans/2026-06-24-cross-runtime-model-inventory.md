@@ -486,6 +486,22 @@ The unit must:
 
 #1514 must not add cleanup apply behavior. It can report cleanup state only.
 
+Implementation approach for #1514:
+
+- Keep the first shared receipt in the existing Python registry snapshot JSON
+  so CLI, Desktop, diagnostics, and maintenance evidence can consume the same
+  machine-readable source without a protocol migration.
+- Emit `scan_receipt` alongside `source_descriptors`, `roots`, and `models`;
+  attach each discovered model's `classification` block to the model payload
+  without changing model admission semantics.
+- Classify currently admitted Melix manifest, plain MLX directory, and
+  Hugging Face cache snapshot rows as usable; represent invalid, incomplete,
+  unsupported, and ambiguous scan findings in receipt rows so later UI slices
+  can explain them without treating them as runnable models.
+- Redact absolute paths in receipt rows by preserving the final path component
+  plus a digest. Do not redact the existing private `roots` and `models`
+  compatibility fields in this unit.
+
 ## Metrics And Probes
 
 The P4.1 implementation units must define PR-scoped probes before code changes
