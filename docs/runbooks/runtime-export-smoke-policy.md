@@ -21,6 +21,33 @@ The target directory receives:
 `export-report.json` is updated with the smoke receipt path, terminal
 verification state, blocker code, waiver id, and report-level `ok` status.
 
+## Diagnostics Evidence
+
+When smoke verification fails or blocks a target, the runner writes
+`diagnostics/diagnostics-receipt.json` before updating `export-report.json`.
+The receipt uses schema `melix.export_diagnostics_receipt.v1` and contains:
+
+- parser status: `matched`, `unknown`, or `not_applicable`
+- typed diagnosis rows for runtime load failures, unsupported architecture,
+  duplicate tensor names, missing blobs, missing binaries, invalid runtime
+  paths, timeouts, permission failures, insufficient memory, and unknown
+  failures
+- operator remedies with redacted evidence pointers for CLI, Desktop, and
+  report surfaces
+- redaction counts, bounded excerpt size, truncation state, and diagnostic
+  parser latency metrics
+
+Operator-facing diagnostics use `diagnostics/redacted-log-excerpt.txt`. The
+parser redacts absolute host paths, credentials, bearer tokens, proxy secrets,
+certificate-like contents, full prompts, full generations, dataset rows,
+private prompt templates, and unnecessary user or operator identity values.
+Paths under the target directory are rewritten as `<target>/...`; other
+absolute paths are replaced with `<absolute-path>`.
+
+`export-report.json` mirrors `diagnostic_status`, `diagnostic_codes`, and
+`operator_remedies` from the diagnostics receipt. UI surfaces should render
+those fields and should not parse raw runtime logs independently.
+
 ## Probe Command
 
 Run the smoke policy probe over the checked-in fixtures:
@@ -34,6 +61,18 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" \
 The probe reports metadata check latency, load smoke latency, generation smoke
 latency, output preview byte count, timeout count, waiver count, target count,
 and peak bytes.
+
+Run the diagnostic parser probe over the same fixture set:
+
+```bash
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" \
+  uv run --project services/mlx-worker-python \
+  python3 scripts/runtime_export_diagnostic_parser_probe.py
+```
+
+The diagnostic probe reports parser coverage, parsed failure count, unknown
+failure count, redaction count, diagnostic latency, target count, and peak
+bytes.
 
 ## Waiver Policy
 

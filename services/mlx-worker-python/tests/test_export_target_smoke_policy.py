@@ -93,13 +93,28 @@ def test_export_target_smoke_blocks_report_when_required_file_is_missing(
     )
 
     updated_report = json.loads((target_root / "export-report.json").read_text(encoding="utf-8"))
+    diagnostics_receipt = json.loads(
+        (target_root / "diagnostics/diagnostics-receipt.json").read_text(encoding="utf-8")
+    )
+    diagnostics_excerpt = (target_root / "diagnostics/redacted-log-excerpt.txt").read_text(
+        encoding="utf-8"
+    )
 
     assert receipt["status"] == "failed"
     assert receipt["metadata_check"]["status"] == "failed"
     assert receipt["metadata_check"]["failure_code"] == "missing_required_file"
     assert receipt["operator_failures"][0]["diagnostics_receipt_path"] == "diagnostics/diagnostics-receipt.json"
+    assert receipt["diagnostics_status"] == "matched"
+    assert receipt["diagnostic_codes"] == ["missing_blob"]
+    assert receipt["operator_remedies"][0]["code"] == "missing_blob"
+    assert diagnostics_receipt["diagnoses"][0]["code"] == "missing_blob"
+    assert diagnostics_receipt["bounded_log_excerpt_path"] == "diagnostics/redacted-log-excerpt.txt"
+    assert str(tmp_path) not in json.dumps(diagnostics_receipt, sort_keys=True)
+    assert str(tmp_path) not in diagnostics_excerpt
     assert updated_report["verification_terminal_state"] == "blocked"
     assert updated_report["verification_blocker_code"] == "missing_required_file"
+    assert updated_report["diagnostic_codes"] == ["missing_blob"]
+    assert updated_report["operator_remedies"][0]["code"] == "missing_blob"
     assert updated_report["ok"] is False
 
 
@@ -304,6 +319,7 @@ def test_export_target_smoke_failure_boundaries(
         available_runtime_binaries=set(),
     )
     assert non_waivable_runtime_receipt["load_check"]["failure_code"] == "runtime_not_installed"
+    assert non_waivable_runtime_receipt["diagnostic_codes"] == ["missing_binary"]
     assert non_waivable_runtime_receipt["waiver"] == {}
 
     perf_counter_values = iter((0.0, 0.02))
@@ -334,6 +350,11 @@ def test_export_target_smoke_failure_boundaries(
     )
     assert export_target_smoke._terminal_status((blocked_result,)) == "blocked"
     assert export_target_smoke._waiver_id({"waiver": []}) == ""
+    assert export_target_smoke._diagnostic_codes({"diagnoses": "invalid"}) == []
+    assert export_target_smoke._diagnostic_codes(
+        {"diagnoses": ["invalid", {"code": "missing_blob"}, {"code": "missing_blob"}]}
+    ) == ["missing_blob"]
+    assert export_target_smoke._operator_remedies({"operator_remedies": "invalid"}) == []
 
 
 def test_runtime_export_smoke_policy_probe_failure_paths(
