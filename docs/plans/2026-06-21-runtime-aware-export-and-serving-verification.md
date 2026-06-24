@@ -159,9 +159,9 @@ schema-backed implementation slice must support exactly these targets:
   model, quantization, required files, runtime requirements, and verification
   policy without Melix-only side channels.
 - #1507 responsibility: store target files under
-  `targets/melix_managed/<target-id>/`, retain manifests, evidence, required
-  runtime artifacts, and classify temporary fusion outputs as cleanable after
-  verification or waiver.
+  `targets/melix_managed/<target-id>/artifacts/`, retain manifests, evidence,
+  required runtime artifacts, and classify temporary fusion outputs as cleanable
+  after verification or waiver.
 
 `ollama`
 
@@ -200,9 +200,9 @@ schema-backed implementation slice must support exactly these targets:
   or fused mode, base model linkage, runtime requirements, and verification
   policy.
 - #1507 responsibility: store MLX bundle files under
-  `targets/mlx_runtime/<target-id>/`; retain runtime-required files and evidence
-  while marking conversion intermediates and temporary logs according to the
-  retention report.
+  `targets/mlx_runtime/<target-id>/artifacts/`; retain runtime-required files and
+  evidence while marking conversion intermediates and temporary logs according to
+  the retention report.
 
 The #1506 unit owns the checked-in schema, fixtures, validator, and manifest
 metrics for this matrix. The #1507 unit owns materializing the directory layout,
