@@ -14,6 +14,8 @@ from worker.productization.export_target_layout import (
     build_layout_metrics_report,
     cleanup_export_target,
     materialize_export_target_layout,
+    _runtime_log_ttl_expired,
+    _target_relative_path,
 )
 from worker.productization.export_target_manifest import validate_export_target_manifest_file
 
@@ -87,6 +89,63 @@ def test_materialize_export_target_layout_writes_reports_and_placeholder_files(
     assert report["retained_byte_size"] == retention_payload["retained_byte_size"]
     assert report["cleanable_byte_size"] == retention_payload["cleanable_byte_size"]
     assert report["retention_decision_count"] == retention_payload["retention_decision_count"]
+
+
+def test_materialize_export_target_layout_allows_manifest_already_at_layout_path(
+    tmp_path: Path,
+) -> None:
+    manifest_path = FIXTURE_ROOT / "ollama/export-target-manifest.json"
+    manifest, validation_report = validate_export_target_manifest_file(
+        manifest_path,
+        return_manifest=True,
+    )
+    assert validation_report.ok is True
+    layout = build_export_target_layout(tmp_path, manifest)
+    layout.manifest_path.parent.mkdir(parents=True)
+    layout.manifest_path.write_text(manifest_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    report = materialize_export_target_layout(
+        layout.manifest_path,
+        tmp_path,
+        create_placeholder_files=False,
+    )
+
+    assert report["ok"] is True
+    assert Path(report["manifest_path"]) == layout.manifest_path.relative_to(tmp_path)
+
+
+def test_materialize_export_target_layout_rejects_paths_outside_target_root(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    manifest_path = _write_manifest(
+        tmp_path,
+        "ollama",
+        lambda manifest: _set_nested(
+            manifest,
+            "generated_files.0.path",
+            "artifacts-link/escape.bin",
+        ),
+    )
+    manifest, validation_report = validate_export_target_manifest_file(
+        manifest_path,
+        return_manifest=True,
+    )
+    assert validation_report.ok is True
+    layout = build_export_target_layout(workspace_root, manifest)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    layout.target_root.mkdir(parents=True)
+    (layout.target_root / "artifacts-link").symlink_to(outside_dir)
+
+    with pytest.raises(ValueError, match="escapes target root"):
+        materialize_export_target_layout(
+            manifest_path,
+            workspace_root,
+            create_placeholder_files=True,
+        )
+
+    assert not (outside_dir / "escape.bin").exists()
 
 
 def test_cleanup_dry_run_preserves_required_and_evidence_and_marks_completed_intermediates_cleanable(
@@ -166,6 +225,42 @@ def test_cleanup_apply_deletes_only_cleanable_intermediates(
     assert decisions["intermediates/merge.tmp.safetensors"]["deleted"] is True
 
 
+def test_cleanup_rejects_paths_outside_target_root(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_manifest(
+        tmp_path,
+        "mlx_runtime",
+        lambda manifest: _set_nested(
+            manifest,
+            "verification_status.state",
+            "EXPORT_VERIFICATION_STATE_WAIVED",
+        ),
+    )
+    materialized = materialize_export_target_layout(
+        manifest_path,
+        tmp_path / "workspace",
+        create_placeholder_files=True,
+    )
+    target_root = tmp_path / "workspace" / str(materialized["target_root"])
+    target_manifest_path = target_root / "export-target-manifest.json"
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    (target_root / "intermediates-link").symlink_to(outside_dir)
+    manifest_payload = json.loads(target_manifest_path.read_text(encoding="utf-8"))
+    _set_nested(manifest_payload, "intermediate_files.0.path", "intermediates-link/escape.tmp")
+    target_manifest_path.write_text(json.dumps(manifest_payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="escapes target root"):
+        cleanup_export_target(
+            target_manifest_path,
+            tmp_path / "workspace",
+            apply_cleanup=True,
+        )
+
+    assert not (outside_dir / "escape.tmp").exists()
+
+
 def test_cleanup_keeps_intermediates_while_verification_pending(tmp_path: Path) -> None:
     manifest_path = FIXTURE_ROOT / "mlx_runtime/export-target-manifest.json"
     materialized = materialize_export_target_layout(
@@ -214,6 +309,60 @@ def test_runtime_logs_become_cleanable_after_ttl(tmp_path: Path) -> None:
     decisions = {decision["path"]: decision for decision in report["decisions"]}
     assert decisions["logs/ollama-create.log"]["decision"] == "delete_after_ttl"
     assert decisions["logs/ollama-create.log"]["reason"] == "runtime_log_ttl_expired"
+
+
+def test_runtime_log_ttl_handles_missing_stat_race() -> None:
+    manifest_path = FIXTURE_ROOT / "ollama/export-target-manifest.json"
+    manifest, validation_report = validate_export_target_manifest_file(
+        manifest_path,
+        return_manifest=True,
+    )
+    assert validation_report.ok is True
+
+    class MissingStatPath:
+        def stat(self) -> object:
+            raise FileNotFoundError
+
+    assert _runtime_log_ttl_expired(
+        manifest,
+        MissingStatPath(),  # type: ignore[arg-type]
+        exists=True,
+        now=1_800_000_000.0,
+    ) is False
+
+
+def test_export_target_layout_bounds_path_segments(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(
+        tmp_path,
+        "ollama",
+        lambda manifest: _set_nested(
+            manifest,
+            "adapter_id",
+            "adapter-" + "x" * 300,
+        ),
+    )
+    manifest, validation_report = validate_export_target_manifest_file(
+        manifest_path,
+        return_manifest=True,
+    )
+    assert validation_report.ok is True
+
+    layout = build_export_target_layout(tmp_path / "workspace", manifest)
+
+    assert max(len(part) for part in layout.target_root.parts) <= 128
+
+
+def test_export_target_layout_rejects_empty_relative_path(tmp_path: Path) -> None:
+    manifest_path = FIXTURE_ROOT / "ollama/export-target-manifest.json"
+    manifest, validation_report = validate_export_target_manifest_file(
+        manifest_path,
+        return_manifest=True,
+    )
+    assert validation_report.ok is True
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    with pytest.raises(ValueError, match="path is empty"):
+        _target_relative_path(layout, "")
 
 
 def test_layout_metrics_report_aggregates_target_retention_counts(tmp_path: Path) -> None:

@@ -63,6 +63,7 @@ _EVIDENCE_PATH_FIELDS = (
     "smoke_receipt_path",
     "diagnostics_receipt_path",
 )
+_MAX_PATH_SEGMENT_LENGTH = 128
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,7 +147,9 @@ def materialize_export_target_layout(
 
     layout = build_export_target_layout(workspace_root, manifest)
     _create_layout_directories(layout)
-    shutil.copyfile(manifest_path, layout.manifest_path)
+    source_manifest_path = Path(manifest_path)
+    if source_manifest_path.resolve() != layout.manifest_path.resolve():
+        shutil.copyfile(source_manifest_path, layout.manifest_path)
     if create_placeholder_files:
         _materialize_placeholder_files(layout, manifest)
 
@@ -373,14 +376,14 @@ def _materialize_placeholder_files(
 ) -> None:
     for _section, rows in _file_sections(manifest):
         for row in rows:
-            path = layout.target_root / row.path
+            path = _target_relative_path(layout, row.path)
             if path == layout.manifest_path:
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
             if not path.exists():
                 path.write_bytes(_placeholder_bytes(manifest, row))
     for field_name in _EVIDENCE_PATH_FIELDS:
-        evidence_path = layout.target_root / getattr(manifest.evidence, field_name)
+        evidence_path = _target_relative_path(layout, getattr(manifest.evidence, field_name))
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         if not evidence_path.exists():
             _write_json(
@@ -413,7 +416,7 @@ def _decide_file(
     apply_cleanup: bool,
     now: float,
 ) -> _FileDecision:
-    path = layout.target_root / row.path
+    path = _target_relative_path(layout, row.path)
     exists = path.exists()
     decision, reason = _retention_decision(manifest, row, path, exists, now)
     deleted = False
@@ -422,7 +425,7 @@ def _decide_file(
         and exists
         and decision in {RETENTION_DECISION_CLEANABLE, RETENTION_DECISION_DELETE_AFTER_TTL}
     ):
-        path.unlink()
+        path.unlink(missing_ok=True)
         deleted = True
         exists = False
     return _FileDecision(
@@ -470,7 +473,10 @@ def _runtime_log_ttl_expired(
         return False
     if not exists:
         return False
-    return now - path.stat().st_mtime >= ttl_seconds
+    try:
+        return now - path.stat().st_mtime >= ttl_seconds
+    except FileNotFoundError:
+        return False
 
 
 def _decision_payload(decision: _FileDecision) -> dict[str, object]:
@@ -510,8 +516,18 @@ def _target_type_segment(target_type: int) -> str:
 
 def _path_segment(value: str) -> str:
     stripped = value.strip()
-    segment = _SEGMENT_PATTERN.sub("-", stripped).strip(".-_")
+    segment = _SEGMENT_PATTERN.sub("-", stripped).strip(".-_")[:_MAX_PATH_SEGMENT_LENGTH]
     return segment or "unnamed"
+
+
+def _target_relative_path(layout: ExportTargetLayout, relative_path: str) -> Path:
+    if not relative_path:
+        raise ValueError("export target file path is empty")
+    resolved_root = layout.target_root.resolve()
+    path = (resolved_root / relative_path).resolve()
+    if not path.is_relative_to(resolved_root):
+        raise ValueError(f"export target file path escapes target root: {relative_path}")
+    return path
 
 
 def _relative_to_workspace(layout: ExportTargetLayout, path: Path) -> str:
