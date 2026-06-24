@@ -1483,6 +1483,10 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
         "<secret-redacted>#"
     )
     assert catalog_module._family_signal_from_config(None) == "unknown"
+    assert catalog_module._family_signal_from_config({"model_type": None}) == "unknown"
+    assert catalog_module._family_signal_from_config(
+        {"model_type": None, "text_config": {"model_type": None}, "architectures": [None, "fallback"]}
+    ) == "unknown"
     assert catalog_module._family_signal_from_config({"text_config": {"model_type": "gemma_text"}}) == "gemma_text"
     assert catalog_module._file_layout_for_model(common_pb2.ModelSpec(model_id="unknown")) == "unknown"
     assert catalog_module._payload_size_bytes({"bad": object()}) == 0
@@ -1541,6 +1545,39 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
         remediation="",
     )
     assert usable_candidate.trainability == "adapter_only"
+
+    orphan_root = tmp_path / "orphan-root"
+    orphan_model = common_pb2.ModelSpec(
+        model_id="orphan",
+        model_path=str(tmp_path / "orphan"),
+        model_kind="text",
+        revision="local",
+    )
+    orphan_classification = {
+        "orphan": catalog_module._classification_for_admitted_model(orphan_model)
+    }
+    orphan_receipt = catalog._build_scan_receipt(
+        scan_id="scan-orphan",
+        started_at_unix_ms=1,
+        completed_at_unix_ms=2,
+        source_descriptors=(),
+        roots=(
+            catalog_module.RegistryRootSnapshot(
+                root_id="root-orphan",
+                root_path=str(orphan_root),
+                root_order=1,
+                accessible=True,
+            ),
+        ),
+        discovered_models={"orphan": orphan_model},
+        model_classifications=orphan_classification,
+        candidate_findings=(),
+        aggregated_invalid_entry_counts={},
+        hf_cache_roots=frozenset(),
+        root_scan_latency_ms={},
+    )
+    assert orphan_receipt.summary["usable_model_count"] == 1
+    assert orphan_receipt.source_receipts[0].usable_model_count == 0
 
     nested_model_dir = tmp_path / "nested-context-model"
     _write_model_config(

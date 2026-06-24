@@ -944,17 +944,17 @@ def _inventory_nonnegative_int(value: object) -> int:
 def _family_signal_from_config(config_payload: Mapping[str, object] | None) -> str:
     if not isinstance(config_payload, Mapping):
         return "unknown"
-    model_type = _normalized(str(config_payload.get("model_type", "")))
+    model_type = _normalized(str(config_payload.get("model_type") or ""))
     if model_type:
         return model_type
     text_config = config_payload.get("text_config")
     if isinstance(text_config, Mapping):
-        text_model_type = _normalized(str(text_config.get("model_type", "")))
+        text_model_type = _normalized(str(text_config.get("model_type") or ""))
         if text_model_type:
             return text_model_type
     architectures = config_payload.get("architectures")
     if isinstance(architectures, (list, tuple)) and architectures:
-        first = _normalized(str(architectures[0]))
+        first = _normalized(str(architectures[0] or ""))
         if first:
             return first
     return "unknown"
@@ -2872,7 +2872,12 @@ class WorkerModelCatalog:
 
         records_by_root: dict[str, list[_InventoryClassificationRecord]] = {}
         for record in records:
-            records_by_root.setdefault(_canonical_registry_root_path(record.root_path), []).append(record)
+            canonical_record_root = (
+                _canonical_registry_root_path(record.root_path)
+                if record.root_path.strip()
+                else ""
+            )
+            records_by_root.setdefault(canonical_record_root, []).append(record)
 
         source_receipts: list[ModelInventorySourceScanReceipt] = []
         source_receipt_keys: set[tuple[str, str]] = set()
@@ -3024,8 +3029,9 @@ class WorkerModelCatalog:
         aggregated_invalid_entry_count: int,
         scan_latency_ms: float,
     ) -> tuple[ModelInventorySourceScanReceipt, int]:
-        redacted_effective_root, effective_redaction_count = _inventory_redacted_value(root.root_path)
         root_redaction, root_redaction_count, root_digest = _redacted_inventory_path(root.root_path)
+        redacted_effective_root = str(root_redaction["display"])
+        effective_redaction_count = root_redaction_count
         usable_count = sum(1 for record in root_records if record.classification.usable_state == "usable")
         unsupported_count = sum(1 for record in root_records if record.classification.usable_state == "unsupported")
         incomplete_count = sum(1 for record in root_records if record.classification.usable_state == "incomplete")
@@ -3073,8 +3079,9 @@ class WorkerModelCatalog:
         *,
         requested_root: str,
     ) -> tuple[ModelInventorySourceScanReceipt, int]:
-        redacted_requested_root, requested_redaction_count = _inventory_redacted_value(requested_root)
         root_redaction, root_redaction_count, root_digest = _redacted_inventory_path(requested_root)
+        redacted_requested_root = str(root_redaction["display"])
+        requested_redaction_count = root_redaction_count
         failure_code = (
             "scanner_not_implemented"
             if descriptor.discovery_policy.get("scanner") == "descriptor_only_until_source_specific_scanner_lands"
