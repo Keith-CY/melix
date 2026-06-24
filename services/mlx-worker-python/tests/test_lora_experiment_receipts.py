@@ -26,6 +26,10 @@ def test_persist_training_run_preserves_lora_canary_receipts(tmp_path: Path) -> 
         "completion_loss": 0.125,
         "round_trip_passed": True,
         "grad_norm": 0.75,
+        "checkpoint_step": 100,
+        "checkpoint_sort_key": "0000000100",
+        "selected_checkpoint_path": "/tmp/run/checkpoint-100/adapters.safetensors",
+        "selected_checkpoint_loss_source": "loss_best",
         "updated_at_unix_ms": 1_000,
     }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -48,3 +52,7 @@ def test_persist_training_run_preserves_lora_canary_receipts(tmp_path: Path) -> 
     assert run_payload["completion_loss"] == 0.125
     assert run_payload["round_trip_passed"] is True
     assert run_payload["grad_norm"] == 0.75
+    assert run_payload["checkpoint_step"] == 100
+    assert run_payload["checkpoint_sort_key"] == "0000000100"
+    assert run_payload["selected_checkpoint_path"] == "/tmp/run/checkpoint-100/adapters.safetensors"
+    assert run_payload["selected_checkpoint_loss_source"] == "loss_best"

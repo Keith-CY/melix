@@ -41,6 +41,74 @@ def _runtime_mode_from_activation(activation_mode: str) -> int:
     return int(common_pb2.RUNTIME_MODE_UNSPECIFIED)
 
 
+def _int_value(raw_value: Any) -> int:
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _first_present_value(payload: dict[str, Any], *keys: str, default: Any = "") -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None and value != "":
+            return value
+    return default
+
+
+def _str_value(raw_value: Any) -> str:
+    return "" if raw_value is None else str(raw_value)
+
+
+def _checkpoint_selection_snapshot_fields(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "checkpoint_count": _int_value(
+            _first_present_value(
+                manifest,
+                "checkpoint_count",
+                "experiment.checkpoint_count",
+                default=0,
+            )
+        ),
+        "latest_checkpoint_path": _str_value(
+            _first_present_value(
+                manifest,
+                "latest_checkpoint_path",
+                "experiment.latest_checkpoint_path",
+            )
+        ),
+        "checkpoint_step": _int_value(
+            _first_present_value(
+                manifest,
+                "checkpoint_step",
+                "experiment.checkpoint_step",
+                default=0,
+            )
+        ),
+        "checkpoint_sort_key": _str_value(
+            _first_present_value(
+                manifest,
+                "checkpoint_sort_key",
+                "experiment.checkpoint_sort_key",
+            )
+        ),
+        "selected_checkpoint_path": _str_value(
+            _first_present_value(
+                manifest,
+                "selected_checkpoint_path",
+                "experiment.selected_checkpoint_path",
+            )
+        ),
+        "selected_checkpoint_loss_source": _str_value(
+            _first_present_value(
+                manifest,
+                "selected_checkpoint_loss_source",
+                "experiment.selected_checkpoint_loss_source",
+            )
+        ),
+    }
+
+
 @dataclass(slots=True)
 class ModelOpsJob:
     job_id: str
@@ -815,9 +883,9 @@ class ModelOpsJobRegistry:
                 "adapter_weights_path": str(manifest.get("adapter_weights_path", "")),
                 "adapter_scope": str(manifest.get("adapter_scope", "")),
                 "training_surface": str(manifest.get("training_surface", "")),
-                "component_model_type": str(manifest.get("component_model_type", "")),
-                "component_family": str(manifest.get("component_family", "")),
-                "component_model_path": str(manifest.get("component_model_path", "")),
+                "component_model_type": _str_value(manifest.get("component_model_type")),
+                "component_family": _str_value(manifest.get("component_family")),
+                "component_model_path": _str_value(manifest.get("component_model_path")),
                 "activation_manifest_path": str(job.get("output_path", "")),
                 "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                 "status": "activated",
@@ -846,9 +914,10 @@ class ModelOpsJobRegistry:
             removal_applied = output_path in removed_adapter_manifest_paths
             adapter_scope = str(manifest.get("adapter_scope", ""))
             training_surface = str(manifest.get("training_surface", ""))
-            component_model_type = str(manifest.get("component_model_type", ""))
-            component_family = str(manifest.get("component_family", ""))
-            component_model_path = str(manifest.get("component_model_path", ""))
+            component_model_type = _str_value(manifest.get("component_model_type"))
+            component_family = _str_value(manifest.get("component_family"))
+            component_model_path = _str_value(manifest.get("component_model_path"))
+            checkpoint_selection = _checkpoint_selection_snapshot_fields(manifest)
 
             if publish:
                 status = "published"
@@ -932,18 +1001,7 @@ class ModelOpsJobRegistry:
                     "response_only": bool(manifest.get("response_only", False)),
                     "gradient_checkpointing": bool(manifest.get("gradient_checkpointing", False)),
                     "training_duration_ms": float(manifest.get("training_duration_ms", 0.0)),
-                    "checkpoint_count": int(
-                        manifest.get(
-                            "checkpoint_count",
-                            manifest.get("experiment.checkpoint_count", 0),
-                        )
-                    ),
-                    "latest_checkpoint_path": str(
-                        manifest.get(
-                            "latest_checkpoint_path",
-                            manifest.get("experiment.latest_checkpoint_path", ""),
-                        )
-                    ),
+                    **checkpoint_selection,
                     "resume_source_path": str(
                         manifest.get(
                             "resume_source_path",
@@ -1057,9 +1115,9 @@ class ModelOpsJobRegistry:
                 "adapter_name": str(manifest.get("adapter_name", "")),
                 "adapter_scope": str(manifest.get("adapter_scope", "")),
                 "training_surface": str(manifest.get("training_surface", "")),
-                "component_model_type": str(manifest.get("component_model_type", "")),
-                "component_family": str(manifest.get("component_family", "")),
-                "component_model_path": str(manifest.get("component_model_path", "")),
+                "component_model_type": _str_value(manifest.get("component_model_type")),
+                "component_family": _str_value(manifest.get("component_family")),
+                "component_model_path": _str_value(manifest.get("component_model_path")),
                 "derived_model_alias": str(manifest.get("derived_model_alias", "")),
                 "source_adapter_job_id": str(manifest.get("source_adapter_job_id", "")),
                 "source_model": str(manifest.get("source_model", "")),
