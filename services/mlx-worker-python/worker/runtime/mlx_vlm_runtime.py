@@ -56,6 +56,12 @@ from worker.runtime.runtime_utils import (
     callable_declares_kwarg as _callable_declares_kwarg,
     installed_package_version as _installed_package_version,
 )
+from worker.runtime.quantized_tensor_metadata import (
+    EMPTY_QUANTIZED_TENSOR_METADATA,
+    QuantizedTensorMetadata,
+    quantized_scales_present,
+    quantized_tensor_metadata_from_model_dir,
+)
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import (
     resolve_vision_family_config,
@@ -1889,13 +1895,19 @@ class AutoMLXVLMBackend:
         model_path = get_model_path(model_spec.model_path, revision=model_spec.revision or "main")
         config = load_config(model_path)
         weights: dict[str, Any] = {}
+        weight_files: list[str] = []
         for entry in os.scandir(model_path):
             try:
                 if not entry.is_file() or not entry.name.endswith(".safetensors"):
                     continue
             except OSError:
                 continue
+            weight_files.append(entry.path)
             weights.update(mx.load(entry.path))
+        quantized_metadata = quantized_tensor_metadata_from_model_dir(
+            model_path,
+            weight_files=weight_files,
+        )
 
         has_vision_weights, has_audio_weights = _gemma4_multimodal_weight_presence(weights.keys())
         if has_vision_weights:
@@ -1907,6 +1919,7 @@ class AutoMLXVLMBackend:
             model = AutoMLXVLMBackend._load_gemma4_text_only_language_model(
                 config=config,
                 weights=weights,
+                quantized_metadata=quantized_metadata,
             )
             processor = _CallableTokenizerProcessor(
                 _load_tokenizer_with_supported_hints(load_tokenizer, model_path)
@@ -1948,7 +1961,11 @@ class AutoMLXVLMBackend:
                     return False
                 if hasattr(module, "weight") and module.weight.size % 64 != 0:
                     return False
-                return f"{path}.scales" in weights
+                return quantized_scales_present(
+                    path,
+                    metadata=quantized_metadata,
+                    weights=weights,
+                )
 
             nn.quantize(
                 model,
@@ -1975,7 +1992,12 @@ class AutoMLXVLMBackend:
         return model, processor, execution_mode
 
     @staticmethod
-    def _load_gemma4_text_only_language_model(*, config: dict[str, Any], weights: dict[str, Any]):
+    def _load_gemma4_text_only_language_model(
+        *,
+        config: dict[str, Any],
+        weights: dict[str, Any],
+        quantized_metadata: QuantizedTensorMetadata = EMPTY_QUANTIZED_TENSOR_METADATA,
+    ):
         import mlx.core as mx
         import mlx.nn as nn
         from mlx_vlm.models.gemma4.language import LanguageModel, TextConfig
@@ -1992,7 +2014,11 @@ class AutoMLXVLMBackend:
                     return False
                 if hasattr(module, "weight") and module.weight.size % 64 != 0:
                     return False
-                return f"{path}.scales" in weights
+                return quantized_scales_present(
+                    path,
+                    metadata=quantized_metadata,
+                    weights=weights,
+                )
 
             nn.quantize(
                 model,
