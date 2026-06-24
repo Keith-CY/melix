@@ -482,6 +482,11 @@ def test_quantized_load_acceptance_receipt_counts_native_and_bridge_fallbacks() 
         quantized_load_fallback_reason="unsupported_family",
         quant_profile_id="none",
     )
+    unquantized_bfloat16 = quantized_load_acceptance_receipt(
+        quantized_load_mode="fallback",
+        quantized_load_fallback_reason="unsupported_family",
+        quant_profile_id="bf16",
+    )
 
     assert native.native_quantized_load_count == 1
     assert native.bridge_quantized_fallback_count == 0
@@ -493,6 +498,8 @@ def test_quantized_load_acceptance_receipt_counts_native_and_bridge_fallbacks() 
     assert unquantized.bridge_quantized_fallback_count == 0
     assert unquantized_unsupported_family.native_quantized_load_count == 0
     assert unquantized_unsupported_family.bridge_quantized_fallback_count == 0
+    assert unquantized_bfloat16.native_quantized_load_count == 0
+    assert unquantized_bfloat16.bridge_quantized_fallback_count == 0
 
 
 def test_cross_shard_quantized_metadata_fixup_count_counts_weight_scale_pairs() -> None:

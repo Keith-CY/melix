@@ -10,6 +10,22 @@ class QuantizedLoadAcceptanceReceipt:
     cross_shard_metadata_fixup_count: int = 0
 
 
+_UNQUANTIZED_PROFILE_IDS = frozenset(
+    {
+        "",
+        "none",
+        "fp16",
+        "float16",
+        "f16",
+        "bf16",
+        "bfloat16",
+        "fp32",
+        "float32",
+        "f32",
+    }
+)
+
+
 def quantized_load_acceptance_counts(
     *,
     quantized_load_mode: str,
@@ -20,7 +36,7 @@ def quantized_load_acceptance_counts(
     normalized_mode = str(quantized_load_mode or "").strip()
     normalized_reason = str(quantized_load_fallback_reason or "").strip()
     normalized_profile = str(quant_profile_id or "").strip().lower()
-    is_quantized_artifact = normalized_profile not in {"", "none", "fp16", "float16"}
+    is_quantized_artifact = normalized_profile not in _UNQUANTIZED_PROFILE_IDS
 
     native_count = 1 if normalized_mode == "native_quantized" else 0
     bridge_fallback_count = (

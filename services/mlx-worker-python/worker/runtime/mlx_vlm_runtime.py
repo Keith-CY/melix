@@ -1875,12 +1875,13 @@ class AutoMLXVLMBackend:
         metadata["mlx_lm_version"] = _installed_package_version("mlx-lm")
         metadata["mlx_vlm_version"] = _installed_package_version("mlx-vlm")
         execution_mode = metadata.get("melix.vlm.execution_mode", "").strip() or "multimodal"
-        quantized_metadata = quantized_tensor_metadata_from_model_dir(
-            Path(model_spec.model_path),
-        )
-        cross_shard_metadata_fixup_count = cross_shard_quantized_metadata_fixup_count(
-            quantized_metadata
-        )
+        model_path = Path(model_spec.model_path)
+        cross_shard_metadata_fixup_count = 0
+        if model_path.is_dir():
+            quantized_metadata = quantized_tensor_metadata_from_model_dir(model_path)
+            cross_shard_metadata_fixup_count = cross_shard_quantized_metadata_fixup_count(
+                quantized_metadata
+            )
         native_mtp_metadata = maybe_apply_native_mtp_preload_patches(
             model_spec.model_path,
             metadata=metadata,

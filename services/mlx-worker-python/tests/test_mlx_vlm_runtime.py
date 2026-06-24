@@ -2537,6 +2537,48 @@ def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_ent
 
     assert not metadata.tensor_names
 
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = revision
+        load_paths.append(model_path)
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"))
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    _write_fake_safetensors_header(
+        model_dir / "model-00002.safetensors",
+        ("language_model.layers.1.q_proj.weight",),
+    )
+    _write_fake_safetensors_header(
+        model_dir / "model-00003.safetensors",
+        ("language_model.layers.1.q_proj.scales",),
+    )
+    load_paths: list[str] = []
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "formatted::prompt",
+        )
+    )
+
+    local_model = imported_gemma4_vlm_model()
+    local_model.model_path = str(model_dir)
+    loaded_local_model = runtime.load_model(local_model)
+
+    assert loaded_local_model["cross_shard_metadata_fixup_count"] == 1
+
+    hf_repo_model = common_pb2.ModelSpec(
+        model_id="nano-llava",
+        model_path="mlx-community/nanoLLaVA",
+        model_kind="vlm",
+        revision="main",
+        ext={"melix.vlm.execution_mode": "multimodal"},
+    )
+    loaded_hf_repo_model = runtime.load_model(hf_repo_model)
+
+    assert load_paths == [str(model_dir), "mlx-community/nanoLLaVA"]
+    assert loaded_hf_repo_model["cross_shard_metadata_fixup_count"] == 0
+
 
 def _assert_native_multimodal_quantization_preserves_precision_without_explicit_scales() -> None:
     empty_metadata = QuantizedTensorMetadata({})
