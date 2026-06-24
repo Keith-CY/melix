@@ -117,39 +117,41 @@ include:
 - `source_provenance`
 - `redaction_class`
 
-Required `target_type` values are `melix_managed`, `ollama`, `gguf`, and
-`mlx_runtime`. Unknown target types are rejected until a governing plan extends
-the target matrix.
+Required `target_type` values use the protobuf JSON enum names
+`EXPORT_TARGET_TYPE_MELIX_MANAGED`, `EXPORT_TARGET_TYPE_OLLAMA`,
+`EXPORT_TARGET_TYPE_GGUF`, and `EXPORT_TARGET_TYPE_MLX_RUNTIME`. Unknown
+target types are rejected until a governing plan extends the target matrix.
 
 ### Target Policies
 
-`melix_managed` targets produce Melix-managed adapter or fused derived-model
-artifacts usable by Melix sessions. Their smoke policy requires manifest
-inspection, local catalog resolvability, load through the selected Melix
-runtime path, and one bounded generation when the target is generation-capable.
+`EXPORT_TARGET_TYPE_MELIX_MANAGED` targets produce Melix-managed adapter or
+fused derived-model artifacts usable by Melix sessions. Their smoke policy
+requires manifest inspection, local catalog resolvability, load through the
+selected Melix runtime path, and one bounded generation when the target is
+generation-capable.
 
-`ollama` targets produce an Ollama-compatible model directory or model
-registration bundle. Their smoke policy requires metadata inspection, runtime
-binary/path preflight, load or registration check, and one bounded generation
-with timeout.
+`EXPORT_TARGET_TYPE_OLLAMA` targets produce an Ollama-compatible model
+directory or model registration bundle. Their smoke policy requires metadata
+inspection, runtime binary/path preflight, load or registration check, and one
+bounded generation with timeout.
 
-`gguf` targets produce a GGUF file plus metadata and provenance for compatible
-local runtimes. Their smoke policy requires header/metadata inspection,
-file-size and digest verification, optional load smoke through a configured
-compatible runtime, and an explicit waiver when no compatible runtime is
-available.
+`EXPORT_TARGET_TYPE_GGUF` targets produce a GGUF file plus metadata and
+provenance for compatible local runtimes. Their smoke policy requires
+header/metadata inspection, file-size and digest verification, optional load
+smoke through a configured compatible runtime, and an explicit waiver when no
+compatible runtime is available.
 
-`mlx_runtime` targets produce an MLX-compatible local model or adapter bundle
-for `mlx-lm` or Melix MLX workers. Their smoke policy requires MLX metadata
-inspection, local path preflight, runtime load, and one bounded generation with
-timeout.
+`EXPORT_TARGET_TYPE_MLX_RUNTIME` targets produce an MLX-compatible local model
+or adapter bundle for `mlx-lm` or Melix MLX workers. Their smoke policy requires
+MLX metadata inspection, local path preflight, runtime load, and one bounded
+generation with timeout.
 
 ### Target Matrix And Unit Boundaries
 
 P3.1 fixes the export target matrix before implementation starts. The first
 schema-backed implementation slice must support exactly these targets:
 
-`melix_managed`
+`EXPORT_TARGET_TYPE_MELIX_MANAGED`
 
 - Produced artifact: Melix-managed adapter package or fused derived-model
   artifact.
@@ -163,7 +165,7 @@ schema-backed implementation slice must support exactly these targets:
   required runtime artifacts, and classify temporary fusion outputs as cleanable
   after verification or waiver.
 
-`ollama`
+`EXPORT_TARGET_TYPE_OLLAMA`
 
 - Produced artifact: Ollama-compatible model directory, blob set, or
   registration bundle.
@@ -176,7 +178,7 @@ schema-backed implementation slice must support exactly these targets:
   evidence under `targets/ollama/<target-id>/`; keep manifests and smoke
   evidence while classifying transient import/cache files as cleanable.
 
-`gguf`
+`EXPORT_TARGET_TYPE_GGUF`
 
 - Produced artifact: GGUF file plus metadata and provenance for compatible
   local runtimes.
@@ -190,7 +192,7 @@ schema-backed implementation slice must support exactly these targets:
   `targets/gguf/<target-id>/artifacts/`; retain the GGUF file and evidence, and
   classify conversion scratch files as cleanable.
 
-`mlx_runtime`
+`EXPORT_TARGET_TYPE_MLX_RUNTIME`
 
 - Produced artifact: MLX-compatible local model or adapter bundle for `mlx-lm`
   or Melix MLX workers.
@@ -351,10 +353,14 @@ runtime cache state, ad hoc stdout, or files outside the target directory.
 
 | Target type | Metadata check | Load check | Generation check | Waiver boundary |
 |---|---|---|---|---|
-| `melix_managed` | Validate manifest, required file digests, activation mode, quantization, and catalog-resolvable target identity. | Load through the selected Melix runtime path or model catalog without mutating source adapter evidence. | Required when the target is generation-capable; use a synthetic prompt, fixed token cap, timeout, and preview byte cap. | `metadata_only_target` only for metadata-only exports; runtime failures require diagnostics before waiver. |
-| `ollama` | Validate generated model metadata, registration inputs, required blobs, runtime binary/path preflight, and target-local log path. | Prove load or registration through the configured local Ollama runtime with bounded timeout. | Required after load or registration succeeds. | `runtime_not_installed`, `runtime_incompatible_host`, `known_runtime_bug`, or `operator_manual_verification` with replacement evidence. |
-| `gguf` | Validate GGUF header, declared metadata, byte size, digest, quantization, and compatible runtime requirements. | Required when a compatible local runtime is configured; otherwise the load check is `waived`. | Required only when the configured compatible runtime supports generation. | No-compatible-runtime cases may use `runtime_not_installed` or `runtime_incompatible_host`; digest, header, and metadata failures are never waivable. |
-| `mlx_runtime` | Validate MLX config, tokenizer, weight inventory, adapter or fused mode, runtime path, and required file digests. | Load with `mlx-lm` or the selected Melix MLX worker path using a bounded timeout. | Required for generation-capable targets with the same fixed prompt, token cap, timeout, and preview byte cap as Melix-managed targets. | `runtime_not_installed`, `runtime_incompatible_host`, `known_runtime_bug`, or `operator_manual_verification` with replacement evidence. |
+| `EXPORT_TARGET_TYPE_MELIX_MANAGED` | Validate manifest, required file digests, activation mode, quantization, and catalog-resolvable target identity. | Load through the selected Melix runtime path or model catalog without mutating source adapter evidence. | Required when the target is generation-capable; use a synthetic prompt, fixed token cap, timeout, and preview byte cap. | `EXPORT_WAIVER_REASON_METADATA_ONLY_TARGET` only for metadata-only exports; runtime failures require diagnostics before waiver. |
+| `EXPORT_TARGET_TYPE_OLLAMA` | Validate generated model metadata, registration inputs, required blobs, runtime binary/path preflight, and target-local log path. | Prove load or registration through the configured local Ollama runtime with bounded timeout. | Required after load or registration succeeds. | `EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED`, `EXPORT_WAIVER_REASON_RUNTIME_INCOMPATIBLE_HOST`, `EXPORT_WAIVER_REASON_KNOWN_RUNTIME_BUG`, or `EXPORT_WAIVER_REASON_OPERATOR_MANUAL_VERIFICATION` with replacement evidence. |
+| `EXPORT_TARGET_TYPE_GGUF` | Validate GGUF header, declared metadata, byte size, digest, quantization, and compatible runtime requirements. | Required when a compatible local runtime is configured; otherwise the load check is recorded as waived. | Required only when the configured compatible runtime supports generation. | No-compatible-runtime cases may use `EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED` or `EXPORT_WAIVER_REASON_RUNTIME_INCOMPATIBLE_HOST`; digest, header, and metadata failures are never waivable. |
+| `EXPORT_TARGET_TYPE_MLX_RUNTIME` | Validate MLX config, tokenizer, weight inventory, adapter or fused mode, runtime path, and required file digests. | Load with `mlx-lm` or the selected Melix MLX worker path using a bounded timeout. | Required for generation-capable targets with the same fixed prompt, token cap, timeout, and preview byte cap as Melix-managed targets. | `EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED`, `EXPORT_WAIVER_REASON_RUNTIME_INCOMPATIBLE_HOST`, `EXPORT_WAIVER_REASON_KNOWN_RUNTIME_BUG`, or `EXPORT_WAIVER_REASON_OPERATOR_MANUAL_VERIFICATION` with replacement evidence. |
+
+The target type and waiver reason values in this matrix use the protobuf JSON
+enum names from `workspace/v1/export_target_manifest.proto`. Target directory
+slugs remain lower snake case, such as `targets/ollama/<target-id>/`.
 
 The first implementation slice for #1509 should use a policy id such as
 `bounded-local-v1`. The policy owns default timeout values, preview byte caps,
@@ -399,10 +405,13 @@ Each `metadata_check`, `load_check`, and `generation_check` entry must include
 when diagnostics are applicable. The receipt records target-relative paths only.
 
 The metadata check is required for every target. The load check is required for
-`melix_managed`, `ollama`, and `mlx_runtime` targets. The generation check is
-required for generation-capable `melix_managed`, `ollama`, and `mlx_runtime`
-targets. GGUF generation may be waived only when no compatible local runtime is
-configured, and the waiver must record the missing runtime capability.
+`EXPORT_TARGET_TYPE_MELIX_MANAGED`, `EXPORT_TARGET_TYPE_OLLAMA`, and
+`EXPORT_TARGET_TYPE_MLX_RUNTIME` targets. The generation check is required for
+generation-capable `EXPORT_TARGET_TYPE_MELIX_MANAGED`,
+`EXPORT_TARGET_TYPE_OLLAMA`, and `EXPORT_TARGET_TYPE_MLX_RUNTIME` targets.
+`EXPORT_TARGET_TYPE_GGUF` generation may be waived only when no compatible
+local runtime is configured, and the waiver must record the missing runtime
+capability.
 
 Bounded generation checks must use a repository-owned prompt fixture or a
 synthetic non-private prompt, a fixed token limit, a timeout, and a preview byte
@@ -473,11 +482,11 @@ Waivers use schema `melix.export_verification_waiver.v1` and must include:
 
 Allowed first-slice waiver reasons are:
 
-- `runtime_not_installed`
-- `runtime_incompatible_host`
-- `metadata_only_target`
-- `known_runtime_bug`
-- `operator_manual_verification`
+- `EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED`
+- `EXPORT_WAIVER_REASON_RUNTIME_INCOMPATIBLE_HOST`
+- `EXPORT_WAIVER_REASON_METADATA_ONLY_TARGET`
+- `EXPORT_WAIVER_REASON_KNOWN_RUNTIME_BUG`
+- `EXPORT_WAIVER_REASON_OPERATOR_MANUAL_VERIFICATION`
 
 Waivers are not allowed for missing required files, digest mismatch, unsafe
 paths, unsupported target type, missing source provenance, or missing target
@@ -562,10 +571,10 @@ melix export plan \
   --workspace-manifest path/to/workspace-manifest.json \
   --adapter-manifest path/to/train_lora.adapter.json \
   --derived-model-manifest path/to/activate_adapter.derived_model.json \
-  --target melix_managed \
-  --target ollama \
-  --target gguf \
-  --target mlx_runtime \
+  --target EXPORT_TARGET_TYPE_MELIX_MANAGED \
+  --target EXPORT_TARGET_TYPE_OLLAMA \
+  --target EXPORT_TARGET_TYPE_GGUF \
+  --target EXPORT_TARGET_TYPE_MLX_RUNTIME \
   --output exports/support-chat-v1/export-plan-receipt.json \
   --json
 ```
@@ -650,9 +659,10 @@ outputs regenerated by `make proto`. The Python worker owns the first validator
 and fixture metrics report under `worker.productization` because export
 materialization is worker-owned; CLI and Desktop consumption remains follow-up
 work unless a later unit needs new operator surfaces. Checked-in fixtures must
-cover `melix_managed`, `ollama`, `gguf`, and `mlx_runtime` without `ext` fields
-or target-specific side-channel keys. The registered PR-scoped probe for this
-unit is `runtime-export-manifest-validation`, measuring validation latency,
+cover `EXPORT_TARGET_TYPE_MELIX_MANAGED`, `EXPORT_TARGET_TYPE_OLLAMA`,
+`EXPORT_TARGET_TYPE_GGUF`, and `EXPORT_TARGET_TYPE_MLX_RUNTIME` without `ext`
+fields or target-specific side-channel keys. The registered PR-scoped probe for
+this unit is `runtime-export-manifest-validation`, measuring validation latency,
 fixture count, schema error count, and manifest byte size.
 
 ### #1507 Layout And Retention Unit
