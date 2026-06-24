@@ -68,6 +68,12 @@ These are the authoritative interface and architecture definitions. Do not move 
 | [Evidence, Telemetry & Report Contract](evidence-telemetry-report-contract.md) | Run evidence, probe timeline, Apple Silicon telemetry, report, and release-gate source-of-truth rules |
 | [Repository Skeleton](repo-skeleton.md) | Directory layout and conventions for the Melix repository |
 
+## Active Implementation Plans
+
+| Plan | What It Covers |
+|---|---|
+| [Export Artifact Layout And Retention Policy](plans/2026-06-24-export-artifact-layout-retention.md) | Runtime export target layout, retention reports, cleanup dry-run/apply behavior, and byte-accounting metrics |
+
 ---
 
 ## Architecture & Decisions
