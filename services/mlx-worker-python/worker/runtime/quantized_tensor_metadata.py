@@ -43,6 +43,7 @@ class QuantizedTensorMetadata:
 
 
 EMPTY_QUANTIZED_TENSOR_METADATA = QuantizedTensorMetadata({})
+MAX_SAFETENSORS_HEADER_BYTES = 100 * 1024 * 1024
 
 
 def _load_json_payload(path: Path) -> dict[str, Any]:
@@ -106,7 +107,7 @@ def quantized_tensor_metadata_from_model_dir(
                             shard_paths.append(entry.path)
                     except OSError:
                         continue
-        except FileNotFoundError:
+        except OSError:
             return EMPTY_QUANTIZED_TENSOR_METADATA
     return quantized_tensor_metadata_from_safetensor_headers(shard_paths)
 
@@ -128,7 +129,7 @@ def _safetensors_header_tensor_names(path: Path) -> tuple[str, ...]:
             if len(header_size_raw) != 8:
                 return ()
             header_size = int.from_bytes(header_size_raw, "little")
-            if header_size <= 0:
+            if header_size <= 0 or header_size > MAX_SAFETENSORS_HEADER_BYTES:
                 return ()
             header_payload = handle.read(header_size)
     except OSError:

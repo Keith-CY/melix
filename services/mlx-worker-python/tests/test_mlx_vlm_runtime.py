@@ -2433,6 +2433,11 @@ def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_ent
     assert not quantized_tensor_metadata_from_safetensor_headers(
         [tmp_path / "missing.safetensors"]
     ).tensor_names
+    oversized_header = model_dir / "oversized.safetensors"
+    oversized_header.write_bytes((100 * 1024 * 1024 + 1).to_bytes(8, "little"))
+    assert not quantized_tensor_metadata_from_safetensor_headers(
+        [oversized_header]
+    ).tensor_names
 
     class BadEntry:
         name = "bad.safetensors"
@@ -2465,6 +2470,17 @@ def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_ent
         metadata = quantized_tensor_metadata_from_model_dir(model_dir)
 
     assert metadata.has_quantized_scales("language_model.layers.1.q_proj") is True
+
+    with monkeypatch.context() as patch_context:
+        patch_context.setattr(
+            quantized_tensor_metadata_module.os,
+            "scandir",
+            lambda _path: (_ for _ in ()).throw(NotADirectoryError("not a directory")),
+        )
+
+        metadata = quantized_tensor_metadata_from_model_dir(model_dir)
+
+    assert not metadata.tensor_names
 
 
 def test_native_mtp_weight_key_detection_preserves_string_and_custom_keys() -> None:
