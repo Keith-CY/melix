@@ -15,6 +15,9 @@ from worker.model_ops.alignment_rollout_manifest import (
     build_alignment_rollout_manifest_fields_from_training_metrics,
 )
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.lora_checkpoint_selection import (
+    build_checkpoint_selection_receipt_fields,
+)
 from worker.model_ops.lora_runtime_metadata import (
     build_lora_canary_receipt_fields,
     build_quantized_lora_manifest_fields,
@@ -63,7 +66,7 @@ from worker.trajectory_provenance import (
 )
 
 
-_NUMERIC_TOKEN_RE = re.compile(r"\d+")
+_NUMERIC_TOKEN_RE = re.compile(r"(?<=checkpoint-)\d+")
 _ROLLOUT_ALIGNMENT_ALGORITHMS = frozenset({"grpo", "rlhf"})
 _ROLLOUT_MANIFEST_FIELD_KEYS = (
     "rollout_manifest_schema_version",
@@ -246,6 +249,11 @@ class LoRATrainingPipeline:
             weights_path=training_result.weights_path,
             training_metrics=training_result.metrics,
         )
+        checkpoint_selection_fields = build_checkpoint_selection_receipt_fields(
+            latest_checkpoint_path=latest_checkpoint_path,
+            loss_best=training_result.metrics.loss_best,
+            loss_final=training_result.metrics.loss_final,
+        )
 
         emit("write_manifest", 0.97)
         manifest = {
@@ -317,6 +325,7 @@ class LoRATrainingPipeline:
             "base_quantization_method": config.base_quantization_method,
             **quantized_lora_fields,
             **lora_canary_receipt_fields,
+            **checkpoint_selection_fields,
             "training_backend": training_result.execution_backend,
             "adapter_set_hash": adapter_set_hash,
             "weights_path": str(training_result.weights_path),
@@ -360,6 +369,14 @@ class LoRATrainingPipeline:
             "training.response_only_enabled": config.response_only,
             "experiment.checkpoint_count": checkpoint_count,
             "experiment.latest_checkpoint_path": latest_checkpoint_path,
+            "experiment.checkpoint_step": checkpoint_selection_fields["checkpoint_step"],
+            "experiment.checkpoint_sort_key": checkpoint_selection_fields["checkpoint_sort_key"],
+            "experiment.selected_checkpoint_path": checkpoint_selection_fields[
+                "selected_checkpoint_path"
+            ],
+            "experiment.selected_checkpoint_loss_source": checkpoint_selection_fields[
+                "selected_checkpoint_loss_source"
+            ],
             "experiment.resume_source_path": resume_source_path,
             "experiment.resume_ready": resume_ready,
             "validation_strategy": config.validation_strategy,
@@ -905,7 +922,6 @@ def _percentile_value(ordered_values: list[float], percentile: float) -> float:
 _CONTENT_HASH_CHUNK_SIZE = 1024 * 1024
 
 
-
 def _content_hash(*paths: Path) -> str:
     digest = hashlib.sha256()
     for path in paths:
@@ -980,7 +996,7 @@ def _load_manifest_payload(path: Path) -> dict[str, Any]:
 
 
 def _resolve_resume_path_from_manifest(path: Path, manifest: dict[str, Any]) -> Path:
-    for key in ("latest_checkpoint_path", "weights_path"):
+    for key in ("selected_checkpoint_path", "latest_checkpoint_path", "weights_path"):
         raw_value = str(manifest.get(key, "")).strip()
         if raw_value:
             return _validated_resume_path(Path(raw_value).expanduser(), source_label=str(path))

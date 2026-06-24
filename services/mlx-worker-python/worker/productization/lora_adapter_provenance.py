@@ -113,6 +113,14 @@ def build_adapter_provenance_manifest(
             "target_repo": _str_value(adapter_manifest.get("target_repo")),
             "checkpoint_count": _int_value(adapter_manifest.get("checkpoint_count")),
             "latest_checkpoint_path": _str_value(adapter_manifest.get("latest_checkpoint_path")),
+            "checkpoint_step": _int_value(adapter_manifest.get("checkpoint_step")),
+            "checkpoint_sort_key": _str_value(adapter_manifest.get("checkpoint_sort_key")),
+            "selected_checkpoint_path": _str_value(
+                adapter_manifest.get("selected_checkpoint_path")
+            ),
+            "selected_checkpoint_loss_source": _str_value(
+                adapter_manifest.get("selected_checkpoint_loss_source")
+            ),
             "resume_source_path": _str_value(adapter_manifest.get("resume_source_path")),
             "resume_source_job_id": _str_value(adapter_manifest.get("resume_source_job_id")),
             "resume_source_manifest_path": _str_value(adapter_manifest.get("resume_source_manifest_path")),
