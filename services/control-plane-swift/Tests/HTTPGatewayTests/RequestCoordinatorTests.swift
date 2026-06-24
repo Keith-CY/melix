@@ -1400,6 +1400,9 @@ struct RequestCoordinatorTests {
             response.stats.lastHybridStatePatchMode = "family_scoped"
             response.stats.lastHybridStateAdvanceCount = 42
             response.stats.lastFamilyFastPathOverrideCount = 1
+            response.stats.nativeQuantizedLoadCount = 0
+            response.stats.bridgeQuantizedFallbackCount = 1
+            response.stats.crossShardMetadataFixupCount = 3
             response.stats.textBatchGeneratorSubmittedRequestCount = 2
             response.stats.textBatchGeneratorCompletedRequestCount = 1
             response.stats.textBatchGeneratorStepCount = 16
@@ -1490,6 +1493,9 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.hybrid_state_patch_mode", default: -1] == 2)
         #expect(metrics.values["vision.hybrid_state_advance_count", default: -1] == 42)
         #expect(metrics.values["vision.family_fast_path_override_count", default: -1] == 1)
+        #expect(metrics.values["vision.native_quantized_load_count", default: -1] == 0)
+        #expect(metrics.values["vision.bridge_quantized_fallback_count", default: -1] == 1)
+        #expect(metrics.values["vision.cross_shard_metadata_fixup_count", default: -1] == 3)
         #expect(metrics.values["vision.text_batch_generator.submitted_request_count", default: -1] == 2)
         #expect(metrics.values["vision.text_batch_generator.completed_request_count", default: -1] == 1)
         #expect(metrics.values["vision.text_batch_generator.step_count", default: -1] == 16)

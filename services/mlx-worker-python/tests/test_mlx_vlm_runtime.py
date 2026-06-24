@@ -69,6 +69,7 @@ from worker.runtime.native_mtp import mlx_lm_loader as native_mtp_loader_module
 from worker.runtime.quantized_tensor_metadata import (
     EMPTY_QUANTIZED_TENSOR_METADATA,
     QuantizedTensorMetadata,
+    cross_shard_quantized_metadata_fixup_count,
     native_multimodal_quantization_preserves_precision,
     quantized_tensor_metadata_from_model_dir,
     quantized_tensor_metadata_from_index_payload,
@@ -689,7 +690,6 @@ def test_mlx_vlm_runtime_streams_backend_tokens_and_records_probe() -> None:
             apply_chat_template_fn=fake_apply_chat_template,
         )
     )
-
     loaded_model = runtime.load_model(imported_gemma4_vlm_model())
     prepared = runtime.render_prompt(
         [
@@ -1413,6 +1413,9 @@ def test_mlx_vlm_runtime_text_only_step_fast_path_releases_executor_between_toke
         ),
         executor=executor,
     )
+    initial_probe = runtime.last_probe_snapshot()
+
+    assert not hasattr(initial_probe, "native_quantized_load_count")
 
     try:
         loaded_model = runtime.load_model(imported_gemma4_vlm_model())
@@ -1653,6 +1656,9 @@ def test_mlx_vlm_runtime_image_batch1_step_uses_executor_stream_and_token_counte
     probe = runtime.last_probe_snapshot()
     assert probe.multimodal_decode_mode == "image_batch1_step"
     assert probe.multimodal_decode_sync_mode == "executor_step"
+    assert probe.native_quantized_load_count == 1
+    assert probe.bridge_quantized_fallback_count == 0
+    assert probe.cross_shard_metadata_fixup_count == 0
     assert probe.image_batch1_step_admission_reason == ""
     assert probe.position_metadata_receipt["vision_metadata_guard"] == "aligned"
     assert probe.position_metadata_receipt["vision_metadata_reuse_allowed"] is True
@@ -2413,6 +2419,7 @@ def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
         "weight": "model-00001.safetensors",
         "scales": "model-00002.safetensors",
     }
+    assert cross_shard_quantized_metadata_fixup_count(index_metadata) == 1
 
     shard_a = tmp_path / "model-00001.safetensors"
     shard_b = tmp_path / "model-00002.safetensors"
@@ -2425,6 +2432,7 @@ def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
         "weight": str(shard_a),
         "scales": str(shard_b),
     }
+    assert cross_shard_quantized_metadata_fixup_count(header_metadata) == 1
 
     mutable_source = {
         "language_model.layers.2.q_proj.scales": "model-00001.safetensors"
@@ -2444,6 +2452,7 @@ def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
             "language_model.layers.4.q_proj.scales"
         ] = "model-00003.safetensors"
     assert not EMPTY_QUANTIZED_TENSOR_METADATA.tensor_names
+    assert cross_shard_quantized_metadata_fixup_count(EMPTY_QUANTIZED_TENSOR_METADATA) == 0
 
 
 def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_entries(
@@ -2527,6 +2536,48 @@ def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_ent
         metadata = quantized_tensor_metadata_from_model_dir(model_dir)
 
     assert not metadata.tensor_names
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = revision
+        load_paths.append(model_path)
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"))
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    _write_fake_safetensors_header(
+        model_dir / "model-00002.safetensors",
+        ("language_model.layers.1.q_proj.weight",),
+    )
+    _write_fake_safetensors_header(
+        model_dir / "model-00003.safetensors",
+        ("language_model.layers.1.q_proj.scales",),
+    )
+    load_paths: list[str] = []
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "formatted::prompt",
+        )
+    )
+
+    local_model = imported_gemma4_vlm_model()
+    local_model.model_path = str(model_dir)
+    loaded_local_model = runtime.load_model(local_model)
+
+    assert loaded_local_model["cross_shard_metadata_fixup_count"] == 1
+
+    hf_repo_model = common_pb2.ModelSpec(
+        model_id="nano-llava",
+        model_path="mlx-community/nanoLLaVA",
+        model_kind="vlm",
+        revision="main",
+        ext={"melix.vlm.execution_mode": "multimodal"},
+    )
+    loaded_hf_repo_model = runtime.load_model(hf_repo_model)
+
+    assert load_paths == [str(model_dir), "mlx-community/nanoLLaVA"]
+    assert loaded_hf_repo_model["cross_shard_metadata_fixup_count"] == 0
 
 
 def _assert_native_multimodal_quantization_preserves_precision_without_explicit_scales() -> None:

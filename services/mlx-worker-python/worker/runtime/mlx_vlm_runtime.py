@@ -59,10 +59,12 @@ from worker.runtime.runtime_utils import (
 from worker.runtime.quantized_tensor_metadata import (
     EMPTY_QUANTIZED_TENSOR_METADATA,
     QuantizedTensorMetadata,
+    cross_shard_quantized_metadata_fixup_count,
     native_multimodal_quantization_preserves_precision,
     quantized_scales_present,
     quantized_tensor_metadata_from_model_dir,
 )
+from worker.runtime.quantized_load_acceptance import quantized_load_acceptance_counts
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import (
     resolve_vision_family_config,
@@ -72,6 +74,18 @@ from worker.runtime.vlm_preprocessing_policy import (
     apply_resize_shape_to_stream_kwargs,
     prepared_request_preprocessing_policy_receipt,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _MLXVLMProbeSnapshotView:
+    snapshot: VisionProbeSnapshot
+    native_quantized_load_count: int = 0
+    bridge_quantized_fallback_count: int = 0
+    cross_shard_metadata_fixup_count: int = 0
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.snapshot, name)
+
 
 logger = logging.getLogger(__name__)
 _GEMMA4_PRESENCE_NONE = (False, False)
@@ -1861,6 +1875,13 @@ class AutoMLXVLMBackend:
         metadata["mlx_lm_version"] = _installed_package_version("mlx-lm")
         metadata["mlx_vlm_version"] = _installed_package_version("mlx-vlm")
         execution_mode = metadata.get("melix.vlm.execution_mode", "").strip() or "multimodal"
+        model_path = Path(model_spec.model_path)
+        cross_shard_metadata_fixup_count = 0
+        if model_path.is_dir():
+            quantized_metadata = quantized_tensor_metadata_from_model_dir(model_path)
+            cross_shard_metadata_fixup_count = cross_shard_quantized_metadata_fixup_count(
+                quantized_metadata
+            )
         native_mtp_metadata = maybe_apply_native_mtp_preload_patches(
             model_spec.model_path,
             metadata=metadata,
@@ -1916,6 +1937,7 @@ class AutoMLXVLMBackend:
             "revision": model_spec.revision,
             "tokenizer_hash": model_spec.tokenizer_hash,
             "quant_profile_id": model_spec.quant_profile_id,
+            "cross_shard_metadata_fixup_count": cross_shard_metadata_fixup_count,
             "parser_mode": model_spec.parser_mode,
             "reasoning_mode": model_spec.reasoning_mode,
             "model": model,
@@ -2123,6 +2145,7 @@ class MLXVLMRuntime:
         self._fast_path_controller = fast_path_controller or MultimodalFastPathController()
         self._executor = executor
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
+        self._last_quantized_load_acceptance_probe = (0, 0, 0)
         self._last_fast_path_signature: tuple[str, ...] | None = None
         self._last_fast_path_media_position_count = 0
         self._loaded_models_with_schedulers: list[dict[str, Any]] = []
@@ -3634,7 +3657,7 @@ class MLXVLMRuntime:
             "rejected_tokens": rejected_tokens,
         }
 
-    def last_probe_snapshot(self) -> VisionProbeSnapshot:
+    def last_probe_snapshot(self) -> VisionProbeSnapshot | _MLXVLMProbeSnapshotView:
         probe = self._last_probe
         stats_kwargs: dict[str, float | int] = {}
         for loaded_model in self._loaded_models_with_schedulers:
@@ -3645,7 +3668,25 @@ class MLXVLMRuntime:
                 stats_kwargs = _text_batch_generator_probe_kwargs(
                     _text_batch_generator_stats_snapshot(scheduler)
                 )
-        return replace(probe, **stats_kwargs) if stats_kwargs else probe
+        if stats_kwargs:
+            probe = replace(probe, **stats_kwargs)
+        (
+            native_quantized_load_count,
+            bridge_quantized_fallback_count,
+            cross_shard_metadata_fixup_count,
+        ) = self._last_quantized_load_acceptance_probe
+        if (
+            native_quantized_load_count
+            or bridge_quantized_fallback_count
+            or cross_shard_metadata_fixup_count
+        ):
+            return _MLXVLMProbeSnapshotView(
+                probe,
+                native_quantized_load_count=native_quantized_load_count,
+                bridge_quantized_fallback_count=bridge_quantized_fallback_count,
+                cross_shard_metadata_fixup_count=cross_shard_metadata_fixup_count,
+            )
+        return probe
 
     def _wrap_chunked_prompt_model(self, model: Any) -> Any:
         if isinstance(model, _ChunkedPromptModelProxy):
@@ -3747,6 +3788,32 @@ class MLXVLMRuntime:
             image_batch1_step_supported=image_batch1_step_supported,
             image_batch1_step_greedy_sampling=image_batch1_step_greedy_sampling,
         )
+        if (
+            fast_path.quantized_load_mode == "fallback"
+            and fast_path.quantized_load_fallback_reason == "not_quantized"
+        ):
+            native_quantized_load_count = 0
+            bridge_quantized_fallback_count = 0
+            cross_shard_metadata_fixup_count = 0
+        else:
+            (
+                native_quantized_load_count,
+                bridge_quantized_fallback_count,
+                cross_shard_metadata_fixup_count,
+            ) = quantized_load_acceptance_counts(
+                quantized_load_mode=fast_path.quantized_load_mode,
+                quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+                quant_profile_id=str(
+                    getattr(loaded_model, "quant_profile_id", "")
+                    if not isinstance(loaded_model, dict)
+                    else loaded_model.get("quant_profile_id", "")
+                ),
+                cross_shard_metadata_fixup_count=int(
+                    getattr(loaded_model, "cross_shard_metadata_fixup_count", 0)
+                    if not isinstance(loaded_model, dict)
+                    else loaded_model.get("cross_shard_metadata_fixup_count", 0)
+                ),
+            )
         receipt_fallback_reason = probe_receipt_fallback_reason(
             fast_path.multimodal_fallback_reason
         )
@@ -3777,6 +3844,11 @@ class MLXVLMRuntime:
         media_position_count = int(position_metadata_receipt.get("media_position_count", 0) or 0)
         self._last_fast_path_signature = signature
         self._last_fast_path_media_position_count = media_position_count
+        self._last_quantized_load_acceptance_probe = (
+            native_quantized_load_count,
+            bridge_quantized_fallback_count,
+            cross_shard_metadata_fixup_count,
+        )
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,

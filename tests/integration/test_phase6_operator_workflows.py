@@ -849,5 +849,8 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
         assert metrics["vision.multi_image_scatter_mode"] in {"none", "per_sample"}
         assert metrics["vision.quantized_load_mode"] in {"fallback", "native_quantized"}
         assert "vision.quantized_load_fallback_reason" in metrics
+        assert "vision.native_quantized_load_count" in metrics
+        assert "vision.bridge_quantized_fallback_count" in metrics
+        assert "vision.cross_shard_metadata_fixup_count" in metrics
     finally:
         stack.stop()

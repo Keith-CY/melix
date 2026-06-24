@@ -191,6 +191,9 @@ def test_build_phase6_vision_metrics_report_includes_machine_readable_checks() -
                 "vision.hybrid_state_patch_mode": "family_scoped",
                 "vision.hybrid_state_advance_count": 42.0,
                 "vision.family_fast_path_override_count": 0.0,
+                "vision.native_quantized_load_count": 1.0,
+                "vision.bridge_quantized_fallback_count": 0.0,
+                "vision.cross_shard_metadata_fixup_count": 2.0,
             }
         },
     )
@@ -227,6 +230,9 @@ def test_build_phase6_vision_metrics_report_includes_machine_readable_checks() -
     assert metrics["vision.hybrid_state_patch_mode"] == "family_scoped"
     assert metrics["vision.hybrid_state_advance_count"] == 42.0
     assert metrics["vision.family_fast_path_override_count"] == 0.0
+    assert metrics["vision.native_quantized_load_count"] == 1.0
+    assert metrics["vision.bridge_quantized_fallback_count"] == 0.0
+    assert metrics["vision.cross_shard_metadata_fixup_count"] == 2.0
 
 
 def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
@@ -273,6 +279,9 @@ def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
     assert metrics["vision.hybrid_state_patch_mode"] == "not_reported"
     assert metrics["vision.hybrid_state_advance_count"] == 0.0
     assert metrics["vision.family_fast_path_override_count"] == 0.0
+    assert metrics["vision.native_quantized_load_count"] == 0.0
+    assert metrics["vision.bridge_quantized_fallback_count"] == 0.0
+    assert metrics["vision.cross_shard_metadata_fixup_count"] == 0.0
 
 
 def test_build_phase6_vision_metrics_report_accepts_legacy_tool_success_key() -> None:

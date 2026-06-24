@@ -37,6 +37,12 @@ from worker.runtime.multimodal_preprocessing import (
     PreparedVideoFramePolicy,
     PreparedVisionRequest,
 )
+from worker.runtime.quantized_load_acceptance import quantized_load_acceptance_receipt
+from worker.runtime.quantized_tensor_metadata import (
+    EMPTY_QUANTIZED_TENSOR_METADATA,
+    QuantizedTensorMetadata,
+    cross_shard_quantized_metadata_fixup_count,
+)
 from worker.runtime.video_preprocessing import PreparedVideoInput
 from worker.runtime.vlm_preprocessing_policy import request_preprocessing_policy_signature
 
@@ -452,6 +458,63 @@ def test_fast_path_admits_native_quantized_supported_multimodal_family() -> None
     assert unsupported.multimodal_fallback_reason == "unsupported_family"
     assert unsupported.quantized_load_mode == MULTIMODAL_LOAD_FALLBACK
     assert unsupported.quantized_load_fallback_reason == "unsupported_family"
+
+
+def test_quantized_load_acceptance_receipt_counts_native_and_bridge_fallbacks() -> None:
+    native = quantized_load_acceptance_receipt(
+        quantized_load_mode="native_quantized",
+        quantized_load_fallback_reason="",
+        quant_profile_id="q8",
+        cross_shard_metadata_fixup_count=2,
+    )
+    unsupported = quantized_load_acceptance_receipt(
+        quantized_load_mode="fallback",
+        quantized_load_fallback_reason="unsupported_family",
+        quant_profile_id="q8",
+    )
+    unquantized = quantized_load_acceptance_receipt(
+        quantized_load_mode="fallback",
+        quantized_load_fallback_reason="not_quantized",
+        quant_profile_id="none",
+    )
+    unquantized_unsupported_family = quantized_load_acceptance_receipt(
+        quantized_load_mode="fallback",
+        quantized_load_fallback_reason="unsupported_family",
+        quant_profile_id="none",
+    )
+    unquantized_bfloat16 = quantized_load_acceptance_receipt(
+        quantized_load_mode="fallback",
+        quantized_load_fallback_reason="unsupported_family",
+        quant_profile_id="bf16",
+    )
+
+    assert native.native_quantized_load_count == 1
+    assert native.bridge_quantized_fallback_count == 0
+    assert native.cross_shard_metadata_fixup_count == 2
+    assert unsupported.native_quantized_load_count == 0
+    assert unsupported.bridge_quantized_fallback_count == 1
+    assert unsupported.cross_shard_metadata_fixup_count == 0
+    assert unquantized.native_quantized_load_count == 0
+    assert unquantized.bridge_quantized_fallback_count == 0
+    assert unquantized_unsupported_family.native_quantized_load_count == 0
+    assert unquantized_unsupported_family.bridge_quantized_fallback_count == 0
+    assert unquantized_bfloat16.native_quantized_load_count == 0
+    assert unquantized_bfloat16.bridge_quantized_fallback_count == 0
+
+
+def test_cross_shard_quantized_metadata_fixup_count_counts_weight_scale_pairs() -> None:
+    metadata = QuantizedTensorMetadata(
+        {
+            "language_model.layers.0.q_proj.weight": "model-00001.safetensors",
+            "language_model.layers.0.q_proj.scales": "model-00002.safetensors",
+            "language_model.layers.1.q_proj.weight": "model-00003.safetensors",
+            "language_model.layers.1.q_proj.scales": "model-00003.safetensors",
+            "language_model.layers.2.q_proj.scales": "model-00004.safetensors",
+        }
+    )
+
+    assert cross_shard_quantized_metadata_fixup_count(metadata) == 1
+    assert cross_shard_quantized_metadata_fixup_count(EMPTY_QUANTIZED_TENSOR_METADATA) == 0
 
 
 def test_fast_path_fails_closed_without_extracting_features_for_unsupported_family() -> None:

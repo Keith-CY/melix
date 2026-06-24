@@ -909,6 +909,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
             image_feature_cache_misses=2,
             image_feature_encoder_calls_saved=5,
             image_feature_work_saved_bytes=8192,
+            native_quantized_load_count=1,
+            bridge_quantized_fallback_count=0,
+            cross_shard_metadata_fixup_count=2,
             hybrid_state_patch_mode="family_scoped",
             hybrid_state_advance_count=42,
             family_fast_path_override_count=1,
@@ -965,6 +968,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert vision_stats.last_image_feature_cache_misses == 2
     assert vision_stats.last_image_feature_encoder_calls_saved == 5
     assert vision_stats.last_image_feature_work_saved_bytes == 8192
+    assert vision_stats.native_quantized_load_count == 1
+    assert vision_stats.bridge_quantized_fallback_count == 0
+    assert vision_stats.cross_shard_metadata_fixup_count == 2
 
     registry.record_vision_probe(
         "ocr",
@@ -1000,6 +1006,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
             image_feature_cache_misses=-1,
             image_feature_encoder_calls_saved=-1,
             image_feature_work_saved_bytes=-1,
+            native_quantized_load_count=-1,
+            bridge_quantized_fallback_count=3,
+            cross_shard_metadata_fixup_count=4,
         ),
     )
     media_stats = registry.runtime_stats()
@@ -1011,6 +1020,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert media_stats.last_image_feature_encoder_calls_saved == 8
     assert media_stats.last_media_feature_work_saved_bytes == 32768
     assert media_stats.last_image_feature_work_saved_bytes == 32768
+    assert media_stats.native_quantized_load_count == 0
+    assert media_stats.bridge_quantized_fallback_count == 3
+    assert media_stats.cross_shard_metadata_fixup_count == 4
     assert vision_stats.last_hybrid_state_patch_mode == "family_scoped"
     assert vision_stats.last_hybrid_state_advance_count == 42
     assert vision_stats.last_family_fast_path_override_count == 1
