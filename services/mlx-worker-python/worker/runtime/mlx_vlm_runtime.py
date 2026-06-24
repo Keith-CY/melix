@@ -59,6 +59,7 @@ from worker.runtime.runtime_utils import (
 from worker.runtime.quantized_tensor_metadata import (
     EMPTY_QUANTIZED_TENSOR_METADATA,
     QuantizedTensorMetadata,
+    native_multimodal_quantization_preserves_precision,
     quantized_scales_present,
     quantized_tensor_metadata_from_model_dir,
 )
@@ -1337,6 +1338,55 @@ def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[boo
     return _GEMMA4_PRESENCE_NONE
 
 
+def _vision_patch_embed_dtype(model: Any) -> Any | None:
+    for candidate in _vision_patch_embed_candidates(model):
+        dtype = _module_weight_dtype(candidate)
+        if dtype is not None:
+            return dtype
+    return None
+
+
+def _vision_patch_embed_candidates(model: Any) -> tuple[Any, ...]:
+    vision_roots = (
+        getattr(model, "vision_tower", None),
+        getattr(model, "vision_model", None),
+        getattr(model, "visual", None),
+    )
+    candidates: list[Any] = []
+    for root in vision_roots:
+        if root is None:
+            continue
+        candidates.append(root)
+        for attr in ("patch_embed", "patch_embedding", "embeddings", "conv1", "proj"):
+            candidate = getattr(root, attr, None)
+            if candidate is not None:
+                candidates.append(candidate)
+    return tuple(candidates)
+
+
+def _module_weight_dtype(module: Any) -> Any | None:
+    weight = getattr(module, "weight", None)
+    dtype = getattr(weight, "dtype", None)
+    if dtype is not None:
+        return dtype
+    return getattr(module, "dtype", None)
+
+
+def _cast_pixel_values_to_vision_dtype(model: Any, pixel_values: Any) -> Any:
+    if pixel_values is None:
+        return pixel_values
+    dtype = _vision_patch_embed_dtype(model)
+    if dtype is None or getattr(pixel_values, "dtype", None) == dtype:
+        return pixel_values
+    astype = getattr(pixel_values, "astype", None)
+    if not callable(astype):
+        return pixel_values
+    try:
+        return astype(dtype)
+    except (TypeError, ValueError, RuntimeError):
+        return pixel_values
+
+
 def _mlx_peak_memory_gb(mx_module: Any) -> float:
     get_peak_memory = getattr(mx_module, "get_peak_memory", None)
     if callable(get_peak_memory):
@@ -1959,6 +2009,12 @@ class AutoMLXVLMBackend:
                     return quantization[path]
                 if not hasattr(module, "to_quantized"):
                     return False
+                if native_multimodal_quantization_preserves_precision(
+                    path,
+                    metadata=quantized_metadata,
+                    weights=weights,
+                ):
+                    return False
                 if hasattr(module, "weight") and module.weight.size % 64 != 0:
                     return False
                 return quantized_scales_present(
@@ -2011,6 +2067,12 @@ class AutoMLXVLMBackend:
                 if path in quantization:
                     return quantization[path]
                 if not hasattr(module, "to_quantized"):
+                    return False
+                if native_multimodal_quantization_preserves_precision(
+                    path,
+                    metadata=quantized_metadata,
+                    weights=weights,
+                ):
                     return False
                 if hasattr(module, "weight") and module.weight.size % 64 != 0:
                     return False
@@ -3151,6 +3213,12 @@ class MLXVLMRuntime:
             return prepare_inputs(loaded_model["processor"], **input_kwargs)
 
         inputs = self._run_on_executor(prepare_on_executor)
+        if "pixel_values" in inputs:
+            inputs = dict(inputs)
+            inputs["pixel_values"] = _cast_pixel_values_to_vision_dtype(
+                loaded_model["model"],
+                inputs.get("pixel_values"),
+            )
         prompt_tokens = int(getattr(inputs["input_ids"], "shape", [0, prompt_tokens])[-1] or prompt_tokens)
         position_receipt = self._position_metadata_receipt(
             loaded_model=loaded_model,

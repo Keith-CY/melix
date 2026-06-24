@@ -47,10 +47,12 @@ from worker.runtime.mlx_vlm_runtime import (
     _gemma4_loaded_execution_mode,
     _gemma4_multimodal_weight_presence,
     _combine_image_feature_payloads,
+    _cast_pixel_values_to_vision_dtype,
     _image_argument_paths,
     _isolated_streaming_detokenizer,
     _mlx_peak_memory_gb,
     _patch_gemma4_scaled_linear_quantization,
+    _vision_patch_embed_dtype,
     _select_image_feature_rows,
     _split_image_feature_payloads,
 )
@@ -67,6 +69,7 @@ from worker.runtime.native_mtp import mlx_lm_loader as native_mtp_loader_module
 from worker.runtime.quantized_tensor_metadata import (
     EMPTY_QUANTIZED_TENSOR_METADATA,
     QuantizedTensorMetadata,
+    native_multimodal_quantization_preserves_precision,
     quantized_tensor_metadata_from_model_dir,
     quantized_tensor_metadata_from_index_payload,
     quantized_tensor_metadata_from_safetensor_headers,
@@ -1457,6 +1460,17 @@ def test_mlx_vlm_runtime_image_batch1_step_uses_executor_stream_and_token_counte
     stream_generate_calls = 0
     release_seen = Event()
 
+    class FakePixelValues:
+        shape = (1, 1, 1)
+        dtype = "int4-language"
+
+        def __init__(self) -> None:
+            self.cast_to: list[object] = []
+
+        def astype(self, dtype):
+            self.cast_to.append(dtype)
+            return SimpleNamespace(shape=self.shape, dtype=dtype, source=self)
+
     class FakeDetokenizer:
         def __init__(self) -> None:
             self.text = ""
@@ -1498,7 +1512,7 @@ def test_mlx_vlm_runtime_image_batch1_step_uses_executor_stream_and_token_counte
             return SimpleNamespace(
                 input_ids=mx.array([[1, 2, 3, 4, 5, 6]]),
                 attention_mask=mx.array([[1, 1, 1, 1, 1, 1]]),
-                pixel_values=mx.array([[[9]]]),
+                pixel_values=FakePixelValues(),
                 position_ids=mx.array([[0, 1, 2, 3, 4, 5]]),
                 rope_deltas=mx.array([[0]]),
             )
@@ -1510,7 +1524,12 @@ def test_mlx_vlm_runtime_image_batch1_step_uses_executor_stream_and_token_counte
         _ = model_path
         _ = revision
         return (
-            SimpleNamespace(config=SimpleNamespace(model_type="gemma4", image_token_index=256)),
+            SimpleNamespace(
+                config=SimpleNamespace(model_type="gemma4", image_token_index=256),
+                vision_tower=SimpleNamespace(
+                    patch_embed=SimpleNamespace(weight=SimpleNamespace(dtype="float16-vision"))
+                ),
+            ),
             FakeProcessor(),
         )
 
@@ -1532,6 +1551,9 @@ def test_mlx_vlm_runtime_image_batch1_step_uses_executor_stream_and_token_counte
                 "input_ids_shape": tuple(input_ids.shape),
                 "model": model,
                 "pixel_values_shape": tuple(pixel_values.shape),
+                "pixel_values_dtype": pixel_values.dtype,
+                "pixel_values_source_dtype": pixel_values.source.dtype,
+                "pixel_values_cast_to": tuple(pixel_values.source.cast_to),
                 "mask_shape": tuple(mask.shape),
                 "position_ids_shape": tuple(kwargs["position_ids"].shape),
                 "rope_deltas_shape": tuple(kwargs["rope_deltas"].shape),
@@ -1611,6 +1633,9 @@ def test_mlx_vlm_runtime_image_batch1_step_uses_executor_stream_and_token_counte
             "input_ids_shape": (1, 6),
             "model": loaded_model["model"],
             "pixel_values_shape": (1, 1, 1),
+            "pixel_values_dtype": "float16-vision",
+            "pixel_values_source_dtype": "int4-language",
+            "pixel_values_cast_to": ("float16-vision",),
             "mask_shape": (1, 6),
             "position_ids_shape": (1, 6),
             "rope_deltas_shape": (1, 1),
@@ -2504,6 +2529,65 @@ def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_ent
     assert not metadata.tensor_names
 
 
+def _assert_native_multimodal_quantization_preserves_precision_without_explicit_scales() -> None:
+    empty_metadata = QuantizedTensorMetadata({})
+    indexed_metadata = quantized_tensor_metadata_from_index_payload(
+        {
+            "weight_map": {
+                "vision_tower.patch_embed.weight": "model.safetensors",
+                "vision_tower.patch_embed.scales": "model.safetensors",
+                "language_model.lm_head.weight": "model.safetensors",
+                "language_model.lm_head.scales": "model.safetensors",
+            }
+        }
+    )
+
+    assert native_multimodal_quantization_preserves_precision(
+        "vision_tower.patch_embed",
+        metadata=empty_metadata,
+        weights={"vision_tower.patch_embed.weight": object()},
+    ) is True
+    assert native_multimodal_quantization_preserves_precision(
+        "projector",
+        metadata=empty_metadata,
+        weights={"projector.weight": object()},
+    ) is True
+    assert native_multimodal_quantization_preserves_precision(
+        "language_model.lm_head",
+        metadata=empty_metadata,
+        weights={"language_model.lm_head.weight": object()},
+    ) is True
+    assert native_multimodal_quantization_preserves_precision(
+        "model.visual.patch_embed",
+        metadata=empty_metadata,
+        weights={"model.visual.patch_embed.weight": object()},
+    ) is True
+    assert native_multimodal_quantization_preserves_precision(
+        "vision_tower.patch_embed",
+        metadata=indexed_metadata,
+        weights={},
+    ) is False
+    assert native_multimodal_quantization_preserves_precision(
+        "language_model.lm_head",
+        metadata=indexed_metadata,
+        weights={},
+    ) is False
+    assert native_multimodal_quantization_preserves_precision(
+        "language_model.layers.0.q_proj",
+        metadata=empty_metadata,
+        weights={},
+    ) is False
+    assert native_multimodal_quantization_preserves_precision(
+        "",
+        metadata=empty_metadata,
+        weights={},
+    ) is False
+
+
+def test_native_multimodal_quantization_preserves_precision_without_explicit_scales() -> None:
+    _assert_native_multimodal_quantization_preserves_precision_without_explicit_scales()
+
+
 def test_native_mtp_weight_key_detection_preserves_string_and_custom_keys() -> None:
     class CustomKey:
         def __str__(self) -> str:
@@ -2691,6 +2775,8 @@ def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    _assert_native_multimodal_quantization_preserves_precision_without_explicit_scales()
+
     import worker.runtime.native_mtp.mlx_lm_loader as loader_module
 
     model_dir = tmp_path / "patched-model"
@@ -2704,6 +2790,8 @@ def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(
                     "language_model.layers.0.q_proj.weight": "model.safetensors",
                     "language_model.layers.0.q_proj.scales": "mtp.safetensors",
                     "language_model.mtp.fc.weight": "mtp.safetensors",
+                    "projector.weight": "model.safetensors",
+                    "language_model.lm_head.weight": "model.safetensors",
                 }
             }
         ),
@@ -2723,6 +2811,14 @@ def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(
             self.args = args
             self.loaded_weights: list[tuple[str, object]] = []
             self.q_proj = SimpleNamespace(
+                to_quantized=lambda: None,
+                weight=SimpleNamespace(size=64),
+            )
+            self.projector = SimpleNamespace(
+                to_quantized=lambda: None,
+                weight=SimpleNamespace(size=64),
+            )
+            self.lm_head = SimpleNamespace(
                 to_quantized=lambda: None,
                 weight=SimpleNamespace(size=64),
             )
@@ -2756,11 +2852,15 @@ def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(
     fake_nn = SimpleNamespace(
         Module=SimpleNamespace(is_module=lambda value: False),
         QuantizedLinear=type("QuantizedLinear", (), {}),
-        quantize=lambda model, *, group_size, bits, mode, class_predicate: quantized_paths.append(
-            "language_model.layers.0.q_proj"
-        )
-        if class_predicate("language_model.layers.0.q_proj", model.q_proj)
-        else None,
+        quantize=lambda model, *, group_size, bits, mode, class_predicate: quantized_paths.extend(
+            path
+            for path, module in (
+                ("language_model.layers.0.q_proj", model.q_proj),
+                ("projector", model.projector),
+                ("language_model.lm_head", model.lm_head),
+            )
+            if class_predicate(path, module)
+        ),
     )
     fake_utils = SimpleNamespace(
         load_model=lambda *args, **kwargs: ("original", {}),
@@ -5122,6 +5222,58 @@ def test_gemma4_scaled_linear_patch_accepts_newer_language_api(monkeypatch: pyte
     assert hasattr(FakeScaledLinear, "to_quantized")
 
 
+def _assert_image_batch1_step_pixel_values_cast_to_vision_patch_embed_dtype() -> None:
+    class FakePixels:
+        dtype = "int4-language"
+
+        def __init__(self) -> None:
+            self.cast_to: list[object] = []
+
+        def astype(self, dtype):
+            self.cast_to.append(dtype)
+            return SimpleNamespace(dtype=dtype, source=self)
+
+    pixels = FakePixels()
+    model = SimpleNamespace(
+        language_model=SimpleNamespace(
+            model=SimpleNamespace(
+                embed_tokens=SimpleNamespace(weight=SimpleNamespace(dtype="int4-language"))
+            )
+        ),
+        vision_tower=SimpleNamespace(
+            patch_embed=SimpleNamespace(weight=SimpleNamespace(dtype="float16-vision"))
+        ),
+    )
+
+    assert _vision_patch_embed_dtype(model) == "float16-vision"
+    cast_pixels = _cast_pixel_values_to_vision_dtype(model, pixels)
+
+    assert cast_pixels.dtype == "float16-vision"
+    assert cast_pixels.source is pixels
+    assert pixels.cast_to == ["float16-vision"]
+    assert _vision_patch_embed_dtype(SimpleNamespace()) is None
+    assert _cast_pixel_values_to_vision_dtype(model, None) is None
+
+    same_dtype_pixels = SimpleNamespace(dtype="float16-vision")
+    assert _cast_pixel_values_to_vision_dtype(model, same_dtype_pixels) is same_dtype_pixels
+
+    no_astype_pixels = SimpleNamespace(dtype="float32-language")
+    assert _cast_pixel_values_to_vision_dtype(model, no_astype_pixels) is no_astype_pixels
+
+    class FailingPixels:
+        dtype = "float32-language"
+
+        def astype(self, _dtype):
+            raise TypeError("unsupported dtype")
+
+    failing_pixels = FailingPixels()
+    assert _cast_pixel_values_to_vision_dtype(model, failing_pixels) is failing_pixels
+
+
+def test_image_batch1_step_pixel_values_cast_to_vision_patch_embed_dtype() -> None:
+    _assert_image_batch1_step_pixel_values_cast_to_vision_patch_embed_dtype()
+
+
 def _assert_gemma4_shared_kv_patch_removes_unused_kv_modules_from_shared_layers() -> None:
     layers = []
     for _index in range(5):
@@ -5391,6 +5543,14 @@ def _assert_gemma4_text_backed_loader_patches_shared_kv_layers(
                     to_quantized=lambda: None,
                     weight=SimpleNamespace(size=64),
                 )
+                self.projector = SimpleNamespace(
+                    to_quantized=lambda: None,
+                    weight=SimpleNamespace(size=64),
+                )
+                self.lm_head = SimpleNamespace(
+                    to_quantized=lambda: None,
+                    weight=SimpleNamespace(size=64),
+                )
 
             def load_weights(self, weights):
                 calls["load_weights"] = list(weights)
@@ -5421,6 +5581,8 @@ def _assert_gemma4_text_backed_loader_patches_shared_kv_layers(
         def fake_quantize(model, *, group_size, bits, mode, class_predicate):
             calls["quantize"] = (group_size, bits, mode)
             assert class_predicate("language_model.model.layers.0.q_proj", model.q_proj) is True
+            assert class_predicate("projector", model.projector) is False
+            assert class_predicate("language_model.lm_head", model.lm_head) is False
 
         patch_context.setattr(nn, "quantize", fake_quantize)
         patch_context.setattr(
@@ -5767,6 +5929,10 @@ def test_gemma4_text_only_language_model_quantizes_from_presanitize_metadata(
             "language_model.layers.0.q_proj",
             SimpleNamespace(to_quantized=lambda: None, weight=SimpleNamespace(size=64)),
         ) is True
+        assert class_predicate(
+            "language_model.lm_head",
+            SimpleNamespace(to_quantized=lambda: None, weight=SimpleNamespace(size=64)),
+        ) is False
 
     metadata = quantized_tensor_metadata_from_index_payload(
         {
@@ -6674,6 +6840,10 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    _assert_image_batch1_step_pixel_values_cast_to_vision_patch_embed_dtype()
+    with monkeypatch.context() as patch_context:
+        test_mlx_vlm_runtime_image_batch1_step_uses_executor_stream_and_token_counter(patch_context)
+
     current_signature_path = tmp_path / "current-signature"
     legacy_signature_path = tmp_path / "legacy-signature"
     current_signature_path.mkdir()

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Type
 
 from worker.runtime.quantized_tensor_metadata import (
+    native_multimodal_quantization_preserves_precision,
     quantized_scales_present,
     quantized_tensor_metadata_from_model_dir,
 )
@@ -191,6 +192,12 @@ def apply() -> bool:
                 if p in config["quantization"]:
                     return config["quantization"][p]
                 if not hasattr(m, "to_quantized"):
+                    return False
+                if native_multimodal_quantization_preserves_precision(
+                    p,
+                    metadata=quantized_metadata,
+                    weights=weights,
+                ):
                     return False
                 return quantized_scales_present(
                     p,
