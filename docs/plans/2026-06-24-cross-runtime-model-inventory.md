@@ -67,7 +67,7 @@ fixtures before #1513 is closed.
   or evidence artifacts.
 - Do not show unsupported or ambiguous external models as usable Melix models
   until the shared classification marks them usable.
-- Do not add a fifth source kind without updating this plan and its fixture
+- Do not add a sixth source kind without updating this plan and its fixture
   matrix first.
 
 ## Source Descriptor Contract
@@ -129,7 +129,7 @@ without preventing valid sources from being scanned.
 ### Melix-Managed Roots
 
 - `source_kind`: `melix_managed_root`
-- Requested roots: `MELIX_MODEL_REGISTRY_ROOTS`, `MELIX_MANAGED_MODEL_ROOT`,
+- Requested roots: `MELIX_MODEL_ROOTS`, `MELIX_MANAGED_MODEL_ROOT`,
   Desktop model-root settings, and explicit CLI scan roots.
 - Effective roots: configured roots plus the default
   `$MELIX_HOME/models/default-managed` when it exists.
