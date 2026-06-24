@@ -45,6 +45,7 @@ Step-by-step operating procedures for specific workflows. Use these when you nee
 | [Packaging Targets](runbooks/platform-packaging-targets.md) | Launch agent, Homebrew, Nix, and preview app-bundle delivery options |
 | [Release Gates](runbooks/phase-8-release-gates.md) | Automated release gate workflow and verification criteria |
 | [Product Acceptance](runbooks/phase-8-product-acceptance.md) | Acceptance evidence and product-level smoke procedures |
+| [Runtime Export Smoke Policy](runbooks/runtime-export-smoke-policy.md) | Bounded post-export load, generation, waiver, and receipt checks for runtime export targets |
 | [Structured Streaming](runbooks/structured-streaming-reasoning-continuity.md) | Streaming and reasoning continuity behavior |
 | [Serving Diagnostics Evidence](runbooks/serving-diagnostics-evidence.md) | Serving diagnostics bundles and baseline-vs-accelerated evidence artifacts |
 | [All Runbooks →](runbooks/README.md) | Full runbook index |
