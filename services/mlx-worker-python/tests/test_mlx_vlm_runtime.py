@@ -65,6 +65,8 @@ from worker.runtime.native_mtp.mlx_lm_loader import (
 )
 from worker.runtime.native_mtp import mlx_lm_loader as native_mtp_loader_module
 from worker.runtime.quantized_tensor_metadata import (
+    EMPTY_QUANTIZED_TENSOR_METADATA,
+    QuantizedTensorMetadata,
     quantized_tensor_metadata_from_model_dir,
     quantized_tensor_metadata_from_index_payload,
     quantized_tensor_metadata_from_safetensor_headers,
@@ -2398,6 +2400,25 @@ def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
         "weight": str(shard_a),
         "scales": str(shard_b),
     }
+
+    mutable_source = {
+        "language_model.layers.2.q_proj.scales": "model-00001.safetensors"
+    }
+    immutable_metadata = QuantizedTensorMetadata(mutable_source)
+    mutable_source["language_model.layers.2.q_proj.scales"] = "mutated.safetensors"
+    assert (
+        immutable_metadata.shard_for("language_model.layers.2.q_proj.scales")
+        == "model-00001.safetensors"
+    )
+    with pytest.raises(TypeError):
+        immutable_metadata.tensor_to_shard[
+            "language_model.layers.3.q_proj.scales"
+        ] = "model-00002.safetensors"
+    with pytest.raises(TypeError):
+        EMPTY_QUANTIZED_TENSOR_METADATA.tensor_to_shard[
+            "language_model.layers.4.q_proj.scales"
+        ] = "model-00003.safetensors"
+    assert not EMPTY_QUANTIZED_TENSOR_METADATA.tensor_names
 
 
 def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_entries(

@@ -4,19 +4,26 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class QuantizedTensorMetadata:
-    tensor_to_shard: dict[str, str]
+    tensor_to_shard: Mapping[str, str]
 
     def __post_init__(self) -> None:
-        self.tensor_to_shard = {
-            str(name): str(shard)
-            for name, shard in self.tensor_to_shard.items()
-            if str(name)
-        }
+        object.__setattr__(
+            self,
+            "tensor_to_shard",
+            MappingProxyType(
+                {
+                    str(name): str(shard)
+                    for name, shard in self.tensor_to_shard.items()
+                    if str(name)
+                }
+            ),
+        )
 
     @property
     def tensor_names(self) -> frozenset[str]:
