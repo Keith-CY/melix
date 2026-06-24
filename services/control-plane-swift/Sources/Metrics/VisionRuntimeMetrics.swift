@@ -150,6 +150,18 @@ func recordPythonVLMRuntimeProbeMetrics(
         forKey: "vision.image_feature_work_saved_bytes"
     )
     await metricsStore.set(
+        Double(stats.nativeQuantizedLoadCount),
+        forKey: "vision.native_quantized_load_count"
+    )
+    await metricsStore.set(
+        Double(stats.bridgeQuantizedFallbackCount),
+        forKey: "vision.bridge_quantized_fallback_count"
+    )
+    await metricsStore.set(
+        Double(stats.crossShardMetadataFixupCount),
+        forKey: "vision.cross_shard_metadata_fixup_count"
+    )
+    await metricsStore.set(
         Double(stats.textBatchGeneratorSubmittedRequestCount),
         forKey: "vision.text_batch_generator.submitted_request_count"
     )

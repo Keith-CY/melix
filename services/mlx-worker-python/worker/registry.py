@@ -37,6 +37,7 @@ from worker.runtime.runtime_utils import callable_accepts_kwarg
 _MULTIMODAL_REQUEST_KINDS = frozenset({"ocr", "vlm", "transcription", "speech", "image"})
 _COMPLETED_UNLOAD_RECEIPT_LIMIT = 256
 _DEFAULT_HYBRID_STATE_PROBE = ("", 0, 0)
+_DEFAULT_QUANTIZED_LOAD_ACCEPTANCE_PROBE = (0, 0, 0)
 
 
 @dataclass(slots=True)
@@ -284,6 +285,7 @@ class WorkerRegistry:
         self._last_image_feature_cache_misses = 0
         self._last_image_feature_encoder_calls_saved = 0
         self._last_image_feature_work_saved_bytes = 0
+        self._last_quantized_load_acceptance_probe = _DEFAULT_QUANTIZED_LOAD_ACCEPTANCE_PROBE
         self._text_batch_generator_submitted_request_count = 0
         self._text_batch_generator_completed_request_count = 0
         self._text_batch_generator_step_count = 0
@@ -1001,6 +1003,7 @@ class WorkerRegistry:
                     last_image_feature_cache_misses = self._last_image_feature_cache_misses
                     last_image_feature_encoder_calls_saved = self._last_image_feature_encoder_calls_saved
                     last_image_feature_work_saved_bytes = self._last_image_feature_work_saved_bytes
+                    last_quantized_load_acceptance_probe = self._last_quantized_load_acceptance_probe
                     last_model_load_trust_policy_resolution_ms = (
                         self._last_model_load_trust_policy_resolution_ms
                     )
@@ -1069,6 +1072,11 @@ class WorkerRegistry:
             stats.last_image_feature_cache_misses = last_image_feature_cache_misses
             stats.last_image_feature_encoder_calls_saved = last_image_feature_encoder_calls_saved
             stats.last_image_feature_work_saved_bytes = last_image_feature_work_saved_bytes
+            (
+                stats.native_quantized_load_count,
+                stats.bridge_quantized_fallback_count,
+                stats.cross_shard_metadata_fixup_count,
+            ) = last_quantized_load_acceptance_probe
             if last_model_load_trust_policy_resolution_ms:
                 stats.last_model_load_trust_policy_resolution_ms = last_model_load_trust_policy_resolution_ms
             if model_load_trust_blocked_count:
@@ -1140,6 +1148,7 @@ class WorkerRegistry:
             self._last_image_feature_cache_misses,
             self._last_image_feature_encoder_calls_saved,
             self._last_image_feature_work_saved_bytes,
+            *self._last_quantized_load_acceptance_probe,
             self._text_batch_generator_submitted_request_count,
             self._text_batch_generator_completed_request_count,
             self._text_batch_generator_step_count,
@@ -1186,6 +1195,9 @@ class WorkerRegistry:
             stats.last_image_feature_cache_misses,
             stats.last_image_feature_encoder_calls_saved,
             stats.last_image_feature_work_saved_bytes,
+            stats.native_quantized_load_count,
+            stats.bridge_quantized_fallback_count,
+            stats.cross_shard_metadata_fixup_count,
             stats.text_batch_generator_submitted_request_count,
             stats.text_batch_generator_completed_request_count,
             stats.text_batch_generator_step_count,
@@ -1253,6 +1265,7 @@ class WorkerRegistry:
         self._last_image_feature_cache_misses = 0
         self._last_image_feature_encoder_calls_saved = 0
         self._last_image_feature_work_saved_bytes = 0
+        self._last_quantized_load_acceptance_probe = _DEFAULT_QUANTIZED_LOAD_ACCEPTANCE_PROBE
 
     def record_vision_probe(self, runtime_kind: str, probe: Any) -> None:
         with self._lock:
@@ -1311,6 +1324,11 @@ class WorkerRegistry:
                 str(getattr(probe, "hybrid_state_patch_mode", "not_reported")),
                 int(getattr(probe, "hybrid_state_advance_count", 0)),
                 int(getattr(probe, "family_fast_path_override_count", 0)),
+            )
+            self._last_quantized_load_acceptance_probe = (
+                _non_negative_int(getattr(probe, "native_quantized_load_count", 0)),
+                _non_negative_int(getattr(probe, "bridge_quantized_fallback_count", 0)),
+                _non_negative_int(getattr(probe, "cross_shard_metadata_fixup_count", 0)),
             )
             self._text_batch_generator_submitted_request_count = int(
                 getattr(probe, "text_batch_generator_submitted_request_count", 0)
