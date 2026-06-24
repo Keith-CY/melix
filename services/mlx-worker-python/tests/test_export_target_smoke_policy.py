@@ -269,10 +269,6 @@ def test_export_target_smoke_failure_boundaries(
 
     with pytest.raises(RuntimeError, match="runtime requirement is missing runtime_name"):
         export_target_smoke._check_runtime_preflight(
-            export_target_smoke.build_export_target_layout(
-                tmp_path,
-                missing_runtime_name_manifest,
-            ),
             missing_runtime_name_manifest,
             available_runtime_binaries={"mlx_lm.generate"},
         )
@@ -288,10 +284,6 @@ def test_export_target_smoke_failure_boundaries(
         match="runtime binary is required but runtime_binary_name is empty",
     ):
         export_target_smoke._check_runtime_preflight(
-            export_target_smoke.build_export_target_layout(
-                tmp_path,
-                missing_binary_manifest,
-            ),
             missing_binary_manifest,
             available_runtime_binaries=set(),
         )

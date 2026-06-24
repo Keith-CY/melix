@@ -19,12 +19,29 @@ from worker.productization.export_target_manifest import validate_export_target_
 EXPORT_SMOKE_RECEIPT_SCHEMA_VERSION = "melix.export_smoke_receipt.v1"
 EXPORT_SMOKE_METRICS_SCHEMA_VERSION = "melix.export_smoke.metrics.v1"
 DEFAULT_SMOKE_POLICY_ID = "bounded-local-v1"
+_DIGEST_CHUNK_BYTES = 1024 * 1024
 
 CHECK_STATUS_PASSED = "passed"
 CHECK_STATUS_FAILED = "failed"
 CHECK_STATUS_BLOCKED = "blocked"
 CHECK_STATUS_WAIVED = "waived"
 CHECK_STATUS_NOT_APPLICABLE = "not_applicable"
+
+
+class SmokeValidationError(RuntimeError):
+    failure_code = "runtime_load_failed"
+
+
+class MissingSmokeFileError(SmokeValidationError):
+    failure_code = "missing_required_file"
+
+
+class DigestMismatchError(SmokeValidationError):
+    failure_code = "digest_mismatch"
+
+
+class RuntimeNotInstalledError(SmokeValidationError):
+    failure_code = "runtime_not_installed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +97,6 @@ def run_export_target_smoke(
         evidence_path=manifest.evidence.smoke_receipt_path,
         now=current_time,
         check=lambda: _check_runtime_preflight(
-            layout,
             manifest,
             available_runtime_binaries=available_runtime_binaries,
         ),
@@ -321,17 +337,16 @@ def _check_manifest_files(
         if not path.is_file():
             missing.append(row.path)
             continue
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        digest = _file_sha256(path)
         if digest != row.sha256:
             mismatched.append(row.path)
     if missing:
-        raise RuntimeError(f"missing required smoke files: {', '.join(missing)}")
+        raise MissingSmokeFileError(f"missing required smoke files: {', '.join(missing)}")
     if mismatched:
-        raise RuntimeError(f"digest mismatch for smoke files: {', '.join(mismatched)}")
+        raise DigestMismatchError(f"digest mismatch for smoke files: {', '.join(mismatched)}")
 
 
 def _check_runtime_preflight(
-    layout,
     manifest: export_target_manifest_pb2.ExportTargetManifest,
     *,
     available_runtime_binaries: set[str] | None,
@@ -343,9 +358,7 @@ def _check_runtime_preflight(
         if not binary_name:
             raise RuntimeError("runtime binary is required but runtime_binary_name is empty")
         if available_runtime_binaries is not None and binary_name not in available_runtime_binaries:
-            raise RuntimeError(f"runtime binary not installed: {binary_name}")
-    for row in manifest.generated_files:
-        _target_relative_path(layout, row.path)
+            raise RuntimeNotInstalledError(f"runtime binary not installed: {binary_name}")
 
 
 def _waiver_for_load_failure(
@@ -506,13 +519,8 @@ def _first_failure_code(receipt: dict[str, object]) -> str:
 
 
 def _failure_code(exc: Exception) -> str:
-    message = str(exc)
-    if "missing" in message:
-        return "missing_required_file"
-    if "runtime binary not installed" in message:
-        return "runtime_not_installed"
-    if "digest mismatch" in message:
-        return "digest_mismatch"
+    if isinstance(exc, SmokeValidationError):
+        return exc.failure_code
     return "runtime_load_failed"
 
 
@@ -522,6 +530,14 @@ def _redact_message(message: str) -> str:
 
 def _timestamp(seconds: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(seconds))
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(_DIGEST_CHUNK_BYTES), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _write_digest_fixture_files(

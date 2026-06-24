@@ -50,23 +50,25 @@ def main() -> int:
 
     for _sample in range(samples):
         tracemalloc.start()
-        started = time.perf_counter()
-        for _index in range(iterations):
-            with tempfile.TemporaryDirectory(prefix="melix-export-smoke-probe-") as directory:
-                report = build_smoke_metrics_report(manifests, Path(directory))
-            if report.get("ok") is not True:
-                raise SystemExit("export smoke policy probe failed")
-            target_count = float(report["target_count"])
-            metadata_latency_ms = float(report["metadata_check_latency_ms"])
-            load_latency_ms = float(report["load_smoke_latency_ms"])
-            generation_latency_ms = float(report["generation_smoke_latency_ms"])
-            preview_bytes = float(report["output_preview_byte_count"])
-            timeout_count = float(report["timeout_count"])
-            waiver_count = float(report["waiver_count"])
-        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
-        _, peak_bytes = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
-        peak_samples.append(float(peak_bytes))
+        try:
+            started = time.perf_counter()
+            for _index in range(iterations):
+                with tempfile.TemporaryDirectory(prefix="melix-export-smoke-probe-") as directory:
+                    report = build_smoke_metrics_report(manifests, Path(directory))
+                if report.get("ok") is not True:
+                    raise SystemExit("export smoke policy probe failed")
+                target_count = float(report["target_count"])
+                metadata_latency_ms = float(report["metadata_check_latency_ms"])
+                load_latency_ms = float(report["load_smoke_latency_ms"])
+                generation_latency_ms = float(report["generation_smoke_latency_ms"])
+                preview_bytes = float(report["output_preview_byte_count"])
+                timeout_count = float(report["timeout_count"])
+                waiver_count = float(report["waiver_count"])
+            elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+            _, peak_bytes = tracemalloc.get_traced_memory()
+            peak_samples.append(float(peak_bytes))
+        finally:
+            tracemalloc.stop()
 
     print(
         json.dumps(
