@@ -1146,6 +1146,18 @@ def test_scope_report_selects_lora_experiment_run_dir_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "lora-experiment-run-dir-name-scan"
 
 
+def test_scope_report_selects_runtime_export_manifest_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/productization/export_target_manifest.py"
+        ],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "runtime-export-manifest-validation"
+
+
 def test_lora_experiment_run_dir_scan_probe_script_smoke(capsys: pytest.CaptureFixture[str]) -> None:
     runpy.run_path(
         str(REPO_ROOT / "scripts/lora_experiment_run_dir_scan_probe.py"),
@@ -3118,6 +3130,27 @@ def test_runtime_utils_package_version_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
 
 
+def test_runtime_export_manifest_validation_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_MANIFEST_PROBE_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_MANIFEST_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/runtime_export_manifest_validation_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["fixture_count"] == 4.0
+    assert metrics["schema_error_count"] == 0.0
+    assert metrics["manifest_byte_size"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
 def test_runtime_utils_top_level_weights_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -3600,6 +3633,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
         "retrieval-context-projection-fastpath",
+        "runtime-export-manifest-validation",
         "same-cohort-batching-probe-evidence",
         "runtime-utils-kwarg-signature-cache",
         "runtime-utils-package-version-cache",
@@ -3869,6 +3903,10 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         assert "services/mlx-worker-python/tests/test_pr_scoped_performance.py" in watch_globs
         assert "../head/$SCRIPT" in probe_command
         assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in probe_command
+
+    runtime_export_probe_command = by_id["runtime-export-manifest-validation"]["probe_command"]
+    assert "../head/$SCRIPT" in runtime_export_probe_command
+    assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in runtime_export_probe_command
 
     probe_policy_metrics = {
         metric["key"]: metric for metric in by_id["probe-policy-noop-overhead"]["metrics"]

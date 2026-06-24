@@ -16,6 +16,7 @@ PYTHON_PROJECT="$ROOT_DIR/services/mlx-worker-python"
 
 PROTO_FILES=(
   "$SCHEMA_DIR/controlplane/v1/control_plane.proto"
+  "$SCHEMA_DIR/workspace/v1/export_target_manifest.proto"
   "$SCHEMA_DIR/workspace/v1/workspace_manifest.proto"
   "$SCHEMA_DIR/worker/v1/common.proto"
   "$SCHEMA_DIR/worker/v1/runtime.proto"

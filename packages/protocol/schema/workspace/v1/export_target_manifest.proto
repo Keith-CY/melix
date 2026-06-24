@@ -1,0 +1,243 @@
+syntax = "proto3";
+
+package melix.workspace.v1;
+
+message ExportTargetManifest {
+  string schema_version = 1;
+  string export_id = 2;
+  string target_id = 3;
+  ExportTargetType target_type = 4;
+  string target_runtime = 5;
+  string target_runtime_version = 6;
+  string workspace_project_id = 7;
+  string workspace_manifest_path = 8;
+  string source_adapter_manifest_path = 9;
+  string source_derived_model_manifest_path = 10;
+  string source_training_dataset_manifest_path = 11;
+  string base_model_id = 12;
+  string base_model_revision = 13;
+  string adapter_id = 14;
+  string adapter_snapshot = 15;
+  ExportActivationMode activation_mode = 16;
+  ExportQuantizationSpec quantization = 17;
+  repeated ExportTargetFile generated_files = 18;
+  repeated ExportTargetFile required_files = 19;
+  repeated ExportTargetFile intermediate_files = 20;
+  ExportRuntimeRequirements runtime_requirements = 21;
+  ExportVerificationPolicy verification_policy = 22;
+  ExportVerificationStatus verification_status = 23;
+  ExportVerificationWaiver waiver = 24;
+  ExportRetentionPolicy retention_policy = 25;
+  ExportDiagnosticPolicy diagnostic_policy = 26;
+  ExportEvidencePolicy evidence = 27;
+  ExportTargetMetrics metrics = 28;
+}
+
+enum ExportTargetType {
+  EXPORT_TARGET_TYPE_UNSPECIFIED = 0;
+  EXPORT_TARGET_TYPE_MELIX_MANAGED = 1;
+  EXPORT_TARGET_TYPE_OLLAMA = 2;
+  EXPORT_TARGET_TYPE_GGUF = 3;
+  EXPORT_TARGET_TYPE_MLX_RUNTIME = 4;
+}
+
+enum ExportActivationMode {
+  EXPORT_ACTIVATION_MODE_UNSPECIFIED = 0;
+  EXPORT_ACTIVATION_MODE_FUSED_DERIVED_MODEL = 1;
+  EXPORT_ACTIVATION_MODE_ADAPTER_BACKED_RUNTIME = 2;
+  EXPORT_ACTIVATION_MODE_ADAPTER_PACKAGE = 3;
+  EXPORT_ACTIVATION_MODE_METADATA_ONLY = 4;
+}
+
+message ExportQuantizationSpec {
+  string quantization_profile_id = 1;
+  string quantization_method = 2;
+  uint32 weight_bits = 3;
+  string source_precision = 4;
+  string target_precision = 5;
+  string kv_cache_quantization = 6;
+  bool requires_requantization = 7;
+}
+
+message ExportTargetFile {
+  string path = 1;
+  ExportTargetFileRole role = 2;
+  string media_type = 3;
+  uint64 byte_size = 4;
+  string sha256 = 5;
+  ExportRetentionClass retention_class = 6;
+  string source_provenance = 7;
+  ExportRedactionClass redaction_class = 8;
+}
+
+enum ExportTargetFileRole {
+  EXPORT_TARGET_FILE_ROLE_UNSPECIFIED = 0;
+  EXPORT_TARGET_FILE_ROLE_ADAPTER_WEIGHTS = 1;
+  EXPORT_TARGET_FILE_ROLE_ADAPTER_CONFIG = 2;
+  EXPORT_TARGET_FILE_ROLE_DERIVED_MODEL_MANIFEST = 3;
+  EXPORT_TARGET_FILE_ROLE_MODEL_CONFIG = 4;
+  EXPORT_TARGET_FILE_ROLE_MODEL_WEIGHTS = 5;
+  EXPORT_TARGET_FILE_ROLE_TOKENIZER = 6;
+  EXPORT_TARGET_FILE_ROLE_MODEFILE = 7;
+  EXPORT_TARGET_FILE_ROLE_RUNTIME_BLOB = 8;
+  EXPORT_TARGET_FILE_ROLE_GGUF_MODEL = 9;
+  EXPORT_TARGET_FILE_ROLE_MLX_BUNDLE_FILE = 10;
+  EXPORT_TARGET_FILE_ROLE_EVIDENCE_RECEIPT = 11;
+  EXPORT_TARGET_FILE_ROLE_RUNTIME_LOG = 12;
+  EXPORT_TARGET_FILE_ROLE_INTERMEDIATE = 13;
+}
+
+enum ExportRetentionClass {
+  EXPORT_RETENTION_CLASS_UNSPECIFIED = 0;
+  EXPORT_RETENTION_CLASS_REQUIRED = 1;
+  EXPORT_RETENTION_CLASS_EVIDENCE = 2;
+  EXPORT_RETENTION_CLASS_RUNTIME_LOG = 3;
+  EXPORT_RETENTION_CLASS_INTERMEDIATE = 4;
+  EXPORT_RETENTION_CLASS_CACHE = 5;
+  EXPORT_RETENTION_CLASS_TEMPORARY = 6;
+}
+
+enum ExportRedactionClass {
+  EXPORT_REDACTION_CLASS_UNSPECIFIED = 0;
+  EXPORT_REDACTION_CLASS_PUBLIC_METADATA = 1;
+  EXPORT_REDACTION_CLASS_RELATIVE_PATH = 2;
+  EXPORT_REDACTION_CLASS_LOCAL_PATH_REDACTED = 3;
+  EXPORT_REDACTION_CLASS_SECRET_REDACTED = 4;
+  EXPORT_REDACTION_CLASS_PRIVATE_PREVIEW_REDACTED = 5;
+}
+
+message ExportRuntimeRequirements {
+  string runtime_name = 1;
+  string min_runtime_version = 2;
+  bool local_runtime_required = 3;
+  bool runtime_binary_required = 4;
+  string runtime_binary_name = 5;
+  repeated string compatible_runtime_ids = 6;
+  repeated string required_capabilities = 7;
+}
+
+message ExportVerificationPolicy {
+  string policy_id = 1;
+  bool metadata_check_required = 2;
+  bool load_check_required = 3;
+  bool generation_check_required = 4;
+  uint32 timeout_ms = 5;
+  uint32 preview_byte_limit = 6;
+  bool waiver_allowed = 7;
+  repeated ExportWaiverReason allowed_waiver_reasons = 8;
+}
+
+message ExportVerificationStatus {
+  ExportVerificationState state = 1;
+  ExportCheckStatus metadata_check = 2;
+  ExportCheckStatus load_check = 3;
+  ExportCheckStatus generation_check = 4;
+  string smoke_receipt_path = 5;
+  string diagnostics_receipt_path = 6;
+}
+
+enum ExportVerificationState {
+  EXPORT_VERIFICATION_STATE_UNSPECIFIED = 0;
+  EXPORT_VERIFICATION_STATE_PENDING = 1;
+  EXPORT_VERIFICATION_STATE_PASSED = 2;
+  EXPORT_VERIFICATION_STATE_FAILED = 3;
+  EXPORT_VERIFICATION_STATE_BLOCKED = 4;
+  EXPORT_VERIFICATION_STATE_WAIVED = 5;
+}
+
+enum ExportCheckStatus {
+  EXPORT_CHECK_STATUS_UNSPECIFIED = 0;
+  EXPORT_CHECK_STATUS_PENDING = 1;
+  EXPORT_CHECK_STATUS_PASSED = 2;
+  EXPORT_CHECK_STATUS_FAILED = 3;
+  EXPORT_CHECK_STATUS_BLOCKED = 4;
+  EXPORT_CHECK_STATUS_WAIVED = 5;
+  EXPORT_CHECK_STATUS_NOT_APPLICABLE = 6;
+}
+
+message ExportVerificationWaiver {
+  string waiver_id = 1;
+  ExportWaiverReason reason = 2;
+  string detail = 3;
+  string operator_id = 4;
+  string created_at = 5;
+  string expires_at = 6;
+  ExportRiskLevel risk_level = 7;
+  string replacement_evidence = 8;
+  string follow_up_issue = 9;
+}
+
+enum ExportWaiverReason {
+  EXPORT_WAIVER_REASON_UNSPECIFIED = 0;
+  EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED = 1;
+  EXPORT_WAIVER_REASON_RUNTIME_INCOMPATIBLE_HOST = 2;
+  EXPORT_WAIVER_REASON_METADATA_ONLY_TARGET = 3;
+  EXPORT_WAIVER_REASON_KNOWN_RUNTIME_BUG = 4;
+  EXPORT_WAIVER_REASON_OPERATOR_MANUAL_VERIFICATION = 5;
+}
+
+enum ExportRiskLevel {
+  EXPORT_RISK_LEVEL_UNSPECIFIED = 0;
+  EXPORT_RISK_LEVEL_LOW = 1;
+  EXPORT_RISK_LEVEL_MEDIUM = 2;
+  EXPORT_RISK_LEVEL_HIGH = 3;
+}
+
+message ExportRetentionPolicy {
+  string policy_id = 1;
+  ExportRetentionDecision required_default_decision = 2;
+  ExportRetentionDecision evidence_default_decision = 3;
+  ExportRetentionDecision runtime_log_default_decision = 4;
+  ExportRetentionDecision intermediate_default_decision = 5;
+  ExportRetentionDecision cache_default_decision = 6;
+  ExportRetentionDecision temporary_default_decision = 7;
+  uint32 runtime_log_ttl_seconds = 8;
+}
+
+enum ExportRetentionDecision {
+  EXPORT_RETENTION_DECISION_UNSPECIFIED = 0;
+  EXPORT_RETENTION_DECISION_RETAIN = 1;
+  EXPORT_RETENTION_DECISION_CLEANABLE = 2;
+  EXPORT_RETENTION_DECISION_DELETE_AFTER_SUCCESS = 3;
+  EXPORT_RETENTION_DECISION_DELETE_AFTER_TTL = 4;
+}
+
+message ExportDiagnosticPolicy {
+  string policy_id = 1;
+  string parser_policy_id = 2;
+  uint32 bounded_log_excerpt_bytes = 3;
+  repeated string required_diagnosis_codes = 4;
+}
+
+message ExportEvidencePolicy {
+  string export_report_path = 1;
+  string retention_report_path = 2;
+  string smoke_receipt_path = 3;
+  string diagnostics_receipt_path = 4;
+  string redaction_policy_id = 5;
+}
+
+message ExportTargetMetrics {
+  uint32 generated_file_count = 1;
+  uint32 required_file_count = 2;
+  uint32 intermediate_file_count = 3;
+  uint64 artifact_byte_size = 4;
+  uint64 required_byte_size = 5;
+  uint64 evidence_byte_size = 6;
+}
+
+message ExportTargetManifestValidationReport {
+  bool ok = 1;
+  string schema_version = 2;
+  string export_id = 3;
+  string target_id = 4;
+  ExportTargetType target_type = 5;
+  uint32 fixture_count = 6;
+  uint32 schema_error_count = 7;
+  uint64 manifest_byte_size = 8;
+  double manifest_validation_latency_ms = 9;
+  uint32 generated_file_count = 10;
+  uint32 required_file_count = 11;
+  uint32 intermediate_file_count = 12;
+  repeated string errors = 13;
+}

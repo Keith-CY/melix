@@ -39,6 +39,7 @@ Step-by-step operating procedures for specific workflows. Use these when you nee
 | [Benchmark, Matrix & LoRA](runbooks/benchmark-matrix-evaluation-and-lora.md) | Full operator guide: benchmarking, matrix runs, evaluation, and LoRA fine-tuning |
 | [Workflow Recipes And URI Inspection](runbooks/workflow-recipes.md) | Built-in workflow recipes, URI inspection, planning, and pipeline-backed apply |
 | [LoRA Adapter Workflow](runbooks/phase-8-lora-adapter-workflow.md) | Training, activating, publishing, and removing LoRA adapters |
+| [Runtime Export Target Manifest](runbooks/runtime-export-target-manifest.md) | Schema-backed export target manifests for Melix, Ollama, GGUF, and MLX-compatible runtimes |
 | [Local Install](runbooks/phase-8-local-install.md) | Install Melix as a persistent local service via launch agent |
 | [Homebrew Install](runbooks/homebrew-install.md) | Install and manage Melix through Homebrew |
 | [Packaging Targets](runbooks/platform-packaging-targets.md) | Launch agent, Homebrew, Nix, and preview app-bundle delivery options |
