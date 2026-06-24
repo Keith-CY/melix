@@ -2410,18 +2410,9 @@ class WorkerModelCatalog:
             if default_managed_root is not None:
                 requested[_SOURCE_KIND_MELIX_MANAGED_ROOT].append(os.fspath(default_managed_root))
 
-        env_hf_cache = (self._environment.get("HUGGINGFACE_HUB_CACHE") or "").strip()
-        env_hf_home = (self._environment.get("HF_HOME") or "").strip()
-        if env_hf_cache:
-            requested[_SOURCE_KIND_HUGGINGFACE_CACHE].append(env_hf_cache)
-        elif env_hf_home:
-            requested[_SOURCE_KIND_HUGGINGFACE_CACHE].append(
-                os.fspath(Path(env_hf_home).expanduser() / "hub")
-            )
-        else:
-            default_hf_cache = self._default_huggingface_cache_root()
-            if default_hf_cache is not None:
-                requested[_SOURCE_KIND_HUGGINGFACE_CACHE].append(os.fspath(default_hf_cache))
+        requested[_SOURCE_KIND_HUGGINGFACE_CACHE].extend(
+            self._requested_huggingface_cache_roots()
+        )
 
         for key in ("MODELSCOPE_CACHE", "MODELSCOPE_HOME"):
             requested[_SOURCE_KIND_MODELSCOPE_CACHE].extend(self._split_env_paths(key))
@@ -2442,19 +2433,9 @@ class WorkerModelCatalog:
         if cached is not None:
             return cached
         if source_kind == _SOURCE_KIND_HUGGINGFACE_CACHE:
-            roots = []
-            env_hf_cache = (self._environment.get("HUGGINGFACE_HUB_CACHE") or "").strip()
-            env_hf_home = (self._environment.get("HF_HOME") or "").strip()
-            if env_hf_cache:
-                roots.append(env_hf_cache)
-            if env_hf_home:
-                roots.append(os.fspath(Path(env_hf_home).expanduser() / "hub"))
-            default_hf_cache = self._default_huggingface_cache_root()
-            if default_hf_cache is not None:
-                roots.append(os.fspath(default_hf_cache))
             root_set = {
                 _canonical_registry_root_path(root)
-                for root in roots
+                for root in self._requested_huggingface_cache_roots()
                 if root.strip()
             }
         elif source_kind == _SOURCE_KIND_MODELSCOPE_CACHE:
@@ -2473,6 +2454,20 @@ class WorkerModelCatalog:
             }
         self._source_requested_root_sets_cache[source_kind] = root_set
         return root_set
+
+    def _requested_huggingface_cache_roots(self) -> list[str]:
+        env_hf_cache = (self._environment.get("HUGGINGFACE_HUB_CACHE") or "").strip()
+        if env_hf_cache:
+            return [env_hf_cache]
+
+        env_hf_home = (self._environment.get("HF_HOME") or "").strip()
+        if env_hf_home:
+            return [os.fspath(Path(env_hf_home).expanduser() / "hub")]
+
+        default_hf_cache = self._default_huggingface_cache_root()
+        if default_hf_cache is not None:
+            return [os.fspath(default_hf_cache)]
+        return []
 
     def _split_env_paths(self, key: str) -> list[str]:
         raw = self._environment.get(key) or ""
