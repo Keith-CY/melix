@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import os
@@ -56,6 +56,19 @@ _REGISTRY_SCAN_PRUNED_DIR_NAMES = frozenset({"blobs", ".git", "__pycache__"})
 _HF_CACHE_REPO_PREFIX = "models--"
 _HF_CACHE_REPO_PREFIX_LEN = len(_HF_CACHE_REPO_PREFIX)
 _HF_CACHE_PRUNED_SUBTREE_NAMES = frozenset({"snapshots", "refs"})
+_MODEL_INVENTORY_SOURCE_DESCRIPTOR_SCHEMA = "melix.model_inventory_source_descriptor.v1"
+_SOURCE_KIND_MELIX_MANAGED_ROOT = "melix_managed_root"
+_SOURCE_KIND_HUGGINGFACE_CACHE = "huggingface_cache"
+_SOURCE_KIND_MODELSCOPE_CACHE = "modelscope_cache"
+_SOURCE_KIND_OLLAMA_STORE = "ollama_store"
+_SOURCE_KIND_LM_STUDIO_STORE = "lm_studio_store"
+_MODEL_INVENTORY_SOURCE_KINDS = (
+    _SOURCE_KIND_MELIX_MANAGED_ROOT,
+    _SOURCE_KIND_HUGGINGFACE_CACHE,
+    _SOURCE_KIND_MODELSCOPE_CACHE,
+    _SOURCE_KIND_OLLAMA_STORE,
+    _SOURCE_KIND_LM_STUDIO_STORE,
+)
 _MODEL_WEIGHT_FILE_SUFFIXES = (".safetensors", ".npz")
 _GEMMA4_QAT_AUTOMATIC_ORG = "mlx-community"
 _GEMMA4_QAT_AUTOMATIC_SCOPE = "mlx-community-gemma4-q4"
@@ -85,10 +98,49 @@ class RegistryRootSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelInventorySourceDescriptor:
+    descriptor_id: str
+    source_kind: str
+    display_name: str
+    ownership: str
+    requested_roots: tuple[str, ...]
+    effective_roots: tuple[str, ...]
+    path_policy: Mapping[str, object]
+    discovery_policy: Mapping[str, object]
+    receipt_policy: Mapping[str, object]
+    redaction_policy: Mapping[str, object]
+    failure_modes: tuple[str, ...]
+    catalog_policy: Mapping[str, object] = field(default_factory=dict)
+    pull_policy: Mapping[str, object] = field(default_factory=dict)
+    metrics_policy: Mapping[str, object] = field(default_factory=dict)
+    schema_version: str = _MODEL_INVENTORY_SOURCE_DESCRIPTOR_SCHEMA
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "descriptor_id": self.descriptor_id,
+            "source_kind": self.source_kind,
+            "display_name": self.display_name,
+            "ownership": self.ownership,
+            "requested_roots": list(self.requested_roots),
+            "effective_roots": list(self.effective_roots),
+            "path_policy": dict(self.path_policy),
+            "discovery_policy": dict(self.discovery_policy),
+            "receipt_policy": dict(self.receipt_policy),
+            "redaction_policy": dict(self.redaction_policy),
+            "failure_modes": list(self.failure_modes),
+            "catalog_policy": dict(self.catalog_policy),
+            "pull_policy": dict(self.pull_policy),
+            "metrics_policy": dict(self.metrics_policy),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RegistrySnapshot:
     roots: tuple[RegistryRootSnapshot, ...]
     models: tuple[common_pb2.ModelSpec, ...]
     scanned_at_unix_ms: int
+    source_descriptors: tuple[ModelInventorySourceDescriptor, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -583,6 +635,86 @@ def _sorted_child_directories(root: Path, *, name_prefix: str | None = None) -> 
     except OSError:
         return ()
     return tuple(root / name for name in sorted(child_names))
+
+
+def _inventory_receipt_policy(*, source_kind: str) -> dict[str, object]:
+    return {
+        "schema_version": "melix.model_inventory_receipt.v1",
+        "source_kind": source_kind,
+        "root_fields": [
+            "root_id",
+            "root_path",
+            "root_order",
+            "accessible",
+            "error_code",
+            "error_message",
+            "discovered_model_ids",
+        ],
+        "model_fields": [
+            "model_id",
+            "model_path",
+            "revision",
+            "melix.source_kind",
+            "melix.registry_root_id",
+            "melix.registry_relative_path",
+        ],
+        "scan_fields": [
+            "scanned_at_unix_ms",
+            "requested_roots",
+            "effective_roots",
+            "descriptor_id",
+        ],
+    }
+
+
+def _inventory_redaction_policy() -> dict[str, object]:
+    return {
+        "path_fields": [
+            "requested_roots",
+            "effective_roots",
+            "root_path",
+            "model_path",
+            "melix.model_path",
+            "melix.registry_root_path",
+            "melix.registry_descriptor_path",
+        ],
+        "redaction": "preserve_basename_and_digest_absolute_prefix",
+        "digest": "sha256",
+        "secret_fields": [
+            "token",
+            "authorization",
+            "cookie",
+            "api_key",
+        ],
+    }
+
+
+def _inventory_metrics_policy() -> dict[str, object]:
+    return {
+        "counters": [
+            "source_count",
+            "requested_source_root_count",
+            "effective_source_root_count",
+            "invalid_source_count",
+            "redaction_count",
+            "discovered_model_count",
+            "usable_model_count",
+            "unsupported_model_count",
+            "incomplete_model_count",
+            "ambiguous_model_count",
+        ],
+        "timers": [
+            "source_scan_latency_ms",
+            "catalog_scan_latency_ms",
+            "classification_latency_ms",
+            "pull_cancel_latency_ms",
+            "partial_artifact_cleanup_latency_ms",
+        ],
+        "sizes": [
+            "discovery_receipt_byte_size",
+            "catalog_result_count",
+        ],
+    }
 
 
 def _iter_relative_file_paths_sorted(root: Path, *, prefix: str = "") -> Iterable[tuple[Path, str]]:
@@ -2132,6 +2264,10 @@ class WorkerModelCatalog:
         snapshot = self.registry_snapshot(rescan=rescan, registry_roots=registry_roots)
         return {
             "scanned_at_unix_ms": snapshot.scanned_at_unix_ms,
+            "source_descriptors": [
+                descriptor.to_payload()
+                for descriptor in snapshot.source_descriptors
+            ],
             "roots": [
                 {
                     "root_id": root.root_id,
@@ -2163,12 +2299,371 @@ class WorkerModelCatalog:
 
     def _refresh_registry_snapshot(self, registry_roots: tuple[str, ...]) -> RegistrySnapshot:
         self._prune_text_prefix_cache()
-        roots, discovered_models = self._scan_registry_roots(registry_roots)
+        roots, discovered_models, hf_cache_roots = self._scan_registry_roots(registry_roots)
         _apply_gemma4_qat_companion_metadata(discovered_models.values())
         return RegistrySnapshot(
             roots=tuple(roots),
             models=tuple(discovered_models[model_id] for model_id in sorted(discovered_models)),
             scanned_at_unix_ms=int(time.time() * 1000),
+            source_descriptors=self._source_descriptors_for_registry_roots(
+                registry_roots,
+                hf_cache_roots=hf_cache_roots,
+            ),
+        )
+
+    def _source_descriptors_for_registry_roots(
+        self,
+        registry_roots: tuple[str, ...],
+        *,
+        hf_cache_roots: frozenset[str] = frozenset(),
+    ) -> tuple[ModelInventorySourceDescriptor, ...]:
+        effective_roots_by_kind: dict[str, list[str]] = {
+            source_kind: []
+            for source_kind in _MODEL_INVENTORY_SOURCE_KINDS
+        }
+        for root in registry_roots:
+            effective_roots_by_kind[
+                self._source_kind_for_registry_root(root, hf_cache_roots=hf_cache_roots)
+            ].append(root)
+
+        requested_roots_by_kind = self._requested_roots_by_source_kind(
+            effective_roots_by_kind=effective_roots_by_kind,
+            hf_cache_roots=hf_cache_roots,
+        )
+        return (
+            self._melix_managed_root_source_descriptor(
+                requested_roots=tuple(requested_roots_by_kind[_SOURCE_KIND_MELIX_MANAGED_ROOT]),
+                effective_roots=tuple(effective_roots_by_kind[_SOURCE_KIND_MELIX_MANAGED_ROOT]),
+            ),
+            self._huggingface_cache_source_descriptor(
+                requested_roots=tuple(requested_roots_by_kind[_SOURCE_KIND_HUGGINGFACE_CACHE]),
+                effective_roots=tuple(effective_roots_by_kind[_SOURCE_KIND_HUGGINGFACE_CACHE]),
+            ),
+            self._external_runtime_source_descriptor(
+                descriptor_id="modelscope-cache",
+                source_kind=_SOURCE_KIND_MODELSCOPE_CACHE,
+                display_name="ModelScope cache snapshots",
+                env_vars=("MODELSCOPE_CACHE", "MODELSCOPE_HOME"),
+                requested_roots=tuple(requested_roots_by_kind[_SOURCE_KIND_MODELSCOPE_CACHE]),
+                effective_roots=tuple(effective_roots_by_kind[_SOURCE_KIND_MODELSCOPE_CACHE]),
+                store_layout="ModelScope cache snapshot directories",
+            ),
+            self._external_runtime_source_descriptor(
+                descriptor_id="ollama-store",
+                source_kind=_SOURCE_KIND_OLLAMA_STORE,
+                display_name="Ollama model store",
+                env_vars=("OLLAMA_MODELS",),
+                requested_roots=tuple(requested_roots_by_kind[_SOURCE_KIND_OLLAMA_STORE]),
+                effective_roots=tuple(effective_roots_by_kind[_SOURCE_KIND_OLLAMA_STORE]),
+                store_layout="Ollama manifest and blob store",
+            ),
+            self._external_runtime_source_descriptor(
+                descriptor_id="lm-studio-store",
+                source_kind=_SOURCE_KIND_LM_STUDIO_STORE,
+                display_name="LM Studio model store",
+                env_vars=("LM_STUDIO_MODELS", "LMSTUDIO_MODELS", "LM_STUDIO_HOME"),
+                requested_roots=tuple(requested_roots_by_kind[_SOURCE_KIND_LM_STUDIO_STORE]),
+                effective_roots=tuple(effective_roots_by_kind[_SOURCE_KIND_LM_STUDIO_STORE]),
+                store_layout="LM Studio local model directories",
+            ),
+        )
+
+    def _source_kind_for_registry_root(
+        self,
+        root_path: str,
+        *,
+        hf_cache_roots: frozenset[str] = frozenset(),
+    ) -> str:
+        root = _canonical_registry_root_path(root_path)
+        if root in self._source_requested_root_set(_SOURCE_KIND_HUGGINGFACE_CACHE):
+            return _SOURCE_KIND_HUGGINGFACE_CACHE
+        if root in self._source_requested_root_set(_SOURCE_KIND_MODELSCOPE_CACHE):
+            return _SOURCE_KIND_MODELSCOPE_CACHE
+        if root in self._source_requested_root_set(_SOURCE_KIND_OLLAMA_STORE):
+            return _SOURCE_KIND_OLLAMA_STORE
+        if root in self._source_requested_root_set(_SOURCE_KIND_LM_STUDIO_STORE):
+            return _SOURCE_KIND_LM_STUDIO_STORE
+        if root in hf_cache_roots:
+            return _SOURCE_KIND_HUGGINGFACE_CACHE
+        return _SOURCE_KIND_MELIX_MANAGED_ROOT
+
+    def _requested_roots_by_source_kind(
+        self,
+        *,
+        effective_roots_by_kind: Mapping[str, list[str]],
+        hf_cache_roots: frozenset[str],
+    ) -> dict[str, list[str]]:
+        requested: dict[str, list[str]] = {
+            source_kind: []
+            for source_kind in _MODEL_INVENTORY_SOURCE_KINDS
+        }
+        for root in self._split_env_paths(_REGISTRY_ROOTS_ENV_KEY):
+            requested[
+                self._source_kind_for_registry_root(root, hf_cache_roots=hf_cache_roots)
+            ].append(root)
+        managed_root = self._environment.get(_MANAGED_MODEL_ROOT_ENV_KEY, "").strip()
+        if managed_root:
+            requested[_SOURCE_KIND_MELIX_MANAGED_ROOT].append(managed_root)
+        else:
+            default_managed_root = self._default_managed_model_root()
+            if default_managed_root is not None:
+                requested[_SOURCE_KIND_MELIX_MANAGED_ROOT].append(os.fspath(default_managed_root))
+
+        env_hf_cache = self._environment.get("HUGGINGFACE_HUB_CACHE", "").strip()
+        env_hf_home = self._environment.get("HF_HOME", "").strip()
+        if env_hf_cache:
+            requested[_SOURCE_KIND_HUGGINGFACE_CACHE].append(env_hf_cache)
+        elif env_hf_home:
+            requested[_SOURCE_KIND_HUGGINGFACE_CACHE].append(
+                os.fspath(Path(env_hf_home).expanduser() / "hub")
+            )
+        else:
+            default_hf_cache = self._default_huggingface_cache_root()
+            if default_hf_cache is not None:
+                requested[_SOURCE_KIND_HUGGINGFACE_CACHE].append(os.fspath(default_hf_cache))
+
+        for key in ("MODELSCOPE_CACHE", "MODELSCOPE_HOME"):
+            requested[_SOURCE_KIND_MODELSCOPE_CACHE].extend(self._split_env_paths(key))
+        requested[_SOURCE_KIND_OLLAMA_STORE].extend(self._split_env_paths("OLLAMA_MODELS"))
+        for key in ("LM_STUDIO_MODELS", "LMSTUDIO_MODELS", "LM_STUDIO_HOME"):
+            requested[_SOURCE_KIND_LM_STUDIO_STORE].extend(self._split_env_paths(key))
+
+        for source_kind, effective_roots in effective_roots_by_kind.items():
+            requested[source_kind].extend(effective_roots)
+
+        return {
+            source_kind: self._dedupe_requested_roots(roots)
+            for source_kind, roots in requested.items()
+        }
+
+    def _source_requested_root_set(self, source_kind: str) -> set[str]:
+        if source_kind == _SOURCE_KIND_HUGGINGFACE_CACHE:
+            roots = []
+            env_hf_cache = self._environment.get("HUGGINGFACE_HUB_CACHE", "").strip()
+            env_hf_home = self._environment.get("HF_HOME", "").strip()
+            if env_hf_cache:
+                roots.append(env_hf_cache)
+            if env_hf_home:
+                roots.append(os.fspath(Path(env_hf_home).expanduser() / "hub"))
+            default_hf_cache = self._default_huggingface_cache_root()
+            if default_hf_cache is not None:
+                roots.append(os.fspath(default_hf_cache))
+            return {
+                _canonical_registry_root_path(root)
+                for root in roots
+                if root.strip()
+            }
+        if source_kind == _SOURCE_KIND_MODELSCOPE_CACHE:
+            keys = ("MODELSCOPE_CACHE", "MODELSCOPE_HOME")
+        elif source_kind == _SOURCE_KIND_OLLAMA_STORE:
+            keys = ("OLLAMA_MODELS",)
+        elif source_kind == _SOURCE_KIND_LM_STUDIO_STORE:
+            keys = ("LM_STUDIO_MODELS", "LMSTUDIO_MODELS", "LM_STUDIO_HOME")
+        else:
+            keys = ()
+        return {
+            _canonical_registry_root_path(root)
+            for key in keys
+            for root in self._split_env_paths(key)
+        }
+
+    def _split_env_paths(self, key: str) -> list[str]:
+        raw = self._environment.get(key, "")
+        if not raw.strip():
+            return []
+        return [
+            part.strip()
+            for part in raw.split(os.pathsep)
+            if part.strip()
+        ]
+
+    def _dedupe_requested_roots(self, roots: Iterable[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for root in roots:
+            normalized = root.strip()
+            if not normalized:
+                continue
+            canonical = _canonical_registry_root_path(normalized)
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            deduped.append(normalized)
+        return deduped
+
+    def _melix_managed_root_source_descriptor(
+        self,
+        *,
+        requested_roots: tuple[str, ...],
+        effective_roots: tuple[str, ...],
+    ) -> ModelInventorySourceDescriptor:
+        return ModelInventorySourceDescriptor(
+            descriptor_id="melix-managed-root",
+            source_kind=_SOURCE_KIND_MELIX_MANAGED_ROOT,
+            display_name="Melix-managed model roots",
+            ownership="melix_owned",
+            requested_roots=requested_roots,
+            effective_roots=effective_roots,
+            path_policy={
+                "configured_by": [
+                    _REGISTRY_ROOTS_ENV_KEY,
+                    _MANAGED_MODEL_ROOT_ENV_KEY,
+                    "MELIX_HOME",
+                    "HOME",
+                ],
+                "resolution": "expanduser.resolve(strict=false)",
+                "dedupe": "canonical_path_first_wins",
+                "scan_scope": "recursive_manifest_and_mlx_directory_scan",
+                "writable": True,
+            },
+            discovery_policy={
+                "scanner": "WorkerModelCatalog.registry_snapshot",
+                "admission": "manifest_or_mlx_directory",
+                "invalid_source_isolation": "per_root",
+                "missing_roots": "reported_in_roots_without_poisoning_valid_roots",
+            },
+            receipt_policy=_inventory_receipt_policy(
+                source_kind=_SOURCE_KIND_MELIX_MANAGED_ROOT,
+            ),
+            redaction_policy=_inventory_redaction_policy(),
+            failure_modes=(
+                "not_found",
+                "permission_denied",
+                "manifest_invalid",
+                "invalid_layout",
+                "scan_io_error",
+            ),
+            catalog_policy={
+                "searchable": False,
+                "browse_surface": "local_filesystem",
+            },
+            pull_policy={
+                "supports_pull": False,
+                "admission": "managed_downloads_recorded_after_fetch",
+            },
+            metrics_policy=_inventory_metrics_policy(),
+        )
+
+    def _huggingface_cache_source_descriptor(
+        self,
+        *,
+        requested_roots: tuple[str, ...],
+        effective_roots: tuple[str, ...],
+    ) -> ModelInventorySourceDescriptor:
+        return ModelInventorySourceDescriptor(
+            descriptor_id="huggingface-cache",
+            source_kind=_SOURCE_KIND_HUGGINGFACE_CACHE,
+            display_name="Hugging Face cache snapshots",
+            ownership="external_read_only",
+            requested_roots=requested_roots,
+            effective_roots=effective_roots,
+            path_policy={
+                "configured_by": [
+                    "HUGGINGFACE_HUB_CACHE",
+                    "HF_HOME",
+                    "HOME",
+                    _REGISTRY_ROOTS_ENV_KEY,
+                ],
+                "resolution": "expanduser.resolve(strict=false)",
+                "dedupe": "canonical_path_first_wins",
+                "layout": "models--<org>--<name>/snapshots/<revision>",
+                "writable": False,
+            },
+            discovery_policy={
+                "scanner": "WorkerModelCatalog._scan_huggingface_cache_models",
+                "admission": "config_plus_weight_files_plus_mlx_signal",
+                "revision_receipt": "refs/<name> mapped to snapshot id when available",
+                "invalid_source_isolation": "per_root",
+                "missing_roots": "reported_in_roots_without_poisoning_valid_roots",
+            },
+            receipt_policy=_inventory_receipt_policy(
+                source_kind=_SOURCE_KIND_HUGGINGFACE_CACHE,
+            ),
+            redaction_policy=_inventory_redaction_policy(),
+            failure_modes=(
+                "not_found",
+                "permission_denied",
+                "invalid_cache_repo",
+                "snapshot_incomplete",
+                "metadata_not_mlx",
+                "scan_io_error",
+            ),
+            catalog_policy={
+                "searchable": True,
+                "discovery_backend": "huggingface_hub",
+                "search_method": "HubCatalog.search_models",
+                "card_method": "HubCatalog.get_model_card",
+                "mlx_filter": "filter=mlx",
+            },
+            pull_policy={
+                "supports_pull": True,
+                "states": [
+                    "queued",
+                    "resolving",
+                    "downloading",
+                    "verifying",
+                    "admitted",
+                    "cancel_requested",
+                    "cancelled",
+                    "failed",
+                    "partial_cleanup_pending",
+                    "partial_cleanup_done",
+                ],
+                "cancel_semantics": "best_effort_transport_cancel_then_partial_cleanup",
+                "partial_artifacts": "receipt_records_bytes_and_cleanup_state",
+            },
+            metrics_policy=_inventory_metrics_policy(),
+        )
+
+    def _external_runtime_source_descriptor(
+        self,
+        *,
+        descriptor_id: str,
+        source_kind: str,
+        display_name: str,
+        env_vars: tuple[str, ...],
+        requested_roots: tuple[str, ...],
+        effective_roots: tuple[str, ...],
+        store_layout: str,
+    ) -> ModelInventorySourceDescriptor:
+        return ModelInventorySourceDescriptor(
+            descriptor_id=descriptor_id,
+            source_kind=source_kind,
+            display_name=display_name,
+            ownership="external_read_only",
+            requested_roots=requested_roots,
+            effective_roots=effective_roots,
+            path_policy={
+                "configured_by": list(env_vars) + [_REGISTRY_ROOTS_ENV_KEY],
+                "resolution": "expanduser.resolve(strict=false)",
+                "dedupe": "canonical_path_first_wins",
+                "layout": store_layout,
+                "writable": False,
+            },
+            discovery_policy={
+                "scanner": "descriptor_only_until_source_specific_scanner_lands",
+                "admission": "reported_as_requested_and_effective_roots_only",
+                "invalid_source_isolation": "per_source",
+                "missing_roots": "kept_out_of_model_admission_for_other_sources",
+            },
+            receipt_policy=_inventory_receipt_policy(source_kind=source_kind),
+            redaction_policy=_inventory_redaction_policy(),
+            failure_modes=(
+                "not_found",
+                "permission_denied",
+                "invalid_layout",
+                "unsupported_manifest",
+                "scan_io_error",
+            ),
+            catalog_policy={
+                "searchable": False,
+                "browse_surface": "external_runtime_store",
+            },
+            pull_policy={
+                "supports_pull": False,
+                "admission": "external_runtime_owned_artifacts_are_read_only",
+            },
+            metrics_policy=_inventory_metrics_policy(),
         )
 
     def _prune_text_prefix_cache(self) -> None:
@@ -2179,9 +2674,10 @@ class WorkerModelCatalog:
     def _scan_registry_roots(
         self,
         registry_roots: tuple[str, ...],
-    ) -> tuple[list[RegistryRootSnapshot], dict[str, common_pb2.ModelSpec]]:
+    ) -> tuple[list[RegistryRootSnapshot], dict[str, common_pb2.ModelSpec], frozenset[str]]:
         roots: list[RegistryRootSnapshot] = []
         discovered_models: dict[str, common_pb2.ModelSpec] = {}
+        hf_cache_roots: set[str] = set()
 
         for index, root_path in enumerate(registry_roots, start=1):
             root_id = _stable_registry_root_id(root_path)
@@ -2201,6 +2697,8 @@ class WorkerModelCatalog:
 
             accepted_model_ids: list[str] = []
             manifest_paths, plain_local_model_dirs, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
+            if hf_cache_repo_dirs:
+                hf_cache_roots.add(root_path)
             for manifest_path in manifest_paths:
                 relative_path = manifest_path.parent.relative_to(root)
                 if _path_derived_registry_identity(relative_path.parts) is None:
@@ -2244,7 +2742,7 @@ class WorkerModelCatalog:
                 )
             )
 
-        return roots, discovered_models
+        return roots, discovered_models, frozenset(hf_cache_roots)
 
     def _configured_registry_roots(self) -> list[str]:
         configured: list[str] = []

@@ -451,6 +451,22 @@ The unit must:
 #1513 must not broaden Desktop UI beyond showing requested/effective source
 roots from the shared receipt.
 
+Implementation note for #1513:
+
+- `WorkerModelCatalog.registry_snapshot_payload()` now emits
+  `source_descriptors` alongside the existing `roots` and `models` fields so
+  current Swift snapshot parsing remains backward-compatible while CLI and
+  Desktop can consume requested and effective source roots from the shared
+  receipt path.
+- The first implemented descriptor set covers `melix_managed_root`,
+  `huggingface_cache`, `modelscope_cache`, `ollama_store`, and
+  `lm_studio_store`. Hugging Face cache descriptors mark the existing
+  `HubCatalog.search_models` path as searchable and define pull states for
+  cancelled and partial-cleanup follow-up receipts.
+- The #1513 fixture scope verifies the five descriptor rows, Hugging Face cache
+  model discovery, external requested roots, missing Hugging Face cache root
+  isolation, and propagation through generated maintenance manifests.
+
 ### #1514 Scan Receipts And Classification
 
 #1514 owns the shared scan receipt and discovered-model classification output.
