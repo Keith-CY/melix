@@ -7,6 +7,11 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Type
 
+from worker.runtime.quantized_tensor_metadata import (
+    quantized_scales_present,
+    quantized_tensor_metadata_from_model_dir,
+)
+
 logger = logging.getLogger(__name__)
 
 _PATCHED = False
@@ -152,6 +157,11 @@ def apply() -> bool:
         if not weight_files and strict:
             raise FileNotFoundError(f"No safetensors found in {model_path}")
 
+        quantized_metadata = quantized_tensor_metadata_from_model_dir(
+            model_path,
+            weight_files=weight_files,
+            extra_files=extra_files,
+        )
         weights = _load_weight_shards(mx.load, weight_files, extra_files)
 
         if (model_file := config.get("model_file")) is not None:
@@ -182,7 +192,11 @@ def apply() -> bool:
                     return config["quantization"][p]
                 if not hasattr(m, "to_quantized"):
                     return False
-                return f"{p}.scales" in weights
+                return quantized_scales_present(
+                    p,
+                    metadata=quantized_metadata,
+                    weights=weights,
+                )
 
             nn.quantize(
                 model,

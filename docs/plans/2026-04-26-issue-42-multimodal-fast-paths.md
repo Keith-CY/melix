@@ -485,6 +485,21 @@ Executable unit issues:
   fast path is not actually selected or identity differs, benchmark metrics mark
   `vlm_batch1_comparison_claim_blocked=1` instead of emitting an eligible claim.
 
+- Unit 3.3.1 adds a shared quantized-tensor metadata prepass for native MTP and
+  Gemma4 text-backed VLM loads. Loaders read `model.safetensors.index.json`
+  before tensor materialization and fall back to safetensors headers only when no
+  index map is available. The resulting tensor-to-shard map is built before
+  model-specific sanitize steps, so `.weight` and `.scales` tensors split across
+  shards still drive quantization admission. Native MTP and Gemma4 loaders use
+  the shared metadata predicate when deciding bits/group-size quantization
+  before loading sanitized weights; materialized weight dictionaries remain a
+  fallback for legacy unindexed artifacts. The PR-scoped
+  `quantized-tensor-metadata-prepass` probe reports index/header prepass cost
+  and gates metadata-vs-materialized quantization decisions, while focused
+  fixtures cover cross-shard index and header metadata, native MTP
+  sanitize-before-load, Gemma4 text-only exports, and text-backed fallback
+  loads.
+
 ## Verification Policy
 
 Per milestone:

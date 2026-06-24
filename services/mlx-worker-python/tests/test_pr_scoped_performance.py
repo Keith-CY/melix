@@ -419,7 +419,18 @@ def test_scope_report_selects_native_mtp_loader_probe() -> None:
         registry_path=REGISTRY_PATH,
         changed_files=["services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py"],
     )
-    assert _selected_probe_ids(scope) == ["native-mtp-loader-safetensor-scandir"]
+    assert _selected_probe_ids(scope) == [
+        "native-mtp-loader-safetensor-scandir",
+        "quantized-tensor-metadata-prepass",
+    ]
+
+
+def test_scope_report_selects_quantized_tensor_metadata_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/quantized_tensor_metadata.py"],
+    )
+    assert _selected_probe_ids(scope) == ["quantized-tensor-metadata-prepass"]
 
 
 def test_scope_report_selects_local_job_followup_scan_probe() -> None:
@@ -631,6 +642,69 @@ def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
     assert metrics["weight_load_new_mean_ms"] >= 0.0
     assert metrics["key_old_mean_ms"] >= 0.0
     assert metrics["key_new_mean_ms"] >= 0.0
+
+
+def test_quantized_tensor_metadata_prepass_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_PAIR_COUNT", "6")
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_SHARD_COUNT", "3")
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_DECISION_ITERATIONS", "2")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/quantized_tensor_metadata_prepass_probe.py"))
+
+    metrics = probe_script["run_probe"]()
+
+    assert metrics["index_elapsed_ms_mean"] >= 0.0
+    assert metrics["header_elapsed_ms_mean"] >= 0.0
+    assert metrics["metadata_decision_elapsed_ms_mean"] >= 0.0
+    assert metrics["materialized_decision_elapsed_ms_mean"] >= 0.0
+    assert metrics["metadata_tensor_count"] == 18.0
+    assert metrics["header_tensor_count"] == 18.0
+    assert metrics["cross_shard_pair_count"] == 6.0
+    assert metrics["matched_decision_count"] == 12.0
+    assert metrics["pair_count"] == 6.0
+    assert metrics["shard_count"] == 3.0
+    assert probe_script["main"]() == 0
+    assert json.loads(capsys.readouterr().out)["matched_decision_count"] == 12.0
+
+
+def test_quantized_tensor_metadata_prepass_probe_base_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "services" / "mlx-worker-python").mkdir(parents=True)
+    monkeypatch.setenv("MELIX_QUANTIZED_TENSOR_METADATA_REPO_ROOT", str(tmp_path))
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_PAIR_COUNT", "4")
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_SHARD_COUNT", "2")
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_DECISION_ITERATIONS", "2")
+    module_name = "worker.runtime.quantized_tensor_metadata"
+    original_module = sys.modules.pop(module_name, None)
+    original_import = __import__
+
+    def block_quantized_metadata_import(name, *args, **kwargs):
+        if name == module_name:
+            raise ImportError(name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", block_quantized_metadata_import)
+    try:
+        probe_script = runpy.run_path(str(REPO_ROOT / "scripts/quantized_tensor_metadata_prepass_probe.py"))
+    finally:
+        if original_module is not None:
+            sys.modules[module_name] = original_module
+
+    metrics = probe_script["run_probe"]()
+
+    assert metrics["metadata_tensor_count"] == 12.0
+    assert metrics["header_tensor_count"] == 12.0
+    assert metrics["cross_shard_pair_count"] == 4.0
+    assert metrics["matched_decision_count"] == 8.0
+    assert probe_script["main"]() == 0
+    assert json.loads(capsys.readouterr().out)["matched_decision_count"] == 8.0
 
 
 def test_dataset_version_listing_probe_script_emits_metrics(
@@ -1773,11 +1847,12 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py"],
     )
 
-    assert scope["selected_count"] == 3
+    assert scope["selected_count"] == 4
     assert [probe["id"] for probe in scope["selected_probes"]] == [
         "vlm-batch1-comparison-artifact",
         "mlx-vlm-family-config-cache",
         "mlx-vlm-gemma4-weight-presence-single-pass",
+        "quantized-tensor-metadata-prepass",
     ]
     coverage_commands = " ".join(str(probe["coverage_command"]) for probe in scope["selected_probes"])
     assert "test_mlx_vlm_runtime_image_batch1_step_keeps_ineligible_requests_on_stream" in coverage_commands
@@ -3564,6 +3639,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
         "native-mtp-loader-safetensor-scandir",
+        "quantized-tensor-metadata-prepass",
         "mlx-audio-local-uri-zero-copy-preprocess",
         "mlx-audio-generate-signature-cache",
         "mlx-audio-speech-signature-cache",
@@ -3845,6 +3921,18 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     assert native_mtp_metrics["model_listing_delta_ms"]["direction"] == "lower_is_better"
     assert native_mtp_metrics["model_listing_speedup"]["direction"] == "higher_is_better"
     assert native_mtp_metrics["key_new_mean_ms"]["direction"] == "lower_is_better"
+
+    quantized_metadata_metrics = {
+        metric["key"]: metric
+        for metric in by_id["quantized-tensor-metadata-prepass"]["metrics"]
+    }
+    assert quantized_metadata_metrics["index_elapsed_ms_mean"]["direction"] == "informational"
+    assert quantized_metadata_metrics["index_peak_bytes_mean"]["direction"] == "informational"
+    assert quantized_metadata_metrics["header_elapsed_ms_mean"]["direction"] == "informational"
+    assert quantized_metadata_metrics["header_peak_bytes_mean"]["direction"] == "informational"
+    assert quantized_metadata_metrics["metadata_decision_elapsed_ms_mean"]["direction"] == "lower_is_better"
+    assert quantized_metadata_metrics["materialized_decision_elapsed_ms_mean"]["direction"] == "informational"
+    assert quantized_metadata_metrics["cross_shard_pair_count"]["warn_pct"] == 0.0
 
     changed_scope_metrics = {
         metric["key"]: metric
