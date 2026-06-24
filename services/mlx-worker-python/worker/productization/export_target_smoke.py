@@ -13,6 +13,7 @@ from worker.productization.export_target_layout import (
     build_export_target_layout,
     _target_relative_path,
 )
+from worker.productization.export_target_diagnostics import write_export_diagnostics_receipt
 from worker.productization.export_target_manifest import validate_export_target_manifest_file
 
 
@@ -135,6 +136,16 @@ def run_export_target_smoke(
 
     checks = (metadata_check, load_check, generation_check)
     status = _terminal_status(checks)
+    diagnostics_receipt = (
+        write_export_diagnostics_receipt(
+            layout,
+            manifest,
+            failure_checks=_diagnostic_failure_check_payloads(checks),
+            now=current_time,
+        )
+        if status in {CHECK_STATUS_FAILED, CHECK_STATUS_BLOCKED}
+        else {}
+    )
     preview_payload = _output_preview_payload(preview_path, layout, preview_limit)
     receipt = {
         "schema_version": EXPORT_SMOKE_RECEIPT_SCHEMA_VERSION,
@@ -152,12 +163,15 @@ def run_export_target_smoke(
         },
         "output_preview": preview_payload,
         "diagnostics_receipt_path": diagnostics_receipt_path,
+        "diagnostics_status": diagnostics_receipt.get("status", ""),
+        "diagnostic_codes": _diagnostic_codes(diagnostics_receipt),
+        "operator_remedies": diagnostics_receipt.get("operator_remedies", []),
         "operator_failures": [
             payload
             for payload in (
-                _operator_failure_payload("metadata_check", metadata_check),
-                _operator_failure_payload("load_check", load_check),
-                _operator_failure_payload("generation_check", generation_check),
+                _operator_failure_payload("metadata_check", metadata_check, diagnostics_receipt),
+                _operator_failure_payload("load_check", load_check, diagnostics_receipt),
+                _operator_failure_payload("generation_check", generation_check, diagnostics_receipt),
             )
             if payload is not None
         ],
@@ -467,15 +481,38 @@ def _check_payload(result: _CheckResult) -> dict[str, object]:
 def _operator_failure_payload(
     check_name: str,
     result: _CheckResult,
+    diagnostics_receipt: dict[str, object] | None = None,
 ) -> dict[str, object] | None:
     if result.status != CHECK_STATUS_FAILED:
         return None
-    return {
+    payload = {
         "check": check_name,
         "failure_code": result.failure_code,
         "failure_message": result.failure_message,
         "diagnostics_receipt_path": result.diagnostics_receipt_path,
     }
+    remedies = _operator_remedies(diagnostics_receipt or {})
+    if remedies:
+        payload["operator_remedy_code"] = str(remedies[0].get("code", ""))
+        payload["operator_remedy"] = str(remedies[0].get("remediation", ""))
+    return payload
+
+
+def _diagnostic_failure_check_payloads(
+    checks: tuple[_CheckResult, _CheckResult, _CheckResult],
+) -> list[dict[str, object]]:
+    names = ("metadata_check", "load_check", "generation_check")
+    return [
+        {
+            "check": name,
+            "status": check.status,
+            "failure_code": check.failure_code,
+            "failure_message": check.failure_message,
+            "evidence_path": check.evidence_path,
+        }
+        for name, check in zip(names, checks)
+        if check.status in {CHECK_STATUS_FAILED, CHECK_STATUS_BLOCKED}
+    ]
 
 
 def _update_export_report(
@@ -500,6 +537,9 @@ def _update_export_report(
             "diagnostics_receipt_path": manifest.evidence.diagnostics_receipt_path
             if status in {CHECK_STATUS_FAILED, CHECK_STATUS_BLOCKED}
             else "",
+            "diagnostic_status": str(receipt.get("diagnostics_status", "")),
+            "diagnostic_codes": receipt.get("diagnostic_codes", []),
+            "operator_remedies": receipt.get("operator_remedies", []),
             "verification_terminal_state": terminal_state,
             "verification_blocker_code": _first_failure_code(receipt),
             "waiver_id": _waiver_id(receipt),
@@ -516,6 +556,27 @@ def _first_failure_code(receipt: dict[str, object]) -> str:
         if isinstance(first, dict):
             return str(first.get("failure_code", ""))
     return ""
+
+
+def _diagnostic_codes(receipt: dict[str, object]) -> list[str]:
+    diagnoses = receipt.get("diagnoses", [])
+    if not isinstance(diagnoses, list):
+        return []
+    codes: list[str] = []
+    for diagnosis in diagnoses:
+        if not isinstance(diagnosis, dict):
+            continue
+        code = str(diagnosis.get("code", ""))
+        if code and code not in codes:
+            codes.append(code)
+    return codes
+
+
+def _operator_remedies(receipt: dict[str, object]) -> list[dict[str, object]]:
+    remedies = receipt.get("operator_remedies", [])
+    if not isinstance(remedies, list):
+        return []
+    return [remedy for remedy in remedies if isinstance(remedy, dict)]
 
 
 def _failure_code(exc: Exception) -> str:

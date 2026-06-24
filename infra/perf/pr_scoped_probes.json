@@ -6335,5 +6335,78 @@
         "warn_pct": 5.0
       }
     ]
+  },
+  {
+    "id": "runtime-export-diagnostic-parser",
+    "name": "Runtime export diagnostic parser",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/productization/export_target_diagnostics.py",
+      "services/mlx-worker-python/tests/test_export_target_diagnostics.py",
+      "services/mlx-worker-python/tests/test_export_target_smoke_policy.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "services/mlx-worker-python/fixtures/runtime-export/target-manifests.dev.v1/**",
+      "scripts/runtime_export_diagnostic_parser_probe.py",
+      "infra/perf/pr_scoped_probes.json",
+      "docs/plans/2026-06-24-runtime-export-diagnostic-parser.md",
+      "docs/plans/2026-06-21-runtime-aware-export-and-serving-verification.md",
+      "docs/runbooks/runtime-export-smoke-policy.md"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_export_target_diagnostics.py services/mlx-worker-python/tests/test_export_target_smoke_policy.py::test_export_target_smoke_blocks_report_when_required_file_is_missing services/mlx-worker-python/tests/test_export_target_smoke_policy.py::test_export_target_smoke_failure_boundaries services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_runtime_export_diagnostic_parser_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_runtime_export_diagnostic_parser_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_export_target_diagnostics.py services/mlx-worker-python/tests/test_export_target_smoke_policy.py::test_export_target_smoke_blocks_report_when_required_file_is_missing services/mlx-worker-python/tests/test_export_target_smoke_policy.py::test_export_target_smoke_failure_boundaries services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_runtime_export_diagnostic_parser_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_runtime_export_diagnostic_parser_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/productization/export_target_diagnostics.py services/mlx-worker-python/worker/productization/export_target_smoke.py services/mlx-worker-python/tests/test_export_target_diagnostics.py services/mlx-worker-python/tests/test_export_target_smoke_policy.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/runtime_export_diagnostic_parser_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'SCRIPT=\"scripts/runtime_export_diagnostic_parser_probe.py\"; for CANDIDATE in \"../head/$SCRIPT\" \"${GITHUB_WORKSPACE:-}/head/$SCRIPT\" \"$SCRIPT\"; do if [ -f \"$CANDIDATE\" ]; then python3 \"$CANDIDATE\"; exit $?; fi; done; echo \"missing probe script fallback for $SCRIPT\" >&2; exit 2'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "diagnostic_parser_coverage",
+        "unit": "ratio",
+        "direction": "higher_is_better",
+        "warn_abs": 0.0
+      },
+      {
+        "key": "parsed_failure_count",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
+        "key": "unknown_failure_count",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
+        "key": "redaction_count",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
+        "key": "diagnostic_latency_ms",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "target_count",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
+        "key": "diagnosis_code_count",
+        "unit": "count",
+        "direction": "informational"
+      }
+    ]
   }
 ]
