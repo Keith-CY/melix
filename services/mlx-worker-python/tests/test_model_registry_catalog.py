@@ -83,6 +83,16 @@ def _write_weights(variant_dir: Path) -> None:
     (variant_dir / "model.safetensors").write_bytes(b"weights")
 
 
+def _source_descriptors_by_kind(payload: dict[str, object]) -> dict[str, dict[str, object]]:
+    descriptors = payload["source_descriptors"]
+    assert isinstance(descriptors, list)
+    return {
+        descriptor["source_kind"]: descriptor
+        for descriptor in descriptors
+        if isinstance(descriptor, dict)
+    }
+
+
 def test_read_text_prefix_reads_only_requested_prefix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     target = tmp_path / "README.md"
     target.write_text("placeholder", encoding="utf-8")
@@ -516,7 +526,6 @@ def test_huggingface_cache_snapshot_skips_incomplete_indexed_weights(tmp_path: P
     (snapshot_dir / "model-00001-of-00001.safetensors").write_bytes(b"weights")
 
     assert [model.model_id for model in catalog.registry_snapshot(rescan=True).models] == ["org/demo-mlx"]
-
 
 
 def test_has_model_weight_files_returns_false_when_scandir_raises_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1251,6 +1260,112 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
     assert model.model_kind == "text"
     assert model.ext["melix.model_path"] == str(model_dir.resolve())
     assert config_load_count == 1
+
+    managed_root = tmp_path / "descriptor-managed-root"
+    _write_registry_manifest(
+        managed_root / "huggingface" / "mlx-community" / "ManagedTiny" / "main",
+        model_id="mlx-community/ManagedTiny",
+    )
+    hf_cache = tmp_path / "descriptor-hf-cache"
+    hf_snapshot = hf_cache / "models--mlx-community--DescriptorTiny" / "snapshots" / "abc123"
+    hf_refs = hf_cache / "models--mlx-community--DescriptorTiny" / "refs"
+    _write_model_config(hf_snapshot, {"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]})
+    _write_weights(hf_snapshot)
+    hf_refs.mkdir(parents=True, exist_ok=True)
+    (hf_refs / "main").write_text("abc123\n", encoding="utf-8")
+    missing_hf_cache = tmp_path / "missing-hf-cache"
+    lower_priority_hf_home = tmp_path / "lower-priority-hf-home"
+    modelscope_root = tmp_path / "modelscope-cache"
+    ollama_root = tmp_path / "ollama-models"
+    lm_studio_root = tmp_path / "lm-studio-models"
+    descriptor_catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MODEL_ROOTS": os.pathsep.join([str(managed_root), str(hf_cache)]),
+            "MELIX_MANAGED_MODEL_ROOT": None,
+            "HUGGINGFACE_HUB_CACHE": str(missing_hf_cache),
+            "HF_HOME": str(lower_priority_hf_home),
+            "MODELSCOPE_CACHE": str(modelscope_root),
+            "MODELSCOPE_HOME": None,
+            "OLLAMA_MODELS": str(ollama_root),
+            "LM_STUDIO_MODELS": str(lm_studio_root),
+            "LMSTUDIO_MODELS": None,
+            "LM_STUDIO_HOME": None,
+        }
+    )
+    descriptor_payload = descriptor_catalog.registry_snapshot_payload()
+    descriptors = _source_descriptors_by_kind(descriptor_payload)
+    roots = {root["root_path"]: root for root in descriptor_payload["roots"]}
+
+    assert set(descriptors) == {
+        "melix_managed_root",
+        "huggingface_cache",
+        "modelscope_cache",
+        "ollama_store",
+        "lm_studio_store",
+    }
+    for descriptor in descriptors.values():
+        assert descriptor["schema_version"] == "melix.model_inventory_source_descriptor.v1"
+        assert descriptor["path_policy"]
+        assert descriptor["discovery_policy"]
+        assert descriptor["receipt_policy"]["schema_version"] == "melix.model_inventory_receipt.v1"
+        assert "requested_roots" in descriptor["redaction_policy"]["path_fields"]
+        assert "source_scan_latency_ms" in descriptor["metrics_policy"]["timers"]
+        assert "not_found" in descriptor["failure_modes"]
+
+    assert descriptors["melix_managed_root"]["requested_roots"] == [str(managed_root)]
+    assert descriptors["melix_managed_root"]["effective_roots"] == [str(managed_root.resolve())]
+    assert descriptors["melix_managed_root"]["catalog_policy"]["searchable"] is False
+    assert descriptors["huggingface_cache"]["requested_roots"] == [str(hf_cache), str(missing_hf_cache)]
+    assert str(lower_priority_hf_home / "hub") not in descriptors["huggingface_cache"]["requested_roots"]
+    assert descriptors["huggingface_cache"]["effective_roots"] == [
+        str(hf_cache.resolve()),
+        str(missing_hf_cache.resolve()),
+    ]
+    assert descriptors["huggingface_cache"]["catalog_policy"]["searchable"] is True
+    assert descriptors["huggingface_cache"]["catalog_policy"]["search_method"] == "HubCatalog.search_models"
+    assert "cancelled" in descriptors["huggingface_cache"]["pull_policy"]["states"]
+    assert "partial_cleanup_pending" in descriptors["huggingface_cache"]["pull_policy"]["states"]
+    assert descriptors["modelscope_cache"]["discovery_policy"]["scanner"] == (
+        "descriptor_only_until_source_specific_scanner_lands"
+    )
+    assert descriptors["modelscope_cache"]["requested_roots"] == [str(modelscope_root)]
+    assert descriptors["modelscope_cache"]["effective_roots"] == []
+    assert descriptors["ollama_store"]["ownership"] == "external_read_only"
+    assert descriptors["ollama_store"]["requested_roots"] == [str(ollama_root)]
+    assert descriptors["ollama_store"]["effective_roots"] == []
+    assert descriptors["lm_studio_store"]["pull_policy"]["supports_pull"] is False
+    assert descriptors["lm_studio_store"]["requested_roots"] == [str(lm_studio_root)]
+    assert descriptors["lm_studio_store"]["effective_roots"] == []
+    assert roots[str(missing_hf_cache.resolve())]["accessible"] is False
+    assert roots[str(missing_hf_cache.resolve())]["error_code"] == "not_found"
+    assert [model["model_id"] for model in descriptor_payload["models"]] == [
+        "mlx-community/DescriptorTiny",
+        "mlx-community/ManagedTiny",
+    ]
+
+    no_hf_env_catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MODEL_ROOTS": str(managed_root),
+            "MELIX_MANAGED_MODEL_ROOT": None,
+        }
+    )
+    no_hf_descriptors = _source_descriptors_by_kind(no_hf_env_catalog.registry_snapshot_payload())
+    assert no_hf_descriptors["huggingface_cache"]["requested_roots"] == []
+    assert no_hf_descriptors["huggingface_cache"]["effective_roots"] == []
+
+    default_hf_home = tmp_path / "default-hf-home"
+    default_hf_cache = default_hf_home / ".cache" / "huggingface" / "hub"
+    default_hf_cache.mkdir(parents=True)
+    default_hf_catalog = WorkerModelCatalog(
+        environment={
+            "HOME": str(default_hf_home),
+            "MELIX_MODEL_ROOTS": str(managed_root),
+            "MELIX_MANAGED_MODEL_ROOT": None,
+        }
+    )
+    default_hf_descriptors = _source_descriptors_by_kind(default_hf_catalog.registry_snapshot_payload())
+    assert default_hf_descriptors["huggingface_cache"]["requested_roots"] == [str(default_hf_cache.resolve())]
+    assert default_hf_descriptors["huggingface_cache"]["effective_roots"] == [str(default_hf_cache.resolve())]
 
     nested_model_dir = tmp_path / "nested-context-model"
     _write_model_config(
