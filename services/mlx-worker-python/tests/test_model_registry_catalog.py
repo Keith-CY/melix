@@ -1280,10 +1280,15 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
     descriptor_catalog = WorkerModelCatalog(
         environment={
             "MELIX_MODEL_ROOTS": os.pathsep.join([str(managed_root), str(hf_cache)]),
+            "MELIX_MANAGED_MODEL_ROOT": None,
             "HUGGINGFACE_HUB_CACHE": str(missing_hf_cache),
+            "HF_HOME": None,
             "MODELSCOPE_CACHE": str(modelscope_root),
+            "MODELSCOPE_HOME": None,
             "OLLAMA_MODELS": str(ollama_root),
             "LM_STUDIO_MODELS": str(lm_studio_root),
+            "LMSTUDIO_MODELS": None,
+            "LM_STUDIO_HOME": None,
         }
     )
     descriptor_payload = descriptor_catalog.registry_snapshot_payload()

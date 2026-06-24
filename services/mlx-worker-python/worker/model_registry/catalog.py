@@ -2188,6 +2188,7 @@ class WorkerModelCatalog:
         self._json_file_cache: dict[Path, tuple[int, int, dict[str, object]]] = {}
         self._text_prefix_cache: dict[Path, tuple[int, int, int, int, str]] = {}
         self._registry_snapshot_cache: dict[tuple[str, ...], RegistrySnapshot] = {}
+        self._source_requested_root_sets_cache: dict[str, set[str]] = {}
         self._runtime_models_snapshot: RegistrySnapshot | None = None
         self._runtime_models_overlay_revision = 0
         self._overlay_revision = 0
@@ -2401,7 +2402,7 @@ class WorkerModelCatalog:
             requested[
                 self._source_kind_for_registry_root(root, hf_cache_roots=hf_cache_roots)
             ].append(root)
-        managed_root = self._environment.get(_MANAGED_MODEL_ROOT_ENV_KEY, "").strip()
+        managed_root = (self._environment.get(_MANAGED_MODEL_ROOT_ENV_KEY) or "").strip()
         if managed_root:
             requested[_SOURCE_KIND_MELIX_MANAGED_ROOT].append(managed_root)
         else:
@@ -2409,8 +2410,8 @@ class WorkerModelCatalog:
             if default_managed_root is not None:
                 requested[_SOURCE_KIND_MELIX_MANAGED_ROOT].append(os.fspath(default_managed_root))
 
-        env_hf_cache = self._environment.get("HUGGINGFACE_HUB_CACHE", "").strip()
-        env_hf_home = self._environment.get("HF_HOME", "").strip()
+        env_hf_cache = (self._environment.get("HUGGINGFACE_HUB_CACHE") or "").strip()
+        env_hf_home = (self._environment.get("HF_HOME") or "").strip()
         if env_hf_cache:
             requested[_SOURCE_KIND_HUGGINGFACE_CACHE].append(env_hf_cache)
         elif env_hf_home:
@@ -2437,10 +2438,13 @@ class WorkerModelCatalog:
         }
 
     def _source_requested_root_set(self, source_kind: str) -> set[str]:
+        cached = self._source_requested_root_sets_cache.get(source_kind)
+        if cached is not None:
+            return cached
         if source_kind == _SOURCE_KIND_HUGGINGFACE_CACHE:
             roots = []
-            env_hf_cache = self._environment.get("HUGGINGFACE_HUB_CACHE", "").strip()
-            env_hf_home = self._environment.get("HF_HOME", "").strip()
+            env_hf_cache = (self._environment.get("HUGGINGFACE_HUB_CACHE") or "").strip()
+            env_hf_home = (self._environment.get("HF_HOME") or "").strip()
             if env_hf_cache:
                 roots.append(env_hf_cache)
             if env_hf_home:
@@ -2448,12 +2452,12 @@ class WorkerModelCatalog:
             default_hf_cache = self._default_huggingface_cache_root()
             if default_hf_cache is not None:
                 roots.append(os.fspath(default_hf_cache))
-            return {
+            root_set = {
                 _canonical_registry_root_path(root)
                 for root in roots
                 if root.strip()
             }
-        if source_kind == _SOURCE_KIND_MODELSCOPE_CACHE:
+        elif source_kind == _SOURCE_KIND_MODELSCOPE_CACHE:
             keys = ("MODELSCOPE_CACHE", "MODELSCOPE_HOME")
         elif source_kind == _SOURCE_KIND_OLLAMA_STORE:
             keys = ("OLLAMA_MODELS",)
@@ -2461,14 +2465,17 @@ class WorkerModelCatalog:
             keys = ("LM_STUDIO_MODELS", "LMSTUDIO_MODELS", "LM_STUDIO_HOME")
         else:
             keys = ()
-        return {
-            _canonical_registry_root_path(root)
-            for key in keys
-            for root in self._split_env_paths(key)
-        }
+        if source_kind != _SOURCE_KIND_HUGGINGFACE_CACHE:
+            root_set = {
+                _canonical_registry_root_path(root)
+                for key in keys
+                for root in self._split_env_paths(key)
+            }
+        self._source_requested_root_sets_cache[source_kind] = root_set
+        return root_set
 
     def _split_env_paths(self, key: str) -> list[str]:
-        raw = self._environment.get(key, "")
+        raw = self._environment.get(key) or ""
         if not raw.strip():
             return []
         return [
@@ -2746,11 +2753,11 @@ class WorkerModelCatalog:
 
     def _configured_registry_roots(self) -> list[str]:
         configured: list[str] = []
-        raw = self._environment.get(_REGISTRY_ROOTS_ENV_KEY, "")
+        raw = self._environment.get(_REGISTRY_ROOTS_ENV_KEY) or ""
         if raw.strip():
             configured.extend(raw.split(os.pathsep))
 
-        managed_root = self._environment.get(_MANAGED_MODEL_ROOT_ENV_KEY, "").strip()
+        managed_root = (self._environment.get(_MANAGED_MODEL_ROOT_ENV_KEY) or "").strip()
         if managed_root:
             configured.append(managed_root)
         else:
@@ -2768,7 +2775,7 @@ class WorkerModelCatalog:
             return self._configured_registry_roots()
 
         requested_roots = list(registry_roots)
-        managed_root = self._environment.get(_MANAGED_MODEL_ROOT_ENV_KEY, "").strip()
+        managed_root = (self._environment.get(_MANAGED_MODEL_ROOT_ENV_KEY) or "").strip()
         if managed_root:
             requested_roots.append(managed_root)
         else:
@@ -2781,17 +2788,17 @@ class WorkerModelCatalog:
         return self._normalized_registry_roots(requested_roots)
 
     def _default_huggingface_cache_root(self) -> Path | None:
-        env_cache = self._environment.get("HUGGINGFACE_HUB_CACHE", "").strip()
+        env_cache = (self._environment.get("HUGGINGFACE_HUB_CACHE") or "").strip()
         if env_cache:
             return Path(env_cache).expanduser().resolve()
 
-        env_hf_home = self._environment.get("HF_HOME", "").strip()
+        env_hf_home = (self._environment.get("HF_HOME") or "").strip()
         if env_hf_home:
             return (Path(env_hf_home).expanduser() / "hub").resolve()
 
         if self._uses_explicit_environment and "HOME" not in self._environment:
             return None
-        home = self._environment.get("HOME", "").strip()
+        home = (self._environment.get("HOME") or "").strip()
         root = (Path(home).expanduser() if home else Path.home()) / ".cache" / "huggingface" / "hub"
         resolved = root.resolve()
         return resolved if resolved.is_dir() else None
@@ -2803,9 +2810,9 @@ class WorkerModelCatalog:
             and "HOME" not in self._environment
         ):
             return None
-        home = self._environment.get("MELIX_HOME", "").strip()
+        home = (self._environment.get("MELIX_HOME") or "").strip()
         if not home:
-            home = self._environment.get("HOME", "").strip()
+            home = (self._environment.get("HOME") or "").strip()
             root = (Path(home).expanduser() if home else Path.home()) / ".melix"
         else:
             root = Path(home).expanduser()
