@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 
@@ -150,6 +151,78 @@ def test_export_target_diagnostics_preserves_bounded_unknown_failure_excerpt(
     assert receipt["redaction_summary"]["truncated"] is True
     assert receipt["redaction_summary"]["excerpt_byte_count"] <= 160
     assert excerpt
+
+
+def test_export_target_diagnostics_reads_only_bounded_log_chunk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+    manifest.diagnostic_policy.bounded_log_excerpt_bytes = 64
+    log_path = target_root / "logs/ollama-create.log"
+    log_path.write_text("runtime load failed " + ("detail " * 2000), encoding="utf-8")
+    original_open = Path.open
+    read_sizes: list[int] = []
+
+    class _TrackingBytes(io.BytesIO):
+        def __enter__(self) -> "_TrackingBytes":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            self.close()
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return super().read(size)
+
+    def tracking_open(path: Path, mode: str = "r", *args: object, **kwargs: object) -> object:
+        if path == log_path and mode == "rb":
+            return _TrackingBytes(original_open(path, mode, *args, **kwargs).read())
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+
+    receipt = write_export_diagnostics_receipt(layout, manifest)
+
+    assert read_sizes == [128]
+    assert receipt["status"] == "matched"
+
+
+def test_export_target_diagnostics_falls_back_when_path_resolution_raises_oserror(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+    raw_path = target_root / "artifacts/blobs/sha256-777777"
+    (target_root / "logs/ollama-create.log").write_text(
+        f"runtime load failed while opening {raw_path}\n",
+        encoding="utf-8",
+    )
+    original_resolve = Path.resolve
+
+    def raising_resolve(path: Path, *args: object, **kwargs: object) -> Path:
+        if path == raw_path:
+            raise OSError("path cannot be resolved")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", raising_resolve)
+
+    receipt = write_export_diagnostics_receipt(layout, manifest)
+
+    excerpt = (target_root / "diagnostics/redacted-log-excerpt.txt").read_text(
+        encoding="utf-8"
+    )
+    assert receipt["status"] == "matched"
+    assert str(raw_path) not in excerpt
+    assert "<absolute-path>" in excerpt
 
 
 def test_export_target_diagnostics_not_applicable_without_logs_or_failures(

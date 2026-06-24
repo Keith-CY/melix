@@ -53,7 +53,7 @@ SUPPORTED_DIAGNOSIS_CODES = (
 )
 _KNOWN_DIAGNOSIS_CODES = tuple(code for code in SUPPORTED_DIAGNOSIS_CODES if code != CODE_UNKNOWN_FAILURE)
 
-_ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![A-Za-z0-9_.-])/(?:[^\s:'\"<>|]+/?)+")
+_ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![A-Za-z0-9_.-])/[^\s:'\"<>|]+")
 _BEARER_SECRET_PATTERN = re.compile(
     r"(?i)\b(authorization\s*:\s*bearer\s+)[A-Za-z0-9._~+/=-]+"
 )
@@ -450,7 +450,8 @@ def _collect_source_lines(
         path = _target_relative_path(layout, row.path)
         if not path.is_file():
             continue
-        text = path.read_bytes()[:source_read_bytes].decode("utf-8", errors="replace")
+        with path.open("rb") as source:
+            text = source.read(source_read_bytes).decode("utf-8", errors="replace")
         lines.extend(_split_source_lines(row.path, text))
 
     for check in failure_checks:
@@ -608,7 +609,7 @@ def _redact_absolute_path(
             layout.target_root.resolve(strict=False)
         )
         replacement = f"<target>/{relative.as_posix()}"
-    except ValueError:
+    except (ValueError, OSError):
         pass
     summary.redacted_absolute_path_count += 1
     summary.redaction_count += 1
