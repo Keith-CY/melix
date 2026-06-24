@@ -913,6 +913,17 @@ def test_job_registry_snapshot_tolerates_malformed_checkpoint_numbers() -> None:
                 "adapter_name": "adapter-a",
                 "checkpoint_count": "not-an-int",
                 "checkpoint_step": "not-an-int",
+                "latest_checkpoint_path": None,
+                "experiment.latest_checkpoint_path": "/runtime/train/checkpoint-100/adapters.safetensors",
+                "checkpoint_sort_key": None,
+                "experiment.checkpoint_sort_key": "0000000100",
+                "selected_checkpoint_path": None,
+                "experiment.selected_checkpoint_path": "/runtime/train/checkpoint-100/adapters.safetensors",
+                "selected_checkpoint_loss_source": None,
+                "experiment.selected_checkpoint_loss_source": "loss_best",
+                "component_model_type": None,
+                "component_family": None,
+                "component_model_path": None,
             }
         ),
     )
@@ -922,6 +933,17 @@ def test_job_registry_snapshot_tolerates_malformed_checkpoint_numbers() -> None:
 
     assert adapter["checkpoint_count"] == 0
     assert adapter["checkpoint_step"] == 0
+    assert adapter["latest_checkpoint_path"].endswith(
+        "checkpoint-100/adapters.safetensors"
+    )
+    assert adapter["checkpoint_sort_key"] == "0000000100"
+    assert adapter["selected_checkpoint_path"].endswith(
+        "checkpoint-100/adapters.safetensors"
+    )
+    assert adapter["selected_checkpoint_loss_source"] == "loss_best"
+    assert adapter["component_model_type"] == ""
+    assert adapter["component_family"] == ""
+    assert adapter["component_model_path"] == ""
 
 
 def test_job_registry_omits_partial_adapter_runtime_fields() -> None:

@@ -112,6 +112,12 @@ def test_checkpoint_selection_receipt_fields_record_step_sort_key_and_loss_sourc
     assert checkpoint_step_from_path(
         "/tmp/model-ops-999/adapter/checkpoint-final/adapters.safetensors"
     ) == -1
+    assert checkpoint_step_from_path(
+        "/tmp/model-ops-999/adapter/checkpoint-100-v2/adapters.safetensors"
+    ) == 100
+    assert checkpoint_step_from_path(
+        "/tmp/model-ops-999/adapter/checkpoint-100-epoch-3/adapters.safetensors"
+    ) == 100
     assert checkpoint_step_from_path("/tmp/model-ops-999/adapter-42.safetensors") == 42
     assert checkpoint_step_from_path("") == 0
     assert checkpoint_sort_key(

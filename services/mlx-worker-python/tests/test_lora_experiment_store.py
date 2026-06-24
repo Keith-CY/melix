@@ -359,6 +359,29 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
     assert payload["groups"][0]["checkpoint_lineage"][0]["checkpoint_step"] == 100
     assert payload["runs"][0]["adapter_name"] == "demo-adapter"
 
+    run_record_path = (
+        jobs_root / "train_lora" / "model-ops-0001" / "lora-experiment-run.json"
+    )
+    run_record_payload = json.loads(run_record_path.read_text(encoding="utf-8"))
+    run_record_payload["checkpoint_sort_key"] = None
+    run_record_payload["selected_checkpoint_path"] = None
+    run_record_payload["selected_checkpoint_loss_source"] = None
+    run_record_path.write_text(
+        json.dumps(run_record_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    payload = LoraExperimentStore().rebuild_index(jobs_root)
+    assert payload["groups"][0]["latest_checkpoint_sort_key"] == ""
+    assert payload["groups"][0]["latest_selected_checkpoint_path"] == ""
+    assert payload["groups"][0]["latest_selected_checkpoint_loss_source"] == ""
+    assert payload["groups"][0]["checkpoint_lineage"][0]["checkpoint_sort_key"] == ""
+    assert payload["groups"][0]["best_known_adapter"]["checkpoint_sort_key"] == ""
+    assert (
+        payload["groups"][0]["best_known_adapter"]["selected_checkpoint_loss_source"]
+        == ""
+    )
+
     _write_manifest(
         jobs_root,
         run_id="model-ops-0002",
@@ -369,10 +392,14 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
             "saved_eos_token": "<eos>",
             "merge_export_canary_result": "passed",
             "round_trip_passed": True,
-            "checkpoint_step": 101,
-            "checkpoint_sort_key": "0000000101",
-            "selected_checkpoint_path": "/tmp/model-ops-0002/adapter/checkpoint-101/adapters.safetensors",
-            "selected_checkpoint_loss_source": "loss_final",
+            "checkpoint_step": None,
+            "experiment.checkpoint_step": 101,
+            "checkpoint_sort_key": None,
+            "experiment.checkpoint_sort_key": "0000000101",
+            "selected_checkpoint_path": None,
+            "experiment.selected_checkpoint_path": "/tmp/model-ops-0002/adapter/checkpoint-101/adapters.safetensors",
+            "selected_checkpoint_loss_source": None,
+            "experiment.selected_checkpoint_loss_source": "loss_final",
         },
     )
 
@@ -479,6 +506,9 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
             "peak_memory_gb": {"bad": "float"},
             "checkpoint_count": "not-an-int",
             "checkpoint_step": "not-an-int",
+            "checkpoint_sort_key": "0000000004",
+            "selected_checkpoint_path": "/tmp/model-ops-0004/adapter/checkpoint-4/adapters.safetensors",
+            "selected_checkpoint_loss_source": "loss_final",
             "adapter_operator_note_count": "not-an-int",
             "loss_best": "not-a-float",
         },
@@ -499,6 +529,9 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
     bad_payload["operator_notes"]["note_count"] = "not-an-int"
     bad_payload["adapter"]["checkpoint_count"] = "not-an-int"
     bad_payload["adapter"]["checkpoint_step"] = "not-an-int"
+    bad_payload["adapter"]["checkpoint_sort_key"] = None
+    bad_payload["adapter"]["selected_checkpoint_path"] = None
+    bad_payload["adapter"]["selected_checkpoint_loss_source"] = None
     bad_provenance_path.write_text(
         json.dumps(bad_payload, indent=2) + "\n",
         encoding="utf-8",
@@ -516,10 +549,21 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
     assert bad_run["peak_memory_gb"] == 0.0
     assert bad_run["checkpoint_count"] == 0
     assert bad_run["checkpoint_step"] == 0
+    assert bad_run["checkpoint_sort_key"] == "0000000004"
+    assert bad_run["selected_checkpoint_path"].endswith(
+        "checkpoint-4/adapters.safetensors"
+    )
+    assert bad_run["selected_checkpoint_loss_source"] == "loss_final"
     assert bad_run["loss_series_row_count"] == 0
     assert bad_run["operator_note_count"] == 0
     assert bad_group["latest_checkpoint_count"] == 0
     assert bad_group["latest_checkpoint_step"] == 0
+    assert bad_group["latest_checkpoint_sort_key"] == "0000000004"
+    assert bad_group["latest_selected_checkpoint_path"].endswith(
+        "checkpoint-4/adapters.safetensors"
+    )
+    assert bad_group["latest_selected_checkpoint_loss_source"] == "loss_final"
+    assert bad_group["checkpoint_lineage"][0]["checkpoint_sort_key"] == "0000000004"
     assert bad_group["latest_loss_series_row_count"] == 0
     assert bad_group["latest_operator_note_count"] == 0
     assert bad_group["best_known_adapter"]["checkpoint_count"] == 0

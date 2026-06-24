@@ -185,14 +185,16 @@ class LoraExperimentStore:
                     "latest_tokens_per_second": _optional_finite_float(latest_run.get("tokens_per_second")) or 0.0,
                     "latest_peak_memory_gb": _optional_finite_float(latest_run.get("peak_memory_gb")) or 0.0,
                     "latest_checkpoint_count": _int_value(latest_run.get("checkpoint_count")),
-                    "latest_checkpoint_path": str(latest_run.get("latest_checkpoint_path", "")),
+                    "latest_checkpoint_path": _str_value(latest_run.get("latest_checkpoint_path")),
                     "latest_checkpoint_step": _int_value(latest_run.get("checkpoint_step")),
-                    "latest_checkpoint_sort_key": str(latest_run.get("checkpoint_sort_key", "")),
-                    "latest_selected_checkpoint_path": str(
-                        latest_run.get("selected_checkpoint_path", "")
+                    "latest_checkpoint_sort_key": _str_value(
+                        latest_run.get("checkpoint_sort_key")
                     ),
-                    "latest_selected_checkpoint_loss_source": str(
-                        latest_run.get("selected_checkpoint_loss_source", "")
+                    "latest_selected_checkpoint_path": _str_value(
+                        latest_run.get("selected_checkpoint_path")
+                    ),
+                    "latest_selected_checkpoint_loss_source": _str_value(
+                        latest_run.get("selected_checkpoint_loss_source")
                     ),
                     "latest_resume_source_path": str(latest_run.get("resume_source_path", "")),
                     "latest_resume_ready": bool(latest_run.get("resume_ready", False)),
@@ -223,14 +225,16 @@ class LoraExperimentStore:
                         ),
                         "adapter_name": str(best_run.get("adapter_name", "")),
                         "checkpoint_count": _int_value(best_run.get("checkpoint_count")),
-                        "latest_checkpoint_path": str(best_run.get("latest_checkpoint_path", "")),
-                        "checkpoint_step": _int_value(best_run.get("checkpoint_step")),
-                        "checkpoint_sort_key": str(best_run.get("checkpoint_sort_key", "")),
-                        "selected_checkpoint_path": str(
-                            best_run.get("selected_checkpoint_path", "")
+                        "latest_checkpoint_path": _str_value(
+                            best_run.get("latest_checkpoint_path")
                         ),
-                        "selected_checkpoint_loss_source": str(
-                            best_run.get("selected_checkpoint_loss_source", "")
+                        "checkpoint_step": _int_value(best_run.get("checkpoint_step")),
+                        "checkpoint_sort_key": _str_value(best_run.get("checkpoint_sort_key")),
+                        "selected_checkpoint_path": _str_value(
+                            best_run.get("selected_checkpoint_path")
+                        ),
+                        "selected_checkpoint_loss_source": _str_value(
+                            best_run.get("selected_checkpoint_loss_source")
                         ),
                         "resume_ready": bool(best_run.get("resume_ready", False)),
                         "loss_best": best_loss if best_loss is not None else 0.0,
@@ -317,45 +321,53 @@ class LoraExperimentStore:
             "training_backend": str(training.get("backend") or manifest.get("training_backend", "")),
             "status": str(training.get("status") or manifest.get("status", "completed")),
             "checkpoint_count": _int_value(
-                adapter.get(
+                _first_present_value(
+                    adapter,
+                    manifest,
                     "checkpoint_count",
-                    manifest.get("checkpoint_count", manifest.get("experiment.checkpoint_count", 0)),
+                    "experiment.checkpoint_count",
+                    default=0,
                 )
             ),
-            "latest_checkpoint_path": str(
-                adapter.get(
+            "latest_checkpoint_path": _str_value(
+                _first_present_value(
+                    adapter,
+                    manifest,
                     "latest_checkpoint_path",
-                    manifest.get("latest_checkpoint_path", manifest.get("experiment.latest_checkpoint_path", "")),
+                    "experiment.latest_checkpoint_path",
                 )
             ),
             "checkpoint_step": _int_value(
-                adapter.get(
+                _first_present_value(
+                    adapter,
+                    manifest,
                     "checkpoint_step",
-                    manifest.get("checkpoint_step", manifest.get("experiment.checkpoint_step", 0)),
+                    "experiment.checkpoint_step",
+                    default=0,
                 )
             ),
-            "checkpoint_sort_key": str(
-                adapter.get(
+            "checkpoint_sort_key": _str_value(
+                _first_present_value(
+                    adapter,
+                    manifest,
                     "checkpoint_sort_key",
-                    manifest.get("checkpoint_sort_key", manifest.get("experiment.checkpoint_sort_key", "")),
+                    "experiment.checkpoint_sort_key",
                 )
             ),
-            "selected_checkpoint_path": str(
-                adapter.get(
+            "selected_checkpoint_path": _str_value(
+                _first_present_value(
+                    adapter,
+                    manifest,
                     "selected_checkpoint_path",
-                    manifest.get(
-                        "selected_checkpoint_path",
-                        manifest.get("experiment.selected_checkpoint_path", ""),
-                    ),
+                    "experiment.selected_checkpoint_path",
                 )
             ),
-            "selected_checkpoint_loss_source": str(
-                adapter.get(
+            "selected_checkpoint_loss_source": _str_value(
+                _first_present_value(
+                    adapter,
+                    manifest,
                     "selected_checkpoint_loss_source",
-                    manifest.get(
-                        "selected_checkpoint_loss_source",
-                        manifest.get("experiment.selected_checkpoint_loss_source", ""),
-                    ),
+                    "experiment.selected_checkpoint_loss_source",
                 )
             ),
             "resume_source_path": str(
@@ -421,11 +433,11 @@ class LoraExperimentStore:
         for key in _LORA_CANARY_RECEIPT_KEYS:
             if key in manifest:
                 payload[key] = manifest[key]
-        if "checkpoint_step" in manifest:
+        if manifest.get("checkpoint_step") not in (None, ""):
             payload["checkpoint_step"] = _int_value(manifest.get("checkpoint_step"))
         for key in _CHECKPOINT_SELECTION_RECEIPT_KEYS[1:]:
-            if key in manifest:
-                payload[key] = str(manifest.get(key, ""))
+            if manifest.get(key) not in (None, ""):
+                payload[key] = _str_value(manifest.get(key))
         return payload
 
     def _load_adapter_provenance(
@@ -447,12 +459,12 @@ class LoraExperimentStore:
         return {
             "run_id": str(run.get("run_id", "")),
             "checkpoint_count": _int_value(run.get("checkpoint_count")),
-            "latest_checkpoint_path": str(run.get("latest_checkpoint_path", "")),
+            "latest_checkpoint_path": _str_value(run.get("latest_checkpoint_path")),
             "checkpoint_step": _int_value(run.get("checkpoint_step")),
-            "checkpoint_sort_key": str(run.get("checkpoint_sort_key", "")),
-            "selected_checkpoint_path": str(run.get("selected_checkpoint_path", "")),
-            "selected_checkpoint_loss_source": str(
-                run.get("selected_checkpoint_loss_source", "")
+            "checkpoint_sort_key": _str_value(run.get("checkpoint_sort_key")),
+            "selected_checkpoint_path": _str_value(run.get("selected_checkpoint_path")),
+            "selected_checkpoint_loss_source": _str_value(
+                run.get("selected_checkpoint_loss_source")
             ),
             "resume_source_path": str(run.get("resume_source_path", "")),
             "resume_source_job_id": str(run.get("resume_source_job_id", "")),
@@ -516,6 +528,28 @@ def _int_value(*values: Any, default: int = 0) -> int:
             return int(candidate)
         except (TypeError, ValueError):
             continue
+    return default
+
+
+def _str_value(raw_value: Any) -> str:
+    return "" if raw_value is None else str(raw_value)
+
+
+def _first_present_value(
+    primary: dict[str, Any],
+    fallback: dict[str, Any],
+    *keys: str,
+    default: Any = "",
+) -> Any:
+    if not keys:
+        return default
+    primary_value = primary.get(keys[0])
+    if primary_value is not None and primary_value != "":
+        return primary_value
+    for key in keys:
+        fallback_value = fallback.get(key)
+        if fallback_value is not None and fallback_value != "":
+            return fallback_value
     return default
 
 

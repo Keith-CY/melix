@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 
+_CHECKPOINT_STEP_RE = re.compile(r"checkpoint-(\d+)")
 _NUMERIC_TOKEN_RE = re.compile(r"\d+")
 _CHECKPOINT_STEP_SORT_WIDTH = 10
 
@@ -42,8 +43,8 @@ def checkpoint_step_from_path(path: str | Path) -> int:
     for part in reversed(path_parts):
         part_stem = Path(part).stem
         if part_stem.startswith("checkpoint"):
-            numeric_tokens = _NUMERIC_TOKEN_RE.findall(part_stem)
-            return int(numeric_tokens[-1]) if numeric_tokens else -1
+            match = _CHECKPOINT_STEP_RE.search(part_stem)
+            return int(match.group(1)) if match else -1
     filename_tokens = _NUMERIC_TOKEN_RE.findall(Path(path_text).stem)
     return int(filename_tokens[-1]) if filename_tokens else -1
 
