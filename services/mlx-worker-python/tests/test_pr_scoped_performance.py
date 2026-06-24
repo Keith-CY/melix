@@ -1080,8 +1080,26 @@ def test_scope_report_selects_runtime_export_manifest_probe() -> None:
         ],
     )
 
+    assert scope["selected_count"] == 2
+    assert {
+        probe["id"]
+        for probe in scope["selected_probes"]
+    } == {
+        "runtime-export-manifest-validation",
+        "runtime-export-layout-retention",
+    }
+
+
+def test_scope_report_selects_runtime_export_layout_retention_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/productization/export_target_layout.py"
+        ],
+    )
+
     assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "runtime-export-manifest-validation"
+    assert scope["selected_probes"][0]["id"] == "runtime-export-layout-retention"
 
 
 def test_lora_experiment_run_dir_scan_probe_script_smoke(capsys: pytest.CaptureFixture[str]) -> None:
@@ -3076,6 +3094,28 @@ def test_runtime_export_manifest_validation_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
 
 
+def test_runtime_export_layout_retention_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_LAYOUT_PROBE_ITERATIONS", "1")
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_LAYOUT_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/runtime_export_layout_retention_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["target_count"] == 4.0
+    assert metrics["retention_decision_count"] == 15.0
+    assert metrics["retained_byte_size"] == 12141056.0
+    assert metrics["cleanable_byte_size"] == 0.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
 def test_runtime_utils_top_level_weights_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -3559,6 +3599,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "rerank-core-top-k-heap-selection",
         "retrieval-context-projection-fastpath",
         "runtime-export-manifest-validation",
+        "runtime-export-layout-retention",
         "same-cohort-batching-probe-evidence",
         "runtime-utils-kwarg-signature-cache",
         "runtime-utils-package-version-cache",
@@ -3831,6 +3872,9 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     runtime_export_probe_command = by_id["runtime-export-manifest-validation"]["probe_command"]
     assert "../head/$SCRIPT" in runtime_export_probe_command
     assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in runtime_export_probe_command
+    runtime_export_layout_probe_command = by_id["runtime-export-layout-retention"]["probe_command"]
+    assert "../head/$SCRIPT" in runtime_export_layout_probe_command
+    assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in runtime_export_layout_probe_command
 
     probe_policy_metrics = {
         metric["key"]: metric for metric in by_id["probe-policy-noop-overhead"]["metrics"]
