@@ -185,7 +185,7 @@ def _native_multimodal_high_precision_module(prefix: str) -> bool:
             return True
         if segment in {"lm_head", "output", "output_layer", "score"}:
             return True
-    return prefix.endswith(_NATIVE_MULTIMODAL_HIGH_PRECISION_SUFFIXES)
+    return False
 
 
 def _safetensors_header_tensor_names(path: Path) -> tuple[str, ...]:
