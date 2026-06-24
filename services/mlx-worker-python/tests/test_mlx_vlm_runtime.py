@@ -5241,6 +5241,7 @@ def _assert_image_batch1_step_pixel_values_cast_to_vision_patch_embed_dtype() ->
             )
         ),
         vision_tower=SimpleNamespace(
+            weight=SimpleNamespace(dtype="float32-root"),
             patch_embed=SimpleNamespace(weight=SimpleNamespace(dtype="float16-vision"))
         ),
     )
@@ -5268,6 +5269,26 @@ def _assert_image_batch1_step_pixel_values_cast_to_vision_patch_embed_dtype() ->
 
     failing_pixels = FailingPixels()
     assert _cast_pixel_values_to_vision_dtype(model, failing_pixels) is failing_pixels
+
+    tuple_pixel_a = FakePixels()
+    tuple_pixel_b = SimpleNamespace(dtype="float16-vision")
+    tuple_pixels = _cast_pixel_values_to_vision_dtype(model, (tuple_pixel_a, tuple_pixel_b))
+
+    assert isinstance(tuple_pixels, tuple)
+    assert tuple_pixels[0].dtype == "float16-vision"
+    assert tuple_pixels[0].source is tuple_pixel_a
+    assert tuple_pixel_a.cast_to == ["float16-vision"]
+    assert tuple_pixels[1] is tuple_pixel_b
+
+    list_pixel_a = FakePixels()
+    list_pixel_b = SimpleNamespace(dtype="float16-vision")
+    list_pixels = _cast_pixel_values_to_vision_dtype(model, [list_pixel_a, list_pixel_b])
+
+    assert isinstance(list_pixels, list)
+    assert list_pixels[0].dtype == "float16-vision"
+    assert list_pixels[0].source is list_pixel_a
+    assert list_pixel_a.cast_to == ["float16-vision"]
+    assert list_pixels[1] is list_pixel_b
 
 
 def test_image_batch1_step_pixel_values_cast_to_vision_patch_embed_dtype() -> None:

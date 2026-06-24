@@ -1356,11 +1356,11 @@ def _vision_patch_embed_candidates(model: Any) -> tuple[Any, ...]:
     for root in vision_roots:
         if root is None:
             continue
-        candidates.append(root)
         for attr in ("patch_embed", "patch_embedding", "embeddings", "conv1", "proj"):
             candidate = getattr(root, attr, None)
             if candidate is not None:
                 candidates.append(candidate)
+        candidates.append(root)
     return tuple(candidates)
 
 
@@ -1376,15 +1376,25 @@ def _cast_pixel_values_to_vision_dtype(model: Any, pixel_values: Any) -> Any:
     if pixel_values is None:
         return pixel_values
     dtype = _vision_patch_embed_dtype(model)
-    if dtype is None or getattr(pixel_values, "dtype", None) == dtype:
+    if dtype is None:
         return pixel_values
-    astype = getattr(pixel_values, "astype", None)
-    if not callable(astype):
-        return pixel_values
-    try:
-        return astype(dtype)
-    except (TypeError, ValueError, RuntimeError):
-        return pixel_values
+
+    def cast_array(array: Any) -> Any:
+        if getattr(array, "dtype", None) == dtype:
+            return array
+        astype = getattr(array, "astype", None)
+        if not callable(astype):
+            return array
+        try:
+            return astype(dtype)
+        except (TypeError, ValueError, RuntimeError):
+            return array
+
+    if isinstance(pixel_values, list):
+        return [cast_array(array) for array in pixel_values]
+    if isinstance(pixel_values, tuple):
+        return tuple(cast_array(array) for array in pixel_values)
+    return cast_array(pixel_values)
 
 
 def _mlx_peak_memory_gb(mx_module: Any) -> float:
