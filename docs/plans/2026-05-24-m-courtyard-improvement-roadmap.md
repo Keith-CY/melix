@@ -270,7 +270,8 @@ dry-run latency, and safe-delete count.
 #### Plan P4.1: Cross-Runtime Model Inventory
 
 Extend model discovery with explicit source descriptors for Melix-managed
-models and compatible local runtime caches.
+models and compatible local runtime caches. The detailed execution plan is
+[`2026-06-24-cross-runtime-model-inventory.md`](2026-06-24-cross-runtime-model-inventory.md).
 
 ##### Unit U4.1.1: Add External Runtime Source Descriptors
 
