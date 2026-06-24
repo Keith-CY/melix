@@ -49,6 +49,10 @@ from worker.model_ops.training_preflight import (
     require_trainability_preflight_ready,
     write_trainability_preflight_receipt,
 )
+from worker.productization.lora_adapter_provenance import (
+    ADAPTER_PROVENANCE_SCHEMA_VERSION,
+    write_adapter_provenance_artifacts,
+)
 from worker.productization.lora_experiment_store import LoraExperimentStore
 from worker.trajectory_provenance import (
     adapter_manifest_trajectory_provenance,
@@ -479,6 +483,26 @@ class LoRATrainingPipeline:
                 json.dumps(alignment_manifest, indent=2) + "\n",
                 encoding="utf-8",
             )
+        provenance_result = write_adapter_provenance_artifacts(
+            adapter_manifest=manifest,
+            adapter_manifest_path=manifest_path,
+            now_unix_ms=persisted_at_unix_ms,
+        )
+        provenance = provenance_result["provenance"]
+        manifest.update(
+            {
+                "adapter_provenance_schema_version": ADAPTER_PROVENANCE_SCHEMA_VERSION,
+                "adapter_provenance_manifest_path": str(provenance_result["provenance_path"]),
+                "adapter_operator_notes_path": str(provenance_result["notes_path"]),
+                "adapter_operator_notes_schema_version": provenance["operator_notes"][
+                    "schema_version"
+                ],
+                "adapter_operator_note_count": provenance["operator_notes"]["note_count"],
+                "adapter_export_eligibility": dict(provenance["export_eligibility"]),
+                "adapter_export_eligible": bool(provenance["export_eligibility"]["eligible"]),
+                **dict(provenance_result["metrics"]),
+            }
+        )
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         self._experiment_store.persist_training_run(
             jobs_root=jobs_root,

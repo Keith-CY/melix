@@ -201,3 +201,69 @@ def test_deterministic_lora_manifest_records_training_log_events(tmp_path: Path)
         "validation_loss",
         "final_summary",
     ]
+
+
+def test_deterministic_lora_manifest_writes_adapter_provenance_and_notes(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+    (dataset_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "melix-dev-dataset",
+                "format": "chat_messages",
+                "sample_count": 1,
+                "version": "dataset-v1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (dataset_dir / "samples.jsonl").write_text(
+        '{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"ok"}]}\n',
+        encoding="utf-8",
+    )
+
+    result = LoRATrainingPipeline(runner=DeterministicLoRARunner()).run(
+        job_id="adapter-provenance",
+        request_ext={
+            "operation": "train_lora",
+            "adapter_name": "receipt-adapter",
+            "dataset_uri": str(dataset_dir),
+            "max_steps": "0",
+        },
+        source_model=common_pb2.ModelSpec(
+            model_id="melix-dev-text",
+            model_path=str(tmp_path / "base-model"),
+            model_kind="text",
+            revision="main",
+            max_context=4096,
+        ),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    manifest = result.manifest
+    provenance_path = Path(manifest["adapter_provenance_manifest_path"])
+    notes_path = Path(manifest["adapter_operator_notes_path"])
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    notes = json.loads(notes_path.read_text(encoding="utf-8"))
+
+    assert manifest["adapter_provenance_schema_version"] == "melix.lora_adapter_provenance.v1"
+    assert provenance["schema_version"] == "melix.lora_adapter_provenance.v1"
+    assert provenance["adapter"]["job_id"] == "adapter-provenance"
+    assert provenance["base_model"]["model_id"] == "melix-dev-text"
+    assert provenance["dataset"]["version"] == "dataset-v1"
+    assert provenance["dataset"]["train_sample_count"] == 1
+    assert provenance["training"]["loss_series_row_count"] == 3
+    assert provenance["final_metrics"]["loss_best"] == pytest.approx(0.33)
+    assert provenance["export_eligibility"]["eligible"] is False
+    assert "merge_export_canary:missing_base_config" in provenance["export_eligibility"]["blocking_reasons"]
+    assert notes["schema_version"] == "melix.lora_adapter_operator_notes.v1"
+    assert notes["notes"] == []
+    assert notes["note_count"] == 0
+    assert manifest["adapter_operator_note_count"] == 0
+    assert manifest["adapter_provenance_loss_series_row_count"] == 3
+    assert manifest["adapter_provenance_manifest_bytes"] > 0
+    assert manifest["adapter_provenance_manifest_write_duration_ms"] >= 0.0
+    assert manifest["adapter_operator_notes_write_duration_ms"] >= 0.0
