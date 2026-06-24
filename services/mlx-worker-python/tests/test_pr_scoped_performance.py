@@ -1188,6 +1188,18 @@ def test_scope_report_selects_runtime_export_smoke_policy_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "runtime-export-smoke-policy"
 
 
+def test_scope_report_selects_runtime_export_diagnostic_parser_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/productization/export_target_diagnostics.py"
+        ],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "runtime-export-diagnostic-parser"
+
+
 def test_lora_experiment_run_dir_scan_probe_script_smoke(capsys: pytest.CaptureFixture[str]) -> None:
     runpy.run_path(
         str(REPO_ROOT / "scripts/lora_experiment_run_dir_scan_probe.py"),
@@ -3228,6 +3240,31 @@ def test_runtime_export_smoke_policy_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
 
 
+def test_runtime_export_diagnostic_parser_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_DIAGNOSTIC_PROBE_ITERATIONS", "1")
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_DIAGNOSTIC_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/runtime_export_diagnostic_parser_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["target_count"] == 4.0
+    assert metrics["diagnostic_parser_coverage"] == 1.0
+    assert metrics["diagnosis_code_count"] == 9.0
+    assert metrics["parsed_failure_count"] >= 9.0
+    assert metrics["unknown_failure_count"] == 1.0
+    assert metrics["redaction_count"] >= 2.0
+    assert metrics["diagnostic_latency_ms"] >= 0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
 def test_runtime_utils_top_level_weights_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -3713,6 +3750,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "runtime-export-manifest-validation",
         "runtime-export-layout-retention",
         "runtime-export-smoke-policy",
+        "runtime-export-diagnostic-parser",
         "same-cohort-batching-probe-evidence",
         "runtime-utils-kwarg-signature-cache",
         "runtime-utils-package-version-cache",
@@ -3992,6 +4030,9 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     runtime_export_smoke_probe_command = by_id["runtime-export-smoke-policy"]["probe_command"]
     assert "../head/$SCRIPT" in runtime_export_smoke_probe_command
     assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in runtime_export_smoke_probe_command
+    runtime_export_diagnostics_probe_command = by_id["runtime-export-diagnostic-parser"]["probe_command"]
+    assert "../head/$SCRIPT" in runtime_export_diagnostics_probe_command
+    assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in runtime_export_diagnostics_probe_command
     runtime_export_smoke_metrics = {
         metric["key"]: metric
         for metric in by_id["runtime-export-smoke-policy"]["metrics"]
@@ -4001,6 +4042,17 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     assert runtime_export_smoke_metrics["load_smoke_latency_ms"]["direction"] == "informational"
     assert runtime_export_smoke_metrics["generation_smoke_latency_ms"]["direction"] == "informational"
     assert runtime_export_smoke_metrics["timeout_count"]["warn_abs"] == 0.0
+    runtime_export_diagnostics_metrics = {
+        metric["key"]: metric
+        for metric in by_id["runtime-export-diagnostic-parser"]["metrics"]
+    }
+    assert runtime_export_diagnostics_metrics["elapsed_ms_mean"]["direction"] == "lower_is_better"
+    assert runtime_export_diagnostics_metrics["diagnostic_parser_coverage"]["direction"] == "higher_is_better"
+    assert runtime_export_diagnostics_metrics["diagnostic_parser_coverage"]["warn_abs"] == 0.0
+    assert runtime_export_diagnostics_metrics["parsed_failure_count"]["direction"] == "informational"
+    assert runtime_export_diagnostics_metrics["unknown_failure_count"]["direction"] == "informational"
+    assert runtime_export_diagnostics_metrics["redaction_count"]["direction"] == "informational"
+    assert runtime_export_diagnostics_metrics["diagnostic_latency_ms"]["direction"] == "lower_is_better"
 
     probe_policy_metrics = {
         metric["key"]: metric for metric in by_id["probe-policy-noop-overhead"]["metrics"]
