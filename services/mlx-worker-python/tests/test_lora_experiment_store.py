@@ -398,6 +398,61 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
     assert provenance_group["latest_export_eligible"] is True
     assert provenance_group["best_known_adapter"]["provenance_manifest_path"] == str(provenance_path)
 
+    bad_manifest_path = _write_manifest(
+        jobs_root,
+        run_id="model-ops-0004",
+        adapter_name="bad-counts",
+        group_id="bad-counts",
+        updated_at_unix_ms=3_000,
+        extra={
+            "created_at_unix_ms": "not-an-int",
+            "trainer_dataset_sample_count": "not-an-int",
+            "trainer_dataset_validation_sample_count": {"bad": "count"},
+            "tokens_per_second": "not-a-float",
+            "peak_memory_gb": {"bad": "float"},
+            "checkpoint_count": "not-an-int",
+            "adapter_operator_note_count": "not-an-int",
+            "loss_best": "not-a-float",
+        },
+    )
+    bad_provenance_path = _write_provenance(
+        bad_manifest_path,
+        run_id="model-ops-0004",
+        group_id="bad-counts",
+        loss_best=0.7,
+        loss_final=0.8,
+    )
+    bad_payload = json.loads(bad_provenance_path.read_text(encoding="utf-8"))
+    bad_payload["dataset"]["train_sample_count"] = "not-an-int"
+    bad_payload["dataset"]["validation_sample_count"] = {"bad": "count"}
+    bad_payload["training"]["tokens_per_second"] = "not-a-float"
+    bad_payload["training"]["peak_memory_gb"] = {"bad": "float"}
+    bad_payload["training"]["loss_series_row_count"] = "not-an-int"
+    bad_payload["operator_notes"]["note_count"] = "not-an-int"
+    bad_payload["adapter"]["checkpoint_count"] = "not-an-int"
+    bad_provenance_path.write_text(
+        json.dumps(bad_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    payload = LoraExperimentStore().rebuild_index(jobs_root)
+    bad_run = next(run for run in payload["runs"] if run["run_id"] == "model-ops-0004")
+    bad_group = next(group for group in payload["groups"] if group["group_id"] == "bad-counts")
+
+    assert bad_run["created_at_unix_ms"] == 0
+    assert bad_run["updated_at_unix_ms"] == 3_000
+    assert bad_run["train_sample_count"] == 0
+    assert bad_run["validation_sample_count"] == 0
+    assert bad_run["tokens_per_second"] == 0.0
+    assert bad_run["peak_memory_gb"] == 0.0
+    assert bad_run["checkpoint_count"] == 0
+    assert bad_run["loss_series_row_count"] == 0
+    assert bad_run["operator_note_count"] == 0
+    assert bad_group["latest_checkpoint_count"] == 0
+    assert bad_group["latest_loss_series_row_count"] == 0
+    assert bad_group["latest_operator_note_count"] == 0
+    assert bad_group["best_known_adapter"]["checkpoint_count"] == 0
+
 
 def test_rebuild_index_skips_manifest_parse_when_run_record_exists(tmp_path: Path, monkeypatch) -> None:
     jobs_root = tmp_path / "model-ops"

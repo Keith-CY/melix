@@ -113,7 +113,7 @@ class LoraExperimentStore:
 
         runs = sorted(
             runs_by_id.values(),
-            key=lambda item: (int(item.get("updated_at_unix_ms", 0)), str(item.get("run_id", ""))),
+            key=lambda item: (_int_value(item.get("updated_at_unix_ms")), str(item.get("run_id", ""))),
             reverse=True,
         )
         groups = self._build_group_payloads(runs)
@@ -140,7 +140,7 @@ class LoraExperimentStore:
         for group_id, group_runs in grouped_runs.items():
             latest_run = group_runs[0]
             latest_key = (
-                int(latest_run.get("updated_at_unix_ms", 0)),
+                _int_value(latest_run.get("updated_at_unix_ms")),
                 str(latest_run.get("run_id", "")),
             )
             best_run = latest_run
@@ -150,7 +150,7 @@ class LoraExperimentStore:
                 -latest_key[0],
             )
             for run in group_runs[1:]:
-                run_updated_at = int(run.get("updated_at_unix_ms", 0))
+                run_updated_at = _int_value(run.get("updated_at_unix_ms"))
                 run_key_latest = (run_updated_at, str(run.get("run_id", "")))
                 if run_key_latest > latest_key:
                     latest_run = run
@@ -178,7 +178,7 @@ class LoraExperimentStore:
                     "latest_preset_title": str(latest_run.get("preset_title", "")),
                     "latest_tokens_per_second": _optional_finite_float(latest_run.get("tokens_per_second")) or 0.0,
                     "latest_peak_memory_gb": _optional_finite_float(latest_run.get("peak_memory_gb")) or 0.0,
-                    "latest_checkpoint_count": int(latest_run.get("checkpoint_count", 0)),
+                    "latest_checkpoint_count": _int_value(latest_run.get("checkpoint_count")),
                     "latest_checkpoint_path": str(latest_run.get("latest_checkpoint_path", "")),
                     "latest_resume_source_path": str(latest_run.get("resume_source_path", "")),
                     "latest_resume_ready": bool(latest_run.get("resume_ready", False)),
@@ -199,8 +199,8 @@ class LoraExperimentStore:
                     ),
                     "latest_export_eligible": bool(latest_run.get("export_eligible", False)),
                     "best_export_eligible": bool(best_run.get("export_eligible", False)),
-                    "latest_loss_series_row_count": int(latest_run.get("loss_series_row_count", 0)),
-                    "latest_operator_note_count": int(latest_run.get("operator_note_count", 0)),
+                    "latest_loss_series_row_count": _int_value(latest_run.get("loss_series_row_count")),
+                    "latest_operator_note_count": _int_value(latest_run.get("operator_note_count")),
                     "best_known_adapter": {
                         "run_id": str(best_run.get("run_id", "")),
                         "manifest_path": str(best_run.get("manifest_path", "")),
@@ -208,18 +208,18 @@ class LoraExperimentStore:
                             best_run.get("adapter_provenance_manifest_path", "")
                         ),
                         "adapter_name": str(best_run.get("adapter_name", "")),
-                        "checkpoint_count": int(best_run.get("checkpoint_count", 0)),
+                        "checkpoint_count": _int_value(best_run.get("checkpoint_count")),
                         "latest_checkpoint_path": str(best_run.get("latest_checkpoint_path", "")),
                         "resume_ready": bool(best_run.get("resume_ready", False)),
                         "loss_best": best_loss if best_loss is not None else 0.0,
                         "export_eligible": bool(best_run.get("export_eligible", False)),
                     },
-                    "updated_at_unix_ms": int(latest_run.get("updated_at_unix_ms", 0)),
+                    "updated_at_unix_ms": _int_value(latest_run.get("updated_at_unix_ms")),
                 }
             )
 
         groups.sort(
-            key=lambda item: (int(item.get("updated_at_unix_ms", 0)), str(item.get("group_id", ""))),
+            key=lambda item: (_int_value(item.get("updated_at_unix_ms")), str(item.get("group_id", ""))),
             reverse=True,
         )
         return groups
@@ -258,10 +258,10 @@ class LoraExperimentStore:
             or f"{source_model}:{adapter_name}"
         )
         if "created_at_unix_ms" in manifest:
-            created_at_unix_ms = int(manifest.get("created_at_unix_ms", 0))
+            created_at_unix_ms = _int_value(manifest.get("created_at_unix_ms"))
         else:
             created_at_unix_ms = int(manifest_path.stat().st_mtime * 1000)
-        updated_at_unix_ms = int(manifest.get("updated_at_unix_ms", created_at_unix_ms))
+        updated_at_unix_ms = _int_value(manifest.get("updated_at_unix_ms"), default=created_at_unix_ms)
         payload = {
             "schema_version": _RUN_SCHEMA_VERSION,
             "run_id": manifest_job_id,
@@ -279,25 +279,26 @@ class LoraExperimentStore:
             "source_model": source_model,
             "dataset_uri": str(dataset.get("uri") or manifest.get("dataset_uri", "")),
             "dataset_version": str(dataset.get("version") or manifest.get("dataset_version", "")),
-            "train_sample_count": int(dataset.get("train_sample_count", manifest.get("trainer_dataset_sample_count", 0)) or 0),
-            "validation_sample_count": int(
+            "train_sample_count": _int_value(
+                dataset.get("train_sample_count"),
+                manifest.get("trainer_dataset_sample_count"),
+            ),
+            "validation_sample_count": _int_value(
                 dataset.get(
                     "validation_sample_count",
                     manifest.get("trainer_dataset_validation_sample_count", manifest.get("validation_sample_count", 0)),
-                )
-                or 0
+                ),
             ),
             "preset_id": str(hyperparameters.get("preset_id") or manifest.get("preset_id", "")),
             "preset_title": str(hyperparameters.get("preset_title") or manifest.get("preset_title", "")),
             "training_mode": str(hyperparameters.get("training_mode") or manifest.get("training_mode", "")),
             "training_backend": str(training.get("backend") or manifest.get("training_backend", "")),
             "status": str(training.get("status") or manifest.get("status", "completed")),
-            "checkpoint_count": int(
+            "checkpoint_count": _int_value(
                 adapter.get(
                     "checkpoint_count",
                     manifest.get("checkpoint_count", manifest.get("experiment.checkpoint_count", 0)),
                 )
-                or 0
             ),
             "latest_checkpoint_path": str(
                 adapter.get(
@@ -316,20 +317,20 @@ class LoraExperimentStore:
                 adapter.get("resume_source_manifest_path") or manifest.get("resume_source_manifest_path", "")
             ),
             "resume_ready": bool(adapter.get("resume_ready", manifest.get("resume_ready", manifest.get("experiment.resume_ready", False)))),
-            "tokens_per_second": float(
+            "tokens_per_second": _optional_finite_float(
                 training.get(
                     "tokens_per_second",
                     manifest.get("tokens_per_second", manifest.get("training.tokens_per_second", 0.0)),
                 )
-                or 0.0
-            ),
-            "peak_memory_gb": float(
+            )
+            or 0.0,
+            "peak_memory_gb": _optional_finite_float(
                 training.get(
                     "peak_memory_gb",
                     manifest.get("peak_memory_gb", manifest.get("training.peak_memory_gb", 0.0)),
                 )
-                or 0.0
-            ),
+            )
+            or 0.0,
             "loss_final": _optional_finite_float(
                 final_metrics.get("loss_final"),
                 _manifest_optional_float(manifest, "loss_final", "training.loss_final"),
@@ -339,7 +340,7 @@ class LoraExperimentStore:
                 _manifest_optional_float(manifest, "loss_best", "training.loss_best"),
             ),
             "validation_loss_best": _optional_finite_float(final_metrics.get("validation_loss_best")),
-            "loss_series_row_count": int(training.get("loss_series_row_count", 0) or 0),
+            "loss_series_row_count": _int_value(training.get("loss_series_row_count")),
             "loss_series": _list_value(training.get("loss_series")),
             "base_model": base_model,
             "dataset_provenance": dataset,
@@ -356,7 +357,10 @@ class LoraExperimentStore:
                 operator_notes.get("path")
                 or manifest.get("adapter_operator_notes_path", "")
             ),
-            "operator_note_count": int(operator_notes.get("note_count", manifest.get("adapter_operator_note_count", 0)) or 0),
+            "operator_note_count": _int_value(
+                operator_notes.get("note_count"),
+                manifest.get("adapter_operator_note_count"),
+            ),
             "manifest_path": str(manifest_path),
             "output_dir": str(manifest_path.parent),
             "created_at_unix_ms": created_at_unix_ms,
@@ -385,7 +389,7 @@ class LoraExperimentStore:
     def _checkpoint_lineage_entry(run: dict[str, Any]) -> dict[str, Any]:
         return {
             "run_id": str(run.get("run_id", "")),
-            "checkpoint_count": int(run.get("checkpoint_count", 0)),
+            "checkpoint_count": _int_value(run.get("checkpoint_count")),
             "latest_checkpoint_path": str(run.get("latest_checkpoint_path", "")),
             "resume_source_path": str(run.get("resume_source_path", "")),
             "resume_source_job_id": str(run.get("resume_source_job_id", "")),
@@ -440,6 +444,16 @@ class LoraExperimentStore:
             return
         self._cached_payloads[path] = (signature, payload)
 
+
+def _int_value(*values: Any, default: int = 0) -> int:
+    for candidate in values:
+        if candidate is None or candidate == "":
+            continue
+        try:
+            return int(candidate)
+        except (TypeError, ValueError):
+            continue
+    return default
 
 
 def _manifest_optional_float(manifest: dict[str, Any], *keys: str) -> float | None:
