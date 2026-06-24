@@ -93,6 +93,18 @@ def _source_descriptors_by_kind(payload: dict[str, object]) -> dict[str, dict[st
     }
 
 
+def _classification_by_model_id(payload: dict[str, object]) -> dict[str, dict[str, object]]:
+    receipt = payload["scan_receipt"]
+    assert isinstance(receipt, dict)
+    discovered_models = receipt["discovered_models"]
+    assert isinstance(discovered_models, list)
+    return {
+        classification["model_id"]: classification
+        for classification in discovered_models
+        if isinstance(classification, dict)
+    }
+
+
 def test_read_text_prefix_reads_only_requested_prefix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     target = tmp_path / "README.md"
     target.write_text("placeholder", encoding="utf-8")
@@ -1265,6 +1277,7 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
     _write_registry_manifest(
         managed_root / "huggingface" / "mlx-community" / "ManagedTiny" / "main",
         model_id="mlx-community/ManagedTiny",
+        ext={"melix.estimated_size_bytes": "not-a-number"},
     )
     hf_cache = tmp_path / "descriptor-hf-cache"
     hf_snapshot = hf_cache / "models--mlx-community--DescriptorTiny" / "snapshots" / "abc123"
@@ -1342,6 +1355,37 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
         "mlx-community/DescriptorTiny",
         "mlx-community/ManagedTiny",
     ]
+    scan_receipt = descriptor_payload["scan_receipt"]
+    assert scan_receipt["schema_version"] == "melix.model_inventory_scan_receipt.v1"
+    assert scan_receipt["summary"]["usable_model_count"] == 2
+    assert scan_receipt["summary"]["invalid_source_count"] == 1
+    assert scan_receipt["metrics"]["discovered_model_count"] == 2
+    assert scan_receipt["metrics"]["scan_payload_byte_size"] > 0
+    assert scan_receipt["redaction_summary"]["redaction_count"] > 0
+    source_receipts = {
+        (receipt["source_kind"], receipt["failure_code"]): receipt
+        for receipt in scan_receipt["source_receipts"]
+    }
+    assert source_receipts[("huggingface_cache", "not_found")]["scan_status"] == "failed"
+    assert source_receipts[("modelscope_cache", "scanner_not_implemented")]["scan_status"] == "skipped"
+    assert source_receipts[("ollama_store", "scanner_not_implemented")]["scan_status"] == "skipped"
+    assert "://" not in source_receipts[("huggingface_cache", "not_found")]["requested_root"]
+    assert source_receipts[("huggingface_cache", "not_found")]["requested_root"].endswith(
+        source_receipts[("huggingface_cache", "not_found")]["root_path_digest"]
+    )
+    classifications = _classification_by_model_id(descriptor_payload)
+    assert classifications["mlx-community/ManagedTiny"]["schema_version"] == (
+        "melix.model_inventory_classification.v1"
+    )
+    assert classifications["mlx-community/ManagedTiny"]["source_kind"] == "melix_managed_root"
+    assert classifications["mlx-community/ManagedTiny"]["file_layout"] == "melix_manifest"
+    assert classifications["mlx-community/ManagedTiny"]["usable_state"] == "usable"
+    assert classifications["mlx-community/ManagedTiny"]["estimated_size_bytes"] == 0
+    assert classifications["mlx-community/DescriptorTiny"]["source_kind"] == "huggingface_cache"
+    assert classifications["mlx-community/DescriptorTiny"]["file_layout"] == "huggingface_snapshot"
+    assert classifications["mlx-community/DescriptorTiny"]["mlx_compatibility"] == "compatible"
+    assert classifications["mlx-community/DescriptorTiny"]["model_path"].startswith("abc123#")
+    assert descriptor_payload["models"][0]["classification"]["usable_state"] == "usable"
 
     no_hf_env_catalog = WorkerModelCatalog(
         environment={
@@ -1366,6 +1410,174 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
     default_hf_descriptors = _source_descriptors_by_kind(default_hf_catalog.registry_snapshot_payload())
     assert default_hf_descriptors["huggingface_cache"]["requested_roots"] == [str(default_hf_cache.resolve())]
     assert default_hf_descriptors["huggingface_cache"]["effective_roots"] == [str(default_hf_cache.resolve())]
+
+    classification_root = tmp_path / "classification-root"
+    incomplete_dir = classification_root / "incomplete-model"
+    _write_model_config(incomplete_dir, {"model_type": "qwen3"})
+    unsupported_dir = classification_root / "unsupported-model"
+    _write_model_config(unsupported_dir, {"model_type": "llama"})
+    _write_weights(unsupported_dir)
+    ambiguous_dir = classification_root / "ambiguous-model"
+    _write_model_config(ambiguous_dir, {"architectures": []})
+    _write_weights(ambiguous_dir)
+    invalid_manifest_dir = classification_root / "invalid" / "layout"
+    invalid_manifest_dir.mkdir(parents=True)
+    (invalid_manifest_dir / "manifest.json").write_text("{}\n", encoding="utf-8")
+    duplicate_invalid_manifest_dir = classification_root / "invalid" / "layout-2"
+    duplicate_invalid_manifest_dir.mkdir(parents=True)
+    (duplicate_invalid_manifest_dir / "manifest.json").write_text("{}\n", encoding="utf-8")
+
+    classification_catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MODEL_ROOTS": str(classification_root),
+            "MELIX_MANAGED_MODEL_ROOT": None,
+        }
+    )
+    classification_payload = classification_catalog.registry_snapshot_payload()
+    classification_receipt = classification_payload["scan_receipt"]
+    assert classification_receipt["summary"]["usable_model_count"] == 0
+    assert classification_receipt["summary"]["incomplete_model_count"] == 1
+    assert classification_receipt["summary"]["unsupported_model_count"] == 1
+    assert classification_receipt["summary"]["ambiguous_model_count"] == 3
+    assert classification_receipt["summary"]["invalid_entry_count"] == 2
+    source_receipt = classification_receipt["source_receipts"][0]
+    assert source_receipt["ambiguous_model_count"] == 3
+    assert source_receipt["invalid_entry_count"] == 2
+    findings = _classification_by_model_id(classification_payload)
+    assert findings["incomplete-model"]["usable_state"] == "incomplete"
+    assert findings["incomplete-model"]["missing_file_state"] == "missing_weights"
+    assert findings["unsupported-model"]["usable_state"] == "unsupported"
+    assert findings["unsupported-model"]["mlx_compatibility"] == "incompatible"
+    assert findings["ambiguous-model"]["usable_state"] == "ambiguous"
+    assert "layout" not in findings
+    assert "layout-2" not in findings
+
+    hf_findings_root = tmp_path / "hf-findings-root"
+    no_snapshots_repo = hf_findings_root / "models--org--NoSnapshots"
+    no_snapshots_repo.mkdir(parents=True)
+    missing_config_snapshot = hf_findings_root / "models--org--MissingConfig" / "snapshots" / "rev1"
+    _write_weights(missing_config_snapshot)
+    missing_weights_snapshot = hf_findings_root / "models--org--MissingWeights" / "snapshots" / "rev2"
+    _write_model_config(missing_weights_snapshot, {"model_type": "qwen3"})
+    unsupported_hf_snapshot = hf_findings_root / "models--org--Unsupported" / "snapshots" / "rev3"
+    _write_model_config(unsupported_hf_snapshot, {"model_type": "llama"})
+    _write_weights(unsupported_hf_snapshot)
+
+    hf_findings_catalog = WorkerModelCatalog(
+        environment={
+            "MELIX_MODEL_ROOTS": str(hf_findings_root),
+            "MELIX_MANAGED_MODEL_ROOT": None,
+        }
+    )
+    hf_findings = _classification_by_model_id(hf_findings_catalog.registry_snapshot_payload())
+    assert hf_findings["org/NoSnapshots"]["missing_file_state"] == "missing_companion"
+    assert hf_findings["org/MissingConfig"]["missing_file_state"] == "missing_config"
+    assert hf_findings["org/MissingWeights"]["missing_file_state"] == "missing_weights"
+    assert hf_findings["org/Unsupported"]["usable_state"] == "unsupported"
+
+    assert catalog_module._source_descriptor_id_for_kind("modelscope_cache") == "modelscope-cache"
+    assert catalog_module._source_descriptor_id_for_kind("ollama_store") == "ollama-store"
+    assert catalog_module._source_descriptor_id_for_kind("lm_studio_store") == "lm-studio-store"
+    assert catalog_module._redacted_inventory_path("")[0]["strategy"] == "empty"
+    assert catalog_module._redacted_inventory_path("/tmp/hf_token_secret")[0]["display"].startswith(
+        "<secret-redacted>#"
+    )
+    assert catalog_module._family_signal_from_config(None) == "unknown"
+    assert catalog_module._family_signal_from_config({"model_type": None}) == "unknown"
+    assert catalog_module._family_signal_from_config(
+        {"model_type": None, "text_config": {"model_type": None}, "architectures": [None, "fallback"]}
+    ) == "unknown"
+    assert catalog_module._family_signal_from_config({"text_config": {"model_type": "gemma_text"}}) == "gemma_text"
+    assert catalog_module._file_layout_for_model(common_pb2.ModelSpec(model_id="unknown")) == "unknown"
+    assert catalog_module._payload_size_bytes({"bad": object()}) == 0
+
+    cancelled_classification = catalog_module._classification_for_admitted_model(
+        common_pb2.ModelSpec(
+            model_id="cancelled",
+            model_path=str(tmp_path / "cancelled"),
+            model_kind="text",
+            revision="local",
+            ext={
+                "melix.source_kind": "local_mlx_directory",
+                "melix.pull_state": "cancelled",
+            },
+        )
+    )
+    assert cancelled_classification.artifact_state == "cancelled_pull"
+    partial_classification = catalog_module._classification_for_admitted_model(
+        common_pb2.ModelSpec(
+            model_id="partial",
+            model_path=str(tmp_path / "partial"),
+            model_kind="text",
+            revision="local",
+            ext={
+                "melix.source_kind": "local_mlx_directory",
+                "melix.pull_state": "partial_cleanup_pending",
+            },
+        )
+    )
+    assert partial_classification.artifact_state == "partial_cleanup_pending"
+    blocked_classification = catalog_module._classification_for_admitted_model(
+        common_pb2.ModelSpec(
+            model_id="blocked",
+            model_path=str(tmp_path / "blocked"),
+            model_kind="embedding",
+            revision="local",
+            ext={
+                "melix.source_kind": "local_mlx_directory",
+                "melix.lora.training_ready": "false",
+            },
+        )
+    )
+    assert blocked_classification.trainability == "not_trainable"
+    usable_candidate = catalog_module._inventory_candidate_for_path(
+        root_path=str(tmp_path),
+        model_id="candidate",
+        source_model_id="candidate",
+        model_path=tmp_path / "candidate",
+        file_layout="plain_mlx_directory",
+        config_payload={"model_type": "qwen3"},
+        mlx_compatibility="compatible",
+        missing_file_state="complete",
+        artifact_state="ready",
+        usable_state="usable",
+        operator_message="ok",
+        remediation="",
+    )
+    assert usable_candidate.trainability == "adapter_only"
+
+    orphan_root = tmp_path / "orphan-root"
+    orphan_model = common_pb2.ModelSpec(
+        model_id="orphan",
+        model_path=str(tmp_path / "orphan"),
+        model_kind="text",
+        revision="local",
+    )
+    orphan_classification = {
+        "orphan": catalog_module._classification_for_admitted_model(orphan_model)
+    }
+    orphan_receipt = catalog._build_scan_receipt(
+        scan_id="scan-orphan",
+        started_at_unix_ms=1,
+        completed_at_unix_ms=2,
+        source_descriptors=(),
+        roots=(
+            catalog_module.RegistryRootSnapshot(
+                root_id="root-orphan",
+                root_path=str(orphan_root),
+                root_order=1,
+                accessible=True,
+            ),
+        ),
+        discovered_models={"orphan": orphan_model},
+        model_classifications=orphan_classification,
+        candidate_findings=(),
+        aggregated_invalid_entry_counts={},
+        hf_cache_roots=frozenset(),
+        root_scan_latency_ms={},
+    )
+    assert orphan_receipt.summary["usable_model_count"] == 1
+    assert orphan_receipt.source_receipts[0].usable_model_count == 0
 
     nested_model_dir = tmp_path / "nested-context-model"
     _write_model_config(
