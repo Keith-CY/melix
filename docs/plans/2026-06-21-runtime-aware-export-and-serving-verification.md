@@ -144,6 +144,72 @@ for `mlx-lm` or Melix MLX workers. Their smoke policy requires MLX metadata
 inspection, local path preflight, runtime load, and one bounded generation with
 timeout.
 
+### Target Matrix And Unit Boundaries
+
+P3.1 fixes the export target matrix before implementation starts. The first
+schema-backed implementation slice must support exactly these targets:
+
+`melix_managed`
+
+- Produced artifact: Melix-managed adapter package or fused derived-model
+  artifact.
+- Runtime policy: resolvable by the Melix catalog and loadable through the
+  selected Melix runtime path.
+- #1506 responsibility: represent source adapter, derived model identity, base
+  model, quantization, required files, runtime requirements, and verification
+  policy without Melix-only side channels.
+- #1507 responsibility: store target files under
+  `targets/melix_managed/<target-id>/artifacts/`, retain manifests, evidence,
+  required runtime artifacts, and classify temporary fusion outputs as cleanable
+  after verification or waiver.
+
+`ollama`
+
+- Produced artifact: Ollama-compatible model directory, blob set, or
+  registration bundle.
+- Runtime policy: prove runtime binary/path readiness and either load or
+  register the target before bounded generation.
+- #1506 responsibility: represent Modelfile or equivalent registration inputs,
+  generated blobs, base model linkage, runtime requirements, and verification
+  policy without reading Ollama state as the source of truth.
+- #1507 responsibility: store generated runtime files, logs, and registration
+  evidence under `targets/ollama/<target-id>/`; keep manifests and smoke
+  evidence while classifying transient import/cache files as cleanable.
+
+`gguf`
+
+- Produced artifact: GGUF file plus metadata and provenance for compatible
+  local runtimes.
+- Runtime policy: verify header, digest, byte size, and metadata. Load or
+  generation smoke may be waived only when no compatible local runtime is
+  configured.
+- #1506 responsibility: represent GGUF metadata, quantization, source
+  provenance, required file digest, compatible runtime requirements, and the
+  explicit waiver policy for unavailable local runtimes.
+- #1507 responsibility: store the GGUF artifact under
+  `targets/gguf/<target-id>/artifacts/`; retain the GGUF file and evidence, and
+  classify conversion scratch files as cleanable.
+
+`mlx_runtime`
+
+- Produced artifact: MLX-compatible local model or adapter bundle for `mlx-lm`
+  or Melix MLX workers.
+- Runtime policy: pass local path preflight, MLX metadata inspection, runtime
+  load, and bounded generation.
+- #1506 responsibility: represent MLX config, tokenizer, weight files, adapter
+  or fused mode, base model linkage, runtime requirements, and verification
+  policy.
+- #1507 responsibility: store MLX bundle files under
+  `targets/mlx_runtime/<target-id>/artifacts/`; retain runtime-required files and
+  evidence while marking conversion intermediates and temporary logs according to
+  the retention report.
+
+The #1506 unit owns the checked-in schema, fixtures, validator, and manifest
+metrics for this matrix. The #1507 unit owns materializing the directory layout,
+retention report, cleanup dry-run/apply behavior, and byte-accounting metrics.
+Neither unit may introduce a fifth target type or a target-specific side
+channel without updating this plan first.
+
 ### Export Plan Receipt
 
 Before materializing artifacts, export planning writes
@@ -247,6 +313,28 @@ Required retention metrics:
 - `cleanable_byte_size`
 - `retention_decision_count`
 - `retention_scan_latency_ms`
+
+### P3.1 Acceptance Closure For #1505
+
+#1505 is the plan-level contract for P3.1. It is complete when this document is
+the governing plan for the multi-target export contract and the executable
+units can proceed without inventing schema, layout, retention, or metric
+semantics during implementation.
+
+Acceptance mapping:
+
+| #1505 acceptance criterion | Governing section in this plan |
+|---|---|
+| The plan defines an export target manifest schema and target-specific policy. | `Export Target Manifest`, `Target Policies`, and `Target Matrix And Unit Boundaries`. |
+| The plan defines artifact layout and retention behavior before implementation. | `Artifact Layout` and `Retention Policy`. |
+| The unit issues cover both manifest definition and artifact layout. | `Target Matrix And Unit Boundaries`, `Verification Plan`, and `Delivery Order` assign schema/fixtures to #1506 and layout/retention to #1507. |
+| The plan records export planning, artifact size, and retention metrics. | `Export Plan Receipt`, `Retention Policy`, and `Performance Probes And Metrics`. |
+
+This #1505 slice is documentation-only. It does not change protobuf schemas,
+fixtures, worker code, CLI commands, or Desktop surfaces. Runtime metrics for
+this slice are therefore `N/A`; the required measurement points are specified
+above and must become executable probes in #1506 and #1507 before code changes
+land.
 
 ## P3.2 Post-Export Smoke And Diagnostics
 
@@ -445,6 +533,7 @@ IDs should be scoped to the changed unit:
 
 | Unit | Probe direction |
 |---|---|
+| #1505 | Documentation-only planning slice; runtime metrics are `N/A`, with measurement points specified for the executable units. |
 | #1506 | Manifest validation latency, fixture count, schema error count, manifest byte size. |
 | #1507 | Export duration, artifact byte size, cleanable bytes, retention decision count. |
 | #1509 | Load smoke latency, generation latency, preview bytes, timeout count, waiver count. |
