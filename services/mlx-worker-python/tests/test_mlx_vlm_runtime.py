@@ -22,6 +22,7 @@ from worker.runtime.multimodal_preprocessing import (
     PreparedVisionRequest,
 )
 from worker.runtime import mlx_vlm_runtime as mlx_vlm_runtime_module
+from worker.runtime import quantized_tensor_metadata as quantized_tensor_metadata_module
 from worker.runtime import runtime_utils
 from worker.runtime.mlx_vlm_runtime import (
     AutoMLXVLMBackend,
@@ -63,6 +64,13 @@ from worker.runtime.native_mtp.mlx_lm_loader import (
     extra_mtp_safetensor_files,
 )
 from worker.runtime.native_mtp import mlx_lm_loader as native_mtp_loader_module
+from worker.runtime.quantized_tensor_metadata import (
+    EMPTY_QUANTIZED_TENSOR_METADATA,
+    QuantizedTensorMetadata,
+    quantized_tensor_metadata_from_model_dir,
+    quantized_tensor_metadata_from_index_payload,
+    quantized_tensor_metadata_from_safetensor_headers,
+)
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 
 
@@ -158,6 +166,19 @@ def _fake_ones(shape):
     if not dimensions:
         return 1
     return [_fake_ones(dimensions[1:]) for _ in range(dimensions[0])]
+
+
+def _write_fake_safetensors_header(path: Path, tensor_names: tuple[str, ...]) -> None:
+    header = {
+        tensor_name: {
+            "dtype": "F16",
+            "shape": [1],
+            "data_offsets": [0, 0],
+        }
+        for tensor_name in tensor_names
+    }
+    payload = json.dumps(header, sort_keys=True).encode("utf-8")
+    path.write_bytes(len(payload).to_bytes(8, "little") + payload)
 
 
 def _assert_chunked_prompt_kwargs_slice_inputs_embeds_and_mrope_position_ids_by_cache_offset() -> None:
@@ -2349,6 +2370,140 @@ def test_native_mtp_index_payload_loads_from_bytes(
     assert _load_json_payload(tmp_path / "missing.json") == {}
 
 
+def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
+    tmp_path: Path,
+) -> None:
+    index_metadata = quantized_tensor_metadata_from_index_payload(
+        {
+            "weight_map": {
+                "language_model.layers.0.q_proj.weight": "model-00001.safetensors",
+                "language_model.layers.0.q_proj.scales": "model-00002.safetensors",
+                "language_model.layers.0.q_proj.biases": "model-00002.safetensors",
+            }
+        }
+    )
+
+    assert index_metadata.has_quantized_scales("language_model.layers.0.q_proj") is True
+    assert index_metadata.quantized_tensor_shards("language_model.layers.0.q_proj") == {
+        "weight": "model-00001.safetensors",
+        "scales": "model-00002.safetensors",
+    }
+
+    shard_a = tmp_path / "model-00001.safetensors"
+    shard_b = tmp_path / "model-00002.safetensors"
+    _write_fake_safetensors_header(shard_a, ("vision_tower.proj.weight",))
+    _write_fake_safetensors_header(shard_b, ("vision_tower.proj.scales",))
+    header_metadata = quantized_tensor_metadata_from_safetensor_headers([shard_a, shard_b])
+
+    assert header_metadata.has_quantized_scales("vision_tower.proj") is True
+    assert header_metadata.quantized_tensor_shards("vision_tower.proj") == {
+        "weight": str(shard_a),
+        "scales": str(shard_b),
+    }
+
+    mutable_source = {
+        "language_model.layers.2.q_proj.scales": "model-00001.safetensors"
+    }
+    immutable_metadata = QuantizedTensorMetadata(mutable_source)
+    mutable_source["language_model.layers.2.q_proj.scales"] = "mutated.safetensors"
+    assert (
+        immutable_metadata.shard_for("language_model.layers.2.q_proj.scales")
+        == "model-00001.safetensors"
+    )
+    with pytest.raises(TypeError):
+        immutable_metadata.tensor_to_shard[
+            "language_model.layers.3.q_proj.scales"
+        ] = "model-00002.safetensors"
+    with pytest.raises(TypeError):
+        EMPTY_QUANTIZED_TENSOR_METADATA.tensor_to_shard[
+            "language_model.layers.4.q_proj.scales"
+        ] = "model-00003.safetensors"
+    assert not EMPTY_QUANTIZED_TENSOR_METADATA.tensor_names
+
+
+def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_entries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    valid_shard = model_dir / "model-00001.safetensors"
+    zero_header = model_dir / "zero.safetensors"
+    invalid_json = model_dir / "invalid.safetensors"
+    list_header = model_dir / "list.safetensors"
+    _write_fake_safetensors_header(
+        valid_shard,
+        (
+            "language_model.layers.1.q_proj.weight",
+            "language_model.layers.1.q_proj.scales",
+        ),
+    )
+    zero_header.write_bytes((0).to_bytes(8, "little"))
+    invalid_json.write_bytes((1).to_bytes(8, "little") + b"{")
+    list_payload = json.dumps([]).encode("utf-8")
+    list_header.write_bytes(len(list_payload).to_bytes(8, "little") + list_payload)
+
+    metadata = quantized_tensor_metadata_from_model_dir(model_dir)
+
+    assert metadata.has_quantized_scales("language_model.layers.1.q_proj") is True
+    assert metadata.quantized_tensor_shards("language_model.layers.1.q_proj") == {
+        "weight": str(valid_shard),
+        "scales": str(valid_shard),
+    }
+    assert not quantized_tensor_metadata_from_model_dir(tmp_path / "missing").tensor_names
+    assert not quantized_tensor_metadata_from_safetensor_headers(
+        [tmp_path / "missing.safetensors"]
+    ).tensor_names
+    oversized_header = model_dir / "oversized.safetensors"
+    oversized_header.write_bytes((100 * 1024 * 1024 + 1).to_bytes(8, "little"))
+    assert not quantized_tensor_metadata_from_safetensor_headers(
+        [oversized_header]
+    ).tensor_names
+
+    class BadEntry:
+        name = "bad.safetensors"
+        path = str(model_dir / "bad.safetensors")
+
+        def is_file(self) -> bool:
+            raise OSError("entry disappeared")
+
+    class GoodEntry:
+        name = valid_shard.name
+        path = str(valid_shard)
+
+        def is_file(self) -> bool:
+            return True
+
+    class FakeScandir:
+        def __enter__(self):
+            return iter((BadEntry(), GoodEntry()))
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    with monkeypatch.context() as patch_context:
+        patch_context.setattr(
+            quantized_tensor_metadata_module.os,
+            "scandir",
+            lambda _path: FakeScandir(),
+        )
+
+        metadata = quantized_tensor_metadata_from_model_dir(model_dir)
+
+    assert metadata.has_quantized_scales("language_model.layers.1.q_proj") is True
+
+    with monkeypatch.context() as patch_context:
+        patch_context.setattr(
+            quantized_tensor_metadata_module.os,
+            "scandir",
+            lambda _path: (_ for _ in ()).throw(NotADirectoryError("not a directory")),
+        )
+
+        metadata = quantized_tensor_metadata_from_model_dir(model_dir)
+
+    assert not metadata.tensor_names
+
+
 def test_native_mtp_weight_key_detection_preserves_string_and_custom_keys() -> None:
     class CustomKey:
         def __str__(self) -> str:
@@ -2543,11 +2698,20 @@ def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(
     (model_dir / "model.safetensors").write_bytes(b"base")
     (model_dir / "mtp.safetensors").write_bytes(b"mtp")
     (model_dir / "model.safetensors.index.json").write_text(
-        json.dumps({"weight_map": {"language_model.mtp.fc.weight": "mtp.safetensors"}}),
+        json.dumps(
+            {
+                "weight_map": {
+                    "language_model.layers.0.q_proj.weight": "model.safetensors",
+                    "language_model.layers.0.q_proj.scales": "mtp.safetensors",
+                    "language_model.mtp.fc.weight": "mtp.safetensors",
+                }
+            }
+        ),
         encoding="utf-8",
     )
 
     loaded_weight_paths: list[str] = []
+    quantized_paths: list[str] = []
 
     class FakeModelArgs:
         @classmethod
@@ -2558,9 +2722,20 @@ def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(
         def __init__(self, args: dict[str, object]) -> None:
             self.args = args
             self.loaded_weights: list[tuple[str, object]] = []
+            self.q_proj = SimpleNamespace(
+                to_quantized=lambda: None,
+                weight=SimpleNamespace(size=64),
+            )
 
         def eval(self) -> None:
             pass
+
+        def sanitize(self, weights: dict[str, object]) -> dict[str, object]:
+            return {
+                key: value
+                for key, value in weights.items()
+                if not key.endswith(".scales")
+            }
 
         def load_weights(self, weights: list[tuple[str, object]], *, strict: bool) -> None:
             self.loaded_weights = weights
@@ -2570,17 +2745,29 @@ def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(
             return []
 
     fake_mx = SimpleNamespace(
-        load=lambda path: loaded_weight_paths.append(path) or {path: path},
+        load=lambda path: loaded_weight_paths.append(path)
+        or (
+            {"language_model.layers.0.q_proj.scales": path, "language_model.mtp.fc.weight": path}
+            if Path(path).name == "mtp.safetensors"
+            else {"language_model.layers.0.q_proj.weight": path}
+        ),
         eval=lambda parameters: None,
     )
     fake_nn = SimpleNamespace(
         Module=SimpleNamespace(is_module=lambda value: False),
         QuantizedLinear=type("QuantizedLinear", (), {}),
-        quantize=lambda *args, **kwargs: None,
+        quantize=lambda model, *, group_size, bits, mode, class_predicate: quantized_paths.append(
+            "language_model.layers.0.q_proj"
+        )
+        if class_predicate("language_model.layers.0.q_proj", model.q_proj)
+        else None,
     )
     fake_utils = SimpleNamespace(
         load_model=lambda *args, **kwargs: ("original", {}),
-        load_config=lambda path: {"model_type": "fake"},
+        load_config=lambda path: {
+            "model_type": "fake",
+            "quantization": {"group_size": 64, "bits": 4, "mode": "affine"},
+        },
         _get_classes=lambda config: (FakeModel, FakeModelArgs),
         _transform_awq_weights=lambda weights, quantization_config: (weights, {}),
         tree_map=lambda callback, modules, is_leaf: modules,
@@ -2598,8 +2785,16 @@ def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(
     model, config = fake_utils.load_model(model_dir, lazy=True)
 
     assert isinstance(model, FakeModel)
-    assert config == {"model_type": "fake"}
+    assert config == {
+        "model_type": "fake",
+        "quantization": {"group_size": 64, "bits": 4, "mode": "affine"},
+    }
     assert loaded_weight_paths == [str(model_dir / "model.safetensors"), str(model_dir / "mtp.safetensors")]
+    assert quantized_paths == ["language_model.layers.0.q_proj"]
+    assert [name for name, _value in model.loaded_weights] == [
+        "language_model.layers.0.q_proj.weight",
+        "language_model.mtp.fc.weight",
+    ]
 
 
 def test_native_mtp_preload_patch_detects_qwen36_mtp_weights(
@@ -5154,6 +5349,17 @@ def _assert_gemma4_text_backed_loader_patches_shared_kv_layers(
 
         model_path.mkdir()
         (model_path / "model.safetensors").write_bytes(b"")
+        (model_path / "model.safetensors.index.json").write_text(
+            json.dumps(
+                {
+                    "weight_map": {
+                        "language_model.model.layers.0.q_proj.weight": "model.safetensors",
+                        "language_model.model.layers.0.q_proj.scales": "scale-sidecar.safetensors",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
         calls: dict[str, object] = {}
 
         modules["mlx_vlm.models.gemma4.language"].ScaledLinear = type(
@@ -5181,6 +5387,10 @@ def _assert_gemma4_text_backed_loader_patches_shared_kv_layers(
                 self.embed_vision = object()
                 self.audio_tower = object()
                 self.embed_audio = object()
+                self.q_proj = SimpleNamespace(
+                    to_quantized=lambda: None,
+                    weight=SimpleNamespace(size=64),
+                )
 
             def load_weights(self, weights):
                 calls["load_weights"] = list(weights)
@@ -5191,14 +5401,28 @@ def _assert_gemma4_text_backed_loader_patches_shared_kv_layers(
 
         patch_context.setattr(utils, "get_model_and_args", lambda *, config: (FakeModelClass, None))
         patch_context.setattr(utils, "get_model_path", lambda *_args, **_kwargs: model_path)
-        patch_context.setattr(utils, "load_config", lambda *_args, **_kwargs: {"model_type": "gemma4"})
+        patch_context.setattr(
+            utils,
+            "load_config",
+            lambda *_args, **_kwargs: {
+                "model_type": "gemma4",
+                "quantization": {"group_size": 64, "bits": 4, "mode": "affine"},
+            },
+        )
         patch_context.setattr(
             utils,
             "update_module_configs",
             lambda model_config, model_class, config, modules: model_config,
         )
         patch_context.setattr(utils, "load_processor", lambda *_args, **_kwargs: SimpleNamespace())
-        patch_context.setattr(mx, "load", lambda path: {"language_model.model.layers.0.weight": path})
+        patch_context.setattr(mx, "load", lambda path: {"language_model.model.layers.0.q_proj.weight": path})
+        import mlx.nn as nn
+
+        def fake_quantize(model, *, group_size, bits, mode, class_predicate):
+            calls["quantize"] = (group_size, bits, mode)
+            assert class_predicate("language_model.model.layers.0.q_proj", model.q_proj) is True
+
+        patch_context.setattr(nn, "quantize", fake_quantize)
         patch_context.setattr(
             mlx_vlm_runtime_module,
             "_patch_gemma4_shared_kv_layers",
@@ -5215,6 +5439,7 @@ def _assert_gemma4_text_backed_loader_patches_shared_kv_layers(
         )
 
     assert calls["shared_kv_patch"] == (model.language_model, model.config.text_config)
+    assert calls["quantize"] == (64, 4, "affine")
     assert processor is not None
     assert execution_mode == "text_backed"
 
@@ -5502,6 +5727,75 @@ def test_gemma4_text_only_language_model_loader_wraps_and_sanitizes(
     assert [name for name, _value in calls["load_weights"]] == ["clean.scales", "clean.weight"]
 
 
+def test_gemma4_text_only_language_model_quantizes_from_presanitize_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_vlm_modules(monkeypatch)
+    import mlx.core as mx
+    import mlx.nn as nn
+    import mlx_vlm.models.gemma4.language as language
+
+    calls: dict[str, object] = {}
+
+    class FakeTextConfig:
+        @classmethod
+        def from_dict(cls, config):
+            return SimpleNamespace(model_type="gemma4_text")
+
+    class FakeLanguageModel:
+        def __init__(self, config):
+            self.config = config
+            self.model = SimpleNamespace(hidden_size_per_layer_input=0)
+
+        def sanitize(self, weights):
+            calls["sanitize"] = dict(weights)
+            return {"language_model.layers.0.q_proj.weight": object()}
+
+        def load_weights(self, weights):
+            calls["load_weights"] = list(weights)
+
+        def parameters(self):
+            return []
+
+        def eval(self):
+            calls["eval"] = True
+
+    def fake_quantize(model, *, group_size, bits, mode, class_predicate):
+        calls["quantize"] = (group_size, bits, mode)
+        assert class_predicate(
+            "language_model.layers.0.q_proj",
+            SimpleNamespace(to_quantized=lambda: None, weight=SimpleNamespace(size=64)),
+        ) is True
+
+    metadata = quantized_tensor_metadata_from_index_payload(
+        {
+            "weight_map": {
+                "language_model.layers.0.q_proj.weight": "model-00001.safetensors",
+                "language_model.layers.0.q_proj.scales": "model-00002.safetensors",
+            }
+        }
+    )
+    monkeypatch.setattr(language, "TextConfig", FakeTextConfig)
+    monkeypatch.setattr(language, "LanguageModel", FakeLanguageModel)
+    monkeypatch.setattr(nn, "quantize", fake_quantize)
+    monkeypatch.setattr(mx, "eval", lambda parameters: None)
+
+    model = AutoMLXVLMBackend._load_gemma4_text_only_language_model(
+        config={
+            "model_type": "gemma4_text",
+            "quantization": {"group_size": 64, "bits": 4, "mode": "affine"},
+        },
+        weights={"language_model.layers.0.q_proj.weight": object()},
+        quantized_metadata=metadata,
+    )
+
+    assert isinstance(model, _Gemma4TextBackedModelShim)
+    assert calls["quantize"] == (64, 4, "affine")
+    assert calls["sanitize"].keys() == {"language_model.layers.0.q_proj.weight"}
+    assert [name for name, _value in calls["load_weights"]] == ["language_model.layers.0.q_proj.weight"]
+
+
 def test_gemma4_text_backed_loader_uses_tokenizer_for_text_only_exports(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -5514,6 +5808,17 @@ def test_gemma4_text_backed_loader_uses_tokenizer_for_text_only_exports(
     model_path = tmp_path / "model"
     model_path.mkdir()
     (model_path / "model.safetensors").write_bytes(b"")
+    (model_path / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "language_model.layers.0.q_proj.weight": "model.safetensors",
+                    "language_model.layers.0.q_proj.scales": "scale-sidecar.safetensors",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     calls: dict[str, object] = {}
 
     modules["mlx_vlm.models.gemma4.language"].ScaledLinear = type(
@@ -5527,8 +5832,8 @@ def test_gemma4_text_backed_loader_uses_tokenizer_for_text_only_exports(
     monkeypatch.setattr(utils, "load_processor", lambda *_args, **_kwargs: pytest.fail("unexpected processor load"))
     monkeypatch.setattr(utils, "update_module_configs", lambda *_args, **_kwargs: pytest.fail("unexpected config update"))
 
-    def fake_load_text_only_language_model(*, config, weights):
-        calls["model_args"] = (config, weights)
+    def fake_load_text_only_language_model(*, config, weights, quantized_metadata):
+        calls["model_args"] = (config, weights, quantized_metadata)
         return "text-model"
 
     monkeypatch.setattr(
@@ -5551,6 +5856,7 @@ def test_gemma4_text_backed_loader_uses_tokenizer_for_text_only_exports(
     assert model == "text-model"
     assert calls["model_args"][0] == {"model_type": "gemma4_text"}
     assert list(calls["model_args"][1]) == ["model.layers.0.weight"]
+    assert calls["model_args"][2].has_quantized_scales("language_model.layers.0.q_proj") is True
     assert isinstance(processor, _CallableTokenizerProcessor)
     assert execution_mode == "text_backed"
 
@@ -5599,7 +5905,7 @@ def _assert_gemma4_text_backed_loader_tolerates_missing_optional_tokenizer_hints
     monkeypatch.setattr(
         AutoMLXVLMBackend,
         "_load_gemma4_text_only_language_model",
-        staticmethod(lambda *, config, weights: "text-model"),
+        staticmethod(lambda *, config, weights, quantized_metadata: "text-model"),
     )
     monkeypatch.setattr(mx, "load", lambda path: {"model.layers.0.weight": path})
 
