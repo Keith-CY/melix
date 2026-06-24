@@ -51,6 +51,24 @@ class QuantizedTensorMetadata:
 
 EMPTY_QUANTIZED_TENSOR_METADATA = QuantizedTensorMetadata({})
 MAX_SAFETENSORS_HEADER_BYTES = 100 * 1024 * 1024
+_NATIVE_MULTIMODAL_HIGH_PRECISION_PREFIXES = (
+    "audio_tower",
+    "embed_audio",
+    "embed_vision",
+    "multi_modal_projector",
+    "multimodal_projector",
+    "projector",
+    "vision_model",
+    "vision_projector",
+    "vision_tower",
+    "visual",
+)
+_NATIVE_MULTIMODAL_HIGH_PRECISION_SUFFIXES = (
+    ".lm_head",
+    ".output",
+    ".output_layer",
+    ".score",
+)
 
 
 def _load_json_payload(path: Path) -> dict[str, Any]:
@@ -127,6 +145,47 @@ def quantized_scales_present(
 ) -> bool:
     scales_key = f"{prefix}.scales"
     return metadata.has_tensor(scales_key) or scales_key in weights
+
+
+def native_multimodal_quantization_preserves_precision(
+    prefix: str,
+    *,
+    metadata: QuantizedTensorMetadata,
+    weights: Mapping[str, object],
+) -> bool:
+    """Return whether native multimodal quantization should keep a module high precision.
+
+    Vision towers, multimodal projectors, and output heads often need the dtype
+    they were exported with. They are only safe to quantize when the artifact
+    explicitly includes quantized scale metadata for that module.
+    """
+
+    normalized = str(prefix or "").strip()
+    if not normalized:
+        return False
+    if not _native_multimodal_high_precision_module(normalized):
+        return False
+    return not quantized_scales_present(
+        normalized,
+        metadata=metadata,
+        weights=weights,
+    )
+
+
+def _native_multimodal_high_precision_module(prefix: str) -> bool:
+    segments = tuple(segment for segment in prefix.split(".") if segment)
+    for index, segment in enumerate(segments):
+        if segment in _NATIVE_MULTIMODAL_HIGH_PRECISION_PREFIXES:
+            return True
+        if (
+            segment in {"model", "language_model"}
+            and index + 1 < len(segments)
+            and segments[index + 1] in _NATIVE_MULTIMODAL_HIGH_PRECISION_PREFIXES
+        ):
+            return True
+        if segment in {"lm_head", "output", "output_layer", "score"}:
+            return True
+    return False
 
 
 def _safetensors_header_tensor_names(path: Path) -> tuple[str, ...]:
