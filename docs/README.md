@@ -72,6 +72,7 @@ These are the authoritative interface and architecture definitions. Do not move 
 
 | Plan | What It Covers |
 |---|---|
+| [Runtime-Aware Export And Serving Verification Plan](plans/2026-06-21-runtime-aware-export-and-serving-verification.md) | M3 export target manifests, layout, retention, post-export smoke policy, diagnostics, waiver semantics, and serving evidence |
 | [Export Artifact Layout And Retention Policy](plans/2026-06-24-export-artifact-layout-retention.md) | Runtime export target layout, retention reports, cleanup dry-run/apply behavior, and byte-accounting metrics |
 
 ---

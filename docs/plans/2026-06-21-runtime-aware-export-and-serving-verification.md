@@ -341,6 +341,38 @@ land.
 P3.2 defines how export completion is proven for each target and how failures
 become typed operator diagnostics.
 
+### P3.2 Target Smoke Matrix
+
+P3.2 consumes the target directories and retention contract produced by #1507.
+Each target smoke runner reads the target manifest, writes evidence only under
+the target-local `smoke/` and `diagnostics/` directories, and updates the
+export report from those receipts. The runner must not infer success from
+runtime cache state, ad hoc stdout, or files outside the target directory.
+
+| Target type | Metadata check | Load check | Generation check | Waiver boundary |
+|---|---|---|---|---|
+| `melix_managed` | Validate manifest, required file digests, activation mode, quantization, and catalog-resolvable target identity. | Load through the selected Melix runtime path or model catalog without mutating source adapter evidence. | Required when the target is generation-capable; use a synthetic prompt, fixed token cap, timeout, and preview byte cap. | `metadata_only_target` only for metadata-only exports; runtime failures require diagnostics before waiver. |
+| `ollama` | Validate generated model metadata, registration inputs, required blobs, runtime binary/path preflight, and target-local log path. | Prove load or registration through the configured local Ollama runtime with bounded timeout. | Required after load or registration succeeds. | `runtime_not_installed`, `runtime_incompatible_host`, `known_runtime_bug`, or `operator_manual_verification` with replacement evidence. |
+| `gguf` | Validate GGUF header, declared metadata, byte size, digest, quantization, and compatible runtime requirements. | Required when a compatible local runtime is configured; otherwise the load check is `waived`. | Required only when the configured compatible runtime supports generation. | No-compatible-runtime cases may use `runtime_not_installed` or `runtime_incompatible_host`; digest, header, and metadata failures are never waivable. |
+| `mlx_runtime` | Validate MLX config, tokenizer, weight inventory, adapter or fused mode, runtime path, and required file digests. | Load with `mlx-lm` or the selected Melix MLX worker path using a bounded timeout. | Required for generation-capable targets with the same fixed prompt, token cap, timeout, and preview byte cap as Melix-managed targets. | `runtime_not_installed`, `runtime_incompatible_host`, `known_runtime_bug`, or `operator_manual_verification` with replacement evidence. |
+
+The first implementation slice for #1509 should use a policy id such as
+`bounded-local-v1`. The policy owns default timeout values, preview byte caps,
+token caps, and the synthetic prompt fixture. The plan intentionally does not
+standardize those numeric defaults in the planning slice; #1509 must pick
+conservative defaults, test them, and record them in the receipt.
+
+Smoke status is target-local:
+
+- `passed`: metadata, required file digest, required load, and required
+  generation checks passed.
+- `failed`: one required check ran and failed with a typed failure or linked
+  diagnostics receipt.
+- `blocked`: a required check could not start because an earlier materialization
+  or preflight requirement failed.
+- `waived`: an allowed waiver records the skipped checks, reason, operator
+  identity, replacement evidence, expiry, and follow-up issue when applicable.
+
 ### Smoke Receipt
 
 Each target writes `smoke/smoke-receipt.json` with schema
@@ -361,6 +393,11 @@ Each target writes `smoke/smoke-receipt.json` with schema
 - `operator_failures`
 - `metrics`
 
+Each `metadata_check`, `load_check`, and `generation_check` entry must include
+`status`, `started_at`, `ended_at`, `duration_ms`, `timeout_ms`,
+`failure_code`, `failure_message`, `evidence_path`, and `diagnostics_receipt_path`
+when diagnostics are applicable. The receipt records target-relative paths only.
+
 The metadata check is required for every target. The load check is required for
 `melix_managed`, `ollama`, and `mlx_runtime` targets. The generation check is
 required for generation-capable `melix_managed`, `ollama`, and `mlx_runtime`
@@ -370,6 +407,10 @@ configured, and the waiver must record the missing runtime capability.
 Bounded generation checks must use a repository-owned prompt fixture or a
 synthetic non-private prompt, a fixed token limit, a timeout, and a preview byte
 limit. The preview is diagnostic evidence only; it is not an evaluation score.
+`output_preview` records byte count, content type, truncation status, digest,
+and the target-relative `smoke/generation-preview.txt` path; it must not contain
+full prompt text, full generated text, credentials, dataset rows, or private
+operator input.
 
 Required smoke metrics:
 
@@ -399,6 +440,20 @@ states:
 The report must not use `completed` for a target when smoke evidence is missing,
 when digest checks are absent, when a runtime log parser is still pending after
 a failure, or when a waiver has no reason and operator identity.
+
+Every export report target row must attach:
+
+- `target_manifest_path`
+- `retention_report_path`
+- `smoke_receipt_path`
+- `diagnostics_receipt_path` when present
+- `verification_terminal_state`
+- `verification_blocker_code`
+- `waiver_id` when a waiver is used
+
+The export report may summarize sensitive paths for operators, but the
+machine-readable evidence paths remain target-relative so workspace exports do
+not leak absolute host paths.
 
 ### Waiver Contract
 
@@ -445,6 +500,12 @@ Failure diagnostics write `diagnostics/diagnostics-receipt.json` with schema
 - `operator_remedies`
 - `metrics`
 
+The diagnostics parser consumes target-local runtime logs, bounded subprocess
+stderr/stdout captures, and smoke failure messages. It writes one receipt per
+target and must finish before a failed smoke receipt can become a terminal
+export-report row. CLI and Desktop render remedies from this receipt; they do
+not parse raw logs independently.
+
 Required diagnosis codes for #1510:
 
 - `runtime_load_failed`
@@ -461,6 +522,27 @@ Required diagnosis codes for #1510:
 Each diagnosis row must include `code`, `severity`, `matched_pattern_id`,
 `operator_message`, `remediation`, and a redacted evidence pointer. Unknown
 failures preserve bounded redacted excerpts for later parser expansion.
+
+### Log Redaction And Evidence Bounds
+
+Runtime log diagnostics use the workspace redaction policy and the target
+manifest redaction classes. The parser must redact or omit:
+
+- absolute host paths, replacing them with target-relative evidence pointers
+  when the path is under the target directory;
+- credentials, bearer tokens, API keys, proxy secrets, certificate contents, and
+  shell environment values that can carry secrets;
+- full prompts, full generations, dataset rows, private prompt templates, and
+  operator-entered free text beyond bounded previews;
+- user identity strings when they are not required to explain the failure.
+
+Unknown failures preserve `diagnostics/redacted-log-excerpt.txt` with byte and
+line caps chosen by #1510. The receipt records `excerpt_byte_count`,
+`excerpt_line_count`, `truncated`, `redaction_count`,
+`redacted_absolute_path_count`, `redacted_secret_count`, and
+`redacted_prompt_or_response_count`. Raw logs can remain in the target-local
+`logs/` directory according to retention policy, but exported summaries and
+operator-facing evidence use only redacted excerpts.
 
 Required diagnostic metrics:
 
@@ -596,11 +678,24 @@ and diagnostics units use.
 ### #1509 Smoke Unit
 
 - Smoke policy tests for Melix-managed, Ollama, GGUF, and MLX runtime targets.
+- Smoke receipt fixture tests for `passed`, `failed`, `blocked`, and `waived`
+  terminal states.
 - Timeout tests proving bounded generation cannot hang export completion.
 - Waiver tests proving allowed waivers are recorded and disallowed waivers are
   rejected.
+- Export-report gating tests proving targets cannot be marked verified without
+  manifest validation, digest checks, smoke receipt, retention report, and
+  diagnostics when a smoke failure occurs.
 - CLI/Desktop decoder tests proving smoke status and preview metadata render
   from the shared receipt.
+
+#1509 implementation lands the worker-owned smoke policy runner and receipt
+fixtures for the four target types. The registered PR-scoped probe for this
+unit is `runtime-export-smoke-policy`, measuring metadata check latency, load
+smoke latency, generation smoke latency, output preview byte count, timeout
+count, and waiver count. This unit may add CLI or Desktop decoding only when it
+is needed to prove that operator surfaces consume the shared receipt instead of
+raw logs or ad hoc status strings.
 
 ### #1510 Diagnostics Unit
 
@@ -608,8 +703,38 @@ and diagnostics units use.
 - Redaction tests for absolute paths, tokens, credentials, and unbounded log
   excerpts.
 - Unknown failure tests proving bounded excerpts are preserved.
+- Export-report attachment tests proving diagnostics receipts are linked to
+  failed smoke receipts and target rows.
 - CLI/Desktop tests proving typed remedies and redacted evidence pointers are
   shown from the shared receipt.
+
+#1510 implementation lands the worker-owned diagnostic parser, redaction
+fixtures, and receipt writer. The registered PR-scoped probe for this unit is
+`runtime-export-diagnostic-parser`, measuring parser coverage, parsed failure
+count, unknown failure count, redaction count, and diagnostic latency. This unit
+does not add new export target types or change retention cleanup semantics.
+
+### P3.2 Acceptance Closure For #1508
+
+#1508 is complete when this document is the governing contract for post-export
+smoke and diagnostics and the executable units can proceed without inventing
+target-specific smoke, waiver, diagnostic, redaction, or probe semantics during
+implementation.
+
+Acceptance mapping:
+
+| #1508 acceptance criterion | Governing section in this plan |
+|---|---|
+| The plan defines target-specific load and generation smoke policies. | `P3.2 Target Smoke Matrix`, `Smoke Receipt`, and `#1509 Smoke Unit`. |
+| The plan defines runtime log diagnostics and redaction rules. | `Diagnostics Receipt`, `Log Redaction And Evidence Bounds`, and `#1510 Diagnostics Unit`. |
+| The unit issues cover both smoke checks and diagnostic parsers. | `P3.2 Target Smoke Matrix`, `Verification Plan`, and `Delivery Order` assign smoke checks to #1509 and diagnostics to #1510. |
+| The plan records smoke-test latency and diagnostic parser coverage metrics. | `Smoke Receipt`, `Diagnostics Receipt`, and `Performance Probes And Metrics`. |
+
+This #1508 slice is documentation-only. It does not change protobuf schemas,
+fixtures, worker code, CLI commands, or Desktop surfaces. Runtime metrics for
+this slice are therefore `N/A`; the required measurement points are specified
+above and must become executable probes in #1509 and #1510 before code changes
+land.
 
 ## Delivery Order
 
