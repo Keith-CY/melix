@@ -6,13 +6,13 @@ from dataclasses import asdict, dataclass, field, replace
 import json
 import logging
 from pathlib import Path
-import re
 import subprocess
 import sys
 import time
 from typing import Any, Iterable
 
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.lora_checkpoint_selection import checkpoint_step_from_path
 from worker.model_ops.multimodal_lora_contracts import (
     audit_manifest_fields,
     audit_trainable_module_tree,
@@ -31,7 +31,6 @@ from worker.model_ops.training_dataset_chunker import (
 from worker.model_ops.training_log_events import parse_training_log_events
 
 _RESULT_PREFIX = "__MELIX_MLX_RESULT__="
-_NUMERIC_TOKEN_RE = re.compile(r"\d+")
 # Sentinel tied to mlx-lm's internal error wording. Keep the mlx-lm pin in
 # pyproject.toml tight: any upstream wording change would silently disable the
 # no-strict retry for QLoRA loads. Update both the sentinel and tests together
@@ -1081,8 +1080,7 @@ def _checkpoint_summary(adapter_output_dir: Path) -> tuple[int, str]:
 
 def _checkpoint_order_key(path: Path) -> tuple[int, str]:
     path_text = str(path)
-    numeric_tokens = _NUMERIC_TOKEN_RE.findall(path_text)
-    return (int(numeric_tokens[-1]) if numeric_tokens else -1, path_text)
+    return (checkpoint_step_from_path(path_text), path_text)
 
 
 def _serialize_activation_request(request: ActivationRequest) -> dict:

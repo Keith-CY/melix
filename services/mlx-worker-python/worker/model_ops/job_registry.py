@@ -41,6 +41,54 @@ def _runtime_mode_from_activation(activation_mode: str) -> int:
     return int(common_pb2.RUNTIME_MODE_UNSPECIFIED)
 
 
+def _int_value(raw_value: Any) -> int:
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _checkpoint_selection_snapshot_fields(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "checkpoint_count": _int_value(
+            manifest.get(
+                "checkpoint_count",
+                manifest.get("experiment.checkpoint_count", 0),
+            )
+        ),
+        "latest_checkpoint_path": str(
+            manifest.get(
+                "latest_checkpoint_path",
+                manifest.get("experiment.latest_checkpoint_path", ""),
+            )
+        ),
+        "checkpoint_step": _int_value(
+            manifest.get(
+                "checkpoint_step",
+                manifest.get("experiment.checkpoint_step", 0),
+            )
+        ),
+        "checkpoint_sort_key": str(
+            manifest.get(
+                "checkpoint_sort_key",
+                manifest.get("experiment.checkpoint_sort_key", ""),
+            )
+        ),
+        "selected_checkpoint_path": str(
+            manifest.get(
+                "selected_checkpoint_path",
+                manifest.get("experiment.selected_checkpoint_path", ""),
+            )
+        ),
+        "selected_checkpoint_loss_source": str(
+            manifest.get(
+                "selected_checkpoint_loss_source",
+                manifest.get("experiment.selected_checkpoint_loss_source", ""),
+            )
+        ),
+    }
+
+
 @dataclass(slots=True)
 class ModelOpsJob:
     job_id: str
@@ -849,6 +897,7 @@ class ModelOpsJobRegistry:
             component_model_type = str(manifest.get("component_model_type", ""))
             component_family = str(manifest.get("component_family", ""))
             component_model_path = str(manifest.get("component_model_path", ""))
+            checkpoint_selection = _checkpoint_selection_snapshot_fields(manifest)
 
             if publish:
                 status = "published"
@@ -932,18 +981,7 @@ class ModelOpsJobRegistry:
                     "response_only": bool(manifest.get("response_only", False)),
                     "gradient_checkpointing": bool(manifest.get("gradient_checkpointing", False)),
                     "training_duration_ms": float(manifest.get("training_duration_ms", 0.0)),
-                    "checkpoint_count": int(
-                        manifest.get(
-                            "checkpoint_count",
-                            manifest.get("experiment.checkpoint_count", 0),
-                        )
-                    ),
-                    "latest_checkpoint_path": str(
-                        manifest.get(
-                            "latest_checkpoint_path",
-                            manifest.get("experiment.latest_checkpoint_path", ""),
-                        )
-                    ),
+                    **checkpoint_selection,
                     "resume_source_path": str(
                         manifest.get(
                             "resume_source_path",

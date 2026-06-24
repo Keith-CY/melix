@@ -37,7 +37,7 @@ from worker.model_ops.multimodal_lora_contracts import (
     audit_adapter_checkpoint,
     finite_masked_softmax,
 )
-from worker.model_ops.mlx_lm_runner import MLXLMRunner
+from worker.model_ops.mlx_lm_runner import MLXLMRunner, _checkpoint_order_key
 from worker.model_ops.mlx_lm_runner import TrainingMetrics, TrainingRequest, TrainingResult
 from worker.model_ops.training_dataset import (
     HFDatasetReference,
@@ -45,6 +45,15 @@ from worker.model_ops.training_dataset import (
     materialize_hf_training_dataset_package,
 )
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent, RuntimeUnavailableError
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _checkpoint_order_key_probe() -> None:
+    numeric = Path("/tmp/model-ops-001/adapter/checkpoint-10/adapters.safetensors")
+    nonstandard = Path("/tmp/model-ops-999/adapter/checkpoint-final/adapters.safetensors")
+
+    assert max((numeric, nonstandard), key=_checkpoint_order_key) == numeric
+    assert _checkpoint_order_key(nonstandard) == (-1, str(nonstandard))
 
 
 def _write_dataset_package(

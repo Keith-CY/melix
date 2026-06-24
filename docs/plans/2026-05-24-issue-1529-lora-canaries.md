@@ -37,6 +37,14 @@ so run history can surface drift evidence without reparsing adapter manifests.
   `base_config_present`, `processor_resume_mode`, `aux_modules_restored`,
   `merge_export_canary_result`, `callback_api_drift_result`,
   `completion_loss`, `round_trip_passed`, and `grad_norm`.
+- Checkpoint provenance fields are present and consistent across adapter
+  manifests, resume defaults, provenance artifacts, and experiment history:
+  `checkpoint_step`, `checkpoint_sort_key`, `selected_checkpoint_path`, and
+  `selected_checkpoint_loss_source`.
+- A fixture containing `checkpoint-1`, `checkpoint-9`, `checkpoint-10`,
+  `checkpoint-100`, and one non-standard checkpoint proves the selected
+  checkpoint is numeric-latest rather than lexicographic or filesystem-order
+  latest.
 
 ## TDD Steps
 
@@ -52,3 +60,14 @@ so run history can surface drift evidence without reparsing adapter manifests.
 5. Add experiment-store assertions if the manifest fields are not already
    visible from run records.
 6. Run focused pytest filters and `git diff --check`.
+
+## Current Slice
+
+The 2026-06-23 and 2026-06-24 watch updates made checkpoint ordering the next
+executable slice. This pass keeps the existing tokenizer/resume/merge/callback
+canary receipts in place and adds checkpoint provenance receipts so export and
+resume surfaces can prove which checkpoint was selected and why.
+
+Performance probes for this slice should measure the existing LoRA manifest and
+experiment-index paths. No real training backend or generic export gate should
+be widened for this change.

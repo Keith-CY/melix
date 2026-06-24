@@ -844,7 +844,16 @@ def test_job_registry_snapshot_preserves_adapter_runtime_fields() -> None:
     adapter_manifest_path = "/runtime/train/train_lora.adapter.json"
     registry.attach_manifest(
         train_job.job_id,
-        json.dumps({"adapter_name": "adapter-a", "adapter_set_hash": "hash-a"}),
+        json.dumps(
+            {
+                "adapter_name": "adapter-a",
+                "adapter_set_hash": "hash-a",
+                "checkpoint_step": 100,
+                "checkpoint_sort_key": "0000000100",
+                "selected_checkpoint_path": "/runtime/train/checkpoint-100/adapters.safetensors",
+                "selected_checkpoint_loss_source": "loss_best",
+            }
+        ),
     )
     registry.complete(train_job.job_id, adapter_manifest_path)
 
@@ -880,10 +889,39 @@ def test_job_registry_snapshot_preserves_adapter_runtime_fields() -> None:
         assert row[ADAPTER_RUNTIME_SHARING_POLICY_FIELD] == "shared_base_isolated_adapter"
         assert row[ADAPTER_RUNTIME_COMPATIBILITY_STATUS_FIELD] == "compatible"
 
+    assert adapter["checkpoint_step"] == 100
+    assert adapter["checkpoint_sort_key"] == "0000000100"
+    assert adapter["selected_checkpoint_path"].endswith(
+        "checkpoint-100/adapters.safetensors"
+    )
+    assert adapter["selected_checkpoint_loss_source"] == "loss_best"
+
     target = registry.resolve_derived_model_target(derived_model_id="melix-dev-active")
     assert target is not None
     assert target[ADAPTER_RUNTIME_BASE_REUSE_KEY_FIELD] == "base-runtime-key"
     assert target[ADAPTER_RUNTIME_ADAPTER_ISOLATION_KEY_FIELD] == "adapter-runtime-key"
+
+
+def test_job_registry_snapshot_tolerates_malformed_checkpoint_numbers() -> None:
+    registry = ModelOpsJobRegistry()
+
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps(
+            {
+                "adapter_name": "adapter-a",
+                "checkpoint_count": "not-an-int",
+                "checkpoint_step": "not-an-int",
+            }
+        ),
+    )
+    registry.complete(train_job.job_id, "/runtime/train/train_lora.adapter.json")
+
+    adapter = registry.snapshot()["adapters"][0]
+
+    assert adapter["checkpoint_count"] == 0
+    assert adapter["checkpoint_step"] == 0
 
 
 def test_job_registry_omits_partial_adapter_runtime_fields() -> None:

@@ -358,6 +358,28 @@ def _lora_manifest_reason_receipt_probe(tmp_path_factory: pytest.TempPathFactory
     )
     assert manifest["adapter_unsupported_reason"] == manifest["capability_gate"]["unsupported_reason"]
     assert manifest["unsupported_reason"] == manifest["adapter_unsupported_reason"]
+    assert manifest["checkpoint_step"] == 2
+    assert manifest["checkpoint_sort_key"] == "0000000002"
+    assert manifest["selected_checkpoint_path"] == manifest["latest_checkpoint_path"]
+    assert manifest["selected_checkpoint_loss_source"] == "loss_best"
+    checkpoint_root = tmp_path / "checkpoint-selection"
+    numeric_checkpoint = checkpoint_root / "adapter" / "checkpoint-10" / "adapters.safetensors"
+    final_checkpoint = checkpoint_root / "adapter" / "checkpoint-final" / "adapters.safetensors"
+    for checkpoint_path in (numeric_checkpoint, final_checkpoint):
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint_path.write_bytes(b"weights")
+    assert _latest_checkpoint_from_directory(checkpoint_root) == numeric_checkpoint.resolve()
+    selected_resume_path = tmp_path / "selected-checkpoint.safetensors"
+    latest_resume_path = tmp_path / "latest-checkpoint.safetensors"
+    for resume_path in (selected_resume_path, latest_resume_path):
+        resume_path.write_bytes(b"weights")
+    assert _resolve_resume_path_from_manifest(
+        tmp_path / "resume-manifest.json",
+        {
+            "selected_checkpoint_path": str(selected_resume_path),
+            "latest_checkpoint_path": str(latest_resume_path),
+        },
+    ) == selected_resume_path.resolve()
 
 
 class NativeUnavailableRunner(SuccessfulRunner):
