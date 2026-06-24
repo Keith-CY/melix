@@ -158,6 +158,9 @@ message RuntimeStats {
   uint64 last_image_feature_cache_misses = 86;
   uint64 last_image_feature_encoder_calls_saved = 87;
   uint64 last_image_feature_work_saved_bytes = 88;
+  uint64 native_quantized_load_count = 89;
+  uint64 bridge_quantized_fallback_count = 90;
+  uint64 cross_shard_metadata_fixup_count = 91;
 }
 
 message GetRuntimeStatsRequest {}

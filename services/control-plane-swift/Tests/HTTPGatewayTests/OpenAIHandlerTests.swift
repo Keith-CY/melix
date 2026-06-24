@@ -6794,6 +6794,9 @@ struct OpenAIHandlerTests {
             response.stats.lastImageFeatureCacheMisses = 1
             response.stats.lastImageFeatureEncoderCallsSaved = 3
             response.stats.lastImageFeatureWorkSavedBytes = 4096
+            response.stats.nativeQuantizedLoadCount = 1
+            response.stats.bridgeQuantizedFallbackCount = 0
+            response.stats.crossShardMetadataFixupCount = 2
             return response
         }()
         let vlmClient = ScriptedWorkerClient(
@@ -6918,6 +6921,9 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["vision.image_feature_cache_misses", default: -1] == 1)
         #expect(metrics.values["vision.image_feature_encoder_calls_saved", default: -1] == 3)
         #expect(metrics.values["vision.image_feature_work_saved_bytes", default: -1] == 4096)
+        #expect(metrics.values["vision.native_quantized_load_count", default: -1] == 1)
+        #expect(metrics.values["vision.bridge_quantized_fallback_count", default: -1] == 0)
+        #expect(metrics.values["vision.cross_shard_metadata_fixup_count", default: -1] == 2)
         #expect(metrics.values["vision.text_batch_generator.step_count", default: -1] == 0)
     }
 

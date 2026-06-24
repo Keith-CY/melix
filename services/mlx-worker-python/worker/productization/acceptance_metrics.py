@@ -155,6 +155,18 @@ def build_phase6_vision_metrics_report(
             metrics_snapshot,
             "vision.family_fast_path_override_count",
         ),
+        "vision.native_quantized_load_count": _metric_value(
+            metrics_snapshot,
+            "vision.native_quantized_load_count",
+        ),
+        "vision.bridge_quantized_fallback_count": _metric_value(
+            metrics_snapshot,
+            "vision.bridge_quantized_fallback_count",
+        ),
+        "vision.cross_shard_metadata_fixup_count": _metric_value(
+            metrics_snapshot,
+            "vision.cross_shard_metadata_fixup_count",
+        ),
     }
 
     return {

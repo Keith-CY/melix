@@ -509,6 +509,16 @@ Executable unit issues:
   fixtures pin projector/output skip behavior, explicit quantized metadata
   override behavior, optional-head weight preservation after sanitize, and the
   pixel dtype selection contract.
+- Unit 3.3.3 promotes the existing native-versus-fallback quantized admission
+  decision into acceptance metrics. Supported quantized VLM artifacts report
+  `quantized_load_mode=native_quantized`, increment
+  `native_quantized_load_count`, keep `bridge_quantized_fallback_count=0`, and
+  carry any cross-shard quantized metadata fixup count into runtime stats and
+  phase-6 evidence. Unsupported family or signature combinations keep the
+  fail-closed fallback reason such as `unsupported_family`, increment
+  `bridge_quantized_fallback_count`, and surface the same counts through the
+  worker `RuntimeStats`, control-plane `vision.*` metrics, phase-6 acceptance
+  report, benchmark samples, and focused supported/unsupported fixtures.
 
 ## Verification Policy
 
