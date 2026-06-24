@@ -22,6 +22,8 @@ from tests.integration.helpers import LiveMelixStack, get_cache_stats, read_metr
 from worker.model_registry.catalog import WorkerModelCatalog
 
 _READY_MODEL_STATES = {"pinned", "warm"}
+_OPENAI_MODEL_STATE_KEYS = ("melix_state", "state", "readiness", "status")
+_DISCOVERY_MODEL_STATE_KEYS = ("melix_state", "state", "readiness")
 
 
 def measure_cold_boot_to_ready(repo_root: Path) -> dict[str, float]:
@@ -909,7 +911,7 @@ def _model_states_from_payload(payload: Any) -> dict[str, str]:
             if not isinstance(item, dict):
                 continue
             model_id = item.get("id")
-            state = _model_state_from_item(item)
+            state = _model_state_from_item(item, _OPENAI_MODEL_STATE_KEYS)
             if isinstance(model_id, str) and isinstance(state, str):
                 states[model_id] = state
 
@@ -919,15 +921,15 @@ def _model_states_from_payload(payload: Any) -> dict[str, str]:
             if not isinstance(item, dict):
                 continue
             model_id = item.get("model_id")
-            state = _model_state_from_item(item)
+            state = _model_state_from_item(item, _DISCOVERY_MODEL_STATE_KEYS)
             if isinstance(model_id, str) and isinstance(state, str):
                 states[model_id] = state
 
     return states
 
 
-def _model_state_from_item(item: dict[str, Any]) -> str | None:
-    for key in ("melix_state", "state", "readiness", "status"):
+def _model_state_from_item(item: dict[str, Any], state_keys: tuple[str, ...]) -> str | None:
+    for key in state_keys:
         state = item.get(key)
         if isinstance(state, str) and state.strip():
             return state
