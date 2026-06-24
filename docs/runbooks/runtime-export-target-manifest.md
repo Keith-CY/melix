@@ -157,3 +157,49 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" \
 
 The probe reports layout materialization latency, target count, retained bytes,
 cleanable bytes, deleted file count, and retention decision count.
+
+## Post-Export Smoke And Diagnostics
+
+The #1508 plan defines the target-local evidence contract consumed by the
+#1509 smoke runner and #1510 diagnostic parser. After #1507 materializes a
+target directory, export verification writes:
+
+- `smoke/smoke-receipt.json`: metadata, load, and generation check outcomes.
+- `smoke/generation-preview.txt`: bounded diagnostic preview for generation
+  capable targets.
+- `diagnostics/diagnostics-receipt.json`: typed runtime failure diagnoses and
+  operator remedies.
+- `diagnostics/redacted-log-excerpt.txt`: bounded, redacted excerpts for
+  matched or unknown runtime failures.
+
+Every smoke and diagnostic evidence path is relative to the target directory.
+Operator summaries may display friendly labels, but exported reports must not
+depend on absolute host paths.
+
+The first smoke policy matrix covers these targets:
+
+| Target type | Required smoke policy |
+|---|---|
+| `EXPORT_TARGET_TYPE_MELIX_MANAGED` | Manifest and digest inspection, Melix catalog/runtime load, and bounded generation when the target is generation-capable. |
+| `EXPORT_TARGET_TYPE_OLLAMA` | Generated metadata inspection, runtime binary/path preflight, local load or registration, and bounded generation. |
+| `EXPORT_TARGET_TYPE_GGUF` | GGUF header, metadata, byte-size, and digest inspection; local load and generation only when a compatible runtime is configured. |
+| `EXPORT_TARGET_TYPE_MLX_RUNTIME` | MLX config, tokenizer, weight inventory, runtime path preflight, bounded load, and bounded generation. |
+
+Waivers are allowed only for configured runtime unavailability, incompatible
+hosts, metadata-only targets, known runtime bugs, or operator manual
+verification with replacement evidence. Waivers are not allowed for unsafe
+paths, missing required files, digest mismatches, unsupported target types,
+missing source provenance, or a missing target manifest.
+
+Diagnostic receipts cover common runtime failures such as load failure,
+unsupported architecture, duplicate tensor names, missing blobs, missing
+binaries, invalid runtime paths, timeout, permission denial, insufficient
+memory, and unknown failures. CLI, Desktop, Markdown summaries, and CSV exports
+must render typed remedies from `diagnostics-receipt.json`; they must not parse
+raw runtime logs independently.
+
+Redaction follows the workspace manifest policy and the target manifest
+redaction classes. Exported summaries and operator-facing evidence must omit or
+redact credentials, bearer tokens, API keys, proxy secrets, certificates,
+absolute host paths, full prompts, full responses, dataset rows, private prompt
+templates, and unnecessary user identity strings.
