@@ -21,6 +21,8 @@ from worker.productization.export_target_diagnostics import (
     build_diagnostic_metrics_report,
     build_export_diagnostics_receipt,
     write_export_diagnostics_receipt,
+    _SourceLine,
+    _build_redacted_excerpt,
 )
 from worker.productization.export_target_layout import (
     build_export_target_layout,
@@ -118,6 +120,87 @@ def test_export_target_diagnostics_redacts_paths_secrets_private_text_and_identi
     assert receipt["redaction_summary"]["redacted_identity_count"] >= 1
 
 
+def test_export_target_diagnostics_resolves_target_root_once_for_many_path_redactions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+    source_lines = [
+        _SourceLine(
+            source_path="logs/ollama-create.log",
+            text=f"runtime load failed at {target_root / 'artifacts/model.gguf'}",
+        ),
+        _SourceLine(
+            source_path="logs/ollama-create.log",
+            text=f"missing blob at {target_root / 'artifacts/blobs/sha256-777777'}",
+        ),
+        _SourceLine(
+            source_path="logs/ollama-create.log",
+            text=f"permission denied at {target_root / 'logs/ollama-create.log'}",
+        ),
+    ]
+    original_resolve = Path.resolve
+    target_root_resolves = 0
+
+    def tracking_resolve(path: Path, strict: bool = False) -> Path:
+        nonlocal target_root_resolves
+        if path == target_root:
+            target_root_resolves += 1
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", tracking_resolve)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        source_lines,
+        bounded_bytes=4096,
+        bounded_lines=20,
+    )
+
+    assert target_root_resolves == 1
+    assert "<target>/artifacts/model.gguf" in excerpt.text
+    assert "<target>/artifacts/blobs/sha256-777777" in excerpt.text
+    assert "<target>/logs/ollama-create.log" in excerpt.text
+
+
+def test_export_target_diagnostics_redaction_uses_unresolved_root_when_root_resolve_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+    source_lines = [
+        _SourceLine(
+            source_path="logs/ollama-create.log",
+            text=f"runtime load failed at {target_root / 'artifacts/model.gguf'}",
+        )
+    ]
+    original_resolve = Path.resolve
+
+    def maybe_raising_resolve(path: Path, strict: bool = False) -> Path:
+        if path == target_root:
+            raise OSError("target root cannot be resolved")
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", maybe_raising_resolve)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        source_lines,
+        bounded_bytes=4096,
+        bounded_lines=20,
+    )
+
+    assert "<target>/artifacts/model.gguf" in excerpt.text
+
+
 def test_export_target_diagnostics_preserves_bounded_unknown_failure_excerpt(
     tmp_path: Path,
 ) -> None:
@@ -201,7 +284,7 @@ def test_export_target_diagnostics_falls_back_when_path_resolution_raises_oserro
         FIXTURE_ROOT / "ollama/export-target-manifest.json",
     )
     layout = build_export_target_layout(tmp_path, manifest)
-    raw_path = target_root / "artifacts/blobs/sha256-777777"
+    raw_path = target_root / "artifacts" / ".." / "artifacts/blobs/sha256-777777"
     (target_root / "logs/ollama-create.log").write_text(
         f"runtime load failed while opening {raw_path}\n",
         encoding="utf-8",
