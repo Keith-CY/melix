@@ -212,6 +212,14 @@ retention report, cleanup dry-run/apply behavior, and byte-accounting metrics.
 Neither unit may introduce a fifth target type or a target-specific side
 channel without updating this plan first.
 
+The manifest validator's safe relative path gate is on the per-file validation
+hot path. It must preserve the same rejection semantics while using direct
+string checks for absolute, Windows-drive, UNC, empty-component, and parent
+component shapes instead of allocating `PurePath` helper objects for every file
+row. The registered `runtime-export-manifest-validation` PR-scoped probe remains
+the evidence source for this Python slice and includes focused test, coverage,
+and `command_json` probe commands in `infra/perf/pr_scoped_probes.json`.
+
 ### Export Plan Receipt
 
 Before materializing artifacts, export planning writes

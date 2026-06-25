@@ -189,6 +189,23 @@ def test_export_target_manifest_safe_relative_path_rejects_invalid_shapes(
     assert expected in str(_safe_relative_path_error(path_value))
 
 
+def test_export_target_manifest_safe_relative_path_uses_string_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import worker.productization.export_target_manifest as target
+
+    def fail_pure_path(*_args: object, **_kwargs: object) -> None:  # pragma: no cover
+        raise AssertionError("safe relative path checks should not allocate PurePath helpers")
+
+    monkeypatch.setattr(target, "PurePosixPath", fail_pure_path)
+    monkeypatch.setattr(target, "PureWindowsPath", fail_pure_path)
+
+    assert target._safe_relative_path_error("artifacts/model.gguf") is None
+    assert "parent-directory" in str(target._safe_relative_path_error("artifacts/../model.gguf"))
+    assert "Windows absolute" in str(target._safe_relative_path_error("C:/Models/model.gguf"))
+    assert "absolute" in str(target._safe_relative_path_error("/tmp/export.bin"))
+
+
 def test_export_target_manifest_rejects_file_row_contract_violations(
     tmp_path: Path,
 ) -> None:
