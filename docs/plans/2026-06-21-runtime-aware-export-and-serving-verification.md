@@ -219,6 +219,9 @@ component shapes instead of allocating `PurePath` helper objects for every file
 row. The registered `runtime-export-manifest-validation` PR-scoped probe remains
 the evidence source for this Python slice and includes focused test, coverage,
 and `command_json` probe commands in `infra/perf/pr_scoped_probes.json`.
+The same validator should derive `manifest_byte_size` from the manifest bytes it
+already read for protobuf JSON parsing instead of issuing a second filesystem
+stat call on every validation.
 
 ### Export Plan Receipt
 

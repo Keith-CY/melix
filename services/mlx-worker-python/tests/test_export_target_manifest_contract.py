@@ -70,6 +70,26 @@ def test_export_target_manifest_fixture_reports_machine_readable_metrics() -> No
     assert report.intermediate_file_count == 1
 
 
+def test_export_target_manifest_reuses_read_bytes_for_manifest_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = FIXTURE_ROOT / "melix_managed/export-target-manifest.json"
+    expected_size = len(path.read_bytes())
+
+    def fail_manifest_stat(self: Path, *_args: object, **_kwargs: object) -> None:
+        raise AssertionError("manifest validation should not stat after reading bytes")
+
+    monkeypatch.setattr(Path, "stat", fail_manifest_stat)
+
+    report = validate_export_target_manifest_file(path)
+
+    with pytest.raises(AssertionError):
+        path.stat()
+
+    assert report.ok is True
+    assert report.manifest_byte_size == expected_size
+
+
 def test_export_target_manifest_metrics_cli_aggregates_fixture_set(
     tmp_path: Path,
 ) -> None:
