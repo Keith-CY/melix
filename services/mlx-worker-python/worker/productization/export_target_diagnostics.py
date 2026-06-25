@@ -84,6 +84,9 @@ class _DiagnosisPattern:
     remediation: str
     markers: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "markers", tuple(marker.lower() for marker in self.markers))
+
     def matches(self, text: str) -> bool:
         if self.markers:
             lowered = text.lower()
@@ -149,7 +152,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The target runtime cannot load this artifact on the current host architecture.",
         remediation="Use an Apple Silicon compatible runtime binary or export for a compatible target architecture.",
-        markers=("architecture", "cpu type", "arm64"),
+        markers=("arch", "cpu type", "arm64"),
     ),
     _DiagnosisPattern(
         code=CODE_DUPLICATE_TENSOR_NAME,
@@ -162,7 +165,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The runtime reported duplicate tensor names while loading the export.",
         remediation="Regenerate the export from a clean adapter snapshot and inspect the conversion step that writes tensor names.",
-        markers=("duplicate", "duplicated", "tensor", "already exists"),
+        markers=("duplicate", "tensor", "already exists"),
     ),
     _DiagnosisPattern(
         code=CODE_MISSING_BLOB,
@@ -233,7 +236,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The runtime cannot read or execute a required export path because of local permissions.",
         remediation="Fix file permissions for the target directory and retry the smoke check from the same worktree.",
-        markers=("permission", "permitted", "eacces"),
+        markers=("permi", "eacces"),
     ),
     _DiagnosisPattern(
         code=CODE_INSUFFICIENT_MEMORY,

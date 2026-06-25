@@ -449,6 +449,24 @@ def test_export_target_diagnostics_pattern_markers_preserve_matching_regex() -> 
     expression.search.assert_called_once_with("missing blob sha256-777777")
 
 
+def test_export_target_diagnostics_pattern_markers_normalize_case() -> None:
+    expression = Mock()
+    expression.search.return_value = object()
+    pattern = _DiagnosisPattern(
+        code=CODE_MISSING_BLOB,
+        severity="error",
+        pattern_id="missing-blob-v1",
+        expressions=(expression,),
+        operator_message="message",
+        remediation="remediation",
+        markers=("BLOB",),
+    )
+
+    assert pattern.markers == ("blob",)
+    assert pattern.matches("missing blob sha256-777777") is True
+    expression.search.assert_called_once_with("missing blob sha256-777777")
+
+
 def test_export_target_diagnostics_skips_path_regex_for_slashless_text(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
