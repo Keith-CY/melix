@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from packages.protocol.python.workspace.v1 import export_target_manifest_pb2
@@ -412,6 +413,26 @@ def test_export_target_diagnostics_metric_counts_single_pass() -> None:
     assert parsed_count == 2
     assert unknown_count == 1
     assert matched_codes == {CODE_RUNTIME_LOAD_FAILED, CODE_MISSING_BINARY}
+
+
+def test_export_target_diagnostics_skips_path_regex_for_slashless_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path_pattern = Mock()
+    monkeypatch.setattr(export_target_diagnostics_module, "_ABSOLUTE_PATH_PATTERN", path_pattern)
+    summary = export_target_diagnostics_module._RedactionSummary()
+
+    redacted = export_target_diagnostics_module._redact_text(
+        "runtime load failed while opening model",
+        tmp_path,
+        str(tmp_path),
+        summary,
+    )
+
+    assert redacted == "runtime load failed while opening model"
+    path_pattern.sub.assert_not_called()
+    assert summary.redaction_count == 0
 
 
 def test_export_target_diagnostics_not_applicable_without_logs_or_failures(

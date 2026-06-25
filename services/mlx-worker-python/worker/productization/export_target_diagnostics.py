@@ -591,6 +591,8 @@ def _redact_text(
                 lambda match: _record_identity(summary, match.group(1)),
                 text,
             )
+    if "/" not in text:
+        return text
     return _ABSOLUTE_PATH_PATTERN.sub(
         lambda match: _redact_absolute_path(
             match.group(0),
