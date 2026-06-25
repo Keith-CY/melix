@@ -528,15 +528,24 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
     probe_summary = report.get("probe_summary")
     if not isinstance(probe_summary, dict):
         return phases
+    phases_add = phases.add
+    to_string = str
+    buckets = ("slowest_phases", "failed_phases", "skipped_phases", "fallback_phases")
     for side in ("baseline", "candidate"):
         side_summary = probe_summary.get(side)
         if not isinstance(side_summary, dict):
             continue
-        for bucket in ("slowest_phases", "failed_phases", "skipped_phases", "fallback_phases"):
-            for row in _dict_list(side_summary.get(bucket)):
-                phase = str(row.get("phase", "")).strip()
+        side_summary_get = side_summary.get
+        for bucket in buckets:
+            rows = side_summary_get(bucket)
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                phase = to_string(row.get("phase", "")).strip()
                 if phase:
-                    phases.add(phase)
+                    phases_add(phase)
     return phases
 
 

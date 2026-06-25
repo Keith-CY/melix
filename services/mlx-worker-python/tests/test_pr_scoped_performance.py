@@ -365,6 +365,7 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["target_field_elapsed_ms_mean"] >= 0.0
     assert metrics["matrix_roles_elapsed_ms_mean"] >= 0.0
     assert metrics["dict_list_elapsed_ms_mean"] >= 0.0
+    assert metrics["probe_phases_elapsed_ms_mean"] >= 0.0
     assert metrics["load_report_payload_elapsed_ms_mean"] >= 0.0
     assert metrics["load_report_payload_checksum"] == (
         96.0 * max(1.0, metrics["iterations"] / 500.0) * metrics["sample_count"]
@@ -372,6 +373,10 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["dict_list_identity_hits"] == (
         max(1.0, metrics["iterations"] / 50.0) * metrics["sample_count"]
     )
+    assert metrics["probe_phases_checksum"] == (
+        256.0 * max(1.0, metrics["iterations"] / 200.0) * metrics["sample_count"]
+    )
+    assert metrics["probe_phases_rows_per_call"] == 2048.0
     assert metrics["run_kind_count"] == 65.0
     assert metrics["metric_prefix_count"] == 65.0
     assert metrics["target_field_count"] == 65.0
