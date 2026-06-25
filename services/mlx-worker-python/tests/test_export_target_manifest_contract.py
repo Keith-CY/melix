@@ -12,6 +12,7 @@ from packages.protocol.python.workspace.v1 import export_target_manifest_pb2
 from worker.productization.export_target_manifest import (
     REQUIRED_EXPORT_TARGET_TYPES,
     _safe_relative_path_error,
+    _validate_metrics,
     validate_export_target_manifest_file,
 )
 
@@ -452,6 +453,38 @@ def test_export_target_manifest_rejects_metric_mismatches(tmp_path: Path) -> Non
     assert "metrics.artifact_byte_size must equal generated_files byte_size sum" in report.errors
     assert "metrics.required_byte_size must equal required_files byte_size sum" in report.errors
     assert "metrics.evidence_byte_size must equal evidence file byte_size sum" in report.errors
+
+
+def test_export_target_manifest_metrics_evidence_bytes_cover_all_file_sections() -> None:
+    evidence = export_target_manifest_pb2.EXPORT_RETENTION_CLASS_EVIDENCE
+    manifest = export_target_manifest_pb2.ExportTargetManifest()
+    manifest.generated_files.add(byte_size=11, retention_class=evidence)
+    manifest.generated_files.add(
+        byte_size=13,
+        retention_class=export_target_manifest_pb2.EXPORT_RETENTION_CLASS_REQUIRED,
+    )
+    manifest.required_files.add(byte_size=17, retention_class=evidence)
+    manifest.required_files.add(
+        byte_size=19,
+        retention_class=export_target_manifest_pb2.EXPORT_RETENTION_CLASS_REQUIRED,
+    )
+    manifest.intermediate_files.add(byte_size=23, retention_class=evidence)
+    manifest.intermediate_files.add(
+        byte_size=29,
+        retention_class=export_target_manifest_pb2.EXPORT_RETENTION_CLASS_CACHE,
+    )
+    manifest.metrics.generated_file_count = 2
+    manifest.metrics.required_file_count = 2
+    manifest.metrics.intermediate_file_count = 2
+    manifest.metrics.artifact_byte_size = 24
+    manifest.metrics.required_byte_size = 36
+    manifest.metrics.evidence_byte_size = 51
+
+    assert _validate_metrics(manifest) == []
+
+    manifest.metrics.evidence_byte_size = 50
+
+    assert "metrics.evidence_byte_size must equal evidence file byte_size sum" in _validate_metrics(manifest)
 
 
 def test_export_target_manifest_metrics_cli_returns_nonzero_for_invalid_manifest(
