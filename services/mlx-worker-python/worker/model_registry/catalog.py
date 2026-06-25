@@ -719,6 +719,8 @@ def _read_text_prefix(
 
 
 def _metadata_text_has_mlx_signal(metadata_text: str) -> bool:
+    if "mlx" not in metadata_text:
+        return False
     return (
         "library_name: mlx" in metadata_text
         or '"library_name": "mlx"' in metadata_text
