@@ -154,7 +154,8 @@ def port_is_available(port: int, *, host: str = "127.0.0.1") -> bool:
 
 
 def check_for_updates(installed_version: str, channel_path: str | Path) -> UpdateCheckResult:
-    payload = json.loads(Path(channel_path).expanduser().resolve().read_text(encoding="utf-8"))
+    resolved_channel_path = Path(channel_path).expanduser().resolve()
+    payload = json.loads(resolved_channel_path.read_bytes())
     latest_version = str(payload.get("latest_version", "")).strip()
     channel = str(payload.get("channel", "stable")).strip() or "stable"
     if latest_version:
@@ -185,7 +186,7 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
         latest_version="",
         channel=channel,
         summary="Update check failed",
-        detail=f"Channel metadata at {Path(channel_path).expanduser().resolve()} does not declare latest_version",
+        detail=f"Channel metadata at {resolved_channel_path} does not declare latest_version",
     )
 
 
