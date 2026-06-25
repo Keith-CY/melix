@@ -22,8 +22,10 @@ from worker.productization.export_target_diagnostics import (
     build_diagnostic_metrics_report,
     build_export_diagnostics_receipt,
     write_export_diagnostics_receipt,
+    _RedactionSummary,
     _SourceLine,
     _build_redacted_excerpt,
+    _redact_absolute_path,
 )
 from worker.productization.export_target_layout import (
     build_export_target_layout,
@@ -170,6 +172,81 @@ def test_export_target_diagnostics_resolves_target_root_once_for_many_path_redac
     assert "<target>/artifacts/model.gguf" in excerpt.text
     assert "<target>/artifacts/blobs/sha256-777777" in excerpt.text
     assert "<target>/logs/ollama-create.log" in excerpt.text
+
+
+def test_export_target_diagnostics_redacts_clean_target_paths_without_path_objects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    class FailingPath:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover
+            raise AssertionError("clean target path redaction should use string prefix matching")
+
+    monkeypatch.setattr(export_target_diagnostics_module, "Path", FailingPath)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text=f"runtime load failed at {target_root / 'artifacts/model.gguf'}",
+            ),
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text=f"missing blob at {target_root / 'artifacts/blobs/sha256-777777'}",
+            ),
+        ],
+        bounded_bytes=4096,
+        bounded_lines=20,
+    )
+
+    assert "<target>/artifacts/model.gguf" in excerpt.text
+    assert "<target>/artifacts/blobs/sha256-777777" in excerpt.text
+    assert excerpt.summary.redacted_absolute_path_count == 2
+
+
+def test_export_target_diagnostics_path_prefix_handles_root_and_normalized_paths(
+    tmp_path: Path,
+) -> None:
+    root_summary = _RedactionSummary()
+    assert _redact_absolute_path("/", Path("/"), "/", root_summary) == "<target>"
+    assert _redact_absolute_path("/var/log.txt", Path("/"), "/", root_summary) == "<target>/var/log.txt"
+
+    class RootLayout:
+        target_root = Path("/")
+
+    root_excerpt = _build_redacted_excerpt(
+        RootLayout(),  # type: ignore[arg-type]
+        [_SourceLine(source_path="logs/root.log", text="failed at /var/log.txt")],
+        bounded_bytes=256,
+        bounded_lines=4,
+    )
+    assert "<target>/var/log.txt" in root_excerpt.text
+
+    target_root = tmp_path / "target"
+    target_root.mkdir()
+    nested = target_root / "nested"
+    nested.mkdir()
+    artifact = target_root / "artifact.gguf"
+    artifact.write_text("model", encoding="utf-8")
+    normalized_summary = _RedactionSummary()
+
+    redacted = _redact_absolute_path(
+        str(nested / ".." / "artifact.gguf"),
+        target_root,
+        target_root.as_posix(),
+        normalized_summary,
+    )
+
+    assert redacted == "<target>/artifact.gguf"
+    assert root_summary.redacted_absolute_path_count == 2
+    assert normalized_summary.redacted_absolute_path_count == 1
 
 
 def test_export_target_diagnostics_skips_secret_regexes_for_plain_path_lines(

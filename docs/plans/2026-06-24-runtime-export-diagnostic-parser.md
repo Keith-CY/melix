@@ -77,6 +77,8 @@ It measures:
 - `unknown_failure_count`
 - `redaction_count`
 - `diagnostic_latency_ms`
+- `path_redaction_elapsed_ms_mean`
+- `path_redaction_count`
 
 The 2026-06-25 optimization slice keeps the parser contract unchanged and caches
 `layout.target_root.resolve(strict=False)` once per redacted excerpt build. It
@@ -93,6 +95,13 @@ redactor, but skip the bearer-token, named-secret, URL credential, OpenAI key,
 certificate, and identity regex passes. Lines with `:`, `=`, `@`, `sk-`, or a
 certificate preamble continue through the relevant guarded regexes before path
 redaction.
+
+This 2026-06-25 path-prefix slice keeps the same target-relative labels and
+removes per-path `Path(...)` construction for clean absolute paths that are
+lexically under the already-resolved target root. Paths containing `..` still
+fall back to filesystem-normalized `Path.resolve(strict=False)` before deciding
+whether they are target-relative. The registered probe's path-redaction metric is
+the acceptance gate for the slice.
 
 Focused verification:
 

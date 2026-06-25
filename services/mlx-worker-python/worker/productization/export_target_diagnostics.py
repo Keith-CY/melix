@@ -513,11 +513,19 @@ def _build_redacted_excerpt(
         resolved_target_root = layout.target_root.resolve(strict=False)
     except OSError:
         resolved_target_root = layout.target_root
+    resolved_target_root_text = resolved_target_root.as_posix().rstrip("/")
+    if not resolved_target_root_text:
+        resolved_target_root_text = "/"
     for index, source_line in enumerate(source_lines):
         if len(output_lines) >= bounded_lines:
             summary.truncated = True
             break
-        redacted = _redact_text(source_line.text, resolved_target_root, summary)
+        redacted = _redact_text(
+            source_line.text,
+            resolved_target_root,
+            resolved_target_root_text,
+            summary,
+        )
         rendered = f"[{source_line.source_path}] {redacted}"
         rendered_bytes = (rendered + "\n").encode("utf-8")
         if used_bytes + len(rendered_bytes) > bounded_bytes:
@@ -555,6 +563,7 @@ def _build_redacted_excerpt(
 def _redact_text(
     text: str,
     resolved_target_root: Path,
+    resolved_target_root_text: str,
     summary: _RedactionSummary,
 ) -> str:
     if _PRIVATE_TEXT_LINE_PATTERN.search(text):
@@ -589,7 +598,12 @@ def _redact_text(
                 text,
             )
     return _ABSOLUTE_PATH_PATTERN.sub(
-        lambda match: _redact_absolute_path(match.group(0), resolved_target_root, summary),
+        lambda match: _redact_absolute_path(
+            match.group(0),
+            resolved_target_root,
+            resolved_target_root_text,
+            summary,
+        ),
         text,
     )
 
@@ -614,20 +628,26 @@ def _record_identity(summary: _RedactionSummary, key: str) -> str:
 def _redact_absolute_path(
     raw_path: str,
     resolved_target_root: Path,
+    resolved_target_root_text: str,
     summary: _RedactionSummary,
 ) -> str:
     trimmed_path = raw_path.rstrip(".,)")
     suffix = raw_path[len(trimmed_path):]
     replacement = "<absolute-path>"
-    try:
-        path = Path(trimmed_path)
-        if ".." not in path.parts:
-            relative = path.relative_to(resolved_target_root)
-        else:
-            relative = path.resolve(strict=False).relative_to(resolved_target_root)
-        replacement = f"<target>/{relative.as_posix()}"
-    except (ValueError, OSError):
-        pass
+    path_parts = trimmed_path.split("/")
+    if ".." not in path_parts:
+        if trimmed_path == resolved_target_root_text:
+            replacement = "<target>"
+        elif resolved_target_root_text == "/" and trimmed_path.startswith("/"):
+            replacement = f"<target>/{trimmed_path.lstrip('/')}"
+        elif trimmed_path.startswith(f"{resolved_target_root_text}/"):
+            replacement = f"<target>/{trimmed_path[len(resolved_target_root_text) + 1:]}"
+    else:
+        try:
+            relative = Path(trimmed_path).resolve(strict=False).relative_to(resolved_target_root)
+            replacement = f"<target>/{relative.as_posix()}"
+        except (ValueError, OSError):
+            pass
     summary.redacted_absolute_path_count += 1
     summary.redaction_count += 1
     return replacement + suffix
