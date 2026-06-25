@@ -361,6 +361,12 @@ shared Swift diagnostics code so CLI and Desktop decode the same fields. Debug
 bundles write the receipt both as `environment-diagnostic.json` and as the
 manifest summary payload.
 
+`melix doctor --json` and `melix system --json` intentionally expose
+`environment_diagnostic` as a top-level field. `doctor --json` also preserves
+the nested `system.environment_diagnostic` value inherited from the shared
+system payload. The top-level field is the stable convenience path for Desktop
+and CLI automation; the nested copy remains part of the system payload shape.
+
 The first slice keeps version and local-server probes bounded to the effective
 process environment. It records executable resolution and health-probe
 availability without spawning dependency imports or opening network

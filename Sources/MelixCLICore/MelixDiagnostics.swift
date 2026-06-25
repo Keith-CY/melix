@@ -649,7 +649,7 @@ public enum MelixDesktopEnvironmentDiagnosticBuilder {
 
     private static func localServerHealthCheck(environment: [String: String]) -> [String: Any] {
         let started = currentUnixMilliseconds()
-        let port = normalized(environment["MELIX_HTTP_PORT"]) ?? "12436"
+        let port = normalized(environment["MELIX_HTTP_PORT"]) ?? String(MelixGatewayDefaults.port)
         let socketPaths = ["MELIX_WORKER_SOCKET_PATH", "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"].compactMap { key -> [String: Any]? in
             guard let value = normalized(environment[key]) else {
                 return nil
