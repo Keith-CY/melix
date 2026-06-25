@@ -78,6 +78,14 @@ It measures:
 - `redaction_count`
 - `diagnostic_latency_ms`
 
+The 2026-06-25 optimization slice keeps the parser contract unchanged and caches
+`layout.target_root.resolve(strict=False)` once per redacted excerpt build. It
+also labels absolute paths that are already lexically under the resolved target
+root without per-path filesystem resolution, falling back to the previous
+`Path.resolve(strict=False)` path when `..` segments require normalization. This
+avoids repeated resolution work in multi-path runtime logs while preserving
+safe target-relative redaction labels.
+
 Focused verification:
 
 ```bash

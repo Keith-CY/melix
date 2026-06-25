@@ -3284,6 +3284,8 @@ def test_runtime_export_diagnostic_parser_probe_script_emits_metrics(
     assert metrics["unknown_failure_count"] == 1.0
     assert metrics["redaction_count"] >= 2.0
     assert metrics["diagnostic_latency_ms"] >= 0
+    assert metrics["path_redaction_elapsed_ms_mean"] >= 0
+    assert metrics["path_redaction_count"] >= 1.0
     assert metrics["elapsed_ms_mean"] >= 0
 
 
