@@ -86,6 +86,14 @@ root without per-path filesystem resolution, falling back to the previous
 avoids repeated resolution work in multi-path runtime logs while preserving
 safe target-relative redaction labels.
 
+A follow-up 2026-06-25 slice keeps the same redaction contract but gates the
+secret/identity regex substitutions behind cheap marker checks. Plain runtime
+log lines that only contain an absolute target path still run the absolute-path
+redactor, but skip the bearer-token, named-secret, URL credential, OpenAI key,
+certificate, and identity regex passes. Lines with `:`, `=`, `@`, `sk-`, or a
+certificate preamble continue through the relevant guarded regexes before path
+redaction.
+
 Focused verification:
 
 ```bash
