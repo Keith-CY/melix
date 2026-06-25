@@ -527,7 +527,7 @@ def build_packaged_launch_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
             "required_flags_present": isolation_required_flags_present,
             "runtime_layout_requires_isolation": runtime_layout_requires_isolation,
             "gate_satisfied": import_isolation_gate_satisfied,
-            "pythonpath_policy": str(python_import_isolation.get("pythonpath_policy", "")),
+            "pythonpath_policy": str(python_import_isolation.get("pythonpath_policy") or ""),
         },
     }
 

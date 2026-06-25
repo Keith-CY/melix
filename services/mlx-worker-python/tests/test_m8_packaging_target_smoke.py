@@ -39,3 +39,22 @@ def test_main_emits_expected_packaging_target_metrics(
     assert payload["packaging_target_homebrew_profile_ok"] == 1
     assert payload["packaging_target_app_bundle_profile_ok"] == 1
     assert payload["packaging_target_app_bundle_python_import_isolated"] == 1
+
+
+def test_python_import_isolation_manifest_reader_treats_malformed_values_as_missing() -> None:
+    module = load_packaging_target_smoke_module()
+
+    isolation, env = module._python_import_isolation_from_manifest({"python_import_isolation": None})
+    assert isolation == {}
+    assert env == {}
+
+    isolation, env = module._python_import_isolation_from_manifest(
+        {
+            "python_import_isolation": {
+                "import_isolated": True,
+                "env": None,
+            }
+        }
+    )
+    assert isolation["import_isolated"] is True
+    assert env == {}

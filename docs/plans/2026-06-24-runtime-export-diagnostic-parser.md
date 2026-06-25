@@ -78,6 +78,22 @@ It measures:
 - `redaction_count`
 - `diagnostic_latency_ms`
 
+The 2026-06-25 optimization slice keeps the parser contract unchanged and caches
+`layout.target_root.resolve(strict=False)` once per redacted excerpt build. It
+also labels absolute paths that are already lexically under the resolved target
+root without per-path filesystem resolution, falling back to the previous
+`Path.resolve(strict=False)` path when `..` segments require normalization. This
+avoids repeated resolution work in multi-path runtime logs while preserving
+safe target-relative redaction labels.
+
+A follow-up 2026-06-25 slice keeps the same redaction contract but gates the
+secret/identity regex substitutions behind cheap marker checks. Plain runtime
+log lines that only contain an absolute target path still run the absolute-path
+redactor, but skip the bearer-token, named-secret, URL credential, OpenAI key,
+certificate, and identity regex passes. Lines with `:`, `=`, `@`, `sk-`, or a
+certificate preamble continue through the relevant guarded regexes before path
+redaction.
+
 Focused verification:
 
 ```bash

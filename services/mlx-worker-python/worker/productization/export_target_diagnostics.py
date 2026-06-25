@@ -69,6 +69,9 @@ _PRIVATE_TEXT_LINE_PATTERN = re.compile(
 _IDENTITY_PATTERN = re.compile(
     r"(?i)\b(user|operator)(?:[_-]?(?:id|name))?\s*[:=]\s*['\"]?[^'\"\s,;]+['\"]?"
 )
+_SECRET_REDACTION_MARKERS = ("=", ":", "@", "sk-", "-----BEGIN ")
+_NAMED_SECRET_MARKERS = ("api", "access", "token", "password", "secret")
+_IDENTITY_MARKERS = ("user", "operator")
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,11 +509,15 @@ def _build_redacted_excerpt(
     output_lines: list[str] = []
     line_numbers: dict[int, int] = {}
     used_bytes = 0
+    try:
+        resolved_target_root = layout.target_root.resolve(strict=False)
+    except OSError:
+        resolved_target_root = layout.target_root
     for index, source_line in enumerate(source_lines):
         if len(output_lines) >= bounded_lines:
             summary.truncated = True
             break
-        redacted = _redact_text(source_line.text, layout, summary)
+        redacted = _redact_text(source_line.text, resolved_target_root, summary)
         rendered = f"[{source_line.source_path}] {redacted}"
         rendered_bytes = (rendered + "\n").encode("utf-8")
         if used_bytes + len(rendered_bytes) > bounded_bytes:
@@ -547,7 +554,7 @@ def _build_redacted_excerpt(
 
 def _redact_text(
     text: str,
-    layout: ExportTargetLayout,
+    resolved_target_root: Path,
     summary: _RedactionSummary,
 ) -> str:
     if _PRIVATE_TEXT_LINE_PATTERN.search(text):
@@ -555,26 +562,34 @@ def _redact_text(
         summary.redaction_count += 1
         return "<redacted-private-preview>"
 
-    text = _CERTIFICATE_PATTERN.sub(lambda _match: _record_secret(summary), text)
-    text = _BEARER_SECRET_PATTERN.sub(
-        lambda match: match.group(1) + _record_secret(summary),
-        text,
-    )
-    text = _NAMED_SECRET_PATTERN.sub(
-        lambda match: f"{match.group(1)}=<redacted-secret>{_record_secret_count_only(summary)}",
-        text,
-    )
-    text = _URL_CREDENTIAL_PATTERN.sub(
-        lambda match: match.group(1) + _record_secret(summary) + match.group(2),
-        text,
-    )
-    text = _OPENAI_KEY_PATTERN.sub(lambda _match: _record_secret(summary), text)
-    text = _IDENTITY_PATTERN.sub(
-        lambda match: _record_identity(summary, match.group(1)),
-        text,
-    )
+    if any(marker in text for marker in _SECRET_REDACTION_MARKERS):
+        secret_text = text.lower()
+        if "-----begin " in secret_text:
+            text = _CERTIFICATE_PATTERN.sub(lambda _match: _record_secret(summary), text)
+        if "bearer" in secret_text:
+            text = _BEARER_SECRET_PATTERN.sub(
+                lambda match: match.group(1) + _record_secret(summary),
+                text,
+            )
+        if any(marker in secret_text for marker in _NAMED_SECRET_MARKERS):
+            text = _NAMED_SECRET_PATTERN.sub(
+                lambda match: f"{match.group(1)}=<redacted-secret>{_record_secret_count_only(summary)}",
+                text,
+            )
+        if "://" in text and "@" in text:
+            text = _URL_CREDENTIAL_PATTERN.sub(
+                lambda match: match.group(1) + _record_secret(summary) + match.group(2),
+                text,
+            )
+        if "sk-" in text:
+            text = _OPENAI_KEY_PATTERN.sub(lambda _match: _record_secret(summary), text)
+        if any(marker in secret_text for marker in _IDENTITY_MARKERS):
+            text = _IDENTITY_PATTERN.sub(
+                lambda match: _record_identity(summary, match.group(1)),
+                text,
+            )
     return _ABSOLUTE_PATH_PATTERN.sub(
-        lambda match: _redact_absolute_path(match.group(0), layout, summary),
+        lambda match: _redact_absolute_path(match.group(0), resolved_target_root, summary),
         text,
     )
 
@@ -598,16 +613,18 @@ def _record_identity(summary: _RedactionSummary, key: str) -> str:
 
 def _redact_absolute_path(
     raw_path: str,
-    layout: ExportTargetLayout,
+    resolved_target_root: Path,
     summary: _RedactionSummary,
 ) -> str:
     trimmed_path = raw_path.rstrip(".,)")
     suffix = raw_path[len(trimmed_path):]
     replacement = "<absolute-path>"
     try:
-        relative = Path(trimmed_path).resolve(strict=False).relative_to(
-            layout.target_root.resolve(strict=False)
-        )
+        path = Path(trimmed_path)
+        if ".." not in path.parts:
+            relative = path.relative_to(resolved_target_root)
+        else:
+            relative = path.resolve(strict=False).relative_to(resolved_target_root)
         replacement = f"<target>/{relative.as_posix()}"
     except (ValueError, OSError):
         pass

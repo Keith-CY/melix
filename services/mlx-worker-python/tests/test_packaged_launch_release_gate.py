@@ -171,6 +171,7 @@ def test_packaged_launch_evidence_treats_malformed_import_isolation_as_missing()
             "python_import_isolation": {
                 "import_isolated": True,
                 "env": "not-a-dict",
+                "pythonpath_policy": None,
             },
         }
     )
@@ -178,6 +179,7 @@ def test_packaged_launch_evidence_treats_malformed_import_isolation_as_missing()
     assert evidence["python_import_isolation"]["import_isolated"] == 1.0
     assert evidence["python_import_isolation"]["required_flags_present"] == 0.0
     assert evidence["python_import_isolation"]["gate_satisfied"] == 0.0
+    assert evidence["python_import_isolation"]["pythonpath_policy"] == ""
 
 
 def test_build_packaged_launch_evidence_accepts_ipv6_loopback_urls() -> None:
