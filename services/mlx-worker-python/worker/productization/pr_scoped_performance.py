@@ -78,8 +78,9 @@ def _summarize_command(command: str, *, max_length: int = 180) -> str:
     if not command:
         return "<empty command>"
 
-    newline_index = command.find("\n")
-    if newline_index < 0:
+    try:
+        newline_index = command.index("\n")
+    except ValueError:
         summary = command
     else:
         summary = command[:newline_index].rstrip() + " ..."
