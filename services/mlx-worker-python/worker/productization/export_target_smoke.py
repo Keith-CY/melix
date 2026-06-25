@@ -78,6 +78,24 @@ def run_export_target_smoke(
         )
 
     layout = build_export_target_layout(workspace_root, manifest)
+    return _run_export_target_smoke_validated(
+        manifest,
+        layout,
+        available_runtime_binaries=available_runtime_binaries,
+        operator_id=operator_id,
+        now=current_time,
+    )
+
+
+def _run_export_target_smoke_validated(
+    manifest: export_target_manifest_pb2.ExportTargetManifest,
+    layout,
+    *,
+    available_runtime_binaries: set[str] | None,
+    operator_id: str,
+    now: float,
+) -> dict[str, object]:
+    current_time = now
     timeout_ms = int(manifest.verification_policy.timeout_ms)
     preview_limit = int(manifest.verification_policy.preview_byte_limit)
     receipt_path = _target_relative_path(layout, manifest.evidence.smoke_receipt_path)
@@ -207,17 +225,18 @@ def build_smoke_metrics_report(
 
     from worker.productization.export_target_layout import materialize_export_target_layout
 
+    workspace_path = Path(workspace_root)
     for manifest_path in manifest_paths:
         export_report = materialize_export_target_layout(
             manifest_path,
-            workspace_root,
+            workspace_path,
             create_placeholder_files=True,
             now=now,
         )
         if export_report.get("ok") is not True:
             errors.extend(str(error) for error in export_report.get("errors", []))
             continue
-        target_root = Path(workspace_root) / str(export_report["target_root"])
+        target_root = workspace_path / str(export_report["target_root"])
         manifest, validation_report = validate_export_target_manifest_file(
             target_root / "export-target-manifest.json",
             return_manifest=True,
@@ -228,11 +247,12 @@ def build_smoke_metrics_report(
         _write_digest_fixture_files(target_root, manifest)
         try:
             receipts.append(
-                run_export_target_smoke(
-                    target_root / "export-target-manifest.json",
-                    workspace_root,
+                _run_export_target_smoke_validated(
+                    manifest,
+                    build_export_target_layout(workspace_path, manifest),
                     available_runtime_binaries=_fixture_runtime_binaries(manifest),
-                    now=now,
+                    operator_id="melix-export-smoke",
+                    now=now if now is not None else time.time(),
                 )
             )
         except Exception as exc:  # pragma: no cover - caller needs aggregate errors

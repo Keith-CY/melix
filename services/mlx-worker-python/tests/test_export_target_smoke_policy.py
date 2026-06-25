@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import runpy
 import sys
+from typing import Any
 
 from google.protobuf import json_format
 import pytest
@@ -202,6 +203,28 @@ def test_export_target_smoke_metrics_report_covers_all_fixtures(tmp_path: Path) 
     assert payload["output_preview_byte_count"] > 0
     assert payload["timeout_count"] == 0
     assert payload["waiver_count"] == 0
+
+
+def test_export_target_smoke_metrics_report_reuses_validated_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest_paths = [FIXTURE_ROOT / "melix_managed/export-target-manifest.json"]
+    original_validate = export_target_smoke.validate_export_target_manifest_file
+    validation_calls = 0
+
+    def tracked_validate(*args: Any, **kwargs: Any):
+        nonlocal validation_calls
+        validation_calls += 1
+        return original_validate(*args, **kwargs)
+
+    monkeypatch.setattr(export_target_smoke, "validate_export_target_manifest_file", tracked_validate)
+
+    payload = export_target_smoke.build_smoke_metrics_report(manifest_paths, tmp_path)
+
+    assert payload["ok"] is True
+    assert payload["target_count"] == 1
+    assert validation_calls == len(manifest_paths)
 
 
 def test_runtime_export_smoke_policy_probe_script_emits_metrics(

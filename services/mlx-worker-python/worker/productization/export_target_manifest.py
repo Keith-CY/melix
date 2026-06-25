@@ -67,7 +67,8 @@ def validate_export_target_manifest_file(
 ):
     manifest_path = Path(path)
     started = time.perf_counter()
-    payload = manifest_path.read_text(encoding="utf-8")
+    payload_bytes = manifest_path.read_bytes()
+    payload = payload_bytes.decode("utf-8")
     manifest = export_target_manifest_pb2.ExportTargetManifest()
     errors: list[str] = []
 
@@ -88,7 +89,7 @@ def validate_export_target_manifest_file(
         target_type=manifest.target_type,
         fixture_count=fixture_count,
         schema_error_count=len(errors),
-        manifest_byte_size=manifest_path.stat().st_size,
+        manifest_byte_size=len(payload_bytes),
         manifest_validation_latency_ms=elapsed_ms,
         generated_file_count=len(manifest.generated_files),
         required_file_count=len(manifest.required_files),
