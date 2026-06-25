@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from packages.protocol.python.workspace.v1 import export_target_manifest_pb2
+from worker.productization import export_target_diagnostics as export_target_diagnostics_module
 from worker.productization.export_target_diagnostics import (
     CODE_DUPLICATE_TENSOR_NAME,
     CODE_INSUFFICIENT_MEMORY,
@@ -96,6 +97,8 @@ def test_export_target_diagnostics_redacts_paths_secrets_private_text_and_identi
             "proxy=http://user:secret-proxy-pass@example.test",
             "prompt: private customer prompt that must not leave the log",
             "operator_id=chenyu",
+            "certificate -----BEGIN TOKEN-----abc123-----END TOKEN-----",
+            "openai key sk-liveexample12345678",
         ]
     )
     (target_root / "logs/ollama-create.log").write_text(log_text + "\n", encoding="utf-8")
@@ -112,6 +115,8 @@ def test_export_target_diagnostics_redacts_paths_secrets_private_text_and_identi
     assert "sk-testsecret" not in excerpt
     assert "super-secret-value" not in excerpt
     assert "secret-proxy-pass" not in excerpt
+    assert "abc123" not in excerpt
+    assert "sk-liveexample12345678" not in excerpt
     assert "private customer prompt" not in excerpt
     assert "chenyu" not in excerpt
     assert receipt["redaction_summary"]["redacted_absolute_path_count"] >= 1
@@ -165,6 +170,50 @@ def test_export_target_diagnostics_resolves_target_root_once_for_many_path_redac
     assert "<target>/artifacts/model.gguf" in excerpt.text
     assert "<target>/artifacts/blobs/sha256-777777" in excerpt.text
     assert "<target>/logs/ollama-create.log" in excerpt.text
+
+
+def test_export_target_diagnostics_skips_secret_regexes_for_plain_path_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    class FailingSecretPattern:
+        def sub(self, *_args: object, **_kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("secret redaction regex should be skipped")
+
+    for pattern_name in (
+        "_CERTIFICATE_PATTERN",
+        "_BEARER_SECRET_PATTERN",
+        "_NAMED_SECRET_PATTERN",
+        "_URL_CREDENTIAL_PATTERN",
+        "_OPENAI_KEY_PATTERN",
+        "_IDENTITY_PATTERN",
+    ):
+        monkeypatch.setattr(
+            export_target_diagnostics_module,
+            pattern_name,
+            FailingSecretPattern(),
+        )
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text=f"runtime load failed at {target_root / 'artifacts/model.gguf'}",
+            )
+        ],
+        bounded_bytes=4096,
+        bounded_lines=20,
+    )
+
+    assert "<target>/artifacts/model.gguf" in excerpt.text
+    assert excerpt.summary.redacted_secret_count == 0
 
 
 def test_export_target_diagnostics_redaction_uses_unresolved_root_when_root_resolve_fails(
