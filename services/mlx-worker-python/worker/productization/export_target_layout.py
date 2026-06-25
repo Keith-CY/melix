@@ -178,29 +178,43 @@ def build_export_retention_report(
     now: float | None = None,
 ) -> dict[str, object]:
     current_time = time.time() if now is None else now
-    decisions: list[_FileDecision] = []
+    resolved_target_root = layout.target_root.resolve()
+    retained_byte_size = 0
+    cleanable_byte_size = 0
+    deleted_byte_size = 0
+    retained_file_count = 0
+    cleanable_file_count = 0
+    deleted_file_count = 0
+    missing_file_count = 0
+    retention_decision_count = 0
+    decision_payloads: list[dict[str, object]] = []
     for section, rows in _file_sections(manifest):
         for row in rows:
-            decisions.append(
-                _decide_file(
-                    layout,
-                    manifest,
-                    section,
-                    row,
-                    apply_cleanup=apply_cleanup,
-                    now=current_time,
-                )
+            decision = _decide_file(
+                layout,
+                manifest,
+                section,
+                row,
+                resolved_target_root=resolved_target_root,
+                apply_cleanup=apply_cleanup,
+                now=current_time,
             )
-
-    retained = [decision for decision in decisions if decision.decision == RETENTION_DECISION_RETAIN]
-    cleanable = [
-        decision
-        for decision in decisions
-        if decision.decision
-        in {RETENTION_DECISION_CLEANABLE, RETENTION_DECISION_DELETE_AFTER_TTL}
-    ]
-    deleted = [decision for decision in decisions if decision.deleted]
-    missing = [decision for decision in decisions if not decision.exists]
+            retention_decision_count += 1
+            if decision.decision == RETENTION_DECISION_RETAIN:
+                retained_byte_size += decision.byte_size
+                retained_file_count += 1
+            elif decision.decision in {
+                RETENTION_DECISION_CLEANABLE,
+                RETENTION_DECISION_DELETE_AFTER_TTL,
+            }:
+                cleanable_byte_size += decision.byte_size
+                cleanable_file_count += 1
+            if decision.deleted:
+                deleted_byte_size += decision.byte_size
+                deleted_file_count += 1
+            if not decision.exists:
+                missing_file_count += 1
+            decision_payloads.append(_decision_payload(decision))
 
     payload = {
         "schema_version": EXPORT_RETENTION_REPORT_SCHEMA_VERSION,
@@ -209,15 +223,15 @@ def build_export_retention_report(
         "target_type": layout.target_type_segment,
         "target_root": _relative_to_workspace(layout, layout.target_root),
         "mode": "apply" if apply_cleanup else "dry_run",
-        "retained_byte_size": sum(decision.byte_size for decision in retained),
-        "cleanable_byte_size": sum(decision.byte_size for decision in cleanable),
-        "deleted_byte_size": sum(decision.byte_size for decision in deleted),
-        "retention_decision_count": len(decisions),
-        "retained_file_count": len(retained),
-        "cleanable_file_count": len(cleanable),
-        "deleted_file_count": len(deleted),
-        "missing_file_count": len(missing),
-        "decisions": [_decision_payload(decision) for decision in decisions],
+        "retained_byte_size": retained_byte_size,
+        "cleanable_byte_size": cleanable_byte_size,
+        "deleted_byte_size": deleted_byte_size,
+        "retention_decision_count": retention_decision_count,
+        "retained_file_count": retained_file_count,
+        "cleanable_file_count": cleanable_file_count,
+        "deleted_file_count": deleted_file_count,
+        "missing_file_count": missing_file_count,
+        "decisions": decision_payloads,
     }
     return payload
 
@@ -413,10 +427,11 @@ def _decide_file(
     section: str,
     row: export_target_manifest_pb2.ExportTargetFile,
     *,
+    resolved_target_root: Path | None = None,
     apply_cleanup: bool,
     now: float,
 ) -> _FileDecision:
-    path = _target_relative_path(layout, row.path)
+    path = _target_relative_path(layout, row.path, resolved_root=resolved_target_root)
     exists = path.exists()
     decision, reason = _retention_decision(manifest, row, path, exists, now)
     deleted = False
@@ -520,12 +535,17 @@ def _path_segment(value: str) -> str:
     return segment or "unnamed"
 
 
-def _target_relative_path(layout: ExportTargetLayout, relative_path: str) -> Path:
+def _target_relative_path(
+    layout: ExportTargetLayout,
+    relative_path: str,
+    *,
+    resolved_root: Path | None = None,
+) -> Path:
     if not relative_path:
         raise ValueError("export target file path is empty")
-    resolved_root = layout.target_root.resolve()
-    path = (resolved_root / relative_path).resolve()
-    if not path.is_relative_to(resolved_root):
+    target_root = layout.target_root.resolve() if resolved_root is None else resolved_root
+    path = (target_root / relative_path).resolve()
+    if not path.is_relative_to(target_root):
         raise ValueError(f"export target file path escapes target root: {relative_path}")
     return path
 
