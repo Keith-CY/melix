@@ -24,6 +24,12 @@ The affected path is covered by the registered PR-scoped probe `local-job-follow
 3. Run the registered focused test command, changed-scope coverage command, and local registered probe on Linux.
 4. Use GitHub Actions PR-scoped performance as the merge gate after opening the PR.
 
+## 2026-06-25 follow-up: direct binary open
+
+This follow-up keeps the same registered `local-job-followup-scan-scandir` probe and narrows the already byte-oriented `load_record()` hot path by replacing the `Path.read_bytes()` convenience wrapper with a direct `open(path, "rb").read()` call. The record still enters `json.loads()` as bytes, and missing-record behavior still returns `None` on `FileNotFoundError`; no schema, reconciliation, claim, projection, or admission behavior changes.
+
+The focused regression guard monkeypatches `Path.read_bytes()` so the scan/load path cannot silently drift back to the wrapper when iterating large continuation stores.
+
 ## Validation boundary
 
 This is a Python-only slice and is locally verifiable on Linux. GitHub Actions remains the final registered PR-scoped performance validation and merge gate.
