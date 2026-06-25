@@ -148,6 +148,9 @@ release evidence. The gate fails closed when:
 - steady-state health polling would exceed the local TIME_WAIT socket budget
 - the installed-app audit does not record `runtime_source`, health probe URL,
   service base URL, and manifest completion evidence
+- a self-contained app-bundle packaged-launch manifest does not satisfy
+  `python_import_isolation.gate_satisfied=1`, which proves the generated launcher
+  declares bundled-runtime import isolation before starting packaged Python workers
 
 Interpret the top-level M9 counters as:
 

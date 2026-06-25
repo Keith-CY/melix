@@ -19,6 +19,16 @@ from worker.productization.macos_app_bundle import write_unsigned_macos_app_bund
 from worker.productization.packaging_targets import list_packaging_target_profiles
 
 
+def _python_import_isolation_from_manifest(manifest: dict[str, object]) -> tuple[dict[str, object], dict[str, object]]:
+    raw_python_import_isolation = manifest.get("python_import_isolation", {})
+    python_import_isolation = (
+        raw_python_import_isolation if isinstance(raw_python_import_isolation, dict) else {}
+    )
+    raw_isolation_env = python_import_isolation.get("env", {})
+    isolation_env = raw_isolation_env if isinstance(raw_isolation_env, dict) else {}
+    return python_import_isolation, isolation_env
+
+
 def _write_repo_fixture(repo_root: Path) -> None:
     (repo_root / "services/mlx-worker-python/worker").mkdir(parents=True, exist_ok=True)
     (repo_root / "packages/protocol/python").mkdir(parents=True, exist_ok=True)
@@ -113,6 +123,7 @@ def main() -> int:
         bundle_target_manifest = json.loads(
             Path(bundle_manifest["packaging_target_manifest_path"]).read_text(encoding="utf-8")
         )
+        python_import_isolation, isolation_env = _python_import_isolation_from_manifest(bundle_target_manifest)
 
     logical_identities = {
         launch_manifest["logical_product_identity"],
@@ -136,6 +147,12 @@ def main() -> int:
         ),
         "packaging_target_app_bundle_profile_ok": int(
             bundle_target_manifest["packaging_target_id"] == "macos_app_bundle_preview"
+        ),
+        "packaging_target_app_bundle_python_import_isolated": int(
+            python_import_isolation.get("import_isolated") is True
+            and isolation_env.get("PYTHONSAFEPATH") == "1"
+            and isolation_env.get("PYTHONNOUSERSITE") == "1"
+            and isolation_env.get("PYTHONDONTWRITEBYTECODE") == "1"
         ),
         "packaging_target_smoke_ms": round((time.perf_counter() - started_at) * 1_000, 2),
     }
