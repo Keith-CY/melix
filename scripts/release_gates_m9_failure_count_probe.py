@@ -94,10 +94,12 @@ def _exercise_packaged_launch_release_gate() -> None:
     expected_malformed = {
         "packaged_launch.connect_host_resolution is missing",
         "packaged_launch.installed_app_audit is missing",
+        "packaged_launch.python_import_isolation is missing",
         "packaged_launch.runtime_source.packaging_target_id is missing",
         "packaged_launch.runtime_source.runtime_layout is missing",
         "connect_host_resolution.connect_host_loopback is missing",
         "installed_app_audit.audit_passed is missing",
+        "python_import_isolation.gate_satisfied is missing",
     }
     if not expected_malformed.issubset(set(malformed_failures)):  # pragma: no cover
         raise SystemExit(f"malformed packaged launch evidence was not fully reported: {malformed_failures}")
@@ -117,6 +119,10 @@ def _exercise_packaged_launch_release_gate() -> None:
             **packaged_launch["installed_app_audit"],
             "audit_passed": 0.0,
         },
+        "python_import_isolation": {
+            **packaged_launch["python_import_isolation"],
+            "gate_satisfied": 0.0,
+        },
     }
     regressed_failures = release_gates.evaluate_release_gate(
         {"install": {"packaged_launch": regressed}},
@@ -127,6 +133,7 @@ def _exercise_packaged_launch_release_gate() -> None:
         "health_probe_reuse.reused_client_count=0.00 fell below minimum 1.00",
         "health_probe_reuse.time_wait_socket_count=6.00 exceeded maximum 4.00",
         "installed_app_audit.audit_passed=0.00 fell below minimum 1.00",
+        "python_import_isolation.gate_satisfied=0.00 fell below minimum 1.00",
     }
     if not expected_regressions.issubset(set(regressed_failures)):  # pragma: no cover
         raise SystemExit(f"regressed packaged launch evidence was not fully reported: {regressed_failures}")

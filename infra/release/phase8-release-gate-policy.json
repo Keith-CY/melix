@@ -87,6 +87,9 @@
     },
     "installed_app_audit.audit_passed": {
       "min": 1.0
+    },
+    "python_import_isolation.gate_satisfied": {
+      "min": 1.0
     }
   },
   "quantization": {
