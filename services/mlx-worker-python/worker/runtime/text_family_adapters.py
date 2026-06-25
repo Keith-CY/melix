@@ -263,6 +263,24 @@ def resolve_text_family_config(
         "melix.text.moe.enabled",
         default=expert_count > 0 or descriptor.moe_enabled,
     )
+    attention_profile = _string_value(metadata, "melix.text.attention_profile", "")
+    if not attention_profile:
+        attention_profile = _inferred_attention_profile(
+            config_payload,
+            default=descriptor.attention_profile,
+        )
+    rope_profile = _string_value(metadata, "melix.text.rope_profile", "")
+    if not rope_profile:
+        rope_profile = _inferred_rope_profile(
+            config_payload,
+            default=descriptor.rope_profile,
+        )
+    moe_gate_dequant_metadata = metadata.get("melix.text.moe.gate_dequant", "").strip()
+    moe_gate_dequant = (
+        _bool_from_any(moe_gate_dequant_metadata)
+        if moe_gate_dequant_metadata
+        else _inferred_moe_gate_dequant(config_payload, default=descriptor.moe_gate_dequant)
+    )
     return ResolvedTextFamilyConfig(
         family_id=detection.family_id,
         architecture=_string_value(metadata, "model_architecture", detection.architecture or descriptor.default_architecture),
@@ -279,24 +297,12 @@ def resolve_text_family_config(
             "tool_parser_xml_fallback",
             default=descriptor.tool_parser_xml_fallback,
         ),
-        attention_profile=_string_value(
-            metadata,
-            "melix.text.attention_profile",
-            _inferred_attention_profile(config_payload, default=descriptor.attention_profile),
-        ),
-        rope_profile=_string_value(
-            metadata,
-            "melix.text.rope_profile",
-            _inferred_rope_profile(config_payload, default=descriptor.rope_profile),
-        ),
+        attention_profile=attention_profile,
+        rope_profile=rope_profile,
         moe_enabled=moe_enabled,
         expert_count=expert_count if moe_enabled else 0,
         expert_count_source=expert_count_source if moe_enabled and expert_count > 0 else "none",
-        moe_gate_dequant=_bool_value(
-            metadata,
-            "melix.text.moe.gate_dequant",
-            default=_inferred_moe_gate_dequant(config_payload, default=descriptor.moe_gate_dequant),
-        ),
+        moe_gate_dequant=moe_gate_dequant,
     )
 
 

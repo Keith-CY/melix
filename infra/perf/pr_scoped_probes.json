@@ -392,6 +392,12 @@
         "unit": "calls",
         "direction": "lower_is_better",
         "warn_pct": 0.0
+      },
+      {
+        "key": "config_key_accesses_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
       }
     ]
   },
