@@ -766,6 +766,7 @@ def test_dataset_source_records_probe_script_emits_metrics(
     assert metrics["directory_count"] == 3.0
     assert metrics["files_per_directory"] == 4.0
     assert metrics["file_count_mean"] == 12.0
+    assert metrics["source_kind_variant_count"] == 4.0
 
 
 def test_dataset_source_records_probe_rejects_changed_source_kind(
