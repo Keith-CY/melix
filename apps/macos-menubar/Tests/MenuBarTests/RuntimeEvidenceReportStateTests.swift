@@ -194,6 +194,27 @@ struct RuntimeEvidenceReportStateTests {
         #expect(renderedTexts.contains("Debug bundle ready at /tmp/melix-debug/bench-1."))
     }
 
+    @Test("diagnostics debug bundle tolerates sparse environment diagnostic payloads")
+    func diagnosticsDebugBundleToleratesSparseEnvironmentDiagnosticPayloads() throws {
+        let result = try RuntimeDiagnosticsDebugBundleState.decode(
+            json: makeDiagnosticsDebugBundleJSON(
+                environmentDiagnosticJSON: """
+                  "environment_diagnostic": {
+                    "schema_version": "melix.desktop_environment_diagnostic_receipt.v1",
+                    "summary": {},
+                    "redaction_summary": {},
+                    "metrics": {}
+                  }
+                """
+            )
+        )
+
+        #expect(result.environmentDiagnostic?.schemaVersion == "melix.desktop_environment_diagnostic_receipt.v1")
+        #expect(result.environmentDiagnostic?.summaryText == "unknown • 0 checks • 0 failed • 0 warnings")
+        #expect(result.environmentDiagnostic?.redactionText == "0 fields redacted")
+        #expect(result.environmentDiagnostic?.latencyText == "0 ms")
+    }
+
     @Test("diagnostics summarizes serving diagnostics queue retention and drops")
     @MainActor
     func diagnosticsSummarizesServingDiagnosticsQueueRetentionAndDrops() throws {

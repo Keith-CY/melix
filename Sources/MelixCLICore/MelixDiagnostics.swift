@@ -577,11 +577,12 @@ public enum MelixDesktopEnvironmentDiagnosticBuilder {
             guard let raw = normalized(environment[key]) else {
                 return nil
             }
+            let expanded = (raw as NSString).expandingTildeInPath
             return [
                 "key": key,
                 "path": pathRedaction(raw),
-                "exists": fileManager.fileExists(atPath: raw),
-                "readable": fileManager.isReadableFile(atPath: raw),
+                "exists": fileManager.fileExists(atPath: expanded),
+                "readable": fileManager.isReadableFile(atPath: expanded),
             ]
         }
         let missing = values.filter { ($0["exists"] as? Bool) != true || ($0["readable"] as? Bool) != true }
@@ -714,7 +715,8 @@ public enum MelixDesktopEnvironmentDiagnosticBuilder {
 
     private static func resolveExecutable(named name: String, environment: [String: String], fileManager: FileManager) -> String? {
         for entry in pathEntries(environment["PATH"]) {
-            let candidate = URL(fileURLWithPath: entry).appendingPathComponent(name).path
+            let expandedEntry = (entry as NSString).expandingTildeInPath
+            let candidate = URL(fileURLWithPath: expandedEntry).appendingPathComponent(name).path
             if fileManager.isExecutableFile(atPath: candidate) {
                 return candidate
             }

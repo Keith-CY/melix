@@ -12005,7 +12005,12 @@ struct MelixCLIRunnerTests {
             .appendingPathComponent("melix-env-diagnostic-\(UUID().uuidString)")
         let bin = root.appendingPathComponent("bin", isDirectory: true)
         let cert = root.appendingPathComponent("certs/root.pem")
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let homeRelativeRoot = home.appendingPathComponent(".melix-env-diagnostic-\(UUID().uuidString)")
+        let homeRelativeBin = homeRelativeRoot.appendingPathComponent("bin", isDirectory: true)
+        let homeRelativeCert = homeRelativeRoot.appendingPathComponent("certs/root.pem")
         defer { try? FileManager.default.removeItem(at: root) }
+        defer { try? FileManager.default.removeItem(at: homeRelativeRoot) }
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: cert.deletingLastPathComponent(), withIntermediateDirectories: true)
         for name in ["melix", "uv", "python3", "mlx_lm"] {
@@ -12014,6 +12019,16 @@ struct MelixCLIRunnerTests {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
         }
         try "fixture cert\n".write(to: cert, atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: homeRelativeBin, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: homeRelativeCert.deletingLastPathComponent(), withIntermediateDirectories: true)
+        for name in ["melix", "uv", "python3", "mlx_lm"] {
+            let executable = homeRelativeBin.appendingPathComponent(name)
+            try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        }
+        try "fixture home cert\n".write(to: homeRelativeCert, atomically: true, encoding: .utf8)
+        let tildeBinPath = "~/" + homeRelativeBin.path.replacingOccurrences(of: home.path + "/", with: "")
+        let tildeCertPath = "~/" + homeRelativeCert.path.replacingOccurrences(of: home.path + "/", with: "")
 
         let melixHome = MelixHome(environment: [
             "MELIX_HOME": root.path,
@@ -12026,12 +12041,12 @@ struct MelixCLIRunnerTests {
             environment: [
                 "MELIX_HOME": melixHome.rootURL.path,
                 "MELIX_RUNTIME_DIR": melixHome.runtimeDirectoryURL.path,
-                "PATH": bin.path,
+                "PATH": tildeBinPath,
                 "MELIX_PYTHON_BRIDGE_EXECUTABLE": bin.appendingPathComponent("python3").path,
                 "MELIX_UV": bin.appendingPathComponent("uv").path,
                 "MELIX_MLX_LM": bin.appendingPathComponent("mlx_lm").path,
                 "HTTP_PROXY": "http://alice:sk-secret-proxy@example.test:8080",
-                "SSL_CERT_FILE": cert.path,
+                "SSL_CERT_FILE": tildeCertPath,
                 "MELIX_HTTP_PORT": "not-a-port",
                 "MELIX_WORKER_SOCKET_PATH": root.appendingPathComponent("runtime/sk-secret-socket.sock").path,
             ]
@@ -12059,7 +12074,9 @@ struct MelixCLIRunnerTests {
         #expect(proxyVariables.first?["contains_credentials"] as? Bool == true)
         #expect((proxyVariables.first?["value"] as? String ?? "").contains("sk-secret-proxy") == false)
         #expect(certificate["status"] as? String == "pass")
-        #expect(certificateVariables.first?["path"] as? String != cert.path)
+        #expect(certificateVariables.first?["exists"] as? Bool == true)
+        #expect(certificateVariables.first?["readable"] as? Bool == true)
+        #expect(certificateVariables.first?["path"] as? String != homeRelativeCert.path)
         #expect(localServer["status"] as? String == "warn")
         #expect(localServerObserved["http_port"] as? String == "not-a-port")
         #expect(localServerObserved["worker_socket_path_count"] as? Int == 1)

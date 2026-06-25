@@ -87,10 +87,10 @@ public struct RuntimeEnvironmentDiagnosticSummaryState: Equatable, Sendable, Dec
     }
 
     private struct SummaryPayload: Decodable {
-        let status: String
-        let checkCount: Int
-        let failedCheckCount: Int
-        let warningCheckCount: Int
+        let status: String?
+        let checkCount: Int?
+        let failedCheckCount: Int?
+        let warningCheckCount: Int?
 
         private enum CodingKeys: String, CodingKey {
             case status
@@ -101,7 +101,7 @@ public struct RuntimeEnvironmentDiagnosticSummaryState: Equatable, Sendable, Dec
     }
 
     private struct RedactionSummaryPayload: Decodable {
-        let redactedFieldCount: Int
+        let redactedFieldCount: Int?
 
         private enum CodingKeys: String, CodingKey {
             case redactedFieldCount = "redacted_field_count"
@@ -109,7 +109,7 @@ public struct RuntimeEnvironmentDiagnosticSummaryState: Equatable, Sendable, Dec
     }
 
     private struct MetricsPayload: Decodable {
-        let diagnosticLatencyMS: Int
+        let diagnosticLatencyMS: Int?
 
         private enum CodingKeys: String, CodingKey {
             case diagnosticLatencyMS = "diagnostic_latency_ms"
