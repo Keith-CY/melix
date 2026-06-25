@@ -221,7 +221,10 @@ the evidence source for this Python slice and includes focused test, coverage,
 and `command_json` probe commands in `infra/perf/pr_scoped_probes.json`.
 The same validator should derive `manifest_byte_size` from the manifest bytes it
 already read for protobuf JSON parsing instead of issuing a second filesystem
-stat call on every validation.
+stat call on every validation. Its metrics pass should accumulate generated,
+required, and evidence byte totals while iterating each manifest file section
+once instead of materializing a combined file-row tuple solely to count evidence
+bytes.
 
 ### Export Plan Receipt
 

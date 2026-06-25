@@ -348,23 +348,30 @@ def _validate_metrics(
 ) -> list[str]:
     metrics = manifest.metrics
     errors: list[str] = []
+    evidence_bytes = 0
     if metrics.generated_file_count != len(manifest.generated_files):
         errors.append("metrics.generated_file_count must equal generated_files count")
     if metrics.required_file_count != len(manifest.required_files):
         errors.append("metrics.required_file_count must equal required_files count")
     if metrics.intermediate_file_count != len(manifest.intermediate_files):
         errors.append("metrics.intermediate_file_count must equal intermediate_files count")
-    generated_bytes = sum(row.byte_size for row in manifest.generated_files)
+    generated_bytes = 0
+    for row in manifest.generated_files:
+        generated_bytes += row.byte_size
+        if row.retention_class == export_target_manifest_pb2.EXPORT_RETENTION_CLASS_EVIDENCE:
+            evidence_bytes += row.byte_size
     if metrics.artifact_byte_size != generated_bytes:
         errors.append("metrics.artifact_byte_size must equal generated_files byte_size sum")
-    required_bytes = sum(row.byte_size for row in manifest.required_files)
+    required_bytes = 0
+    for row in manifest.required_files:
+        required_bytes += row.byte_size
+        if row.retention_class == export_target_manifest_pb2.EXPORT_RETENTION_CLASS_EVIDENCE:
+            evidence_bytes += row.byte_size
     if metrics.required_byte_size != required_bytes:
         errors.append("metrics.required_byte_size must equal required_files byte_size sum")
-    evidence_bytes = sum(
-        row.byte_size
-        for row in (*manifest.generated_files, *manifest.required_files, *manifest.intermediate_files)
-        if row.retention_class == export_target_manifest_pb2.EXPORT_RETENTION_CLASS_EVIDENCE
-    )
+    for row in manifest.intermediate_files:
+        if row.retention_class == export_target_manifest_pb2.EXPORT_RETENTION_CLASS_EVIDENCE:
+            evidence_bytes += row.byte_size
     if metrics.evidence_byte_size != evidence_bytes:
         errors.append("metrics.evidence_byte_size must equal evidence file byte_size sum")
     return errors
