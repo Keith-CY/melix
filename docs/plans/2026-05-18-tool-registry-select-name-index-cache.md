@@ -72,6 +72,17 @@ builder is kept as a module-level helper so the existing vector/keyword paths do
 not pay a per-call nested-function allocation cost. The probe records a separate
 `always_only_planning_elapsed_ms_mean` metric for this bounded-cap routing path.
 
+## Slice update: exact missing single-name error fast path
+
+This incremental slice keeps the same `tool-registry-select-name-index-cache`
+registered probe and narrows the optimization to exact single-name selection
+misses such as `("missing_tool",)`. Once the first cached name-index lookup
+proves the exact non-blank name is absent and there is no selected-registry cache
+hit, `ToolRegistry.select()` now raises the existing unknown-tool error directly
+instead of performing a second equivalent dictionary lookup. Whitespace-trimmed
+single-name requests, cache hits, valid selections, and error messages remain
+unchanged.
+
 ## Acceptance Criteria
 
 - Focused behavior tests pass locally on Linux.
