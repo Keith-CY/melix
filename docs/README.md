@@ -77,6 +77,7 @@ These are the authoritative interface and architecture definitions. Do not move 
 | [Export Artifact Layout And Retention Policy](plans/2026-06-24-export-artifact-layout-retention.md) | Runtime export target layout, retention reports, cleanup dry-run/apply behavior, and byte-accounting metrics |
 | [Cross-Runtime Model Inventory Plan](plans/2026-06-24-cross-runtime-model-inventory.md) | M4 source descriptors, scan receipts, usability classification, browse-to-admit receipts, cancellable pulls, and inventory metrics |
 | [Desktop Environment Doctor And Storage Cleanup Plan](plans/2026-06-25-desktop-environment-doctor-storage-cleanup.md) | M4 Desktop/CLI diagnostic receipts, storage inventory, cleanup dry-run/apply receipts, redaction rules, active-job protection, and cleanup metrics |
+| [Issue 58 Packaged Python Import Isolation](plans/2026-06-25-issue-58-packaged-python-import-isolation.md) | App-bundle Python import isolation contract, launcher environment flags, and packaged-launch release-gate evidence |
 
 ---
 

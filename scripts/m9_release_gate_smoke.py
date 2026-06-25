@@ -32,6 +32,7 @@ def run_smoke(repo_root: Path, fixture_mode: str) -> dict[str, object]:
     observability_evidence = dict(report.get("observability", {}).get("evidence", {}))
     packaged_launch = dict(report.get("install", {}).get("packaged_launch", {}))
     packaged_launch_audit = dict(packaged_launch.get("installed_app_audit", {}))
+    packaged_launch_import_isolation = dict(packaged_launch.get("python_import_isolation", {}))
 
     return {
         "passed": not failures,
@@ -52,6 +53,9 @@ def run_smoke(repo_root: Path, fixture_mode: str) -> dict[str, object]:
             ),
             "release_gate.packaged_launch_installed_app_audit_passed": float(
                 packaged_launch_audit.get("audit_passed", 0.0)
+            ),
+            "release_gate.packaged_launch_python_import_isolation_passed": float(
+                packaged_launch_import_isolation.get("gate_satisfied", 0.0)
             ),
         },
     }
@@ -252,6 +256,13 @@ def _build_passing_packaged_launch_report() -> dict[str, object]:
             "logical_product_identity": "io.melix",
             "logical_product_identity_matches": 1.0,
             "audit_passed": 1.0,
+        },
+        "python_import_isolation": {
+            "import_isolated": 1.0,
+            "required_flags_present": 1.0,
+            "runtime_layout_requires_isolation": 1.0,
+            "gate_satisfied": 1.0,
+            "pythonpath_policy": "bundled_site_packages_then_bundled_repo",
         },
     }
 

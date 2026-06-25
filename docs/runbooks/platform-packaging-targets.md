@@ -74,6 +74,11 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
 - packages `Contents/Resources/MelixAppIcon.icns` and advertises it through `CFBundleIconFile`
 - launches the packaged app in `Dock + tray` mode through `MELIX_MENU_BAR_PRESENTATION_MODE=dock-and-tray`
 - keeps the tray surface backed by the menu-bar template icon shipped in the Swift package resources
+- starts bundled Python workers and readiness probes with `PYTHONSAFEPATH=1`,
+  `PYTHONNOUSERSITE=1`, and `PYTHONDONTWRITEBYTECODE=1` while keeping `PYTHONPATH`
+  pinned to bundled site-packages and bundled Melix sources
+- records that import-isolation contract under `python_import_isolation` in
+  `Resources/packaging-target-manifest.json`
 - keeps the same logical Melix identity while making the bundle-specific distribution and update
   strategy explicit
 
