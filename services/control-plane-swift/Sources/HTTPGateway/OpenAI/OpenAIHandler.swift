@@ -1151,7 +1151,8 @@ button.primary:active {
                 response = rateLimitFailure
                 break
             }
-            switch (request.method, request.path) {
+            let routePath = sanitizedRequestRoutePath(request.path)
+            switch (request.method, routePath) {
             case (.get, "/.well-known/melix.json"):
                 response = try await handleDiscoveryWellKnown()
             case (.get, "/api/capabilities"):
@@ -4954,13 +4955,20 @@ button.primary:active {
         [
             "schema_version": "melix.ingress_privacy_receipt.v1",
             "surface": "openai_request_ingress",
-            "route": route,
+            "route": sanitizedRequestRoutePath(route),
             "field": field,
             "phase": phase,
             "action": action,
             "redaction_policy": redactionPolicy,
             "raw_payload_included": false,
         ]
+    }
+
+    private func sanitizedRequestRoutePath(_ route: String) -> String {
+        guard let separatorIndex = route.firstIndex(where: { $0 == "?" || $0 == "#" }) else {
+            return route
+        }
+        return String(route[..<separatorIndex])
     }
 
     private func decodingErrorField(_ error: DecodingError) -> String {
@@ -5571,7 +5579,8 @@ button.primary:active {
     }
 
     private func authorizationRoute(for request: HTTPRequest) -> GatewayAuthorizationRoute {
-        switch (request.method, request.path) {
+        let routePath = sanitizedRequestRoutePath(request.path)
+        switch (request.method, routePath) {
         case (.get, "/v1/melix/companion"):
             return .publicAsset
         case (.get, "/health"):

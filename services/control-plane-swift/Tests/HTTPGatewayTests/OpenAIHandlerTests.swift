@@ -2346,6 +2346,7 @@ struct OpenAIHandlerTests {
         "OpenAI ingress validation errors include sanitized privacy receipts",
         arguments: [
             (
+                "/v1/chat/completions?token=abc123#frag-secret",
                 "/v1/chat/completions",
                 """
                 {
@@ -2359,6 +2360,7 @@ struct OpenAIHandlerTests {
             ),
             (
                 "/v1/completions",
+                "/v1/completions",
                 """
                 {
                   "model": "melix-dev-text",
@@ -2370,6 +2372,7 @@ struct OpenAIHandlerTests {
                 "prompt"
             ),
             (
+                "/v1/responses",
                 "/v1/responses",
                 """
                 {
@@ -2383,6 +2386,7 @@ struct OpenAIHandlerTests {
             ),
             (
                 "/v1/messages",
+                "/v1/messages",
                 """
                 {
                   "model": "melix-dev-text",
@@ -2395,6 +2399,7 @@ struct OpenAIHandlerTests {
             ),
             (
                 "/v1/embeddings",
+                "/v1/embeddings",
                 """
                 {
                   "model": "melix-dev-embedding",
@@ -2405,6 +2410,7 @@ struct OpenAIHandlerTests {
                 "input"
             ),
             (
+                "/v1/chat/completions",
                 "/v1/chat/completions",
                 """
                 {
@@ -2421,6 +2427,7 @@ struct OpenAIHandlerTests {
     )
     func openAIIngressValidationErrorsIncludeSanitizedPrivacyReceipts(
         path: String,
+        expectedRoute: String,
         bodyJSON: String,
         expectedCode: String,
         expectedField: String
@@ -2464,7 +2471,7 @@ struct OpenAIHandlerTests {
         #expect(error["phase"] as? String == "decode")
         #expect(receipt["schema_version"] as? String == "melix.ingress_privacy_receipt.v1")
         #expect(receipt["surface"] as? String == "openai_request_ingress")
-        #expect(receipt["route"] as? String == path)
+        #expect(receipt["route"] as? String == expectedRoute)
         #expect(receipt["phase"] as? String == "decode")
         #expect(receipt["field"] as? String == expectedField)
         #expect(receipt["action"] as? String == "redacted")

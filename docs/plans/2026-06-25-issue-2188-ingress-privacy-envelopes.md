@@ -17,6 +17,8 @@ stable sanitized envelope instead of raw submitted payload content.
   - `POST /v1/embeddings`.
 - Keep status codes, existing error codes, and worker-dispatch boundaries
   unchanged.
+- Report only the request-target path in privacy receipts; query strings and
+  fragments are treated as sensitive ingress material and omitted.
 - Add sentinel tests proving error bodies do not contain submitted email, token,
   path, query, fragment, or local implementation fingerprints.
 
@@ -32,9 +34,10 @@ stable sanitized envelope instead of raw submitted payload content.
 
 The Swift control plane owns local-proxy request admission and OpenAI-compatible
 payload decoding. This slice keeps validation decisions in the existing handler
-paths and attaches a typed `privacy_receipt` to client-visible validation
-errors. The receipt reports route, phase, field, and redaction policy while
-omitting raw payload fragments.
+paths, derives route identity from the request-target path, and attaches a typed
+`privacy_receipt` to client-visible validation errors. The receipt reports
+route, phase, field, and redaction policy while omitting raw payload fragments
+and request-target query or fragment material.
 
 ## Performance Probes And Metrics
 
