@@ -24,6 +24,7 @@ from worker.productization.export_target_diagnostics import (
     write_export_diagnostics_receipt,
     _SourceLine,
     _build_redacted_excerpt,
+    _diagnosis_metric_counts,
 )
 from worker.productization.export_target_layout import (
     build_export_target_layout,
@@ -355,6 +356,20 @@ def test_export_target_diagnostics_falls_back_when_path_resolution_raises_oserro
     assert receipt["status"] == "matched"
     assert str(raw_path) not in excerpt
     assert "<absolute-path>" in excerpt
+
+
+def test_export_target_diagnostics_metric_counts_single_pass() -> None:
+    parsed_count, unknown_count, matched_codes = _diagnosis_metric_counts(
+        [
+            {"code": CODE_RUNTIME_LOAD_FAILED},
+            {"code": CODE_UNKNOWN_FAILURE},
+            {"code": CODE_MISSING_BINARY},
+        ]
+    )
+
+    assert parsed_count == 2
+    assert unknown_count == 1
+    assert matched_codes == {CODE_RUNTIME_LOAD_FAILED, CODE_MISSING_BINARY}
 
 
 def test_export_target_diagnostics_not_applicable_without_logs_or_failures(
