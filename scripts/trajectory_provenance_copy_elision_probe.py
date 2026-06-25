@@ -20,8 +20,11 @@ if str(WORKER_ROOT) not in sys.path:
 from worker.trajectory_provenance import normalize_trajectory_provenance  # noqa: E402
 
 try:  # noqa: E402
-    from worker.trajectory_provenance import _copy_trajectory_provenance_value
+    from worker.trajectory_provenance import _copy_json_list, _copy_trajectory_provenance_value
 except ImportError:  # base checkout before this slice added the helper
+    def _copy_json_list(value: list[Any]) -> list[Any]:
+        return copy.deepcopy(value)
+
     def _copy_trajectory_provenance_value(value: Any) -> Any:
         return copy.deepcopy(value)
 
@@ -107,6 +110,30 @@ def _measure(func: Callable[[dict[str, Any]], dict[str, Any]], provenance: dict[
     return elapsed_ms, peak_bytes
 
 
+def _baseline_scalar_list_copy(value: list[Any]) -> list[Any]:
+    immutable_types = (str, int, float, bool, type(None))
+    for item in value:
+        if type(item) not in immutable_types:
+            return [_copy_trajectory_provenance_value(item) for item in value]
+    return value.copy()
+
+
+def _measure_scalar_list_copy(
+    func: Callable[[list[Any]], list[Any]],
+    value: list[Any],
+    iterations: int,
+) -> float:
+    start = time.perf_counter()
+    checksum = 0
+    for _ in range(iterations):
+        copied = func(value)
+        checksum += len(copied)
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    if checksum != len(value) * iterations:
+        raise RuntimeError("scalar-list probe checksum mismatch")
+    return elapsed_ms
+
+
 def _mean(values: list[float]) -> float:
     return float(statistics.fmean(values)) if values else 0.0
 
@@ -121,10 +148,14 @@ def main() -> int:
     optimized_ms: list[float] = []
     baseline_peak: list[float] = []
     optimized_peak: list[float] = []
+    scalar_baseline_ms: list[float] = []
+    scalar_optimized_ms: list[float] = []
 
     copied = _copy_trajectory_provenance_value(provenance["trajectory_quality_metrics"])
     if copied is provenance["trajectory_quality_metrics"] or copied["components"] is provenance["trajectory_quality_metrics"]["components"]:
         raise RuntimeError("optimized copy did not isolate nested containers")
+
+    scalar_values = ["agentic", "trajectory", "quality", 3, True, None, 0.75]
 
     for _ in range(samples):
         elapsed, peak = _measure(_baseline_normalize, provenance, iterations)
@@ -133,11 +164,19 @@ def main() -> int:
         elapsed, peak = _measure(normalize_trajectory_provenance, provenance, iterations)
         optimized_ms.append(elapsed)
         optimized_peak.append(float(peak))
+        scalar_baseline_ms.append(
+            _measure_scalar_list_copy(_baseline_scalar_list_copy, scalar_values, iterations)
+        )
+        scalar_optimized_ms.append(
+            _measure_scalar_list_copy(_copy_json_list, scalar_values, iterations)
+        )
 
     baseline_mean = _mean(baseline_ms)
     optimized_mean = _mean(optimized_ms)
     delta_ms = optimized_mean - baseline_mean
     speedup = baseline_mean / optimized_mean if optimized_mean > 0 else 0.0
+    scalar_baseline_mean = _mean(scalar_baseline_ms)
+    scalar_optimized_mean = _mean(scalar_optimized_ms)
     result = {
         "baseline_elapsed_ms_mean": baseline_mean,
         "optimized_elapsed_ms_mean": optimized_mean,
@@ -147,6 +186,12 @@ def main() -> int:
         "baseline_peak_bytes_mean": _mean(baseline_peak),
         "optimized_peak_bytes_mean": _mean(optimized_peak),
         "peak_bytes_mean": _mean(optimized_peak),
+        "scalar_list_baseline_elapsed_ms_mean": scalar_baseline_mean,
+        "scalar_list_elapsed_ms_mean": scalar_optimized_mean,
+        "scalar_list_delta_ms": scalar_optimized_mean - scalar_baseline_mean,
+        "scalar_list_speedup": scalar_baseline_mean / scalar_optimized_mean
+        if scalar_optimized_mean > 0
+        else 0.0,
         "sample_count": float(samples),
         "iteration_count": float(iterations),
         "component_count": float(component_count),
