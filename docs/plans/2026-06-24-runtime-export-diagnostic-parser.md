@@ -100,6 +100,13 @@ and matched diagnosis codes in a single pass. The aggregate report also folds
 receipt metrics and diagnosis code discovery into one receipt pass, avoiding the
 previous extra comprehensions and metric summations on every diagnostic report.
 
+A follow-up 2026-06-25 path-redaction slice keeps the same redaction contract
+but checks whether a matched absolute path is lexically under the resolved target
+root before constructing a fallback `Path`. Clean target-local paths now produce
+the same `<target>/...` labels through string slicing, while paths with `..`
+segments or paths outside the target root continue through the existing
+normalization fallback.
+
 Focused verification:
 
 ```bash

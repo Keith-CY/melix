@@ -173,6 +173,48 @@ def test_export_target_diagnostics_resolves_target_root_once_for_many_path_redac
     assert "<target>/logs/ollama-create.log" in excerpt.text
 
 
+def test_export_target_diagnostics_uses_lexical_target_path_fast_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    def fail_path_construction(*_args: object, **_kwargs: object) -> Path:  # pragma: no cover
+        raise AssertionError("clean target paths should not allocate fallback Path objects")
+
+    monkeypatch.setattr(export_target_diagnostics_module, "Path", fail_path_construction)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text=f"runtime load failed at {target_root / 'artifacts/model.gguf'}.",
+            ),
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text=f"missing blob at {target_root / 'artifacts/blobs/sha256-777777'})",
+            ),
+        ],
+        bounded_bytes=4096,
+        bounded_lines=20,
+    )
+
+    assert "<target>/artifacts/model.gguf." in excerpt.text
+    assert "<target>/artifacts/blobs/sha256-777777)" in excerpt.text
+    assert excerpt.summary.redacted_absolute_path_count == 2
+    assert export_target_diagnostics_module._target_relative_text(
+        str(target_root), str(target_root)
+    ) == "."
+    assert export_target_diagnostics_module._target_relative_text(
+        f"{target_root}-sibling/artifact", str(target_root)
+    ) is None
+
+
 def test_export_target_diagnostics_skips_secret_regexes_for_plain_path_lines(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
