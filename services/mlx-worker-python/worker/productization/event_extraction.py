@@ -2860,7 +2860,11 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
             raise json.JSONDecodeError("Extra data", response_text, end_index)
         return parsed
 
-    if response_length and response_text[0] == "`" and response_text.startswith(_JSON_FENCE_PREFIX):
+    if (
+        response_length >= _JSON_FENCE_PREFIX_LENGTH
+        and response_text[0] == "`"
+        and response_text[:_JSON_FENCE_PREFIX_LENGTH] == _JSON_FENCE_PREFIX
+    ):
         parsed, end_index = _JSON_RAW_DECODE(
             response_text,
             _JSON_FENCE_PREFIX_LENGTH,
