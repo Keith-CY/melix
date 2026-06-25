@@ -164,6 +164,36 @@ def test_prepare_video_input_reuses_uri_byte_length_for_metadata_and_identity_ha
     assert len(prepared.sha256_hex) == 64
 
 
+def test_uri_identity_hash_caches_repeated_metadata_frames() -> None:
+    _uri_identity_hash.cache_clear()
+
+    first = _uri_identity_hash(
+        uri="https://example.com/media/demo.mov",
+        mime_type="video/quicktime",
+        format_name="mov",
+        filename="demo.mov",
+        byte_length=123,
+        duration_ms=1_000,
+        frame_budget=8,
+        start_ms=0,
+        end_ms=1_000,
+    )
+    second = _uri_identity_hash(
+        uri="https://example.com/media/demo.mov",
+        mime_type="video/quicktime",
+        format_name="mov",
+        filename="demo.mov",
+        byte_length=123,
+        duration_ms=1_000,
+        frame_budget=8,
+        start_ms=0,
+        end_ms=1_000,
+    )
+
+    assert first == second
+    assert _uri_identity_hash.cache_info().hits == 1
+
+
 def test_prepare_video_input_prefers_explicit_filename_for_uri_format() -> None:
     part = common_pb2.MessagePart(
         video_uri="https://example.com/media/download",
