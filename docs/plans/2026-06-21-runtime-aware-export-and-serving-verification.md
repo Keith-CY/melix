@@ -424,6 +424,14 @@ generation-capable `EXPORT_TARGET_TYPE_MELIX_MANAGED`,
 local runtime is configured, and the waiver must record the missing runtime
 capability.
 
+The metrics-report path may reuse the already validated target manifest object
+when materializing fixture digest files and executing the smoke receipt writer.
+It must preserve the public `run_export_target_smoke()` validation boundary for
+external callers while avoiding an extra manifest parse on each probe iteration.
+The registered `runtime-export-smoke-policy` PR-scoped probe remains the
+evidence source for this Python slice and includes focused test, coverage, and
+`command_json` probe commands in `infra/perf/pr_scoped_probes.json`.
+
 Bounded generation checks must use a repository-owned prompt fixture or a
 synthetic non-private prompt, a fixed token limit, a timeout, and a preview byte
 limit. The preview is diagnostic evidence only; it is not an evaluation score.
