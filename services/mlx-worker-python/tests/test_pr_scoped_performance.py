@@ -4142,6 +4142,7 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     assert native_mtp_metrics["model_listing_speedup"]["direction"] == "higher_is_better"
     assert native_mtp_metrics["new_mean_ms"]["warn_abs"] == 0.5
     assert native_mtp_metrics["model_listing_new_mean_ms"]["warn_abs"] == 0.5
+    assert native_mtp_metrics["model_listing_speedup"]["warn_abs"] == 0.5
     assert native_mtp_metrics["extra_new_mean_ms"]["warn_abs"] == 10.0
     assert native_mtp_metrics["extra_speedup"]["warn_abs"] == 0.5
     assert native_mtp_metrics["key_new_mean_ms"]["direction"] == "lower_is_better"
@@ -5587,9 +5588,19 @@ def test_metric_and_probe_helpers_cover_error_branches() -> None:
         base_metrics={"count": 0.0},
         head_metrics={"count": 1.0},
     )
+    higher_is_better_with_abs_tolerance = _build_metric_row(
+        key="speedup",
+        unit="x",
+        direction="higher_is_better",
+        warn_pct=5.0,
+        warn_abs=0.5,
+        base_metrics={"speedup": 2.3},
+        head_metrics={"speedup": 2.16},
+    )
 
     assert missing["status"] == "missing"
     assert higher_is_better["status"] == "regression"
+    assert higher_is_better_with_abs_tolerance["status"] == "neutral"
     assert informational_faster["delta"] == -2.0
     assert informational_faster["status"] == "neutral"
     assert informational_slower["delta"] == 20.0

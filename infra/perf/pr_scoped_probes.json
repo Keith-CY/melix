@@ -5594,7 +5594,8 @@
         "key": "model_listing_speedup",
         "unit": "x",
         "direction": "higher_is_better",
-        "warn_pct": 5.0
+        "warn_pct": 5.0,
+        "warn_abs": 0.5
       },
       {
         "key": "model_listing_old_peak_bytes_mean",
