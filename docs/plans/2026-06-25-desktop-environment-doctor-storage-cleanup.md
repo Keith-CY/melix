@@ -352,6 +352,21 @@ Probe success criteria:
   protect active or changed artifacts.
 - Desktop and CLI fixture outputs must agree on summary counts and receipt IDs.
 
+## #1516 Implementation Notes
+
+The #1516 implementation emits the shared environment diagnostic receipt through
+existing `melix doctor --json`, `melix system --json`, and debug bundle JSON
+paths before introducing a new long-lived protobuf API. The receipt is built in
+shared Swift diagnostics code so CLI and Desktop decode the same fields. Debug
+bundles write the receipt both as `environment-diagnostic.json` and as the
+manifest summary payload.
+
+The first slice keeps version and local-server probes bounded to the effective
+process environment. It records executable resolution and health-probe
+availability without spawning dependency imports or opening network
+connections, so Finder-style PATH and redaction failures are visible without
+turning diagnostics into a long-running runtime probe.
+
 ## Verification
 
 This #1511/#1515 change is documentation-only. The PR that introduces this

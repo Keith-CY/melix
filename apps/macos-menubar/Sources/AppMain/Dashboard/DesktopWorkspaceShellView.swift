@@ -8546,6 +8546,20 @@ struct DesktopDiagnosticsToolSectionView: View {
             debugBundleResultRow(title: "Consent", value: result.diagnosticsConsentState)
             debugBundleResultRow(title: "Artifact Policy", value: result.debugArtifactPolicy)
             debugBundleResultRow(title: "Debug JSONL", value: result.debugJSONLSummaryText)
+            if let environmentDiagnostic = result.environmentDiagnostic {
+                debugBundleResultRow(
+                    title: "Environment Doctor",
+                    value: environmentDiagnostic.summaryText
+                )
+                debugBundleResultRow(
+                    title: "Environment Redaction",
+                    value: environmentDiagnostic.redactionText
+                )
+                debugBundleResultRow(
+                    title: "Environment Latency",
+                    value: environmentDiagnostic.latencyText
+                )
+            }
             if result.servingDiagnosticsQueueSummaryText.isEmpty == false {
                 debugBundleResultRow(
                     title: "Serving Diagnostics Queue",

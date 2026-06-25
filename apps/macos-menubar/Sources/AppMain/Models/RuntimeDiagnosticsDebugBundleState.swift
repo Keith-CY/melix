@@ -41,6 +41,82 @@ public struct RuntimeDiagnosticsServingDiagnosticsSummary: Equatable, Sendable, 
     }
 }
 
+public struct RuntimeEnvironmentDiagnosticSummaryState: Equatable, Sendable, Decodable {
+    public let schemaVersion: String
+    public let status: String
+    public let checkCount: Int
+    public let failedCheckCount: Int
+    public let warningCheckCount: Int
+    public let redactedFieldCount: Int
+    public let diagnosticLatencyMS: Int
+
+    public var summaryText: String {
+        let normalizedStatus = status.isEmpty ? "unknown" : status
+        return "\(normalizedStatus) • \(checkCount) checks • \(failedCheckCount) failed • \(warningCheckCount) warnings"
+    }
+
+    public var redactionText: String {
+        "\(redactedFieldCount) fields redacted"
+    }
+
+    public var latencyText: String {
+        "\(diagnosticLatencyMS) ms"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = RichOutputSanitizer.sanitized(
+            try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? ""
+        )
+        let summary = try container.decodeIfPresent(SummaryPayload.self, forKey: .summary)
+        let redactionSummary = try container.decodeIfPresent(RedactionSummaryPayload.self, forKey: .redactionSummary)
+        let metrics = try container.decodeIfPresent(MetricsPayload.self, forKey: .metrics)
+        status = RichOutputSanitizer.sanitized(summary?.status ?? "")
+        checkCount = max(0, summary?.checkCount ?? 0)
+        failedCheckCount = max(0, summary?.failedCheckCount ?? 0)
+        warningCheckCount = max(0, summary?.warningCheckCount ?? 0)
+        redactedFieldCount = max(0, redactionSummary?.redactedFieldCount ?? 0)
+        diagnosticLatencyMS = max(0, metrics?.diagnosticLatencyMS ?? 0)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case summary
+        case redactionSummary = "redaction_summary"
+        case metrics
+    }
+
+    private struct SummaryPayload: Decodable {
+        let status: String
+        let checkCount: Int
+        let failedCheckCount: Int
+        let warningCheckCount: Int
+
+        private enum CodingKeys: String, CodingKey {
+            case status
+            case checkCount = "check_count"
+            case failedCheckCount = "failed_check_count"
+            case warningCheckCount = "warning_check_count"
+        }
+    }
+
+    private struct RedactionSummaryPayload: Decodable {
+        let redactedFieldCount: Int
+
+        private enum CodingKeys: String, CodingKey {
+            case redactedFieldCount = "redacted_field_count"
+        }
+    }
+
+    private struct MetricsPayload: Decodable {
+        let diagnosticLatencyMS: Int
+
+        private enum CodingKeys: String, CodingKey {
+            case diagnosticLatencyMS = "diagnostic_latency_ms"
+        }
+    }
+}
+
 public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable {
     public let schemaVersion: String
     public let bundleID: String
@@ -55,6 +131,7 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
     public let artifacts: [String: String]
     public let mediaRouteReceipt: RuntimeDiscoveryMediaRouteReceiptState?
     public let servingDiagnostics: RuntimeDiagnosticsServingDiagnosticsSummary?
+    public let environmentDiagnostic: RuntimeEnvironmentDiagnosticSummaryState?
 
     public var manifestPath: String {
         guard bundlePath.isEmpty == false else {
@@ -155,6 +232,10 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
             RuntimeDiagnosticsServingDiagnosticsSummary.self,
             forKey: .servingDiagnostics
         )
+        environmentDiagnostic = try container.decodeIfPresent(
+            RuntimeEnvironmentDiagnosticSummaryState.self,
+            forKey: .environmentDiagnostic
+        )
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -171,6 +252,7 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
         case artifacts
         case mediaRouteReceipt = "media_route_receipt"
         case servingDiagnostics = "serving_diagnostics"
+        case environmentDiagnostic = "environment_diagnostic"
     }
 
     private func artifactPath(_ relativePath: String) -> String {

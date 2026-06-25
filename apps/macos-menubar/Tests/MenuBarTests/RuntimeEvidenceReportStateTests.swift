@@ -185,6 +185,12 @@ struct RuntimeEvidenceReportStateTests {
         #expect(renderedTexts.contains("Manifest"))
         #expect(renderedTexts.contains("/tmp/melix-debug/bench-1/manifest.json"))
         #expect(renderedTexts.contains("Effective Config"))
+        #expect(renderedTexts.contains("Environment Doctor"))
+        #expect(renderedTexts.contains("warn • 10 checks • 0 failed • 2 warnings"))
+        #expect(renderedTexts.contains("Environment Redaction"))
+        #expect(renderedTexts.contains("4 fields redacted"))
+        #expect(renderedTexts.contains("Environment Latency"))
+        #expect(renderedTexts.contains("12 ms"))
         #expect(renderedTexts.contains("Debug bundle ready at /tmp/melix-debug/bench-1."))
     }
 
