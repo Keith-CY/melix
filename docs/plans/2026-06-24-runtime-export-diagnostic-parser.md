@@ -94,6 +94,13 @@ certificate, and identity regex passes. Lines with `:`, `=`, `@`, `sk-`, or a
 certificate preamble continue through the relevant guarded regexes before path
 redaction.
 
+This 2026-06-25 path-prefix slice keeps the same diagnostics receipt and
+redaction output, but reuses the resolved target-root string inside each excerpt
+and labels simple target-root-prefixed absolute paths with lexical prefix slicing
+instead of constructing `Path` objects and calling `Path.relative_to()` for every
+path match. Paths containing `..` still take the normalization fallback through
+`Path.resolve(strict=False)` before receiving a target-relative label.
+
 Focused verification:
 
 ```bash

@@ -172,6 +172,67 @@ def test_export_target_diagnostics_resolves_target_root_once_for_many_path_redac
     assert "<target>/logs/ollama-create.log" in excerpt.text
 
 
+def test_export_target_diagnostics_labels_simple_target_paths_without_path_relative_to(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+    source_lines = [
+        _SourceLine(
+            source_path="logs/ollama-create.log",
+            text=f"runtime load failed at {target_root / 'artifacts/model.gguf'}",
+        )
+    ]
+
+    def fail_relative_to(self: Path, *_args: object, **_kwargs: object) -> Path:
+        raise AssertionError("simple target path redaction should use lexical prefix slicing")
+
+    monkeypatch.setattr(Path, "relative_to", fail_relative_to)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        source_lines,
+        bounded_bytes=4096,
+        bounded_lines=20,
+    )
+
+    assert "<target>/artifacts/model.gguf" in excerpt.text
+    assert excerpt.summary.redacted_absolute_path_count == 1
+
+
+def test_export_target_diagnostics_preserves_target_root_and_dotdot_labels(
+    tmp_path: Path,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text=f"runtime load failed at {target_root}",
+            ),
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text=f"runtime load failed at {target_root / 'artifacts' / '..' / 'logs' / 'ollama-create.log'}",
+            ),
+        ],
+        bounded_bytes=4096,
+        bounded_lines=20,
+    )
+
+    assert "<target>/." in excerpt.text
+    assert "<target>/logs/ollama-create.log" in excerpt.text
+    assert excerpt.summary.redacted_absolute_path_count == 2
+
+
 def test_export_target_diagnostics_skips_secret_regexes_for_plain_path_lines(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
