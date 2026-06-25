@@ -210,6 +210,7 @@ def test_compare_versions_ignores_build_metadata_suffix() -> None:
     assert normalized_version_parts("v1.2.3+abcdef1") == [1, 2, 3]
     assert compare_versions("1.2.3+build.4", "1.2.3") == 0
     assert compare_versions("1.2.3", "1.2.3+abcdef1") == 0
+    assert compare_versions("v1.2.3+build.4", "1.2.3+abcdef1") == 0
     assert compare_versions("1.2.4", "1.2.3+abcdef1") == 1
     assert compare_versions("1.2.2", "1.2.3") == -1
 

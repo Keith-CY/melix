@@ -301,6 +301,8 @@ def _compare_normalized_version_parts(
             return -1
         if left_value > right_value:
             return 1
+        if left_index >= left_length and right_index >= right_length:
+            return 0
 
 
 def _next_normalized_version_part(value: str, index: int) -> tuple[int, int, bool]:
