@@ -7646,6 +7646,17 @@ def test_multimodal_speculative_probe_receipt_covers_disabled_and_admitted_edges
     assert admitted.receipt["position_aligned"] is False
     assert admitted.receipt["cache_aligned"] is True
 
+    position_only = speculative_probe_admission(
+        enabled=True,
+        fallback_reason="media fallback",
+        loaded_model={"metadata": {}},
+        prepared_request=prepared,
+        acceleration_policy=None,
+        position_metadata_receipt={"status": "ok", "media_position_count": 1},
+    )
+    assert position_only.receipt["position_aligned"] is True
+    assert position_only.receipt["cache_aligned"] is True
+
 
 def test_multimodal_speculative_probe_receipt_rejects_unaligned_position_status() -> None:
     prepared = PreparedVisionRequest(

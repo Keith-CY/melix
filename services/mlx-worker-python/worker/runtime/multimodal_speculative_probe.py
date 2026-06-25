@@ -79,6 +79,11 @@ def build_speculative_probe_receipt(
     metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
     cache_identity = str(metadata.get("cache_identity", "") or "").strip()
     cache_scope_id = str(metadata.get("scope_id", "") or metadata.get("cache_scope_id", "") or "").strip()
+    # Verification-only probes may run before the target/draft cache identity
+    # contract exists. In that case, media position alignment is the narrow
+    # cache-layout proof we can report without loading a drafter or mutating
+    # output.
+    cache_aligned = bool(cache_identity or cache_scope_id or position_aligned)
 
     receipt.update(
         {
@@ -91,7 +96,7 @@ def build_speculative_probe_receipt(
             "image_count": image_count,
             "video_count": video_count,
             "position_aligned": position_aligned,
-            "cache_aligned": bool(cache_identity or cache_scope_id or position_aligned),
+            "cache_aligned": cache_aligned,
             "output_mutation_allowed": False,
             "draft_loaded": False,
             "target_decode_started": False,

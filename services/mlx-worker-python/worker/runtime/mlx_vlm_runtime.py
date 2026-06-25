@@ -2406,6 +2406,9 @@ class MLXVLMRuntime:
                 image_batch1_step_greedy_sampling=self._sampling_is_greedy(sampling),
             )
             if speculative_fallback_reason and speculative_probe is not None:
+                # The baseline probe refresh replaces _last_probe; restore the
+                # entry-captured speculative receipt so it is not recomputed
+                # from post-generation position metadata.
                 self._last_probe = replace(
                     self._last_probe,
                     speculative_probe_receipt=speculative_probe.receipt,
