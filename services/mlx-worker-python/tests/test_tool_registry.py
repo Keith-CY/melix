@@ -327,8 +327,10 @@ def test_tool_registry_select_reuses_missing_name_sentinel_between_calls() -> No
         def __init__(self, values: dict[str, ToolDescriptor]) -> None:
             super().__init__(values)
             self.default_ids: list[int] = []
+            self.get_calls = 0
 
         def get(self, key: str, default: object = None) -> ToolDescriptor | object:
+            self.get_calls += 1
             self.default_ids.append(id(default))
             return super().get(key, default)
 
@@ -341,6 +343,7 @@ def test_tool_registry_select_reuses_missing_name_sentinel_between_calls() -> No
             registry.select([missing_name])
 
     assert len(set(index.default_ids)) == 1
+    assert index.get_calls == 2
 
 
 def test_tool_registry_select_reuses_cached_selected_registry() -> None:

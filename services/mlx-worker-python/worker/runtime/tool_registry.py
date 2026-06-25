@@ -326,6 +326,10 @@ class ToolRegistry:
                     if isinstance(names, tuple) and names != requested_names:
                         self._selection_cache[names] = cached_selection
                     return cached_selection
+                if normalized_name == raw_name:
+                    raise ToolRegistryError(
+                        f"Unknown tool registry entry requested: {normalized_name}"
+                    )
                 tool = tool_by_name.get(normalized_name, missing_tool_sentinel)
                 if tool is missing_tool_sentinel:
                     raise ToolRegistryError(
