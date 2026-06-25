@@ -672,6 +672,42 @@ def test_report_matrix_roles_scans_probe_phases_once_for_phase_rules(
     assert calls == 1
 
 
+def test_report_evidence_gate_probe_phases_scans_buckets_without_dict_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_dict_list(value: object) -> list[dict[str, object]]:
+        raise AssertionError(  # pragma: no cover - exercised only on regression
+            "_probe_phases should scan list buckets directly"
+        )
+
+    monkeypatch.setattr(report_evidence_gate_module, "_dict_list", fail_dict_list)
+
+    phases = report_evidence_gate_module._probe_phases(
+        {
+            "probe_summary": {
+                "baseline": {
+                    "slowest_phases": [
+                        {"phase": " runtime_prepare "},
+                        object(),
+                        {"phase": ""},
+                    ],
+                    "failed_phases": [
+                        {"phase": "model_load"},
+                        {"duration_ms": 1.0},
+                    ],
+                    "skipped_phases": "not-a-list",
+                },
+                "candidate": {
+                    "slowest_phases": [{"phase": "decode"}],
+                    "fallback_phases": [{"phase": 42}],
+                },
+            }
+        }
+    )
+
+    assert phases == {"runtime_prepare", "model_load", "decode", "42"}
+
+
 def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
     run_kinds = ["evaluation"]
     rule = {"run_kinds": run_kinds}

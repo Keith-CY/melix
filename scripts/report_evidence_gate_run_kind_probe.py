@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
 from worker.productization.report_evidence_gate import (  # noqa: E402
     _dict_list,
+    _probe_phases,
     _release_matrix_rows,
     _report_matrix_roles,
     _rule_matches_report,
@@ -274,6 +275,45 @@ def _measure_dict_list(iterations: int, sample_count: int) -> tuple[dict[str, fl
     )
 
 
+def _measure_probe_phases(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
+    buckets = ("slowest_phases", "failed_phases", "skipped_phases", "fallback_phases")
+    report = {
+        "probe_summary": {
+            side: {
+                bucket: [
+                    {"phase": f"probe_phase_{index}", "duration_ms": float(index)}
+                    for index in range(256)
+                ]
+                for bucket in buckets
+            }
+            for side in ("baseline", "candidate")
+        }
+    }
+    elapsed_samples: list[float] = []
+    checksum = 0
+
+    for _ in range(sample_count):
+        started = time.perf_counter()
+        for _index in range(iterations):
+            phases = _probe_phases(report)
+            if len(phases) != 256:
+                raise RuntimeError(  # pragma: no cover - probe invariant guard
+                    "expected unique probe phases from summary buckets"
+                )
+            checksum += len(phases)
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
+    elapsed_mean = statistics.fmean(elapsed_samples)
+    return (
+        {
+            "probe_phases_elapsed_ms_mean": elapsed_mean,
+            "probe_phases_rows_per_call": 2048.0,
+            "probe_phases_checksum": float(checksum),
+        },
+        elapsed_mean,
+    )
+
+
 def _measure_load_report_payload(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
     payload = {
         "schema_version": "melix.benchmark_evaluation_report.v1",
@@ -330,6 +370,11 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     )
     dict_list_iterations = max(1, iterations // 50)
     dict_list_metrics, dict_list_elapsed = _measure_dict_list(dict_list_iterations, sample_count)
+    probe_phases_iterations = max(1, iterations // 200)
+    probe_phases_metrics, probe_phases_elapsed = _measure_probe_phases(
+        probe_phases_iterations,
+        sample_count,
+    )
     load_report_payload_iterations = max(1, iterations // 500)
     load_report_payload_metrics, load_report_payload_elapsed = _measure_load_report_payload(
         load_report_payload_iterations,
@@ -342,6 +387,7 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         + matrix_roles_elapsed
         + slowest_probe_phase_elapsed
         + dict_list_elapsed
+        + probe_phases_elapsed
         + load_report_payload_elapsed,
         "iterations": float(iterations),
         "sample_count": float(sample_count),
@@ -352,6 +398,7 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         **matrix_roles_metrics,
         **slowest_probe_phase_metrics,
         **dict_list_metrics,
+        **probe_phases_metrics,
         **load_report_payload_metrics,
     }
 
