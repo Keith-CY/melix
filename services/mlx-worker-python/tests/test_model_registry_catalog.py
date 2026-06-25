@@ -28,6 +28,7 @@ from worker.model_registry.catalog import (
     _load_json_dict_file,
     _local_model_id,
     _metadata_payload_has_mlx_signal,
+    _metadata_text_has_mlx_signal,
     _read_text_prefix,
     _text_layer_count,
     _text_lora_support_metadata,
@@ -386,6 +387,14 @@ def test_has_mlx_signal_falls_back_to_config_text_for_unserializable_nonempty_pa
         config_payload={"tags": {"mlx"}},
     ) is True
 
+
+
+def test_metadata_text_has_mlx_signal_short_circuits_negative_metadata() -> None:
+    assert (
+        _metadata_text_has_mlx_signal("library_name: transformers\ntags:\n- text-generation\n")
+        is False
+    )
+    assert _metadata_text_has_mlx_signal("library_name: mlx\ntags:\n- text-generation\n") is True
 
 
 def test_metadata_payload_has_mlx_signal_does_not_request_sorted_json(monkeypatch: pytest.MonkeyPatch) -> None:
