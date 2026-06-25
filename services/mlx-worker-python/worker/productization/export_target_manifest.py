@@ -379,24 +379,27 @@ def _append_path_error(errors: list[str], field_name: str, path_value: str) -> N
 
 
 def _safe_relative_path_error(path_value: str) -> str | None:
-    if path_value != path_value.strip():
-        return "leading or trailing whitespace is not allowed"
     if not path_value:
         return "path is empty"
+    if path_value[0].isspace() or path_value[-1].isspace():
+        return "leading or trailing whitespace is not allowed"
     if "\\" in path_value:
         return "backslashes are not allowed"
 
-    windows_path = PureWindowsPath(path_value)
-    if windows_path.is_absolute() or windows_path.drive or path_value.startswith("\\\\"):
+    if (
+        len(path_value) >= 2
+        and path_value[1] == ":"
+        and path_value[0].isascii()
+        and path_value[0].isalpha()
+    ) or path_value.startswith("//"):
         return "Windows absolute, drive, or UNC paths are not allowed"
 
-    posix_path = PurePosixPath(path_value)
-    if posix_path.is_absolute():
+    if path_value[0] == "/":
         return "absolute paths are not allowed"
     if path_value == ".":
         return "current-directory paths are not allowed"
     if "//" in path_value:
         return "empty path components are not allowed"
-    if any(part in ("", "..") for part in posix_path.parts):
+    if ".." in path_value.split("/"):
         return "empty or parent-directory path components are not allowed"
     return None
