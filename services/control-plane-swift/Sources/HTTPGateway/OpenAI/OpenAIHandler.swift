@@ -1704,6 +1704,7 @@ button.primary:active {
             return mediaNormalizationErrorResponse(error)
         } catch let error as DecodingError {
             return invalidRequestSchemaResponse(
+                route: request.path,
                 field: decodingErrorField(error),
                 message: "Malformed multimodal chat payload."
             )
@@ -1737,6 +1738,12 @@ button.primary:active {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ChatTemplatePolicyError {
             return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed completions payload."
+            )
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
@@ -1761,6 +1768,12 @@ button.primary:active {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ChatTemplatePolicyError {
             return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed responses payload."
+            )
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
@@ -1786,6 +1799,12 @@ button.primary:active {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ChatTemplatePolicyError {
             return invalidArgumentResponse(message: error.operatorMessage)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed messages payload."
+            )
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
@@ -1860,7 +1879,16 @@ button.primary:active {
     }
 
     private func handleEmbeddings(_ request: HTTPRequest) async throws -> HTTPResponse {
-        let embeddingsRequest = try decoder.decode(OpenAIEmbeddingsRequest.self, from: request.body)
+        let embeddingsRequest: OpenAIEmbeddingsRequest
+        do {
+            embeddingsRequest = try decoder.decode(OpenAIEmbeddingsRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed embeddings payload."
+            )
+        }
         if let validationFailure = await endpointCompatibilityFailureResponse(
             modelID: embeddingsRequest.model,
             endpoint: .embedding
@@ -4895,7 +4923,7 @@ button.primary:active {
         )
     }
 
-    private func invalidRequestSchemaResponse(field: String, message: String) -> HTTPResponse {
+    private func invalidRequestSchemaResponse(route: String, field: String, message: String) -> HTTPResponse {
         jsonResponse(
             statusCode: 400,
             payload: [
@@ -4904,9 +4932,35 @@ button.primary:active {
                     "field": field,
                     "phase": "decode",
                     "message": message,
+                    "privacy_receipt": ingressPrivacyReceipt(
+                        route: route,
+                        field: field,
+                        phase: "decode",
+                        action: "redacted",
+                        redactionPolicy: "raw_payload_omitted"
+                    ),
                 ],
             ]
         )
+    }
+
+    private func ingressPrivacyReceipt(
+        route: String,
+        field: String,
+        phase: String,
+        action: String,
+        redactionPolicy: String
+    ) -> [String: Any] {
+        [
+            "schema_version": "melix.ingress_privacy_receipt.v1",
+            "surface": "openai_request_ingress",
+            "route": route,
+            "field": field,
+            "phase": phase,
+            "action": action,
+            "redaction_policy": redactionPolicy,
+            "raw_payload_included": false,
+        ]
     }
 
     private func decodingErrorField(_ error: DecodingError) -> String {
