@@ -113,6 +113,8 @@ def main() -> int:
         bundle_target_manifest = json.loads(
             Path(bundle_manifest["packaging_target_manifest_path"]).read_text(encoding="utf-8")
         )
+        python_import_isolation = dict(bundle_target_manifest.get("python_import_isolation", {}))
+        isolation_env = dict(python_import_isolation.get("env", {}))
 
     logical_identities = {
         launch_manifest["logical_product_identity"],
@@ -136,6 +138,12 @@ def main() -> int:
         ),
         "packaging_target_app_bundle_profile_ok": int(
             bundle_target_manifest["packaging_target_id"] == "macos_app_bundle_preview"
+        ),
+        "packaging_target_app_bundle_python_import_isolated": int(
+            python_import_isolation.get("import_isolated") is True
+            and isolation_env.get("PYTHONSAFEPATH") == "1"
+            and isolation_env.get("PYTHONNOUSERSITE") == "1"
+            and isolation_env.get("PYTHONDONTWRITEBYTECODE") == "1"
         ),
         "packaging_target_smoke_ms": round((time.perf_counter() - started_at) * 1_000, 2),
     }

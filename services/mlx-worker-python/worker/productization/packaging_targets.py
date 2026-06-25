@@ -5,6 +5,11 @@ from pathlib import Path
 from typing import Any
 
 MELIX_LOGICAL_PRODUCT_IDENTITY = "io.melix"
+PACKAGED_PYTHON_IMPORT_ISOLATION_ENV = {
+    "PYTHONSAFEPATH": "1",
+    "PYTHONNOUSERSITE": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+}
 
 
 @dataclass(frozen=True)
@@ -89,6 +94,21 @@ def get_packaging_target_profile(target_id: str) -> PackagingTargetProfile:
         ) from error
 
 
+def packaged_python_import_isolation_manifest() -> dict[str, Any]:
+    return {
+        "import_isolated": True,
+        "pythonpath_policy": "bundled_site_packages_then_bundled_repo",
+        "env": dict(sorted(PACKAGED_PYTHON_IMPORT_ISOLATION_ENV.items())),
+    }
+
+
+def packaged_python_import_isolation_env_exports() -> tuple[str, ...]:
+    return tuple(
+        f'export {name}="{value}"'
+        for name, value in sorted(PACKAGED_PYTHON_IMPORT_ISOLATION_ENV.items())
+    )
+
+
 def build_packaging_target_metadata(
     target_id: str,
     *,
@@ -103,6 +123,8 @@ def build_packaging_target_metadata(
     payload["product_version"] = product_version
     payload["update_channel_path"] = str(Path(update_channel_path).expanduser().resolve())
     payload["service_instance_name"] = service_instance_name
+    if profile.runtime_layout == "self_contained_bundle":
+        payload["python_import_isolation"] = packaged_python_import_isolation_manifest()
     if bundle_id:
         payload["bundle_id"] = bundle_id
     return payload

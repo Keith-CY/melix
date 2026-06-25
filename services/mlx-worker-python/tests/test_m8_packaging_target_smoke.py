@@ -38,3 +38,4 @@ def test_main_emits_expected_packaging_target_metrics(
     assert payload["packaging_target_launch_agents_profile_ok"] == 1
     assert payload["packaging_target_homebrew_profile_ok"] == 1
     assert payload["packaging_target_app_bundle_profile_ok"] == 1
+    assert payload["packaging_target_app_bundle_python_import_isolated"] == 1
