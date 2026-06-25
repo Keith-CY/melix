@@ -61,6 +61,11 @@ def build_speculative_probe_receipt(
     acceleration_policy: common_pb2.AccelerationPolicy | None,
     position_metadata_receipt: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    """Build the verification-only receipt without loading a drafter.
+
+    ``cache_aligned`` means any cache-layout evidence is available at receipt
+    time: a cache identity, a cache scope id, or media position alignment.
+    """
     receipt = empty_speculative_probe_receipt()
     receipt["enabled"] = bool(enabled)
     if not enabled:
