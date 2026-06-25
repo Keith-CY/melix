@@ -5309,6 +5309,11 @@
         "key": "file_count_mean",
         "unit": "items",
         "direction": "informational"
+      },
+      {
+        "key": "source_kind_variant_count",
+        "unit": "items",
+        "direction": "informational"
       }
     ]
   },
