@@ -2287,6 +2287,7 @@ class MLXVLMRuntime:
         execution_mode = str(metadata.get("melix.vlm.execution_mode", "") or "").strip() or "multimodal"
         speculative_fallback_reason = ""
         speculative_probe_enabled_for_request = False
+        speculative_probe = None
         if self._mtp_speculative_requested(acceleration_policy):
             speculative_fallback_reason = self._mtp_speculative_unsupported_reason(
                 loaded_model=loaded_model,
@@ -2404,15 +2405,7 @@ class MLXVLMRuntime:
                 ),
                 image_batch1_step_greedy_sampling=self._sampling_is_greedy(sampling),
             )
-            if speculative_fallback_reason and speculative_probe_enabled_for_request:
-                speculative_probe = speculative_probe_admission(
-                    enabled=True,
-                    fallback_reason=speculative_fallback_reason,
-                    loaded_model=loaded_model,
-                    prepared_request=prepared_request,
-                    acceleration_policy=acceleration_policy,
-                    position_metadata_receipt=self._last_probe.position_metadata_receipt,
-                )
+            if speculative_fallback_reason and speculative_probe is not None:
                 self._last_probe = replace(
                     self._last_probe,
                     speculative_probe_receipt=speculative_probe.receipt,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
@@ -7435,6 +7436,7 @@ def test_mlx_vlm_runtime_falls_back_for_non_greedy_mtp_requests_when_allowed() -
 def test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_fallback() -> None:
     stream_calls: list[dict[str, object]] = []
     drafter_loads: list[str] = []
+    ensure_fast_path_probe_calls = 0
 
     def fake_load(model_path: str, revision: str = "main"):
         _ = model_path
@@ -7458,6 +7460,23 @@ def test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_f
             batch_generate_fn=lambda *args, **kwargs: [SimpleNamespace(text="unexpected")],
         )
     )
+    original_ensure_fast_path_probe = runtime._ensure_fast_path_probe
+
+    def mutate_position_receipt_after_entry_probe(*args, **kwargs):
+        nonlocal ensure_fast_path_probe_calls
+        ensure_fast_path_probe_calls += 1
+        original_ensure_fast_path_probe(*args, **kwargs)
+        if ensure_fast_path_probe_calls == 2:
+            runtime._last_probe = replace(
+                runtime._last_probe,
+                position_metadata_receipt={
+                    **runtime._last_probe.position_metadata_receipt,
+                    "fallback_reason": "post-generation metadata changed",
+                    "media_position_count": 0,
+                },
+            )
+
+    runtime._ensure_fast_path_probe = mutate_position_receipt_after_entry_probe
     loaded_model = runtime.load_model(imported_gemma4_vlm_model())
     prepared = runtime.render_prompt(
         [
@@ -7498,6 +7517,7 @@ def test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_f
 
     assert [event.text for event in events] == ["baseline image"]
     assert drafter_loads == []
+    assert ensure_fast_path_probe_calls == 2
     assert len(stream_calls) == 1
     assert stream_calls[0]["prompt"] == "formatted:1:Describe this image."
     assert events[-1].speculative_fallback_count == 1
@@ -7522,8 +7542,8 @@ def test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_f
         "target_decode_started": False,
     }
     position_receipt = runtime.last_probe_snapshot().position_metadata_receipt
-    assert position_receipt["media_position_count"] == 1
-    assert position_receipt["fallback_reason"] == ""
+    assert position_receipt["media_position_count"] == 0
+    assert position_receipt["fallback_reason"] == "post-generation metadata changed"
 
 
 def test_mlx_vlm_runtime_records_verification_only_probe_before_speculative_refusal() -> None:
