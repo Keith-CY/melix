@@ -94,6 +94,12 @@ certificate, and identity regex passes. Lines with `:`, `=`, `@`, `sk-`, or a
 certificate preamble continue through the relevant guarded regexes before path
 redaction.
 
+A 2026-06-25 metric aggregation slice keeps the receipt schema and parser
+semantics unchanged while deriving parsed-failure count, unknown-failure count,
+and matched diagnosis codes in a single pass. The aggregate report also folds
+receipt metrics and diagnosis code discovery into one receipt pass, avoiding the
+previous extra comprehensions and metric summations on every diagnostic report.
+
 Focused verification:
 
 ```bash

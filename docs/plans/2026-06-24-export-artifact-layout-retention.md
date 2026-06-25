@@ -73,7 +73,9 @@ The export report and retention report include:
 
 The PR-scoped probe records layout materialization latency, target count,
 retained byte size, cleanable byte size, deleted file count, and retention
-decision count.
+decision count. Runtime-log TTL decisions reuse the file metadata collected
+while checking manifest-row existence, avoiding an extra stat call on the
+retention hot path while preserving the missing-file race fallback.
 
 ## Verification
 

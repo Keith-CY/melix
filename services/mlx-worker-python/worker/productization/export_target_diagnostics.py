@@ -315,9 +315,11 @@ def build_export_diagnostics_receipt(
             }
         ]
 
+    parsed_failure_count, unknown_failure_count, matched_codes = _diagnosis_metric_counts(diagnoses)
+
     if not source_lines:
         status = DIAGNOSTIC_STATUS_NOT_APPLICABLE
-    elif any(diagnosis["code"] != CODE_UNKNOWN_FAILURE for diagnosis in diagnoses):
+    elif parsed_failure_count > 0:
         status = DIAGNOSTIC_STATUS_MATCHED
     else:
         status = DIAGNOSTIC_STATUS_UNKNOWN
@@ -328,22 +330,13 @@ def build_export_diagnostics_receipt(
         for code in manifest.diagnostic_policy.required_diagnosis_codes
         if str(code) in _KNOWN_DIAGNOSIS_CODES
     }
-    matched_codes = {
-        str(diagnosis["code"])
-        for diagnosis in diagnoses
-        if diagnosis["code"] != CODE_UNKNOWN_FAILURE
-    }
     coverage = _diagnostic_coverage(required_codes, matched_codes, status)
     redaction_summary = excerpt.summary.payload(policy_id=manifest.evidence.redaction_policy_id or "export-diagnostics-redaction-v1")
     metrics = {
         "schema_version": EXPORT_DIAGNOSTICS_METRICS_SCHEMA_VERSION,
         "diagnostic_parser_coverage": coverage,
-        "parsed_failure_count": sum(
-            1 for diagnosis in diagnoses if diagnosis["code"] != CODE_UNKNOWN_FAILURE
-        ),
-        "unknown_failure_count": sum(
-            1 for diagnosis in diagnoses if diagnosis["code"] == CODE_UNKNOWN_FAILURE
-        ),
+        "parsed_failure_count": parsed_failure_count,
+        "unknown_failure_count": unknown_failure_count,
         "redaction_count": redaction_summary["redaction_count"],
         "diagnostic_latency_ms": diagnostic_latency_ms,
     }
@@ -405,17 +398,25 @@ def build_diagnostic_metrics_report(
             errors.append(str(exc))
 
     elapsed_ms = (time.perf_counter() - started) * 1000.0
-    metrics = [
-        receipt["metrics"]
-        for receipt in receipts
-        if isinstance(receipt.get("metrics"), dict)
-    ]
-    matched_codes = {
-        str(diagnosis["code"])
-        for receipt in receipts
-        for diagnosis in receipt.get("diagnoses", [])
-        if isinstance(diagnosis, dict) and diagnosis.get("code") != CODE_UNKNOWN_FAILURE
-    }
+    matched_codes: set[str] = set()
+    parsed_failure_count = 0
+    unknown_failure_count = 0
+    redaction_count = 0
+    diagnostic_latency_ms = 0.0
+    for receipt in receipts:
+        metrics = receipt.get("metrics")
+        if isinstance(metrics, dict):
+            parsed_failure_count += int(metrics.get("parsed_failure_count", 0))
+            unknown_failure_count += int(metrics.get("unknown_failure_count", 0))
+            redaction_count += int(metrics.get("redaction_count", 0))
+            diagnostic_latency_ms += float(metrics.get("diagnostic_latency_ms", 0.0))
+        diagnoses = receipt.get("diagnoses", [])
+        if isinstance(diagnoses, list):
+            for diagnosis in diagnoses:
+                if isinstance(diagnosis, dict):
+                    code = str(diagnosis.get("code", ""))
+                    if code and code != CODE_UNKNOWN_FAILURE:
+                        matched_codes.add(code)
     parser_coverage = len(matched_codes & set(_KNOWN_DIAGNOSIS_CODES)) / len(_KNOWN_DIAGNOSIS_CODES)
     return {
         "schema_version": EXPORT_DIAGNOSTICS_METRICS_SCHEMA_VERSION,
@@ -423,10 +424,10 @@ def build_diagnostic_metrics_report(
         "target_count": len(receipts),
         "diagnostic_policy_latency_ms": elapsed_ms,
         "diagnostic_parser_coverage": parser_coverage,
-        "parsed_failure_count": sum(int(metric.get("parsed_failure_count", 0)) for metric in metrics),
-        "unknown_failure_count": sum(int(metric.get("unknown_failure_count", 0)) for metric in metrics),
-        "redaction_count": sum(int(metric.get("redaction_count", 0)) for metric in metrics),
-        "diagnostic_latency_ms": sum(float(metric.get("diagnostic_latency_ms", 0.0)) for metric in metrics),
+        "parsed_failure_count": parsed_failure_count,
+        "unknown_failure_count": unknown_failure_count,
+        "redaction_count": redaction_count,
+        "diagnostic_latency_ms": diagnostic_latency_ms,
         "diagnosis_code_count": len(matched_codes),
         "errors": errors,
         "receipts": receipts,
@@ -676,6 +677,22 @@ def _operator_remedies(diagnoses: list[dict[str, object]]) -> list[dict[str, obj
             }
         )
     return remedies
+
+
+def _diagnosis_metric_counts(
+    diagnoses: list[dict[str, object]],
+) -> tuple[int, int, set[str]]:
+    parsed_failure_count = 0
+    unknown_failure_count = 0
+    matched_codes: set[str] = set()
+    for diagnosis in diagnoses:
+        code = str(diagnosis["code"])
+        if code == CODE_UNKNOWN_FAILURE:
+            unknown_failure_count += 1
+        else:
+            parsed_failure_count += 1
+            matched_codes.add(code)
+    return parsed_failure_count, unknown_failure_count, matched_codes
 
 
 def _diagnostic_coverage(
