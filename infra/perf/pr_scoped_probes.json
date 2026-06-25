@@ -6471,6 +6471,17 @@
         "direction": "informational"
       },
       {
+        "key": "diagnosis_matching_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "diagnosis_matching_line_count",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
         "key": "target_count",
         "unit": "count",
         "direction": "informational"

@@ -3270,6 +3270,8 @@ def test_runtime_export_diagnostic_parser_probe_script_emits_metrics(
     assert metrics["diagnostic_latency_ms"] >= 0
     assert metrics["path_redaction_elapsed_ms_mean"] >= 0
     assert metrics["path_redaction_count"] >= 1.0
+    assert metrics["diagnosis_matching_elapsed_ms_mean"] >= 0
+    assert metrics["diagnosis_matching_line_count"] >= 4.0
     assert metrics["elapsed_ms_mean"] >= 0
 
 
@@ -4062,6 +4064,8 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     assert runtime_export_diagnostics_metrics["unknown_failure_count"]["direction"] == "informational"
     assert runtime_export_diagnostics_metrics["redaction_count"]["direction"] == "informational"
     assert runtime_export_diagnostics_metrics["diagnostic_latency_ms"]["direction"] == "lower_is_better"
+    assert runtime_export_diagnostics_metrics["diagnosis_matching_elapsed_ms_mean"]["direction"] == "lower_is_better"
+    assert runtime_export_diagnostics_metrics["diagnosis_matching_line_count"]["direction"] == "informational"
 
     probe_policy_metrics = {
         metric["key"]: metric for metric in by_id["probe-policy-noop-overhead"]["metrics"]

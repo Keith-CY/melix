@@ -77,6 +77,9 @@ It measures:
 - `unknown_failure_count`
 - `redaction_count`
 - `diagnostic_latency_ms`
+- `path_redaction_elapsed_ms_mean`
+- `diagnosis_matching_elapsed_ms_mean`
+- `diagnosis_matching_line_count`
 
 The 2026-06-25 optimization slice keeps the parser contract unchanged and caches
 `layout.target_root.resolve(strict=False)` once per redacted excerpt build. It
@@ -106,6 +109,13 @@ root before constructing a fallback `Path`. Clean target-local paths now produce
 the same `<target>/...` labels through string slicing, while paths with `..`
 segments or paths outside the target root continue through the existing
 normalization fallback.
+
+A follow-up 2026-06-25 diagnosis matching slice keeps the diagnosis semantics
+unchanged while adding cheap lowercase marker gates to each diagnosis pattern.
+Runtime lines whose text cannot contain a given failure class now skip that
+class's regex expressions, while lines that contain a marker continue through the
+same compiled regexes and matched-pattern ids as before. This reduces repeated
+regex scans across bounded excerpts with many non-matching lines.
 
 Focused verification:
 
