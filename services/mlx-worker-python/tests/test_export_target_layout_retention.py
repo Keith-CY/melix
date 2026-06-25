@@ -311,6 +311,34 @@ def test_runtime_logs_become_cleanable_after_ttl(tmp_path: Path) -> None:
     assert decisions["logs/ollama-create.log"]["reason"] == "runtime_log_ttl_expired"
 
 
+def test_runtime_log_ttl_reuses_existing_stat_result(tmp_path: Path) -> None:
+    manifest_path = FIXTURE_ROOT / "ollama/export-target-manifest.json"
+    manifest, validation_report = validate_export_target_manifest_file(
+        manifest_path,
+        return_manifest=True,
+    )
+    assert validation_report.ok is True
+    log_path = tmp_path / "ollama-create.log"
+    log_path.write_text("log", encoding="utf-8")
+    old_time = 1_700_000_000.0
+    import os
+
+    os.utime(log_path, (old_time, old_time))
+    stat_result = log_path.stat()
+
+    class UnexpectedStatPath:
+        def stat(self) -> object:  # pragma: no cover - must not be called
+            raise AssertionError("runtime TTL should reuse the caller stat result")
+
+    assert _runtime_log_ttl_expired(
+        manifest,
+        UnexpectedStatPath(),  # type: ignore[arg-type]
+        exists=True,
+        now=old_time + 604800 + 1,
+        path_stat=stat_result,
+    ) is True
+
+
 def test_runtime_log_ttl_handles_missing_stat_race() -> None:
     manifest_path = FIXTURE_ROOT / "ollama/export-target-manifest.json"
     manifest, validation_report = validate_export_target_manifest_file(
