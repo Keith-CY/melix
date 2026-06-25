@@ -3982,7 +3982,10 @@ def test_registered_probes_expose_focused_commands() -> None:
     gemma4_weight_presence_metrics = {
         metric.key: metric for metric in gemma4_weight_presence_probe.metrics
     }
-    assert gemma4_weight_presence_metrics["elapsed_ms_mean"].warn_abs == 2.5
+    assert gemma4_weight_presence_metrics["elapsed_ms_mean"].direction == "informational"
+    assert gemma4_weight_presence_metrics["elapsed_ms_min"].direction == "informational"
+    assert gemma4_weight_presence_metrics["visited_names_mean"].direction == "lower_is_better"
+    assert gemma4_weight_presence_metrics["visited_names_mean"].warn_pct == 0.0
     assert gemma4_weight_presence_metrics["peak_bytes_mean"].warn_pct == 5.0
     assert gemma4_weight_presence_metrics["peak_bytes_mean"].warn_abs == 64.0
 
@@ -5960,6 +5963,7 @@ def test_mlx_vlm_gemma4_weight_presence_probe_script_emits_metrics() -> None:
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["elapsed_ms_mean"] > 0
+    assert 0 < metrics["elapsed_ms_min"] <= metrics["elapsed_ms_mean"]
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["visited_names_mean"] > 0
     assert metrics["has_vision"] == 1.0

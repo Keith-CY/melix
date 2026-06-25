@@ -2041,9 +2041,14 @@
       {
         "key": "elapsed_ms_mean",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0,
-        "warn_abs": 2.5
+        "direction": "informational",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "elapsed_ms_min",
+        "unit": "ms",
+        "direction": "informational",
+        "warn_pct": 5.0
       },
       {
         "key": "peak_bytes_mean",

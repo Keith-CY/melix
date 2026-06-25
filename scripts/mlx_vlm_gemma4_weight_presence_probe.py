@@ -96,6 +96,7 @@ def run_probe() -> dict[str, float]:
     return {
         "checksum": float(checksum),
         "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
+        "elapsed_ms_min": round(min(elapsed_samples), 6),
         "has_audio": float(has_audio),
         "has_vision": float(has_vision),
         "iteration_count": float(ITERATION_COUNT),
