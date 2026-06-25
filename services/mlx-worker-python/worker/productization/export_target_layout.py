@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 import re
 import shutil
 import time
@@ -432,8 +433,20 @@ def _decide_file(
     now: float,
 ) -> _FileDecision:
     path = _target_relative_path(layout, row.path, resolved_root=resolved_target_root)
-    exists = path.exists()
-    decision, reason = _retention_decision(manifest, row, path, exists, now)
+    try:
+        path_stat = path.stat()
+        exists = True
+    except OSError:
+        path_stat = None
+        exists = False
+    decision, reason = _retention_decision(
+        manifest,
+        row,
+        path,
+        exists,
+        now,
+        path_stat=path_stat,
+    )
     deleted = False
     if (
         apply_cleanup
@@ -463,11 +476,13 @@ def _retention_decision(
     path: Path,
     exists: bool,
     now: float,
+    *,
+    path_stat: os.stat_result | None = None,
 ) -> tuple[str, str]:
     if row.retention_class in _RETAINED_RETENTION_CLASSES:
         return RETENTION_DECISION_RETAIN, "required_or_evidence_artifact"
     if row.retention_class == export_target_manifest_pb2.EXPORT_RETENTION_CLASS_RUNTIME_LOG:
-        if _runtime_log_ttl_expired(manifest, path, exists, now):
+        if _runtime_log_ttl_expired(manifest, path, exists, now, path_stat=path_stat):
             return RETENTION_DECISION_DELETE_AFTER_TTL, "runtime_log_ttl_expired"
         return RETENTION_DECISION_RETAIN, "runtime_log_ttl_active"
     if row.retention_class in _CLEANABLE_AFTER_SUCCESS_RETENTION_CLASSES:
@@ -482,6 +497,8 @@ def _runtime_log_ttl_expired(
     path: Path,
     exists: bool,
     now: float,
+    *,
+    path_stat: os.stat_result | None = None,
 ) -> bool:
     ttl_seconds = int(manifest.retention_policy.runtime_log_ttl_seconds)
     if ttl_seconds <= 0:
@@ -489,7 +506,8 @@ def _runtime_log_ttl_expired(
     if not exists:
         return False
     try:
-        return now - path.stat().st_mtime >= ttl_seconds
+        stat_result = path.stat() if path_stat is None else path_stat
+        return now - stat_result.st_mtime >= ttl_seconds
     except FileNotFoundError:
         return False
 
