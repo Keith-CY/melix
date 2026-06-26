@@ -367,6 +367,19 @@ def test_repo_id_mlx_substring_match_preserves_ascii_case_insensitivity() -> Non
     ) is True
 
 
+def test_payload_repo_id_mlx_match_skips_tag_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    tag_scan = Mock(side_effect=AssertionError("repo-id MLX matches should not scan tag payloads"))
+    monkeypatch.setattr(hub_catalog_module, "_tag_payload_contains_mlx", tag_scan)
+
+    assert (
+        _payload_is_mlx_compatible(
+            {"id": "owner/model-mlx-suffix", "tags": ["slow", object()], "cardData": {}}
+        )
+        is True
+    )
+    tag_scan.assert_not_called()
+
+
 def test_size_hint_single_readme_uses_direct_explicit_marker_before_regex(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
