@@ -385,11 +385,37 @@ def _rule_matches_report(
                 return True
     metric_prefixes = rule.get("metric_prefixes", ())
     if metric_prefixes:
-        (
-            metric_prefix_tuple,
-            metric_prefix_initials,
-            metric_prefix_matches_empty,
-        ) = _string_prefix_tuple(metric_prefixes)
+        if isinstance(metric_prefixes, tuple):
+            cached_metric_prefix_state = rule.get("_melix_cached_metric_prefix_state")
+            if (
+                isinstance(cached_metric_prefix_state, tuple)
+                and len(cached_metric_prefix_state) == 4
+                and cached_metric_prefix_state[0] is metric_prefixes
+                and isinstance(cached_metric_prefix_state[1], tuple)
+                and isinstance(cached_metric_prefix_state[2], frozenset)
+                and isinstance(cached_metric_prefix_state[3], bool)
+            ):
+                metric_prefix_tuple = cached_metric_prefix_state[1]
+                metric_prefix_initials = cached_metric_prefix_state[2]
+                metric_prefix_matches_empty = cached_metric_prefix_state[3]
+            else:
+                (
+                    metric_prefix_tuple,
+                    metric_prefix_initials,
+                    metric_prefix_matches_empty,
+                ) = _string_prefix_tuple_from_tuple(metric_prefixes)
+                rule["_melix_cached_metric_prefix_state"] = (
+                    metric_prefixes,
+                    metric_prefix_tuple,
+                    metric_prefix_initials,
+                    metric_prefix_matches_empty,
+                )
+        else:
+            (
+                metric_prefix_tuple,
+                metric_prefix_initials,
+                metric_prefix_matches_empty,
+            ) = _string_prefix_tuple(metric_prefixes)
         metric_key = "metric"
         to_string = str
         for metric in metrics:

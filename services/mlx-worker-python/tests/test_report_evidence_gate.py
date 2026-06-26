@@ -335,7 +335,7 @@ def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> N
 
 def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple() -> None:
     report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_clear()
-    rule = {"metric_prefixes": ("adapter.", "runtime.")}
+    rule: dict[str, object] = {"metric_prefixes": ("adapter.", "runtime.")}
 
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
@@ -353,8 +353,14 @@ def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple()
     )
 
     cache_info = report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_info()
-    assert cache_info.hits >= 1
+    assert cache_info.hits == 0
     assert cache_info.misses == 1
+    cached_state = rule["_melix_cached_metric_prefix_state"]
+    assert isinstance(cached_state, tuple)
+    assert cached_state[0] is rule["metric_prefixes"]
+    assert cached_state[1] == ("adapter.", "runtime.")
+    assert cached_state[2] == frozenset({"a", "r"})
+    assert cached_state[3] is False
 
 
 def test_report_evidence_gate_metric_prefix_fast_reject_preserves_empty_prefix() -> None:
