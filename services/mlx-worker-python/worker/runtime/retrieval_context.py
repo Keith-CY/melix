@@ -455,33 +455,106 @@ def project_retrieval_lookup_result(
     lookup_segment_id: Any = "",
     lookup_source_field: Any = "",
 ) -> RetrievalLookupResultProjection:
-    wrapper_metadata_refusal = _lookup_result_metadata_refusal(
-        lookup_source_id=lookup_source_id,
-        lookup_segment_id=lookup_segment_id,
-        lookup_source_field=lookup_source_field,
-    )
-    if wrapper_metadata_refusal is not None:
-        return RetrievalLookupResultProjection(
-            prompt_user_payload={},
-            untrusted_context_receipts=[],
-            refusal_receipts=[wrapper_metadata_refusal],
-            lookup_message=None,
-        )
-    normalized_lookup_source_id = _lookup_metadata_text_or_default(
-        lookup_source_id,
-        default="unknown-retrieval-lookup",
-    )
-    normalized_lookup_segment_id = _lookup_metadata_text_or_default(
-        lookup_segment_id,
-        default=f"{normalized_lookup_source_id}:lookup-result",
-    )
-    normalized_lookup_source_field = _lookup_metadata_text_or_default(
-        lookup_source_field,
-        default="lookup_result",
-    )
     has_lookup_metadata = (
         lookup_source_id != "" or lookup_segment_id != "" or lookup_source_field != ""
     )
+    if has_lookup_metadata:
+        if lookup_source_id == "":
+            normalized_lookup_source_id = "unknown-retrieval-lookup"
+        elif isinstance(lookup_source_id, str):
+            normalized_lookup_source_id = lookup_source_id.strip()
+            if not normalized_lookup_source_id:
+                return RetrievalLookupResultProjection(
+                    prompt_user_payload={},
+                    untrusted_context_receipts=[],
+                    refusal_receipts=[
+                        _lookup_result_refusal(
+                            source_id="unknown-retrieval-lookup",
+                            segment_id="unknown-retrieval-lookup:lookup-result",
+                            source_field="lookup_source_id",
+                        )
+                    ],
+                    lookup_message=None,
+                )
+        else:
+            return RetrievalLookupResultProjection(
+                prompt_user_payload={},
+                untrusted_context_receipts=[],
+                refusal_receipts=[
+                    _lookup_result_refusal(
+                        source_id="unknown-retrieval-lookup",
+                        segment_id="unknown-retrieval-lookup:lookup-result",
+                        source_field="lookup_source_id",
+                    )
+                ],
+                lookup_message=None,
+            )
+
+        if lookup_segment_id == "":
+            normalized_lookup_segment_id = f"{normalized_lookup_source_id}:lookup-result"
+        elif isinstance(lookup_segment_id, str):
+            normalized_lookup_segment_id = lookup_segment_id.strip()
+            if not normalized_lookup_segment_id:
+                return RetrievalLookupResultProjection(
+                    prompt_user_payload={},
+                    untrusted_context_receipts=[],
+                    refusal_receipts=[
+                        _lookup_result_refusal(
+                            source_id=normalized_lookup_source_id,
+                            segment_id=f"{normalized_lookup_source_id}:lookup-result",
+                            source_field="lookup_segment_id",
+                        )
+                    ],
+                    lookup_message=None,
+                )
+        else:
+            return RetrievalLookupResultProjection(
+                prompt_user_payload={},
+                untrusted_context_receipts=[],
+                refusal_receipts=[
+                    _lookup_result_refusal(
+                        source_id=normalized_lookup_source_id,
+                        segment_id=f"{normalized_lookup_source_id}:lookup-result",
+                        source_field="lookup_segment_id",
+                    )
+                ],
+                lookup_message=None,
+            )
+
+        if lookup_source_field == "":
+            normalized_lookup_source_field = "lookup_result"
+        elif isinstance(lookup_source_field, str):
+            normalized_lookup_source_field = lookup_source_field.strip()
+            if not normalized_lookup_source_field:
+                return RetrievalLookupResultProjection(
+                    prompt_user_payload={},
+                    untrusted_context_receipts=[],
+                    refusal_receipts=[
+                        _lookup_result_refusal(
+                            source_id=normalized_lookup_source_id,
+                            segment_id=normalized_lookup_segment_id,
+                            source_field="lookup_source_field",
+                        )
+                    ],
+                    lookup_message=None,
+                )
+        else:
+            return RetrievalLookupResultProjection(
+                prompt_user_payload={},
+                untrusted_context_receipts=[],
+                refusal_receipts=[
+                    _lookup_result_refusal(
+                        source_id=normalized_lookup_source_id,
+                        segment_id=normalized_lookup_segment_id,
+                        source_field="lookup_source_field",
+                    )
+                ],
+                lookup_message=None,
+            )
+    else:
+        normalized_lookup_source_id = "unknown-retrieval-lookup"
+        normalized_lookup_segment_id = "unknown-retrieval-lookup:lookup-result"
+        normalized_lookup_source_field = "lookup_result"
     if not isinstance(lookup_result, Mapping):
         return RetrievalLookupResultProjection(
             prompt_user_payload={},
