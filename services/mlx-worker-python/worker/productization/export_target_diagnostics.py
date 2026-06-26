@@ -52,6 +52,7 @@ SUPPORTED_DIAGNOSIS_CODES = (
     CODE_UNKNOWN_FAILURE,
 )
 _KNOWN_DIAGNOSIS_CODES = tuple(code for code in SUPPORTED_DIAGNOSIS_CODES if code != CODE_UNKNOWN_FAILURE)
+_KNOWN_DIAGNOSIS_CODE_SET = frozenset(_KNOWN_DIAGNOSIS_CODES)
 
 _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![A-Za-z0-9_.-])/[^\s:'\"<>|]+")
 _BEARER_SECRET_PATTERN = re.compile(
@@ -266,7 +267,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The target runtime failed while loading the exported artifact.",
         remediation="Inspect the redacted runtime evidence, then regenerate or repair the target artifact before retrying.",
-        markers=("load", "model", "runtime", "failed", "error"),
+        markers=("failed to load", "model load", "runtime load", "error loading", "load failed"),
     ),
 )
 
@@ -345,7 +346,7 @@ def build_export_diagnostics_receipt(
     required_codes = {
         str(code)
         for code in manifest.diagnostic_policy.required_diagnosis_codes
-        if str(code) in _KNOWN_DIAGNOSIS_CODES
+        if str(code) in _KNOWN_DIAGNOSIS_CODE_SET
     }
     coverage = _diagnostic_coverage(required_codes, matched_codes, status)
     redaction_summary = excerpt.summary.payload(policy_id=manifest.evidence.redaction_policy_id or "export-diagnostics-redaction-v1")
@@ -434,7 +435,7 @@ def build_diagnostic_metrics_report(
                     code = str(diagnosis.get("code", ""))
                     if code and code != CODE_UNKNOWN_FAILURE:
                         matched_codes.add(code)
-    parser_coverage = len(matched_codes & set(_KNOWN_DIAGNOSIS_CODES)) / len(_KNOWN_DIAGNOSIS_CODES)
+    parser_coverage = len(matched_codes & _KNOWN_DIAGNOSIS_CODE_SET) / len(_KNOWN_DIAGNOSIS_CODE_SET)
     return {
         "schema_version": EXPORT_DIAGNOSTICS_METRICS_SCHEMA_VERSION,
         "ok": not errors and parser_coverage == 1.0,
