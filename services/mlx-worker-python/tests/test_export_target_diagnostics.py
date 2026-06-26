@@ -26,6 +26,7 @@ from worker.productization.export_target_diagnostics import (
     _SourceLine,
     _DiagnosisPattern,
     _build_redacted_excerpt,
+    _diagnoses_from_excerpt,
     _diagnosis_metric_counts,
 )
 from worker.productization.export_target_layout import (
@@ -215,6 +216,26 @@ def test_export_target_diagnostics_uses_lexical_target_path_fast_path(
     assert export_target_diagnostics_module._target_relative_text(
         f"{target_root}-sibling/artifact", str(target_root)
     ) is None
+
+
+def test_export_target_diagnostics_lowercases_source_line_once_per_match_scan() -> None:
+    class TrackingText(str):
+        lower_calls = 0
+
+        def lower(self) -> str:
+            type(self).lower_calls += 1
+            return super().lower()
+
+    text = TrackingText("progress line loaded shard metadata without failure")
+
+    diagnoses = _diagnoses_from_excerpt(
+        [_SourceLine(source_path="logs/ollama-create.log", text=text)],
+        {0: 1},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert diagnoses == []
+    assert TrackingText.lower_calls == 1
 
 
 def test_export_target_diagnostics_skips_secret_regexes_for_plain_path_lines(

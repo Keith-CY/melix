@@ -87,9 +87,9 @@ class _DiagnosisPattern:
     def __post_init__(self) -> None:
         object.__setattr__(self, "markers", tuple(marker.lower() for marker in self.markers))
 
-    def matches(self, text: str) -> bool:
+    def matches(self, text: str, lowered_text: str | None = None) -> bool:
         if self.markers:
-            lowered = text.lower()
+            lowered = lowered_text if lowered_text is not None else text.lower()
             if not any(marker in lowered for marker in self.markers):
                 return False
         return any(expression.search(text) for expression in self.expressions)
@@ -695,10 +695,11 @@ def _diagnoses_from_excerpt(
     seen_codes: set[str] = set()
     for index, line_number in line_numbers.items():
         text = source_lines[index].text
+        lowered_text = text.lower()
         for pattern in _DIAGNOSIS_PATTERNS:
             if pattern.code in seen_codes:
                 continue
-            if not pattern.matches(text):
+            if not pattern.matches(text, lowered_text):
                 continue
             seen_codes.add(pattern.code)
             diagnoses.append(
