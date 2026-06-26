@@ -428,7 +428,19 @@ def _rule_matches_report(
                 return True
     target_fields = rule.get("target_fields", ())
     if target_fields:
-        target_field_set = _string_frozenset(target_fields)
+        if isinstance(target_fields, tuple):
+            cached_target_field_set = rule.get("_melix_cached_target_field_set")
+            if rule.get("_melix_cached_target_fields") is target_fields and isinstance(
+                cached_target_field_set,
+                frozenset,
+            ):
+                target_field_set = cached_target_field_set
+            else:
+                target_field_set = _string_frozenset_from_tuple(target_fields)
+                rule["_melix_cached_target_fields"] = target_fields
+                rule["_melix_cached_target_field_set"] = target_field_set
+        else:
+            target_field_set = _string_frozenset(target_fields)
         target_fields_are_disjoint = target_field_set.isdisjoint
         for target in targets:
             if target_fields_are_disjoint(target):
