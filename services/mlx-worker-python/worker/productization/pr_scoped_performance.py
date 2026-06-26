@@ -2599,13 +2599,18 @@ def coverage_paths_for_probe(
     changed_files: list[str] | tuple[str, ...],
 ) -> tuple[str, ...]:
     coverage_paths: list[str] = []
+    exact_watch_paths, wildcard_watch_matchers = _probe_watch_glob_matchers(probe.watch_globs)
+    matches_any_compiled_glob = _matches_any_compiled_glob
     for path in sorted({path for path in changed_files if path}):
         direct_probe_ids = _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH.get(path)
         if path in _FORCE_ALL_CONTEXT_ONLY_PATHS:
             if direct_probe_ids and probe.probe_id in direct_probe_ids:
                 coverage_paths.append(path)
             continue
-        if _matches_any_glob(path, probe.watch_globs):
+        if path in exact_watch_paths:
+            coverage_paths.append(path)
+            continue
+        if wildcard_watch_matchers and matches_any_compiled_glob(path, wildcard_watch_matchers):
             coverage_paths.append(path)
     return tuple(coverage_paths)
 
@@ -2617,6 +2622,20 @@ def _probe_id_to_index(probes: tuple[ProbeDefinition, ...]) -> dict[str, int]:
         cached = {probe.probe_id: index for index, probe in enumerate(probes)}
         _PROBE_ID_INDEX_CACHE[cache_key] = cached
     return cached
+
+
+@lru_cache(maxsize=None)
+def _probe_watch_glob_matchers(
+    watch_globs: tuple[str, ...],
+) -> tuple[frozenset[str], tuple[tuple[str, re.Pattern[str]], ...]]:
+    exact_watch_paths: set[str] = set()
+    wildcard_watch_matchers: list[tuple[str, re.Pattern[str]]] = []
+    for glob in watch_globs:
+        if _glob_has_magic(glob):
+            wildcard_watch_matchers.append((_glob_literal_prefix(glob), _compiled_glob_pattern(glob)))
+        else:
+            exact_watch_paths.add(glob)
+    return frozenset(exact_watch_paths), tuple(wildcard_watch_matchers)
 
 
 @lru_cache(maxsize=None)

@@ -39,6 +39,7 @@ from worker.productization.pr_scoped_performance import (
     _match_probe_indexes,
     _parse_coverage_percent,
     _probe_id_to_index,
+    _probe_watch_glob_matchers,
     _probe_benchmark_evaluation_report,
     _probe_benchmark_export_run_scan,
     _probe_benchmark_queue_cache,
@@ -2517,13 +2518,13 @@ def test_matches_any_glob_uses_explicit_short_circuit(monkeypatch: pytest.Monkey
     assert glob_calls == ["services/*.py"]
 
 
-def test_coverage_paths_for_probe_uses_explicit_glob_matcher(monkeypatch: pytest.MonkeyPatch) -> None:
-    glob_calls: list[str] = []
+def test_coverage_paths_for_probe_uses_cached_watch_glob_matchers(monkeypatch: pytest.MonkeyPatch) -> None:
+    matcher_calls: list[tuple[str, tuple[str, ...]]] = []
     probe = ProbeDefinition(
         probe_id="alpha",
         name="Alpha",
         runner="ubuntu-latest",
-        watch_globs=("services/*.py", "docs/*.md"),
+        watch_globs=("README.md", "services/*.py", "docs/*.md"),
         test_command="true",
         coverage_command="true",
         probe_impl="benchmark_evaluation_report",
@@ -2531,14 +2532,42 @@ def test_coverage_paths_for_probe_uses_explicit_glob_matcher(monkeypatch: pytest
         metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
     )
 
-    def tracked_match(path: str, globs: tuple[str, ...]) -> bool:
-        glob_calls.extend(globs)
+    def fail_legacy_match(path: str, globs: tuple[str, ...]) -> bool:
+        raise AssertionError(f"coverage_paths_for_probe should not rescan raw globs: {path} {globs}")
+
+    def tracked_match(path: str, matchers: tuple[tuple[str, re.Pattern[str]], ...]) -> bool:
+        matcher_calls.append((path, tuple(prefix for prefix, _pattern in matchers)))
         return path.startswith("services/")
 
-    monkeypatch.setattr(pr_scoped_performance_module, "_matches_any_glob", tracked_match)
+    monkeypatch.setattr(pr_scoped_performance_module, "_matches_any_glob", fail_legacy_match)
+    monkeypatch.setattr(pr_scoped_performance_module, "_matches_any_compiled_glob", tracked_match)
 
-    assert coverage_paths_for_probe(probe=probe, changed_files=["services/a.py"]) == ("services/a.py",)
-    assert glob_calls == ["services/*.py", "docs/*.md"]
+    assert coverage_paths_for_probe(
+        probe=probe,
+        changed_files=["README.md", "services/a.py"],
+    ) == ("README.md", "services/a.py")
+    assert matcher_calls == [("services/a.py", ("services/", "docs/"))]
+
+
+def test_probe_watch_glob_matchers_reuses_cached_matchers(monkeypatch: pytest.MonkeyPatch) -> None:
+    compile_calls: list[str] = []
+    original_compile = pr_scoped_performance_module._compiled_glob_pattern
+
+    def tracked_compile(glob: str) -> re.Pattern[str]:
+        compile_calls.append(glob)
+        return original_compile(glob)
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_compiled_glob_pattern", tracked_compile)
+    _probe_watch_glob_matchers.cache_clear()
+    try:
+        first = _probe_watch_glob_matchers(("README.md", "services/*.py"))
+        second = _probe_watch_glob_matchers(("README.md", "services/*.py"))
+    finally:
+        _probe_watch_glob_matchers.cache_clear()
+
+    assert first is second
+    assert first[0] == frozenset({"README.md"})
+    assert compile_calls == ["services/*.py"]
 
 
 def test_scope_report_empty_direct_paths_skips_probe_matching(monkeypatch: pytest.MonkeyPatch) -> None:
