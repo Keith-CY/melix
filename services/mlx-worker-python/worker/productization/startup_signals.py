@@ -28,6 +28,7 @@ _VERSION_CANONICAL_PREFIX = b'version = "'
 _QUOTE_BYTE = 34
 _EQUALS_BYTE = 61
 _PRODUCT_VERSION_CACHE: dict[str, tuple[int, int, str]] = {}
+_UPDATE_CHANNEL_CACHE: dict[str, tuple[int, int, str, str]] = {}
 
 
 class UpdateCheckResult(NamedTuple):
@@ -154,10 +155,12 @@ def port_is_available(port: int, *, host: str = "127.0.0.1") -> bool:
 
 
 def check_for_updates(installed_version: str, channel_path: str | Path) -> UpdateCheckResult:
-    resolved_channel_path = Path(channel_path).expanduser().resolve()
-    payload = json.loads(resolved_channel_path.read_bytes())
-    latest_version = str(payload.get("latest_version", "")).strip()
-    channel = str(payload.get("channel", "stable")).strip() or "stable"
+    resolved_channel_path = (
+        channel_path
+        if isinstance(channel_path, Path) and channel_path.is_absolute()
+        else Path(channel_path).expanduser().resolve()
+    )
+    latest_version, channel = _read_update_channel_version(resolved_channel_path)
     if latest_version:
         comparison = compare_versions(latest_version, installed_version)
         if comparison > 0:
@@ -188,6 +191,26 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
         summary="Update check failed",
         detail=f"Channel metadata at {resolved_channel_path} does not declare latest_version",
     )
+
+
+def _read_update_channel_version(channel_path: Path) -> tuple[str, str]:
+    stat_result = channel_path.stat()
+    cache_key = str(channel_path)
+    cached = _UPDATE_CHANNEL_CACHE.get(cache_key)
+    if cached is not None:
+        cached_mtime_ns, cached_size, cached_latest_version, cached_channel = cached
+        if cached_mtime_ns == stat_result.st_mtime_ns and cached_size == stat_result.st_size:
+            return cached_latest_version, cached_channel
+    payload = json.loads(channel_path.read_bytes())
+    latest_version = str(payload.get("latest_version", "")).strip()
+    channel = str(payload.get("channel", "stable")).strip() or "stable"
+    _UPDATE_CHANNEL_CACHE[cache_key] = (
+        stat_result.st_mtime_ns,
+        stat_result.st_size,
+        latest_version,
+        channel,
+    )
+    return latest_version, channel
 
 
 def compare_versions(left: str, right: str) -> int:

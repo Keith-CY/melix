@@ -82,6 +82,7 @@ def test_check_for_updates_reads_channel_bytes_without_text_decoder(
         json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
         encoding="utf-8",
     )
+    startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
     read_bytes_calls = 0
     original_read_bytes = Path.read_bytes
 
@@ -101,6 +102,34 @@ def test_check_for_updates_reads_channel_bytes_without_text_decoder(
 
     assert result.update_available is True
     assert read_bytes_calls == 1
+
+
+def test_check_for_updates_reuses_stat_valid_channel_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel_path = tmp_path / "stable.json"
+    channel_path.write_text(
+        json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
+        encoding="utf-8",
+    )
+    startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
+
+    assert check_for_updates("0.1.0", channel_path).update_available is True
+
+    read_bytes_calls = 0
+    original_read_bytes = Path.read_bytes
+
+    def counted_read_bytes(self: Path) -> bytes:  # pragma: no cover - sentinel
+        nonlocal read_bytes_calls
+        if self == channel_path:
+            read_bytes_calls += 1
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", counted_read_bytes)
+
+    assert check_for_updates("0.1.0", channel_path).update_available is True
+    assert read_bytes_calls == 0
 
 
 def test_read_product_version_reads_project_version(tmp_path: Path) -> None:
