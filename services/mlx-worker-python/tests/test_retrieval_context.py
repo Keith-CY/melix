@@ -1438,6 +1438,7 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
             "metadata": {
                 "labels": ("retrieved", {"kind": "document"}, {"bucket": 1}),
                 "scores": [3, 4, {"rank": 0}],
+                "single_key_detail": {"summary": {"nested": "copied"}},
             },
         }
     }
@@ -1448,6 +1449,17 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
     assert copied is not payload
     assert copied["retrieved_context"] is not payload["retrieved_context"]
     assert copied["retrieved_context"]["metadata"] is not payload["retrieved_context"]["metadata"]
+    assert copied["retrieved_context"]["metadata"]["single_key_detail"] == {
+        "summary": {"nested": "copied"}
+    }
+    assert (
+        copied["retrieved_context"]["metadata"]["single_key_detail"]
+        is not payload["retrieved_context"]["metadata"]["single_key_detail"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["single_key_detail"]["summary"]
+        is not payload["retrieved_context"]["metadata"]["single_key_detail"]["summary"]
+    )
     assert (
         copied["retrieved_context"]["metadata"]["labels"]
         == payload["retrieved_context"]["metadata"]["labels"]
