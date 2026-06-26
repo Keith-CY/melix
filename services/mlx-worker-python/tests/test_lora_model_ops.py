@@ -2661,6 +2661,19 @@ def test_training_config_helper_resolution_paths_and_limits() -> None:
     assert training_config_module._FAMILY_PROFILES["qwen3moe"][
         training_config_module._NORMALIZED_TARGET_MODULE_PRESETS_KEY
     ]["attention_experts"] == ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+    qwen3moe_cache = training_config_module._FAMILY_PROFILES["qwen3moe"][
+        training_config_module._NORMALIZED_TARGET_MODULES_CACHE_KEY
+    ]
+    assert isinstance(qwen3moe_cache, dict)
+    assert qwen3moe_cache["attention_experts"] == [
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    ]
     custom_profile = {
         "default_target_modules": [" Custom_Default "],
         "target_module_presets": {"Preset": [" Custom_Default ", " Second "]},
