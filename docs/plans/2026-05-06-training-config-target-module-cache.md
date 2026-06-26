@@ -2,7 +2,7 @@
 
 ## Goal
 
-Reduce repeated normalization work in LoRA training target-module resolution by reusing normalized family-profile target presets and default target tuples.
+Reduce repeated normalization and cached-result materialization work in LoRA training target-module resolution by reusing normalized family-profile target presets, default target tuples, and canonical cached target lists.
 
 ## Linux-only Constraint
 
@@ -28,7 +28,7 @@ Register `training-config-target-module-cache` in PR-scoped performance CI. The 
 
 ## Success Metrics
 
-- Preserve exact resolved target-module lists and mutation isolation for returned default lists.
+- Preserve exact resolved target-module lists and mutation isolation for returned default and cached lists.
 - Achieve at least 95% changed-scope automated coverage for touched Python files.
 - Show a concrete local base-vs-head improvement for the registered probe before PR creation.
 
