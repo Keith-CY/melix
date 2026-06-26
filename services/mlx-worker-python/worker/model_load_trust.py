@@ -31,6 +31,12 @@ EXECUTABLE_MODEL_FILE_PREFIXES = (
     "processing",
     "tokenization",
 )
+VALID_REQUESTED_TRUST_MODES = frozenset(
+    {
+        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
+        common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
+    }
+)
 TRUST_APPLICABLE_TEXT_LOADERS = frozenset({"mlx_lm", "mlx_lm_unavailable"})
 TRUST_APPLICABLE_TEXT_LOADERS_COMMON = frozenset({"mlx-lm", "mlx_lm", "mlx_lm_unavailable"})
 TRUST_APPLICABLE_VLM_LOADERS = frozenset({"mlx_vlm", "python_vlm", "mlx_vlm_unavailable"})
@@ -152,15 +158,13 @@ def _requested_mode(
     model_spec: common_pb2.ModelSpec,
     request_policy: common_pb2.ModelLoadTrustPolicy | None,
 ) -> tuple[int, str]:
-    if request_policy is not None and request_policy.requested_mode in {
-        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
-        common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
-    }:
+    valid_requested_modes = VALID_REQUESTED_TRUST_MODES
+    if request_policy is not None and request_policy.requested_mode in valid_requested_modes:
         return request_policy.requested_mode, REQUEST_SOURCE
-    if model_spec.HasField("settings") and model_spec.settings.load_trust_mode in {
-        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
-        common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
-    }:
+    if (
+        model_spec.HasField("settings")
+        and model_spec.settings.load_trust_mode in valid_requested_modes
+    ):
         return model_spec.settings.load_trust_mode, MODEL_SETTINGS_SOURCE
     return common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE, DEFAULT_SAFE_SOURCE
 
