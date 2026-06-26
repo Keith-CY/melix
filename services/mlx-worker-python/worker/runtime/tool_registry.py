@@ -45,6 +45,7 @@ _KEYWORD_BOUNDARY_TRANSLATION = str.maketrans(
     }
 )
 _KeywordHintRule = tuple[str, bool]
+_KeywordHintRuleSet = tuple[str, tuple[str, ...], tuple[str, ...]]
 
 TOOL_REGISTRY_SCHEMA_VERSION = "melix.agentic_tool_registry.v1"
 BUILTIN_TOOLSET_VERSION = "melix.agentic_tools.builtin.v1"
@@ -464,7 +465,7 @@ def agentic_tool_catalog_registry() -> ToolRegistry:
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
     copy_tool_config = _copy_tool_config
-    if names is None or names == BUILTIN_AGENTIC_TOOL_NAMES:
+    if names is None or names is BUILTIN_AGENTIC_TOOL_NAMES or names == BUILTIN_AGENTIC_TOOL_NAMES:
         return copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
     if isinstance(names, tuple):
         cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(names)
@@ -643,21 +644,23 @@ def _keyword_tool_matches(text: str) -> tuple[str, ...]:
     boundary_text = ""
     matches: list[str] = []
     append_match = matches.append
-    keyword_hint_rules = _BUILTIN_TOOL_KEYWORD_HINT_RULES
     keyword_boundary_text = _keyword_boundary_text
-    for tool_name in _KEYWORD_MATCHABLE_TOOL_NAMES:
-        rules = keyword_hint_rules.get(tool_name, ())
-        for hint, literal in rules:
-            if literal:
-                if hint in normalized_text:
-                    append_match(tool_name)
-                    break
-                continue
+    for tool_name, literal_hints, boundary_hints in _BUILTIN_TOOL_KEYWORD_HINT_RULE_ITEMS:
+        matched = False
+        for hint in literal_hints:
+            if hint in normalized_text:
+                append_match(tool_name)
+                matched = True
+                break
+        if matched:
+            continue
+        if boundary_hints:
             if not boundary_text:
                 boundary_text = keyword_boundary_text(normalized_text)
-            if hint in boundary_text:
-                append_match(tool_name)
-                break
+            for hint in boundary_hints:
+                if hint in boundary_text:
+                    append_match(tool_name)
+                    break
     return tuple(matches)
 
 
@@ -870,6 +873,14 @@ _BUILTIN_TOOL_KEYWORD_HINTS = {
     ),
 }
 _BUILTIN_TOOL_KEYWORD_HINT_RULES = _compile_keyword_hint_rules(_BUILTIN_TOOL_KEYWORD_HINTS)
+_BUILTIN_TOOL_KEYWORD_HINT_RULE_ITEMS: tuple[_KeywordHintRuleSet, ...] = tuple(
+    (
+        tool_name,
+        tuple(hint for hint, literal in _BUILTIN_TOOL_KEYWORD_HINT_RULES.get(tool_name, ()) if literal),
+        tuple(hint for hint, literal in _BUILTIN_TOOL_KEYWORD_HINT_RULES.get(tool_name, ()) if not literal),
+    )
+    for tool_name in _KEYWORD_MATCHABLE_TOOL_NAMES
+)
 
 
 _BUILTIN_TOOL_NAME_SET = frozenset(BUILTIN_AGENTIC_TOOL_NAMES)

@@ -204,6 +204,24 @@ def test_tool_registry_names_reuses_registry_snapshot() -> None:
     assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
 
 
+def test_keyword_tool_matches_reuses_compiled_rule_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool_registry_module._keyword_tool_matches.cache_clear()
+    expected_matches = tool_registry_module._keyword_tool_matches(
+        "Search local evidence, crop the image, and visit fixture://docs/provider-contract."
+    )
+    tool_registry_module._keyword_tool_matches.cache_clear()
+    monkeypatch.setattr(tool_registry_module, "_BUILTIN_TOOL_KEYWORD_HINT_RULES", {})
+
+    matches = tool_registry_module._keyword_tool_matches(
+        "Search local evidence, crop the image, and visit fixture://docs/provider-contract."
+    )
+
+    assert matches == expected_matches
+    assert matches == ("image_crop", "text_search", "visit")
+
+
 def test_tool_registry_descriptors_use_slotted_snapshots() -> None:
     registry = built_in_tool_registry()
 
