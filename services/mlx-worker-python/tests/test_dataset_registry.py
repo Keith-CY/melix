@@ -405,6 +405,79 @@ def test_dataset_catalog_first_preview_scan_skips_unsupported_files_before_best(
     assert catalog._first_supported_dataset_file(snapshot_dir) == winner
 
 
+def test_dataset_catalog_scan_records_skip_file_stat_for_unsupported_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeEntry:
+        def __init__(
+            self,
+            name: str,
+            *,
+            is_dir: bool = False,
+            is_file: bool = True,
+            file_error: bool = False,
+        ) -> None:
+            self.name = name
+            self.path = f"/tmp/{name}"
+            self._is_dir = is_dir
+            self._is_file = is_file
+            self._file_error = file_error
+            self.is_file_calls = 0
+
+        def is_dir(self) -> bool:
+            return self._is_dir
+
+        def is_file(self) -> bool:
+            self.is_file_calls += 1
+            if self._file_error:
+                raise OSError("stat failed")
+            return self._is_file
+
+    class FakeScandir:
+        def __init__(self, entries: list[FakeEntry]) -> None:
+            self.entries = entries
+
+        def __enter__(self) -> list[FakeEntry]:
+            return self.entries
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    unsupported = FakeEntry("notes.txt")
+    readme = FakeEntry("README.md")
+    directory = FakeEntry("raw-data.txt", is_dir=True)
+    broken = FakeEntry("broken.jsonl", file_error=True)
+    non_file = FakeEntry("pipe.jsonl", is_file=False)
+    supported = FakeEntry("train.jsonl")
+
+    records = list(
+        catalog._supported_scan_entry_records(
+            [unsupported, readme, directory, broken, non_file, supported],  # type: ignore[arg-type]
+            after="",
+        )
+    )
+
+    assert records == [
+        ("raw-data.txt", "/tmp/raw-data.txt", True, False),
+        ("train.jsonl", "/tmp/train.jsonl", False, True),
+    ]
+    assert unsupported.is_file_calls == 0
+    assert readme.is_file_calls == 0
+    assert broken.is_file_calls == 1
+    assert non_file.is_file_calls == 1
+    assert supported.is_file_calls == 1
+
+    monkeypatch.setattr(
+        catalog.os,
+        "scandir",
+        lambda _path: FakeScandir([unsupported, readme, broken, non_file, supported]),
+    )
+
+    next_entry = catalog._next_supported_scan_entry(Path("/tmp"), after="")
+
+    assert next_entry == ("train.jsonl", Path("/tmp/train.jsonl"), False, True)
+
+
 def test_dataset_catalog_limited_preview_scan_streams_multiple_files_without_sorted_walk(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
