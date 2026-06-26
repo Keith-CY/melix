@@ -26,6 +26,7 @@ from worker.productization.export_target_diagnostics import (
     _SourceLine,
     _DiagnosisPattern,
     _build_redacted_excerpt,
+    _collect_source_lines,
     _diagnoses_from_excerpt,
     _diagnosis_metric_counts,
 )
@@ -388,6 +389,34 @@ def test_export_target_diagnostics_reads_only_bounded_log_chunk(
 
     assert read_sizes == [128]
     assert receipt["status"] == "matched"
+
+
+def test_export_target_diagnostics_source_collection_skips_duplicates_and_missing_logs(
+    tmp_path: Path,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+    log_path = "logs/ollama-create.log"
+    (target_root / log_path).write_text("runtime load failed\n", encoding="utf-8")
+    duplicate_row = manifest.required_files.add()
+    duplicate_row.path = log_path
+    duplicate_row.role = export_target_manifest_pb2.EXPORT_TARGET_FILE_ROLE_RUNTIME_LOG
+    missing_row = manifest.intermediate_files.add()
+    missing_row.path = "logs/missing-runtime.log"
+    missing_row.role = export_target_manifest_pb2.EXPORT_TARGET_FILE_ROLE_RUNTIME_LOG
+
+    lines = _collect_source_lines(
+        layout,
+        manifest,
+        failure_checks=(),
+        bounded_bytes=1024,
+    )
+
+    assert [line.source_path for line in lines].count(log_path) == 1
+    assert all(line.source_path != "logs/missing-runtime.log" for line in lines)
 
 
 def test_export_target_diagnostics_falls_back_when_path_resolution_raises_oserror(
