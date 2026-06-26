@@ -639,6 +639,9 @@ def _copy_payload_value(value: Any) -> Any:
         return value
     copy_value = _copy_payload_value
     if value_type is dict:
+        if len(value) == 1:
+            key = next(iter(value))
+            return {key: copy_value(value[key])}
         return {key: copy_value(item) for key, item in value.items()}
     if value_type is list:
         value_len = len(value)
