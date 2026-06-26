@@ -69,6 +69,7 @@ from worker.runtime.native_mtp import mlx_lm_loader as native_mtp_loader_module
 from worker.runtime.quantized_tensor_metadata import (
     EMPTY_QUANTIZED_TENSOR_METADATA,
     QuantizedTensorMetadata,
+    _native_multimodal_high_precision_module,
     cross_shard_quantized_metadata_fixup_count,
     native_multimodal_quantization_preserves_precision,
     quantized_tensor_metadata_from_model_dir,
@@ -2545,6 +2546,10 @@ def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_ent
         return model, processor
 
     _write_fake_safetensors_header(
+        valid_shard,
+        ("language_model.layers.9.q_proj.weight",),
+    )
+    _write_fake_safetensors_header(
         model_dir / "model-00002.safetensors",
         ("language_model.layers.1.q_proj.weight",),
     )
@@ -2637,6 +2642,17 @@ def _assert_native_multimodal_quantization_preserves_precision_without_explicit_
 
 def test_native_multimodal_quantization_preserves_precision_without_explicit_scales() -> None:
     _assert_native_multimodal_quantization_preserves_precision_without_explicit_scales()
+
+
+def test_native_multimodal_high_precision_module_segment_scan_preserves_boundaries() -> None:
+    assert _native_multimodal_high_precision_module("vision_tower.patch_embed") is True
+    assert _native_multimodal_high_precision_module("model.visual.patch_embed") is True
+    assert _native_multimodal_high_precision_module("language_model.lm_head") is True
+    assert _native_multimodal_high_precision_module("model..vision_tower") is True
+    assert _native_multimodal_high_precision_module("language_model.layers.0.q_proj") is False
+    assert _native_multimodal_high_precision_module("prevision_tower.patch_embed") is False
+    assert _native_multimodal_high_precision_module("model.visualizer.patch_embed") is False
+    assert _native_multimodal_high_precision_module("language_model.output_projection") is False
 
 
 def test_native_mtp_weight_key_detection_preserves_string_and_custom_keys() -> None:
