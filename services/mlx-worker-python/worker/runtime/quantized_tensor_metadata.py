@@ -69,6 +69,11 @@ _NATIVE_MULTIMODAL_HIGH_PRECISION_SUFFIXES = (
     ".output_layer",
     ".score",
 )
+_NATIVE_MULTIMODAL_HIGH_PRECISION_SEGMENTS = frozenset(_NATIVE_MULTIMODAL_HIGH_PRECISION_PREFIXES)
+_NATIVE_MULTIMODAL_HIGH_PRECISION_OUTPUT_SEGMENTS = frozenset(
+    suffix[1:] for suffix in _NATIVE_MULTIMODAL_HIGH_PRECISION_SUFFIXES
+)
+_NATIVE_MULTIMODAL_CONTAINER_SEGMENTS = frozenset(("model", "language_model"))
 
 
 def _load_json_payload(path: Path) -> dict[str, Any]:
@@ -191,18 +196,29 @@ def native_multimodal_quantization_preserves_precision(
 
 
 def _native_multimodal_high_precision_module(prefix: str) -> bool:
-    segments = tuple(segment for segment in prefix.split(".") if segment)
-    for index, segment in enumerate(segments):
-        if segment in _NATIVE_MULTIMODAL_HIGH_PRECISION_PREFIXES:
+    start = 0
+    prefix_length = len(prefix)
+    previous_segment = ""
+    while start <= prefix_length:
+        separator_index = prefix.find(".", start)
+        if separator_index < 0:
+            segment = prefix[start:]
+            start = prefix_length + 1
+        else:
+            segment = prefix[start:separator_index]
+            start = separator_index + 1
+        if not segment:
+            continue
+        if segment in _NATIVE_MULTIMODAL_HIGH_PRECISION_SEGMENTS:
             return True
         if (
-            segment in {"model", "language_model"}
-            and index + 1 < len(segments)
-            and segments[index + 1] in _NATIVE_MULTIMODAL_HIGH_PRECISION_PREFIXES
+            previous_segment in _NATIVE_MULTIMODAL_CONTAINER_SEGMENTS
+            and segment in _NATIVE_MULTIMODAL_HIGH_PRECISION_SEGMENTS
         ):
             return True
-        if segment in {"lm_head", "output", "output_layer", "score"}:
+        if segment in _NATIVE_MULTIMODAL_HIGH_PRECISION_OUTPUT_SEGMENTS:
             return True
+        previous_segment = segment
     return False
 
 

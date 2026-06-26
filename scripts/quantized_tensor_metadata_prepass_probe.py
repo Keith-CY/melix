@@ -20,6 +20,7 @@ sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 try:
     from worker.runtime.quantized_tensor_metadata import (  # noqa: E402
         QuantizedTensorMetadata,
+        _native_multimodal_high_precision_module,
         quantized_scales_present,
         quantized_tensor_metadata_from_index_payload,
         quantized_tensor_metadata_from_safetensor_headers,
@@ -99,6 +100,21 @@ except ImportError:  # Base refs before the metadata prepass do not have the hel
         scales_key = f"{prefix}.scales"
         return metadata.has_quantized_scales(prefix) or scales_key in weights
 
+    def _native_multimodal_high_precision_module(prefix: str) -> bool:
+        segments = tuple(segment for segment in prefix.split(".") if segment)
+        for index, segment in enumerate(segments):
+            if segment in {"projector", "vision_tower", "visual"}:
+                return True
+            if (
+                segment in {"model", "language_model"}
+                and index + 1 < len(segments)
+                and segments[index + 1] in {"projector", "vision_tower", "visual"}
+            ):
+                return True
+            if segment in {"lm_head", "output", "output_layer", "score"}:
+                return True
+        return False
+
 
 def _build_weight_map(pair_count: int, shard_count: int) -> dict[str, str]:
     weight_map: dict[str, str] = {}
@@ -143,6 +159,21 @@ def _materialized_scales_present(
     return f"{prefix}.scales" in weights
 
 
+def _high_precision_prefixes(pair_count: int) -> list[str]:
+    prefixes: list[str] = []
+    variants = (
+        "language_model.layers.{index}.q_proj",
+        "vision_tower.patch_embed.{index}",
+        "model.visual.patch_embed.{index}",
+        "language_model.lm_head.{index}",
+        "model.visualizer.patch_embed.{index}",
+        "prevision_tower.patch_embed.{index}",
+    )
+    for index in range(pair_count):
+        prefixes.append(variants[index % len(variants)].format(index=index))
+    return prefixes
+
+
 def _measure(
     callback: Callable[[], object],
     *,
@@ -172,6 +203,7 @@ def run_probe() -> dict[str, float]:
     weight_map = _build_weight_map(pair_count, shard_count)
     index_payload = {"weight_map": weight_map}
     prefixes = [f"language_model.layers.{index}.q_proj" for index in range(pair_count)]
+    high_precision_prefixes = _high_precision_prefixes(pair_count)
 
     index_ms, index_peaks, metadata = _measure(
         lambda: quantized_tensor_metadata_from_index_payload(index_payload),
@@ -203,6 +235,15 @@ def run_probe() -> dict[str, float]:
     if metadata_decision_count != materialized_decision_count:
         raise SystemExit("metadata quantized decisions differ from materialized weights")
 
+    high_precision_ms, high_precision_peaks, high_precision_decision_count = _measure(
+        lambda: sum(
+            int(_native_multimodal_high_precision_module(prefix))
+            for _ in range(decision_iterations)
+            for prefix in high_precision_prefixes
+        ),
+        samples=samples,
+    )
+
     with tempfile.TemporaryDirectory(prefix="melix-quantized-metadata-") as tmp_dir:
         shard_paths = _write_header_shards(Path(tmp_dir), weight_map)
         header_ms, header_peaks, header_metadata = _measure(
@@ -220,6 +261,9 @@ def run_probe() -> dict[str, float]:
         "metadata_decision_peak_bytes_mean": statistics.fmean(metadata_decision_peaks),
         "materialized_decision_elapsed_ms_mean": statistics.fmean(materialized_decision_ms),
         "materialized_decision_peak_bytes_mean": statistics.fmean(materialized_decision_peaks),
+        "high_precision_decision_elapsed_ms_mean": statistics.fmean(high_precision_ms),
+        "high_precision_decision_peak_bytes_mean": statistics.fmean(high_precision_peaks),
+        "high_precision_decision_count": float(cast(int, high_precision_decision_count)),
         "matched_decision_count": float(metadata_decision_count),
         "metadata_tensor_count": metadata_tensor_count,
         "header_tensor_count": float(len(header_metadata.tensor_names)),
