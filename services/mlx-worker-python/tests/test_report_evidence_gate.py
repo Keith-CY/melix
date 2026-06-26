@@ -421,8 +421,10 @@ def test_report_evidence_gate_target_field_tuple_rules_reuse_normalized_tuple() 
     )
 
     cache_info = report_evidence_gate_module._string_frozenset_from_tuple.cache_info()
-    assert cache_info.hits >= 1
+    assert cache_info.hits == 0
     assert cache_info.misses == 1
+    assert rule["_melix_cached_target_fields"] is rule["target_fields"]
+    assert rule["_melix_cached_target_field_set"] == {"adapter_id", "adapter_snapshot"}
 
 
 def test_report_evidence_gate_target_field_rules_skip_unrelated_target_items() -> None:
