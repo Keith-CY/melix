@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import stat
 from types import FunctionType
 from typing import Any
 
@@ -213,9 +214,10 @@ def _weight_dir_entry_file_size(entry: os.DirEntry[str]) -> int:
     if not _is_model_weight_filename(entry.name):
         return 0
     try:
-        if not entry.is_file():
+        stat_result = entry.stat()
+        if not stat.S_ISREG(stat_result.st_mode):
             return 0
-        return entry.stat().st_size
+        return stat_result.st_size
     except OSError:
         return 0
 
