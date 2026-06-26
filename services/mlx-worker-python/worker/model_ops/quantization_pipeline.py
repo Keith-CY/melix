@@ -348,7 +348,7 @@ class OQQuantizationPipeline:
                 )
             if path.suffix == ".json":
                 try:
-                    json.loads(path.read_text(encoding="utf-8"))
+                    json.loads(path.read_bytes())
                 except (OSError, json.JSONDecodeError) as exc:
                     return LocalInferenceSmokeEvidence(
                         status="failed",
