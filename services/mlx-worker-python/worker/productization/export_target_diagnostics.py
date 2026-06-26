@@ -82,8 +82,16 @@ class _DiagnosisPattern:
     expressions: tuple[re.Pattern[str], ...]
     operator_message: str
     remediation: str
+    markers: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "markers", tuple(marker.lower() for marker in self.markers))
 
     def matches(self, text: str) -> bool:
+        if self.markers:
+            lowered = text.lower()
+            if not any(marker in lowered for marker in self.markers):
+                return False
         return any(expression.search(text) for expression in self.expressions)
 
 
@@ -144,6 +152,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The target runtime cannot load this artifact on the current host architecture.",
         remediation="Use an Apple Silicon compatible runtime binary or export for a compatible target architecture.",
+        markers=("arch", "cpu type", "arm64"),
     ),
     _DiagnosisPattern(
         code=CODE_DUPLICATE_TENSOR_NAME,
@@ -156,6 +165,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The runtime reported duplicate tensor names while loading the export.",
         remediation="Regenerate the export from a clean adapter snapshot and inspect the conversion step that writes tensor names.",
+        markers=("duplicate", "tensor", "already exists"),
     ),
     _DiagnosisPattern(
         code=CODE_MISSING_BLOB,
@@ -170,6 +180,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The target artifact references a blob or required artifact that is not present.",
         remediation="Re-run target materialization and verify required artifact digests before runtime load.",
+        markers=("blob", "sha256", "artifact", "missing required"),
     ),
     _DiagnosisPattern(
         code=CODE_MISSING_BINARY,
@@ -184,6 +195,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The target runtime binary is missing or not available on PATH.",
         remediation="Install the required runtime binary or configure the export target to use an available local runtime.",
+        markers=("command", "binary", "executable", "installed", "ollama", "mlx_lm", "llama"),
     ),
     _DiagnosisPattern(
         code=CODE_INVALID_RUNTIME_PATH,
@@ -197,6 +209,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The runtime was invoked with a path that is invalid for this target.",
         remediation="Use target-relative manifest paths and regenerate the export report before retrying the runtime load.",
+        markers=("invalid", "path", "directory"),
     ),
     _DiagnosisPattern(
         code=CODE_RUNTIME_TIMEOUT,
@@ -210,6 +223,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The runtime did not finish the load or generation smoke check within the configured timeout.",
         remediation="Inspect runtime logs for slow startup, reduce the target artifact size, or increase the verified timeout policy.",
+        markers=("timed out", "timeout", "deadline"),
     ),
     _DiagnosisPattern(
         code=CODE_PERMISSION_DENIED,
@@ -222,6 +236,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The runtime cannot read or execute a required export path because of local permissions.",
         remediation="Fix file permissions for the target directory and retry the smoke check from the same worktree.",
+        markers=("permi", "eacces"),
     ),
     _DiagnosisPattern(
         code=CODE_INSUFFICIENT_MEMORY,
@@ -236,6 +251,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The host did not have enough memory for the runtime load or generation check.",
         remediation="Free memory, choose a smaller or more quantized target, or retry on a host with more memory.",
+        markers=("memory", "oom"),
     ),
     _DiagnosisPattern(
         code=CODE_RUNTIME_LOAD_FAILED,
@@ -250,6 +266,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The target runtime failed while loading the exported artifact.",
         remediation="Inspect the redacted runtime evidence, then regenerate or repair the target artifact before retrying.",
+        markers=("load", "model", "runtime", "failed", "error"),
     ),
 )
 

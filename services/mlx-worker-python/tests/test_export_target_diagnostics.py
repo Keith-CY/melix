@@ -24,6 +24,7 @@ from worker.productization.export_target_diagnostics import (
     build_export_diagnostics_receipt,
     write_export_diagnostics_receipt,
     _SourceLine,
+    _DiagnosisPattern,
     _build_redacted_excerpt,
     _diagnosis_metric_counts,
 )
@@ -413,6 +414,57 @@ def test_export_target_diagnostics_metric_counts_single_pass() -> None:
     assert parsed_count == 2
     assert unknown_count == 1
     assert matched_codes == {CODE_RUNTIME_LOAD_FAILED, CODE_MISSING_BINARY}
+
+
+def test_export_target_diagnostics_pattern_markers_skip_unrelated_regex() -> None:
+    expression = Mock()
+    pattern = _DiagnosisPattern(
+        code=CODE_MISSING_BLOB,
+        severity="error",
+        pattern_id="missing-blob-v1",
+        expressions=(expression,),
+        operator_message="message",
+        remediation="remediation",
+        markers=("blob",),
+    )
+
+    assert pattern.matches("runtime emitted a harmless progress line") is False
+    expression.search.assert_not_called()
+
+
+def test_export_target_diagnostics_pattern_markers_preserve_matching_regex() -> None:
+    expression = Mock()
+    expression.search.return_value = object()
+    pattern = _DiagnosisPattern(
+        code=CODE_MISSING_BLOB,
+        severity="error",
+        pattern_id="missing-blob-v1",
+        expressions=(expression,),
+        operator_message="message",
+        remediation="remediation",
+        markers=("blob",),
+    )
+
+    assert pattern.matches("missing blob sha256-777777") is True
+    expression.search.assert_called_once_with("missing blob sha256-777777")
+
+
+def test_export_target_diagnostics_pattern_markers_normalize_case() -> None:
+    expression = Mock()
+    expression.search.return_value = object()
+    pattern = _DiagnosisPattern(
+        code=CODE_MISSING_BLOB,
+        severity="error",
+        pattern_id="missing-blob-v1",
+        expressions=(expression,),
+        operator_message="message",
+        remediation="remediation",
+        markers=("BLOB",),
+    )
+
+    assert pattern.markers == ("blob",)
+    assert pattern.matches("missing blob sha256-777777") is True
+    expression.search.assert_called_once_with("missing blob sha256-777777")
 
 
 def test_export_target_diagnostics_skips_path_regex_for_slashless_text(
