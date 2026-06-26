@@ -541,16 +541,19 @@ def _supported_scan_entry_records(
             continue
         try:
             is_dir = entry.is_dir()
-            is_file = False if is_dir else entry.is_file()
+            if is_dir:
+                yield name, entry.path, True, False
+                continue
         except OSError:
             continue
-        if not is_dir and not is_file:
+        if name in _README_NAMES or not _is_supported_dataset_file_name(name):
             continue
-        if is_file and name in _README_NAMES:
+        try:
+            is_file = entry.is_file()
+        except OSError:
             continue
-        if is_file and not _is_supported_dataset_file_name(name):
-            continue
-        yield name, entry.path, is_dir, is_file
+        if is_file:
+            yield name, entry.path, False, True
 
 
 def _first_supported_dataset_file(directory: Path) -> Path | None:
@@ -583,15 +586,19 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
                     continue
                 try:
                     is_dir = entry.is_dir()
-                    is_file = False if is_dir else entry.is_file()
                 except OSError:
                     continue
-                if not is_dir and not is_file:
+                if is_dir:
+                    is_file = False
+                elif name in _README_NAMES or not _is_supported_dataset_file_name(name):
                     continue
-                if is_file and name in _README_NAMES:
-                    continue
-                if is_file and not _is_supported_dataset_file_name(name):
-                    continue
+                else:
+                    try:
+                        is_file = entry.is_file()
+                    except OSError:
+                        continue
+                    if not is_file:
+                        continue
                 best_name = name
                 best_path_raw = entry.path
                 best_is_dir = is_dir
