@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 import pytest
 
+from worker.productization import export_target_layout as export_target_layout_module
 from worker.productization.export_target_layout import (
     EXPORT_RETENTION_REPORT_SCHEMA_VERSION,
     build_export_target_layout,
@@ -410,6 +411,29 @@ def test_layout_metrics_report_aggregates_target_retention_counts(tmp_path: Path
     assert payload["cleanable_byte_size"] == 0
     assert payload["deleted_file_count"] == 0
     assert payload["layout_materialization_latency_ms"] >= 0
+
+
+def test_layout_metrics_report_reuses_materialized_dry_run_retention_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_paths = sorted(FIXTURE_ROOT.glob("*/export-target-manifest.json"))
+
+    def fail_cleanup(*_args: object, **_kwargs: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError("dry-run metrics should reuse materialized retention reports")
+
+    monkeypatch.setattr(export_target_layout_module, "cleanup_export_target", fail_cleanup)
+
+    payload = build_layout_metrics_report(
+        manifest_paths,
+        tmp_path,
+        cleanup="dry-run",
+        create_placeholder_files=True,
+    )
+
+    assert payload["ok"] is True
+    assert payload["retention_decision_count"] == 15
+    assert payload["retained_byte_size"] == 12141056
 
 
 def test_export_target_layout_retention_cli_writes_metrics(tmp_path: Path) -> None:

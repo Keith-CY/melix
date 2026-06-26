@@ -294,17 +294,17 @@ def build_layout_metrics_report(
         if export_report.get("ok") is not True:
             errors.extend(str(error) for error in export_report.get("errors", []))
             continue
-        if cleanup != "none":
+        if cleanup == "apply":
             retention_reports.append(
                 cleanup_export_target(
                     root / str(export_report["target_root"]) / EXPORT_TARGET_MANIFEST_FILENAME,
                     root,
-                    apply_cleanup=cleanup == "apply",
+                    apply_cleanup=True,
                     now=now,
                 )
             )
         else:
-            retention_report_path = Path(export_report["retention_report_path"])
+            retention_report_path = root / str(export_report["retention_report_path"])
             if retention_report_path.is_file():
                 retention_reports.append(json.loads(retention_report_path.read_text(encoding="utf-8")))
 
