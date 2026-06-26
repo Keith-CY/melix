@@ -123,6 +123,12 @@ it across all marker-gated diagnosis patterns. This preserves the per-pattern
 marker checks and regex match ids while avoiding repeated `str.lower()` calls on
 large bounded excerpts with many non-matching progress lines.
 
+A second 2026-06-26 diagnosis matching slice keeps the marker and regex
+semantics unchanged but replaces generator-based `any(...)` checks in the hot
+pattern matcher with explicit loops. The matcher still returns after the first
+marker miss or regex hit, while avoiding per-pattern generator allocation during
+bounded excerpt scans.
+
 Focused verification:
 
 ```bash
