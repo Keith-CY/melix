@@ -363,7 +363,7 @@ def _canary_result(failures: list[str]) -> str:
 
 def _load_json_mapping(path: Path) -> Mapping[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_bytes())
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, Mapping) else {}
