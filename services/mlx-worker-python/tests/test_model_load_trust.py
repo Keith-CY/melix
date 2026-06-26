@@ -37,6 +37,28 @@ def test_trust_policy_non_empty_source_fast_path_preserves_blank_fallback() -> N
     assert model_load_trust_module._non_empty(" \t\n", "fallback") == "fallback"
 
 
+def test_requested_mode_reuses_valid_mode_membership_for_sources() -> None:
+    model = WorkerModelCatalog.dev_text_model()
+    assert model_load_trust_module._requested_mode(model, None) == (
+        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
+        "default_safe",
+    )
+
+    model.settings.load_trust_mode = common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    assert model_load_trust_module._requested_mode(model, None) == (
+        common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
+        "model_settings",
+    )
+
+    request_policy = common_pb2.ModelLoadTrustPolicy(
+        requested_mode=common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
+    )
+    assert model_load_trust_module._requested_mode(model, request_policy) == (
+        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
+        "request",
+    )
+
+
 def test_worker_rejects_custom_loader_metadata_without_explicit_trust(tmp_path: Path) -> None:
     backend = RecordingTextBackend()
     service = WorkerRuntimeService(
