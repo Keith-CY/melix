@@ -501,9 +501,15 @@ def _json_field_value_start_for_token(
     cursor = key_index + len(key_token)
     payload_length = len(payload_bytes)
     whitespace = _JSON_PAYLOAD_WHITESPACE
+    colon = _ORD_COLON
+    if cursor < payload_length and payload_bytes[cursor] == colon:
+        cursor += 1
+        while cursor < payload_length and payload_bytes[cursor] in whitespace:
+            cursor += 1
+        return cursor if cursor < payload_length else None
+
     while cursor < payload_length and payload_bytes[cursor] in whitespace:
         cursor += 1
-    colon = _ORD_COLON
     if cursor >= payload_length or payload_bytes[cursor] != colon:
         return None
     cursor += 1
