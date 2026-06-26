@@ -117,6 +117,12 @@ class's regex expressions, while lines that contain a marker continue through th
 same compiled regexes and matched-pattern ids as before. This reduces repeated
 regex scans across bounded excerpts with many non-matching lines.
 
+A follow-up 2026-06-26 diagnosis matching slice keeps the same parser semantics
+but computes each source line's lowercase form once per diagnosis scan and shares
+it across all marker-gated diagnosis patterns. This preserves the per-pattern
+marker checks and regex match ids while avoiding repeated `str.lower()` calls on
+large bounded excerpts with many non-matching progress lines.
+
 Focused verification:
 
 ```bash
