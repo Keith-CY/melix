@@ -123,6 +123,12 @@ it across all marker-gated diagnosis patterns. This preserves the per-pattern
 marker checks and regex match ids while avoiding repeated `str.lower()` calls on
 large bounded excerpts with many non-matching progress lines.
 
+A follow-up 2026-06-26 source-row iteration slice keeps source collection
+semantics unchanged while iterating generated, required, and intermediate file
+repeated fields separately instead of expanding them into one temporary tuple.
+This avoids an intermediate container allocation when each diagnostic receipt
+scans manifest rows for runtime logs.
+
 Focused verification:
 
 ```bash

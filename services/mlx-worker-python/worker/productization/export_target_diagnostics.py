@@ -462,18 +462,19 @@ def _collect_source_lines(
     seen_paths: set[str] = set()
     source_read_bytes = max(bounded_bytes * _SOURCE_READ_MULTIPLIER, bounded_bytes)
 
-    for row in (*manifest.generated_files, *manifest.required_files, *manifest.intermediate_files):
-        if not _is_runtime_log_row(row):
-            continue
-        if row.path in seen_paths:
-            continue
-        seen_paths.add(row.path)
-        path = _target_relative_path(layout, row.path)
-        if not path.is_file():
-            continue
-        with path.open("rb") as source:
-            text = source.read(source_read_bytes).decode("utf-8", errors="replace")
-        lines.extend(_split_source_lines(row.path, text))
+    for rows in (manifest.generated_files, manifest.required_files, manifest.intermediate_files):
+        for row in rows:
+            if not _is_runtime_log_row(row):
+                continue
+            if row.path in seen_paths:
+                continue
+            seen_paths.add(row.path)
+            path = _target_relative_path(layout, row.path)
+            if not path.is_file():
+                continue
+            with path.open("rb") as source:
+                text = source.read(source_read_bytes).decode("utf-8", errors="replace")
+            lines.extend(_split_source_lines(row.path, text))
 
     for check in failure_checks:
         failure_message = _check_value(check, "failure_message")
