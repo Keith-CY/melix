@@ -236,7 +236,50 @@ def test_export_target_diagnostics_lowercases_source_line_once_per_match_scan() 
     )
 
     assert diagnoses == []
-    assert TrackingText.lower_calls == 1
+    assert text.lower_calls == 1
+
+
+def test_export_target_diagnostics_runtime_load_markers_skip_progress_regexes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_load_pattern = next(
+        pattern
+        for pattern in export_target_diagnostics_module._DIAGNOSIS_PATTERNS
+        if pattern.code == CODE_RUNTIME_LOAD_FAILED
+    )
+    expressions = tuple(Mock(wraps=expression) for expression in runtime_load_pattern.expressions)
+    patched_pattern = _DiagnosisPattern(
+        code=runtime_load_pattern.code,
+        severity=runtime_load_pattern.severity,
+        pattern_id=runtime_load_pattern.pattern_id,
+        expressions=expressions,
+        operator_message=runtime_load_pattern.operator_message,
+        remediation=runtime_load_pattern.remediation,
+        markers=runtime_load_pattern.markers,
+    )
+    monkeypatch.setattr(
+        export_target_diagnostics_module,
+        "_DIAGNOSIS_PATTERNS",
+        (patched_pattern,),
+    )
+
+    diagnoses = _diagnoses_from_excerpt(
+        [
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text="progress line loaded shard metadata without failure",
+            ),
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text="runtime load failed while opening model",
+            ),
+        ],
+        {0: 1, 1: 2},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert [diagnosis["code"] for diagnosis in diagnoses] == [CODE_RUNTIME_LOAD_FAILED]
+    assert [expression.search.call_count for expression in expressions] == [1, 1, 1, 0, 0]
 
 
 def test_export_target_diagnostics_skips_secret_regexes_for_plain_path_lines(
