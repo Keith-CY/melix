@@ -135,6 +135,22 @@ def materialize_export_target_layout(
     create_placeholder_files: bool = False,
     now: float | None = None,
 ) -> dict[str, object]:
+    export_report, _retention_report = _materialize_export_target_layout_reports(
+        manifest_path,
+        workspace_root,
+        create_placeholder_files=create_placeholder_files,
+        now=now,
+    )
+    return export_report
+
+
+def _materialize_export_target_layout_reports(
+    manifest_path: Path | str,
+    workspace_root: Path | str,
+    *,
+    create_placeholder_files: bool,
+    now: float | None,
+) -> tuple[dict[str, object], dict[str, object] | None]:
     manifest, validation_report = validate_export_target_manifest_file(
         manifest_path,
         return_manifest=True,
@@ -144,7 +160,7 @@ def materialize_export_target_layout(
             "schema_version": EXPORT_LAYOUT_REPORT_SCHEMA_VERSION,
             "ok": False,
             "errors": list(validation_report.errors),
-        }
+        }, None
 
     layout = build_export_target_layout(workspace_root, manifest)
     _create_layout_directories(layout)
@@ -168,7 +184,7 @@ def materialize_export_target_layout(
     )
     _write_json(layout.export_report_path, export_report)
     _write_json(layout.retention_report_path, retention_report)
-    return export_report
+    return export_report, retention_report
 
 
 def build_export_retention_report(
@@ -284,7 +300,7 @@ def build_layout_metrics_report(
     errors: list[str] = []
 
     for manifest_path in manifest_paths:
-        export_report = materialize_export_target_layout(
+        export_report, retention_report = _materialize_export_target_layout_reports(
             manifest_path,
             root,
             create_placeholder_files=create_placeholder_files,
@@ -303,6 +319,8 @@ def build_layout_metrics_report(
                     now=now,
                 )
             )
+        elif retention_report is not None:
+            retention_reports.append(retention_report)
         else:
             retention_report_path = root / str(export_report["retention_report_path"])
             if retention_report_path.is_file():

@@ -422,7 +422,11 @@ def test_layout_metrics_report_reuses_materialized_dry_run_retention_report(
     def fail_cleanup(*_args: object, **_kwargs: object) -> dict[str, object]:  # pragma: no cover
         raise AssertionError("dry-run metrics should reuse materialized retention reports")
 
+    def fail_read_text(*_args: object, **_kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("dry-run metrics should keep retention reports in memory")
+
     monkeypatch.setattr(export_target_layout_module, "cleanup_export_target", fail_cleanup)
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
 
     payload = build_layout_metrics_report(
         manifest_paths,
