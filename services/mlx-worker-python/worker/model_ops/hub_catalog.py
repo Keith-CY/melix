@@ -54,6 +54,26 @@ _URL_HEX_DIGITS = {
     "F": 15,
 }
 _LOWERCASE_WEIGHT_OR_CONFIG_SUFFIXES = (".safetensors", ".npz", ".gguf", "config.json", "tokenizer.json")
+_COMMON_4BIT_OPTIQ_TAGS = {"4-bit", "4bit"}
+_COMMON_4BIT_OPTIQ_EXCLUDED_TAGS = {
+    "2bit",
+    "2-bit",
+    "3bit",
+    "3-bit",
+    "8bit",
+    "8-bit",
+    "mixed-precision",
+    "mixed_precision",
+    "fp32",
+    "float32",
+    "f32",
+    "bf16",
+    "fp16",
+    "float16",
+    "qat",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class HubModelSummaryRecord:
     repo_id: str
@@ -1107,6 +1127,12 @@ def _bytes_per_parameter_from_tag_substrings(lowered: set[str]) -> float:
 
 def _quantization_summary(tags: list[str], *, lowered_tags: set[str] | None = None) -> str:
     lowered = _normalized_lowered_tags(tags, lowered_tags)
+    if (
+        "optiq" in lowered
+        and not lowered.isdisjoint(_COMMON_4BIT_OPTIQ_TAGS)
+        and lowered.isdisjoint(_COMMON_4BIT_OPTIQ_EXCLUDED_TAGS)
+    ):
+        return "4-bit, optiq"
     values: list[str] = []
     if "2bit" in lowered or "2-bit" in lowered:
         values.append("2-bit")
