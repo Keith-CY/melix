@@ -124,6 +124,21 @@ def test_mlx_repo_id_detection_preserves_case_insensitive_matches() -> None:
     assert _repo_id_contains_mlx("owner/model-MLX-suffix") is True
 
 
+def test_payload_mlx_tag_detection_preserves_exact_list_and_subclass_semantics() -> None:
+    class TagList(list[str]):
+        pass
+
+    assert _payload_is_mlx_compatible(
+        {"id": "plain/model", "tags": ["Text-Generation", "MLX", object()]}
+    ) is True
+    assert _payload_is_mlx_compatible(
+        {"id": "plain/model", "tags": TagList(["Text-Generation", "mLx"])}
+    ) is True
+    assert _payload_is_mlx_compatible(
+        {"id": "plain/model", "tags": ["Text-Generation"], "cardData": {"tags": ["audio"]}}
+    ) is False
+
+
 class FakeHTTPResponse:
     def __init__(self, payload: object):
         self._payload = json.dumps(payload).encode("utf-8")
