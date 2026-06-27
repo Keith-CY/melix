@@ -991,6 +991,27 @@ def test_code_eval_payload_fast_path_decodes_known_status_values() -> None:
         "tests_total": 3,
         "failure_detail": "",
     }
+    for known_value in (
+        "",
+        "compiled",
+        "syntax_error",
+        "not_run",
+        "ok",
+        "error",
+        "timeout",
+        "timed_out",
+        "failed",
+        "passed",
+    ):
+        token = known_value.encode("utf-8")
+        assert (
+            code_eval_runner._known_code_eval_payload_string_value(
+                b'"' + token + b'"',
+                1,
+                len(token) + 1,
+            )
+            == known_value
+        )
     assert (
         code_eval_runner._known_code_eval_payload_string_value(
             b'"custom_failure"',
