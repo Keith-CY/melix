@@ -30,3 +30,16 @@ Replace `not text.strip()` with `not text or text.isspace()` when detecting empt
 - Focused tests pass and the whitespace-only source remains classified as `DATASET_INGEST_EMPTY_SOURCE`.
 - Changed-scope coverage for touched files remains at or above 95%.
 - The registered local and CI probes show non-regression or improvement for `elapsed_ms_mean` and related source-record metrics.
+
+## 2026-06-27 follow-up: JSONL blank-line skip
+
+The next focused slice keeps the same Python boundary and registered
+`dataset-source-records-scandir` probe, but narrows to JSONL structured data
+ingest in `_structured_records(...)`. Blank JSONL records previously used
+`line.strip()` before skipping empty lines, allocating a stripped copy even
+though the common non-empty line immediately flows into `json.loads(...)`.
+
+This slice replaces that guard with `not line or line.isspace()`, preserving
+blank and whitespace-only line skipping while avoiding stripped-copy allocation
+for populated JSONL rows. The existing focused ingest test now includes a
+whitespace-only JSONL line to keep behavior parity explicit.

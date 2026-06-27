@@ -175,6 +175,7 @@ def test_dataset_ingest_receipt_reports_independent_cleaning_controls(
     )
     (input_root / "rows.jsonl").write_text(
         '{"id":"row-1","text":"Alpha structured row"}\n'
+        "   \n"
         '{"id":"row-2","text":"Alpha structured row"}\n'
         '{"id":"row-3","text":"Alpha structured row."}\n',
         encoding="utf-8",
@@ -268,6 +269,7 @@ def test_dataset_ingest_receipt_reports_independent_cleaning_controls(
     assert all("sk-test-secret" not in row["text"] for row in segment_rows)
     assert any(row["source_kind"] == "code" and row["metadata"]["language"] == "python" for row in segment_rows)
     assert any(row["text"] == "JSON array row one" for row in segment_rows)
+    assert not any(row["text"].isspace() for row in segment_rows)
     assert any(row["text"] == "CSV structured row" for row in segment_rows)
     assert any(row["text"] == "TSV structured row" for row in segment_rows)
     assert json.loads(receipt_path.read_text(encoding="utf-8")) == receipt

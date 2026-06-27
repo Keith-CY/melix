@@ -713,7 +713,7 @@ def _structured_records(path: Path, text: str) -> Iterable[dict[str, Any]]:
     suffix = path.suffix.lower()
     if suffix == ".jsonl":
         for index, line in enumerate(text.splitlines(), start=1):
-            if not line.strip():
+            if not line or line.isspace():
                 continue
             payload = json.loads(line)
             yield _record(
