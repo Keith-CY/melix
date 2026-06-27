@@ -213,21 +213,21 @@ def _analyze_report(
                     "message": f"hardware telemetry failure: {failure}",
                 }
             )
+    source_evidence_ids = report.get("source_evidence_ids")
+    known_gaps = report.get("known_gaps")
     return {
         "path": str(path),
         "report_id": report.get("report_id", ""),
         "report_kind": report.get("report_kind", ""),
-        "source_evidence_ids": list(report.get("source_evidence_ids", []))
-        if isinstance(report.get("source_evidence_ids"), list)
+        "source_evidence_ids": list(source_evidence_ids)
+        if isinstance(source_evidence_ids, list)
         else [],
         "markdown_report_path": artifacts.get("markdown_report_path", ""),
         "validation_errors": validation_errors,
         "gate_result": gate_result.get("overall_result", "fail"),
         "blocking_failures": blocking_failures,
         "informational_results": _dict_list(gate_result.get("informational_results")),
-        "known_gaps": list(report.get("known_gaps", []))
-        if isinstance(report.get("known_gaps"), list)
-        else [],
+        "known_gaps": list(known_gaps) if isinstance(known_gaps, list) else [],
         "telemetry_failures": telemetry_failures,
         "slowest_probe_phases": _slowest_probe_phases(report),
         "evidence_validity_metrics": gate_result.get("evidence_validity_metrics", {})
