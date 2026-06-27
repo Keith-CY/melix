@@ -24,7 +24,9 @@ Add `_iter_supported_dataset_file_entries(...)`, which carries the snapshot-rela
 path string while scanning. `_dataset_files(...)` consumes `(Path, relative_path)`
 entries directly and avoids per-file `Path.relative_to(...)`. The existing
 `_iter_supported_dataset_files(...)` API is preserved as a thin wrapper for other
-callers, keeping external behavior and ordering unchanged.
+callers, keeping external behavior and ordering unchanged. The carried logical
+metadata path always uses `/` separators so serialized snapshot payloads remain
+platform-independent even when the host filesystem separator differs.
 
 ## Verification plan
 

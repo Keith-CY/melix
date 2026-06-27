@@ -990,7 +990,7 @@ def _iter_supported_dataset_file_entries(
         try:
             if entry.is_dir():
                 yield from _iter_supported_dataset_file_entries(
-                    Path(entry.path), f"{relative_path}{os.sep}"
+                    Path(entry.path), f"{relative_path}/"
                 )
                 continue
             if not entry.is_file():
