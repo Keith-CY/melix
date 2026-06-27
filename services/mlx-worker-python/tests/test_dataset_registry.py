@@ -359,6 +359,41 @@ def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
     assert rows == [{"prompt": "first", "answer": "a"}]
 
 
+def test_dataset_catalog_jsonl_row_reader_stops_after_limited_dict_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    jsonl_path = tmp_path / "sample.jsonl"
+    jsonl_path.write_text(
+        '\n'.join(
+            [
+                "",
+                json.dumps(["not", "a", "dict"]),
+                json.dumps({"prompt": "first"}),
+                json.dumps({"prompt": "second"}),
+                json.dumps({"prompt": "third"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    original_loads = catalog.json.loads
+    load_calls = 0
+
+    def counting_loads(payload: str) -> object:
+        nonlocal load_calls
+        load_calls += 1
+        return original_loads(payload)
+
+    monkeypatch.setattr(catalog.json, "loads", counting_loads)
+
+    assert catalog._read_rows_from_file(jsonl_path, limit=2) == [
+        {"prompt": "first"},
+        {"prompt": "second"},
+    ]
+    assert load_calls == 3
+
+
 def test_dataset_catalog_first_preview_scan_skips_readme_without_rescan(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshot"
     data_dir = snapshot_dir / "data"
