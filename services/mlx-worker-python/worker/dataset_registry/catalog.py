@@ -1009,7 +1009,11 @@ def _dataset_file_format(path: Path) -> str:
     dot_index = name.rfind(".")
     if dot_index <= 0 or dot_index == len(name) - 1:
         return ""
-    return _SUPPORTED_DATASET_SUFFIXES.get(name[dot_index:].lower(), "")
+    suffix = name[dot_index:]
+    file_format = _SUPPORTED_DATASET_SUFFIXES.get(suffix)
+    if file_format is not None:
+        return file_format
+    return _SUPPORTED_DATASET_SUFFIXES.get(suffix.lower(), "")
 
 
 def _inferred_split(relative_path: str) -> str:
