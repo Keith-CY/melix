@@ -87,6 +87,7 @@ def test_quantization_summary_preserves_alias_order_from_lowered_tags() -> None:
         _quantization_summary(["2-bit", "3bit", "8-bit", "float32", "bf16"])
         == "2-bit, 3-bit, 8-bit, fp32, bf16"
     )
+    assert _quantization_summary([], lowered_tags={"family-test", "4-bit", "optiq"}) == "4-bit, optiq"
 
 
 def test_string_list_preserves_exact_list_and_list_subclass_inputs() -> None:
