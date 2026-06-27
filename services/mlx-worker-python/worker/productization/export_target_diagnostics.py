@@ -270,6 +270,9 @@ _DIAGNOSIS_PATTERNS = (
         markers=("failed to load", "model load", "runtime load", "error loading", "load failed"),
     ),
 )
+_DIAGNOSIS_MARKERS = tuple(
+    dict.fromkeys(marker for pattern in _DIAGNOSIS_PATTERNS for marker in pattern.markers)
+)
 
 
 def write_export_diagnostics_receipt(
@@ -698,6 +701,8 @@ def _diagnoses_from_excerpt(
     for index, line_number in line_numbers.items():
         text = source_lines[index].text
         lowered_text = text.lower()
+        if not any(marker in lowered_text for marker in _DIAGNOSIS_MARKERS):
+            continue
         for pattern in _DIAGNOSIS_PATTERNS:
             if pattern.code in seen_codes:
                 continue
