@@ -13,16 +13,15 @@ class QuantizedTensorMetadata:
     tensor_to_shard: Mapping[str, str]
 
     def __post_init__(self) -> None:
+        normalized: dict[str, str] = {}
+        for raw_name, raw_shard in self.tensor_to_shard.items():
+            name = str(raw_name)
+            if name:
+                normalized[name] = str(raw_shard)
         object.__setattr__(
             self,
             "tensor_to_shard",
-            MappingProxyType(
-                {
-                    str(name): str(shard)
-                    for name, shard in self.tensor_to_shard.items()
-                    if str(name)
-                }
-            ),
+            MappingProxyType(normalized),
         )
 
     @property
@@ -90,13 +89,12 @@ def quantized_tensor_metadata_from_index_payload(
     weight_map = index_payload.get("weight_map") if isinstance(index_payload, Mapping) else None
     if not isinstance(weight_map, Mapping):
         return EMPTY_QUANTIZED_TENSOR_METADATA
-    return QuantizedTensorMetadata(
-        {
-            str(tensor_name): str(shard_name)
-            for tensor_name, shard_name in weight_map.items()
-            if str(tensor_name)
-        }
-    )
+    tensor_to_shard: dict[str, str] = {}
+    for raw_tensor_name, raw_shard_name in weight_map.items():
+        tensor_name = str(raw_tensor_name)
+        if tensor_name:
+            tensor_to_shard[tensor_name] = str(raw_shard_name)
+    return QuantizedTensorMetadata(tensor_to_shard)
 
 
 def quantized_tensor_metadata_from_safetensor_headers(
