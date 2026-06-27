@@ -227,6 +227,23 @@ def test_export_target_smoke_metrics_report_reuses_validated_manifest(
     assert validation_calls == len(manifest_paths)
 
 
+def test_export_target_smoke_manifest_file_rows_streams_generated_then_required(
+    tmp_path: Path,
+) -> None:
+    _target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "melix_managed/export-target-manifest.json",
+    )
+
+    streamed_paths = [row.path for row in export_target_smoke._manifest_file_rows(manifest)]
+
+    assert streamed_paths == [
+        *(row.path for row in manifest.generated_files),
+        *(row.path for row in manifest.required_files),
+    ]
+    assert "export-target-manifest.json" in streamed_paths
+
+
 def test_runtime_export_smoke_policy_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
