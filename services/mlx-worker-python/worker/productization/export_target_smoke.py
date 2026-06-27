@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from itertools import chain
 import json
 import time
 from dataclasses import dataclass
@@ -364,7 +365,7 @@ def _check_manifest_files(
 ) -> None:
     missing: list[str] = []
     mismatched: list[str] = []
-    for row in (*manifest.generated_files, *manifest.required_files):
+    for row in _manifest_file_rows(manifest):
         if row.path == "export-target-manifest.json":
             continue
         path = _target_relative_path(layout, row.path)
@@ -621,11 +622,17 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _manifest_file_rows(
+    manifest: export_target_manifest_pb2.ExportTargetManifest,
+):
+    return chain(manifest.generated_files, manifest.required_files)
+
+
 def _write_digest_fixture_files(
     target_root: Path,
     manifest: export_target_manifest_pb2.ExportTargetManifest,
 ) -> None:
-    for row in (*manifest.generated_files, *manifest.required_files):
+    for row in _manifest_file_rows(manifest):
         if row.path == "export-target-manifest.json":
             continue
         path = target_root / row.path
