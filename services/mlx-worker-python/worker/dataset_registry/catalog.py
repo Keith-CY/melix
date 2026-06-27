@@ -638,14 +638,16 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
     suffix = path.suffix.lower()
     if suffix == ".jsonl":
         rows: list[dict[str, Any]] = []
+        append_row = rows.append
+        loads = json.loads
         with path.open("r", encoding="utf-8") as handle:
             for raw_line in handle:
                 line = raw_line.strip()
                 if not line:
                     continue
-                payload = json.loads(line)
+                payload = loads(line)
                 if isinstance(payload, dict):
-                    rows.append(payload)
+                    append_row(payload)
                     if limit is not None and len(rows) >= limit:
                         break
         return rows
