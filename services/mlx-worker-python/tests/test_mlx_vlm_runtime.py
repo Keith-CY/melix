@@ -2467,6 +2467,38 @@ class _CountingEmptyWeights(dict[str, object]):
         return super().__contains__(key)
 
 
+class _StringifiedOnce:
+    def __init__(self, value: str) -> None:
+        self.value = value
+        self.calls = 0
+
+    def __str__(self) -> str:
+        self.calls += 1
+        return self.value
+
+
+def test_quantized_tensor_metadata_normalizes_index_keys_once() -> None:
+    tensor_name = _StringifiedOnce("language_model.layers.0.q_proj.scales")
+    empty_tensor_name = _StringifiedOnce("")
+    shard_name = _StringifiedOnce("model-00001.safetensors")
+
+    metadata = quantized_tensor_metadata_from_index_payload(
+        {"weight_map": {tensor_name: shard_name, empty_tensor_name: "ignored.safetensors"}}
+    )
+
+    assert metadata.tensor_to_shard == {
+        "language_model.layers.0.q_proj.scales": "model-00001.safetensors"
+    }
+    assert tensor_name.calls == 1
+    assert empty_tensor_name.calls == 1
+    assert shard_name.calls == 1
+
+    with pytest.raises(TypeError):
+        metadata.tensor_to_shard["language_model.layers.1.q_proj.scales"] = (
+            "model-00002.safetensors"
+        )
+
+
 def test_quantized_scales_present_skips_empty_weight_lookup() -> None:
     metadata = QuantizedTensorMetadata(
         {"language_model.layers.0.q_proj.scales": "model-00001.safetensors"}
