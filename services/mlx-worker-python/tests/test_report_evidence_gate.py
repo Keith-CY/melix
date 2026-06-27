@@ -548,8 +548,12 @@ def test_report_evidence_gate_probe_phase_tuple_rules_reuse_normalized_set() -> 
     )
 
     cache_info = report_evidence_gate_module._string_frozenset_from_tuple.cache_info()
-    assert cache_info.hits >= 1
+    assert cache_info.hits == 0
     assert cache_info.misses == 1
+    assert rule["_melix_cached_probe_phases"] is rule["probe_phases"]
+    assert rule["_melix_cached_probe_phase_set"] == frozenset(
+        {"runtime_prepare", "model_load", "decode"}
+    )
 
 
 def test_report_evidence_gate_probe_phase_list_rules_reflect_mutation() -> None:
