@@ -411,20 +411,6 @@ _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY = (
 )
 _CODE_EVAL_PAYLOAD_RUNNER_PREFIX = b'{"compile_status"'
 
-_CODE_EVAL_PAYLOAD_KNOWN_STRING_VALUES = (
-    (b"", ""),
-    (b"compiled", "compiled"),
-    (b"syntax_error", "syntax_error"),
-    (b"not_run", "not_run"),
-    (b"ok", "ok"),
-    (b"error", "error"),
-    (b"timeout", "timeout"),
-    (b"timed_out", "timed_out"),
-    (b"failed", "failed"),
-    (b"passed", "passed"),
-)
-
-
 _JSON_PAYLOAD_WHITESPACE = b" \t\r\n"
 
 
@@ -565,9 +551,26 @@ def _known_code_eval_payload_string_value(
     value_end: int,
 ) -> str | None:
     value_length = value_end - value_start
-    for token, value in _CODE_EVAL_PAYLOAD_KNOWN_STRING_VALUES:
-        if value_length == len(token) and payload_bytes.startswith(token, value_start):
-            return value
+    if value_length == 0:
+        return ""
+    if value_length == 2:
+        return "ok" if payload_bytes.startswith(b"ok", value_start) else None
+    if value_length == 5:
+        return "error" if payload_bytes.startswith(b"error", value_start) else None
+    if value_length == 6:
+        if payload_bytes.startswith(b"failed", value_start):
+            return "failed"
+        return "passed" if payload_bytes.startswith(b"passed", value_start) else None
+    if value_length == 7:
+        if payload_bytes.startswith(b"not_run", value_start):
+            return "not_run"
+        return "timeout" if payload_bytes.startswith(b"timeout", value_start) else None
+    if value_length == 8:
+        return "compiled" if payload_bytes.startswith(b"compiled", value_start) else None
+    if value_length == 9:
+        return "timed_out" if payload_bytes.startswith(b"timed_out", value_start) else None
+    if value_length == 12:
+        return "syntax_error" if payload_bytes.startswith(b"syntax_error", value_start) else None
     return None
 
 
