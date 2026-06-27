@@ -1427,6 +1427,40 @@ def test_project_retrieval_contexts_preserves_multi_field_admission_duplicate_sc
     ]
 
 
+def test_project_retrieval_contexts_single_field_admission_uses_items_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CountingPayload(dict[str, dict[str, str]]):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(*args, **kwargs)
+            self.getitem_calls = 0
+
+        def __getitem__(self, key: str) -> dict[str, str]:  # pragma: no cover - must stay unused
+            self.getitem_calls += 1
+            return super().__getitem__(key)
+
+    payload = CountingPayload({"retrieved_document": {"text": "cached payload"}})
+
+    class Admission:
+        user_payload = payload
+        untrusted_context_receipts = [
+            {
+                "schema_version": "melix.untrusted_context_receipt.v1",
+                "source_field": "retrieved_document",
+                "source_id": "doc:local-7",
+            }
+        ]
+
+    monkeypatch.setattr(retrieval_context_module, "_admit_entry", lambda _entry: Admission())
+
+    projection = project_retrieval_contexts([{"fallback": True}])
+
+    assert projection.user_payload == {"retrieved_document": {"text": "cached payload"}}
+    assert projection.untrusted_context_receipts == Admission.untrusted_context_receipts
+    assert projection.refusal_receipts == []
+    assert payload.getitem_calls == 0
+
+
 def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> None:
     payload = {
         "retrieved_context": {
