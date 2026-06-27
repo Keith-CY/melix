@@ -334,12 +334,13 @@ def _partition_failed_segments(
     if not fail_segment_ids:
         return segments, []
     failed_id_set = set(fail_segment_ids)
-    successful_segments = [
-        segment for segment in segments if segment.get("segment_id") not in failed_id_set
-    ]
-    failed_segments = [
-        segment for segment in segments if segment.get("segment_id") in failed_id_set
-    ]
+    successful_segments: list[dict[str, Any]] = []
+    failed_segments: list[dict[str, Any]] = []
+    for segment in segments:
+        if segment.get("segment_id") in failed_id_set:
+            failed_segments.append(segment)
+        else:
+            successful_segments.append(segment)
     return successful_segments, failed_segments
 
 

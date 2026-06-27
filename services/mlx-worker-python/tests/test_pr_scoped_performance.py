@@ -740,6 +740,8 @@ def test_dataset_quality_lengths_probe_script_emits_metrics(
     monkeypatch.setenv("MELIX_DATASET_QUALITY_LENGTHS_TRAIN_ROWS", "5")
     monkeypatch.setenv("MELIX_DATASET_QUALITY_LENGTHS_VALIDATION_ROWS", "2")
     monkeypatch.setenv("MELIX_DATASET_QUALITY_LENGTHS_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_DATASET_FAILED_PARTITION_SEGMENTS", "10")
+    monkeypatch.setenv("MELIX_DATASET_FAILED_PARTITION_MODULUS", "4")
     probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_quality_lengths_probe.py"))
 
     assert probe_script["main"]() == 0
@@ -753,6 +755,10 @@ def test_dataset_quality_lengths_probe_script_emits_metrics(
     assert metrics["row_count"] == 7.0
     assert metrics["mean_output_length"] > 0.0
     assert metrics["p95_output_length"] > 0.0
+    assert metrics["failed_partition_elapsed_ms_mean"] >= 0.0
+    assert metrics["failed_partition_elapsed_ms_p95"] >= 0.0
+    assert metrics["failed_partition_segment_count"] == 10.0
+    assert metrics["failed_partition_failed_count"] == 3.0
 
 
 def test_dataset_source_records_probe_script_emits_metrics(

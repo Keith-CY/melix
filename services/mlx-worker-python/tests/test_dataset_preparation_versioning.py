@@ -145,6 +145,29 @@ def test_dataset_version_failed_segment_partition_preserves_failed_id_semantics(
     assert failed_segments == [segments[1], segments[2]]
 
 
+def test_dataset_version_failed_segment_partition_scans_nonempty_failures_once() -> None:
+    class CountingSegments(list[dict[str, object]]):
+        iter_calls = 0
+
+        def __iter__(self):
+            self.iter_calls += 1
+            return super().__iter__()
+
+    segments = CountingSegments(
+        [
+            {"segment_id": "a", "text": "first"},
+            {"segment_id": "b", "text": "second"},
+            {"segment_id": "c", "text": "third"},
+        ]
+    )
+
+    successful_segments, failed_segments = _partition_failed_segments(segments, ("b",))
+
+    assert successful_segments == [segments[0], segments[2]]
+    assert failed_segments == [segments[1]]
+    assert segments.iter_calls == 1
+
+
 def test_dataset_quality_output_lengths_preserve_completion_and_message_semantics() -> None:
     train_rows = [
         {"completion": "abc"},
