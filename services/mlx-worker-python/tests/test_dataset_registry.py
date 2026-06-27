@@ -185,11 +185,42 @@ def test_dataset_catalog_file_format_uses_supported_suffixes() -> None:
     assert catalog._dataset_file_format(Path("train.JSONL")) == "jsonl"
     assert catalog._dataset_file_format(Path("train.jsonl.")) == ""
     assert catalog._dataset_file_format(Path(".jsonl")) == ""
+    assert catalog._dataset_file_format_name("README.md") == "metadata"
+    assert catalog._dataset_file_format_name("train.JSONL") == "jsonl"
+    assert catalog._dataset_file_format_name("notes.txt") == ""
     assert catalog._is_supported_dataset_file_name("train.jsonl") is True
     assert catalog._is_supported_dataset_file_name("train.JSONL") is True
     assert catalog._is_supported_dataset_file_name("notes.txt") is False
     assert catalog._is_supported_dataset_file_name("README") is False
     assert catalog._is_supported_dataset_file_name(".jsonl") is False
+
+
+def test_dataset_catalog_skips_path_construction_for_unsupported_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "README.md").write_text("# Dataset\n", encoding="utf-8")
+    (snapshot_dir / "train.jsonl").write_text("{}\n", encoding="utf-8")
+    (snapshot_dir / "notes.txt").write_text("ignore\n", encoding="utf-8")
+    (snapshot_dir / ".jsonl").write_text("ignore\n", encoding="utf-8")
+
+    real_path = Path
+    constructor_calls = 0
+
+    class CountingPath:
+        def __new__(cls, *args: Any, **kwargs: Any):
+            nonlocal constructor_calls
+            constructor_calls += 1
+            return real_path(*args, **kwargs)
+
+    monkeypatch.setattr(catalog, "Path", CountingPath)
+
+    entries = tuple(catalog._iter_supported_dataset_file_entries(snapshot_dir))
+
+    assert [relative_path for _path, relative_path in entries] == ["README.md", "train.jsonl"]
+    assert constructor_calls == 2
 
 
 def test_dataset_catalog_split_alias_prefix_scan_matches_legacy_delimiters() -> None:
