@@ -2455,6 +2455,10 @@ def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
         ] = "model-00003.safetensors"
     assert not EMPTY_QUANTIZED_TENSOR_METADATA.tensor_names
     assert cross_shard_quantized_metadata_fixup_count(EMPTY_QUANTIZED_TENSOR_METADATA) == 0
+    assert (
+        quantized_tensor_metadata_from_index_payload({"weight_map": {}})
+        is EMPTY_QUANTIZED_TENSOR_METADATA
+    )
 
 
 class _CountingEmptyWeights(dict[str, object]):
