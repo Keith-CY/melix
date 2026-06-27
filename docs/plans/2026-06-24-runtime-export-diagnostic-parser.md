@@ -129,6 +129,13 @@ repeated fields separately instead of expanding them into one temporary tuple.
 This avoids an intermediate container allocation when each diagnostic receipt
 scans manifest rows for runtime logs.
 
+A follow-up 2026-06-27 diagnosis prefilter slice keeps the existing per-pattern
+marker gates and regex expressions, but first checks each lowercased source line
+against the union of known diagnosis markers. Lines with no diagnostic marker
+skip the pattern loop entirely, while matching lines still use the same compiled
+regexes and matched-pattern ids as before. This reduces bounded-excerpt scans
+with many progress lines that contain no supported failure terms.
+
 Focused verification:
 
 ```bash

@@ -560,6 +560,25 @@ def test_export_target_diagnostics_pattern_markers_normalize_case() -> None:
     expression.search.assert_called_once_with("missing blob sha256-777777")
 
 
+def test_export_target_diagnostics_prefilters_unmarked_lines_before_pattern_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pattern = Mock()
+    pattern.code = CODE_MISSING_BLOB
+    pattern.matches.return_value = True
+    monkeypatch.setattr(export_target_diagnostics_module, "_DIAGNOSIS_PATTERNS", (pattern,))
+    monkeypatch.setattr(export_target_diagnostics_module, "_DIAGNOSIS_MARKERS", ("blob",))
+
+    diagnoses = export_target_diagnostics_module._diagnoses_from_excerpt(
+        [_SourceLine(source_path="logs/runtime.log", text="progress line without diagnostic terms")],
+        {0: 1},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert diagnoses == []
+    pattern.matches.assert_not_called()
+
+
 def test_export_target_diagnostics_skips_path_regex_for_slashless_text(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
