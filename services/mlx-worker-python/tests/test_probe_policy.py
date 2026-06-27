@@ -7,6 +7,7 @@ from worker.productization.probe_policy_overhead import (
 from worker.productization.probe_policy import (
     ProbeMode,
     ProbePolicy,
+    _PROBE_POLICY_INVALID_MINIMAL_BY_EXACT_VALUE,
     _probe_policy_from_uncached_string,
     probe_policy_from_env,
 )
@@ -96,6 +97,27 @@ def test_probe_policy_reuses_normalized_string_cache_for_invalid_values() -> Non
     assert ProbePolicy.from_value("Definitely-Not-Valid") is invalid_policy
     assert _probe_policy_from_uncached_string.cache_info().hits == 1
     assert ProbePolicy.from_value("   ") is ProbePolicy.from_value("")
+
+
+def test_probe_policy_reuses_exact_invalid_minimal_cache_without_default_mode_drift() -> None:
+    _PROBE_POLICY_INVALID_MINIMAL_BY_EXACT_VALUE.clear()
+    _probe_policy_from_uncached_string.cache_clear()
+
+    invalid_policy = ProbePolicy.from_value("definitely-not-valid")
+
+    assert invalid_policy.mode is ProbeMode.MINIMAL
+    assert invalid_policy.source_value == "definitely-not-valid"
+    assert invalid_policy.fallback_applied is True
+    assert _PROBE_POLICY_INVALID_MINIMAL_BY_EXACT_VALUE["definitely-not-valid"] is invalid_policy
+    assert ProbePolicy.from_value("definitely-not-valid") is invalid_policy
+    assert _probe_policy_from_uncached_string.cache_info().hits == 0
+
+    debug_invalid_policy = ProbePolicy.from_value(
+        "definitely-not-valid",
+        default_mode=ProbeMode.DEBUG,
+    )
+    assert debug_invalid_policy.mode is ProbeMode.DEBUG
+    assert debug_invalid_policy is not invalid_policy
 
 
 def test_probe_policy_empty_values_reuse_default_policy_cache() -> None:

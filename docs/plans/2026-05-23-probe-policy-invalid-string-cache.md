@@ -26,3 +26,11 @@ normalization so repeated absent-value parsing returns the cached default policy
 without allocating and normalizing `str(None or "")`. The registered probe now
 also reports `mode_parse_none_call_ms_mean` alongside the existing empty, valid,
 and invalid parse metrics.
+
+## 2026-06-27 follow-up: exact lowercase invalid fast path
+
+Repeated unsupported lowercase values such as `definitely-not-valid` can reuse
+the invalid-policy cache directly after the exact supported-mode lookup misses.
+This keeps whitespace-padded or mixed-case strings on the normalization helper,
+while exact lowercase invalid strings skip one cached helper frame and avoid
+repeating `strip().lower()` work.

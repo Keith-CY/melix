@@ -67,7 +67,23 @@ class ProbePolicy:
             policy = _PROBE_POLICY_BY_VALUE_GET(value)
             if policy is not None:
                 return policy
-            return _probe_policy_from_uncached_string(value, default_mode)
+            if default_mode is ProbeMode.MINIMAL:
+                policy = _PROBE_POLICY_INVALID_MINIMAL_BY_EXACT_VALUE_GET(value)
+                if policy is not None:
+                    return policy
+            policy = _probe_policy_from_uncached_string(value, default_mode)
+            if (
+                default_mode is ProbeMode.MINIMAL
+                and policy.fallback_applied
+                and policy.source_value == value
+            ):
+                if (
+                    len(_PROBE_POLICY_INVALID_MINIMAL_BY_EXACT_VALUE)
+                    >= _PROBE_POLICY_INVALID_MINIMAL_CACHE_MAX_SIZE
+                ):
+                    _PROBE_POLICY_INVALID_MINIMAL_BY_EXACT_VALUE.clear()
+                _PROBE_POLICY_INVALID_MINIMAL_BY_EXACT_VALUE[value] = policy
+            return policy
         elif isinstance(value, ProbeMode):
             return _PROBE_POLICY_BY_MODE[value]
         elif isinstance(value, str):
@@ -97,6 +113,11 @@ _PROBE_POLICY_BY_VALUE: dict[str, ProbePolicy] = {
     mode.value: ProbePolicy(mode=mode, source_value=mode.value) for mode in ProbeMode
 }
 _PROBE_POLICY_BY_VALUE_GET = _PROBE_POLICY_BY_VALUE.get
+_PROBE_POLICY_INVALID_MINIMAL_BY_EXACT_VALUE: dict[str, ProbePolicy] = {}
+_PROBE_POLICY_INVALID_MINIMAL_CACHE_MAX_SIZE = 64
+_PROBE_POLICY_INVALID_MINIMAL_BY_EXACT_VALUE_GET = (
+    _PROBE_POLICY_INVALID_MINIMAL_BY_EXACT_VALUE.get
+)
 _PROBE_POLICY_BY_MODE: dict[ProbeMode, ProbePolicy] = {
     mode: _PROBE_POLICY_BY_VALUE[mode.value] for mode in ProbeMode
 }
