@@ -794,6 +794,35 @@ def test_agentic_tool_selection_whitespace_turn_skips_casefold() -> None:
     assert result.receipt["fallback_reason"] == "no_keyword_match"
 
 
+def test_agentic_tool_selection_whitespace_turn_skips_keyword_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_keyword_tool_matches(text: str) -> tuple[str, ...]:  # pragma: no cover
+        raise AssertionError(f"whitespace fast path should not scan keywords: {text!r}")
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "_keyword_tool_matches",
+        fail_keyword_tool_matches,
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn=" \t\n  ",
+            vector_available=True,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+    assert result.receipt["vector_available"] is True
+    assert result.receipt["fallback_reason"] == "no_keyword_match"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+    ]
+
+
 def test_agentic_tool_selection_skips_empty_context_keyword_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

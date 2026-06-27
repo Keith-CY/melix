@@ -494,6 +494,13 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
     max_selected_tools = max(1, selection_input.max_selected_tools)
     if max_selected_tools == 1:
         return _build_always_only_tool_selection_result(registry, selection_input)
+    current_user_turn = selection_input.current_user_turn
+    if (
+        not selection_input.vector_selected_tool_ids
+        and not selection_input.recent_user_turns
+        and (not current_user_turn or current_user_turn.isspace())
+    ):
+        return _build_always_only_tool_selection_result(registry, selection_input)
     selected_sources: dict[str, str] = {}
     selected_names: list[str] = []
     has_vector_selection = False
