@@ -43,3 +43,16 @@ This slice replaces that guard with `not line or line.isspace()`, preserving
 blank and whitespace-only line skipping while avoiding stripped-copy allocation
 for populated JSONL rows. The existing focused ingest test now includes a
 whitespace-only JSONL line to keep behavior parity explicit.
+
+## 2026-06-27 follow-up: common lowercase source suffix fast path
+
+This Python-only follow-up stays within `_classify_source_kind_name(...)` and
+the existing registered `dataset-source-records-scandir` probe. The source tree
+probe repeatedly classifies lowercase `.md`, `.py`, and `.jsonl` filenames, but
+those names previously fell through to the generic suffix path that finds the
+last dot and lowercases the suffix before set membership checks.
+
+This slice adds exact lowercase suffix returns for `.md`, `.py`, and `.jsonl`
+after the existing text fast paths. Uppercase and mixed-case names still fall
+through to the generic lowercase path, preserving current behavior while
+avoiding generic suffix allocation/work for common generated dataset inputs.
