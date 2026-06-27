@@ -612,6 +612,12 @@ def _classify_source_kind_name(name: str) -> str | None:
         return "text"
     if name[-5:] == ".text":
         return "text"
+    if name[-3:] == ".md":
+        return "markdown"
+    if name[-3:] == ".py":
+        return "code"
+    if name[-6:] == ".jsonl":
+        return "structured_data"
 
     dot_index = name.rfind(".")
     if dot_index < 0:
