@@ -50,6 +50,16 @@ class QuantizedTensorMetadata:
 
 EMPTY_QUANTIZED_TENSOR_METADATA = QuantizedTensorMetadata({})
 MAX_SAFETENSORS_HEADER_BYTES = 100 * 1024 * 1024
+
+
+def _metadata_from_normalized_mapping(tensor_to_shard: dict[str, str]) -> QuantizedTensorMetadata:
+    if not tensor_to_shard:
+        return EMPTY_QUANTIZED_TENSOR_METADATA
+    metadata = object.__new__(QuantizedTensorMetadata)
+    object.__setattr__(metadata, "tensor_to_shard", MappingProxyType(tensor_to_shard))
+    return metadata
+
+
 _NATIVE_MULTIMODAL_HIGH_PRECISION_PREFIXES = (
     "audio_tower",
     "embed_audio",
@@ -94,7 +104,7 @@ def quantized_tensor_metadata_from_index_payload(
         tensor_name = str(raw_tensor_name)
         if tensor_name:
             tensor_to_shard[tensor_name] = str(raw_shard_name)
-    return QuantizedTensorMetadata(tensor_to_shard)
+    return _metadata_from_normalized_mapping(tensor_to_shard)
 
 
 def quantized_tensor_metadata_from_safetensor_headers(
@@ -108,7 +118,7 @@ def quantized_tensor_metadata_from_safetensor_headers(
             tensor_to_shard[tensor_name] = shard_name
     if not tensor_to_shard:
         return EMPTY_QUANTIZED_TENSOR_METADATA
-    return QuantizedTensorMetadata(tensor_to_shard)
+    return _metadata_from_normalized_mapping(tensor_to_shard)
 
 
 def quantized_tensor_metadata_from_model_dir(
@@ -144,7 +154,7 @@ def cross_shard_quantized_metadata_fixup_count(
     metadata: QuantizedTensorMetadata,
 ) -> int:
     prefixes: set[str] = set()
-    for tensor_name in metadata.tensor_names:
+    for tensor_name in metadata.tensor_to_shard:
         if tensor_name.endswith(".weight"):
             prefixes.add(tensor_name[: -len(".weight")])
         elif tensor_name.endswith(".scales"):
