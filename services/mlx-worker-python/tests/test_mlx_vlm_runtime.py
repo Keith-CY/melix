@@ -2456,6 +2456,50 @@ def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
     assert cross_shard_quantized_metadata_fixup_count(EMPTY_QUANTIZED_TENSOR_METADATA) == 0
 
 
+class _CountingTensorName:
+    def __init__(self, value: str) -> None:
+        self.value = value
+        self.calls = 0
+
+    def __str__(self) -> str:
+        self.calls += 1
+        return self.value
+
+
+def test_quantized_tensor_metadata_normalizes_names_once_and_reuses_empty_singleton(
+    tmp_path: Path,
+) -> None:
+    tensor_name = _CountingTensorName("language_model.layers.0.q_proj.scales")
+    empty_name = _CountingTensorName("")
+    metadata = QuantizedTensorMetadata(  # type: ignore[arg-type]
+        {
+            tensor_name: "model-00001.safetensors",
+            empty_name: "model-ignored.safetensors",
+        }
+    )
+
+    assert tensor_name.calls == 1
+    assert empty_name.calls == 1
+    assert metadata.shard_for("language_model.layers.0.q_proj.scales") == "model-00001.safetensors"
+    assert "" not in metadata.tensor_to_shard
+    with pytest.raises(TypeError):
+        metadata.tensor_to_shard["new.tensor"] = "model-00002.safetensors"  # type: ignore[index]
+    assert (
+        quantized_tensor_metadata_from_index_payload({"weight_map": {"": "ignored.safetensors"}})
+        is EMPTY_QUANTIZED_TENSOR_METADATA
+    )
+
+    metadata_only_shard = tmp_path / "metadata-only.safetensors"
+    metadata_payload = json.dumps({"__metadata__": {"format": "pt"}}).encode("utf-8")
+    metadata_only_shard.write_bytes(
+        len(metadata_payload).to_bytes(8, "little") + metadata_payload
+    )
+    assert (
+        quantized_tensor_metadata_from_safetensor_headers([metadata_only_shard])
+        is EMPTY_QUANTIZED_TENSOR_METADATA
+    )
+
+
 def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_entries(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

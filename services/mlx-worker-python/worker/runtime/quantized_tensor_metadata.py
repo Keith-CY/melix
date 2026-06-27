@@ -13,17 +13,12 @@ class QuantizedTensorMetadata:
     tensor_to_shard: Mapping[str, str]
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "tensor_to_shard",
-            MappingProxyType(
-                {
-                    str(name): str(shard)
-                    for name, shard in self.tensor_to_shard.items()
-                    if str(name)
-                }
-            ),
-        )
+        normalized: dict[str, str] = {}
+        for name, shard in self.tensor_to_shard.items():
+            normalized_name = str(name)
+            if normalized_name:
+                normalized[normalized_name] = str(shard)
+        object.__setattr__(self, "tensor_to_shard", MappingProxyType(normalized))
 
     @property
     def tensor_names(self) -> frozenset[str]:
@@ -90,13 +85,14 @@ def quantized_tensor_metadata_from_index_payload(
     weight_map = index_payload.get("weight_map") if isinstance(index_payload, Mapping) else None
     if not isinstance(weight_map, Mapping):
         return EMPTY_QUANTIZED_TENSOR_METADATA
-    return QuantizedTensorMetadata(
-        {
-            str(tensor_name): str(shard_name)
-            for tensor_name, shard_name in weight_map.items()
-            if str(tensor_name)
-        }
-    )
+    tensor_to_shard: dict[str, str] = {}
+    for tensor_name, shard_name in weight_map.items():
+        normalized_name = str(tensor_name)
+        if normalized_name:
+            tensor_to_shard[normalized_name] = str(shard_name)
+    if not tensor_to_shard:
+        return EMPTY_QUANTIZED_TENSOR_METADATA
+    return QuantizedTensorMetadata(tensor_to_shard)
 
 
 def quantized_tensor_metadata_from_safetensor_headers(
@@ -240,8 +236,11 @@ def _safetensors_header_tensor_names(path: Path) -> tuple[str, ...]:
         return ()
     if not isinstance(header, dict):
         return ()
-    return tuple(
-        str(key)
-        for key in header
-        if key != "__metadata__" and str(key)
-    )
+    tensor_names: list[str] = []
+    for key in header:
+        if key == "__metadata__":
+            continue
+        tensor_name = str(key)
+        if tensor_name:
+            tensor_names.append(tensor_name)
+    return tuple(tensor_names)
