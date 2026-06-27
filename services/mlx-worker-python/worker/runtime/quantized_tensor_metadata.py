@@ -167,7 +167,11 @@ def quantized_scales_present(
     weights: Mapping[str, object],
 ) -> bool:
     scales_key = f"{prefix}.scales"
-    return metadata.has_tensor(scales_key) or scales_key in weights
+    if metadata.has_tensor(scales_key):
+        return True
+    if not weights:
+        return False
+    return scales_key in weights
 
 
 def native_multimodal_quantization_preserves_precision(

@@ -72,6 +72,7 @@ from worker.runtime.quantized_tensor_metadata import (
     _native_multimodal_high_precision_module,
     cross_shard_quantized_metadata_fixup_count,
     native_multimodal_quantization_preserves_precision,
+    quantized_scales_present,
     quantized_tensor_metadata_from_model_dir,
     quantized_tensor_metadata_from_index_payload,
     quantized_tensor_metadata_from_safetensor_headers,
@@ -2454,6 +2455,56 @@ def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
         ] = "model-00003.safetensors"
     assert not EMPTY_QUANTIZED_TENSOR_METADATA.tensor_names
     assert cross_shard_quantized_metadata_fixup_count(EMPTY_QUANTIZED_TENSOR_METADATA) == 0
+
+
+class _CountingEmptyWeights(dict[str, object]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.contains_calls = 0
+
+    def __contains__(self, key: object) -> bool:
+        self.contains_calls += 1
+        return super().__contains__(key)
+
+
+def test_quantized_scales_present_skips_empty_weight_lookup() -> None:
+    metadata = QuantizedTensorMetadata(
+        {"language_model.layers.0.q_proj.scales": "model-00001.safetensors"}
+    )
+    empty_weights = _CountingEmptyWeights()
+
+    assert (
+        quantized_scales_present(
+            "language_model.layers.0.q_proj",
+            metadata=metadata,
+            weights=empty_weights,
+        )
+        is True
+    )
+    assert empty_weights.contains_calls == 0
+
+    missing_empty_weights = _CountingEmptyWeights()
+    assert (
+        quantized_scales_present(
+            "language_model.layers.9.q_proj",
+            metadata=EMPTY_QUANTIZED_TENSOR_METADATA,
+            weights=missing_empty_weights,
+        )
+        is False
+    )
+    assert missing_empty_weights.contains_calls == 0
+
+    materialized_weights = _CountingEmptyWeights()
+    materialized_weights["language_model.layers.1.q_proj.scales"] = object()
+    assert (
+        quantized_scales_present(
+            "language_model.layers.1.q_proj",
+            metadata=EMPTY_QUANTIZED_TENSOR_METADATA,
+            weights=materialized_weights,
+        )
+        is True
+    )
+    assert materialized_weights.contains_calls == 1
 
 
 def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_entries(

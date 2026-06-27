@@ -38,3 +38,9 @@ The probe entry already has focused `test_command`, `coverage_command`, and `pro
 - Focused quantized/native-MTP/VLM tests and PR-scoped registry tests pass.
 - Changed-scope coverage remains at or above the repository threshold for touched files.
 - The registered probe reports non-regression or improvement for the new high-precision decision metric while preserving existing quantized metadata metrics.
+
+## Follow-up slice: empty materialized-weight fast path
+
+A later Python-only performance slice keeps the same registered probe and narrows the changed behavior to `quantized_scales_present(...)` when callers pass an empty materialized `weights` mapping. In metadata-prepass decision loops, the quantized scale answer is already fully determined by `QuantizedTensorMetadata`, so the helper can skip the redundant `scales_key in weights` lookup for empty mappings while preserving non-empty materialized-weight fallback behavior.
+
+The `quantized-tensor-metadata-prepass` probe already covers this path through `metadata_decision_elapsed_ms_mean` and `metadata_decision_peak_bytes_mean`, with the existing focused `test_command`, `coverage_command`, and `probe_command` entries.
