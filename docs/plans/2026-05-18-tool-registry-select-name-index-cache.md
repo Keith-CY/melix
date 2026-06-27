@@ -83,6 +83,17 @@ instead of performing a second equivalent dictionary lookup. Whitespace-trimmed
 single-name requests, cache hits, valid selections, and error messages remain
 unchanged.
 
+## Slice update: whitespace-only turn fallback fast path
+
+This incremental slice keeps the same `tool-registry-select-name-index-cache`
+registered probe and narrows the optimization to agentic tool routing requests
+that have no vector-selected tool ids, no recent context turns, and an empty or
+whitespace-only current turn. These requests can only return the always-available
+`local_compute` fallback, so `select_agentic_tools_for_turn()` now returns that
+fallback before allocating the selected-name/source containers or invoking the
+keyword matcher. The receipt shape, `vector_available` flag, fallback reason,
+and selected tool list remain unchanged.
+
 ## Acceptance Criteria
 
 - Focused behavior tests pass locally on Linux.
