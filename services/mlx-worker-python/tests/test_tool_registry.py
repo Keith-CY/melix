@@ -222,6 +222,19 @@ def test_keyword_tool_matches_reuses_compiled_rule_items(
     assert matches == ("image_crop", "text_search", "visit")
 
 
+def test_keyword_tool_matches_preserves_ascii_case_insensitive_matches() -> None:
+    tool_registry_module._keyword_tool_matches.cache_clear()
+
+    assert tool_registry_module._keyword_tool_matches(
+        "SEARCH LOCAL EVIDENCE, CROP THE IMAGE, AND VISIT FIXTURE://DOCS/PROVIDER-CONTRACT."
+    ) == ("image_crop", "text_search", "visit")
+    assert tool_registry_module._keyword_hint_matches(
+        "Please VISIT the cited page.",
+        " visit ",
+        literal=False,
+    )
+
+
 def test_tool_registry_descriptors_use_slotted_snapshots() -> None:
     registry = built_in_tool_registry()
 

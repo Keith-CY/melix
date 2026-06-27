@@ -640,7 +640,7 @@ def _keyword_tool_matches(text: str) -> tuple[str, ...]:
         return ()
     if text.isspace():
         return ()
-    normalized_text = text.casefold()
+    normalized_text = text.lower() if text.isascii() else text.casefold()
     boundary_text = ""
     matches: list[str] = []
     append_match = matches.append
@@ -673,7 +673,7 @@ def _keyword_hint_matches(
 ) -> bool:
     if not hint:
         return False
-    normalized_text = text.casefold()
+    normalized_text = text.lower() if text.isascii() else text.casefold()
     if literal is None:
         literal = any(character in hint for character in _KEYWORD_LITERAL_HINT_CHARACTERS)
         if not literal:
