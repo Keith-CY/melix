@@ -988,7 +988,8 @@ def _iter_supported_dataset_file_entries(
     except OSError:
         return
     for entry in child_entries:
-        relative_path = f"{relative_prefix}{entry.name}"
+        name = entry.name
+        relative_path = f"{relative_prefix}{name}"
         try:
             if entry.is_dir():
                 yield from _iter_supported_dataset_file_entries(
@@ -999,13 +1000,15 @@ def _iter_supported_dataset_file_entries(
                 continue
         except OSError:
             continue
-        child_path = Path(entry.path)
-        if _dataset_file_format(child_path):
-            yield child_path, relative_path
+        if _dataset_file_format_name(name):
+            yield Path(entry.path), relative_path
 
 
 def _dataset_file_format(path: Path) -> str:
-    name = path.name
+    return _dataset_file_format_name(path.name)
+
+
+def _dataset_file_format_name(name: str) -> str:
     if name in _README_NAMES:
         return "metadata"
     dot_index = name.rfind(".")
