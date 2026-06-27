@@ -411,6 +411,19 @@ _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY = (
 )
 _CODE_EVAL_PAYLOAD_RUNNER_PREFIX = b'{"compile_status"'
 
+_CODE_EVAL_PAYLOAD_KNOWN_STRING_VALUES = (
+    (b"", ""),
+    (b"compiled", "compiled"),
+    (b"syntax_error", "syntax_error"),
+    (b"not_run", "not_run"),
+    (b"ok", "ok"),
+    (b"error", "error"),
+    (b"timeout", "timeout"),
+    (b"timed_out", "timed_out"),
+    (b"failed", "failed"),
+    (b"passed", "passed"),
+)
+
 
 _JSON_PAYLOAD_WHITESPACE = b" \t\r\n"
 
@@ -540,7 +553,22 @@ def _extract_json_string_field_at(payload_bytes: bytes, start: int | None) -> st
         return None
     if payload_bytes.find(b"\\", value_start, value_end) >= 0:
         return None
+    known_value = _known_code_eval_payload_string_value(payload_bytes, value_start, value_end)
+    if known_value is not None:
+        return known_value
     return payload_bytes[value_start:value_end].decode("utf-8")
+
+
+def _known_code_eval_payload_string_value(
+    payload_bytes: bytes,
+    value_start: int,
+    value_end: int,
+) -> str | None:
+    value_length = value_end - value_start
+    for token, value in _CODE_EVAL_PAYLOAD_KNOWN_STRING_VALUES:
+        if value_length == len(token) and payload_bytes.startswith(token, value_start):
+            return value
+    return None
 
 
 def _extract_json_int_field(payload_bytes: bytes, key: str) -> int | None:

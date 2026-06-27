@@ -968,6 +968,39 @@ def test_load_payload_file_fast_path_extracts_runner_fields_without_metadata_par
     assert payload_path.read_bytes_calls == 1
 
 
+def test_code_eval_payload_fast_path_decodes_known_status_values() -> None:
+    payload = json.dumps(
+        {
+            "compile_status": "compiled",
+            "runtime_status": "timeout",
+            "timeout_status": "timed_out",
+            "test_status": "failed",
+            "tests_passed": 0,
+            "tests_total": 3,
+            "failure_detail": "",
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    assert code_eval_runner._extract_code_eval_payload_fields(payload) == {
+        "compile_status": "compiled",
+        "runtime_status": "timeout",
+        "timeout_status": "timed_out",
+        "test_status": "failed",
+        "tests_passed": 0,
+        "tests_total": 3,
+        "failure_detail": "",
+    }
+    assert (
+        code_eval_runner._known_code_eval_payload_string_value(
+            b'"custom_failure"',
+            1,
+            len(b'"custom_failure"') - 1,
+        )
+        is None
+    )
+
+
 def test_code_eval_payload_missing_required_field_falls_back_to_json_parse(
     tmp_path: Path,
 ) -> None:
