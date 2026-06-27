@@ -148,6 +148,24 @@ def test_dataset_catalog_builds_snapshot_inference_in_one_pass(
     }
 
 
+def test_dataset_catalog_snapshot_relative_paths_use_forward_slashes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    snapshot_dir = _write_hf_dataset_snapshot(home)
+
+    monkeypatch.setattr(catalog.os, "sep", "\\")
+
+    payload = DatasetCatalog(environment={"HOME": str(home)}).registry_snapshot_payload()
+
+    dataset = payload["datasets"][0]
+    assert {file["relative_path"] for file in dataset["files"]} == {
+        "README.md",
+        "data/train-00000-of-00001.jsonl",
+    }
+
+
 def test_dataset_catalog_inferred_split_and_config_preserves_legacy_helpers() -> None:
     assert catalog._inferred_split("custom/validation-00000.parquet") == "validation"
     assert catalog._inferred_config("custom/validation-00000.parquet") == "custom"
