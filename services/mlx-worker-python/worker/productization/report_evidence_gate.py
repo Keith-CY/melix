@@ -456,7 +456,20 @@ def _rule_matches_report(
     required_probe_phases = rule.get("probe_phases", ())
     if not required_probe_phases:
         return False
-    return _string_frozenset(required_probe_phases).issubset(probe_phases)
+    if isinstance(required_probe_phases, tuple):
+        cached_probe_phase_set = rule.get("_melix_cached_probe_phase_set")
+        if rule.get("_melix_cached_probe_phases") is required_probe_phases and isinstance(
+            cached_probe_phase_set,
+            frozenset,
+        ):
+            required_probe_phase_set = cached_probe_phase_set
+        else:
+            required_probe_phase_set = _string_frozenset_from_tuple(required_probe_phases)
+            rule["_melix_cached_probe_phases"] = required_probe_phases
+            rule["_melix_cached_probe_phase_set"] = required_probe_phase_set
+    else:
+        required_probe_phase_set = _string_frozenset(required_probe_phases)
+    return required_probe_phase_set.issubset(probe_phases)
 
 
 @lru_cache(maxsize=128)
