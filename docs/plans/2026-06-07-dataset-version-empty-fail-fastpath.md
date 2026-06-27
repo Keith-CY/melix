@@ -37,3 +37,18 @@ partition fast path is measured by the existing registered probe.
 
 This is a Python-only slice and is locally verifiable on Linux. No Swift runtime
 behavior changes are included.
+
+## 2026-06-27 follow-up: failed partition single pass
+
+The next focused slice keeps the same `prepare_dataset_version(...)` boundary and
+registered `dataset-quality-lengths-chain` probe, but targets the non-empty
+`fail_segment_ids` path. The empty-failure fast path already returns the original
+segment list without scanning. For non-empty failure ids, `_partition_failed_segments(...)`
+still preserves duplicate failed ids and output order, but can partition
+successful and failed segments in one scan instead of two list-comprehension
+passes over the same segment list.
+
+The registered probe remains the validation gate. This follow-up extends
+`scripts/dataset_quality_lengths_probe.py` with failed-partition metrics so CI
+and local Linux runs report `failed_partition_elapsed_ms_*` together with the
+existing quality-length metrics.
