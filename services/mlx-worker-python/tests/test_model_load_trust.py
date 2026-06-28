@@ -38,6 +38,7 @@ def test_trust_policy_non_empty_source_fast_path_preserves_blank_fallback() -> N
 
 
 def test_requested_mode_reuses_valid_mode_membership_for_sources() -> None:
+    assert model_load_trust_module._non_empty(" request", "fallback") == " request"
     model = WorkerModelCatalog.dev_text_model()
     assert model_load_trust_module._requested_mode(model, None) == (
         common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,

@@ -393,4 +393,8 @@ def _route_name(route_class: int) -> str:
 
 
 def _non_empty(value: str, fallback: str) -> str:
-    return value if value and not value.isspace() else fallback
+    if not value:
+        return fallback
+    if not value[0].isspace():
+        return value
+    return fallback if value.isspace() else value
