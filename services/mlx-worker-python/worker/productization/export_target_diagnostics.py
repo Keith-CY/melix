@@ -596,7 +596,7 @@ def _redact_text(
         summary.redaction_count += 1
         return "<redacted-private-preview>"
 
-    if any(marker in text for marker in _SECRET_REDACTION_MARKERS):
+    if _has_secret_redaction_marker(text):
         secret_text = text.lower()
         if "-----begin " in secret_text:
             text = _CERTIFICATE_PATTERN.sub(lambda _match: _record_secret(summary), text)
@@ -632,6 +632,16 @@ def _redact_text(
             summary,
         ),
         text,
+    )
+
+
+def _has_secret_redaction_marker(text: str) -> bool:
+    return (
+        "=" in text
+        or ":" in text
+        or "@" in text
+        or "sk-" in text
+        or "-----BEGIN " in text
     )
 
 
