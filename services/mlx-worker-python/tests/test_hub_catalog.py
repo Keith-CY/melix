@@ -839,6 +839,15 @@ def test_next_cursor_from_link_accepts_cursor_at_query_start() -> None:
     assert hub_catalog_module._next_cursor_from_link(link_header) == "page/start"
 
 
+def test_next_cursor_from_link_skips_cursor_substrings_outside_query_parameters() -> None:
+    link_header = (
+        '<https://huggingface.co/api/models/cursor=path?mycursor=wrong&cursor=right%2Fvalue'
+        '#cursor=fragment>; rel="next"'
+    )
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "right/value"
+
+
 def test_next_cursor_from_link_decodes_plus_space_cursor_without_percent_escape() -> None:
     link_header = '<https://huggingface.co/api/models?cursor=page+start&limit=10>; rel="next"'
 
