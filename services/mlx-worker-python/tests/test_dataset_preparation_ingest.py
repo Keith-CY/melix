@@ -96,13 +96,14 @@ def test_dataset_ingest_source_kind_returns_cached_none_without_reclassifying(
     assert _source_kind(Path("nested/README")) is None
 
 
-def test_dataset_ingest_source_kind_name_cache_clears_at_bound() -> None:
+def test_dataset_ingest_source_kind_name_cache_bypasses_insert_at_bound() -> None:
     _SOURCE_KIND_BY_NAME.clear()
-    _SOURCE_KIND_BY_NAME.update({f"cached-{index}.txt": "text" for index in range(_SOURCE_KIND_NAME_CACHE_MAX)})
+    cached_entries = {f"cached-{index}.txt": "text" for index in range(_SOURCE_KIND_NAME_CACHE_MAX)}
+    _SOURCE_KIND_BY_NAME.update(cached_entries)
 
     assert _source_kind(Path("next.txt")) == "text"
 
-    assert _SOURCE_KIND_BY_NAME == {"next.txt": "text"}
+    assert _SOURCE_KIND_BY_NAME == cached_entries
 
 
 def test_dataset_ingest_source_file_paths_skips_scandir_errors(
