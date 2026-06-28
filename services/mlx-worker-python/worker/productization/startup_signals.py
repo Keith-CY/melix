@@ -41,6 +41,9 @@ class UpdateCheckResult(NamedTuple):
     detail: str
 
 
+_UPDATE_CHECK_RESULT_CACHE: dict[tuple[str, str, str, str], UpdateCheckResult] = {}
+
+
 @dataclass(frozen=True, slots=True)
 class StartupFailureReport:
     classification: str
@@ -161,10 +164,14 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
         else Path(channel_path).expanduser().resolve()
     )
     latest_version, channel = _read_update_channel_version(resolved_channel_path)
+    cache_key = (str(resolved_channel_path), installed_version, latest_version, channel)
+    cached = _UPDATE_CHECK_RESULT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     if latest_version:
         comparison = compare_versions(latest_version, installed_version)
         if comparison > 0:
-            return UpdateCheckResult(
+            result = UpdateCheckResult(
                 checked=True,
                 update_available=True,
                 installed_version=installed_version,
@@ -173,7 +180,9 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
                 summary=f"Update available: {latest_version}",
                 detail=f"Current {installed_version} on {channel}",
             )
-        return UpdateCheckResult(
+            _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
+            return result
+        result = UpdateCheckResult(
             checked=True,
             update_available=False,
             installed_version=installed_version,
@@ -182,7 +191,9 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
             summary="Update: up to date",
             detail=f"Current {installed_version} on {channel}",
         )
-    return UpdateCheckResult(
+        _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
+        return result
+    result = UpdateCheckResult(
         checked=False,
         update_available=False,
         installed_version=installed_version,
@@ -191,6 +202,8 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
         summary="Update check failed",
         detail=f"Channel metadata at {resolved_channel_path} does not declare latest_version",
     )
+    _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
+    return result
 
 
 def _read_update_channel_version(channel_path: Path) -> tuple[str, str]:
