@@ -644,15 +644,16 @@ def _classify_source_kind_name(name: str) -> str | None:
 
 
 def _source_kind_for_name(name: str) -> str | None:
+    source_kind_by_name = _SOURCE_KIND_BY_NAME
     try:
-        cached = _SOURCE_KIND_BY_NAME[name]
+        cached = source_kind_by_name[name]
         return cached
     except KeyError:
         pass
     source_kind = _classify_source_kind_name(name)
-    if len(_SOURCE_KIND_BY_NAME) >= _SOURCE_KIND_NAME_CACHE_MAX:
-        _SOURCE_KIND_BY_NAME.clear()
-    _SOURCE_KIND_BY_NAME[name] = source_kind
+    if len(source_kind_by_name) >= _SOURCE_KIND_NAME_CACHE_MAX:
+        return source_kind
+    source_kind_by_name[name] = source_kind
     return source_kind
 
 
