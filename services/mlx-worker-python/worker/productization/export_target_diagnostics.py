@@ -717,7 +717,10 @@ def _diagnoses_from_excerpt(
 ) -> list[dict[str, object]]:
     diagnoses: list[dict[str, object]] = []
     seen_codes: set[str] = set()
+    known_code_count = len(_KNOWN_DIAGNOSIS_CODE_SET)
     for index, line_number in line_numbers.items():
+        if len(seen_codes) == known_code_count:
+            break
         text = source_lines[index].text
         lowered_text = text.lower()
         if not any(marker in lowered_text for marker in _DIAGNOSIS_MARKERS):

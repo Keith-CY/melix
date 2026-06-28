@@ -273,6 +273,40 @@ def test_export_target_diagnostics_lowercases_source_line_once_per_match_scan() 
     assert text.lower_calls == 1
 
 
+def test_export_target_diagnostics_stops_after_all_known_codes_match() -> None:
+    class TrackingText(str):
+        lower_calls = 0
+
+        def lower(self) -> str:  # pragma: no cover - must stay uncalled
+            type(self).lower_calls += 1
+            return super().lower()
+
+    source_lines = [
+        _SourceLine("logs/runtime.log", "runtime load failed while opening model"),
+        _SourceLine("logs/runtime.log", "unsupported architecture arm64 required"),
+        _SourceLine("logs/runtime.log", "duplicate tensor name decoder.layers.0"),
+        _SourceLine("logs/runtime.log", "missing blob sha256-777777 not found"),
+        _SourceLine("logs/runtime.log", "runtime binary not installed: ollama"),
+        _SourceLine("logs/runtime.log", "invalid runtime path /tmp/melix/bad-target"),
+        _SourceLine("logs/runtime.log", "generation smoke timed out after deadline exceeded"),
+        _SourceLine("logs/runtime.log", "permission denied opening model weights"),
+        _SourceLine("logs/runtime.log", "Metal out of memory during load"),
+        _SourceLine("logs/runtime.log", TrackingText("late duplicate runtime load failed marker")),
+    ]
+    line_numbers = {index: index + 1 for index in range(len(source_lines))}
+
+    diagnoses = _diagnoses_from_excerpt(
+        source_lines,
+        line_numbers,
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert {diagnosis["code"] for diagnosis in diagnoses} == set(
+        export_target_diagnostics_module._KNOWN_DIAGNOSIS_CODE_SET
+    )
+    assert TrackingText.lower_calls == 0
+
+
 def test_export_target_diagnostics_runtime_load_markers_skip_progress_regexes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
