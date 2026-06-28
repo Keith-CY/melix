@@ -849,6 +849,9 @@ def test_project_retrieval_store_records_projects_records_without_entry_reentry(
     assert multi_projection.user_payload == MultiAdmission.user_payload
     assert multi_projection.untrusted_context_receipts == MultiAdmission.untrusted_context_receipts
     assert multi_projection.untrusted_context_receipts[0] is not MultiAdmission.untrusted_context_receipts[0]
+    assert multi_projection.untrusted_context_receipts[1] is not MultiAdmission.untrusted_context_receipts[1]
+    MultiAdmission.untrusted_context_receipts[0]["mutated"] = "true"
+    assert "mutated" not in multi_projection.untrusted_context_receipts[0]
 
     class SeedAdmission:
         user_payload = {"retrieved_document": {"title": "Seed"}}
