@@ -478,7 +478,7 @@ def _collect_source_lines(
                 continue
             with path.open("rb") as source:
                 text = source.read(source_read_bytes).decode("utf-8", errors="replace")
-            lines.extend(_split_source_lines(row.path, text))
+            _extend_source_lines(lines, row.path, text)
 
     for check in failure_checks:
         failure_message = _check_value(check, "failure_message")
@@ -491,7 +491,7 @@ def _collect_source_lines(
         check_name = _check_value(check, "check") or _check_value(check, "name") or "smoke_failure"
         evidence_path = _check_value(check, "evidence_path") or manifest.evidence.smoke_receipt_path
         text = f"{check_name}: {failure_code}: {failure_message}".strip()
-        lines.extend(_split_source_lines(evidence_path or "smoke/smoke-receipt.json", text))
+        _extend_source_lines(lines, evidence_path or "smoke/smoke-receipt.json", text)
 
     return lines
 
@@ -504,10 +504,19 @@ def _is_runtime_log_row(row: export_target_manifest_pb2.ExportTargetFile) -> boo
     )
 
 
-def _split_source_lines(source_path: str, text: str) -> list[_SourceLine]:
+def _extend_source_lines(lines: list[_SourceLine], source_path: str, text: str) -> None:
     if not text:
-        return []
-    return [_SourceLine(source_path=source_path, text=line) for line in text.splitlines()]
+        return
+    append = lines.append
+    source_line_type = _SourceLine
+    for line in text.splitlines():
+        append(source_line_type(source_path=source_path, text=line))
+
+
+def _split_source_lines(source_path: str, text: str) -> list[_SourceLine]:
+    lines: list[_SourceLine] = []
+    _extend_source_lines(lines, source_path, text)
+    return lines
 
 
 def _check_value(check: object, name: str) -> str:
