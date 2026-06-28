@@ -297,11 +297,16 @@ def _split_capability_values(raw_value: str) -> list[str]:
     if "," not in raw_value:
         stripped = raw_value.strip()
         return [stripped] if stripped else []
-    return [
+    return list(_split_capability_value_tuple(raw_value))
+
+
+@lru_cache(maxsize=128)
+def _split_capability_value_tuple(raw_value: str) -> tuple[str, ...]:
+    return tuple(
         stripped
         for part in raw_value.split(",")
         if (stripped := part.strip())
-    ]
+    )
 
 
 def _default_capability_lists(model_kind: str) -> tuple[list[str], list[str]]:
