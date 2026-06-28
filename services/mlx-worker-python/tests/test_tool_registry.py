@@ -100,6 +100,18 @@ def test_built_in_tool_config_returns_isolated_template_copies() -> None:
     assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
 
 
+def test_tool_registry_worker_config_reuses_isolated_template_copy() -> None:
+    registry = ToolRegistry(built_in_tool_registry().tools)
+    first_config = registry.as_worker_tool_config()
+    first_config.tools.pop()
+    first_config.schema_version = "mutated"
+
+    second_config = registry.as_worker_tool_config()
+
+    assert len(second_config.tools) == len(BUILTIN_AGENTIC_TOOL_NAMES)
+    assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
+
+
 def test_built_in_tool_config_full_tuple_selection_returns_full_template_copy() -> None:
     selected_config = built_in_tool_config(BUILTIN_AGENTIC_TOOL_NAMES)
     selected_config.tools.pop()
