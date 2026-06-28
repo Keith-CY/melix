@@ -30,6 +30,7 @@ from worker.productization.export_target_diagnostics import (
     _diagnoses_from_excerpt,
     _diagnosis_metric_counts,
     _extend_source_lines,
+    _has_secret_redaction_marker,
     _split_source_lines,
 )
 from worker.productization.export_target_layout import (
@@ -99,6 +100,24 @@ def test_export_target_diagnostics_parser_matches_common_runtime_failures(
     assert receipt_path.is_file()
     assert json.loads(receipt_path.read_text(encoding="utf-8")) == receipt
     assert excerpt_path.read_text(encoding="utf-8").startswith("[logs/ollama-create.log]")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("plain log line", False),
+        ("api_key=super-secret-value", True),
+        ("status: failed", True),
+        ("proxy=http://user:pass@example.test", True),
+        ("openai key sk-live", True),
+        ("-----BEGIN TOKEN-----abc123-----END TOKEN-----", True),
+    ],
+)
+def test_export_target_diagnostics_secret_marker_fast_path_matches_registered_markers(
+    text: str,
+    expected: bool,
+) -> None:
+    assert _has_secret_redaction_marker(text) is expected
 
 
 def test_export_target_diagnostics_redacts_paths_secrets_private_text_and_identity(
