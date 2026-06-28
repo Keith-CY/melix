@@ -31,6 +31,8 @@ from worker.model_ops.training_dataset_chunker import (
 from worker.model_ops.training_log_events import parse_training_log_events
 
 _RESULT_PREFIX = "__MELIX_MLX_RESULT__="
+_RESULT_PREFIX_LENGTH = len(_RESULT_PREFIX)
+_RESULT_PAYLOAD_DECODER = json.JSONDecoder()
 # Sentinel tied to mlx-lm's internal error wording. Keep the mlx-lm pin in
 # pyproject.toml tight: any upstream wording change would silently disable the
 # no-strict retry for QLoRA loads. Update both the sentinel and tests together
@@ -479,27 +481,23 @@ class MLXLMRunner:
 
 
 def _extract_structured_result_payload(stdout: str) -> dict[str, object] | None:
-    search_end = len(stdout)
-    prefix = _RESULT_PREFIX
-    prefix_length = len(prefix)
-    while True:
-        prefix_index = stdout.rfind(prefix, 0, search_end)
-        if prefix_index < 0:
-            return None
-        if prefix_index > 0:
-            previous_character = stdout[prefix_index - 1]
-            if previous_character != "\n" and previous_character != "\r":
-                search_end = prefix_index
-                continue
-        newline_index = stdout.find("\n", prefix_index)
-        if newline_index >= 0:
-            line_end = newline_index
-        else:
-            line_end = len(stdout)
-            carriage_index = stdout.find("\r", prefix_index)
-            if carriage_index >= 0:
-                line_end = carriage_index
-        return json.loads(stdout[prefix_index + prefix_length:line_end])
+    prefix_index = stdout.rfind("\n" + _RESULT_PREFIX)
+    carriage_prefix_index = stdout.rfind(
+        "\r" + _RESULT_PREFIX,
+        prefix_index + 1 if prefix_index >= 0 else 0,
+    )
+    if carriage_prefix_index > prefix_index:
+        prefix_index = carriage_prefix_index
+    if prefix_index >= 0:
+        prefix_index += 1
+    elif stdout.startswith(_RESULT_PREFIX):
+        prefix_index = 0
+    else:
+        return None
+
+    payload_start = prefix_index + _RESULT_PREFIX_LENGTH
+    payload, _ = _RESULT_PAYLOAD_DECODER.raw_decode(stdout, payload_start)
+    return payload
 
 
 def _training_info_log_line(info: dict[str, Any], *, loss_key: str) -> str:

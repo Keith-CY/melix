@@ -3091,6 +3091,7 @@ def test_run_subprocess_rejects_missing_structured_result(tmp_path: Path, monkey
 
 def test_extract_structured_result_payload_accepts_carriage_return_line_end() -> None:
     payload = {"manifest_path": "/tmp/manifest.json"}
+    later_payload = {"manifest_path": "/tmp/later-manifest.json"}
     stdout = (
         "leading noise\r\n"
         f"{mlx_lm_runner_module._RESULT_PREFIX}{json.dumps(payload)}\r\n"
@@ -3101,9 +3102,16 @@ def test_extract_structured_result_payload_accepts_carriage_return_line_end() ->
         f"{mlx_lm_runner_module._RESULT_PREFIX}{json.dumps(payload)}\r"
         "tail noise"
     )
+    mixed_line_endings_stdout = (
+        "leading noise\n"
+        f"{mlx_lm_runner_module._RESULT_PREFIX}{json.dumps(payload)}\n"
+        f"{mlx_lm_runner_module._RESULT_PREFIX}{json.dumps(later_payload)}\r"
+        "tail noise"
+    )
 
     assert mlx_lm_runner_module._extract_structured_result_payload(stdout) == payload
     assert mlx_lm_runner_module._extract_structured_result_payload(carriage_only_stdout) == payload
+    assert mlx_lm_runner_module._extract_structured_result_payload(mixed_line_endings_stdout) == later_payload
 
 
 def test_extract_structured_result_payload_skips_embedded_prefix_and_finds_prior_line() -> None:
