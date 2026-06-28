@@ -11,6 +11,7 @@ import pytest
 from packages.protocol.python.workspace.v1 import export_target_manifest_pb2
 from worker.productization.export_target_manifest import (
     REQUIRED_EXPORT_TARGET_TYPES,
+    _contains_parent_path_component,
     _safe_relative_path_error,
     _validate_metrics,
     validate_export_target_manifest_file,
@@ -225,6 +226,25 @@ def test_export_target_manifest_safe_relative_path_uses_string_checks(
     assert "parent-directory" in str(target._safe_relative_path_error("artifacts/../model.gguf"))
     assert "Windows absolute" in str(target._safe_relative_path_error("C:/Models/model.gguf"))
     assert "absolute" in str(target._safe_relative_path_error("/tmp/export.bin"))
+
+
+@pytest.mark.parametrize(
+    ("path_value", "expected"),
+    [
+        ("..", True),
+        ("../model.gguf", True),
+        ("artifacts/..", True),
+        ("artifacts/../model.gguf", True),
+        ("artifacts/.../model.gguf", False),
+        ("artifacts/model..gguf", False),
+        ("artifacts/..model/model.gguf", False),
+    ],
+)
+def test_export_target_manifest_parent_path_component_scan_preserves_split_semantics(
+    path_value: str,
+    expected: bool,
+) -> None:
+    assert _contains_parent_path_component(path_value) is expected
 
 
 def test_export_target_manifest_rejects_file_row_contract_violations(

@@ -408,6 +408,22 @@ def _safe_relative_path_error(path_value: str) -> str | None:
         return "current-directory paths are not allowed"
     if "//" in path_value:
         return "empty path components are not allowed"
-    if ".." in path_value.split("/"):
+    if _contains_parent_path_component(path_value):
         return "empty or parent-directory path components are not allowed"
     return None
+
+
+def _contains_parent_path_component(path_value: str) -> bool:
+    if ".." not in path_value:
+        return False
+    start = 0
+    while True:
+        index = path_value.find("..", start)
+        if index < 0:
+            return False
+        before_component = index == 0 or path_value[index - 1] == "/"
+        after_index = index + 2
+        after_component = after_index == len(path_value) or path_value[after_index] == "/"
+        if before_component and after_component:
+            return True
+        start = after_index
