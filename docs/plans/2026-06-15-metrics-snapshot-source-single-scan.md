@@ -39,6 +39,15 @@ The registry entry includes focused `test_command`, `coverage_command`, and
 6. Update the registered probe workload to measure the multi-source resolution
    path instead of only the single-source helper.
 
+## Follow-up slice: lazy overlapping match materialization
+
+The next focused Python slice keeps the same registered probe and runtime
+metrics discovery boundary. It avoids creating a per-entry list for the common
+case where a runtime file matches only one exact or prefix/suffix source pattern,
+while still preserving overlapping exact, prefix, and multi-wildcard matches.
+The behavior contract remains unchanged: a single runtime directory scan chooses
+the newest matching file for each unresolved source.
+
 ## Verification plan
 
 Run the registered focused tests, changed-scope coverage command, and registered
