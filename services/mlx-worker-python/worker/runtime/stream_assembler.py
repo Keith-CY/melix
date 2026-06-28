@@ -483,7 +483,7 @@ class RequestStreamAssembler:
                 ):
                     self._assistant_parts.append(byte_delta)
                     self._raw_seen_assistant_part_count += 1
-                    return [AssemblyDelta(content_text=byte_delta, raw_text=byte_delta)]
+                    return [AssemblyDelta(byte_delta, "", byte_delta)]
         elif token_ids or token_logprobs:
             token_count = self._record_token_metadata(fragment)
             if token_bytes is not None:
