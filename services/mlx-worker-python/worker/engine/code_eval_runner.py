@@ -448,7 +448,7 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
         else:
             field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY
     else:
-        field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_FRIENDLY
+        return _extract_sorted_code_eval_payload_fields(payload_bytes)
 
     payload: dict[str, object] = {}
     search_start = 0
@@ -477,6 +477,71 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
         value, value_end = int_result
         payload[key] = value
         search_start = value_end
+
+    return payload
+
+
+def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object] | None:
+    payload: dict[str, object] = {}
+    field_value_start = _json_field_value_start_for_token
+    extract_int_and_end = _extract_json_int_field_value_and_end
+
+    failure_start = field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"],
+    )
+    if failure_start is None or not payload_bytes.startswith(b'""', failure_start):
+        return None
+    payload["failure_detail"] = ""
+
+    runtime_start = field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"],
+        start=failure_start + 2,
+    )
+    if runtime_start is None or not payload_bytes.startswith(b'"ok"', runtime_start):
+        return None
+    payload["runtime_status"] = "ok"
+
+    test_start = field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"],
+        start=runtime_start + 4,
+    )
+    if test_start is None or not payload_bytes.startswith(b'"passed"', test_start):
+        return None
+    payload["test_status"] = "passed"
+
+    passed_start = field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"],
+        start=test_start + 8,
+    )
+    passed_result = extract_int_and_end(payload_bytes, passed_start)
+    if passed_result is None:
+        return None
+    tests_passed, passed_end = passed_result
+    payload["tests_passed"] = tests_passed
+
+    total_start = field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"],
+        start=passed_end,
+    )
+    total_result = extract_int_and_end(payload_bytes, total_start)
+    if total_result is None:
+        return None
+    tests_total, total_end = total_result
+    payload["tests_total"] = tests_total
+
+    timeout_start = field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"],
+        start=total_end,
+    )
+    if timeout_start is None or not payload_bytes.startswith(b'"ok"', timeout_start):
+        return None
+    payload["timeout_status"] = "ok"
 
     return payload
 

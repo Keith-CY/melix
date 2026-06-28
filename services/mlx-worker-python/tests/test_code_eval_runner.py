@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import textwrap
+from typing import cast
 
 import pytest
 
@@ -966,6 +967,70 @@ def test_load_payload_file_fast_path_extracts_runner_fields_without_metadata_par
         "timeout_status": "ok",
     }
     assert payload_path.read_bytes_calls == 1
+
+
+def test_load_payload_file_fast_path_extracts_sorted_payload_without_json_parse() -> None:
+    payload_path = _BytesOnlyPayloadPath(
+        json.dumps(
+            {
+                "failure_detail": "",
+                "metadata": {f"case_{index}": "ignored" for index in range(128)},
+                "runtime_status": "ok",
+                "test_status": "passed",
+                "tests_passed": 7,
+                "tests_total": 7,
+                "timeout_status": "ok",
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+
+    def fail_json_loads(*_args: object, **_kwargs: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError("sorted code-eval payload should stay on the fast path")
+
+    assert (
+        code_eval_runner._load_payload_file(cast(Path, payload_path), _loads=fail_json_loads)
+        == {
+            "failure_detail": "",
+            "runtime_status": "ok",
+            "test_status": "passed",
+            "tests_passed": 7,
+            "tests_total": 7,
+            "timeout_status": "ok",
+        }
+    )
+    assert payload_path.read_bytes_calls == 1
+
+
+def test_sorted_payload_fast_path_returns_none_for_missing_or_malformed_fields() -> None:
+    assert (
+        code_eval_runner._extract_sorted_code_eval_payload_fields(
+            b'{"failure_detail":"","test_status":"passed","tests_passed":1,'
+            b'"tests_total":1,"timeout_status":"ok"}'
+        )
+        is None
+    )
+    assert (
+        code_eval_runner._extract_sorted_code_eval_payload_fields(
+            b'{"failure_detail":"","runtime_status":"ok","test_status":"passed",'
+            b'"tests_passed":x,"tests_total":1,"timeout_status":"ok"}'
+        )
+        is None
+    )
+    assert (
+        code_eval_runner._extract_sorted_code_eval_payload_fields(
+            b'{"failure_detail":"","runtime_status":"ok","test_status":"passed",'
+            b'"tests_passed":1,"tests_total":x,"timeout_status":"ok"}'
+        )
+        is None
+    )
+    assert (
+        code_eval_runner._extract_sorted_code_eval_payload_fields(
+            b'{"failure_detail":"","runtime_status":"ok","test_status":"passed",'
+            b'"tests_passed":1,"tests_total":1,"timeout_status":ok}'
+        )
+        is None
+    )
 
 
 def test_code_eval_payload_fast_path_decodes_known_status_values() -> None:
