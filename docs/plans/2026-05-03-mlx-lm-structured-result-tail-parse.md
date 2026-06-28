@@ -44,3 +44,16 @@ Register a dedicated PR-scoped performance probe for the hot path that:
 - Missing structured-result output still raises the same `ModelOperationError` code/message class.
 - Changed-scope coverage for the touched executable Python files remains at least 95%.
 - The dedicated probe shows lower `elapsed_ms_mean` and lower `peak_bytes_mean` than `origin/main` for the same synthetic workload.
+
+## 2026-06-28 JSON slice
+
+This follow-up keeps the registered `mlx-lm-structured-result-tail-parse` probe and narrows the implementation to the JSON payload boundary after the line-start marker has been found. `_extract_structured_result_payload` now reuses a module-level `json.JSONDecoder` and calls `raw_decode` at the payload start offset instead of finding the line ending and slicing the payload string before `json.loads`.
+
+The behavior contract is unchanged:
+
+- valid structured result lines still parse to the same payload dictionary
+- embedded markers that are not at line start are still ignored
+- LF, CRLF, and CR-only line endings remain accepted
+- outputs with no line-start result marker still return `None`
+
+Linux-local validation for this slice uses the registered probe commands, focused pytest, changed-scope coverage, and repeated `scripts/mlx_lm_result_tail_probe.py` runs against `origin/main` and the branch.
