@@ -29,6 +29,8 @@ from worker.productization.export_target_diagnostics import (
     _collect_source_lines,
     _diagnoses_from_excerpt,
     _diagnosis_metric_counts,
+    _extend_source_lines,
+    _split_source_lines,
 )
 from worker.productization.export_target_layout import (
     build_export_target_layout,
@@ -41,6 +43,19 @@ FIXTURE_ROOT = (
     Path(__file__).resolve().parents[1]
     / "fixtures/runtime-export/target-manifests.dev.v1"
 )
+
+
+def test_export_target_diagnostics_source_line_extension_matches_split_helper() -> None:
+    lines: list[_SourceLine] = []
+
+    _extend_source_lines(lines, "logs/runtime.log", "first\nsecond\n")
+
+    assert lines == _split_source_lines("logs/runtime.log", "first\nsecond\n")
+    assert [line.source_path for line in lines] == ["logs/runtime.log", "logs/runtime.log"]
+    assert [line.text for line in lines] == ["first", "second"]
+
+    _extend_source_lines(lines, "logs/empty.log", "")
+    assert len(lines) == 2
 
 
 @pytest.mark.parametrize(
