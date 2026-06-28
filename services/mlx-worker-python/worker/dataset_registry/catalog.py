@@ -965,7 +965,7 @@ def _build_dataset_snapshot(
 
 
 def _dataset_files(snapshot_dir: Path) -> Iterator[DatasetFile]:
-    for path, relative_path in _iter_supported_dataset_file_entries(snapshot_dir):
+    for path, relative_path, file_format in _iter_supported_dataset_file_records(snapshot_dir):
         try:
             stat_result = path.stat()
         except OSError:
@@ -973,7 +973,7 @@ def _dataset_files(snapshot_dir: Path) -> Iterator[DatasetFile]:
         yield DatasetFile(
             relative_path=relative_path,
             size_bytes=stat_result.st_size,
-            file_format=_dataset_file_format(path),
+            file_format=file_format,
         )
 
 
@@ -985,6 +985,16 @@ def _iter_supported_dataset_files(snapshot_dir: Path) -> Iterator[Path]:
 def _iter_supported_dataset_file_entries(
     snapshot_dir: Path, relative_prefix: str = ""
 ) -> Iterator[tuple[Path, str]]:
+    for path, relative_path, _file_format in _iter_supported_dataset_file_records(
+        snapshot_dir,
+        relative_prefix=relative_prefix,
+    ):
+        yield path, relative_path
+
+
+def _iter_supported_dataset_file_records(
+    snapshot_dir: Path, relative_prefix: str = ""
+) -> Iterator[tuple[Path, str, str]]:
     try:
         with os.scandir(os.fspath(snapshot_dir)) as entries:
             child_entries = sorted(entries, key=lambda entry: entry.name)
@@ -995,7 +1005,7 @@ def _iter_supported_dataset_file_entries(
         relative_path = f"{relative_prefix}{name}"
         try:
             if entry.is_dir():
-                yield from _iter_supported_dataset_file_entries(
+                yield from _iter_supported_dataset_file_records(
                     Path(entry.path), f"{relative_path}/"
                 )
                 continue
@@ -1003,8 +1013,9 @@ def _iter_supported_dataset_file_entries(
                 continue
         except OSError:
             continue
-        if _dataset_file_format_name(name):
-            yield Path(entry.path), relative_path
+        file_format = _dataset_file_format_name(name)
+        if file_format:
+            yield Path(entry.path), relative_path, file_format
 
 
 def _dataset_file_format(path: Path) -> str:
