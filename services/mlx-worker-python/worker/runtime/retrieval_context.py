@@ -135,6 +135,7 @@ def project_retrieval_contexts(
     receipts_append = receipts.append
     user_payload_update = user_payload.update
     entry_type = RetrievalContextEntry
+    dict_copy = dict.copy
 
     for entry in entries:
         if type(entry) is entry_type:
@@ -206,7 +207,7 @@ def project_retrieval_contexts(
             admission = admit_entry(entry)
         except RetrievalContextAdmissionError as exc:
             for receipt in exc.refusal_receipts:
-                refusal_receipts_append(receipt.copy())
+                refusal_receipts_append(dict_copy(receipt))
             continue
 
         admission_payload = admission.user_payload
@@ -241,10 +242,10 @@ def project_retrieval_contexts(
             user_payload_update(admission_payload)
         admission_receipts = admission.untrusted_context_receipts
         if len(admission_receipts) == 1:
-            receipts_append(admission_receipts[0].copy())
+            receipts_append(dict_copy(admission_receipts[0]))
         else:
             for receipt in admission_receipts:
-                receipts_append(receipt.copy())
+                receipts_append(dict_copy(receipt))
 
     return RetrievalContextProjection(
         user_payload=user_payload,
@@ -286,6 +287,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     projection_refusal_receipts_extend = projection_refusal_receipts.extend
     receipts_append = receipts.append
     user_payload_update = user_payload.update
+    dict_copy = dict.copy
 
     for record in records:
         if type(record) is not dict and not isinstance(record, Mapping):
@@ -399,7 +401,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             )
         except RetrievalContextAdmissionError as exc:
             for receipt in exc.refusal_receipts:
-                projection_refusal_receipts_append(receipt.copy())
+                projection_refusal_receipts_append(dict_copy(receipt))
             continue
 
         admission_payload = admission.user_payload
@@ -434,10 +436,10 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             user_payload_update(admission_payload)
         admission_receipts = admission.untrusted_context_receipts
         if len(admission_receipts) == 1:
-            receipts_append(admission_receipts[0].copy())
+            receipts_append(dict_copy(admission_receipts[0]))
         else:
             for receipt in admission_receipts:
-                receipts_append(receipt.copy())
+                receipts_append(dict_copy(receipt))
 
     if projection_refusal_receipts:
         store_refusal_receipts.extend(projection_refusal_receipts)

@@ -36,6 +36,11 @@ This follow-up adds fast paths for valid store-record projection in `project_ret
 
 The registered `retrieval-context-projection-fastpath` probe is extended with store-record projection metrics so the store bridge fast path is measured by the same PR-scoped performance gate.
 
+This follow-up keeps the receipt isolation contract but binds `dict.copy` once in
+the projection loops. The hot paths still return fresh shallow copies of
+admission/refusal receipts, while avoiding repeated bound-method lookup for each
+receipt copy.
+
 ## Verification Plan
 
 Run the registered focused test command, changed-scope coverage command, and registered probe command locally on Linux before opening the PR. The PR-scoped performance workflow remains the authoritative CI validation source after push.
