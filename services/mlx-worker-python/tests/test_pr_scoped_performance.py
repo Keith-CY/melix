@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib.util
 import json
 import os
@@ -1492,6 +1493,30 @@ def test_evaluation_answer_normalization_probe_command_emits_metrics() -> None:
     )
 
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["numeric_extract_calls_mean"] == 0.0
+    assert metrics["option_extract_calls_mean"] == 0.0
+    assert metrics["answer_count"] == 3000.0
+    assert metrics["free_text_answer_count"] == 2400.0
+    assert metrics["normalization_checksum"] > 0
+
+
+def test_evaluation_answer_normalization_probe_fallback_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "evaluation-answer-normalization-fast-path"
+    )
+    fallback_command = probe.probe_command.replace(
+        "[ -f scripts/evaluation_answer_normalization_probe.py ]",
+        "false",
+    )
+
+    metrics = _probe_command_json(
+        probe=replace(probe, probe_command=fallback_command),
+        repo_root=REPO_ROOT,
+    )
 
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["numeric_extract_calls_mean"] == 0.0

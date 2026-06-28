@@ -14,6 +14,12 @@ The registry entry includes focused `test_command`, `coverage_command`, and
 - `services/mlx-worker-python/tests/test_evaluation_core.py`
 - `services/mlx-worker-python/tests/test_pr_scoped_performance.py`
 
+The probe command also carries an encoded fallback copy of
+`scripts/evaluation_answer_normalization_probe.py` so CI can benchmark the base
+revision before that helper script exists. The fallback must resolve the repo
+root from `Path.cwd()` when it runs through `python3 -c`, where `__file__` is not
+available.
+
 ## Slice
 
 Exact non-empty predicted answers are already semantically equal to the expected
