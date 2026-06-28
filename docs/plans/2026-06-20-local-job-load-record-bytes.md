@@ -30,6 +30,12 @@ This follow-up keeps the same registered `local-job-followup-scan-scandir` probe
 
 The focused regression guard monkeypatches `Path.read_bytes()` so the scan/load path cannot silently drift back to the wrapper when iterating large continuation stores.
 
+## 2026-06-28 follow-up: path text cache
+
+This follow-up keeps the same registered `local-job-followup-scan-scandir` probe and narrows the byte-oriented `load_record()` hot path by caching the store root as an `os.fspath()` string and constructing the record path with `os.path.join()`. This avoids the `Path.__truediv__`/pathlib join wrapper for every scanned record while preserving `Path` usage for write paths, record schema validation, missing-record handling, reconciliation, claim, projection, and admission behavior.
+
+The focused regression guard monkeypatches `Path.__truediv__` after a record is written so the read-only `load_record()` path cannot silently drift back to pathlib joins during large continuation-store scans.
+
 ## Validation boundary
 
 This is a Python-only slice and is locally verifiable on Linux. GitHub Actions remains the final registered PR-scoped performance validation and merge gate.
