@@ -14,6 +14,7 @@ from worker.productization.dataset_preparation import (
     _SOURCE_KIND_NAME_CACHE_MAX,
     _iter_source_file_paths,
     _source_kind,
+    _source_kind_for_name,
     prepare_dataset_ingest,
 )
 
@@ -72,17 +73,17 @@ def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
     assert _source_kind(Path("archive.tar.gz")) is None
 
 
-def test_dataset_ingest_source_kind_reuses_cached_basename_classification() -> None:
+def test_dataset_ingest_source_kind_name_helper_reuses_cached_basename_classification() -> None:
     _SOURCE_KIND_BY_NAME.clear()
 
-    assert _source_kind(Path("source/sample-0001.txt")) == "text"
+    assert _source_kind_for_name("sample-0001.txt") == "text"
     assert len(_SOURCE_KIND_BY_NAME) == 1
-    assert _source_kind(Path("other/sample-0001.txt")) == "text"
+    assert _source_kind_for_name("sample-0001.txt") == "text"
 
     assert len(_SOURCE_KIND_BY_NAME) == 1
 
 
-def test_dataset_ingest_source_kind_returns_cached_none_without_reclassifying(
+def test_dataset_ingest_source_kind_name_helper_returns_cached_none_without_reclassifying(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _SOURCE_KIND_BY_NAME.clear()
@@ -93,7 +94,16 @@ def test_dataset_ingest_source_kind_returns_cached_none_without_reclassifying(
 
     monkeypatch.setattr(dataset_preparation_module, "_classify_source_kind_name", fail_classify)
 
-    assert _source_kind(Path("nested/README")) is None
+    assert _source_kind_for_name("README") is None
+
+
+def test_dataset_ingest_source_kind_directly_classifies_path_names_without_cache() -> None:
+    _SOURCE_KIND_BY_NAME.clear()
+
+    assert _source_kind(Path("source/sample-0001.txt")) == "text"
+    assert _source_kind(Path("other/sample-0001.txt")) == "text"
+
+    assert _SOURCE_KIND_BY_NAME == {}
 
 
 def test_dataset_ingest_source_kind_name_cache_bypasses_insert_at_bound() -> None:
@@ -101,7 +111,7 @@ def test_dataset_ingest_source_kind_name_cache_bypasses_insert_at_bound() -> Non
     cached_entries = {f"cached-{index}.txt": "text" for index in range(_SOURCE_KIND_NAME_CACHE_MAX)}
     _SOURCE_KIND_BY_NAME.update(cached_entries)
 
-    assert _source_kind(Path("next.txt")) == "text"
+    assert _source_kind_for_name("next.txt") == "text"
 
     assert _SOURCE_KIND_BY_NAME == cached_entries
 

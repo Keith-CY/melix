@@ -658,7 +658,10 @@ def _source_kind_for_name(name: str) -> str | None:
 
 
 def _source_kind(path: Path) -> str | None:
-    return _source_kind_for_name(path.name)
+    # Dataset ingest source paths are commonly unique filenames in large trees, so
+    # classify the basename directly on the hot path instead of paying a dict
+    # lookup/insert for cache entries that will not be reused.
+    return _classify_source_kind_name(path.name)
 
 
 def _workspace_preflight_failures(receipt: dict[str, Any]) -> list[dict[str, Any]]:
