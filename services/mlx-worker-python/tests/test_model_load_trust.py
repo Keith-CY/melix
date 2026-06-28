@@ -499,6 +499,15 @@ def test_route_class_runtime_kind_map_preserves_supported_defaults() -> None:
     assert model_load_trust_module._route_class(model, None, "unknown") == common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED
 
 
+def test_runtime_name_string_fast_path_preserves_exact_value() -> None:
+    runtime = NamedRuntime("mlx-lm")
+
+    assert model_load_trust_module._runtime_name(runtime) is runtime.runtime_name
+    assert model_load_trust_module._runtime_name(None) == ""
+    assert model_load_trust_module._runtime_name(type("Runtime", (), {"runtime_name": 0})()) == ""
+    assert model_load_trust_module._runtime_name(type("Runtime", (), {"runtime_name": 42})()) == "42"
+
+
 def test_trust_policy_skips_expanduser_for_plain_model_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

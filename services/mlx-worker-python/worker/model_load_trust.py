@@ -241,7 +241,14 @@ def _is_trust_applicable(
 
 
 def _runtime_name(runtime: Any) -> str:
-    return str(getattr(runtime, "runtime_name", "") or "") if runtime is not None else ""
+    if runtime is None:
+        return ""
+    runtime_name = getattr(runtime, "runtime_name", "")
+    if type(runtime_name) is str:
+        return runtime_name
+    if not runtime_name:
+        return ""
+    return str(runtime_name)
 
 
 def _detect_custom_loader_requirement(model_spec: common_pb2.ModelSpec) -> tuple[bool, str]:
