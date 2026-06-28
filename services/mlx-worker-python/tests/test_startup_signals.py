@@ -132,6 +132,30 @@ def test_check_for_updates_reuses_stat_valid_channel_cache(
     assert read_bytes_calls == 0
 
 
+def test_check_for_updates_reuses_cached_result_without_recompare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel_path = tmp_path / "stable.json"
+    channel_path.write_text(
+        json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
+        encoding="utf-8",
+    )
+    startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_CACHE.clear()
+
+    first_result = check_for_updates("0.1.0", channel_path)
+
+    def fail_compare_versions(*args: object, **kwargs: object) -> int:  # pragma: no cover - sentinel
+        raise AssertionError("cached update check result should skip version comparison")
+
+    monkeypatch.setattr(startup_signals_module, "compare_versions", fail_compare_versions)
+
+    second_result = check_for_updates("0.1.0", channel_path)
+
+    assert second_result is first_result
+
+
 def test_read_product_version_reads_project_version(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "melix"\nversion = "1.2.3"\n', encoding="utf-8")
 
