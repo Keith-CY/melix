@@ -135,6 +135,23 @@ def test_local_job_continuation_load_record_uses_direct_binary_open(
     assert store.load_record("job-7") == saved
 
 
+def test_local_job_continuation_load_record_avoids_path_join_wrapper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    saved = store.save_record(_record(status="completed", exit_status=0))
+
+    def fail_path_join(self: Path, key: str) -> Path:
+        raise AssertionError(  # pragma: no cover - must stay uncalled for this regression
+            f"load_record() should avoid pathlib join overhead for {self}/{key}"
+        )
+
+    monkeypatch.setattr(Path, "__truediv__", fail_path_join)
+
+    assert store.load_record("job-7") == saved
+
+
 def test_stale_completed_record_with_live_progress_is_revived() -> None:
     result = reconcile_local_job_continuation(
         _record(status="completed", exit_status=0),
@@ -2006,9 +2023,11 @@ def test_load_record_tolerates_record_deleted_between_path_resolution_and_read(
     saved = store.save_record(_record(status="running"))
     original_open = builtins.open
 
-    def delete_before_open(path: Path, *args: Any, **kwargs: Any) -> Any:
-        if path == tmp_path / "job-7.json":
-            path.unlink()
+    target_path = os.fspath(tmp_path / "job-7.json")
+
+    def delete_before_open(path: str | os.PathLike[str], *args: Any, **kwargs: Any) -> Any:
+        if os.fspath(path) == target_path:
+            os.unlink(path)
         return original_open(path, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "open", delete_before_open)

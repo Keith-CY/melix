@@ -178,9 +178,10 @@ class LocalJobSessionFollowupProjectionBatch:
 class LocalJobContinuationStore:
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
+        self._root_fspath = os.fspath(self.root)
 
     def load_record(self, job_id: str) -> LocalJobContinuationRecord | None:
-        path = self._record_path(job_id)
+        path = self._record_path_text(job_id)
         try:
             with open(path, "rb") as record_file:
                 content = record_file.read()
@@ -548,6 +549,10 @@ class LocalJobContinuationStore:
     def _record_path(self, job_id: str) -> Path:
         safe_job_id = _safe_job_id(job_id)
         return self.root / f"{safe_job_id}.json"
+
+    def _record_path_text(self, job_id: str) -> str:
+        safe_job_id = _safe_job_id(job_id)
+        return os.path.join(self._root_fspath, f"{safe_job_id}.json")
 
     @contextmanager
     def _record_write_lock(self, path: Path) -> Iterator[None]:
