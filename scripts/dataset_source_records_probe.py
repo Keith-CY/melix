@@ -31,10 +31,12 @@ def _build_tree(root: Path, *, directory_count: int, files_per_directory: int) -
         directory.mkdir(parents=True, exist_ok=True)
         for file_index in range(files_per_directory):
             suffix, _source_kind = suffixes[file_index % len(suffixes)]
-            (directory / f"sample-{directory_index:04d}-{file_index:04d}{suffix}").write_text(
-                "Melix source row\n",
-                encoding="utf-8",
+            payload = (
+                '{"text":"Melix source row"}\n'
+                if suffix == ".jsonl"
+                else "Melix source row\n"
             )
+            (directory / f"sample-{directory_index:04d}-{file_index:04d}{suffix}").write_text(payload, encoding="utf-8")
             total += 1
     return total
 
@@ -59,7 +61,9 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
 def measure(*, directory_count: int, files_per_directory: int, samples: int) -> dict[str, float]:
     elapsed_ms: list[float] = []
     source_kind_elapsed_ms: list[float] = []
+    record_elapsed_ms: list[float] = []
     file_counts: list[float] = []
+    record_counts: list[float] = []
     with tempfile.TemporaryDirectory(prefix="melix-dataset-source-records-probe-") as tmp:
         root = Path(tmp) / "raw-inputs"
         expected_count = _build_tree(root, directory_count=directory_count, files_per_directory=files_per_directory)
@@ -92,6 +96,15 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
             source_kind_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
             if source_kinds != expected_kinds:
                 raise RuntimeError("source kind classification changed")
+            operator_failures: list[dict[str, object]] = []
+            started = time.perf_counter()
+            records = list(dataset_preparation._iter_source_records(root, operator_failures))
+            record_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+            record_counts.append(float(len(records)))
+            if operator_failures:
+                raise RuntimeError(f"unexpected source ingest failures: {operator_failures!r}")
+            if len(records) != expected_count:
+                raise RuntimeError(f"unexpected source record count: {len(records)} != {expected_count}")
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_ms),
         "elapsed_ms_min": min(elapsed_ms),
@@ -99,9 +112,13 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
         "source_kind_elapsed_ms_mean": statistics.fmean(source_kind_elapsed_ms),
         "source_kind_elapsed_ms_min": min(source_kind_elapsed_ms),
         "source_kind_elapsed_ms_p95": sorted(source_kind_elapsed_ms)[int((len(source_kind_elapsed_ms) - 1) * 0.95)],
+        "record_elapsed_ms_mean": statistics.fmean(record_elapsed_ms),
+        "record_elapsed_ms_min": min(record_elapsed_ms),
+        "record_elapsed_ms_p95": sorted(record_elapsed_ms)[int((len(record_elapsed_ms) - 1) * 0.95)],
         "directory_count": float(directory_count),
         "files_per_directory": float(files_per_directory),
         "file_count_mean": statistics.fmean(file_counts),
+        "record_count_mean": statistics.fmean(record_counts),
         "source_kind_variant_count": float(len(_SOURCE_KIND_SUFFIXES)),
         "sample_count": float(samples),
     }

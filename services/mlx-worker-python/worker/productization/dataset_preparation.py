@@ -572,7 +572,7 @@ def _iter_source_records(
             yield _record(
                 path=path,
                 source_kind=source_kind,
-                text=_normalize_line_endings(text),
+                text=text,
                 metadata=_metadata_for_path(path, source_kind),
             )
 

@@ -777,10 +777,13 @@ def test_dataset_source_records_probe_script_emits_metrics(
     assert metrics["elapsed_ms_p95"] >= 0.0
     assert metrics["source_kind_elapsed_ms_mean"] >= 0.0
     assert metrics["source_kind_elapsed_ms_p95"] >= 0.0
+    assert metrics["record_elapsed_ms_mean"] >= 0.0
+    assert metrics["record_elapsed_ms_p95"] >= 0.0
     assert metrics["sample_count"] == 1.0
     assert metrics["directory_count"] == 3.0
     assert metrics["files_per_directory"] == 4.0
     assert metrics["file_count_mean"] == 12.0
+    assert metrics["record_count_mean"] == 12.0
     assert metrics["source_kind_variant_count"] == 4.0
 
 
@@ -791,6 +794,31 @@ def test_dataset_source_records_probe_rejects_changed_source_kind(
     monkeypatch.setattr(probe_script["dataset_preparation"], "_source_kind", lambda path: None)
 
     with pytest.raises(RuntimeError, match="source kind classification changed"):
+        probe_script["measure"](directory_count=1, files_per_directory=1, samples=1)
+
+
+def test_dataset_source_records_probe_rejects_ingest_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+
+    def fail_iter_source_records(root: Path, failures: list[dict[str, object]]) -> list[dict[str, object]]:
+        failures.append({"path": str(root / "broken.txt"), "error": "boom"})
+        return []
+
+    monkeypatch.setattr(probe_script["dataset_preparation"], "_iter_source_records", fail_iter_source_records)
+
+    with pytest.raises(RuntimeError, match="unexpected source ingest failures"):
+        probe_script["measure"](directory_count=1, files_per_directory=1, samples=1)
+
+
+def test_dataset_source_records_probe_rejects_record_count_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+    monkeypatch.setattr(probe_script["dataset_preparation"], "_iter_source_records", lambda root, failures: [])
+
+    with pytest.raises(RuntimeError, match="unexpected source record count"):
         probe_script["measure"](directory_count=1, files_per_directory=1, samples=1)
 
 

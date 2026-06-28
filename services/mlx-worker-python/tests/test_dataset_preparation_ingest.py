@@ -13,6 +13,7 @@ from worker.productization.dataset_preparation import (
     _SOURCE_KIND_BY_NAME,
     _SOURCE_KIND_NAME_CACHE_MAX,
     _iter_source_file_paths,
+    _iter_source_records,
     _source_kind,
     prepare_dataset_ingest,
 )
@@ -103,6 +104,27 @@ def test_dataset_ingest_source_kind_name_cache_clears_at_bound() -> None:
     assert _source_kind(Path("next.txt")) == "text"
 
     assert _SOURCE_KIND_BY_NAME == {"next.txt": "text"}
+
+
+def test_dataset_ingest_plain_text_normalizes_line_endings_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "notes.txt"
+    input_path.write_text("alpha\r\nbeta\r", encoding="utf-8")
+    calls: list[str] = []
+    original_normalize = dataset_preparation_module._normalize_line_endings
+
+    def count_normalize(text: str) -> str:
+        calls.append(text)
+        return original_normalize(text)
+
+    monkeypatch.setattr(dataset_preparation_module, "_normalize_line_endings", count_normalize)
+
+    records = list(_iter_source_records(input_path, []))
+
+    assert records[0]["text"] == "alpha\nbeta\n"
+    assert calls == ["alpha\nbeta\n"]
 
 
 def test_dataset_ingest_source_file_paths_skips_scandir_errors(
