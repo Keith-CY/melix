@@ -46,10 +46,14 @@ class ProbePolicy:
         default_mode: ProbeMode = ProbeMode.MINIMAL,
     ) -> ProbePolicy:
         if env is not None and not env:
+            if default_mode is ProbeMode.MINIMAL:
+                return _MINIMAL_DEFAULT_PROBE_POLICY
             return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
         values = os.environ if env is None else env
         raw_value = values.get(MELIX_PROBE_MODE_ENV, "")
         if not raw_value:
+            if default_mode is ProbeMode.MINIMAL:
+                return _MINIMAL_DEFAULT_PROBE_POLICY
             return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
         return ProbePolicy.from_value(raw_value, default_mode=default_mode)
 
@@ -60,9 +64,13 @@ class ProbePolicy:
         default_mode: ProbeMode = ProbeMode.MINIMAL,
     ) -> ProbePolicy:
         if value is None:
+            if default_mode is ProbeMode.MINIMAL:
+                return _MINIMAL_DEFAULT_PROBE_POLICY
             return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
         if type(value) is str:
             if not value:
+                if default_mode is ProbeMode.MINIMAL:
+                    return _MINIMAL_DEFAULT_PROBE_POLICY
                 return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
             policy = _PROBE_POLICY_BY_VALUE_GET(value)
             if policy is not None:
@@ -103,6 +111,7 @@ _PROBE_POLICY_BY_MODE: dict[ProbeMode, ProbePolicy] = {
 _PROBE_POLICY_BY_DEFAULT_MODE: dict[ProbeMode, ProbePolicy] = {
     mode: ProbePolicy(mode=mode) for mode in ProbeMode
 }
+_MINIMAL_DEFAULT_PROBE_POLICY = _PROBE_POLICY_BY_DEFAULT_MODE[ProbeMode.MINIMAL]
 _EVIDENCE_PROBE_POLICY = _PROBE_POLICY_BY_MODE[ProbeMode.EVIDENCE]
 _DEBUG_PROBE_POLICY = _PROBE_POLICY_BY_MODE[ProbeMode.DEBUG]
 
