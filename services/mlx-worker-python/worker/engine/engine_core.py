@@ -60,6 +60,12 @@ _PROMPT_CONTEXT_RECEIPT_METRIC_KEYS = {
     "melix.prompt_context.receipt_count": "prompt_context_receipt_count",
     "melix.prompt_context.receipts_json": "prompt_context_receipts_json",
 }
+_EMPTY_MEDIA_FEATURE_USAGE = {
+    "media_feature_cache_hits": 0,
+    "media_feature_cache_misses": 0,
+    "media_feature_encoder_calls_saved": 0,
+    "media_feature_work_saved_bytes": 0,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,14 +184,14 @@ def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> in
 
 
 def _media_feature_usage_from_probe(probe: object | None) -> dict[str, int]:
+    if probe is None:
+        return _EMPTY_MEDIA_FEATURE_USAGE
     usage = {
         "media_feature_cache_hits": 0,
         "media_feature_cache_misses": 0,
         "media_feature_encoder_calls_saved": 0,
         "media_feature_work_saved_bytes": 0,
     }
-    if probe is None:
-        return usage
 
     for key in usage:
         usage[key] = _probe_counter_value(
