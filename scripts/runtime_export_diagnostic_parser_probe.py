@@ -18,6 +18,15 @@ for candidate in (ROOT, WORKER_ROOT):
         sys.path.insert(0, str(candidate))  # pragma: no cover - script bootstrap
 
 from worker.productization.export_target_diagnostics import (
+    CODE_DUPLICATE_TENSOR_NAME,
+    CODE_INSUFFICIENT_MEMORY,
+    CODE_INVALID_RUNTIME_PATH,
+    CODE_MISSING_BINARY,
+    CODE_MISSING_BLOB,
+    CODE_PERMISSION_DENIED,
+    CODE_RUNTIME_LOAD_FAILED,
+    CODE_RUNTIME_TIMEOUT,
+    CODE_UNSUPPORTED_ARCHITECTURE,
     _SourceLine,
     _build_redacted_excerpt,
     _diagnoses_from_excerpt,
@@ -78,31 +87,30 @@ def _path_redaction_elapsed_ms(
 
 
 def _diagnosis_matching_elapsed_ms(*, samples: int, iterations: int, line_count: int) -> float:
+    known_code_lines = [
+        (CODE_RUNTIME_LOAD_FAILED, "runtime load failed while opening model"),
+        (CODE_UNSUPPORTED_ARCHITECTURE, "unsupported architecture arm64 required"),
+        (CODE_DUPLICATE_TENSOR_NAME, "duplicate tensor name decoder.layers.0"),
+        (CODE_MISSING_BLOB, "missing blob sha256-777777 not found"),
+        (CODE_MISSING_BINARY, "runtime binary not installed: ollama"),
+        (CODE_INVALID_RUNTIME_PATH, "invalid runtime path /tmp/melix/bad-target"),
+        (CODE_RUNTIME_TIMEOUT, "generation smoke timed out after deadline exceeded"),
+        (CODE_PERMISSION_DENIED, "permission denied opening model weights"),
+        (CODE_INSUFFICIENT_MEMORY, "Metal out of memory during load"),
+    ]
     source_lines = [
-        _SourceLine(
-            source_path="logs/ollama-create.log",
-            text=f"progress line {index} loaded shard metadata without failure",
-        )
-        for index in range(line_count)
+        _SourceLine(source_path="logs/ollama-create.log", text=text)
+        for _code, text in known_code_lines
     ]
     source_lines.extend(
-        [
-            _SourceLine(
-                source_path="logs/ollama-create.log",
-                text="missing blob sha256-777777 not found",
-            ),
-            _SourceLine(
-                source_path="logs/ollama-create.log",
-                text="runtime binary not installed: ollama",
-            ),
-            _SourceLine(
-                source_path="logs/ollama-create.log",
-                text="Metal out of memory during load",
-            ),
-        ]
+        _SourceLine(
+            source_path="logs/ollama-create.log",
+            text=f"late duplicate runtime load failed marker after full coverage {index}",
+        )
+        for index in range(line_count)
     )
     line_numbers = {index: index + 1 for index in range(len(source_lines))}
-    expected_codes = {"missing_blob", "missing_binary", "insufficient_memory"}
+    expected_codes = {code for code, _text in known_code_lines}
     elapsed_samples: list[float] = []
     for _sample in range(samples):
         started = time.perf_counter()
@@ -178,7 +186,7 @@ def main() -> int:
                     iterations=iterations,
                     line_count=matching_line_count,
                 ),
-                "diagnosis_matching_line_count": float(matching_line_count + 3),
+                "diagnosis_matching_line_count": float(matching_line_count + 9),
                 "diagnosis_code_count": diagnosis_code_count,
                 "iteration_count": float(iterations),
                 "sample_count": float(samples),

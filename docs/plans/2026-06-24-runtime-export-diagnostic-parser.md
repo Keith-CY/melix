@@ -136,6 +136,13 @@ skip the pattern loop entirely, while matching lines still use the same compiled
 regexes and matched-pattern ids as before. This reduces bounded-excerpt scans
 with many progress lines that contain no supported failure terms.
 
+A follow-up 2026-06-28 all-known-code short-circuit slice keeps the parser
+semantics unchanged while stopping diagnosis matching once every known diagnosis
+code has already been emitted for the bounded excerpt. Later lines cannot add a
+new known-code diagnosis at that point because duplicate codes are already
+suppressed, so the parser avoids lowercasing and marker scans across trailing
+runtime-log noise.
+
 Focused verification:
 
 ```bash
