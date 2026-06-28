@@ -453,13 +453,16 @@ def read_hf_dataset_snapshot_rows(
         selected_files = _iter_limited_preview_dataset_files(resolved_snapshot_path, limit=limit)
     else:
         selected_files = _iter_selected_dataset_files(resolved_snapshot_path, split=normalized_split)
+    remaining = limit
     for path in selected_files:
-        remaining = None if limit is None else max(limit - len(rows), 0)
-        if remaining == 0:
+        if remaining is not None and remaining <= 0:
             return rows
-        rows.extend(_read_rows_from_file(path, limit=remaining))
-        if limit is not None and len(rows) >= limit:
-            return rows
+        file_rows = _read_rows_from_file(path, limit=remaining)
+        rows.extend(file_rows)
+        if remaining is not None:
+            remaining -= len(file_rows)
+            if remaining <= 0:
+                return rows
     return rows
 
 
