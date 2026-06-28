@@ -29,6 +29,8 @@ _SIZE_HINT_MULTIPLIERS = {
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _NEXT_LINK_REL_MARKER = 'rel="next"'
+_CURSOR_QUERY_KEY = "cursor="
+_CURSOR_QUERY_KEY_LEN = len(_CURSOR_QUERY_KEY)
 _URL_HEX_DIGITS = {
     "0": 0,
     "1": 1,
@@ -362,24 +364,21 @@ def _next_cursor_from_link(link_header: str) -> str:
         if url_start < 0:
             search_start = relation_start + marker_len
             continue
-        query_start = link_header.rfind("?", url_start + 1, url_end)
-        if query_start < 0:
-            return ""
-        query_end = link_header.find("#", query_start + 1, url_end)
+        url_content_start = url_start + 1
+        query_end = link_header.find("#", url_content_start, url_end)
         if query_end < 0:
             query_end = url_end
-        value_start = query_start + 1
-        if link_header.startswith("cursor=", value_start, query_end):
-            value_start += len("cursor=")
-        else:
-            cursor_start = link_header.find("&cursor=", value_start, query_end)
-            if cursor_start < 0:
-                return ""
-            value_start = cursor_start + len("&cursor=")
-        value_end = link_header.find("&", value_start, query_end)
-        if value_end < 0:
-            value_end = query_end
-        return _unquote_plus_ascii_cursor(link_header[value_start:value_end])
+        cursor_start = link_header.find(_CURSOR_QUERY_KEY, url_content_start, query_end)
+        while cursor_start >= 0:
+            previous_char = link_header[cursor_start - 1] if cursor_start > url_content_start else ""
+            if previous_char == "?" or previous_char == "&":
+                value_start = cursor_start + _CURSOR_QUERY_KEY_LEN
+                value_end = link_header.find("&", value_start, query_end)
+                if value_end < 0:
+                    value_end = query_end
+                return _unquote_plus_ascii_cursor(link_header[value_start:value_end])
+            cursor_start = link_header.find(_CURSOR_QUERY_KEY, cursor_start + _CURSOR_QUERY_KEY_LEN, query_end)
+        return ""
 
 
 def _cursor_query_value(url: str, start: int, end: int) -> str:
