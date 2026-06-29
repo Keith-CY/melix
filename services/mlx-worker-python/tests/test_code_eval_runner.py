@@ -500,11 +500,11 @@ def test_count_nonblank_test_lines_matches_splitlines_semantics() -> None:
         )
 
 
-def test_count_tests_fallback_uses_splitlines_fast_path() -> None:
+def test_count_tests_fallback_counts_nonblank_lines() -> None:
     assert code_eval_runner._count_tests("def broken(:\nassert one\nassert two") == 3
 
 
-def test_count_tests_no_assert_fallback_uses_splitlines_fast_path() -> None:
+def test_count_tests_no_assert_fallback_counts_nonblank_lines() -> None:
     test_code = textwrap.dedent(
         """
         def check(candidate):
@@ -559,6 +559,12 @@ def test_count_nonblank_lines_streams_without_filtered_list() -> None:
     )
 
     assert code_eval_runner._count_nonblank_test_lines(test_code) == 66_666
+
+
+def test_count_nonblank_lines_streams_short_inputs_without_splitlines() -> None:
+    test_code = _SplitlinesGuard("assert value\n   \nassert other")
+
+    assert code_eval_runner._count_nonblank_test_lines(test_code) == 2
 
 
 def test_read_limited_text_handles_missing_and_oversized_files(tmp_path: Path) -> None:
