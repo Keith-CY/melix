@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from bisect import bisect_left
-from collections.abc import Mapping
+from collections.abc import Mapping, Set
 from functools import lru_cache
 import json
 import os
@@ -26,6 +26,7 @@ _ASCII_PLUS = ord("+")
 _ASCII_MINUS = ord("-")
 _ASCII_AT = ord("@")
 _ASCII_LOWER_D = ord("d")
+_EMPTY_CHANGED_LINES: frozenset[int] = frozenset()
 
 
 def _is_diff_file_marker(line: str) -> bool:
@@ -179,7 +180,7 @@ def _filter_coverage_paths(paths: list[str], allowlist: frozenset[str] | None) -
 
 
 def _line_ranges_may_overlap(
-    changed: set[int],
+    changed: Set[int],
     executed_lines: list[int],
     missing_lines: list[int],
 ) -> bool:
@@ -215,7 +216,7 @@ def _measurable_changed_lines(
     repo_root: Path,
     coverage_payload: dict[str, object],
     rel_path: str,
-    changed: set[int],
+    changed: Set[int],
 ) -> tuple[list[int], list[int], list[int]]:
     if not changed:
         return [], [], []
@@ -313,7 +314,7 @@ def main() -> int:
             repo_root,
             coverage_payload,
             rel_path,
-            changed_lines_by_path.get(rel_path, set()),
+            changed_lines_by_path.get(rel_path, _EMPTY_CHANGED_LINES),
         )
         total_measurable += len(measurable)
         total_covered += len(covered)

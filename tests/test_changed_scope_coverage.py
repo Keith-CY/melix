@@ -492,7 +492,7 @@ def test_measurable_changed_lines_skips_source_read_when_no_changed_lines(monkey
 
     monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
 
-    for changed in (set(), {3, 4}):
+    for changed in (set(), changed_scope_coverage._EMPTY_CHANGED_LINES, {3, 4}):
         measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
             tmp_path,
             coverage_payload,

@@ -30,3 +30,15 @@ Register `changed-scope-coverage-empty-path-short-circuit` in the PR-scoped perf
 - Changed executable line coverage is at least 95%.
 - Local probe shows fewer source reads and lower elapsed time than `origin/main` on the same synthetic workload.
 - `git diff --check` passes.
+
+## Follow-up slice: shared empty changed-line default
+
+This follow-up keeps the same changed-scope coverage boundary and the registered
+`changed-scope-coverage-empty-path-short-circuit` /
+`changed-scope-coverage-measured-set-filter` probes. When a requested path is
+absent from the parsed diff map, `main()` now passes a module-level immutable
+empty changed-line set to `_measurable_changed_lines(...)` instead of allocating
+a fresh `set()` for every missing path. The helper accepts any set-like
+container and still returns immediately for empty changed-line inputs, preserving
+coverage semantics while reducing per-path allocation overhead in empty or
+filtered diff scopes.
