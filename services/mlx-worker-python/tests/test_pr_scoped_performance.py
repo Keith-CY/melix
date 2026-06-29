@@ -767,7 +767,7 @@ def test_dataset_source_records_probe_script_emits_metrics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_DIRS", "3")
-    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_FILES_PER_DIR", "4")
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_FILES_PER_DIR", "7")
     monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_SAMPLES", "1")
     probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
 
@@ -780,9 +780,9 @@ def test_dataset_source_records_probe_script_emits_metrics(
     assert metrics["source_kind_elapsed_ms_p95"] >= 0.0
     assert metrics["sample_count"] == 1.0
     assert metrics["directory_count"] == 3.0
-    assert metrics["files_per_directory"] == 4.0
-    assert metrics["file_count_mean"] == 12.0
-    assert metrics["source_kind_variant_count"] == 4.0
+    assert metrics["files_per_directory"] == 7.0
+    assert metrics["file_count_mean"] == 21.0
+    assert metrics["source_kind_variant_count"] == 7.0
 
 
 def test_dataset_source_records_probe_rejects_changed_source_kind(

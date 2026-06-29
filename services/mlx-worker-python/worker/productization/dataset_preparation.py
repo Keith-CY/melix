@@ -618,6 +618,10 @@ def _classify_source_kind_name(name: str) -> str | None:
         return "code"
     if name[-6:] == ".jsonl":
         return "structured_data"
+    if name[-5:] == ".json":
+        return "structured_data"
+    if name[-4:] in (".csv", ".tsv"):
+        return "structured_data"
 
     dot_index = name.rfind(".")
     if dot_index < 0:

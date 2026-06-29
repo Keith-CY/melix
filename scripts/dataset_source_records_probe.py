@@ -20,6 +20,9 @@ _SOURCE_KIND_SUFFIXES = (
     (".md", "markdown"),
     (".py", "code"),
     (".jsonl", "structured_data"),
+    (".json", "structured_data"),
+    (".csv", "structured_data"),
+    (".tsv", "structured_data"),
 )
 
 
@@ -109,7 +112,7 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
 
 def main() -> int:
     directory_count = int(os.environ.get("MELIX_DATASET_SOURCE_RECORDS_PROBE_DIRS", "250"))
-    files_per_directory = int(os.environ.get("MELIX_DATASET_SOURCE_RECORDS_PROBE_FILES_PER_DIR", "24"))
+    files_per_directory = int(os.environ.get("MELIX_DATASET_SOURCE_RECORDS_PROBE_FILES_PER_DIR", "28"))
     samples = int(os.environ.get("MELIX_DATASET_SOURCE_RECORDS_PROBE_SAMPLES", "11"))
     print(json.dumps(measure(directory_count=directory_count, files_per_directory=files_per_directory, samples=samples), sort_keys=True))
     return 0

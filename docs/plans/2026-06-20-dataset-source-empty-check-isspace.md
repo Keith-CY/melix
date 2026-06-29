@@ -56,3 +56,15 @@ This slice adds exact lowercase suffix returns for `.md`, `.py`, and `.jsonl`
 after the existing text fast paths. Uppercase and mixed-case names still fall
 through to the generic lowercase path, preserving current behavior while
 avoiding generic suffix allocation/work for common generated dataset inputs.
+
+## 2026-06-29 follow-up: structured source suffix fast path
+
+This Python-only follow-up extends the lowercase structured source suffix fast
+path to `.json`, `.csv`, and `.tsv` in `_classify_source_kind_name(...)`.
+Uppercase and mixed-case structured suffixes still fall through to the generic
+lowercase path so ingest behavior remains unchanged.
+
+The registered `dataset-source-records-scandir` probe fixture now includes all
+structured ingest suffixes (`.jsonl`, `.json`, `.csv`, `.tsv`) so local Linux
+and PR-scoped CI probe classification timing covers the optimized path before
+the slice is merged.
