@@ -566,6 +566,21 @@ def test_trust_policy_caches_config_path_text_by_model_path(tmp_path: Path) -> N
     assert path_cache.cache_info().hits == 1
 
 
+def test_read_model_config_reuses_cached_config_path_text(tmp_path: Path) -> None:
+    model = _custom_loader_text_model(tmp_path)
+    path_cache = model_load_trust_module._model_config_path_for_model_path
+    path_cache.cache_clear()
+    model_load_trust_module._read_model_config_for_stat.cache_clear()
+
+    first_config = model_load_trust_module._read_model_config(model)
+    second_config = model_load_trust_module._read_model_config(model)
+
+    assert first_config == second_config
+    assert first_config is not None
+    assert first_config["auto_map"] == {"AutoModelForCausalLM": "custom.Loader"}
+    assert path_cache.cache_info().hits == 1
+
+
 def test_trust_policy_expands_tilde_model_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

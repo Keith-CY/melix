@@ -324,17 +324,10 @@ def _auto_map_has_custom_loader(auto_map: dict[Any, Any]) -> bool:
 
 
 def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | None:
-    model_path = str(model_spec.model_path or "").strip()
-    if not model_path:
+    config_path = _model_config_path(model_spec)
+    if config_path is None:
         return None
-    if model_path[0] == "~":
-        config_path = Path(model_path).expanduser() / "config.json"
-        config_path_text = str(config_path)
-        stat_path: str | os.PathLike[str] = config_path
-    else:
-        separator = "" if model_path[-1] == os.sep else os.sep
-        config_path_text = f"{model_path}{separator}config.json"
-        stat_path = config_path_text
+    config_path_text, stat_path = config_path
     try:
         config_stat = os.stat(stat_path)
         if not stat.S_ISREG(config_stat.st_mode):
