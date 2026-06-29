@@ -20,3 +20,14 @@ The affected path is covered by the registered PR-scoped probe `model-load-confi
 ## Expected outcome
 
 The repeated-resolution probe should show a small latency reduction for the common plain local path case without changing missing-file, invalid-config, or tilde-path behavior.
+
+## 2026-06-29 follow-up: config path text cache
+
+This follow-up keeps the same Python-only boundary and registered `model-load-config-json-bytes` probe. The previous slices left repeated model-load trust resolutions rebuilding the same `config.json` path string before the file-stat and JSON detection caches. This slice caches the derived `(config_path_text, stat_path)` pair by stripped model path while preserving the existing empty-path, plain-path, and tilde-path behavior.
+
+Implementation and validation:
+
+1. Add a focused regression test proving repeated `_model_config_path()` calls reuse the cached path derivation.
+2. Factor the string-to-config-path derivation into a bounded `lru_cache` helper.
+3. Run the registered focused tests, changed-scope coverage, and local PR-scoped `model-load-config-json-bytes` probe on Linux.
+4. Use GitHub Actions PR-scoped performance as the merge gate.

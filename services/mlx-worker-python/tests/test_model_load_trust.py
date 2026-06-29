@@ -554,6 +554,18 @@ def test_trust_policy_stats_plain_config_path_without_path_join(
     assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
 
 
+def test_trust_policy_caches_config_path_text_by_model_path(tmp_path: Path) -> None:
+    model = _custom_loader_text_model(tmp_path)
+    path_cache = model_load_trust_module._model_config_path_for_model_path
+    path_cache.cache_clear()
+
+    first_path = model_load_trust_module._model_config_path(model)
+    second_path = model_load_trust_module._model_config_path(model)
+
+    assert first_path == second_path
+    assert path_cache.cache_info().hits == 1
+
+
 def test_trust_policy_expands_tilde_model_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

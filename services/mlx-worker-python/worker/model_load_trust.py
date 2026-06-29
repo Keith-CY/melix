@@ -353,6 +353,11 @@ def _model_config_path(model_spec: common_pb2.ModelSpec) -> tuple[str, str | os.
     model_path = str(model_spec.model_path or "").strip()
     if not model_path:
         return None
+    return _model_config_path_for_model_path(model_path)
+
+
+@lru_cache(maxsize=128)
+def _model_config_path_for_model_path(model_path: str) -> tuple[str, str | os.PathLike[str]]:
     if model_path[0] == "~":
         config_path = Path(model_path).expanduser() / "config.json"
         return str(config_path), config_path
