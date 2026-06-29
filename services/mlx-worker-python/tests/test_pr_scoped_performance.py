@@ -4779,7 +4779,7 @@ def test_code_eval_runner_script_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
 
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["dedent_calls_mean"] == 1.0
+    assert metrics["dedent_calls_mean"] == 0.0
     assert metrics["identity_reuse_mean"] == 1.0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["result_alloc_elapsed_ms_mean"] > 0
