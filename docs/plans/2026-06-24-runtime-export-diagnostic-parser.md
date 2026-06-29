@@ -143,6 +143,14 @@ new known-code diagnosis at that point because duplicate codes are already
 suppressed, so the parser avoids lowercasing and marker scans across trailing
 runtime-log noise.
 
+A follow-up 2026-06-29 private-line redaction marker slice keeps the redaction
+contract unchanged while gating the private prompt/response regex behind a cheap
+leading-character marker. Runtime log lines that cannot begin one of the
+registered private-text labels (`prompt`, `private prompt template`, `response`,
+`completion`, `generated text`, `dataset row`, or `operator input`, after leading
+whitespace) skip the anchored regex; lines with a compatible leading label still
+use the same regex and redaction counters as before.
+
 Focused verification:
 
 ```bash

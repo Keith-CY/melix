@@ -589,7 +589,7 @@ def _redact_text(
     resolved_target_root_text: str,
     summary: _RedactionSummary,
 ) -> str:
-    if _PRIVATE_TEXT_LINE_PATTERN.search(text):
+    if _has_private_text_line_marker(text) and _PRIVATE_TEXT_LINE_PATTERN.search(text):
         summary.redacted_prompt_or_response_count += 1
         summary.redaction_count += 1
         return "<redacted-private-preview>"
@@ -641,6 +641,27 @@ def _has_secret_redaction_marker(text: str) -> bool:
         or "sk-" in text
         or "-----BEGIN " in text
     )
+
+
+def _has_private_text_line_marker(text: str) -> bool:
+    stripped = text.lstrip()
+    if not stripped:
+        return False
+    first = stripped[0]
+    if first == "p" or first == "P":
+        leading = stripped[:23].lower()
+        return leading.startswith("prompt") or leading.startswith("private prompt template")
+    if first == "r" or first == "R":
+        return stripped[:8].lower() == "response"
+    if first == "c" or first == "C":
+        return stripped[:10].lower() == "completion"
+    if first == "g" or first == "G":
+        return stripped[:14].lower() == "generated text"
+    if first == "d" or first == "D":
+        return stripped[:11].lower() == "dataset row"
+    if first == "o" or first == "O":
+        return stripped[:14].lower() == "operator input"
+    return False
 
 
 def _has_named_secret_marker(secret_text: str) -> bool:
