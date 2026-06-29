@@ -343,7 +343,13 @@ def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | Non
 
 
 def _model_config_path(model_spec: common_pb2.ModelSpec) -> tuple[str, str | os.PathLike[str]] | None:
-    model_path = str(model_spec.model_path or "").strip()
+    model_path_value = model_spec.model_path
+    if type(model_path_value) is str:
+        if not model_path_value:
+            return None
+        if not model_path_value[0].isspace() and not model_path_value[-1].isspace():
+            return _model_config_path_for_model_path(model_path_value)
+    model_path = str(model_path_value or "").strip()
     if not model_path:
         return None
     return _model_config_path_for_model_path(model_path)
