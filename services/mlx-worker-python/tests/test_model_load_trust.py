@@ -686,6 +686,18 @@ def test_trust_policy_treats_blank_model_path_as_absent(tmp_path: Path) -> None:
     assert policy.custom_loader_required is False
     assert policy.custom_loader_detection_source == "config_json:absent"
 
+    empty_path_model = WorkerModelCatalog.dev_text_model()
+    empty_path_model.model_path = ""
+    empty_path_policy = resolve_model_load_trust_policy(
+        empty_path_model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=RecordingTextBackend(),
+    )
+
+    assert empty_path_policy.custom_loader_required is False
+    assert empty_path_policy.custom_loader_detection_source == "config_json:absent"
+
     missing_path_model = WorkerModelCatalog.dev_text_model()
     missing_path_model.model_path = str(tmp_path / "nonexistent-subdir")
     missing_path_policy = resolve_model_load_trust_policy(
