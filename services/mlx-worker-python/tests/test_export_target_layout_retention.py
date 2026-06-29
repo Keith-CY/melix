@@ -394,6 +394,42 @@ def test_export_target_layout_rejects_empty_relative_path(tmp_path: Path) -> Non
         _target_relative_path(layout, "")
 
 
+def test_materialize_placeholder_files_reuses_resolved_target_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = FIXTURE_ROOT / "ollama/export-target-manifest.json"
+    manifest, validation_report = validate_export_target_manifest_file(
+        manifest_path,
+        return_manifest=True,
+    )
+    assert validation_report.ok is True
+    layout = build_export_target_layout(tmp_path, manifest)
+    original_target_relative_path = export_target_layout_module._target_relative_path
+    resolved_roots: list[Path | None] = []
+
+    def track_resolved_root(
+        layout_arg: export_target_layout_module.ExportTargetLayout,
+        relative_path: str,
+        *,
+        resolved_root: Path | None = None,
+    ) -> Path:
+        resolved_roots.append(resolved_root)
+        return original_target_relative_path(  # type: ignore[arg-type]
+            layout_arg,
+            relative_path,
+            resolved_root=resolved_root,
+        )
+
+    monkeypatch.setattr(export_target_layout_module, "_target_relative_path", track_resolved_root)
+
+    export_target_layout_module._materialize_placeholder_files(layout, manifest)
+
+    assert resolved_roots
+    assert all(resolved_root is not None for resolved_root in resolved_roots)
+    assert len({id(resolved_root) for resolved_root in resolved_roots}) == 1
+
+
 def test_layout_metrics_report_aggregates_target_retention_counts(tmp_path: Path) -> None:
     manifest_paths = sorted(FIXTURE_ROOT.glob("*/export-target-manifest.json"))
 

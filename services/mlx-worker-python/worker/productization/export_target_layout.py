@@ -407,16 +407,21 @@ def _materialize_placeholder_files(
     layout: ExportTargetLayout,
     manifest: export_target_manifest_pb2.ExportTargetManifest,
 ) -> None:
+    resolved_target_root = layout.target_root.resolve()
     for _section, rows in _file_sections(manifest):
         for row in rows:
-            path = _target_relative_path(layout, row.path)
+            path = _target_relative_path(layout, row.path, resolved_root=resolved_target_root)
             if path == layout.manifest_path:
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
             if not path.exists():
                 path.write_bytes(_placeholder_bytes(manifest, row))
     for field_name in _EVIDENCE_PATH_FIELDS:
-        evidence_path = _target_relative_path(layout, getattr(manifest.evidence, field_name))
+        evidence_path = _target_relative_path(
+            layout,
+            getattr(manifest.evidence, field_name),
+            resolved_root=resolved_target_root,
+        )
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         if not evidence_path.exists():
             _write_json(
