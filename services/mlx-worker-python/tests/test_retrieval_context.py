@@ -983,6 +983,36 @@ def test_project_retrieval_store_records_fast_paths_complete_dict_records(
     )
 
 
+def test_project_retrieval_store_records_complete_dict_fast_path_avoids_isinstance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_isinstance(_value: object, _types: object) -> bool:  # pragma: no cover - regression guard
+        raise AssertionError("complete plain dict store records should use exact type guards")
+
+    monkeypatch.setattr(retrieval_context_module, "isinstance", fail_isinstance, raising=False)
+
+    projection = project_retrieval_store_records(
+        [
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "doc:exact-type",
+                "payload": {"title": "Exact type note"},
+                "owner_scope_checked": True,
+                "segment_id": "doc:exact-type:retrieved-document-context",
+                "source_field": "retrieved_document_exact_type",
+                "reason": "retrieved document evidence is prompt data",
+                "corrective_action": "keep retrieved document evidence in user data",
+            }
+        ]
+    )
+
+    assert projection.user_payload == {
+        "retrieved_document_exact_type": {"title": "Exact type note"}
+    }
+    assert projection.refusal_receipts == []
+    assert projection.untrusted_context_receipts[0]["source_id"] == "doc:exact-type"
+
+
 def test_project_retrieval_store_records_redacts_nonpublic_source_ids_with_fast_check() -> None:
     raw_source_id = "doc local / private"
     projection = project_retrieval_store_records(
