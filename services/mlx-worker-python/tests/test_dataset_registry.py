@@ -532,10 +532,12 @@ def test_dataset_catalog_scan_records_skip_file_stat_for_unsupported_names(
             self._file_error = file_error
             self.is_file_calls = 0
 
-        def is_dir(self) -> bool:
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
             return self._is_dir
 
-        def is_file(self) -> bool:
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
             self.is_file_calls += 1
             if self._file_error:
                 raise OSError("stat failed")
@@ -1076,10 +1078,12 @@ def test_dataset_catalog_first_preview_file_preserves_sorted_depth_first_edges(
         name = "broken.jsonl"
         path = str(data_dir / "broken.jsonl")
 
-        def is_dir(self) -> bool:
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
             raise OSError("broken entry")
 
-        def is_file(self) -> bool:
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
             return True
 
     class FakeScandir:
@@ -1091,6 +1095,18 @@ def test_dataset_catalog_first_preview_file_preserves_sorted_depth_first_edges(
 
     monkeypatch.setattr(catalog.os, "scandir", lambda _path: FakeScandir())
     assert catalog._next_supported_scan_entry(snapshot_dir, after="") is None
+
+
+def test_dataset_catalog_preview_scan_does_not_follow_directory_symlinks(tmp_path: Path) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    target_dir = tmp_path / "target"
+    snapshot_dir.mkdir()
+    target_dir.mkdir()
+    (target_dir / "part-00000.jsonl").write_text('{"prompt":"target"}\n', encoding="utf-8")
+    link_dir = snapshot_dir / "linked-data"
+    link_dir.symlink_to(target_dir, target_is_directory=True)
+
+    assert catalog._first_supported_dataset_file(snapshot_dir) is None
 
 
 def test_dataset_catalog_row_reader_keeps_split_filtering_eager_for_missing_split(
