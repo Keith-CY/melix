@@ -223,6 +223,30 @@ def test_dataset_catalog_skips_path_construction_for_unsupported_files(
     assert constructor_calls == 2
 
 
+def test_dataset_catalog_dataset_files_reuse_scanned_file_format(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "README.md").write_text("# Dataset\n", encoding="utf-8")
+    (snapshot_dir / "train.jsonl").write_text("{}\n", encoding="utf-8")
+
+    def fail_path_format(_path: Path) -> str:
+        raise AssertionError(  # pragma: no cover - regression sentinel
+            "dataset files should reuse scan-time file format"
+        )
+
+    monkeypatch.setattr(catalog, "_dataset_file_format", fail_path_format)
+
+    files = tuple(catalog._dataset_files(snapshot_dir))
+
+    assert [(file.relative_path, file.file_format) for file in files] == [
+        ("README.md", "metadata"),
+        ("train.jsonl", "jsonl"),
+    ]
+
+
 def test_dataset_catalog_split_alias_prefix_scan_matches_legacy_delimiters() -> None:
     assert catalog._split_alias_from_candidate("train-00000-of-00001") == "train"
     assert catalog._split_alias_from_candidate("validation_shard_00000") == "validation"
