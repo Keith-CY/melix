@@ -30,6 +30,8 @@ from worker.productization.export_target_diagnostics import (
     _diagnoses_from_excerpt,
     _diagnosis_metric_counts,
     _extend_source_lines,
+    _has_identity_marker,
+    _has_named_secret_marker,
     _has_secret_redaction_marker,
     _split_source_lines,
 )
@@ -118,6 +120,38 @@ def test_export_target_diagnostics_secret_marker_fast_path_matches_registered_ma
     expected: bool,
 ) -> None:
     assert _has_secret_redaction_marker(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("plain runtime status", False),
+        ("api_key=super-secret-value", True),
+        ("access_token=abc", True),
+        ("password: abc", True),
+        ("contains secret value", True),
+    ],
+)
+def test_export_target_diagnostics_named_secret_marker_fast_path_matches_markers(
+    text: str,
+    expected: bool,
+) -> None:
+    assert _has_named_secret_marker(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("plain runtime status", False),
+        ("operator_id=chenyu", True),
+        ("user_name=alice", True),
+    ],
+)
+def test_export_target_diagnostics_identity_marker_fast_path_matches_markers(
+    text: str,
+    expected: bool,
+) -> None:
+    assert _has_identity_marker(text) is expected
 
 
 def test_export_target_diagnostics_redacts_paths_secrets_private_text_and_identity(
