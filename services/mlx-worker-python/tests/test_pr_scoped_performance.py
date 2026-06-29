@@ -1815,11 +1815,12 @@ def test_scope_report_selects_changed_scope_coverage_probe() -> None:
     )
 
     selected_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 3
+    assert scope["selected_count"] == 4
     assert scope["force_all"] is False
     assert selected_ids == {
         "changed-scope-coverage-empty-path-short-circuit",
         "changed-scope-coverage-measured-set-filter",
+        "changed-scope-coverage-singleton-range-fastpath",
         "changed-scope-coverage-diff-parser",
     }
 
@@ -3804,6 +3805,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "benchmark-store-matrix-streaming",
         "changed-scope-coverage-empty-path-short-circuit",
         "changed-scope-coverage-measured-set-filter",
+        "changed-scope-coverage-singleton-range-fastpath",
         "changed-scope-coverage-diff-parser",
         "closure-audit-probe-source-short-circuit",
         "code-eval-code-block-last-match-streaming",

@@ -45,6 +45,17 @@ assert MEASURED_PROBE_MODULE_SPEC.loader is not None
 changed_scope_coverage_measured_probe = importlib.util.module_from_spec(MEASURED_PROBE_MODULE_SPEC)
 MEASURED_PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_measured_probe)
 
+SINGLETON_PROBE_MODULE_PATH = (
+    Path(__file__).resolve().parents[1] / "scripts" / "changed_scope_coverage_singleton_probe.py"
+)
+SINGLETON_PROBE_MODULE_SPEC = importlib.util.spec_from_file_location(
+    "changed_scope_coverage_singleton_probe", SINGLETON_PROBE_MODULE_PATH
+)
+assert SINGLETON_PROBE_MODULE_SPEC is not None
+assert SINGLETON_PROBE_MODULE_SPEC.loader is not None
+changed_scope_coverage_singleton_probe = importlib.util.module_from_spec(SINGLETON_PROBE_MODULE_SPEC)
+SINGLETON_PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_singleton_probe)
+
 
 @pytest.fixture(autouse=True)
 def clear_probe_coverage_path_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -536,6 +547,22 @@ def test_measurable_changed_lines_checks_singletons_before_range_overlap(
     assert missed == []
 
 
+def test_line_ranges_may_overlap_single_changed_line_avoids_changed_minmax(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SingleLineSet(set[int]):
+        def __iter__(self):  # type: ignore[override]
+            yield 12
+
+    def fail_min(*args: object, **kwargs: object) -> object:  # pragma: no cover
+        raise AssertionError("singleton changed sets should avoid min(changed)")
+
+    monkeypatch.setattr(changed_scope_coverage, "min", fail_min, raising=False)
+
+    assert changed_scope_coverage._line_ranges_may_overlap(SingleLineSet({12}), [1, 10], []) is False
+    assert changed_scope_coverage._line_ranges_may_overlap(SingleLineSet({12}), [1, 12], []) is True
+
+
 def test_measurable_changed_lines_skips_empty_measured_lines(monkeypatch, tmp_path: Path) -> None:
     coverage_payload = {"files": {"foo.py": {"executed_lines": [], "missing_lines": []}}}
 
@@ -625,6 +652,18 @@ def test_changed_scope_coverage_measured_probe_emits_large_measured_metrics() ->
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["allowlist_parse_elapsed_ms_mean"] > 0
     assert metrics["allowlist_parse_count"] == 10000.0
+    assert metrics["source_read_calls_mean"] == 0.0
+
+
+def test_changed_scope_coverage_singleton_probe_emits_range_metrics() -> None:
+    metrics = changed_scope_coverage_singleton_probe.run_probe(
+        Path(__file__).resolve().parents[1], path_count=5, measured_lines_per_path=10, samples=2
+    )
+
+    assert metrics["path_count"] == 5.0
+    assert metrics["measured_lines_per_path"] == 10.0
+    assert metrics["sample_count"] == 2.0
+    assert metrics["elapsed_ms_mean"] > 0
     assert metrics["source_read_calls_mean"] == 0.0
 
 
