@@ -249,6 +249,29 @@ def test_export_target_diagnostics_redacts_paths_secrets_private_text_and_identi
     assert receipt["redaction_summary"]["redacted_identity_count"] >= 1
 
 
+def test_export_target_diagnostics_excerpt_byte_count_reuses_incremental_accounting(
+    tmp_path: Path,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [
+            _SourceLine("logs/runtime.log", "runtime load failed at café"),
+            _SourceLine("logs/runtime.log", "permission denied opening weights"),
+        ],
+        bounded_bytes=4096,
+        bounded_lines=8,
+    )
+
+    assert excerpt.summary.excerpt_byte_count == len(excerpt.text.encode("utf-8"))
+    assert excerpt.summary.excerpt_line_count == 2
+
+
 def test_export_target_diagnostics_resolves_target_root_once_for_many_path_redactions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
