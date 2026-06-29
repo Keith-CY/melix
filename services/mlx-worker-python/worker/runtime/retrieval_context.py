@@ -332,13 +332,13 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                 reason = record_get("reason", "")
                 corrective_action = record_get("corrective_action", "")
             if (
-                isinstance(source_id, str)
-                and isinstance(payload, dict)
-                and isinstance(owner_scope_checked, bool)
-                and isinstance(segment_id, str)
-                and isinstance(source_field, str)
-                and isinstance(reason, str)
-                and isinstance(corrective_action, str)
+                type(source_id) is str
+                and type(payload) is dict
+                and type(owner_scope_checked) is bool
+                and type(segment_id) is str
+                and type(source_field) is str
+                and type(reason) is str
+                and type(corrective_action) is str
             ):
                 normalized_source_id = source_id.strip()
                 normalized_segment_id = segment_id.strip()
