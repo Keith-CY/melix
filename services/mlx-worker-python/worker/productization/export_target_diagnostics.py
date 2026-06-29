@@ -764,7 +764,7 @@ def _diagnoses_from_excerpt(
             break
         text = source_lines[index].text
         lowered_text = text.lower()
-        if not any(marker in lowered_text for marker in _DIAGNOSIS_MARKERS):
+        if not _has_diagnosis_marker(lowered_text):
             continue
         for pattern in _DIAGNOSIS_PATTERNS:
             if pattern.code in seen_codes:
@@ -784,6 +784,13 @@ def _diagnoses_from_excerpt(
             )
             break
     return diagnoses
+
+
+def _has_diagnosis_marker(lowered_text: str) -> bool:
+    for marker in _DIAGNOSIS_MARKERS:
+        if marker in lowered_text:
+            return True
+    return False
 
 
 def _operator_remedies(diagnoses: list[dict[str, object]]) -> list[dict[str, object]]:

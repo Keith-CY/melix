@@ -159,6 +159,12 @@ for a bounded excerpt; overlapping later lines still fall through to the
 remaining lower-priority patterns, and the scan still stops once every known code
 has matched.
 
+A follow-up 2026-06-29 diagnosis marker prefilter loop slice keeps the same
+prefilter semantics while replacing the excerpt-wide marker `any(...)` generator
+with an explicit loop helper. Lines still enter the per-pattern matcher only when
+one registered diagnosis marker appears in the lowercased source text, but the
+hot scan path avoids creating a generator for every bounded excerpt line.
+
 Focused verification:
 
 ```bash
