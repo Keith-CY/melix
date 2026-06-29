@@ -80,3 +80,31 @@ Local 2026-06-29 probe decision for this byte-accounting slice:
 - Post-change `peak_bytes_mean`: `218961.0`, `218377.85714285713`, `225139.7142857143` bytes; mean `220826.1904761905` bytes (`+924.7619047619519` bytes, within the registered warning boundary).
 
 Decision: accepted because the registered end-to-end elapsed metric and path-redaction submetric improved over three local Linux probe runs, the byte-count behavior is covered directly, and the small peak-memory movement remains within the registered warning boundary.
+
+## 2026-06-29 follow-up: diagnosis marker dispatch
+
+This Python-only follow-up stays inside the same
+`runtime-export-diagnostic-parser` registered probe and narrows to
+`_has_diagnosis_marker(...)`. The diagnosis matcher calls this gate for every
+redacted excerpt line before trying the heavier regex-backed diagnosis patterns.
+The previous implementation iterated over the `_DIAGNOSIS_MARKERS` tuple on each
+line; this slice replaces that loop with an explicit boolean chain, preserving
+the same lowercase marker semantics while avoiding per-line iterator dispatch in
+the registered diagnosis-matching submetric.
+
+Validation remains the registered focused pytest selection, changed-scope
+coverage, and the registered local/CI probe for runtime export diagnostic
+parsing.
+
+Local 2026-06-29 probe decision for this diagnosis-marker dispatch slice:
+
+- Baseline `elapsed_ms_mean`: `2637.5025729998015`, `2654.986914584879`, `2665.917513007298` ms; mean `2652.8023335306593` ms.
+- Post-change `elapsed_ms_mean`: `2667.1227828017436`, `2697.7672479930334`, `2665.6808106112294` ms; mean `2676.8569471353353` ms (`+24.05461360467598` ms, within the registered 5% warning boundary).
+- Baseline `diagnosis_matching_elapsed_ms_mean`: `0.6576695828698575`, `0.6117791985161602`, `0.6307542091235518` ms; mean `0.6334009968365232` ms.
+- Post-change `diagnosis_matching_elapsed_ms_mean`: `0.6145246094092727`, `0.6511981831863523`, `0.593486987054348` ms; mean `0.6197365932166576` ms (`-0.01366440361986554` ms, `1.0220x` faster).
+- Baseline `path_redaction_elapsed_ms_mean`: `21.92815599264577`, `18.738398794084787`, `19.31412999983877` ms; mean `19.993561595523108` ms.
+- Post-change `path_redaction_elapsed_ms_mean`: `19.627736799884588`, `19.103819190058857`, `19.20032900525257` ms; mean `19.310628331732005` ms (`-0.682933263791103` ms, `1.0354x` faster).
+- Baseline `peak_bytes_mean`: `201497.0`, `203466.4`, `203879.2` bytes; mean `202947.53333333333` bytes.
+- Post-change `peak_bytes_mean`: `204847.0`, `203285.2`, `203169.0` bytes; mean `203767.06666666665` bytes (`+819.5333333333256` bytes, within the registered 5% warning boundary).
+
+Decision: accepted because the targeted registered diagnosis-matching submetric improved over three local Linux probe runs, path redaction also improved, and the end-to-end elapsed/peak-memory movement stayed within the registered 5% warning boundary. `diagnostic_latency_ms` was noisy (`+0.5255787012477704` ms mean, `+5.96%`) and remains a CI-observed risk for this PR-scoped probe.

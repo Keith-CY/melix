@@ -783,10 +783,40 @@ def _diagnoses_from_excerpt(
 
 
 def _has_diagnosis_marker(lowered_text: str) -> bool:
-    for marker in _DIAGNOSIS_MARKERS:
-        if marker in lowered_text:
-            return True
-    return False
+    return (
+        "arch" in lowered_text
+        or "cpu type" in lowered_text
+        or "arm64" in lowered_text
+        or "duplicate" in lowered_text
+        or "tensor" in lowered_text
+        or "already exists" in lowered_text
+        or "blob" in lowered_text
+        or "sha256" in lowered_text
+        or "artifact" in lowered_text
+        or "missing required" in lowered_text
+        or "command" in lowered_text
+        or "binary" in lowered_text
+        or "executable" in lowered_text
+        or "installed" in lowered_text
+        or "ollama" in lowered_text
+        or "mlx_lm" in lowered_text
+        or "llama" in lowered_text
+        or "invalid" in lowered_text
+        or "path" in lowered_text
+        or "directory" in lowered_text
+        or "timed out" in lowered_text
+        or "timeout" in lowered_text
+        or "deadline" in lowered_text
+        or "permi" in lowered_text
+        or "eacces" in lowered_text
+        or "memory" in lowered_text
+        or "oom" in lowered_text
+        or "failed to load" in lowered_text
+        or "model load" in lowered_text
+        or "runtime load" in lowered_text
+        or "error loading" in lowered_text
+        or "load failed" in lowered_text
+    )
 
 
 def _operator_remedies(diagnoses: list[dict[str, object]]) -> list[dict[str, object]]:
