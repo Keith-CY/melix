@@ -32,3 +32,7 @@ Register `lora-reward-summary-candidate-minmax` in the PR-scoped performance reg
 ## Follow-up total-cache slice
 
 The 2026-05-10 follow-up slice keeps the registered `lora-reward-summary-candidate-minmax` probe and further reduces summary aggregation overhead. `_reward_summary(...)` already maintains running candidate-group variance totals; this slice removes the now-redundant variance list append and uses the existing score list length for reward mean. The summary schema and percentile behavior stay unchanged.
+
+## Follow-up percentile-bound slice
+
+The 2026-06-29 follow-up slice keeps the registered `lora-reward-summary-candidate-minmax` probe and narrows to `_percentile_value(...)`, which is called for reward and candidate-group percentiles after the hot summary lists are sorted. The slice caches the last index once, returns directly for lower and upper percentile bounds, and avoids repeated `len(...)`, `min(...)`, and `max(...)` calls while preserving interpolation semantics and the existing summary schema.

@@ -63,6 +63,10 @@ def test_checkpoint_order_key_uses_last_numeric_token() -> None:
 def test_alignment_percentile_uses_interpolation_and_upper_bound() -> None:
     assert lora_training_pipeline_module._percentile_value(
         [0.4, 0.7],
+        0.0,
+    ) == pytest.approx(0.4)
+    assert lora_training_pipeline_module._percentile_value(
+        [0.4, 0.7],
         0.5,
     ) == pytest.approx(0.55)
     assert lora_training_pipeline_module._percentile_value(
