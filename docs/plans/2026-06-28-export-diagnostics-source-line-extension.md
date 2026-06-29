@@ -53,3 +53,30 @@ case-normalized marker semantics and downstream regex redaction behavior.
 Validation remains the registered focused pytest selection, changed-scope
 coverage, and the registered local/CI probe for runtime export diagnostic
 parsing.
+
+## 2026-06-29 follow-up: excerpt byte accounting
+
+This Python-only follow-up stays inside the same
+`runtime-export-diagnostic-parser` registered probe and narrows to
+`_build_redacted_excerpt(...)`. The excerpt builder already enforces the byte
+bound incrementally before appending each rendered line. The previous tail check
+encoded the complete excerpt a second time and recomputed the same byte count;
+that was redundant once the bounded append loop had accepted or clipped the last
+line. This slice records `excerpt_byte_count` from the existing incremental
+counter while preserving the emitted excerpt text, line count, and truncation
+semantics.
+
+Validation remains the registered focused pytest selection, changed-scope
+coverage, and the registered local/CI probe for runtime export diagnostic
+parsing.
+
+Local 2026-06-29 probe decision for this byte-accounting slice:
+
+- Baseline `elapsed_ms_mean`: `5330.903970852627`, `5367.044953862205`, `5334.687961431752` ms; mean `5344.212295382195` ms.
+- Post-change `elapsed_ms_mean`: `5313.273270290146`, `5320.671012284168`, `5329.956482721692` ms; mean `5321.3002550986685` ms (`-22.91204028352695` ms, `1.0043x` faster).
+- Baseline `path_redaction_elapsed_ms_mean`: `41.330500289664734`, `41.05674671674414`, `38.63969701342285` ms; mean `40.34231467327724` ms.
+- Post-change `path_redaction_elapsed_ms_mean`: `39.35490457973044`, `38.86108529487891`, `40.44690043000238` ms; mean `39.554296768203905` ms (`-0.7880179050733318` ms, `1.0199x` faster).
+- Baseline `peak_bytes_mean`: `221628.14285714287`, `217392.7142857143`, `220683.42857142858` bytes; mean `219901.42857142855` bytes.
+- Post-change `peak_bytes_mean`: `218961.0`, `218377.85714285713`, `225139.7142857143` bytes; mean `220826.1904761905` bytes (`+924.7619047619519` bytes, within the registered warning boundary).
+
+Decision: accepted because the registered end-to-end elapsed metric and path-redaction submetric improved over three local Linux probe runs, the byte-count behavior is covered directly, and the small peak-memory movement remains within the registered warning boundary.

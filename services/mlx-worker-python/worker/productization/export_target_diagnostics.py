@@ -575,11 +575,7 @@ def _build_redacted_excerpt(
     text = "\n".join(output_lines)
     if text:
         text += "\n"
-    encoded_text = text.encode("utf-8")
-    if len(encoded_text) > bounded_bytes:
-        text = encoded_text[:bounded_bytes].decode("utf-8", errors="ignore")
-        summary.truncated = True
-    summary.excerpt_byte_count = len(text.encode("utf-8"))
+    summary.excerpt_byte_count = used_bytes
     summary.excerpt_line_count = len(output_lines)
     if len(source_lines) > len(output_lines):
         summary.truncated = True
