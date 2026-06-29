@@ -71,8 +71,6 @@ _IDENTITY_PATTERN = re.compile(
     r"(?i)\b(user|operator)(?:[_-]?(?:id|name))?\s*[:=]\s*['\"]?[^'\"\s,;]+['\"]?"
 )
 _SECRET_REDACTION_MARKERS = ("=", ":", "@", "sk-", "-----BEGIN ")
-_NAMED_SECRET_MARKERS = ("api", "access", "token", "password", "secret")
-_IDENTITY_MARKERS = ("user", "operator")
 
 
 @dataclass(frozen=True, slots=True)
@@ -605,7 +603,7 @@ def _redact_text(
                 lambda match: match.group(1) + _record_secret(summary),
                 text,
             )
-        if any(marker in secret_text for marker in _NAMED_SECRET_MARKERS):
+        if _has_named_secret_marker(secret_text):
             text = _NAMED_SECRET_PATTERN.sub(
                 lambda match: f"{match.group(1)}=<redacted-secret>{_record_secret_count_only(summary)}",
                 text,
@@ -617,7 +615,7 @@ def _redact_text(
             )
         if "sk-" in text:
             text = _OPENAI_KEY_PATTERN.sub(lambda _match: _record_secret(summary), text)
-        if any(marker in secret_text for marker in _IDENTITY_MARKERS):
+        if _has_identity_marker(secret_text):
             text = _IDENTITY_PATTERN.sub(
                 lambda match: _record_identity(summary, match.group(1)),
                 text,
@@ -643,6 +641,20 @@ def _has_secret_redaction_marker(text: str) -> bool:
         or "sk-" in text
         or "-----BEGIN " in text
     )
+
+
+def _has_named_secret_marker(secret_text: str) -> bool:
+    return (
+        "api" in secret_text
+        or "access" in secret_text
+        or "token" in secret_text
+        or "password" in secret_text
+        or "secret" in secret_text
+    )
+
+
+def _has_identity_marker(secret_text: str) -> bool:
+    return "user" in secret_text or "operator" in secret_text
 
 
 def _record_secret(summary: _RedactionSummary) -> str:

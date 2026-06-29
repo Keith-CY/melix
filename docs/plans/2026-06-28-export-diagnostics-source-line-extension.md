@@ -40,6 +40,16 @@ needed. The common path has many plain runtime and target-path lines, so this
 slice replaces that generator dispatch with an explicit marker helper while
 preserving the same case-sensitive marker set and downstream redaction behavior.
 
+## 2026-06-29 follow-up: named secret marker helpers
+
+This Python-only follow-up stays inside the same
+`runtime-export-diagnostic-parser` registered probe and narrows to the remaining
+marker gates in `_redact_text(...)`. After the broad secret-marker fast path,
+named-secret and identity checks still used generator dispatch over tiny constant
+tuples once a line entered secret redaction. This slice replaces those two
+remaining generator checks with explicit helpers while preserving the same
+case-normalized marker semantics and downstream regex redaction behavior.
+
 Validation remains the registered focused pytest selection, changed-scope
 coverage, and the registered local/CI probe for runtime export diagnostic
 parsing.
