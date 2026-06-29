@@ -43,3 +43,13 @@ Actions PR-scoped performance remains the merge gate.
 - Changed-scope coverage for touched files remains at least 95%.
 - Registered probe shows reduced allocation pressure without a blocking elapsed
   regression.
+
+## 2026-06-29 follow-up slice: ASCII active-line branch order
+
+This follow-up keeps the same registered probe,
+`code-eval-test-count-nonblank-streaming`, and stays limited to
+`_count_nonblank_test_lines()`. The ASCII scanner now checks the active-line
+state before whitespace membership so characters after the first nonblank byte on
+common content lines skip the non-line-whitespace lookup. This is intended to
+reduce per-character dispatch cost while preserving the existing no-allocation
+streaming behavior and splitline-compatible boundary semantics.
