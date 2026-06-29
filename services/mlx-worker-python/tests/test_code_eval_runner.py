@@ -774,7 +774,7 @@ def test_sandbox_static_profile_key_reuses_cached_fingerprint_without_tuple_rebu
     code_eval_runner._sandbox_static_profile_key_cache_clear()
 
 
-def test_runner_script_reuses_dedented_static_payload(monkeypatch) -> None:
+def test_runner_script_reuses_precomputed_static_payload(monkeypatch) -> None:
     code_eval_runner._runner_script.cache_clear()
     calls = 0
     original_dedent = code_eval_runner.textwrap.dedent
@@ -789,8 +789,9 @@ def test_runner_script_reuses_dedented_static_payload(monkeypatch) -> None:
     first_script = code_eval_runner._runner_script()
     second_script = code_eval_runner._runner_script()
 
-    assert calls == 1
+    assert calls == 0
     assert first_script is second_script
+    assert first_script is code_eval_runner._RUNNER_SCRIPT
     assert "def main() -> int:" in first_script
     assert first_script.endswith("\n")
 

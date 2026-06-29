@@ -927,9 +927,8 @@ def _sandbox_allow_path_variants(paths: tuple[Path, ...]) -> tuple[Path, ...]:
     return tuple(deduped)
 
 
-@lru_cache(maxsize=1)
-def _runner_script() -> str:
-    script = """
+_RUNNER_SCRIPT = textwrap.dedent(
+    """
         from __future__ import annotations
 
         import ast
@@ -1081,4 +1080,9 @@ def _runner_script() -> str:
         if __name__ == "__main__":
             raise SystemExit(main())
         """
-    return textwrap.dedent(script).strip() + "\n"
+).strip() + "\n"
+
+
+@lru_cache(maxsize=1)
+def _runner_script() -> str:
+    return _RUNNER_SCRIPT
