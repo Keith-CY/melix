@@ -583,9 +583,13 @@ def _build_always_only_tool_selection_result(
     selection_input: ToolSelectionInput,
 ) -> ToolSelectionResult:
     selected_name = "local_compute"
-    selected_registry = registry.select((selected_name,))
+    if registry is _AGENTIC_TOOL_CATALOG_REGISTRY:
+        selected_registry = _ALWAYS_ONLY_TOOL_REGISTRY
+        selected_metrics = _ALWAYS_ONLY_TOOL_METRICS
+    else:
+        selected_registry = registry.select((selected_name,))
+        selected_metrics = selected_registry.metrics()
     registry_metrics = registry.metrics()
-    selected_metrics = selected_registry.metrics()
     return ToolSelectionResult(
         registry=selected_registry,
         receipt={
@@ -899,6 +903,8 @@ _BUILTIN_AGENTIC_TOOLS = tuple(
     tool for tool in _AGENTIC_TOOL_CATALOG_TOOLS if tool.name in _BUILTIN_TOOL_NAME_SET
 )
 _AGENTIC_TOOL_CATALOG_REGISTRY = ToolRegistry(_AGENTIC_TOOL_CATALOG_TOOLS)
+_ALWAYS_ONLY_TOOL_REGISTRY = _AGENTIC_TOOL_CATALOG_REGISTRY.select(("local_compute",))
+_ALWAYS_ONLY_TOOL_METRICS = _ALWAYS_ONLY_TOOL_REGISTRY.metrics()
 _BUILTIN_TOOL_CONFIG_REGISTRY = ToolRegistry(_BUILTIN_AGENTIC_TOOLS)
 _BUILTIN_TOOL_CONFIG_NAMES_LIST = list(BUILTIN_AGENTIC_TOOL_NAMES)
 _BUILTIN_TOOL_CONFIG_BYTES = (
