@@ -92,7 +92,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     parse_hunk_new_start_from_digit = _parse_hunk_new_start_from_digit_bytes
     add_changed_line = None
     new_line: int | None = None
-    for line in diff_text.encode().split(b"\n"):
+    for line in diff_text.encode().splitlines():
         if not line:
             if add_changed_line is not None and new_line is not None:
                 new_line += 1
