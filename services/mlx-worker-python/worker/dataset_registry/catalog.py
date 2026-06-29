@@ -543,7 +543,7 @@ def _supported_scan_entry_records(
         if name <= after:
             continue
         try:
-            is_dir = entry.is_dir()
+            is_dir = entry.is_dir(follow_symlinks=False)
             if is_dir:
                 yield name, entry.path, True, False
                 continue
@@ -552,7 +552,7 @@ def _supported_scan_entry_records(
         if name in _README_NAMES or not _is_supported_dataset_file_name(name):
             continue
         try:
-            is_file = entry.is_file()
+            is_file = entry.is_file(follow_symlinks=False)
         except OSError:
             continue
         if is_file:
@@ -588,7 +588,7 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
                 if name <= after or (best_name and name >= best_name):
                     continue
                 try:
-                    is_dir = entry.is_dir()
+                    is_dir = entry.is_dir(follow_symlinks=False)
                 except OSError:
                     continue
                 if is_dir:
@@ -597,7 +597,7 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
                     continue
                 else:
                     try:
-                        is_file = entry.is_file()
+                        is_file = entry.is_file(follow_symlinks=False)
                     except OSError:
                         continue
                     if not is_file:
