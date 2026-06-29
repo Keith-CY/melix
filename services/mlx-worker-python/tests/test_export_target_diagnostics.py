@@ -392,6 +392,25 @@ def test_export_target_diagnostics_stops_after_all_known_codes_match() -> None:
     assert TrackingText.lower_calls == 0
 
 
+def test_export_target_diagnostics_preserves_overlap_priority_after_prior_match() -> None:
+    diagnoses = _diagnoses_from_excerpt(
+        [
+            _SourceLine("logs/runtime.log", "unsupported architecture arm64 required"),
+            _SourceLine(
+                "logs/runtime.log",
+                "unsupported architecture warning followed by runtime load failed",
+            ),
+        ],
+        {0: 1, 1: 2},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert [diagnosis["code"] for diagnosis in diagnoses] == [
+        CODE_UNSUPPORTED_ARCHITECTURE,
+        CODE_RUNTIME_LOAD_FAILED,
+    ]
+
+
 def test_export_target_diagnostics_runtime_load_markers_skip_progress_regexes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

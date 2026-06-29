@@ -151,6 +151,14 @@ registered private-text labels (`prompt`, `private prompt template`, `response`,
 whitespace) skip the anchored regex; lines with a compatible leading label still
 use the same regex and redaction counters as before.
 
+A follow-up 2026-06-29 diagnosis pattern loop slice keeps the diagnosis
+semantics and pattern priority unchanged while shrinking per-pattern matching.
+Each pattern now uses explicit marker and expression loops instead of
+generator-backed `any(...)` calls. Duplicate diagnosis codes are still suppressed
+for a bounded excerpt; overlapping later lines still fall through to the
+remaining lower-priority patterns, and the scan still stops once every known code
+has matched.
+
 Focused verification:
 
 ```bash

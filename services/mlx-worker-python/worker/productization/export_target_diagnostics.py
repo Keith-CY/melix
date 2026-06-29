@@ -89,9 +89,17 @@ class _DiagnosisPattern:
     def matches(self, text: str, lowered_text: str | None = None) -> bool:
         if self.markers:
             lowered = lowered_text if lowered_text is not None else text.lower()
-            if not any(marker in lowered for marker in self.markers):
+            marker_matched = False
+            for marker in self.markers:
+                if marker in lowered:
+                    marker_matched = True
+                    break
+            if not marker_matched:
                 return False
-        return any(expression.search(text) for expression in self.expressions)
+        for expression in self.expressions:
+            if expression.search(text):
+                return True
+        return False
 
 
 @dataclass(frozen=True, slots=True)
