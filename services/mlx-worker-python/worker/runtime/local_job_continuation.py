@@ -361,11 +361,11 @@ class LocalJobContinuationStore:
             if live_evidence_by_job_id is not None
             else _missing_live_evidence
         )
-        root = self.root
+        root_fspath = self._root_fspath
         try:
             record_job_ids: list[str] = []
             record_job_ids_append = record_job_ids.append
-            for entry in os.scandir(os.fspath(root)):
+            for entry in os.scandir(root_fspath):
                 name = entry.name
                 if name.endswith(".json") and entry.is_file(follow_symlinks=False):
                     # The scan has already filtered this to a .json file name.
