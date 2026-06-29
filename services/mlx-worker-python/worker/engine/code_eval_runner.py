@@ -21,7 +21,6 @@ _PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
 _PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 _ASCII_SPLITLINE_BOUNDARIES = frozenset("\n\r\v\f\x1c\x1d\x1e")
 _ASCII_NON_LINE_WHITESPACE = frozenset(" \t\x1f")
-_COUNT_TESTS_SPLITLINES_MAX_CHARS = 500_000
 _ORD_ZERO = ord("0")
 _ORD_QUOTE = ord('"')
 _ORD_COLON = ord(":")
@@ -321,8 +320,6 @@ def _count_assert_nodes(
 
 
 def _count_nonblank_test_lines(test_code: str) -> int:
-    if len(test_code) <= _COUNT_TESTS_SPLITLINES_MAX_CHARS:
-        return sum(1 for line in test_code.splitlines() if line.strip())
     count = 0
     line_has_content = False
     if test_code.isascii():
