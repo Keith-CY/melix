@@ -227,6 +227,44 @@ def test_export_target_smoke_metrics_report_reuses_validated_manifest(
     assert validation_calls == len(manifest_paths)
 
 
+def test_export_target_smoke_metrics_aggregation_is_single_pass() -> None:
+    receipts: tuple[dict[str, object], ...] = (
+        {
+            "metrics": {
+                "metadata_check_latency_ms": 1.5,
+                "load_smoke_latency_ms": 2.0,
+                "generation_smoke_latency_ms": 3.5,
+                "output_preview_byte_count": 4,
+                "timeout_count": 1,
+                "waiver_count": 0,
+            }
+        },
+        {"metrics": []},
+        {"metrics": {}},
+        {
+            "metrics": {
+                "metadata_check_latency_ms": 0.5,
+                "load_smoke_latency_ms": 1.0,
+                "generation_smoke_latency_ms": 2.5,
+                "output_preview_byte_count": 6,
+                "timeout_count": 0,
+                "waiver_count": 1,
+            }
+        },
+    )
+
+    totals = export_target_smoke._aggregate_smoke_metrics(iter(receipts))
+
+    assert totals == {
+        "metadata_check_latency_ms": 2.0,
+        "load_smoke_latency_ms": 3.0,
+        "generation_smoke_latency_ms": 6.0,
+        "output_preview_byte_count": 10,
+        "timeout_count": 1,
+        "waiver_count": 1,
+    }
+
+
 def test_export_target_smoke_manifest_file_rows_streams_generated_then_required(
     tmp_path: Path,
 ) -> None:

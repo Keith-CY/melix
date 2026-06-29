@@ -260,20 +260,47 @@ def build_smoke_metrics_report(
             errors.append(str(exc))
 
     elapsed_ms = (time.perf_counter() - started) * 1000.0
-    metrics = [receipt["metrics"] for receipt in receipts if isinstance(receipt.get("metrics"), dict)]
+    metric_totals = _aggregate_smoke_metrics(receipts)
     return {
         "schema_version": EXPORT_SMOKE_METRICS_SCHEMA_VERSION,
         "ok": not errors and all(receipt.get("status") in {"passed", "waived"} for receipt in receipts),
         "target_count": len(receipts),
         "smoke_policy_latency_ms": elapsed_ms,
-        "metadata_check_latency_ms": sum(float(metric.get("metadata_check_latency_ms", 0)) for metric in metrics),
-        "load_smoke_latency_ms": sum(float(metric.get("load_smoke_latency_ms", 0)) for metric in metrics),
-        "generation_smoke_latency_ms": sum(float(metric.get("generation_smoke_latency_ms", 0)) for metric in metrics),
-        "output_preview_byte_count": sum(int(metric.get("output_preview_byte_count", 0)) for metric in metrics),
-        "timeout_count": sum(int(metric.get("timeout_count", 0)) for metric in metrics),
-        "waiver_count": sum(int(metric.get("waiver_count", 0)) for metric in metrics),
+        "metadata_check_latency_ms": metric_totals["metadata_check_latency_ms"],
+        "load_smoke_latency_ms": metric_totals["load_smoke_latency_ms"],
+        "generation_smoke_latency_ms": metric_totals["generation_smoke_latency_ms"],
+        "output_preview_byte_count": metric_totals["output_preview_byte_count"],
+        "timeout_count": metric_totals["timeout_count"],
+        "waiver_count": metric_totals["waiver_count"],
         "errors": errors,
         "receipts": receipts,
+    }
+
+
+def _aggregate_smoke_metrics(receipts: Iterable[dict[str, object]]) -> dict[str, float | int]:
+    metadata_check_latency_ms = 0.0
+    load_smoke_latency_ms = 0.0
+    generation_smoke_latency_ms = 0.0
+    output_preview_byte_count = 0
+    timeout_count = 0
+    waiver_count = 0
+    for receipt in receipts:
+        metric = receipt.get("metrics")
+        if not isinstance(metric, dict):
+            continue
+        metadata_check_latency_ms += float(metric.get("metadata_check_latency_ms", 0))
+        load_smoke_latency_ms += float(metric.get("load_smoke_latency_ms", 0))
+        generation_smoke_latency_ms += float(metric.get("generation_smoke_latency_ms", 0))
+        output_preview_byte_count += int(metric.get("output_preview_byte_count", 0))
+        timeout_count += int(metric.get("timeout_count", 0))
+        waiver_count += int(metric.get("waiver_count", 0))
+    return {
+        "metadata_check_latency_ms": metadata_check_latency_ms,
+        "load_smoke_latency_ms": load_smoke_latency_ms,
+        "generation_smoke_latency_ms": generation_smoke_latency_ms,
+        "output_preview_byte_count": output_preview_byte_count,
+        "timeout_count": timeout_count,
+        "waiver_count": waiver_count,
     }
 
 

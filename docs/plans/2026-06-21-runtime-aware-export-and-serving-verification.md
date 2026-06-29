@@ -433,10 +433,13 @@ It must preserve the public `run_export_target_smoke()` validation boundary for
 external callers while avoiding an extra manifest parse on each probe iteration.
 Smoke metadata and fixture digest loops stream generated and required manifest
 file rows instead of materializing a combined tuple, preserving manifest order
-while reducing per-target allocation in the registered probe. The registered
-`runtime-export-smoke-policy` PR-scoped probe remains the evidence source for
-this Python slice and includes focused test, coverage, and `command_json` probe
-commands in `infra/perf/pr_scoped_probes.json`.
+while reducing per-target allocation in the registered probe. Smoke metrics
+report aggregation sums all receipt metrics in a single pass so the metrics
+report path avoids rebuilding an intermediate metrics list and rescanning it for
+each output field. The registered `runtime-export-smoke-policy` PR-scoped probe
+remains the evidence source for this Python slice and includes focused test,
+coverage, and `command_json` probe commands in
+`infra/perf/pr_scoped_probes.json`.
 
 Bounded generation checks must use a repository-owned prompt fixture or a
 synthetic non-private prompt, a fixed token limit, a timeout, and a preview byte
