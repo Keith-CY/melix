@@ -380,6 +380,16 @@ def test_report_evidence_gate_metric_prefix_fast_reject_preserves_empty_prefix()
     )
 
 
+def test_report_evidence_gate_metric_prefix_preserves_non_string_match() -> None:
+    assert report_evidence_gate_module._rule_matches_report(
+        rule={"metric_prefixes": ("42",)},
+        runs=[],
+        targets=[],
+        metrics=[{"metric": 42}],
+        probe_phases=set(),
+    )
+
+
 def test_report_evidence_gate_metric_prefix_list_rules_reflect_mutation() -> None:
     metric_prefixes = ["adapter."]
     rule = {"metric_prefixes": metric_prefixes}
