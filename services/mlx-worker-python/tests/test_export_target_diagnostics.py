@@ -30,6 +30,7 @@ from worker.productization.export_target_diagnostics import (
     _diagnoses_from_excerpt,
     _diagnosis_metric_counts,
     _extend_source_lines,
+    _has_diagnosis_marker,
     _has_identity_marker,
     _has_named_secret_marker,
     _has_private_text_line_marker,
@@ -173,6 +174,28 @@ def test_export_target_diagnostics_private_line_marker_fast_path_matches_registe
     expected: bool,
 ) -> None:
     assert _has_private_text_line_marker(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("ordinary runtime status", False),
+        ("unsupported architecture arm64 required", True),
+        ("duplicate tensor name decoder.layers.0", True),
+        ("missing blob sha256-777777 not found", True),
+        ("runtime binary not installed: ollama", True),
+        ("invalid runtime path /tmp/melix/bad-target", True),
+        ("generation smoke timed out after deadline exceeded", True),
+        ("permission denied opening model weights", True),
+        ("Metal out of memory during load", True),
+        ("runtime load failed while opening model", True),
+    ],
+)
+def test_export_target_diagnostics_diagnosis_marker_fast_path_matches_registered_markers(
+    text: str,
+    expected: bool,
+) -> None:
+    assert _has_diagnosis_marker(text.lower()) is expected
 
 
 def test_export_target_diagnostics_skips_private_line_regex_for_unrelated_runtime_lines(
