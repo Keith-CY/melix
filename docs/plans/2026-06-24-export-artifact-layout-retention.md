@@ -81,6 +81,12 @@ materialization for `cleanup="dry-run"` metrics reports, avoiding a second
 manifest validation and retention-decision pass when no cleanup side effects are
 requested.
 
+A follow-up 2026-06-29 placeholder materialization slice keeps the symlink-escape
+guard unchanged while resolving each target root once per placeholder pass and
+reusing that resolved root for manifest rows and evidence files. This avoids
+repeated target-root resolution during layout materialization without relaxing
+per-file path normalization or target-root containment checks.
+
 ## Verification
 
 Focused verification:
