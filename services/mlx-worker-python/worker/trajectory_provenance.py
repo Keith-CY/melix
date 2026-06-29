@@ -52,8 +52,9 @@ def _is_clean_manifest_text(value: Any) -> bool:
 
 def _copy_json_list(value: list[Any]) -> list[Any]:
     immutable_types = _JSON_IMMUTABLE_TYPE_SET
+    type_ = type
     for item in value:
-        if type(item) not in immutable_types:
+        if type_(item) not in immutable_types:
             return [_copy_trajectory_provenance_value(item) for item in value]
     return [*value]
 

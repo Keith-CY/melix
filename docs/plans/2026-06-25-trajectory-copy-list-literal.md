@@ -7,9 +7,10 @@ This Python-only performance slice is limited to the scalar-list branch in
 
 The trajectory provenance normalizer copies JSON-like containers before they are
 attached to training, adapter, and evaluation payloads. Previous slices already
-avoid recursive copying for exact scalar lists; this slice keeps the same
-container isolation semantics while replacing the scalar-list `list.copy()` call
-with a list-display unpack copy (`[*value]`).
+avoid recursive copying for exact scalar lists and use list-display unpacking to
+avoid subclass `copy()` hooks. This slice keeps those container isolation
+semantics while binding `type` locally for the scalar-list immutability scan, so
+the hot path avoids repeated global lookup during every item check.
 
 ## Registered probe
 
