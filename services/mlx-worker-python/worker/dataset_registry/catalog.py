@@ -51,7 +51,11 @@ def _is_supported_dataset_file_name(name: str) -> bool:
     if dot_index <= 0 or dot_index == len(name) - 1:
         return False
     suffix = name[dot_index:]
-    return suffix in _SUPPORTED_DATASET_SUFFIXES or suffix.lower() in _SUPPORTED_DATASET_SUFFIXES
+    if suffix in _SUPPORTED_DATASET_SUFFIXES:
+        return True
+    if suffix.islower():
+        return False
+    return suffix.lower() in _SUPPORTED_DATASET_SUFFIXES
 
 
 @dataclass(frozen=True, slots=True)
@@ -1032,6 +1036,8 @@ def _dataset_file_format_name(name: str) -> str:
     file_format = _SUPPORTED_DATASET_SUFFIXES.get(suffix)
     if file_format is not None:
         return file_format
+    if suffix.islower():
+        return ""
     return _SUPPORTED_DATASET_SUFFIXES.get(suffix.lower(), "")
 
 
