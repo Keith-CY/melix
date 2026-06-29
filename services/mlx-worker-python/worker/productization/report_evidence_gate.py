@@ -418,9 +418,11 @@ def _rule_matches_report(
             ) = _string_prefix_tuple(metric_prefixes)
         metric_key = "metric"
         to_string = str
+        if metric_prefix_matches_empty:
+            return bool(metrics)
         for metric in metrics:
             metric_value = to_string(metric.get(metric_key, ""))
-            if metric_prefix_matches_empty or (
+            if (
                 metric_value
                 and metric_value[0] in metric_prefix_initials
                 and metric_value.startswith(metric_prefix_tuple)
