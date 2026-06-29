@@ -67,8 +67,14 @@ def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
     assert _source_kind(Path("README.md")) == "markdown"
     assert _source_kind(Path("script.py")) == "code"
     assert _source_kind(Path("records.jsonl")) == "structured_data"
+    assert _source_kind(Path("records.json")) == "structured_data"
+    assert _source_kind(Path("records.csv")) == "structured_data"
+    assert _source_kind(Path("records.tsv")) == "structured_data"
     assert _source_kind(Path("script.PY")) == "code"
     assert _source_kind(Path("records.JSONL")) == "structured_data"
+    assert _source_kind(Path("records.JSON")) == "structured_data"
+    assert _source_kind(Path("records.CSV")) == "structured_data"
+    assert _source_kind(Path("records.TSV")) == "structured_data"
     assert _source_kind(Path("README")) is None
     assert _source_kind(Path("archive.tar.gz")) is None
 
