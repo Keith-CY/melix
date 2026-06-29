@@ -32,6 +32,7 @@ from worker.productization.export_target_diagnostics import (
     _extend_source_lines,
     _has_identity_marker,
     _has_named_secret_marker,
+    _has_private_text_line_marker,
     _has_secret_redaction_marker,
     _split_source_lines,
 )
@@ -152,6 +153,56 @@ def test_export_target_diagnostics_identity_marker_fast_path_matches_markers(
     expected: bool,
 ) -> None:
     assert _has_identity_marker(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("plain runtime status", False),
+        ("  prompt: private customer prompt", True),
+        ("Private prompt template: hidden", True),
+        ("Response=private completion", True),
+        ("completion: private text", True),
+        ("generated text: hidden", True),
+        ("dataset row: hidden", True),
+        ("operator input: hidden", True),
+    ],
+)
+def test_export_target_diagnostics_private_line_marker_fast_path_matches_registered_prefixes(
+    text: str,
+    expected: bool,
+) -> None:
+    assert _has_private_text_line_marker(text) is expected
+
+
+def test_export_target_diagnostics_skips_private_line_regex_for_unrelated_runtime_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    class FailPrivateLinePattern:
+        def search(self, _text: str) -> None:  # pragma: no cover - regression guard
+            raise AssertionError("private text regex should be skipped for unrelated runtime lines")
+
+    monkeypatch.setattr(
+        export_target_diagnostics_module,
+        "_PRIVATE_TEXT_LINE_PATTERN",
+        FailPrivateLinePattern(),
+    )
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [_SourceLine(source_path="logs/ollama-create.log", text="runtime load failed at /tmp/melix/model")],
+        bounded_bytes=4096,
+        bounded_lines=8,
+    )
+
+    assert "runtime load failed" in excerpt.text
 
 
 def test_export_target_diagnostics_redacts_paths_secrets_private_text_and_identity(
