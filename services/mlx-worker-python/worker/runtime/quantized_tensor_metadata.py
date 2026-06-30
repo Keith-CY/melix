@@ -211,6 +211,15 @@ def native_multimodal_quantization_preserves_precision(
 
 
 def _native_multimodal_high_precision_module(prefix: str) -> bool:
+    if (
+        "vision" not in prefix
+        and "visual" not in prefix
+        and "projector" not in prefix
+        and "lm_head" not in prefix
+        and "output" not in prefix
+        and "score" not in prefix
+    ):
+        return False
     start = 0
     prefix_length = len(prefix)
     previous_segment = ""
