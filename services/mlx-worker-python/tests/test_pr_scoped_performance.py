@@ -781,6 +781,8 @@ def test_dataset_source_records_probe_script_emits_metrics(
     assert metrics["elapsed_ms_p95"] >= 0.0
     assert metrics["source_kind_elapsed_ms_mean"] >= 0.0
     assert metrics["source_kind_elapsed_ms_p95"] >= 0.0
+    assert metrics["record_elapsed_ms_mean"] >= 0.0
+    assert metrics["record_elapsed_ms_p95"] >= 0.0
     assert metrics["sample_count"] == 1.0
     assert metrics["directory_count"] == 3.0
     assert metrics["files_per_directory"] == 7.0
@@ -795,6 +797,23 @@ def test_dataset_source_records_probe_rejects_changed_source_kind(
     monkeypatch.setattr(probe_script["dataset_preparation"], "_source_kind", lambda path: None)
 
     with pytest.raises(RuntimeError, match="source kind classification changed"):
+        probe_script["measure"](directory_count=1, files_per_directory=1, samples=1)
+
+
+def test_dataset_source_records_probe_rejects_changed_record_byte_accounting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+    original_record = probe_script["dataset_preparation"]._record
+
+    def wrong_byte_record(*args: object, **kwargs: object) -> dict[str, object]:
+        record = dict(original_record(*args, **kwargs))
+        record["byte_size"] = -1
+        return record
+
+    monkeypatch.setattr(probe_script["dataset_preparation"], "_record", wrong_byte_record)
+
+    with pytest.raises(RuntimeError, match="source record byte accounting changed"):
         probe_script["measure"](directory_count=1, files_per_directory=1, samples=1)
 
 

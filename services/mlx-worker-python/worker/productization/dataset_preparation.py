@@ -769,13 +769,14 @@ def _structured_text(payload: Any) -> str:
 
 def _record(path: Path, source_kind: str, text: str, metadata: dict[str, Any]) -> dict[str, Any]:
     normalized = _normalize_line_endings(text)
+    normalized_bytes = normalized.encode("utf-8")
     metadata = dict(metadata)
     return {
         "source_id": hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16],
         "source_uri": path.name,
         "source_kind": source_kind,
-        "content_sha256": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
-        "byte_size": len(normalized.encode("utf-8")),
+        "content_sha256": hashlib.sha256(normalized_bytes).hexdigest(),
+        "byte_size": len(normalized_bytes),
         "record_count": 1,
         "text": normalized,
         "metadata": metadata,
