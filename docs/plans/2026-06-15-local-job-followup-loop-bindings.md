@@ -17,6 +17,10 @@ The affected path is covered by the registered PR-scoped performance probe `loca
 3. Run the registered `local-job-followup-scan-scandir` probe locally on Linux against `origin/main` and this branch.
 4. Use the PR-scoped performance workflow as the merge gate.
 
+## 2026-06-30 follow-up: suffix check before file stat
+
+This Python-only follow-up keeps the same registered `local-job-followup-scan-scandir` probe and narrows the top-level scandir filter. `scan_followup_candidates(...)` now rejects non-`.json` directory entries before calling `DirEntry.is_file(follow_symlinks=False)`, and uses direct suffix slicing rather than `str.endswith(...)` on the hot path. JSON-named directories still receive the no-follow file check and are skipped; non-record files such as `*.json.tmp` and `*.txt` avoid an unnecessary metadata query.
+
 ## Linux validation boundary
 
 This is a Python-only slice and is locally verifiable on Linux. No Swift runtime behavior changes are included.
