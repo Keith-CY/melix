@@ -255,6 +255,38 @@ def test_resolve_source_paths_discovers_runtime_sources_with_one_scandir(
     assert resolved["python_worker"].configured_by == "environment"
 
 
+def test_resolve_source_paths_skips_runtime_scan_when_all_sources_are_configured(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    control_plane_path = tmp_path / "control-plane-env.json"
+    swift_worker_arg_path = tmp_path / "swift-worker-arg.json"
+    python_worker_env_path = tmp_path / "python-worker-env.json"
+    for path in (control_plane_path, swift_worker_arg_path, python_worker_env_path):
+        write_metrics(path, updated_at_unix_ms=1_000, values={"configured": 1})
+
+    def fail_scandir(path: object):  # pragma: no cover - regression guard
+        raise AssertionError(f"runtime scan should be skipped when all sources are configured: {path!r}")
+
+    monkeypatch.setattr(snapshot_cli.os, "scandir", fail_scandir)
+
+    resolved = snapshot_cli.resolve_source_paths(
+        swift_text_worker_metrics=swift_worker_arg_path,
+        runtime_dir=tmp_path,
+        environment={
+            "MELIX_CONTROL_PLANE_METRICS_PATH": str(control_plane_path),
+            "MELIX_PYTHON_WORKER_METRICS_PATH": str(python_worker_env_path),
+        },
+    )
+
+    assert resolved["control_plane"].path == control_plane_path
+    assert resolved["control_plane"].configured_by == "environment"
+    assert resolved["swift_text_worker"].path == swift_worker_arg_path
+    assert resolved["swift_text_worker"].configured_by == "argument"
+    assert resolved["python_worker"].path == python_worker_env_path
+    assert resolved["python_worker"].configured_by == "environment"
+
+
 def test_runtime_dir_discovery_preserves_exact_and_multi_wildcard_patterns(
     tmp_path: Path,
     monkeypatch,

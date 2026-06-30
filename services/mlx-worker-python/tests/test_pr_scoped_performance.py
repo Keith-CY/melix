@@ -6437,6 +6437,7 @@ def test_melix_metrics_snapshot_discovery_probe_script_emits_metrics(
     assert metrics["noise_count"] == 200.0
     assert metrics["source_count"] == 3.0
     assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["configured_elapsed_ms_mean"] >= 0.0
 
 
 def test_package_macos_resolve_probe_rejects_unexpected_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
