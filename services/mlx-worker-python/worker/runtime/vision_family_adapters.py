@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, rebuild_multimodal_hash
 from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
@@ -37,6 +37,18 @@ class ResolvedVisionFamilyConfig:
     image_token_divisor: int
     prompt_token_bias: int
     video_frame_token_cost: int
+    _last_media_prompt_request: PreparedVisionRequest | None = field(
+        default=None,
+        init=False,
+        compare=False,
+        repr=False,
+    )
+    _last_media_prompt_token_count: int = field(
+        default=0,
+        init=False,
+        compare=False,
+        repr=False,
+    )
 
     def capability_metadata(self) -> dict[str, str]:
         return {
@@ -74,6 +86,10 @@ class ResolvedVisionFamilyConfig:
         return _with_prompt_text(prepared_request, prompt_text)
 
     def prompt_token_count(self, prepared_request: PreparedVisionRequest) -> int:
+        if prepared_request is self._last_media_prompt_request:
+            return self._last_media_prompt_token_count
+        has_media = bool(prepared_request.images or prepared_request.video_frame_policies)
+
         prompt_tokens = _whitespace_token_count(prepared_request.prompt_text)
 
         image_token_divisor = self.image_token_divisor
@@ -102,7 +118,11 @@ class ResolvedVisionFamilyConfig:
         video_tokens = video_frame_count * video_frame_token_cost + empty_video_frame_policies
 
         total_tokens = prompt_tokens + image_tokens + video_tokens + self.prompt_token_bias
-        return total_tokens if total_tokens > 1 else 1
+        token_count = total_tokens if total_tokens > 1 else 1
+        if has_media:
+            object.__setattr__(self, "_last_media_prompt_request", prepared_request)
+            object.__setattr__(self, "_last_media_prompt_token_count", token_count)
+        return token_count
 
 
 @dataclass(frozen=True, slots=True)
