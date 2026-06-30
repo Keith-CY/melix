@@ -366,15 +366,19 @@ class LocalJobContinuationStore:
             record_job_ids: list[str] = []
             record_job_ids_append = record_job_ids.append
             json_suffix = ".json"
+            json_suffix_length = len(json_suffix)
             for entry in os.scandir(root_fspath):
                 name = entry.name
-                if not name.endswith(json_suffix):
+                if (
+                    len(name) < json_suffix_length
+                    or name[-json_suffix_length:] != json_suffix
+                ):
                     continue
                 if entry.is_file(follow_symlinks=False):
                     # The scan has already filtered this to a .json file name.
                     # Slice directly rather than calling Path.stem or a helper for
                     # every record in large follow-up stores.
-                    record_job_ids_append(json_suffix if name == json_suffix else name[:-5])
+                    record_job_ids_append(json_suffix if name == json_suffix else name[:-json_suffix_length])
             record_job_ids.sort()
         except FileNotFoundError:
             return LocalJobContinuationFollowupScan(candidates=(), receipts=())
