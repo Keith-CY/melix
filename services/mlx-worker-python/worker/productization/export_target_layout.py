@@ -58,6 +58,9 @@ _CLEANABLE_VERIFICATION_STATES = {
     export_target_manifest_pb2.EXPORT_VERIFICATION_STATE_PASSED,
     export_target_manifest_pb2.EXPORT_VERIFICATION_STATE_WAIVED,
 }
+_CLEANUP_DELETE_DECISIONS = frozenset(
+    (RETENTION_DECISION_CLEANABLE, RETENTION_DECISION_DELETE_AFTER_TTL)
+)
 _EVIDENCE_PATH_FIELDS = (
     "export_report_path",
     "retention_report_path",
@@ -220,10 +223,7 @@ def build_export_retention_report(
             if decision.decision == RETENTION_DECISION_RETAIN:
                 retained_byte_size += decision.byte_size
                 retained_file_count += 1
-            elif decision.decision in {
-                RETENTION_DECISION_CLEANABLE,
-                RETENTION_DECISION_DELETE_AFTER_TTL,
-            }:
+            elif decision.decision in _CLEANUP_DELETE_DECISIONS:
                 cleanable_byte_size += decision.byte_size
                 cleanable_file_count += 1
             if decision.deleted:
@@ -474,7 +474,7 @@ def _decide_file(
     if (
         apply_cleanup
         and exists
-        and decision in {RETENTION_DECISION_CLEANABLE, RETENTION_DECISION_DELETE_AFTER_TTL}
+        and decision in _CLEANUP_DELETE_DECISIONS
     ):
         path.unlink(missing_ok=True)
         deleted = True
