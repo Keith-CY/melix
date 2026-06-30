@@ -82,7 +82,7 @@ def discover_latest_metrics_path(runtime_dir: Path | None, source_name: str) -> 
 
 def discover_latest_metrics_paths(runtime_dir: Path | None, source_names: tuple[str, ...]) -> dict[str, Path | None]:
     discovered: dict[str, Path | None] = {name: None for name in source_names}
-    if runtime_dir is None:
+    if runtime_dir is None or not source_names:
         return discovered
     exact_matchers: dict[str, str] = {}
     prefix_matchers_by_initial: dict[str, list[tuple[str, str, str]]] = {}

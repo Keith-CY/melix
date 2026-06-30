@@ -53,3 +53,17 @@ the newest matching file for each unresolved source.
 Run the registered focused tests, changed-scope coverage command, and registered
 probe locally on Linux before opening the PR. GitHub Actions PR-scoped
 performance remains the merge gate for the registered probe report.
+
+## 2026-06-30 follow-up slice: skip configured-source runtime scan
+
+This Python-only follow-up keeps the same registered
+`melix-metrics-snapshot-runtime-scandir` probe and narrows to
+`discover_latest_metrics_paths(...)`. When `resolve_source_paths(...)` has already
+resolved every source from explicit arguments or environment variables, the
+batched runtime discovery call receives an empty source tuple. The helper now
+returns that empty result immediately instead of scanning the runtime directory
+and testing entries that cannot match any unresolved source.
+
+The behavior contract remains unchanged: argument and environment precedence are
+preserved, partially unresolved calls still perform one runtime scan, and missing
+runtime directories still return unresolved source paths without raising.
