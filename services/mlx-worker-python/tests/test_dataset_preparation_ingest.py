@@ -13,6 +13,7 @@ from worker.productization.dataset_preparation import (
     _SOURCE_KIND_BY_NAME,
     _SOURCE_KIND_NAME_CACHE_MAX,
     _iter_source_file_paths,
+    _record,
     _source_kind,
     _source_kind_for_name,
     prepare_dataset_ingest,
@@ -120,6 +121,21 @@ def test_dataset_ingest_source_kind_name_cache_bypasses_insert_at_bound() -> Non
     assert _source_kind_for_name("next.txt") == "text"
 
     assert _SOURCE_KIND_BY_NAME == cached_entries
+
+
+def test_dataset_ingest_record_copies_nonempty_metadata_and_fast_paths_empty_metadata() -> None:
+    empty_metadata: dict[str, object] = {}
+    empty_record = _record(Path("sample.txt"), "text", "hello\r\n", empty_metadata)
+
+    assert empty_record["text"] == "hello\n"
+    assert empty_record["metadata"] == {}
+    assert empty_record["metadata"] is not empty_metadata
+
+    metadata = {"language": "python"}
+    record = _record(Path("script.py"), "code", "print('hello')", metadata)
+    metadata["language"] = "swift"
+
+    assert record["metadata"] == {"language": "python"}
 
 
 def test_dataset_ingest_source_file_paths_skips_scandir_errors(
