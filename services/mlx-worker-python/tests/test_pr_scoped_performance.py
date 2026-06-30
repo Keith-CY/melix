@@ -670,6 +670,9 @@ def test_quantized_tensor_metadata_prepass_probe_script_emits_metrics(
     assert metrics["high_precision_decision_elapsed_ms_mean"] >= 0.0
     assert metrics["high_precision_decision_count"] == 6.0
     assert metrics["metadata_tensor_count"] == 18.0
+    assert metrics["tensor_names_access_count"] == 216.0
+    assert metrics["tensor_names_access_elapsed_ms_mean"] >= 0.0
+    assert metrics["tensor_names_access_peak_bytes_mean"] >= 0.0
     assert metrics["header_tensor_count"] == 18.0
     assert metrics["cross_shard_pair_count"] == 6.0
     assert metrics["matched_decision_count"] == 12.0

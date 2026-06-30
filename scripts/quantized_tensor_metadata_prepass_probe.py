@@ -215,6 +215,15 @@ def run_probe() -> dict[str, float]:
         sum(1 for prefix in prefixes if _is_cross_shard_quantized_pair(metadata, prefix))
     )
 
+    tensor_names_access_ms, tensor_names_access_peaks, tensor_names_access_count = _measure(
+        lambda: sum(
+            len(metadata.tensor_names)
+            for _ in range(decision_iterations)
+            for _prefix in prefixes
+        ),
+        samples=samples,
+    )
+
     metadata_decision_ms, metadata_decision_peaks, metadata_decision_count = _measure(
         lambda: sum(
             int(quantized_scales_present(prefix, metadata=metadata, weights={}))  # type: ignore[arg-type]
@@ -266,6 +275,9 @@ def run_probe() -> dict[str, float]:
         "high_precision_decision_count": float(cast(int, high_precision_decision_count)),
         "matched_decision_count": float(metadata_decision_count),
         "metadata_tensor_count": metadata_tensor_count,
+        "tensor_names_access_count": float(cast(int, tensor_names_access_count)),
+        "tensor_names_access_elapsed_ms_mean": statistics.fmean(tensor_names_access_ms),
+        "tensor_names_access_peak_bytes_mean": statistics.fmean(tensor_names_access_peaks),
         "header_tensor_count": float(len(header_metadata.tensor_names)),
         "cross_shard_pair_count": cross_shard_pair_count,
         "pair_count": float(pair_count),
