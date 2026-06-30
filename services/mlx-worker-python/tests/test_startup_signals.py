@@ -114,6 +114,7 @@ def test_check_for_updates_reuses_stat_valid_channel_cache(
         encoding="utf-8",
     )
     startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_STAT_CACHE.clear()
 
     assert check_for_updates("0.1.0", channel_path).update_available is True
 
@@ -143,6 +144,7 @@ def test_check_for_updates_reuses_cached_result_without_recompare(
     )
     startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
     startup_signals_module._UPDATE_CHECK_RESULT_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_STAT_CACHE.clear()
 
     first_result = check_for_updates("0.1.0", channel_path)
 
@@ -154,6 +156,57 @@ def test_check_for_updates_reuses_cached_result_without_recompare(
     second_result = check_for_updates("0.1.0", channel_path)
 
     assert second_result is first_result
+
+
+def test_check_for_updates_reuses_stat_valid_result_before_channel_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel_path = tmp_path / "stable.json"
+    channel_path.write_text(
+        json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
+        encoding="utf-8",
+    )
+    startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_STAT_CACHE.clear()
+
+    first_result = check_for_updates("0.1.0", channel_path)
+
+    def fail_read_bytes(self: Path) -> bytes:  # pragma: no cover - sentinel
+        if self == channel_path:
+            raise AssertionError("stat-valid result cache should skip channel JSON decode")
+        return Path.read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
+
+    second_result = check_for_updates("0.1.0", channel_path)
+
+    assert second_result is first_result
+
+
+def test_check_for_updates_refreshes_stat_valid_result_after_channel_change(
+    tmp_path: Path,
+) -> None:
+    channel_path = tmp_path / "stable.json"
+    channel_path.write_text(
+        json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
+        encoding="utf-8",
+    )
+    startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_STAT_CACHE.clear()
+
+    first_result = check_for_updates("0.1.0", channel_path)
+    channel_path.write_text(
+        json.dumps({"channel": "stable"}),
+        encoding="utf-8",
+    )
+
+    second_result = check_for_updates("0.1.0", channel_path)
+
+    assert first_result.update_available is True
+    assert second_result.checked is False
 
 
 def test_read_product_version_reads_project_version(tmp_path: Path) -> None:
