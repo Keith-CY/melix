@@ -5820,7 +5820,8 @@
       "scripts/quantized_tensor_metadata_prepass_probe.py",
       "infra/perf/pr_scoped_probes.json",
       "docs/plans/2026-06-26-quantized-high-precision-segment-scan.md",
-      "docs/plans/2026-06-27-quantized-metadata-string-normalization.md"
+      "docs/plans/2026-06-27-quantized-metadata-string-normalization.md",
+      "docs/plans/2026-06-30-quantized-metadata-tensor-names-cache.md"
     ],
     "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_quantized_tensor_metadata_merges_cross_shard_index_and_headers services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_quantized_tensor_metadata_normalizes_index_keys_once services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_entries services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_quantized_scales_present_skips_empty_weight_lookup services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_multimodal_high_precision_module_segment_scan_preserves_boundaries services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_patched_loader_uses_scandir_model_weight_listing services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_gemma4_text_only_language_model_quantizes_from_presanitize_metadata services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_gemma4_text_backed_loader_uses_tokenizer_for_text_only_exports services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_native_mtp_loader_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_quantized_tensor_metadata_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_mlx_vlm_runtime_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_quantized_tensor_metadata_prepass_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_quantized_tensor_metadata_prepass_probe_base_fallback services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
     "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run --include='*/services/mlx-worker-python/worker/runtime/quantized_tensor_metadata.py,*/services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py,*/services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py,*/services/mlx-worker-python/tests/test_mlx_vlm_runtime.py,*/services/mlx-worker-python/tests/test_pr_scoped_performance.py,*/scripts/quantized_tensor_metadata_prepass_probe.py' -m pytest -q services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_quantized_tensor_metadata_merges_cross_shard_index_and_headers services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_quantized_tensor_metadata_normalizes_index_keys_once services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_entries services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_quantized_scales_present_skips_empty_weight_lookup services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_multimodal_high_precision_module_segment_scan_preserves_boundaries services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_patched_loader_uses_scandir_model_weight_listing services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_gemma4_text_only_language_model_quantizes_from_presanitize_metadata services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_gemma4_text_backed_loader_uses_tokenizer_for_text_only_exports services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_native_mtp_loader_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_quantized_tensor_metadata_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_mlx_vlm_runtime_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_quantized_tensor_metadata_prepass_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_quantized_tensor_metadata_prepass_probe_base_fallback services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/quantized_tensor_metadata.py services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py services/mlx-worker-python/tests/test_mlx_vlm_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/quantized_tensor_metadata_prepass_probe.py",
@@ -5899,6 +5900,24 @@
         "unit": "count",
         "direction": "higher_is_better",
         "warn_pct": 0.0
+      },
+      {
+        "key": "tensor_names_access_count",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "tensor_names_access_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "tensor_names_access_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
       },
       {
         "key": "header_tensor_count",

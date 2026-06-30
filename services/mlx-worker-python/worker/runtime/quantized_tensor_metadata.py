@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -11,6 +11,7 @@ from typing import Any, Mapping, Sequence
 @dataclass(frozen=True, slots=True)
 class QuantizedTensorMetadata:
     tensor_to_shard: Mapping[str, str]
+    _tensor_names: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
 
     def __post_init__(self) -> None:
         normalized: dict[str, str] = {}
@@ -23,10 +24,11 @@ class QuantizedTensorMetadata:
             "tensor_to_shard",
             MappingProxyType(normalized),
         )
+        object.__setattr__(self, "_tensor_names", frozenset(normalized))
 
     @property
     def tensor_names(self) -> frozenset[str]:
-        return frozenset(self.tensor_to_shard)
+        return self._tensor_names
 
     def has_tensor(self, tensor_name: str) -> bool:
         return tensor_name in self.tensor_to_shard
@@ -57,6 +59,7 @@ def _metadata_from_normalized_mapping(tensor_to_shard: dict[str, str]) -> Quanti
         return EMPTY_QUANTIZED_TENSOR_METADATA
     metadata = object.__new__(QuantizedTensorMetadata)
     object.__setattr__(metadata, "tensor_to_shard", MappingProxyType(tensor_to_shard))
+    object.__setattr__(metadata, "_tensor_names", frozenset(tensor_to_shard))
     return metadata
 
 

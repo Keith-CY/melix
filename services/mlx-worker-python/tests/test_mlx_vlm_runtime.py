@@ -2493,6 +2493,8 @@ def test_quantized_tensor_metadata_normalizes_index_keys_once() -> None:
     assert metadata.tensor_to_shard == {
         "language_model.layers.0.q_proj.scales": "model-00001.safetensors"
     }
+    assert metadata.tensor_names == frozenset(("language_model.layers.0.q_proj.scales",))
+    assert metadata.tensor_names is metadata.tensor_names
     assert tensor_name.calls == 1
     assert empty_tensor_name.calls == 1
     assert shard_name.calls == 1
