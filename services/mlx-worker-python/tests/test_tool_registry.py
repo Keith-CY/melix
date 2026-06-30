@@ -1082,6 +1082,13 @@ def test_agentic_tool_selection_keyword_matches_reuse_bounded_cache() -> None:
     assert second_info.hits == first_info.hits + 1
 
 
+def test_agentic_tool_selection_keyword_matches_preserve_non_ascii_ascii_hint() -> None:
+    matcher = tool_registry_module._keyword_tool_matches
+    matcher.cache_clear()
+
+    assert matcher("Please SEARCH café evidence.") == ("text_search",)
+
+
 def test_agentic_tool_selection_keyword_rule_compiler_filters_empty_hints() -> None:
     rules = tool_registry_module._compile_keyword_hint_rules(
         {

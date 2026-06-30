@@ -655,7 +655,7 @@ def _keyword_tool_matches(text: str) -> tuple[str, ...]:
         return ()
     if text.isspace():
         return ()
-    normalized_text = text.casefold()
+    normalized_text = text.lower()
     boundary_text = ""
     matches: list[str] = []
     append_match = matches.append
