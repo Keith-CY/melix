@@ -30,6 +30,28 @@ _TARGET_NAME_BY_TYPE = {
     value: export_target_manifest_pb2.ExportTargetType.Name(value)
     for value in _TARGET_RUNTIME_BY_TYPE
 }
+_DERIVED_MODEL_ACTIVATION_MODES = frozenset(
+    {
+        export_target_manifest_pb2.EXPORT_ACTIVATION_MODE_FUSED_DERIVED_MODEL,
+        export_target_manifest_pb2.EXPORT_ACTIVATION_MODE_ADAPTER_BACKED_RUNTIME,
+    }
+)
+_RUNTIME_BINARY_REQUIRED_TARGET_TYPES = frozenset(
+    {
+        export_target_manifest_pb2.EXPORT_TARGET_TYPE_OLLAMA,
+        export_target_manifest_pb2.EXPORT_TARGET_TYPE_MLX_RUNTIME,
+    }
+)
+_LOAD_CHECK_REQUIRED_TARGET_TYPES = frozenset(
+    {
+        export_target_manifest_pb2.EXPORT_TARGET_TYPE_MELIX_MANAGED,
+        export_target_manifest_pb2.EXPORT_TARGET_TYPE_OLLAMA,
+        export_target_manifest_pb2.EXPORT_TARGET_TYPE_MLX_RUNTIME,
+    }
+)
+_RUNTIME_NOT_INSTALLED_WAIVER = (
+    export_target_manifest_pb2.EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED
+)
 
 
 @overload
@@ -141,11 +163,7 @@ def _validate_manifest(manifest: export_target_manifest_pb2.ExportTargetManifest
     )
     if (
         not manifest.source_derived_model_manifest_path
-        and manifest.activation_mode
-        in {
-            export_target_manifest_pb2.EXPORT_ACTIVATION_MODE_FUSED_DERIVED_MODEL,
-            export_target_manifest_pb2.EXPORT_ACTIVATION_MODE_ADAPTER_BACKED_RUNTIME,
-        }
+        and manifest.activation_mode in _DERIVED_MODEL_ACTIVATION_MODES
     ):
         errors.append(
             "source_derived_model_manifest_path is required for derived model activation modes"
@@ -239,10 +257,10 @@ def _validate_runtime_requirements(
         errors.append("runtime_requirements.runtime_name is required")
     elif runtime.runtime_name != manifest.target_runtime:
         errors.append("runtime_requirements.runtime_name must match target_runtime")
-    if manifest.target_type in {
-        export_target_manifest_pb2.EXPORT_TARGET_TYPE_OLLAMA,
-        export_target_manifest_pb2.EXPORT_TARGET_TYPE_MLX_RUNTIME,
-    } and not runtime.runtime_binary_required:
+    if (
+        manifest.target_type in _RUNTIME_BINARY_REQUIRED_TARGET_TYPES
+        and not runtime.runtime_binary_required
+    ):
         errors.append("runtime_requirements.runtime_binary_required is required for this target type")
     if runtime.runtime_binary_required and not runtime.runtime_binary_name:
         errors.append("runtime_requirements.runtime_binary_name is required when runtime_binary_required is true")
@@ -261,18 +279,13 @@ def _validate_verification_policy(
         errors.append("verification_policy.policy_id is required")
     if not policy.metadata_check_required:
         errors.append("verification_policy.metadata_check_required must be true")
-    if manifest.target_type in {
-        export_target_manifest_pb2.EXPORT_TARGET_TYPE_MELIX_MANAGED,
-        export_target_manifest_pb2.EXPORT_TARGET_TYPE_OLLAMA,
-        export_target_manifest_pb2.EXPORT_TARGET_TYPE_MLX_RUNTIME,
-    } and not policy.load_check_required:
+    if (
+        manifest.target_type in _LOAD_CHECK_REQUIRED_TARGET_TYPES
+        and not policy.load_check_required
+    ):
         errors.append("verification_policy.load_check_required must be true for this target type")
     if manifest.target_type == export_target_manifest_pb2.EXPORT_TARGET_TYPE_GGUF:
-        allowed = set(policy.allowed_waiver_reasons)
-        if (
-            export_target_manifest_pb2.EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED
-            not in allowed
-        ):
+        if _RUNTIME_NOT_INSTALLED_WAIVER not in policy.allowed_waiver_reasons:
             errors.append("gguf verification_policy must allow runtime_not_installed waivers")
     if status.state == export_target_manifest_pb2.EXPORT_VERIFICATION_STATE_UNSPECIFIED:
         errors.append("verification_status.state must be specified")
