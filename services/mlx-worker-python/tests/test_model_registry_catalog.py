@@ -27,6 +27,7 @@ from worker.model_registry.catalog import (
     _is_hf_cache_snapshot_dir,
     _load_json_dict_file,
     _local_model_id,
+    _metadata_payload_has_direct_mlx_signal,
     _metadata_payload_has_mlx_signal,
     _metadata_text_has_mlx_signal,
     _read_text_prefix,
@@ -77,6 +78,14 @@ def _write_weight_index(variant_dir: Path, payload: dict[str, object]) -> None:
 def _write_processor_config(variant_dir: Path, payload: dict[str, object]) -> None:
     variant_dir.mkdir(parents=True, exist_ok=True)
     (variant_dir / "processor_config.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+def test_metadata_payload_direct_mlx_signal_accepts_exact_and_normalized_values() -> None:
+    assert _metadata_payload_has_direct_mlx_signal({"library_name": "mlx"}) is True
+    assert _metadata_payload_has_direct_mlx_signal({"library_name": " MLX "}) is True
+    assert _metadata_payload_has_direct_mlx_signal({"tags": ["transformers", "mlx"]}) is True
+    assert _metadata_payload_has_direct_mlx_signal({"tags": ["transformers", " MLX "]}) is True
+    assert _metadata_payload_has_direct_mlx_signal({"tags": ["transformers"]}) is False
 
 
 def _write_weights(variant_dir: Path) -> None:

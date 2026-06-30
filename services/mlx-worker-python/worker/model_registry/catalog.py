@@ -740,14 +740,20 @@ def _metadata_payload_has_mlx_signal(metadata_payload: Mapping[str, object]) -> 
 
 def _metadata_payload_has_direct_mlx_signal(metadata_payload: Mapping[str, object]) -> bool:
     library_name = metadata_payload.get("library_name")
-    if isinstance(library_name, str) and library_name.strip().lower() == "mlx":
-        return True
+    if isinstance(library_name, str):
+        if library_name == "mlx":
+            return True
+        if library_name.strip().lower() == "mlx":
+            return True
 
     tags = metadata_payload.get("tags")
     if isinstance(tags, (list, tuple)):
         for tag in tags:
-            if isinstance(tag, str) and tag.strip().lower() == "mlx":
-                return True
+            if isinstance(tag, str):
+                if tag == "mlx":
+                    return True
+                if tag.strip().lower() == "mlx":
+                    return True
     return False
 
 
