@@ -1286,6 +1286,54 @@ def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
     assert scandir_calls == [os.fspath(tmp_path)]
 
 
+def test_store_scan_followup_candidates_filters_suffix_before_file_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+
+    class FakeEntry:
+        def __init__(self, name: str, *, is_file: bool, fail_if_stat: bool = False) -> None:
+            self.name = name
+            self._is_file = is_file
+            self.fail_if_stat = fail_if_stat
+            self.stat_calls = 0
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
+            self.stat_calls += 1
+            if self.fail_if_stat:
+                raise AssertionError(f"non-record entry should not be statted: {self.name}")
+            return self._is_file
+
+    non_json_entry = FakeEntry("ignored.json.tmp", is_file=True, fail_if_stat=True)
+    text_entry = FakeEntry("notes.txt", is_file=True, fail_if_stat=True)
+    ready_entry = FakeEntry("ready.json", is_file=True)
+    directory_entry = FakeEntry("nested.json", is_file=False)
+
+    monkeypatch.setattr(
+        local_job_continuation_module.os,
+        "scandir",
+        lambda path: iter((non_json_entry, text_entry, ready_entry, directory_entry)),
+    )
+
+    scan = store.scan_followup_candidates()
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == ["ready"]
+    assert non_json_entry.stat_calls == 0
+    assert text_entry.stat_calls == 0
+    assert ready_entry.stat_calls == 1
+    assert directory_entry.stat_calls == 1
+
+
 def test_store_scan_followup_candidates_does_not_follow_record_symlinks(
     tmp_path: Path,
 ) -> None:
