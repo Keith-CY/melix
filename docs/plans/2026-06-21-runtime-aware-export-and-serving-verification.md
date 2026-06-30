@@ -224,7 +224,10 @@ already read for protobuf JSON parsing instead of issuing a second filesystem
 stat call on every validation. Its metrics pass should accumulate generated,
 required, and evidence byte totals while iterating each manifest file section
 once instead of materializing a combined file-row tuple solely to count evidence
-bytes.
+bytes. Repeated validation policy gates should also reuse module-level enum
+membership constants for derived-model activation modes, runtime-binary-required
+target types, load-check-required target types, and the GGUF runtime-unavailable
+waiver instead of constructing short-lived sets on every manifest validation.
 
 ### Export Plan Receipt
 
