@@ -607,6 +607,38 @@ def test_measurable_changed_lines_handles_large_measured_sets_without_union(tmp_
     assert missed == [2]
 
 
+def test_measurable_changed_lines_uses_dense_membership_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 81)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 80, 2)),
+                "missing_lines": list(range(2, 81, 2)),
+            }
+        }
+    }
+
+    def fail_sorted_contains(*args: object, **kwargs: object) -> bool:  # pragma: no cover
+        raise AssertionError("dense changed sets should scan measured lists with set membership")
+
+    monkeypatch.setattr(changed_scope_coverage, "_sorted_line_list_contains", fail_sorted_contains)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        set(range(1, 81)),
+    )
+
+    assert measurable == list(range(1, 81))
+    assert covered == list(range(1, 80, 2))
+    assert missed == list(range(2, 81, 2))
+
+
 def test_measurable_changed_lines_keeps_reversed_coverage_fallback(tmp_path: Path) -> None:
     source_path = tmp_path / "foo.py"
     source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 6)), encoding="utf-8")
@@ -650,9 +682,11 @@ def test_changed_scope_coverage_measured_probe_emits_large_measured_metrics() ->
     assert metrics["measured_lines_per_path"] == 10.0
     assert metrics["sample_count"] == 2.0
     assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["dense_elapsed_ms_mean"] > 0
     assert metrics["allowlist_parse_elapsed_ms_mean"] > 0
     assert metrics["allowlist_parse_count"] == 10000.0
     assert metrics["source_read_calls_mean"] == 0.0
+    assert metrics["dense_source_read_calls_mean"] == 5.0
 
 
 def test_changed_scope_coverage_singleton_probe_emits_range_metrics() -> None:
@@ -693,6 +727,82 @@ def test_changed_scope_coverage_measured_probe_rejects_unexpected_allowlist_pars
     )
 
     with pytest.raises(RuntimeError, match="single-string allowlist parse"):
+        changed_scope_coverage_measured_probe.run_probe(
+            tmp_path,
+            path_count=1,
+            measured_lines_per_path=2,
+            allowlist_parse_count=1,
+            samples=1,
+        )
+
+
+def test_changed_scope_coverage_measured_probe_rejects_incomplete_dense_measurement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class IncompleteDenseCoverageModule:
+        Path = Path
+
+        @staticmethod
+        def _measurable_changed_lines(
+            repo_root: Path,
+            coverage_payload: dict[str, object],
+            rel_path: str,
+            changed: set[int],
+        ) -> tuple[list[int], list[int], list[int]]:
+            if 1 in changed:
+                return [1], [1], []
+            return [], [], []
+
+        @staticmethod
+        def _coverage_path_allowlist(env: dict[str, str]) -> frozenset[str]:
+            return frozenset({"pkg/module_0.py"})
+
+    monkeypatch.setattr(
+        changed_scope_coverage_measured_probe,
+        "_load_changed_scope_coverage",
+        lambda repo_root: IncompleteDenseCoverageModule,
+    )
+
+    with pytest.raises(RuntimeError, match="dense changed set should measure all fixture lines"):
+        changed_scope_coverage_measured_probe.run_probe(
+            tmp_path,
+            path_count=1,
+            measured_lines_per_path=2,
+            allowlist_parse_count=1,
+            samples=1,
+        )
+
+
+def test_changed_scope_coverage_measured_probe_rejects_incomplete_dense_partition(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class IncompletePartitionCoverageModule:
+        Path = Path
+
+        @staticmethod
+        def _measurable_changed_lines(
+            repo_root: Path,
+            coverage_payload: dict[str, object],
+            rel_path: str,
+            changed: set[int],
+        ) -> tuple[list[int], list[int], list[int]]:
+            if 1 in changed:
+                return [1, 2], [1], []
+            return [], [], []
+
+        @staticmethod
+        def _coverage_path_allowlist(env: dict[str, str]) -> frozenset[str]:
+            return frozenset({"pkg/module_0.py"})
+
+    monkeypatch.setattr(
+        changed_scope_coverage_measured_probe,
+        "_load_changed_scope_coverage",
+        lambda repo_root: IncompletePartitionCoverageModule,
+    )
+
+    with pytest.raises(RuntimeError, match="dense changed set should partition all fixture lines"):
         changed_scope_coverage_measured_probe.run_probe(
             tmp_path,
             path_count=1,
