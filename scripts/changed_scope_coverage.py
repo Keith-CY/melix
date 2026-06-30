@@ -91,6 +91,11 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     header_prefix_len = len(header_prefix)
     header_separator_len = len(header_separator)
     parse_hunk_new_start_from_digit = _parse_hunk_new_start_from_digit_bytes
+    ascii_backslash = _ASCII_BACKSLASH
+    ascii_plus = _ASCII_PLUS
+    ascii_minus = _ASCII_MINUS
+    ascii_at = _ASCII_AT
+    ascii_lower_d = _ASCII_LOWER_D
     add_changed_line = None
     new_line: int | None = None
     for line in diff_text.encode().splitlines():
@@ -99,7 +104,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
                 new_line += 1
             continue
         first_char = line[0]
-        if first_char == _ASCII_LOWER_D and line.startswith(header_prefix):
+        if first_char == ascii_lower_d and line.startswith(header_prefix):
             separator_index = line.find(header_separator, header_prefix_len)
             add_changed_line = None
             if separator_index >= 0:
@@ -107,7 +112,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
                 add_changed_line = changed_by_path_setdefault(current_path, set()).add
             new_line = None
             continue
-        if first_char == _ASCII_AT and len(line) > 1 and line[1] == _ASCII_AT:
+        if first_char == ascii_at and len(line) > 1 and line[1] == ascii_at:
             new_range_index = line.find(b" +")
             if new_range_index < 0:
                 new_line = None
@@ -116,12 +121,12 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
             continue
         if add_changed_line is None or new_line is None:
             continue
-        if first_char == _ASCII_BACKSLASH:
+        if first_char == ascii_backslash:
             continue
-        if first_char == _ASCII_PLUS:
+        if first_char == ascii_plus:
             add_changed_line(new_line)
             new_line += 1
-        elif first_char == _ASCII_MINUS:
+        elif first_char == ascii_minus:
             continue
         else:
             new_line += 1
