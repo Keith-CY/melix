@@ -42,6 +42,7 @@ class UpdateCheckResult(NamedTuple):
 
 
 _UPDATE_CHECK_RESULT_CACHE: dict[tuple[str, str, str, str], UpdateCheckResult] = {}
+_UPDATE_CHECK_RESULT_STAT_CACHE: dict[tuple[str, str], tuple[int, int, UpdateCheckResult]] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,11 +164,23 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
         if isinstance(channel_path, Path) and channel_path.is_absolute()
         else Path(channel_path).expanduser().resolve()
     )
-    latest_version, channel = _read_update_channel_version(resolved_channel_path)
-    cache_key = (str(resolved_channel_path), installed_version, latest_version, channel)
-    cached = _UPDATE_CHECK_RESULT_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
+    stat_result = resolved_channel_path.stat()
+    channel_path_text = str(resolved_channel_path)
+    stat_cache_key = (channel_path_text, installed_version)
+    stat_cached = _UPDATE_CHECK_RESULT_STAT_CACHE.get(stat_cache_key)
+    if stat_cached is not None:
+        cached_mtime_ns, cached_size, cached_result = stat_cached
+        if (
+            cached_mtime_ns == stat_result.st_mtime_ns
+            and cached_size == stat_result.st_size
+        ):
+            return cached_result
+    latest_version, channel = _read_update_channel_version(
+        resolved_channel_path,
+        stat_result=stat_result,
+        cache_key=channel_path_text,
+    )
+    cache_key = (channel_path_text, installed_version, latest_version, channel)
     if latest_version:
         comparison = compare_versions(latest_version, installed_version)
         if comparison > 0:
@@ -181,6 +194,11 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
                 detail=f"Current {installed_version} on {channel}",
             )
             _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
+            _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
+                stat_result.st_mtime_ns,
+                stat_result.st_size,
+                result,
+            )
             return result
         result = UpdateCheckResult(
             checked=True,
@@ -192,6 +210,11 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
             detail=f"Current {installed_version} on {channel}",
         )
         _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
+        _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
+            stat_result.st_mtime_ns,
+            stat_result.st_size,
+            result,
+        )
         return result
     result = UpdateCheckResult(
         checked=False,
@@ -203,12 +226,20 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
         detail=f"Channel metadata at {resolved_channel_path} does not declare latest_version",
     )
     _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
+    _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
+        stat_result.st_mtime_ns,
+        stat_result.st_size,
+        result,
+    )
     return result
 
 
-def _read_update_channel_version(channel_path: Path) -> tuple[str, str]:
-    stat_result = channel_path.stat()
-    cache_key = str(channel_path)
+def _read_update_channel_version(
+    channel_path: Path,
+    *,
+    stat_result: Any,
+    cache_key: str,
+) -> tuple[str, str]:
     cached = _UPDATE_CHANNEL_CACHE.get(cache_key)
     if cached is not None:
         cached_mtime_ns, cached_size, cached_latest_version, cached_channel = cached
