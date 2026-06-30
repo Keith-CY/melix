@@ -3999,6 +3999,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.test_command
     assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.test_command
     assert "test_metadata_payload_has_mlx_signal_does_not_request_sorted_json" in registry_probe.test_command
+    assert "test_metadata_payload_has_mlx_signal_skips_json_for_direct_metadata" in registry_probe.test_command
     assert "test_has_mlx_signal_config_payload_fast_path_avoids_json_dump" in registry_probe.test_command
     assert "test_registry_snapshot_keeps_gemma4_qat_target_when_readme_mentions_assistant" in registry_probe.test_command
     assert "scripts/changed_scope_coverage.py" not in registry_probe.watch_globs
@@ -4007,6 +4008,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.coverage_command
     assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.coverage_command
     assert "test_metadata_payload_has_mlx_signal_does_not_request_sorted_json" in registry_probe.coverage_command
+    assert "test_metadata_payload_has_mlx_signal_skips_json_for_direct_metadata" in registry_probe.coverage_command
     assert "test_has_mlx_signal_config_payload_fast_path_avoids_json_dump" in registry_probe.coverage_command
     assert "test_registry_snapshot_keeps_gemma4_qat_target_when_readme_mentions_assistant" in registry_probe.coverage_command
     assert "scripts/changed_scope_coverage.py" in registry_probe.coverage_command
