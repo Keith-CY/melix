@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Mapping
 
@@ -289,6 +290,22 @@ def _huggingface_cache_model_path(
         if snapshot.is_dir():
             return _HuggingFaceCacheModelPath(path=snapshot.resolve())
 
+    fallback = _cached_huggingface_cache_fallback_model_path(
+        model_id,
+        os.fspath(cache_root),
+    )
+    if fallback is None:
+        return None
+    fallback_path_text, warning = fallback
+    return _HuggingFaceCacheModelPath(path=Path(fallback_path_text), warnings=(warning,))
+
+
+@lru_cache(maxsize=32)
+def _cached_huggingface_cache_fallback_model_path(
+    model_id: str,
+    cache_root_text: str,
+) -> tuple[str, str] | None:
+    repo_cache = Path(cache_root_text) / f"models--{model_id.replace('/', '--')}"
     snapshots_root = repo_cache / "snapshots"
     if not snapshots_root.is_dir():
         return None
@@ -304,12 +321,10 @@ def _huggingface_cache_model_path(
     if latest_snapshot_name is None:
         return None
     fallback = snapshots_root / latest_snapshot_name
-    return _HuggingFaceCacheModelPath(
-        path=fallback,
-        warnings=(
-            "Hugging Face cache refs/main was unavailable for "
-            f"{model_id}; using lexicographically last snapshot directory {fallback}.",
-        ),
+    return (
+        os.fspath(fallback),
+        "Hugging Face cache refs/main was unavailable for "
+        f"{model_id}; using lexicographically last snapshot directory {fallback}.",
     )
 
 

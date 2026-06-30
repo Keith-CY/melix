@@ -385,6 +385,47 @@ def test_hf_cache_snapshot_fallback_skips_stale_names_before_is_dir(
     assert is_dir_calls == ["zzz"]
 
 
+def test_hf_cache_snapshot_fallback_reuses_cached_latest_snapshot_scan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    snapshots_root = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+    )
+    snapshots_root.mkdir(parents=True)
+    latest_snapshot = snapshots_root / "zzz"
+    latest_snapshot.mkdir()
+    scan_count = 0
+    real_scandir = real_model_support_module.os.scandir
+    real_model_support_module._cached_huggingface_cache_fallback_model_path.cache_clear()
+
+    def counting_scandir(path: Path):
+        nonlocal scan_count
+        assert path == snapshots_root
+        scan_count += 1
+        return real_scandir(path)
+
+    monkeypatch.setattr(real_model_support_module.os, "scandir", counting_scandir)
+
+    for _ in range(2):
+        source = resolve_real_small_text_model_source(
+            environment={"HOME": str(home)},
+            allow_managed_root=False,
+            allow_hf_cache=True,
+        )
+        assert source.live is False
+        assert source.local_model_path == str(latest_snapshot.resolve())
+        assert source.source_resolution_mode == "hf_cache_snapshot"
+
+    assert scan_count == 1
+
+
 def test_runtime_model_preflight_marks_real_local_weights(tmp_path: Path) -> None:
     model_dir = tmp_path / "qwen-real-small"
     model_dir.mkdir()
