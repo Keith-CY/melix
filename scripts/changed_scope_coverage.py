@@ -27,6 +27,7 @@ _ASCII_MINUS = ord("-")
 _ASCII_AT = ord("@")
 _ASCII_LOWER_D = ord("d")
 _EMPTY_CHANGED_LINES: frozenset[int] = frozenset()
+_DENSE_CHANGED_LINE_SCAN_THRESHOLD = 32
 
 
 def _is_diff_file_marker(line: str) -> bool:
@@ -268,12 +269,22 @@ def _measurable_changed_lines(
         else:
             missing_lookup = missing_lines
         if isinstance(executed_lookup, list) and isinstance(missing_lookup, list):
-            measured_changed = [
-                line_no
-                for line_no in changed
-                if _sorted_line_list_contains(executed_lookup, line_no)
-                or _sorted_line_list_contains(missing_lookup, line_no)
-            ]
+            measured_line_count = len(executed_lookup) + len(missing_lookup)
+            if (
+                measured_line_count
+                and len(changed) >= _DENSE_CHANGED_LINE_SCAN_THRESHOLD
+                and len(changed) * 4 >= measured_line_count
+            ):
+                executed_lookup = {line_no for line_no in executed_lines if line_no in changed}
+                missing_lookup = {line_no for line_no in missing_lines if line_no in changed}
+                measured_changed = list(executed_lookup | missing_lookup)
+            else:
+                measured_changed = [
+                    line_no
+                    for line_no in changed
+                    if _sorted_line_list_contains(executed_lookup, line_no)
+                    or _sorted_line_list_contains(missing_lookup, line_no)
+                ]
         else:
             measured_changed = [
                 line_no
