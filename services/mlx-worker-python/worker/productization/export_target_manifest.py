@@ -52,6 +52,15 @@ _LOAD_CHECK_REQUIRED_TARGET_TYPES = frozenset(
 _RUNTIME_NOT_INSTALLED_WAIVER = (
     export_target_manifest_pb2.EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED
 )
+_RETENTION_DECISION_RETAIN = export_target_manifest_pb2.EXPORT_RETENTION_DECISION_RETAIN
+_RETENTION_DECISION_CLEANABLE = export_target_manifest_pb2.EXPORT_RETENTION_DECISION_CLEANABLE
+_RETENTION_DECISION_DELETE_AFTER_TTL = (
+    export_target_manifest_pb2.EXPORT_RETENTION_DECISION_DELETE_AFTER_TTL
+)
+_RETENTION_DECISION_DELETE_AFTER_SUCCESS = (
+    export_target_manifest_pb2.EXPORT_RETENTION_DECISION_DELETE_AFTER_SUCCESS
+)
+_RETENTION_DECISION_NAME = export_target_manifest_pb2.ExportRetentionDecision.Name
 
 
 @overload
@@ -304,38 +313,36 @@ def _validate_retention_policy(
     errors: list[str] = []
     if not policy.policy_id:
         errors.append("retention_policy.policy_id is required")
-    expected_decisions = {
-        "required_default_decision": (
-            policy.required_default_decision,
-            export_target_manifest_pb2.EXPORT_RETENTION_DECISION_RETAIN,
-        ),
-        "evidence_default_decision": (
-            policy.evidence_default_decision,
-            export_target_manifest_pb2.EXPORT_RETENTION_DECISION_RETAIN,
-        ),
-        "runtime_log_default_decision": (
-            policy.runtime_log_default_decision,
-            export_target_manifest_pb2.EXPORT_RETENTION_DECISION_DELETE_AFTER_TTL,
-        ),
-        "intermediate_default_decision": (
-            policy.intermediate_default_decision,
-            export_target_manifest_pb2.EXPORT_RETENTION_DECISION_CLEANABLE,
-        ),
-        "cache_default_decision": (
-            policy.cache_default_decision,
-            export_target_manifest_pb2.EXPORT_RETENTION_DECISION_CLEANABLE,
-        ),
-        "temporary_default_decision": (
-            policy.temporary_default_decision,
-            export_target_manifest_pb2.EXPORT_RETENTION_DECISION_DELETE_AFTER_SUCCESS,
-        ),
-    }
-    for field_name, (actual, expected) in expected_decisions.items():
-        if actual != expected:
-            errors.append(
-                f"retention_policy.{field_name} must be "
-                f"{export_target_manifest_pb2.ExportRetentionDecision.Name(expected)}"
-            )
+    if policy.required_default_decision != _RETENTION_DECISION_RETAIN:
+        errors.append(
+            "retention_policy.required_default_decision must be "
+            f"{_RETENTION_DECISION_NAME(_RETENTION_DECISION_RETAIN)}"
+        )
+    if policy.evidence_default_decision != _RETENTION_DECISION_RETAIN:
+        errors.append(
+            "retention_policy.evidence_default_decision must be "
+            f"{_RETENTION_DECISION_NAME(_RETENTION_DECISION_RETAIN)}"
+        )
+    if policy.runtime_log_default_decision != _RETENTION_DECISION_DELETE_AFTER_TTL:
+        errors.append(
+            "retention_policy.runtime_log_default_decision must be "
+            f"{_RETENTION_DECISION_NAME(_RETENTION_DECISION_DELETE_AFTER_TTL)}"
+        )
+    if policy.intermediate_default_decision != _RETENTION_DECISION_CLEANABLE:
+        errors.append(
+            "retention_policy.intermediate_default_decision must be "
+            f"{_RETENTION_DECISION_NAME(_RETENTION_DECISION_CLEANABLE)}"
+        )
+    if policy.cache_default_decision != _RETENTION_DECISION_CLEANABLE:
+        errors.append(
+            "retention_policy.cache_default_decision must be "
+            f"{_RETENTION_DECISION_NAME(_RETENTION_DECISION_CLEANABLE)}"
+        )
+    if policy.temporary_default_decision != _RETENTION_DECISION_DELETE_AFTER_SUCCESS:
+        errors.append(
+            "retention_policy.temporary_default_decision must be "
+            f"{_RETENTION_DECISION_NAME(_RETENTION_DECISION_DELETE_AFTER_SUCCESS)}"
+        )
     return errors
 
 
