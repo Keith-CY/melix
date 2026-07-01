@@ -662,7 +662,7 @@ def _build_tool_selection_result(
         selected_registry = registry.select(tuple(selected_names))
         selected_tools = [
             {"tool_id": tool_name, "source": selected_sources[tool_name]}
-            for tool_name in selected_registry.names()
+            for tool_name in selected_names
         ]
     registry_metrics = registry.metrics()
     selected_metrics = selected_registry.metrics()
