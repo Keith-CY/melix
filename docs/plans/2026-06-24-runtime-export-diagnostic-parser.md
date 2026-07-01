@@ -178,6 +178,13 @@ character for the `p*` and `r*` branches first, so common runtime lines such as
 `runtime load failed ...` and ordinary `plain ...` status lines can skip the
 anchored private-text regex without transient lowercased prefix strings.
 
+A follow-up 2026-07-01 excerpt line-number accounting slice keeps the redacted
+excerpt text, truncation behavior, and source-line map unchanged while carrying
+the emitted output-line count, bound output append method, and last source-path
+prefix in the loop. This avoids repeated `len()` calls on the growing output
+list, repeated append attribute lookups, and repeated prefix formatting for
+adjacent bounded log lines from the same source path.
+
 Focused verification:
 
 ```bash

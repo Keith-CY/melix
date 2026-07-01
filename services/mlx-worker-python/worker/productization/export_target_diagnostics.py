@@ -545,32 +545,44 @@ def _build_redacted_excerpt(
         return _Excerpt(path="", text="", line_numbers={}, summary=summary)
 
     output_lines: list[str] = []
+    output_append = output_lines.append
+    output_line_count = 0
     line_numbers: dict[int, int] = {}
     used_bytes = 0
+    last_source_path = ""
+    last_source_prefix = ""
     try:
         resolved_target_root = layout.target_root.resolve(strict=False)
     except OSError:
         resolved_target_root = layout.target_root
     resolved_target_root_text = str(resolved_target_root)
     for index, source_line in enumerate(source_lines):
-        if len(output_lines) >= bounded_lines:
+        if output_line_count >= bounded_lines:
             summary.truncated = True
             break
         redacted = _redact_text(source_line.text, resolved_target_root, resolved_target_root_text, summary)
-        rendered = f"[{source_line.source_path}] {redacted}"
+        if source_line.source_path == last_source_path:
+            source_prefix = last_source_prefix
+        else:
+            last_source_path = source_line.source_path
+            source_prefix = f"[{source_line.source_path}] "
+            last_source_prefix = source_prefix
+        rendered = source_prefix + redacted
         if rendered.isascii():
             rendered_byte_count = len(rendered) + 1
             if used_bytes + rendered_byte_count > bounded_bytes:
                 remaining = max(0, bounded_bytes - used_bytes)
                 if remaining > 0:
                     clipped = (rendered + "\n")[:remaining]
-                    output_lines.append(clipped)
-                    line_numbers[index] = len(output_lines)
+                    output_append(clipped)
+                    output_line_count += 1
+                    line_numbers[index] = output_line_count
                     used_bytes += len(clipped)
                 summary.truncated = True
                 break
-            output_lines.append(rendered)
-            line_numbers[index] = len(output_lines)
+            output_append(rendered)
+            output_line_count += 1
+            line_numbers[index] = output_line_count
             used_bytes += rendered_byte_count
             continue
         rendered_bytes = (rendered + "\n").encode("utf-8")
@@ -578,13 +590,15 @@ def _build_redacted_excerpt(
             remaining = max(0, bounded_bytes - used_bytes)
             if remaining > 0:
                 clipped = rendered_bytes[:remaining].decode("utf-8", errors="ignore")
-                output_lines.append(clipped)
-                line_numbers[index] = len(output_lines)
+                output_append(clipped)
+                output_line_count += 1
+                line_numbers[index] = output_line_count
                 used_bytes += len(clipped.encode("utf-8"))
             summary.truncated = True
             break
-        output_lines.append(rendered)
-        line_numbers[index] = len(output_lines)
+        output_append(rendered)
+        output_line_count += 1
+        line_numbers[index] = output_line_count
         used_bytes += len(rendered_bytes)
 
     text = "\n".join(output_lines)
