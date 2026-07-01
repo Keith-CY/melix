@@ -40,3 +40,17 @@ The probe repeatedly requests semantic value groups for several action-value cou
 - Changed-scope coverage is at least 95%.
 - Local base-vs-head probe shows materially fewer combination-build calls and improved elapsed time without changing output checksum.
 - `git diff --check` passes.
+
+## 2026-07-01 Follow-up Slice: Direct Precomputed Lookup
+
+The first cache slice already precomputes the common `SEMANTIC_ACTION_GROUP_MAX_SIZE == 3`
+value counts used by the registered probe. This follow-up keeps that behavior and
+narrows one remaining Python overhead point: `_semantic_value_groups(...)` now uses
+an index-addressable precomputed tuple before falling back to a bounded cached
+builder for non-precomputed counts or patched group-size tests. The public helper
+still exposes `cache_clear()` for tests and probe setup, but the common precomputed
+path skips the `lru_cache` wrapper lookup.
+
+Validation remains the registered `event-extraction-semantic-value-group-cache` probe,
+focused event-extraction tests, changed-scope coverage, and GitHub PR-scoped
+performance CI before merge.
