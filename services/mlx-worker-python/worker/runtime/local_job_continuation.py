@@ -925,9 +925,23 @@ def project_local_job_session_followups(
         claim_batch=claim_batch,
         projections=tuple(projections),
         followup_messages=tuple(followup_messages),
-        receipts=deepcopy(claim_batch.receipts),
-        refusal_receipts=deepcopy(claim_batch.refusal_receipts),
+        receipts=_copy_receipt_sequence(claim_batch.receipts),
+        refusal_receipts=_copy_receipt_sequence(claim_batch.refusal_receipts),
     )
+
+
+def _copy_receipt_sequence(
+    receipts: Sequence[dict[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    return tuple(_copy_receipt(receipt) for receipt in receipts)
+
+
+def _copy_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    copied = dict(receipt)
+    prompt_context_receipts = copied.get("prompt_context_receipts")
+    if prompt_context_receipts:
+        copied["prompt_context_receipts"] = [dict(item) for item in prompt_context_receipts]
+    return copied
 
 
 def _project_local_job_session_followup_claim(

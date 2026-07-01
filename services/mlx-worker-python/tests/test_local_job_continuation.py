@@ -1138,6 +1138,15 @@ def test_store_scan_followup_candidates_reconciles_and_filters_ready_records(
         projection_batch.claim_batch.receipts[claimed_receipt_index]["reason"]
         == "followup_claimed"
     )
+    projection_batch.receipts[claimed_receipt_index]["prompt_context_receipts"][0][
+        "segment_id"
+    ] = "downstream-mutation"
+    assert (
+        projection_batch.claim_batch.receipts[claimed_receipt_index][
+            "prompt_context_receipts"
+        ][0]["segment_id"]
+        != "downstream-mutation"
+    )
     assert projection_batch.refusal_receipts == ()
     assert projection_store.load_record("projection-live") == replace(
         projection_live,
