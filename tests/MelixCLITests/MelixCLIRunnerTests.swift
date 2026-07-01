@@ -11997,6 +11997,18 @@ struct MelixCLIRunnerTests {
         let mediaRouteReceipt = try #require(capabilityReceipts["media_route_receipt"] as? [String: Any])
         #expect(mediaRouteReceipt["media_route"] as? String == "swift_text")
         #expect(mediaRouteReceipt["unsupported_reason"] as? String == "none")
+        let bundleManifest = try #require(try parseJSONFile(
+            bundleRoot.appendingPathComponent("manifest.json").path
+        ))
+        let manifestEnvironmentDiagnostic = try #require(
+            bundleManifest["environment_diagnostic"] as? [String: Any]
+        )
+        let manifestArtifacts = try #require(bundleManifest["artifacts"] as? [String: String])
+        #expect(
+            manifestEnvironmentDiagnostic["schema_version"] as? String
+                == "melix.desktop_environment_diagnostic_receipt.v1"
+        )
+        #expect(manifestArtifacts["environment_diagnostic"] == "environment-diagnostic.json")
     }
 
     @Test("desktop environment diagnostic receipt redacts GUI runtime inputs")
@@ -12046,8 +12058,9 @@ struct MelixCLIRunnerTests {
                 "MELIX_UV": bin.appendingPathComponent("uv").path,
                 "MELIX_MLX_LM": bin.appendingPathComponent("mlx_lm").path,
                 "HTTP_PROXY": "http://alice:sk-secret-proxy@example.test:8080",
+                "HTTPS_PROXY": "alice:hunter2@example.test:8080",
                 "SSL_CERT_FILE": tildeCertPath,
-                "MELIX_HTTP_PORT": "not-a-port",
+                "MELIX_HTTP_PORT": "0",
                 "MELIX_WORKER_SOCKET_PATH": root.appendingPathComponent("runtime/sk-secret-socket.sock").path,
             ]
         )
@@ -12070,15 +12083,20 @@ struct MelixCLIRunnerTests {
         #expect(receipt.payload["schema_version"] as? String == "melix.desktop_environment_diagnostic_receipt.v1")
         #expect(summary["failed_check_count"] as? Int == 0)
         #expect(proxy["status"] as? String == "warn")
-        #expect(proxy["redaction_count"] as? Int == 1)
+        #expect(proxy["redaction_count"] as? Int == 2)
         #expect(proxyVariables.first?["contains_credentials"] as? Bool == true)
-        #expect((proxyVariables.first?["value"] as? String ?? "").contains("sk-secret-proxy") == false)
+        #expect(proxyVariables.contains { ($0["contains_credentials"] as? Bool) == true })
+        for variable in proxyVariables {
+            let value = variable["value"] as? String ?? ""
+            #expect(value.contains("sk-secret-proxy") == false)
+            #expect(value.contains("hunter2") == false)
+        }
         #expect(certificate["status"] as? String == "pass")
         #expect(certificateVariables.first?["exists"] as? Bool == true)
         #expect(certificateVariables.first?["readable"] as? Bool == true)
         #expect(certificateVariables.first?["path"] as? String != homeRelativeCert.path)
         #expect(localServer["status"] as? String == "warn")
-        #expect(localServerObserved["http_port"] as? String == "not-a-port")
+        #expect(localServerObserved["http_port"] as? String == "0")
         #expect(localServerObserved["worker_socket_path_count"] as? Int == 1)
         #expect(metrics["runtime_binary_probe_latency_ms"] != nil)
         #expect(metrics["version_probe_latency_ms"] != nil)
@@ -12090,6 +12108,7 @@ struct MelixCLIRunnerTests {
         let data = try JSONSerialization.data(withJSONObject: receipt.payload)
         let json = try #require(String(data: data, encoding: .utf8))
         #expect(json.contains("sk-secret-proxy") == false)
+        #expect(json.contains("hunter2") == false)
         #expect(json.contains("sk-secret-socket") == false)
         #expect(json.contains(cert.path) == false)
     }
@@ -12473,6 +12492,15 @@ struct MelixCLIRunnerTests {
         let manifestEnvironmentSummary = try #require(
             manifestEnvironmentDiagnostic["summary"] as? [String: Any]
         )
+        let manifestEnvironmentChecks = try #require(
+            manifestEnvironmentDiagnostic["checks"] as? [[String: Any]]
+        )
+        let manifestProxyCheck = try #require(
+            manifestEnvironmentChecks.first { $0["check_kind"] as? String == "proxy_environment" }
+        )
+        let manifestProxyObserved = try #require(manifestProxyCheck["observed"] as? [String: Any])
+        let manifestProxyVariables = try #require(manifestProxyObserved["variables"] as? [[String: Any]])
+        let manifestProxyExpected = try #require(manifestProxyCheck["expected"] as? [String: Any])
         let manifestArtifacts = try #require(bundleManifest["artifacts"] as? [String: String])
         let bundleMediaRouteReceipt = try #require(capabilityReceipts["media_route_receipt"] as? [String: Any])
         let environmentDiagnosticFile = try #require(try parseJSONFile(
@@ -12493,6 +12521,8 @@ struct MelixCLIRunnerTests {
         #expect(manifestEnvironmentDiagnostic["schema_version"] as? String == "melix.desktop_environment_diagnostic_receipt.v1")
         #expect(environmentDiagnosticFile["schema_version"] as? String == "melix.desktop_environment_diagnostic_receipt.v1")
         #expect((manifestEnvironmentSummary["check_count"] as? Int ?? 0) >= 10)
+        #expect(manifestProxyVariables.allSatisfy { $0["contains_credentials"] is Bool })
+        #expect(manifestProxyExpected["secret_values_redacted"] as? Bool == true)
         #expect(manifestMediaRouteReceipt["media_route"] as? String == "swift_text")
         #expect(manifestMediaRouteReceipt["media_parts_count"] as? Int == 0)
         #expect(manifestMediaRouteReceipt["media_turn_count"] as? Int == 0)

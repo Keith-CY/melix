@@ -656,7 +656,7 @@ public enum MelixDesktopEnvironmentDiagnosticBuilder {
             }
             return ["key": key, "path": pathRedaction(value)]
         }
-        let validPort = UInt16(port) != nil
+        let validPort = UInt16(port).map { $0 > 0 } == true
         return checkPayload(
             id: "local_server_health",
             kind: "local_server_health",
@@ -747,19 +747,33 @@ public enum MelixDesktopEnvironmentDiagnosticBuilder {
     }
 
     private static func redactProxy(_ value: String) -> String {
-        guard var components = URLComponents(string: value), components.user != nil || components.password != nil else {
+        guard let proxy = proxyComponentsWithUserInfo(value) else {
             return MelixDiagnosticsRedaction.redactString(value)
         }
+        var components = proxy.components
         components.user = "<redacted>"
         components.password = components.password == nil ? nil : "<redacted>"
-        return MelixDiagnosticsRedaction.redactString(components.string ?? value)
+        let redacted = components.string.map { proxy.schemelessAuthority && $0.hasPrefix("//") ? String($0.dropFirst(2)) : $0 }
+            ?? value
+        return MelixDiagnosticsRedaction.redactString(redacted)
     }
 
     private static func containsURLUserInfo(_ value: String) -> Bool {
-        guard let components = URLComponents(string: value) else {
-            return false
+        proxyComponentsWithUserInfo(value) != nil
+    }
+
+    private static func proxyComponentsWithUserInfo(_ value: String) -> (components: URLComponents, schemelessAuthority: Bool)? {
+        if let components = URLComponents(string: value), components.user != nil || components.password != nil {
+            return (components, false)
         }
-        return components.user != nil || components.password != nil
+
+        guard value.contains("@"), value.contains("://") == false else {
+            return nil
+        }
+        guard let components = URLComponents(string: "//" + value), components.user != nil || components.password != nil else {
+            return nil
+        }
+        return (components, true)
     }
 }
 
@@ -928,6 +942,7 @@ public struct MelixDiagnosticsStore {
             "redaction_schema_version": MelixDiagnosticsRedaction.schemaVersion,
             "redacted_field_count": totalRedactedFieldCount,
             "command_id": commandID,
+            "environment_diagnostic": environmentDiagnostic.payload,
             "artifacts": [
                 "command": "command.txt",
                 "redacted_env": "redacted-env.json",
@@ -1078,7 +1093,7 @@ public struct MelixDiagnosticsStore {
             to: root.appendingPathComponent("error.json")
         )
 
-        let redactedManifest = MelixDiagnosticsRedaction.redactMapping([
+        let manifestPayload: [String: Any] = [
             "schema_version": "melix.diagnostics.bundle.v1",
             "bundle_id": record.runID,
             "created_at_unix_ms": currentUnixMilliseconds(),
@@ -1091,7 +1106,6 @@ public struct MelixDiagnosticsStore {
             "redaction_schema_version": MelixDiagnosticsRedaction.schemaVersion,
             "redacted_field_count": totalRedacted,
             "source_run_record_path": record.path,
-            "environment_diagnostic": environmentDiagnostic.payload,
             "artifacts": [
                 "command": "command.txt",
                 "redacted_env": "redacted-env.json",
@@ -1104,9 +1118,11 @@ public struct MelixDiagnosticsStore {
                 "metrics": "metrics.json",
                 "error": "error.json",
             ],
-        ])
+        ]
+        let redactedManifest = MelixDiagnosticsRedaction.redactMapping(manifestPayload)
         totalRedacted += redactedManifest.redactedFieldCount
         var manifest = redactedManifest.payload
+        manifest["environment_diagnostic"] = environmentDiagnostic.payload
         manifest["redacted_field_count"] = totalRedacted
         try writeJSON(manifest, to: root.appendingPathComponent("manifest.json"))
         return MelixDebugBundleResult(bundleRoot: root, manifest: manifest)
