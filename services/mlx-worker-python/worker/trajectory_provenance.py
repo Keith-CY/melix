@@ -9,6 +9,7 @@ from typing import Any
 _JSON_LOADS = json.loads
 _PATH_READ_BYTES = Path.read_bytes
 _STR = str
+_TYPE = type
 
 
 def _strip_manifest_text(value: Any) -> str:
@@ -52,16 +53,18 @@ def _is_clean_manifest_text(value: Any) -> bool:
 
 def _copy_json_list(value: list[Any]) -> list[Any]:
     immutable_types = _JSON_IMMUTABLE_TYPE_SET
+    value_type = _TYPE
     for item in value:
-        if type(item) not in immutable_types:
+        if value_type(item) not in immutable_types:
             return [_copy_trajectory_provenance_value(item) for item in value]
     return [*value]
 
 
 def _copy_json_tuple(value: tuple[Any, ...]) -> tuple[Any, ...]:
     immutable_types = _JSON_IMMUTABLE_TYPE_SET
+    value_type = _TYPE
     for item in value:
-        if type(item) not in immutable_types:
+        if value_type(item) not in immutable_types:
             return tuple(_copy_trajectory_provenance_value(item) for item in value)
     return value
 

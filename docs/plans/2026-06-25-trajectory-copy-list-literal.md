@@ -36,3 +36,12 @@ Run the focused registry test command, changed-scope coverage command, and the
 registered probe locally on Linux before opening the PR. The probe compares the
 deep-copy baseline with the optimized provenance copier and reports elapsed time,
 peak bytes, speedup, sample count, iteration count, and component count.
+
+## 2026-07-01 follow-up: scalar container type binding
+
+This follow-up keeps the same Python-only boundary and registered
+`trajectory-provenance-copy-elision` probe. The scalar-list and scalar-tuple copy
+guards now reuse a module-level `type` binding inside the per-item scan instead
+of resolving the builtin on every iteration. Container isolation and recursive
+copy behavior stay unchanged; the slice only targets the exact-scalar list/tuple
+hot loops measured by the registered probe.
