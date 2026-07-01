@@ -41,6 +41,11 @@ _PRECOMPUTED_SEMANTIC_VALUE_GROUPS = {
     )
     for value_count in range(2, 17)
 }
+_PRECOMPUTED_SEMANTIC_VALUE_GROUPS_BY_COUNT = (
+    (),
+    (),
+    *(_PRECOMPUTED_SEMANTIC_VALUE_GROUPS[value_count] for value_count in range(2, 17)),
+)
 SEMANTIC_JUDGE_PROMPT_VERSION = "semantic-judge.v4"
 _GROUP_ACTOR_ALIASES = {"我们", "双方", "咱们", "咱俩", "咱两", "我俩", "两人", "二人"}
 _GROUP_ACTOR_ALIAS_CHARS = frozenset("".join(_GROUP_ACTOR_ALIASES))
@@ -1630,22 +1635,33 @@ def _semantic_action_group_score(
     return _semantic_decision_score(decision), str(decision.get("reason_code") or "")
 
 
-@lru_cache(maxsize=32)
-def _semantic_value_groups(value_count: int) -> tuple[tuple[int, ...], ...]:
+def _semantic_value_groups(
+    value_count: int,
+    _precomputed_groups: tuple[tuple[tuple[int, ...], ...], ...] = _PRECOMPUTED_SEMANTIC_VALUE_GROUPS_BY_COUNT,
+    _precomputed_group_count: int = len(_PRECOMPUTED_SEMANTIC_VALUE_GROUPS_BY_COUNT),
+) -> tuple[tuple[int, ...], ...]:
+    if SEMANTIC_ACTION_GROUP_MAX_SIZE == 3 and 1 < value_count < _precomputed_group_count:
+        return _precomputed_groups[value_count]
     if value_count < 2:
         return ()
-    if SEMANTIC_ACTION_GROUP_MAX_SIZE == 3:
-        precomputed = _PRECOMPUTED_SEMANTIC_VALUE_GROUPS.get(value_count)
-        if precomputed is not None:
-            return precomputed
+    return _computed_semantic_value_groups(value_count, SEMANTIC_ACTION_GROUP_MAX_SIZE)
 
-    max_size = min(SEMANTIC_ACTION_GROUP_MAX_SIZE, value_count)
+
+@lru_cache(maxsize=32)
+def _computed_semantic_value_groups(
+    value_count: int,
+    max_group_size: int,
+) -> tuple[tuple[int, ...], ...]:
+    max_size = min(max_group_size, value_count)
     value_indices = range(value_count)
     return tuple(
         group
         for group_size in range(2, max_size + 1)
         for group in combinations(value_indices, group_size)
     )
+
+
+_semantic_value_groups.cache_clear = _computed_semantic_value_groups.cache_clear  # type: ignore[attr-defined]
 
 
 def _maximum_weight_semantic_value_group_matching(
