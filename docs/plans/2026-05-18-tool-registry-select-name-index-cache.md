@@ -105,6 +105,17 @@ semantics. The probe records `empty_selection_elapsed_ms_mean` and
 `empty_selection_tool_count_mean` so CI and local Linux runs validate the hot
 path directly.
 
+## Slice update: canonical selected-name append fast path
+
+This incremental slice keeps the same `tool-registry-select-name-index-cache`
+registered probe and narrows the optimization to `select_agentic_tools_for_turn()`
+append operations where selected tool ids are already canonical registry names.
+The append helper now avoids an unconditional `str.strip()` call for non-empty
+names with no leading or trailing whitespace, while preserving whitespace
+normalization, blank rejection, deduplication, max-selection limits, and unknown
+tool filtering. The probe's `selector_planning_elapsed_ms_mean` and
+`current_capacity_planning_elapsed_ms_mean` metrics exercise this path directly.
+
 ## Acceptance Criteria
 
 - Focused behavior tests pass locally on Linux.
