@@ -2867,6 +2867,7 @@ def test_event_extraction_semantic_value_group_probe_script_emits_metrics(
     monkeypatch.setenv("MELIX_EVENT_SEMANTIC_GROUP_PROBE_COUNTS", "4,5")
     monkeypatch.setenv("MELIX_EVENT_SEMANTIC_GROUP_PROBE_ITERATIONS", "3")
     monkeypatch.setenv("MELIX_EVENT_SEMANTIC_GROUP_PROBE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_EVENT_SEMANTIC_MATCHING_PROBE_ITERATIONS", "3")
 
     with pytest.raises(SystemExit) as exc_info:
         runpy.run_path(str(REPO_ROOT / "scripts/event_extraction_semantic_value_group_probe.py"), run_name="__main__")
@@ -2875,10 +2876,15 @@ def test_event_extraction_semantic_value_group_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["value_count_max"] == 5.0
     assert metrics["iterations_per_sample"] == 3.0
+    assert metrics["matching_iterations_per_sample"] == 3.0
     assert metrics["sample_count"] == 1.0
     assert metrics["group_count_per_sample"] > 0
+    assert metrics["matching_candidate_count_per_sample"] > 0
+    assert metrics["matching_result_count_per_sample"] > 0
+    assert metrics["matching_checksum"] > 0
     assert metrics["combination_build_calls_mean"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["matching_elapsed_ms_mean"] >= 0
 
 
 def test_event_extraction_actor_alias_probe_script_emits_metrics(
