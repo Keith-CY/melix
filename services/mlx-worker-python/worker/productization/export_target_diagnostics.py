@@ -558,6 +558,21 @@ def _build_redacted_excerpt(
             break
         redacted = _redact_text(source_line.text, resolved_target_root, resolved_target_root_text, summary)
         rendered = f"[{source_line.source_path}] {redacted}"
+        if rendered.isascii():
+            rendered_byte_count = len(rendered) + 1
+            if used_bytes + rendered_byte_count > bounded_bytes:
+                remaining = max(0, bounded_bytes - used_bytes)
+                if remaining > 0:
+                    clipped = (rendered + "\n")[:remaining]
+                    output_lines.append(clipped)
+                    line_numbers[index] = len(output_lines)
+                    used_bytes += len(clipped)
+                summary.truncated = True
+                break
+            output_lines.append(rendered)
+            line_numbers[index] = len(output_lines)
+            used_bytes += rendered_byte_count
+            continue
         rendered_bytes = (rendered + "\n").encode("utf-8")
         if used_bytes + len(rendered_bytes) > bounded_bytes:
             remaining = max(0, bounded_bytes - used_bytes)

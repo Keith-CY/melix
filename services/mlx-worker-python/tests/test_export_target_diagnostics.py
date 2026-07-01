@@ -384,6 +384,32 @@ def test_export_target_diagnostics_uses_lexical_target_path_fast_path(
     ) is None
 
 
+def test_export_target_diagnostics_ascii_excerpt_fast_path_preserves_byte_budget(
+    tmp_path: Path,
+) -> None:
+    _target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [
+            _SourceLine("logs/runtime.log", "runtime load failed while opening model"),
+            _SourceLine("logs/runtime.log", "plain ascii progress line"),
+        ],
+        bounded_bytes=77,
+        bounded_lines=20,
+    )
+
+    assert excerpt.summary.truncated is True
+    assert excerpt.summary.excerpt_byte_count == 77
+    assert excerpt.summary.excerpt_byte_count <= 77
+    assert "runtime load failed" in excerpt.text
+    assert excerpt.text.startswith("[logs/runtime.log] runtime load failed while opening model")
+
+
 def test_export_target_diagnostics_lowercases_source_line_once_per_match_scan() -> None:
     class TrackingText(str):
         lower_calls = 0

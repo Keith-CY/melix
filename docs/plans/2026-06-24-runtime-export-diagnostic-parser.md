@@ -165,6 +165,12 @@ with an explicit loop helper. Lines still enter the per-pattern matcher only whe
 one registered diagnosis marker appears in the lowercased source text, but the
 hot scan path avoids creating a generator for every bounded excerpt line.
 
+A follow-up 2026-07-01 redacted excerpt byte accounting slice keeps the same
+bounded excerpt text, line map, and byte-limit semantics while using an ASCII
+fast path for rendered excerpt lines. ASCII runtime log lines now account for
+`len(rendered) + 1` directly and only encode the uncommon non-ASCII path, while
+clipped ASCII lines preserve the existing newline-inclusive byte boundary.
+
 Focused verification:
 
 ```bash
