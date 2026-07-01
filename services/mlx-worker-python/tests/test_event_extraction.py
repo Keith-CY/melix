@@ -1388,6 +1388,22 @@ def test_semantic_value_groups_are_cached_and_ordered(monkeypatch: pytest.Monkey
     event_extraction_module._semantic_value_groups.cache_clear()
 
 
+def test_semantic_value_group_matching_ignores_invalid_masks_and_preserves_ties() -> None:
+    first = {"gold_indices": (0,), "pred_indices": (0,), "score": 0.8}
+    invalid_gold = {"gold_indices": (99,), "pred_indices": (1,), "score": 1.0}
+    invalid_pred = {"gold_indices": (0,), "pred_indices": (99,), "score": 1.0}
+    better_consumption = {"gold_indices": (1,), "pred_indices": (1, 2), "score": 0.8}
+    conflicting = {"gold_indices": (1,), "pred_indices": (1,), "score": 0.8}
+
+    matches = event_extraction_module._maximum_weight_semantic_value_group_matching(
+        [conflicting, invalid_gold, invalid_pred, first, better_consumption],
+        gold_count=2,
+        pred_count=3,
+    )
+
+    assert matches == [first, better_consumption]
+
+
 def test_evaluate_event_extraction_semantic_matches_specific_check_action(tmp_path: Path) -> None:
     gold = tmp_path / "gold.jsonl"
     pred = tmp_path / "pred.jsonl"
