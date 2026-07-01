@@ -281,7 +281,11 @@ def _release_matrix_rows(
                 "role": role,
                 "required": bool(rule.get("required", True)),
                 "present": bool(evidence_ids),
-                "evidence_ids": sorted(evidence_ids) if evidence_ids else [],
+                "evidence_ids": [next(iter(evidence_ids))]
+                if evidence_ids and len(evidence_ids) == 1
+                else sorted(evidence_ids)
+                if evidence_ids
+                else [],
                 "description": str(rule.get("description", "")),
             }
         )
