@@ -218,11 +218,19 @@ def _usage_delta(
     cached_prompt_tokens: int = 0,
     media_usage: dict[str, int] | None = None,
 ) -> inference_pb2.UsageDelta:
-    media_usage = media_usage or {}
+    prompt_tokens_value = _non_negative_int(prompt_tokens)
+    completion_tokens_value = _non_negative_int(completion_tokens)
+    cached_prompt_tokens_value = _non_negative_int(cached_prompt_tokens)
+    if not media_usage:
+        return inference_pb2.UsageDelta(
+            prompt_tokens=prompt_tokens_value,
+            completion_tokens=completion_tokens_value,
+            cached_prompt_tokens=cached_prompt_tokens_value,
+        )
     return inference_pb2.UsageDelta(
-        prompt_tokens=_non_negative_int(prompt_tokens),
-        completion_tokens=_non_negative_int(completion_tokens),
-        cached_prompt_tokens=_non_negative_int(cached_prompt_tokens),
+        prompt_tokens=prompt_tokens_value,
+        completion_tokens=completion_tokens_value,
+        cached_prompt_tokens=cached_prompt_tokens_value,
         media_feature_cache_hits=_non_negative_int(media_usage.get("media_feature_cache_hits", 0)),
         media_feature_cache_misses=_non_negative_int(media_usage.get("media_feature_cache_misses", 0)),
         media_feature_encoder_calls_saved=_non_negative_int(
