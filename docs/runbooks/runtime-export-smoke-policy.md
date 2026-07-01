@@ -72,7 +72,8 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" \
 
 The diagnostic probe reports parser coverage, parsed failure count, unknown
 failure count, redaction count, diagnostic latency, target count, and peak
-bytes.
+bytes. The diagnostics parser bypasses the absolute-path redaction regex for
+slashless diagnostic lines because that regex only matches `/...` path tokens.
 
 ## Waiver Policy
 

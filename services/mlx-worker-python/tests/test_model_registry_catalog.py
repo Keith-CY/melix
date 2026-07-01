@@ -27,7 +27,9 @@ from worker.model_registry.catalog import (
     _is_hf_cache_snapshot_dir,
     _load_json_dict_file,
     _local_model_id,
+    _metadata_payload_has_direct_mlx_signal,
     _metadata_payload_has_mlx_signal,
+    _metadata_text_has_mlx_signal,
     _read_text_prefix,
     _text_layer_count,
     _text_lora_support_metadata,
@@ -76,6 +78,14 @@ def _write_weight_index(variant_dir: Path, payload: dict[str, object]) -> None:
 def _write_processor_config(variant_dir: Path, payload: dict[str, object]) -> None:
     variant_dir.mkdir(parents=True, exist_ok=True)
     (variant_dir / "processor_config.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+def test_metadata_payload_direct_mlx_signal_accepts_exact_and_normalized_values() -> None:
+    assert _metadata_payload_has_direct_mlx_signal({"library_name": "mlx"}) is True
+    assert _metadata_payload_has_direct_mlx_signal({"library_name": " MLX "}) is True
+    assert _metadata_payload_has_direct_mlx_signal({"tags": ["transformers", "mlx"]}) is True
+    assert _metadata_payload_has_direct_mlx_signal({"tags": ["transformers", " MLX "]}) is True
+    assert _metadata_payload_has_direct_mlx_signal({"tags": ["transformers"]}) is False
 
 
 def _write_weights(variant_dir: Path) -> None:
@@ -388,6 +398,24 @@ def test_has_mlx_signal_falls_back_to_config_text_for_unserializable_nonempty_pa
 
 
 
+def test_metadata_text_has_mlx_signal_short_circuits_negative_metadata() -> None:
+    assert (
+        _metadata_text_has_mlx_signal("library_name: transformers\ntags:\n- text-generation\n")
+        is False
+    )
+    assert _metadata_text_has_mlx_signal("library_name: mlx\ntags:\n- text-generation\n") is True
+
+
+def test_metadata_payload_has_mlx_signal_skips_json_for_direct_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_dumps(*args: object, **kwargs: object) -> str:  # pragma: no cover - sentinel
+        raise AssertionError("direct metadata signal should avoid json.dumps")
+
+    monkeypatch.setattr(catalog_module.json, "dumps", fail_dumps)
+
+    assert _metadata_payload_has_mlx_signal({"library_name": "mlx", "tags": ["text"]}) is True
+    assert _metadata_payload_has_mlx_signal({"tags": ["text", " MLX "]}) is True
+
+
 def test_metadata_payload_has_mlx_signal_does_not_request_sorted_json(monkeypatch: pytest.MonkeyPatch) -> None:
     kwargs_seen: list[dict[str, object]] = []
     original_dumps = catalog_module.json.dumps
@@ -398,7 +426,7 @@ def test_metadata_payload_has_mlx_signal_does_not_request_sorted_json(monkeypatc
 
     monkeypatch.setattr(catalog_module.json, "dumps", fake_dumps)
 
-    assert _metadata_payload_has_mlx_signal({"library_name": "mlx", "tags": ["text"]}) is True
+    assert _metadata_payload_has_mlx_signal({"library_name": "transformers", "tags": ["mlx-ready"]}) is False
     assert kwargs_seen == [{}]
 
 

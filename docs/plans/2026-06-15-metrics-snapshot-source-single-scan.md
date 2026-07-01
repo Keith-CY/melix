@@ -39,8 +39,31 @@ The registry entry includes focused `test_command`, `coverage_command`, and
 6. Update the registered probe workload to measure the multi-source resolution
    path instead of only the single-source helper.
 
+## Follow-up slice: lazy overlapping match materialization
+
+The next focused Python slice keeps the same registered probe and runtime
+metrics discovery boundary. It avoids creating a per-entry list for the common
+case where a runtime file matches only one exact or prefix/suffix source pattern,
+while still preserving overlapping exact, prefix, and multi-wildcard matches.
+The behavior contract remains unchanged: a single runtime directory scan chooses
+the newest matching file for each unresolved source.
+
 ## Verification plan
 
 Run the registered focused tests, changed-scope coverage command, and registered
 probe locally on Linux before opening the PR. GitHub Actions PR-scoped
 performance remains the merge gate for the registered probe report.
+
+## 2026-06-30 follow-up slice: skip configured-source runtime scan
+
+This Python-only follow-up keeps the same registered
+`melix-metrics-snapshot-runtime-scandir` probe and narrows to
+`discover_latest_metrics_paths(...)`. When `resolve_source_paths(...)` has already
+resolved every source from explicit arguments or environment variables, the
+batched runtime discovery call receives an empty source tuple. The helper now
+returns that empty result immediately instead of scanning the runtime directory
+and testing entries that cannot match any unresolved source.
+
+The behavior contract remains unchanged: argument and environment precedence are
+preserved, partially unresolved calls still perform one runtime scan, and missing
+runtime directories still return unresolved source paths without raising.

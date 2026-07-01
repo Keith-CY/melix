@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import stat
 from types import FunctionType
 from typing import Any
 
@@ -99,7 +100,13 @@ def callable_declares_kwarg(callable_obj: Any, keyword: str) -> bool:
 
 
 def callable_accepts_kwarg(callable_obj: Any, keyword: str) -> bool:
-    signature = callable_kwarg_signature(callable_obj)
+    if type(callable_obj) is FunctionType:
+        signature = _callable_kwarg_signature_cached(
+            callable_obj,
+            skip_first_parameter=False,
+        )
+    else:
+        signature = callable_kwarg_signature(callable_obj)
     return keyword in signature.keyword_accessible_params or signature.accepts_var_keyword
 
 
@@ -213,9 +220,10 @@ def _weight_dir_entry_file_size(entry: os.DirEntry[str]) -> int:
     if not _is_model_weight_filename(entry.name):
         return 0
     try:
-        if not entry.is_file():
+        stat_result = entry.stat()
+        if not stat.S_ISREG(stat_result.st_mode):
             return 0
-        return entry.stat().st_size
+        return stat_result.st_size
     except OSError:
         return 0
 

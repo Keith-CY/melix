@@ -217,6 +217,20 @@ def test_lora_training_manifest_records_canary_receipts(tmp_path: Path) -> None:
     assert result.manifest["grad_norm"] == 0.0
 
 
+def test_lora_canary_json_mapping_uses_binary_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "tokenizer_config.json"
+    config_path.write_bytes(b'{"eos_token":"<|endoftext|>"}\n')
+
+    monkeypatch.setattr(Path, "read_text", None)
+
+    assert lora_runtime_metadata_module._load_json_mapping(config_path) == {
+        "eos_token": "<|endoftext|>",
+    }
+
+
 def test_training_runtime_preflight_classifies_dependency_limited_inspection_without_runtime_imports(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

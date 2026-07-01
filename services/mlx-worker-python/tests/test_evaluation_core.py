@@ -3478,7 +3478,20 @@ def test_evaluation_helpers_cover_numeric_option_and_normalization_paths() -> No
     assert EvaluationCore._extract_numeric_value("total becomes 9.0") == "9"
     assert EvaluationCore._extract_option_value("Option C is correct") == "C"
     assert EvaluationCore._answers_match(expected="Paris", predicted="") is False
+    assert EvaluationCore._answers_match(expected="Paris", predicted="Paris") is True
     assert EvaluationCore._answers_match(expected="b", predicted="B") is True
+
+
+def test_answers_match_exact_nonempty_short_circuit_skips_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_normalize(value: str) -> str:  # pragma: no cover - must not be called
+        raise AssertionError(f"exact answer match should skip normalization: {value!r}")
+
+    monkeypatch.setattr(EvaluationCore, "_normalized_answer", staticmethod(fail_normalize))
+
+    assert EvaluationCore._answers_match(expected="Paris", predicted="Paris") is True
+    assert EvaluationCore._answers_match(expected="", predicted="") is False
 
 
 def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.MonkeyPatch) -> None:

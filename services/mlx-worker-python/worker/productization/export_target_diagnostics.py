@@ -52,6 +52,7 @@ SUPPORTED_DIAGNOSIS_CODES = (
     CODE_UNKNOWN_FAILURE,
 )
 _KNOWN_DIAGNOSIS_CODES = tuple(code for code in SUPPORTED_DIAGNOSIS_CODES if code != CODE_UNKNOWN_FAILURE)
+_KNOWN_DIAGNOSIS_CODE_SET = frozenset(_KNOWN_DIAGNOSIS_CODES)
 
 _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![A-Za-z0-9_.-])/[^\s:'\"<>|]+")
 _BEARER_SECRET_PATTERN = re.compile(
@@ -70,8 +71,6 @@ _IDENTITY_PATTERN = re.compile(
     r"(?i)\b(user|operator)(?:[_-]?(?:id|name))?\s*[:=]\s*['\"]?[^'\"\s,;]+['\"]?"
 )
 _SECRET_REDACTION_MARKERS = ("=", ":", "@", "sk-", "-----BEGIN ")
-_NAMED_SECRET_MARKERS = ("api", "access", "token", "password", "secret")
-_IDENTITY_MARKERS = ("user", "operator")
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,9 +81,25 @@ class _DiagnosisPattern:
     expressions: tuple[re.Pattern[str], ...]
     operator_message: str
     remediation: str
+    markers: tuple[str, ...] = ()
 
-    def matches(self, text: str) -> bool:
-        return any(expression.search(text) for expression in self.expressions)
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "markers", tuple(marker.lower() for marker in self.markers))
+
+    def matches(self, text: str, lowered_text: str | None = None) -> bool:
+        if self.markers:
+            lowered = lowered_text if lowered_text is not None else text.lower()
+            marker_matched = False
+            for marker in self.markers:
+                if marker in lowered:
+                    marker_matched = True
+                    break
+            if not marker_matched:
+                return False
+        for expression in self.expressions:
+            if expression.search(text):
+                return True
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +159,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The target runtime cannot load this artifact on the current host architecture.",
         remediation="Use an Apple Silicon compatible runtime binary or export for a compatible target architecture.",
+        markers=("arch", "cpu type", "arm64"),
     ),
     _DiagnosisPattern(
         code=CODE_DUPLICATE_TENSOR_NAME,
@@ -156,6 +172,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The runtime reported duplicate tensor names while loading the export.",
         remediation="Regenerate the export from a clean adapter snapshot and inspect the conversion step that writes tensor names.",
+        markers=("duplicate", "tensor", "already exists"),
     ),
     _DiagnosisPattern(
         code=CODE_MISSING_BLOB,
@@ -170,6 +187,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The target artifact references a blob or required artifact that is not present.",
         remediation="Re-run target materialization and verify required artifact digests before runtime load.",
+        markers=("blob", "sha256", "artifact", "missing required"),
     ),
     _DiagnosisPattern(
         code=CODE_MISSING_BINARY,
@@ -184,6 +202,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The target runtime binary is missing or not available on PATH.",
         remediation="Install the required runtime binary or configure the export target to use an available local runtime.",
+        markers=("command", "binary", "executable", "installed", "ollama", "mlx_lm", "llama"),
     ),
     _DiagnosisPattern(
         code=CODE_INVALID_RUNTIME_PATH,
@@ -197,6 +216,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The runtime was invoked with a path that is invalid for this target.",
         remediation="Use target-relative manifest paths and regenerate the export report before retrying the runtime load.",
+        markers=("invalid", "path", "directory"),
     ),
     _DiagnosisPattern(
         code=CODE_RUNTIME_TIMEOUT,
@@ -210,6 +230,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The runtime did not finish the load or generation smoke check within the configured timeout.",
         remediation="Inspect runtime logs for slow startup, reduce the target artifact size, or increase the verified timeout policy.",
+        markers=("timed out", "timeout", "deadline"),
     ),
     _DiagnosisPattern(
         code=CODE_PERMISSION_DENIED,
@@ -222,6 +243,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The runtime cannot read or execute a required export path because of local permissions.",
         remediation="Fix file permissions for the target directory and retry the smoke check from the same worktree.",
+        markers=("permi", "eacces"),
     ),
     _DiagnosisPattern(
         code=CODE_INSUFFICIENT_MEMORY,
@@ -236,6 +258,7 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The host did not have enough memory for the runtime load or generation check.",
         remediation="Free memory, choose a smaller or more quantized target, or retry on a host with more memory.",
+        markers=("memory", "oom"),
     ),
     _DiagnosisPattern(
         code=CODE_RUNTIME_LOAD_FAILED,
@@ -250,7 +273,11 @@ _DIAGNOSIS_PATTERNS = (
         ),
         operator_message="The target runtime failed while loading the exported artifact.",
         remediation="Inspect the redacted runtime evidence, then regenerate or repair the target artifact before retrying.",
+        markers=("failed to load", "model load", "runtime load", "error loading", "load failed"),
     ),
+)
+_DIAGNOSIS_MARKERS = tuple(
+    dict.fromkeys(marker for pattern in _DIAGNOSIS_PATTERNS for marker in pattern.markers)
 )
 
 
@@ -315,9 +342,11 @@ def build_export_diagnostics_receipt(
             }
         ]
 
+    parsed_failure_count, unknown_failure_count, matched_codes = _diagnosis_metric_counts(diagnoses)
+
     if not source_lines:
         status = DIAGNOSTIC_STATUS_NOT_APPLICABLE
-    elif any(diagnosis["code"] != CODE_UNKNOWN_FAILURE for diagnosis in diagnoses):
+    elif parsed_failure_count > 0:
         status = DIAGNOSTIC_STATUS_MATCHED
     else:
         status = DIAGNOSTIC_STATUS_UNKNOWN
@@ -326,24 +355,15 @@ def build_export_diagnostics_receipt(
     required_codes = {
         str(code)
         for code in manifest.diagnostic_policy.required_diagnosis_codes
-        if str(code) in _KNOWN_DIAGNOSIS_CODES
-    }
-    matched_codes = {
-        str(diagnosis["code"])
-        for diagnosis in diagnoses
-        if diagnosis["code"] != CODE_UNKNOWN_FAILURE
+        if str(code) in _KNOWN_DIAGNOSIS_CODE_SET
     }
     coverage = _diagnostic_coverage(required_codes, matched_codes, status)
     redaction_summary = excerpt.summary.payload(policy_id=manifest.evidence.redaction_policy_id or "export-diagnostics-redaction-v1")
     metrics = {
         "schema_version": EXPORT_DIAGNOSTICS_METRICS_SCHEMA_VERSION,
         "diagnostic_parser_coverage": coverage,
-        "parsed_failure_count": sum(
-            1 for diagnosis in diagnoses if diagnosis["code"] != CODE_UNKNOWN_FAILURE
-        ),
-        "unknown_failure_count": sum(
-            1 for diagnosis in diagnoses if diagnosis["code"] == CODE_UNKNOWN_FAILURE
-        ),
+        "parsed_failure_count": parsed_failure_count,
+        "unknown_failure_count": unknown_failure_count,
         "redaction_count": redaction_summary["redaction_count"],
         "diagnostic_latency_ms": diagnostic_latency_ms,
     }
@@ -405,28 +425,36 @@ def build_diagnostic_metrics_report(
             errors.append(str(exc))
 
     elapsed_ms = (time.perf_counter() - started) * 1000.0
-    metrics = [
-        receipt["metrics"]
-        for receipt in receipts
-        if isinstance(receipt.get("metrics"), dict)
-    ]
-    matched_codes = {
-        str(diagnosis["code"])
-        for receipt in receipts
-        for diagnosis in receipt.get("diagnoses", [])
-        if isinstance(diagnosis, dict) and diagnosis.get("code") != CODE_UNKNOWN_FAILURE
-    }
-    parser_coverage = len(matched_codes & set(_KNOWN_DIAGNOSIS_CODES)) / len(_KNOWN_DIAGNOSIS_CODES)
+    matched_codes: set[str] = set()
+    parsed_failure_count = 0
+    unknown_failure_count = 0
+    redaction_count = 0
+    diagnostic_latency_ms = 0.0
+    for receipt in receipts:
+        metrics = receipt.get("metrics")
+        if isinstance(metrics, dict):
+            parsed_failure_count += int(metrics.get("parsed_failure_count", 0))
+            unknown_failure_count += int(metrics.get("unknown_failure_count", 0))
+            redaction_count += int(metrics.get("redaction_count", 0))
+            diagnostic_latency_ms += float(metrics.get("diagnostic_latency_ms", 0.0))
+        diagnoses = receipt.get("diagnoses", [])
+        if isinstance(diagnoses, list):
+            for diagnosis in diagnoses:
+                if isinstance(diagnosis, dict):
+                    code = str(diagnosis.get("code", ""))
+                    if code and code != CODE_UNKNOWN_FAILURE:
+                        matched_codes.add(code)
+    parser_coverage = len(matched_codes & _KNOWN_DIAGNOSIS_CODE_SET) / len(_KNOWN_DIAGNOSIS_CODE_SET)
     return {
         "schema_version": EXPORT_DIAGNOSTICS_METRICS_SCHEMA_VERSION,
         "ok": not errors and parser_coverage == 1.0,
         "target_count": len(receipts),
         "diagnostic_policy_latency_ms": elapsed_ms,
         "diagnostic_parser_coverage": parser_coverage,
-        "parsed_failure_count": sum(int(metric.get("parsed_failure_count", 0)) for metric in metrics),
-        "unknown_failure_count": sum(int(metric.get("unknown_failure_count", 0)) for metric in metrics),
-        "redaction_count": sum(int(metric.get("redaction_count", 0)) for metric in metrics),
-        "diagnostic_latency_ms": sum(float(metric.get("diagnostic_latency_ms", 0.0)) for metric in metrics),
+        "parsed_failure_count": parsed_failure_count,
+        "unknown_failure_count": unknown_failure_count,
+        "redaction_count": redaction_count,
+        "diagnostic_latency_ms": diagnostic_latency_ms,
         "diagnosis_code_count": len(matched_codes),
         "errors": errors,
         "receipts": receipts,
@@ -444,18 +472,19 @@ def _collect_source_lines(
     seen_paths: set[str] = set()
     source_read_bytes = max(bounded_bytes * _SOURCE_READ_MULTIPLIER, bounded_bytes)
 
-    for row in (*manifest.generated_files, *manifest.required_files, *manifest.intermediate_files):
-        if not _is_runtime_log_row(row):
-            continue
-        if row.path in seen_paths:
-            continue
-        seen_paths.add(row.path)
-        path = _target_relative_path(layout, row.path)
-        if not path.is_file():
-            continue
-        with path.open("rb") as source:
-            text = source.read(source_read_bytes).decode("utf-8", errors="replace")
-        lines.extend(_split_source_lines(row.path, text))
+    for rows in (manifest.generated_files, manifest.required_files, manifest.intermediate_files):
+        for row in rows:
+            if not _is_runtime_log_row(row):
+                continue
+            if row.path in seen_paths:
+                continue
+            seen_paths.add(row.path)
+            path = _target_relative_path(layout, row.path)
+            if not path.is_file():
+                continue
+            with path.open("rb") as source:
+                text = source.read(source_read_bytes).decode("utf-8", errors="replace")
+            _extend_source_lines(lines, row.path, text)
 
     for check in failure_checks:
         failure_message = _check_value(check, "failure_message")
@@ -468,7 +497,7 @@ def _collect_source_lines(
         check_name = _check_value(check, "check") or _check_value(check, "name") or "smoke_failure"
         evidence_path = _check_value(check, "evidence_path") or manifest.evidence.smoke_receipt_path
         text = f"{check_name}: {failure_code}: {failure_message}".strip()
-        lines.extend(_split_source_lines(evidence_path or "smoke/smoke-receipt.json", text))
+        _extend_source_lines(lines, evidence_path or "smoke/smoke-receipt.json", text)
 
     return lines
 
@@ -481,10 +510,19 @@ def _is_runtime_log_row(row: export_target_manifest_pb2.ExportTargetFile) -> boo
     )
 
 
-def _split_source_lines(source_path: str, text: str) -> list[_SourceLine]:
+def _extend_source_lines(lines: list[_SourceLine], source_path: str, text: str) -> None:
     if not text:
-        return []
-    return [_SourceLine(source_path=source_path, text=line) for line in text.splitlines()]
+        return
+    append = lines.append
+    source_line_type = _SourceLine
+    for line in text.splitlines():
+        append(source_line_type(source_path=source_path, text=line))
+
+
+def _split_source_lines(source_path: str, text: str) -> list[_SourceLine]:
+    lines: list[_SourceLine] = []
+    _extend_source_lines(lines, source_path, text)
+    return lines
 
 
 def _check_value(check: object, name: str) -> str:
@@ -513,12 +551,28 @@ def _build_redacted_excerpt(
         resolved_target_root = layout.target_root.resolve(strict=False)
     except OSError:
         resolved_target_root = layout.target_root
+    resolved_target_root_text = str(resolved_target_root)
     for index, source_line in enumerate(source_lines):
         if len(output_lines) >= bounded_lines:
             summary.truncated = True
             break
-        redacted = _redact_text(source_line.text, resolved_target_root, summary)
+        redacted = _redact_text(source_line.text, resolved_target_root, resolved_target_root_text, summary)
         rendered = f"[{source_line.source_path}] {redacted}"
+        if rendered.isascii():
+            rendered_byte_count = len(rendered) + 1
+            if used_bytes + rendered_byte_count > bounded_bytes:
+                remaining = max(0, bounded_bytes - used_bytes)
+                if remaining > 0:
+                    clipped = (rendered + "\n")[:remaining]
+                    output_lines.append(clipped)
+                    line_numbers[index] = len(output_lines)
+                    used_bytes += len(clipped)
+                summary.truncated = True
+                break
+            output_lines.append(rendered)
+            line_numbers[index] = len(output_lines)
+            used_bytes += rendered_byte_count
+            continue
         rendered_bytes = (rendered + "\n").encode("utf-8")
         if used_bytes + len(rendered_bytes) > bounded_bytes:
             remaining = max(0, bounded_bytes - used_bytes)
@@ -536,11 +590,7 @@ def _build_redacted_excerpt(
     text = "\n".join(output_lines)
     if text:
         text += "\n"
-    encoded_text = text.encode("utf-8")
-    if len(encoded_text) > bounded_bytes:
-        text = encoded_text[:bounded_bytes].decode("utf-8", errors="ignore")
-        summary.truncated = True
-    summary.excerpt_byte_count = len(text.encode("utf-8"))
+    summary.excerpt_byte_count = used_bytes
     summary.excerpt_line_count = len(output_lines)
     if len(source_lines) > len(output_lines):
         summary.truncated = True
@@ -555,14 +605,15 @@ def _build_redacted_excerpt(
 def _redact_text(
     text: str,
     resolved_target_root: Path,
+    resolved_target_root_text: str,
     summary: _RedactionSummary,
 ) -> str:
-    if _PRIVATE_TEXT_LINE_PATTERN.search(text):
+    if _has_private_text_line_marker(text) and _PRIVATE_TEXT_LINE_PATTERN.search(text):
         summary.redacted_prompt_or_response_count += 1
         summary.redaction_count += 1
         return "<redacted-private-preview>"
 
-    if any(marker in text for marker in _SECRET_REDACTION_MARKERS):
+    if _has_secret_redaction_marker(text):
         secret_text = text.lower()
         if "-----begin " in secret_text:
             text = _CERTIFICATE_PATTERN.sub(lambda _match: _record_secret(summary), text)
@@ -571,7 +622,7 @@ def _redact_text(
                 lambda match: match.group(1) + _record_secret(summary),
                 text,
             )
-        if any(marker in secret_text for marker in _NAMED_SECRET_MARKERS):
+        if _has_named_secret_marker(secret_text):
             text = _NAMED_SECRET_PATTERN.sub(
                 lambda match: f"{match.group(1)}=<redacted-secret>{_record_secret_count_only(summary)}",
                 text,
@@ -583,15 +634,77 @@ def _redact_text(
             )
         if "sk-" in text:
             text = _OPENAI_KEY_PATTERN.sub(lambda _match: _record_secret(summary), text)
-        if any(marker in secret_text for marker in _IDENTITY_MARKERS):
+        if _has_identity_marker(secret_text):
             text = _IDENTITY_PATTERN.sub(
                 lambda match: _record_identity(summary, match.group(1)),
                 text,
             )
+    if "/" not in text:
+        return text
     return _ABSOLUTE_PATH_PATTERN.sub(
-        lambda match: _redact_absolute_path(match.group(0), resolved_target_root, summary),
+        lambda match: _redact_absolute_path(
+            match.group(0),
+            resolved_target_root,
+            resolved_target_root_text,
+            summary,
+        ),
         text,
     )
+
+
+def _has_secret_redaction_marker(text: str) -> bool:
+    return (
+        "=" in text
+        or ":" in text
+        or "@" in text
+        or "sk-" in text
+        or "-----BEGIN " in text
+    )
+
+
+def _has_private_text_line_marker(text: str) -> bool:
+    stripped = text.lstrip()
+    if not stripped:
+        return False
+    first = stripped[0]
+    if first == "p" or first == "P":
+        if len(stripped) < 2:
+            return False
+        second = stripped[1]
+        if second != "r" and second != "R":
+            return False
+        leading = stripped[:23].lower()
+        return leading.startswith("prompt") or leading.startswith("private prompt template")
+    if first == "r" or first == "R":
+        if len(stripped) < 2:
+            return False
+        second = stripped[1]
+        if second != "e" and second != "E":
+            return False
+        return stripped[:8].lower() == "response"
+    if first == "c" or first == "C":
+        return stripped[:10].lower() == "completion"
+    if first == "g" or first == "G":
+        return stripped[:14].lower() == "generated text"
+    if first == "d" or first == "D":
+        return stripped[:11].lower() == "dataset row"
+    if first == "o" or first == "O":
+        return stripped[:14].lower() == "operator input"
+    return False
+
+
+def _has_named_secret_marker(secret_text: str) -> bool:
+    return (
+        "api" in secret_text
+        or "access" in secret_text
+        or "token" in secret_text
+        or "password" in secret_text
+        or "secret" in secret_text
+    )
+
+
+def _has_identity_marker(secret_text: str) -> bool:
+    return "user" in secret_text or "operator" in secret_text
 
 
 def _record_secret(summary: _RedactionSummary) -> str:
@@ -614,11 +727,17 @@ def _record_identity(summary: _RedactionSummary, key: str) -> str:
 def _redact_absolute_path(
     raw_path: str,
     resolved_target_root: Path,
+    resolved_target_root_text: str,
     summary: _RedactionSummary,
 ) -> str:
     trimmed_path = raw_path.rstrip(".,)")
     suffix = raw_path[len(trimmed_path):]
     replacement = "<absolute-path>"
+    relative_text = _target_relative_text(trimmed_path, resolved_target_root_text)
+    if relative_text is not None:
+        summary.redacted_absolute_path_count += 1
+        summary.redaction_count += 1
+        return f"<target>/{relative_text}" + suffix
     try:
         path = Path(trimmed_path)
         if ".." not in path.parts:
@@ -633,6 +752,26 @@ def _redact_absolute_path(
     return replacement + suffix
 
 
+def _target_relative_text(raw_path: str, resolved_target_root_text: str) -> str | None:
+    if not resolved_target_root_text or not raw_path.startswith(resolved_target_root_text):
+        return None
+    boundary_index = len(resolved_target_root_text)
+    if len(raw_path) == boundary_index:
+        return "."
+    if raw_path[boundary_index] != "/":
+        return None
+    relative_text = raw_path[boundary_index + 1 :]
+    if (
+        not relative_text
+        or relative_text == ".."
+        or relative_text.startswith("../")
+        or "/../" in relative_text
+        or relative_text.endswith("/..")
+    ):
+        return None
+    return relative_text
+
+
 def _diagnoses_from_excerpt(
     source_lines: list[_SourceLine],
     line_numbers: dict[int, int],
@@ -640,12 +779,18 @@ def _diagnoses_from_excerpt(
 ) -> list[dict[str, object]]:
     diagnoses: list[dict[str, object]] = []
     seen_codes: set[str] = set()
+    known_code_count = len(_KNOWN_DIAGNOSIS_CODE_SET)
     for index, line_number in line_numbers.items():
+        if len(seen_codes) == known_code_count:
+            break
         text = source_lines[index].text
+        lowered_text = text.lower()
+        if not _has_diagnosis_marker(lowered_text):
+            continue
         for pattern in _DIAGNOSIS_PATTERNS:
             if pattern.code in seen_codes:
                 continue
-            if not pattern.matches(text):
+            if not pattern.matches(text, lowered_text):
                 continue
             seen_codes.add(pattern.code)
             diagnoses.append(
@@ -662,6 +807,43 @@ def _diagnoses_from_excerpt(
     return diagnoses
 
 
+def _has_diagnosis_marker(lowered_text: str) -> bool:
+    return (
+        "arch" in lowered_text
+        or "cpu type" in lowered_text
+        or "arm64" in lowered_text
+        or "duplicate" in lowered_text
+        or "tensor" in lowered_text
+        or "already exists" in lowered_text
+        or "blob" in lowered_text
+        or "sha256" in lowered_text
+        or "artifact" in lowered_text
+        or "missing required" in lowered_text
+        or "command" in lowered_text
+        or "binary" in lowered_text
+        or "executable" in lowered_text
+        or "installed" in lowered_text
+        or "ollama" in lowered_text
+        or "mlx_lm" in lowered_text
+        or "llama" in lowered_text
+        or "invalid" in lowered_text
+        or "path" in lowered_text
+        or "directory" in lowered_text
+        or "timed out" in lowered_text
+        or "timeout" in lowered_text
+        or "deadline" in lowered_text
+        or "permi" in lowered_text
+        or "eacces" in lowered_text
+        or "memory" in lowered_text
+        or "oom" in lowered_text
+        or "failed to load" in lowered_text
+        or "model load" in lowered_text
+        or "runtime load" in lowered_text
+        or "error loading" in lowered_text
+        or "load failed" in lowered_text
+    )
+
+
 def _operator_remedies(diagnoses: list[dict[str, object]]) -> list[dict[str, object]]:
     remedies: list[dict[str, object]] = []
     for diagnosis in diagnoses:
@@ -676,6 +858,22 @@ def _operator_remedies(diagnoses: list[dict[str, object]]) -> list[dict[str, obj
             }
         )
     return remedies
+
+
+def _diagnosis_metric_counts(
+    diagnoses: list[dict[str, object]],
+) -> tuple[int, int, set[str]]:
+    parsed_failure_count = 0
+    unknown_failure_count = 0
+    matched_codes: set[str] = set()
+    for diagnosis in diagnoses:
+        code = str(diagnosis["code"])
+        if code == CODE_UNKNOWN_FAILURE:
+            unknown_failure_count += 1
+        else:
+            parsed_failure_count += 1
+            matched_codes.add(code)
+    return parsed_failure_count, unknown_failure_count, matched_codes
 
 
 def _diagnostic_coverage(

@@ -82,7 +82,7 @@ def discover_latest_metrics_path(runtime_dir: Path | None, source_name: str) -> 
 
 def discover_latest_metrics_paths(runtime_dir: Path | None, source_names: tuple[str, ...]) -> dict[str, Path | None]:
     discovered: dict[str, Path | None] = {name: None for name in source_names}
-    if runtime_dir is None:
+    if runtime_dir is None or not source_names:
         return discovered
     exact_matchers: dict[str, str] = {}
     prefix_matchers_by_initial: dict[str, list[tuple[str, str, str]]] = {}
@@ -106,38 +106,50 @@ def discover_latest_metrics_paths(runtime_dir: Path | None, source_names: tuple[
         latest_mtimes: dict[str, float | None] = {name: None for name in source_names}
         latest_paths_set = latest_paths.__setitem__
         latest_mtimes_set = latest_mtimes.__setitem__
+        empty_prefix_matchers = prefix_matchers_by_initial.get("", ())
         with os.scandir(os.fspath(runtime_dir.expanduser())) as entries:
             for entry in entries:
                 entry_name = entry.name
                 matched_source_name = exact_matchers.get(entry_name)
                 matched_source_names: list[str] | None = None
+                for source_name, prefix, suffix in prefix_matchers_by_initial.get(
+                    entry_name[:1], ()
+                ):
+                    if entry_name.startswith(prefix) and entry_name.endswith(suffix):
+                        if matched_source_name is None:
+                            matched_source_name = source_name
+                        elif matched_source_names is None:
+                            matched_source_names = [matched_source_name, source_name]
+                        else:
+                            matched_source_names.append(source_name)
+                if empty_prefix_matchers:
+                    for source_name, prefix, suffix in empty_prefix_matchers:
+                        if entry_name.endswith(suffix):
+                            if matched_source_name is None:
+                                matched_source_name = source_name
+                            elif matched_source_names is None:
+                                matched_source_names = [matched_source_name, source_name]
+                            else:
+                                matched_source_names.append(source_name)
+                for source_name, pattern in wildcard_matchers:
+                    if _matches_runtime_pattern(entry_name, pattern):
+                        if matched_source_name is None:
+                            matched_source_name = source_name
+                        elif matched_source_names is None:
+                            matched_source_names = [matched_source_name, source_name]
+                        else:
+                            matched_source_names.append(source_name)
                 if matched_source_name is None:
-                    for source_name, prefix, suffix in prefix_matchers_by_initial.get(
-                        entry_name[:1], ()
-                    ):
-                        if entry_name.startswith(prefix) and entry_name.endswith(suffix):
-                            if matched_source_names is None:
-                                matched_source_names = [source_name]
-                            else:
-                                matched_source_names.append(source_name)
-                    for source_name, pattern in wildcard_matchers:
-                        if _matches_runtime_pattern(entry_name, pattern):
-                            if matched_source_names is None:
-                                matched_source_names = [source_name]
-                            else:
-                                matched_source_names.append(source_name)
-                    if matched_source_names is None:
-                        continue
+                    continue
                 if not entry.is_file():
                     continue
                 mtime = entry.stat().st_mtime
-                if matched_source_name is not None:
+                if matched_source_names is None:
                     latest_mtime = latest_mtimes[matched_source_name]
                     if latest_mtime is None or mtime > latest_mtime:
                         latest_paths_set(matched_source_name, entry.path)
                         latest_mtimes_set(matched_source_name, mtime)
                     continue
-                assert matched_source_names is not None
                 for source_name in matched_source_names:
                     latest_mtime = latest_mtimes[source_name]
                     if latest_mtime is None or mtime > latest_mtime:

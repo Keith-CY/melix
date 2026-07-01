@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 import re
 import shutil
 import time
@@ -57,6 +58,9 @@ _CLEANABLE_VERIFICATION_STATES = {
     export_target_manifest_pb2.EXPORT_VERIFICATION_STATE_PASSED,
     export_target_manifest_pb2.EXPORT_VERIFICATION_STATE_WAIVED,
 }
+_CLEANUP_DELETE_DECISIONS = frozenset(
+    (RETENTION_DECISION_CLEANABLE, RETENTION_DECISION_DELETE_AFTER_TTL)
+)
 _EVIDENCE_PATH_FIELDS = (
     "export_report_path",
     "retention_report_path",
@@ -134,6 +138,22 @@ def materialize_export_target_layout(
     create_placeholder_files: bool = False,
     now: float | None = None,
 ) -> dict[str, object]:
+    export_report, _retention_report = _materialize_export_target_layout_reports(
+        manifest_path,
+        workspace_root,
+        create_placeholder_files=create_placeholder_files,
+        now=now,
+    )
+    return export_report
+
+
+def _materialize_export_target_layout_reports(
+    manifest_path: Path | str,
+    workspace_root: Path | str,
+    *,
+    create_placeholder_files: bool,
+    now: float | None,
+) -> tuple[dict[str, object], dict[str, object] | None]:
     manifest, validation_report = validate_export_target_manifest_file(
         manifest_path,
         return_manifest=True,
@@ -143,7 +163,7 @@ def materialize_export_target_layout(
             "schema_version": EXPORT_LAYOUT_REPORT_SCHEMA_VERSION,
             "ok": False,
             "errors": list(validation_report.errors),
-        }
+        }, None
 
     layout = build_export_target_layout(workspace_root, manifest)
     _create_layout_directories(layout)
@@ -167,7 +187,7 @@ def materialize_export_target_layout(
     )
     _write_json(layout.export_report_path, export_report)
     _write_json(layout.retention_report_path, retention_report)
-    return export_report
+    return export_report, retention_report
 
 
 def build_export_retention_report(
@@ -203,10 +223,7 @@ def build_export_retention_report(
             if decision.decision == RETENTION_DECISION_RETAIN:
                 retained_byte_size += decision.byte_size
                 retained_file_count += 1
-            elif decision.decision in {
-                RETENTION_DECISION_CLEANABLE,
-                RETENTION_DECISION_DELETE_AFTER_TTL,
-            }:
+            elif decision.decision in _CLEANUP_DELETE_DECISIONS:
                 cleanable_byte_size += decision.byte_size
                 cleanable_file_count += 1
             if decision.deleted:
@@ -283,7 +300,7 @@ def build_layout_metrics_report(
     errors: list[str] = []
 
     for manifest_path in manifest_paths:
-        export_report = materialize_export_target_layout(
+        export_report, retention_report = _materialize_export_target_layout_reports(
             manifest_path,
             root,
             create_placeholder_files=create_placeholder_files,
@@ -293,17 +310,19 @@ def build_layout_metrics_report(
         if export_report.get("ok") is not True:
             errors.extend(str(error) for error in export_report.get("errors", []))
             continue
-        if cleanup != "none":
+        if cleanup == "apply":
             retention_reports.append(
                 cleanup_export_target(
                     root / str(export_report["target_root"]) / EXPORT_TARGET_MANIFEST_FILENAME,
                     root,
-                    apply_cleanup=cleanup == "apply",
+                    apply_cleanup=True,
                     now=now,
                 )
             )
+        elif retention_report is not None:
+            retention_reports.append(retention_report)
         else:
-            retention_report_path = Path(export_report["retention_report_path"])
+            retention_report_path = root / str(export_report["retention_report_path"])
             if retention_report_path.is_file():
                 retention_reports.append(json.loads(retention_report_path.read_text(encoding="utf-8")))
 
@@ -388,16 +407,21 @@ def _materialize_placeholder_files(
     layout: ExportTargetLayout,
     manifest: export_target_manifest_pb2.ExportTargetManifest,
 ) -> None:
+    resolved_target_root = layout.target_root.resolve()
     for _section, rows in _file_sections(manifest):
         for row in rows:
-            path = _target_relative_path(layout, row.path)
+            path = _target_relative_path(layout, row.path, resolved_root=resolved_target_root)
             if path == layout.manifest_path:
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
             if not path.exists():
                 path.write_bytes(_placeholder_bytes(manifest, row))
     for field_name in _EVIDENCE_PATH_FIELDS:
-        evidence_path = _target_relative_path(layout, getattr(manifest.evidence, field_name))
+        evidence_path = _target_relative_path(
+            layout,
+            getattr(manifest.evidence, field_name),
+            resolved_root=resolved_target_root,
+        )
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         if not evidence_path.exists():
             _write_json(
@@ -432,13 +456,25 @@ def _decide_file(
     now: float,
 ) -> _FileDecision:
     path = _target_relative_path(layout, row.path, resolved_root=resolved_target_root)
-    exists = path.exists()
-    decision, reason = _retention_decision(manifest, row, path, exists, now)
+    try:
+        path_stat = path.stat()
+        exists = True
+    except OSError:
+        path_stat = None
+        exists = False
+    decision, reason = _retention_decision(
+        manifest,
+        row,
+        path,
+        exists,
+        now,
+        path_stat=path_stat,
+    )
     deleted = False
     if (
         apply_cleanup
         and exists
-        and decision in {RETENTION_DECISION_CLEANABLE, RETENTION_DECISION_DELETE_AFTER_TTL}
+        and decision in _CLEANUP_DELETE_DECISIONS
     ):
         path.unlink(missing_ok=True)
         deleted = True
@@ -463,11 +499,13 @@ def _retention_decision(
     path: Path,
     exists: bool,
     now: float,
+    *,
+    path_stat: os.stat_result | None = None,
 ) -> tuple[str, str]:
     if row.retention_class in _RETAINED_RETENTION_CLASSES:
         return RETENTION_DECISION_RETAIN, "required_or_evidence_artifact"
     if row.retention_class == export_target_manifest_pb2.EXPORT_RETENTION_CLASS_RUNTIME_LOG:
-        if _runtime_log_ttl_expired(manifest, path, exists, now):
+        if _runtime_log_ttl_expired(manifest, path, exists, now, path_stat=path_stat):
             return RETENTION_DECISION_DELETE_AFTER_TTL, "runtime_log_ttl_expired"
         return RETENTION_DECISION_RETAIN, "runtime_log_ttl_active"
     if row.retention_class in _CLEANABLE_AFTER_SUCCESS_RETENTION_CLASSES:
@@ -482,6 +520,8 @@ def _runtime_log_ttl_expired(
     path: Path,
     exists: bool,
     now: float,
+    *,
+    path_stat: os.stat_result | None = None,
 ) -> bool:
     ttl_seconds = int(manifest.retention_policy.runtime_log_ttl_seconds)
     if ttl_seconds <= 0:
@@ -489,7 +529,8 @@ def _runtime_log_ttl_expired(
     if not exists:
         return False
     try:
-        return now - path.stat().st_mtime >= ttl_seconds
+        stat_result = path.stat() if path_stat is None else path_stat
+        return now - stat_result.st_mtime >= ttl_seconds
     except FileNotFoundError:
         return False
 

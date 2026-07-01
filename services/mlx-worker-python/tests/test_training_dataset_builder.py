@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+from unittest.mock import Mock
 
 import pytest
 
@@ -829,6 +830,45 @@ def test_load_training_dataset_package_limits_validation_samples(
 
     assert package.validation_sample_count == 1
     assert package.normalized_validation_samples == [{"text": "holdout-one"}]
+
+
+def test_load_training_dataset_package_reads_manifest_as_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_path = tmp_path / "manifest-bytes-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    (package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "manifest-bytes-package",
+                "format": "text_completion",
+                "sample_count": 1,
+                "version": "1",
+                "validation_sample_count": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (package_path / "samples.jsonl").write_text(
+        '{"text": "alpha"}\n',
+        encoding="utf-8",
+    )
+
+    manifest_read_text = Mock(
+        side_effect=AssertionError(
+            "load_training_dataset_package() should byte-read manifest.json"
+        )
+    )
+    monkeypatch.setattr(Path, "read_text", manifest_read_text)
+
+    package = load_training_dataset_package(str(package_path))
+
+    assert package.dataset_id == "manifest-bytes-package"
+    assert package.normalized_samples == [{"text": "alpha"}]
+    manifest_read_text.assert_not_called()
 
 
 def test_load_training_dataset_package_stops_reading_validation_after_sample_limit(

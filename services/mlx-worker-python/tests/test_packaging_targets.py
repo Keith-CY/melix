@@ -9,6 +9,7 @@ from worker.productization.packaging_targets import (
     format_http_url_host,
     get_packaging_target_profile,
     list_packaging_target_profiles,
+    packaged_python_import_isolation_manifest,
     resolve_local_connect_host,
 )
 
@@ -40,6 +41,7 @@ def test_build_packaging_target_metadata_projects_explicit_target_fields(tmp_pat
     assert metadata["product_version"] == "0.8.11"
     assert metadata["update_channel_path"] == str((tmp_path / "stable.json").resolve())
     assert metadata["bundle_id"] == "io.melix.preview"
+    assert metadata["python_import_isolation"] == packaged_python_import_isolation_manifest()
 
 
 def test_get_packaging_target_profile_rejects_unknown_target() -> None:

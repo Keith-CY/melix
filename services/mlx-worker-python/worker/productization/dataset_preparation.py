@@ -334,12 +334,13 @@ def _partition_failed_segments(
     if not fail_segment_ids:
         return segments, []
     failed_id_set = set(fail_segment_ids)
-    successful_segments = [
-        segment for segment in segments if segment.get("segment_id") not in failed_id_set
-    ]
-    failed_segments = [
-        segment for segment in segments if segment.get("segment_id") in failed_id_set
-    ]
+    successful_segments: list[dict[str, Any]] = []
+    failed_segments: list[dict[str, Any]] = []
+    for segment in segments:
+        if segment.get("segment_id") in failed_id_set:
+            failed_segments.append(segment)
+        else:
+            successful_segments.append(segment)
     return successful_segments, failed_segments
 
 
@@ -611,6 +612,16 @@ def _classify_source_kind_name(name: str) -> str | None:
         return "text"
     if name[-5:] == ".text":
         return "text"
+    if name[-3:] == ".md":
+        return "markdown"
+    if name[-3:] == ".py":
+        return "code"
+    if name[-6:] == ".jsonl":
+        return "structured_data"
+    if name[-5:] == ".json":
+        return "structured_data"
+    if name[-4:] in (".csv", ".tsv"):
+        return "structured_data"
 
     dot_index = name.rfind(".")
     if dot_index < 0:
@@ -637,20 +648,24 @@ def _classify_source_kind_name(name: str) -> str | None:
 
 
 def _source_kind_for_name(name: str) -> str | None:
+    source_kind_by_name = _SOURCE_KIND_BY_NAME
     try:
-        cached = _SOURCE_KIND_BY_NAME[name]
+        cached = source_kind_by_name[name]
         return cached
     except KeyError:
         pass
     source_kind = _classify_source_kind_name(name)
-    if len(_SOURCE_KIND_BY_NAME) >= _SOURCE_KIND_NAME_CACHE_MAX:
-        _SOURCE_KIND_BY_NAME.clear()
-    _SOURCE_KIND_BY_NAME[name] = source_kind
+    if len(source_kind_by_name) >= _SOURCE_KIND_NAME_CACHE_MAX:
+        return source_kind
+    source_kind_by_name[name] = source_kind
     return source_kind
 
 
 def _source_kind(path: Path) -> str | None:
-    return _source_kind_for_name(path.name)
+    # Dataset ingest source paths are commonly unique filenames in large trees, so
+    # classify the basename directly on the hot path instead of paying a dict
+    # lookup/insert for cache entries that will not be reused.
+    return _classify_source_kind_name(path.name)
 
 
 def _workspace_preflight_failures(receipt: dict[str, Any]) -> list[dict[str, Any]]:
@@ -712,7 +727,7 @@ def _structured_records(path: Path, text: str) -> Iterable[dict[str, Any]]:
     suffix = path.suffix.lower()
     if suffix == ".jsonl":
         for index, line in enumerate(text.splitlines(), start=1):
-            if not line.strip():
+            if not line or line.isspace():
                 continue
             payload = json.loads(line)
             yield _record(
@@ -754,16 +769,20 @@ def _structured_text(payload: Any) -> str:
 
 def _record(path: Path, source_kind: str, text: str, metadata: dict[str, Any]) -> dict[str, Any]:
     normalized = _normalize_line_endings(text)
-    metadata = dict(metadata)
+    normalized_bytes = normalized.encode("utf-8")
+    record_metadata = dict(metadata) if metadata else {}
+    sha256 = hashlib.sha256
+    path_name = path.name
+    path_key = str(path).encode("utf-8")
     return {
-        "source_id": hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16],
-        "source_uri": path.name,
+        "source_id": sha256(path_key).hexdigest()[:16],
+        "source_uri": path_name,
         "source_kind": source_kind,
-        "content_sha256": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
-        "byte_size": len(normalized.encode("utf-8")),
+        "content_sha256": sha256(normalized_bytes).hexdigest(),
+        "byte_size": len(normalized_bytes),
         "record_count": 1,
         "text": normalized,
-        "metadata": metadata,
+        "metadata": record_metadata,
     }
 
 

@@ -55,7 +55,7 @@ def _copy_json_list(value: list[Any]) -> list[Any]:
     for item in value:
         if type(item) not in immutable_types:
             return [_copy_trajectory_provenance_value(item) for item in value]
-    return value.copy()
+    return [*value]
 
 
 def _copy_json_tuple(value: tuple[Any, ...]) -> tuple[Any, ...]:

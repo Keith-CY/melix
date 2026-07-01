@@ -45,6 +45,7 @@ _KEYWORD_BOUNDARY_TRANSLATION = str.maketrans(
     }
 )
 _KeywordHintRule = tuple[str, bool]
+_KeywordHintRuleSet = tuple[str, tuple[str, ...], tuple[str, ...]]
 
 TOOL_REGISTRY_SCHEMA_VERSION = "melix.agentic_tool_registry.v1"
 BUILTIN_TOOLSET_VERSION = "melix.agentic_tools.builtin.v1"
@@ -236,6 +237,7 @@ class ToolRegistry:
         "_tools",
         "_toolset_version",
         "_worker_tool_config_bytes",
+        "_worker_tool_config_template",
     )
 
     def __init__(
@@ -269,6 +271,7 @@ class ToolRegistry:
         )
         self._selection_cache: dict[tuple[str, ...], ToolRegistry] = {}
         self._worker_tool_config_bytes: bytes = b""
+        self._worker_tool_config_template: common_pb2.ToolConfig | None = None
         self._metrics = ToolRegistryMetrics(
             tool_count=len(self._tools),
             schema_bytes=sum(tool.schema_byte_count() for tool in self._tools),
@@ -286,6 +289,19 @@ class ToolRegistry:
         return self._metrics
 
     def select(self, names: list[str] | tuple[str, ...]) -> ToolRegistry:
+        if not names:
+            cached_selection = self._selection_cache.get(())
+            if cached_selection is not None:
+                return cached_selection
+            selection = ToolRegistry(
+                (),
+                schema_version=self._schema_version,
+                toolset_version=self._toolset_version,
+                parser=self._parser,
+                parser_contract_version=self._parser_contract_version,
+            )
+            self._selection_cache[()] = selection
+            return selection
         if isinstance(names, tuple):
             if names == self._tool_names:
                 return self
@@ -316,6 +332,10 @@ class ToolRegistry:
                     self._selection_cache.clear()
                 self._selection_cache[requested_names] = selection
                 return selection
+            if raw_name and not raw_name[0].isspace() and not raw_name[-1].isspace():
+                raise ToolRegistryError(
+                    f"Unknown tool registry entry requested: {raw_name}"
+                )
             normalized_name = raw_name.strip()
             if normalized_name:
                 requested_names = (normalized_name,)
@@ -421,8 +441,9 @@ class ToolRegistry:
         ]
 
     def as_worker_tool_config(self) -> common_pb2.ToolConfig:
-        if self._worker_tool_config_bytes:
-            return _TOOL_CONFIG_FROM_BYTES(self._worker_tool_config_bytes)
+        cached_template = self._worker_tool_config_template
+        if cached_template is not None:
+            return _copy_tool_config(cached_template)
         config = common_pb2.ToolConfig(
             tools=[tool.as_worker_tool_definition() for tool in self._tools],
             schema_format="openai-function",
@@ -432,7 +453,8 @@ class ToolRegistry:
             parser_contract_version=self._parser_contract_version,
         )
         self._worker_tool_config_bytes = config.SerializeToString()
-        return config
+        self._worker_tool_config_template = config
+        return _copy_tool_config(config)
 
     def _validate(self) -> None:
         if not self._schema_version:
@@ -460,7 +482,7 @@ def agentic_tool_catalog_registry() -> ToolRegistry:
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
     copy_tool_config = _copy_tool_config
-    if names is None or names == BUILTIN_AGENTIC_TOOL_NAMES:
+    if names is None or names is BUILTIN_AGENTIC_TOOL_NAMES or names == BUILTIN_AGENTIC_TOOL_NAMES:
         return copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
     if isinstance(names, tuple):
         cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(names)
@@ -484,34 +506,45 @@ def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> co
     return copy_tool_config(config)
 
 
+def _append_selected_tool(
+    selected_names: list[str],
+    selected_sources: dict[str, str],
+    tool_name: str,
+    source: str,
+    max_selected_tools: int,
+) -> bool:
+    if len(selected_names) >= max_selected_tools:
+        return False
+    normalized_name = tool_name.strip()
+    if not normalized_name or normalized_name in selected_sources:
+        return False
+    if normalized_name not in _BUILTIN_AGENTIC_TOOL_NAME_SET:
+        return False
+    selected_sources[normalized_name] = source
+    selected_names.append(normalized_name)
+    return True
+
+
 def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSelectionResult:
     registry = agentic_tool_catalog_registry()
     max_selected_tools = max(1, selection_input.max_selected_tools)
     if max_selected_tools == 1:
         return _build_always_only_tool_selection_result(registry, selection_input)
+    current_user_turn = selection_input.current_user_turn
+    if (
+        not selection_input.vector_selected_tool_ids
+        and not selection_input.recent_user_turns
+        and (not current_user_turn or current_user_turn.isspace())
+    ):
+        return _build_always_only_tool_selection_result(registry, selection_input)
     selected_sources: dict[str, str] = {}
     selected_names: list[str] = []
+    append_selected_tool = _append_selected_tool
     has_vector_selection = False
     has_keyword_selection = False
 
-    def add_tool(tool_name: str, source: str) -> None:
-        nonlocal has_keyword_selection, has_vector_selection
-        if len(selected_names) >= max_selected_tools:
-            return
-        normalized_name = tool_name.strip()
-        if not normalized_name or normalized_name in selected_sources:
-            return
-        if normalized_name not in _BUILTIN_AGENTIC_TOOL_NAME_SET:
-            return
-        selected_sources[normalized_name] = source
-        selected_names.append(normalized_name)
-        if source == "vector":
-            has_vector_selection = True
-        elif source == "keyword" or source == "keyword_context":
-            has_keyword_selection = True
-
     for tool_name in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES:
-        add_tool(tool_name, "always")
+        append_selected_tool(selected_names, selected_sources, tool_name, "always", max_selected_tools)
 
     selection_mode = "fallback"
     fallback_reason = "no_keyword_match"
@@ -527,7 +560,14 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
 
     if selection_input.vector_available and selection_input.vector_selected_tool_ids:
         for tool_name in selection_input.vector_selected_tool_ids:
-            add_tool(tool_name, "vector")
+            if append_selected_tool(
+                selected_names,
+                selected_sources,
+                tool_name,
+                "vector",
+                max_selected_tools,
+            ):
+                has_vector_selection = True
         if has_vector_selection:
             return _build_tool_selection_result(
                 registry,
@@ -541,13 +581,27 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
     if selection_mode != "vector":
         current_matches = _keyword_tool_matches(selection_input.current_user_turn)
         for tool_name in current_matches:
-            add_tool(tool_name, "keyword")
+            if append_selected_tool(
+                selected_names,
+                selected_sources,
+                tool_name,
+                "keyword",
+                max_selected_tools,
+            ):
+                has_keyword_selection = True
         if selection_input.recent_user_turns and len(selected_names) < max_selected_tools:
             context_matches = _keyword_tool_matches(
                 _recent_user_turns_keyword_context(selection_input.recent_user_turns)
             )
             for tool_name in context_matches:
-                add_tool(tool_name, "keyword_context")
+                if append_selected_tool(
+                    selected_names,
+                    selected_sources,
+                    tool_name,
+                    "keyword_context",
+                    max_selected_tools,
+                ):
+                    has_keyword_selection = True
         if has_keyword_selection:
             selection_mode = "keyword"
             fallback_reason = "vector_unavailable" if not selection_input.vector_available else "vector_no_match"
@@ -567,9 +621,13 @@ def _build_always_only_tool_selection_result(
     selection_input: ToolSelectionInput,
 ) -> ToolSelectionResult:
     selected_name = "local_compute"
-    selected_registry = registry.select((selected_name,))
+    if registry is _AGENTIC_TOOL_CATALOG_REGISTRY:
+        selected_registry = _ALWAYS_ONLY_TOOL_REGISTRY
+        selected_metrics = _ALWAYS_ONLY_TOOL_METRICS
+    else:
+        selected_registry = registry.select((selected_name,))
+        selected_metrics = selected_registry.metrics()
     registry_metrics = registry.metrics()
-    selected_metrics = selected_registry.metrics()
     return ToolSelectionResult(
         registry=selected_registry,
         receipt={
@@ -604,7 +662,7 @@ def _build_tool_selection_result(
         selected_registry = registry.select(tuple(selected_names))
         selected_tools = [
             {"tool_id": tool_name, "source": selected_sources[tool_name]}
-            for tool_name in selected_registry.names()
+            for tool_name in selected_names
         ]
     registry_metrics = registry.metrics()
     selected_metrics = selected_registry.metrics()
@@ -635,25 +693,27 @@ def _keyword_tool_matches(text: str) -> tuple[str, ...]:
         return ()
     if text.isspace():
         return ()
-    normalized_text = text.casefold()
+    normalized_text = text.lower()
     boundary_text = ""
     matches: list[str] = []
     append_match = matches.append
-    keyword_hint_rules = _BUILTIN_TOOL_KEYWORD_HINT_RULES
     keyword_boundary_text = _keyword_boundary_text
-    for tool_name in _KEYWORD_MATCHABLE_TOOL_NAMES:
-        rules = keyword_hint_rules.get(tool_name, ())
-        for hint, literal in rules:
-            if literal:
-                if hint in normalized_text:
-                    append_match(tool_name)
-                    break
-                continue
+    for tool_name, literal_hints, boundary_hints in _BUILTIN_TOOL_KEYWORD_HINT_RULE_ITEMS:
+        matched = False
+        for hint in literal_hints:
+            if hint in normalized_text:
+                append_match(tool_name)
+                matched = True
+                break
+        if matched:
+            continue
+        if boundary_hints:
             if not boundary_text:
                 boundary_text = keyword_boundary_text(normalized_text)
-            if hint in boundary_text:
-                append_match(tool_name)
-                break
+            for hint in boundary_hints:
+                if hint in boundary_text:
+                    append_match(tool_name)
+                    break
     return tuple(matches)
 
 
@@ -866,6 +926,14 @@ _BUILTIN_TOOL_KEYWORD_HINTS = {
     ),
 }
 _BUILTIN_TOOL_KEYWORD_HINT_RULES = _compile_keyword_hint_rules(_BUILTIN_TOOL_KEYWORD_HINTS)
+_BUILTIN_TOOL_KEYWORD_HINT_RULE_ITEMS: tuple[_KeywordHintRuleSet, ...] = tuple(
+    (
+        tool_name,
+        tuple(hint for hint, literal in _BUILTIN_TOOL_KEYWORD_HINT_RULES.get(tool_name, ()) if literal),
+        tuple(hint for hint, literal in _BUILTIN_TOOL_KEYWORD_HINT_RULES.get(tool_name, ()) if not literal),
+    )
+    for tool_name in _KEYWORD_MATCHABLE_TOOL_NAMES
+)
 
 
 _BUILTIN_TOOL_NAME_SET = frozenset(BUILTIN_AGENTIC_TOOL_NAMES)
@@ -873,6 +941,8 @@ _BUILTIN_AGENTIC_TOOLS = tuple(
     tool for tool in _AGENTIC_TOOL_CATALOG_TOOLS if tool.name in _BUILTIN_TOOL_NAME_SET
 )
 _AGENTIC_TOOL_CATALOG_REGISTRY = ToolRegistry(_AGENTIC_TOOL_CATALOG_TOOLS)
+_ALWAYS_ONLY_TOOL_REGISTRY = _AGENTIC_TOOL_CATALOG_REGISTRY.select(("local_compute",))
+_ALWAYS_ONLY_TOOL_METRICS = _ALWAYS_ONLY_TOOL_REGISTRY.metrics()
 _BUILTIN_TOOL_CONFIG_REGISTRY = ToolRegistry(_BUILTIN_AGENTIC_TOOLS)
 _BUILTIN_TOOL_CONFIG_NAMES_LIST = list(BUILTIN_AGENTIC_TOOL_NAMES)
 _BUILTIN_TOOL_CONFIG_BYTES = (

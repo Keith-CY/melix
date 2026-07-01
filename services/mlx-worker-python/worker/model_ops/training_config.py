@@ -1218,9 +1218,13 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
         cache = {}
         profile[_NORMALIZED_TARGET_MODULES_CACHE_KEY] = cache
     cached_targets = cache.get(raw_value)
+    if isinstance(cached_targets, list):
+        # Cache stores canonical lists; copy() produces a fresh list per call so
+        # callers can safely mutate without changing shared cache state.
+        return cached_targets.copy()
     if cached_targets is not None:
-        # Cache stores immutable tuples; list() produces a fresh copy per call so
-        # callers can safely iterate without risk of mutating shared cache state.
+        # Accept older tuple-style cache entries defensively for callers that may
+        # have seeded custom profiles before this helper was updated.
         return list(cached_targets)
 
     presets = profile.get(_NORMALIZED_TARGET_MODULE_PRESETS_KEY)
@@ -1243,9 +1247,9 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
             if expanded_target not in seen:
                 seen.add(expanded_target)
                 resolved_targets.append(expanded_target)
-    resolved_tuple = tuple(resolved_targets) if requested_found else default_targets
-    cache[raw_value] = resolved_tuple
-    return list(resolved_tuple)
+    resolved_list = resolved_targets if requested_found else list(default_targets)
+    cache[raw_value] = resolved_list
+    return resolved_list.copy()
 
 
 def _reject_unsafe_quantized_lora_targets(

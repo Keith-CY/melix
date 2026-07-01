@@ -13,6 +13,7 @@ from typing import Any
 from worker.productization.packaging_targets import (
     build_packaging_target_metadata,
     format_http_url_host,
+    packaged_python_import_isolation_env_exports,
     resolve_local_connect_host,
 )
 from worker.productization.startup_signals import default_update_channel_path
@@ -240,6 +241,7 @@ def render_launcher_script(
             f'export MELIX_MENU_BAR_PRESENTATION_MODE="{menu_bar_presentation_mode}"',
             f'export MELIX_PYTHON_BRIDGE_EXECUTABLE="$RESOURCES_DIR/{bundled_python_executable_relative_path}"',
             'export PYTHONUNBUFFERED=1',
+            *packaged_python_import_isolation_env_exports(),  # pragma: no cover
             f'export PYTHONPATH="$RESOURCES_DIR/{bundled_site_packages_relative_path}:$MELIX_REPO_ROOT:$MELIX_REPO_ROOT/services/mlx-worker-python"',
             'cleanup() {',
             '  status=$?',

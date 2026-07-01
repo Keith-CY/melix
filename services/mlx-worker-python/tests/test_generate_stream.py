@@ -113,6 +113,23 @@ def test_text_native_mtp_parser_metrics_fast_paths_empty_events() -> None:
         "media_feature_encoder_calls_saved": 0,
         "media_feature_work_saved_bytes": 0,
     }
+    assert engine_core_module._usage_delta(
+        prompt_tokens=8,
+        completion_tokens=2,
+        cached_prompt_tokens=-1,
+        media_usage=None,
+    ) == inference_pb2.UsageDelta(prompt_tokens=8, completion_tokens=2)
+    assert engine_core_module._usage_delta(
+        prompt_tokens=8,
+        completion_tokens=2,
+        cached_prompt_tokens=1,
+        media_usage={"media_feature_cache_hits": 3},
+    ) == inference_pb2.UsageDelta(
+        prompt_tokens=8,
+        completion_tokens=2,
+        cached_prompt_tokens=1,
+        media_feature_cache_hits=3,
+    )
     assert engine_core_module._media_feature_usage_from_probe(
         SimpleNamespace(
             media_feature_cache_hits=-1,

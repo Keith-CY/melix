@@ -1169,6 +1169,66 @@ def test_vision_family_prompt_token_count_reuses_cached_prompt_scan() -> None:
     vision_family_adapters_module._whitespace_token_count.cache_clear()
 
 
+def test_vision_family_prompt_token_count_reuses_same_media_request_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompt_text = "alpha beta gamma"
+    request = PreparedVisionRequest(
+        prompt_text=prompt_text,
+        images=[
+            PreparedImageInput(
+                bytes_data=b"x" * 32,
+                source_kind="inline",
+                reference="inline:image-one",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="image-one.jpg",
+                sha256_hex="1" * 64,
+            )
+        ],
+        videos=[],
+        video_frame_policies=[
+            PreparedVideoFramePolicy(
+                reference="video-one",
+                sampling_strategy="uniform",
+                requested_frame_budget=4,
+                effective_frame_count=4,
+                clip_start_ms=0,
+                clip_end_ms=4000,
+                clip_duration_ms=4000,
+            )
+        ],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+    )
+    token_count_calls = 0
+
+    def tracked_whitespace_token_count(text: str) -> int:
+        nonlocal token_count_calls
+        token_count_calls += 1
+        return whitespace_token_count(text)
+
+    monkeypatch.setattr(
+        vision_family_adapters_module,
+        "_whitespace_token_count",
+        tracked_whitespace_token_count,
+    )
+    family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
+    expected = len(prompt_text.split()) + 2 + 12 + family_config.prompt_token_bias
+
+    assert family_config.prompt_token_count(request) == expected
+
+    class ExplodingMediaList(list):
+        def __bool__(self) -> bool:  # pragma: no cover - exercised only on regression
+            raise AssertionError("identity cache hits should not re-read request media")
+
+    object.__setattr__(request, "images", ExplodingMediaList(request.images))
+    object.__setattr__(request, "video_frame_policies", ExplodingMediaList(request.video_frame_policies))
+    assert family_config.prompt_token_count(request) == expected
+    assert token_count_calls == 1
+
+
 def test_resolve_vision_family_config_rejects_multi_video_requests_for_single_video_families() -> None:
     family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
     request = prepare_vision_request(

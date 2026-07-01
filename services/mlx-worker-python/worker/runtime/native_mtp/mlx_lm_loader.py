@@ -80,23 +80,28 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
     path_sep = os.sep
     key_prefixes = _MTP_WEIGHT_KEY_PREFIXES
     to_text = str
+    str_startswith = str.startswith
+    str_endswith = str.endswith
+    str_rfind = str.rfind
+    safetensors_suffix = ".safetensors"
+    model_prefix = "model"
     for key, file_name in weight_map.items():
         if type(key) is str:
-            if not key.startswith(key_prefixes):
+            if not str_startswith(key, key_prefixes):
                 continue
-        elif not to_text(key).startswith(key_prefixes):
+        elif not str_startswith(to_text(key), key_prefixes):
             continue
         if type(file_name) is str:
             file_name_text = file_name
         else:
             file_name_text = to_text(file_name)
-        if not file_name_text.endswith(".safetensors"):
+        if not str_endswith(file_name_text, safetensors_suffix):
             continue
         if file_name_text in seen:
             continue
-        separator_index = file_name_text.rfind(path_sep)
+        separator_index = str_rfind(file_name_text, path_sep)
         file_basename = file_name_text if separator_index < 0 else file_name_text[separator_index + 1 :]
-        if file_basename.startswith("model"):
+        if str_startswith(file_basename, model_prefix):
             continue
         seen_add(file_name_text)
         path_text = path_join(model_path_text, file_name_text)

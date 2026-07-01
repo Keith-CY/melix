@@ -524,6 +524,7 @@ def test_build_release_gate_report_records_packaged_launch_passed_state(
                 "health_probe_reuse.time_wait_socket_count": {"max": 4.0},
                 "installed_app_audit.logical_product_identity_matches": {"min": 1.0},
                 "installed_app_audit.audit_passed": {"min": 1.0},
+                "python_import_isolation.gate_satisfied": {"min": 1.0},
             },
         },
         recovery={
@@ -539,6 +540,7 @@ def test_build_release_gate_report_records_packaged_launch_passed_state(
     )
 
     assert report["install"]["packaged_launch"]["installed_app_audit"]["audit_passed"] == 1.0
+    assert report["install"]["packaged_launch"]["python_import_isolation"]["gate_satisfied"] == 1.0
     assert report["passed"] is True
     assert report["failures"] == []
 

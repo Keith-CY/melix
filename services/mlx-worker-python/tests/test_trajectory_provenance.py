@@ -605,6 +605,31 @@ def test_copy_json_list_copies_short_scalar_lists_without_recursive_calls(
     assert copied is not source
 
 
+def test_copy_json_list_uses_literal_copy_for_scalar_lists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = ["agentic", "trajectory", 3]
+
+    class CopyBlockedList(list[object]):
+        def copy(self) -> list[object]:
+            raise AssertionError("scalar-list fast path should avoid list.copy()")
+
+    def fail_recursive_copy(value: object) -> object:
+        raise AssertionError(f"unexpected recursive copy for scalar value {value!r}")
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        fail_recursive_copy,
+    )
+
+    copied = trajectory_provenance_module._copy_json_list(CopyBlockedList(source))
+
+    assert copied == source
+    assert copied is not source
+    assert type(copied) is list
+
+
 def test_copy_json_list_still_copies_nested_mutable_items() -> None:
     source = ["agentic", {"labels": ["trajectory"]}]
 
