@@ -88,7 +88,10 @@ class ResolvedVisionFamilyConfig:
     def prompt_token_count(self, prepared_request: PreparedVisionRequest) -> int:
         if prepared_request is self._last_media_prompt_request:
             return self._last_media_prompt_token_count
-        has_media = bool(prepared_request.images or prepared_request.video_frame_policies)
+
+        images = prepared_request.images
+        video_frame_policies = prepared_request.video_frame_policies
+        has_media = bool(images or video_frame_policies)
 
         prompt_tokens = _whitespace_token_count(prepared_request.prompt_text)
 
@@ -97,7 +100,7 @@ class ResolvedVisionFamilyConfig:
             image_token_divisor = 1
         image_tokens = 0
         image_multi_token_threshold = image_token_divisor * 2
-        for image in prepared_request.images:
+        for image in images:
             byte_count = len(image.bytes_data)
             if byte_count < image_multi_token_threshold:
                 image_tokens += 1
@@ -109,7 +112,7 @@ class ResolvedVisionFamilyConfig:
             video_frame_token_cost = 1
         video_frame_count = 0
         empty_video_frame_policies = 0
-        for policy in prepared_request.video_frame_policies:
+        for policy in video_frame_policies:
             effective_frame_count = policy.effective_frame_count
             if effective_frame_count > 0:
                 video_frame_count += effective_frame_count
