@@ -207,6 +207,19 @@ def test_tool_registry_metrics_snapshot_updates_for_selected_registry() -> None:
     )
 
 
+def test_tool_registry_empty_selection_reuses_cached_registry() -> None:
+    registry = built_in_tool_registry()
+
+    selected = registry.select([])
+
+    assert selected.names() == ()
+    assert selected.metrics().tool_count == 0
+    assert selected.metrics().schema_bytes == 0
+    assert selected.metrics().required_argument_count == 0
+    assert registry.select(()) is selected
+    assert registry.select([]) is selected
+
+
 def test_tool_registry_names_reuses_registry_snapshot() -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
     expected_names = registry.names()

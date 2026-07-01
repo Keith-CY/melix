@@ -4896,6 +4896,17 @@
         "warn_pct": 5.0
       },
       {
+        "key": "empty_selection_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "empty_selection_tool_count_mean",
+        "unit": "tools",
+        "direction": "informational"
+      },
+      {
         "key": "missing_selection_elapsed_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
