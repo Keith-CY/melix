@@ -299,6 +299,28 @@ def test_export_target_diagnostics_excerpt_byte_count_reuses_incremental_account
     assert excerpt.summary.excerpt_line_count == 2
 
 
+def test_export_target_diagnostics_non_ascii_clipped_line_keeps_line_number(
+    tmp_path: Path,
+) -> None:
+    _target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [_SourceLine("logs/runtime.log", "runtime load failed at café")],
+        bounded_bytes=34,
+        bounded_lines=8,
+    )
+
+    assert excerpt.summary.truncated is True
+    assert excerpt.summary.excerpt_line_count == 1
+    assert excerpt.line_numbers == {0: 1}
+    assert excerpt.summary.excerpt_byte_count <= 34
+
+
 def test_export_target_diagnostics_resolves_target_root_once_for_many_path_redactions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
