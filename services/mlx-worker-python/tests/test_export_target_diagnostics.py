@@ -160,9 +160,13 @@ def test_export_target_diagnostics_identity_marker_fast_path_matches_markers(
     ("text", "expected"),
     [
         ("plain runtime status", False),
+        ("p", False),
+        ("R", False),
         ("  prompt: private customer prompt", True),
         ("Private prompt template: hidden", True),
+        ("\tPrIvAtE pRoMpT tEmPlAtE: hidden", True),
         ("Response=private completion", True),
+        ("runtime load failed at /tmp/melix/model", False),
         ("completion: private text", True),
         ("generated text: hidden", True),
         ("dataset row: hidden", True),
