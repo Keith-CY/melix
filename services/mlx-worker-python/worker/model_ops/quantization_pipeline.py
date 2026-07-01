@@ -1222,17 +1222,21 @@ def _source_artifact_files_for_qat(source_path: Path) -> list[Path]:
     if source_path.is_file():
         return [source_path]
     source_file_paths: list[str] = []
+    source_file_paths_append = source_file_paths.append
     stack = [os.fspath(source_path)]
+    stack_append = stack.append
+    stack_pop = stack.pop
+    scandir = os.scandir
     while stack:
-        current = stack.pop()
+        current = stack_pop()
         try:
-            with os.scandir(current) as entries:
+            with scandir(current) as entries:
                 for entry in entries:
                     try:
                         if entry.is_file():
-                            source_file_paths.append(entry.path)
+                            source_file_paths_append(entry.path)
                         elif entry.is_dir(follow_symlinks=False):
-                            stack.append(entry.path)
+                            stack_append(entry.path)
                     except OSError:
                         continue
         except OSError:
