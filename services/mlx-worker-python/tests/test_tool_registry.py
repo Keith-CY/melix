@@ -681,6 +681,42 @@ def test_agentic_tool_selection_preserves_always_available_tools_with_vector_hit
     )
 
 
+def test_agentic_tool_selection_caps_vector_hits_without_optional_routing() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search local evidence, then visit fixture://docs/provider-contract.",
+            vector_selected_tool_ids=("text_search", "visit"),
+            vector_available=True,
+            max_selected_tools=2,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selection_mode"] == "vector"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "vector"},
+    ]
+
+
+def test_agentic_tool_selection_ignores_blank_and_duplicate_vector_hits() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search local evidence.",
+            vector_selected_tool_ids=("", " text_search ", "text_search"),
+            vector_available=True,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selection_mode"] == "vector"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "vector"},
+    ]
+
+
 def test_agentic_tool_selection_uses_builtin_name_set_for_membership() -> None:
     result = select_agentic_tools_for_turn(
         ToolSelectionInput(

@@ -506,6 +506,25 @@ def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> co
     return copy_tool_config(config)
 
 
+def _append_selected_tool(
+    selected_names: list[str],
+    selected_sources: dict[str, str],
+    tool_name: str,
+    source: str,
+    max_selected_tools: int,
+) -> bool:
+    if len(selected_names) >= max_selected_tools:
+        return False
+    normalized_name = tool_name.strip()
+    if not normalized_name or normalized_name in selected_sources:
+        return False
+    if normalized_name not in _BUILTIN_AGENTIC_TOOL_NAME_SET:
+        return False
+    selected_sources[normalized_name] = source
+    selected_names.append(normalized_name)
+    return True
+
+
 def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSelectionResult:
     registry = agentic_tool_catalog_registry()
     max_selected_tools = max(1, selection_input.max_selected_tools)
@@ -520,27 +539,12 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
         return _build_always_only_tool_selection_result(registry, selection_input)
     selected_sources: dict[str, str] = {}
     selected_names: list[str] = []
+    append_selected_tool = _append_selected_tool
     has_vector_selection = False
     has_keyword_selection = False
 
-    def add_tool(tool_name: str, source: str) -> None:
-        nonlocal has_keyword_selection, has_vector_selection
-        if len(selected_names) >= max_selected_tools:
-            return
-        normalized_name = tool_name.strip()
-        if not normalized_name or normalized_name in selected_sources:
-            return
-        if normalized_name not in _BUILTIN_AGENTIC_TOOL_NAME_SET:
-            return
-        selected_sources[normalized_name] = source
-        selected_names.append(normalized_name)
-        if source == "vector":
-            has_vector_selection = True
-        elif source == "keyword" or source == "keyword_context":
-            has_keyword_selection = True
-
     for tool_name in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES:
-        add_tool(tool_name, "always")
+        append_selected_tool(selected_names, selected_sources, tool_name, "always", max_selected_tools)
 
     selection_mode = "fallback"
     fallback_reason = "no_keyword_match"
@@ -556,7 +560,14 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
 
     if selection_input.vector_available and selection_input.vector_selected_tool_ids:
         for tool_name in selection_input.vector_selected_tool_ids:
-            add_tool(tool_name, "vector")
+            if append_selected_tool(
+                selected_names,
+                selected_sources,
+                tool_name,
+                "vector",
+                max_selected_tools,
+            ):
+                has_vector_selection = True
         if has_vector_selection:
             return _build_tool_selection_result(
                 registry,
@@ -570,13 +581,27 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
     if selection_mode != "vector":
         current_matches = _keyword_tool_matches(selection_input.current_user_turn)
         for tool_name in current_matches:
-            add_tool(tool_name, "keyword")
+            if append_selected_tool(
+                selected_names,
+                selected_sources,
+                tool_name,
+                "keyword",
+                max_selected_tools,
+            ):
+                has_keyword_selection = True
         if selection_input.recent_user_turns and len(selected_names) < max_selected_tools:
             context_matches = _keyword_tool_matches(
                 _recent_user_turns_keyword_context(selection_input.recent_user_turns)
             )
             for tool_name in context_matches:
-                add_tool(tool_name, "keyword_context")
+                if append_selected_tool(
+                    selected_names,
+                    selected_sources,
+                    tool_name,
+                    "keyword_context",
+                    max_selected_tools,
+                ):
+                    has_keyword_selection = True
         if has_keyword_selection:
             selection_mode = "keyword"
             fallback_reason = "vector_unavailable" if not selection_input.vector_available else "vector_no_match"
