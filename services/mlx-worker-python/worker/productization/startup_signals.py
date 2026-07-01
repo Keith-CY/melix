@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterator, Mapping, NamedTuple
 
@@ -257,6 +258,7 @@ def _read_update_channel_version(
     return latest_version, channel
 
 
+@lru_cache(maxsize=16_384)
 def compare_versions(left: str, right: str) -> int:
     if left == right:
         return 0

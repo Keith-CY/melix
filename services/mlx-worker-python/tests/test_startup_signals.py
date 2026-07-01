@@ -328,6 +328,30 @@ def test_compare_versions_handles_suffixes_without_padding_lists() -> None:
     assert compare_versions("2.10", "2.10.0.0") == 0
 
 
+def test_compare_versions_reuses_cached_result_for_repeated_pairs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compare_versions.cache_clear()
+    calls = 0
+    original_compare_parts = startup_signals_module._compare_normalized_version_parts
+
+    def counted_compare_parts(left: str, right: str, left_index: int, right_index: int) -> int:
+        nonlocal calls
+        calls += 1
+        return original_compare_parts(left, right, left_index, right_index)
+
+    monkeypatch.setattr(
+        startup_signals_module,
+        "_compare_normalized_version_parts",
+        counted_compare_parts,
+    )
+
+    assert compare_versions("v3.2.1+build", "3.2.0") == 1
+    assert compare_versions("v3.2.1+build", "3.2.0") == 1
+    assert calls == 1
+    compare_versions.cache_clear()
+
+
 def test_compare_versions_streams_parts_without_materialized_normalization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

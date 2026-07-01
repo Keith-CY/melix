@@ -27,3 +27,19 @@ The affected path is covered by the registered PR-scoped performance probe `star
 ## Linux validation boundary
 
 This is a Python-only slice and is locally verifiable on Linux. No Swift runtime behavior changes are included.
+
+## 2026-07-01 follow-up: repeated version-pair cache
+
+The next focused Python slice keeps the same registered probe and narrows the
+optimization to repeated `compare_versions(left, right)` pairs. Startup update
+checks and the registered probe repeatedly compare identical installed/latest
+version strings while the channel file remains stat-valid. Decorating
+`compare_versions` with a bounded `lru_cache` preserves the existing parsing and
+normalization semantics for cold pairs while letting hot repeated pairs return
+without rescanning the version strings.
+
+The cache is intentionally bounded (`16_384` entries) so the registered probe's
+12k comparison corpus fits while long-running processes cannot grow the cache
+unbounded. Verification remains the existing focused startup-signals test,
+coverage, and registered local probe commands, followed by the PR-scoped
+performance workflow as the merge gate.
