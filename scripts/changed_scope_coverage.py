@@ -317,8 +317,15 @@ def _measurable_changed_lines(
             if _sorted_line_list_contains(missing_lookup, line_no)
         ]
     else:
-        covered = [line_no for line_no in measurable if line_no in executed_lookup]
-        missed = [line_no for line_no in measurable if line_no in missing_lookup]
+        covered = []
+        missed = []
+        covered_append = covered.append
+        missed_append = missed.append
+        for line_no in measurable:
+            if line_no in executed_lookup:
+                covered_append(line_no)
+            elif line_no in missing_lookup:
+                missed_append(line_no)
     return measurable, covered, missed
 
 
