@@ -744,10 +744,7 @@ def _summarize_stdio(*, stdout_tail: str, stderr_tail: str) -> str:
 
 def _sandbox_profile(*, temp_root: Path) -> str:
     static_profile = _sandbox_static_profile_fragments(_sandbox_static_profile_key())
-    temp_read_filters = " ".join(
-        f"(subpath {json.dumps(str(path))})"
-        for path in _sandbox_allow_path_variants((temp_root,))
-    )
+    temp_read_filters = _sandbox_temp_root_read_filters(temp_root)
     return " ".join(
         (
             static_profile.prefix,
@@ -755,6 +752,19 @@ def _sandbox_profile(*, temp_root: Path) -> str:
             f"(allow file-write* (subpath {json.dumps(str(temp_root))}))",
         )
     )
+
+
+def _sandbox_temp_root_read_filters(temp_root: Path) -> str:
+    temp_root_text = str(temp_root)
+    try:
+        resolved = temp_root.resolve()
+    except OSError:
+        resolved = temp_root
+    resolved_text = str(resolved)
+    temp_filter = f"(subpath {json.dumps(temp_root_text)})"
+    if resolved_text == temp_root_text:
+        return temp_filter
+    return f"{temp_filter} (subpath {json.dumps(resolved_text)})"
 
 
 @dataclass(frozen=True)

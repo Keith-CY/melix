@@ -780,6 +780,37 @@ def test_sandbox_static_profile_key_reuses_cached_fingerprint_without_tuple_rebu
     code_eval_runner._sandbox_static_profile_key_cache_clear()
 
 
+def test_sandbox_temp_root_read_filters_elides_duplicate_resolved_path(
+    tmp_path: Path,
+) -> None:
+    filters = code_eval_runner._sandbox_temp_root_read_filters(tmp_path)
+
+    assert filters == f"(subpath {json.dumps(str(tmp_path))})"
+
+
+def test_sandbox_temp_root_read_filters_preserves_relative_and_resolved_paths() -> None:
+    temp_root = Path("relative-eval-root")
+    filters = code_eval_runner._sandbox_temp_root_read_filters(temp_root)
+
+    assert filters == (
+        f"(subpath {json.dumps(str(temp_root))}) "
+        f"(subpath {json.dumps(str(temp_root.resolve()))})"
+    )
+
+
+def test_sandbox_temp_root_read_filters_falls_back_when_resolve_raises() -> None:
+    class BrokenTempRoot:
+        def __str__(self) -> str:
+            return "broken-temp-root"
+
+        def resolve(self):
+            raise OSError("broken resolve")
+
+    filters = code_eval_runner._sandbox_temp_root_read_filters(cast(Path, BrokenTempRoot()))
+
+    assert filters == f"(subpath {json.dumps('broken-temp-root')})"
+
+
 def test_runner_script_reuses_precomputed_static_payload(monkeypatch) -> None:
     code_eval_runner._runner_script.cache_clear()
     calls = 0
