@@ -171,6 +171,13 @@ fast path for rendered excerpt lines. ASCII runtime log lines now account for
 `len(rendered) + 1` directly and only encode the uncommon non-ASCII path, while
 clipped ASCII lines preserve the existing newline-inclusive byte boundary.
 
+A follow-up 2026-07-01 private-line marker scan slice keeps the redaction
+contract unchanged while short-circuiting prompt/response label checks before
+building lowercased prefix substrings. The marker helper now checks the second
+character for the `p*` and `r*` branches first, so common runtime lines such as
+`runtime load failed ...` and ordinary `plain ...` status lines can skip the
+anchored private-text regex without transient lowercased prefix strings.
+
 Focused verification:
 
 ```bash

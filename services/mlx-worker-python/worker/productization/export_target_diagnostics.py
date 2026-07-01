@@ -668,9 +668,19 @@ def _has_private_text_line_marker(text: str) -> bool:
         return False
     first = stripped[0]
     if first == "p" or first == "P":
+        if len(stripped) < 2:
+            return False
+        second = stripped[1]
+        if second != "r" and second != "R":
+            return False
         leading = stripped[:23].lower()
         return leading.startswith("prompt") or leading.startswith("private prompt template")
     if first == "r" or first == "R":
+        if len(stripped) < 2:
+            return False
+        second = stripped[1]
+        if second != "e" and second != "E":
+            return False
         return stripped[:8].lower() == "response"
     if first == "c" or first == "C":
         return stripped[:10].lower() == "completion"
