@@ -12113,6 +12113,99 @@ struct MelixCLIRunnerTests {
         #expect(json.contains(cert.path) == false)
     }
 
+    @Test("desktop environment diagnostic receipt redacts malformed proxy credentials")
+    func desktopEnvironmentDiagnosticReceiptRedactsMalformedProxyCredentials() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-env-proxy-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let melixHome = MelixHome(environment: ["MELIX_HOME": root.path])
+        try FileManager.default.createDirectory(at: melixHome.rootURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome.runtimeDirectoryURL, withIntermediateDirectories: true)
+
+        let receipt = MelixDesktopEnvironmentDiagnosticBuilder.build(
+            melixHome: melixHome,
+            environment: [
+                "MELIX_HOME": melixHome.rootURL.path,
+                "MELIX_RUNTIME_DIR": melixHome.runtimeDirectoryURL.path,
+                "HTTP_PROXY": "http://svcacct:my pass@proxy.internal:8080",
+                "HTTPS_PROXY": "http://svcacct:p%off@proxy.internal:8080",
+                "ALL_PROXY": "http://svcacct:pa#ss@proxy.internal:8080",
+            ]
+        )
+
+        let checks = try #require(receipt.payload["checks"] as? [[String: Any]])
+        let proxy = try #require(checks.first { $0["check_kind"] as? String == "proxy_environment" })
+        let proxyObserved = try #require(proxy["observed"] as? [String: Any])
+        let proxyVariables = try #require(proxyObserved["variables"] as? [[String: Any]])
+
+        #expect(proxy["status"] as? String == "warn")
+        #expect(proxy["redaction_count"] as? Int == 3)
+        #expect(proxyVariables.allSatisfy { ($0["contains_credentials"] as? Bool) == true })
+        for variable in proxyVariables {
+            let value = variable["value"] as? String ?? ""
+            #expect(value.contains("my pass") == false)
+            #expect(value.contains("p%off") == false)
+            #expect(value.contains("pa#ss") == false)
+            #expect(value.contains("redacted") == true)
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: receipt.payload)
+        let json = try #require(String(data: data, encoding: .utf8))
+        #expect(json.contains("my pass") == false)
+        #expect(json.contains("p%off") == false)
+        #expect(json.contains("pa#ss") == false)
+    }
+
+    @Test("desktop environment diagnostic receipt reconciles shell path and unknown summary counts")
+    func desktopEnvironmentDiagnosticReceiptReconcilesShellPathAndUnknownSummaryCounts() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-env-summary-\(UUID().uuidString)")
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for name in ["melix", "uv", "python3", "mlx_lm"] {
+            let executable = bin.appendingPathComponent(name)
+            try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        }
+        let melixHome = MelixHome(environment: [
+            "MELIX_HOME": root.appendingPathComponent("home", isDirectory: true).path,
+            "MELIX_RUNTIME_DIR": root.appendingPathComponent("runtime", isDirectory: true).path,
+        ])
+        try FileManager.default.createDirectory(at: melixHome.rootURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome.runtimeDirectoryURL, withIntermediateDirectories: true)
+
+        let receipt = MelixDesktopEnvironmentDiagnosticBuilder.build(
+            melixHome: melixHome,
+            environment: [
+                "MELIX_HOME": melixHome.rootURL.path,
+                "MELIX_RUNTIME_DIR": melixHome.runtimeDirectoryURL.path,
+                "PATH": bin.path,
+                "MELIX_PYTHON_BRIDGE_EXECUTABLE": bin.appendingPathComponent("python3").path,
+                "MELIX_UV": bin.appendingPathComponent("uv").path,
+                "MELIX_MLX_LM": bin.appendingPathComponent("mlx_lm").path,
+            ]
+        )
+
+        let checks = try #require(receipt.payload["checks"] as? [[String: Any]])
+        let shellPath = try #require(checks.first { $0["check_kind"] as? String == "shell_path" })
+        let shellPathEvidence = try #require(shellPath["evidence"] as? [String: Any])
+        let summary = try #require(receipt.payload["summary"] as? [String: Any])
+        let checkCount = try #require(summary["check_count"] as? Int)
+        let failedCount = try #require(summary["failed_check_count"] as? Int)
+        let warningCount = try #require(summary["warning_check_count"] as? Int)
+        let passedCount = try #require(summary["passed_check_count"] as? Int)
+        let unknownCount = try #require(summary["unknown_check_count"] as? Int)
+
+        #expect(shellPath["status"] as? String == "pass")
+        #expect(shellPathEvidence["failure_modes"] as? [String] == [])
+        #expect(shellPath["redaction_count"] as? Int == 4)
+        #expect(failedCount == 0)
+        #expect(warningCount == 0)
+        #expect(unknownCount == 2)
+        #expect(failedCount + warningCount + passedCount + unknownCount == checkCount)
+    }
+
     @Test("lora list fails when the server snapshot has no models")
     func loraListFailsWhenServerSnapshotIsEmpty() async throws {
         let client = StubControlPlaneXPCClient()

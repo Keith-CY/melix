@@ -326,6 +326,7 @@ public enum MelixDesktopEnvironmentDiagnosticBuilder {
 
         let failedCount = checks.filter { ($0["status"] as? String) == "fail" }.count
         let warningCount = checks.filter { ($0["status"] as? String) == "warn" }.count
+        let unknownCount = checks.filter { ($0["status"] as? String) == "unknown" }.count
         let completedAt = currentUnixMilliseconds()
         func checkLatency(_ kind: String) -> Int {
             checks.reduce(0) { partial, check in
@@ -355,6 +356,7 @@ public enum MelixDesktopEnvironmentDiagnosticBuilder {
                 "failed_check_count": failedCount,
                 "warning_check_count": warningCount,
                 "passed_check_count": checks.filter { ($0["status"] as? String) == "pass" }.count,
+                "unknown_check_count": unknownCount,
             ],
             "redaction_summary": [
                 "schema_version": MelixDiagnosticsRedaction.schemaVersion,
@@ -380,8 +382,12 @@ public enum MelixDesktopEnvironmentDiagnosticBuilder {
         let entries = pathEntries(environment["PATH"])
         let observedEntries = entries.map { pathRedaction($0) }
         let requiredBinaryNames = ["melix", "uv", "python3"]
+        var resolvedPathRedactionCount = 0
         let resolved = requiredBinaryNames.map { name -> [String: Any] in
             let candidate = resolveExecutable(named: name, environment: environment, fileManager: fileManager)
+            if candidate != nil {
+                resolvedPathRedactionCount += 1
+            }
             return [
                 "name": name,
                 "path": candidate.map(pathRedaction(_:)) ?? "",
@@ -409,11 +415,22 @@ public enum MelixDesktopEnvironmentDiagnosticBuilder {
                 ? "No PATH remediation is needed."
                 : "Configure packaged launch environment or MELIX_CLI/MELIX_PYTHON_BRIDGE_EXECUTABLE so Finder-launched Desktop can resolve runtime binaries.",
             evidence: [
-                "failure_modes": entries.isEmpty ? ["missing_path_entry"] : ["binary_not_found"],
+                "failure_modes": shellPathFailureModes(entries: entries, missing: missing),
             ],
-            redactionCount: observedEntries.count,
+            redactionCount: observedEntries.count + resolvedPathRedactionCount,
             startedAtUnixMS: started
         )
+    }
+
+    private static func shellPathFailureModes(entries: [String], missing: [String]) -> [String] {
+        var modes: [String] = []
+        if entries.isEmpty {
+            modes.append("missing_path_entry")
+        }
+        if missing.isEmpty == false {
+            modes.append("binary_not_found")
+        }
+        return modes
     }
 
     private static func runtimeBinaryCheck(environment: [String: String], fileManager: FileManager) -> [String: Any] {
@@ -748,7 +765,7 @@ public enum MelixDesktopEnvironmentDiagnosticBuilder {
 
     private static func redactProxy(_ value: String) -> String {
         guard let proxy = proxyComponentsWithUserInfo(value) else {
-            return MelixDiagnosticsRedaction.redactString(value)
+            return MelixDiagnosticsRedaction.redactString(redactProxyUserInfoFallback(value))
         }
         var components = proxy.components
         components.user = "<redacted>"
@@ -759,7 +776,7 @@ public enum MelixDesktopEnvironmentDiagnosticBuilder {
     }
 
     private static func containsURLUserInfo(_ value: String) -> Bool {
-        proxyComponentsWithUserInfo(value) != nil
+        proxyComponentsWithUserInfo(value) != nil || proxyUserInfoRangeFallback(value) != nil
     }
 
     private static func proxyComponentsWithUserInfo(_ value: String) -> (components: URLComponents, schemelessAuthority: Bool)? {
@@ -774,6 +791,30 @@ public enum MelixDesktopEnvironmentDiagnosticBuilder {
             return nil
         }
         return (components, true)
+    }
+
+    private static func redactProxyUserInfoFallback(_ value: String) -> String {
+        guard let range = proxyUserInfoRangeFallback(value) else {
+            return value
+        }
+        var redacted = value
+        redacted.replaceSubrange(range, with: "<redacted>")
+        return redacted
+    }
+
+    private static func proxyUserInfoRangeFallback(_ value: String) -> Range<String.Index>? {
+        guard let atIndex = value.firstIndex(of: "@") else {
+            return nil
+        }
+        let prefix = value[..<atIndex]
+        let userInfoStart = prefix.range(of: "://", options: .backwards)?.upperBound ?? value.startIndex
+        let userInfo = value[userInfoStart..<atIndex]
+        guard userInfo.isEmpty == false,
+              userInfo.rangeOfCharacter(from: .whitespacesAndNewlines.inverted) != nil
+        else {
+            return nil
+        }
+        return userInfoStart..<atIndex
     }
 }
 

@@ -97,6 +97,12 @@ Required top-level fields:
 - `redaction_summary`
 - `metrics`
 
+The diagnostic `summary` must include the aggregate `status`, `check_count`,
+`failed_check_count`, `warning_check_count`, `passed_check_count`, and
+`unknown_check_count`. The status breakdown counts must reconcile with
+`check_count` so deferred probes remain visible without being counted as passes
+or warnings.
+
 Each diagnostic check must include:
 
 - `check_id`
