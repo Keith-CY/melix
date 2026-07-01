@@ -513,10 +513,15 @@ def _append_selected_tool(
     source: str,
     max_selected_tools: int,
 ) -> bool:
-    if len(selected_names) >= max_selected_tools:
+    if len(selected_names) >= max_selected_tools or not tool_name:
         return False
-    normalized_name = tool_name.strip()
-    if not normalized_name or normalized_name in selected_sources:
+    if tool_name[0].isspace() or tool_name[-1].isspace():
+        normalized_name = tool_name.strip()
+        if not normalized_name:
+            return False
+    else:
+        normalized_name = tool_name
+    if normalized_name in selected_sources:
         return False
     if normalized_name not in _BUILTIN_AGENTIC_TOOL_NAME_SET:
         return False

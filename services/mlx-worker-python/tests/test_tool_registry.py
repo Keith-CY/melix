@@ -328,6 +328,52 @@ def test_tool_registry_select_trims_blanks_and_deduplicates_in_one_pass() -> Non
     assert selected.names() == ("visit", "image_crop")
 
 
+def test_append_selected_tool_skips_strip_for_canonical_names() -> None:
+    class StripCountingName(str):
+        strip_calls = 0
+
+        def strip(self, chars: str | None = None) -> str:
+            type(self).strip_calls += 1
+            return super().strip(chars)
+
+    selected_names: list[str] = []
+    selected_sources: dict[str, str] = {}
+    canonical_name = StripCountingName("text_search")
+
+    assert tool_registry_module._append_selected_tool(
+        selected_names,
+        selected_sources,
+        canonical_name,
+        "keyword",
+        4,
+    )
+
+    assert StripCountingName.strip_calls == 0
+    assert selected_names == ["text_search"]
+    assert selected_sources == {"text_search": "keyword"}
+
+    whitespace_name = StripCountingName("  visit  ")
+    assert tool_registry_module._append_selected_tool(
+        selected_names,
+        selected_sources,
+        whitespace_name,
+        "keyword",
+        4,
+    )
+    assert StripCountingName.strip_calls == 1
+    assert selected_names == ["text_search", "visit"]
+    assert selected_sources["visit"] == "keyword"
+
+    assert not tool_registry_module._append_selected_tool(
+        selected_names,
+        selected_sources,
+        StripCountingName("   "),
+        "keyword",
+        4,
+    )
+    assert StripCountingName.strip_calls == 2
+
+
 def test_tool_registry_select_reuses_cached_name_index() -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
     object.__setattr__(registry, "_tools", ())
