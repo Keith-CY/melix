@@ -215,6 +215,16 @@ struct RuntimeEvidenceReportStateTests {
         #expect(result.environmentDiagnostic?.latencyText == "0 ms")
     }
 
+    @Test("diagnostics debug bundle fixture supports missing environment diagnostic")
+    func diagnosticsDebugBundleFixtureSupportsMissingEnvironmentDiagnostic() throws {
+        let result = try RuntimeDiagnosticsDebugBundleState.decode(
+            json: makeDiagnosticsDebugBundleJSON(environmentDiagnosticJSON: "")
+        )
+
+        #expect(result.environmentDiagnostic == nil)
+        #expect(result.mediaRouteReceipt?.mediaRoute == "swift_text")
+    }
+
     @Test("diagnostics summarizes serving diagnostics queue retention and drops")
     @MainActor
     func diagnosticsSummarizesServingDiagnosticsQueueRetentionAndDrops() throws {

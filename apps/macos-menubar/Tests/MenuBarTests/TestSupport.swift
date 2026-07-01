@@ -3040,6 +3040,8 @@ func makeDiagnosticsDebugBundleJSON(
       }
     """
 ) -> String {
+    let environmentDiagnosticEntry = environmentDiagnosticJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+    let environmentDiagnosticField = environmentDiagnosticEntry.isEmpty ? "" : ",\n      \(environmentDiagnosticEntry)"
     let servingDiagnosticsJSON: String
     if let servingDiagnosticsEventCount, let servingDiagnosticsDroppedEventCount {
         servingDiagnosticsJSON = """
@@ -3065,8 +3067,7 @@ func makeDiagnosticsDebugBundleJSON(
       "debug_jsonl_event_limit": 256,
       "redaction_schema_version": "melix.diagnostics.redaction.v1",
       "redacted_field_count": 3,
-      "source_run_record_path": "/tmp/melix/jobs/\(bundleID)/run-record.json",
-      \(environmentDiagnosticJSON),
+      "source_run_record_path": "/tmp/melix/jobs/\(bundleID)/run-record.json"\(environmentDiagnosticField),
       "media_route_receipt": {
         "media_route": "swift_text",
         "media_parts_count": 0,
