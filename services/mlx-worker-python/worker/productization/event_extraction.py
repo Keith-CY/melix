@@ -1678,6 +1678,40 @@ def _maximum_weight_semantic_value_group_matching(
             -float(candidate.get("score", 0.0) or 0.0),
         ),
     )
+    ordered_entries: list[tuple[dict[str, object], int, int, float, int]] = []
+    ordered_entries_append = ordered_entries.append
+    for candidate in ordered_candidates:
+        raw_gold_indices = candidate.get("gold_indices", ())
+        gold_indices = raw_gold_indices if isinstance(raw_gold_indices, tuple) else ()
+        gold_mask = 0
+        gold_consumed = 0
+        for index in gold_indices:
+            if isinstance(index, int) and 0 <= index < gold_count:
+                gold_mask |= 1 << index
+                gold_consumed += 1
+        if not gold_mask:
+            continue
+        raw_pred_indices = candidate.get("pred_indices", ())
+        pred_indices = raw_pred_indices if isinstance(raw_pred_indices, tuple) else ()
+        pred_mask = 0
+        pred_consumed = 0
+        for index in pred_indices:
+            if isinstance(index, int) and 0 <= index < pred_count:
+                pred_mask |= 1 << index
+                pred_consumed += 1
+        if not pred_mask:
+            continue
+        raw_score = candidate.get("score", 0.0)
+        score = raw_score if isinstance(raw_score, (float, int)) else 0.0
+        ordered_entries_append(
+            (
+                candidate,
+                gold_mask,
+                pred_mask,
+                float(score),
+                gold_consumed + pred_consumed,
+            )
+        )
     memo: dict[tuple[int, int, int], tuple[float, int, tuple[int, ...]]] = {}
 
     def better(
@@ -1697,31 +1731,17 @@ def _maximum_weight_semantic_value_group_matching(
         key = (candidate_index, used_gold_mask, used_pred_mask)
         if key in memo:
             return memo[key]
-        if candidate_index >= len(ordered_candidates):
+        if candidate_index >= len(ordered_entries):
             return (0.0, 0, ())
 
         best = solve(candidate_index + 1, used_gold_mask, used_pred_mask)
-        candidate = ordered_candidates[candidate_index]
-        gold_indices = tuple(
-            index
-            for index in candidate.get("gold_indices", ())
-            if isinstance(index, int) and 0 <= index < gold_count
-        )
-        pred_indices = tuple(
-            index
-            for index in candidate.get("pred_indices", ())
-            if isinstance(index, int) and 0 <= index < pred_count
-        )
-        gold_mask = sum(1 << index for index in gold_indices)
-        pred_mask = sum(1 << index for index in pred_indices)
-        if gold_indices and pred_indices and not (used_gold_mask & gold_mask) and not (used_pred_mask & pred_mask):
+        _candidate, gold_mask, pred_mask, score, consumed = ordered_entries[candidate_index]
+        if not (used_gold_mask & gold_mask) and not (used_pred_mask & pred_mask):
             next_score, next_consumed, next_indices = solve(
                 candidate_index + 1,
                 used_gold_mask | gold_mask,
                 used_pred_mask | pred_mask,
             )
-            score = float(candidate.get("score", 0.0) or 0.0)
-            consumed = len(gold_indices) + len(pred_indices)
             taken = (score + next_score, consumed + next_consumed, (candidate_index,) + next_indices)
             if better(taken, best):
                 best = taken
@@ -1729,7 +1749,7 @@ def _maximum_weight_semantic_value_group_matching(
         return best
 
     _score, _consumed, indices = solve(0, 0, 0)
-    return [ordered_candidates[index] for index in indices]
+    return [ordered_entries[index][0] for index in indices]
 
 
 def _semantic_action_match_payload(
