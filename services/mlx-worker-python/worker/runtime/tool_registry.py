@@ -289,6 +289,19 @@ class ToolRegistry:
         return self._metrics
 
     def select(self, names: list[str] | tuple[str, ...]) -> ToolRegistry:
+        if not names:
+            cached_selection = self._selection_cache.get(())
+            if cached_selection is not None:
+                return cached_selection
+            selection = ToolRegistry(
+                (),
+                schema_version=self._schema_version,
+                toolset_version=self._toolset_version,
+                parser=self._parser,
+                parser_contract_version=self._parser_contract_version,
+            )
+            self._selection_cache[()] = selection
+            return selection
         if isinstance(names, tuple):
             if names == self._tool_names:
                 return self

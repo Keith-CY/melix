@@ -94,6 +94,17 @@ fallback before allocating the selected-name/source containers or invoking the
 keyword matcher. The receipt shape, `vector_available` flag, fallback reason,
 and selected tool list remain unchanged.
 
+## Slice update: empty selection cache fast path
+
+This incremental slice keeps the same `tool-registry-select-name-index-cache`
+registered probe and narrows the optimization to explicit empty selection
+requests such as `select([])` and `select(())`. The empty selected registry is
+now served from the selection cache before allocating normalization containers,
+while preserving the empty registry metrics snapshot and immutable selection
+semantics. The probe records `empty_selection_elapsed_ms_mean` and
+`empty_selection_tool_count_mean` so CI and local Linux runs validate the hot
+path directly.
+
 ## Acceptance Criteria
 
 - Focused behavior tests pass locally on Linux.
