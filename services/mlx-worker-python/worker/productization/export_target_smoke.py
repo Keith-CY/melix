@@ -434,10 +434,11 @@ def _waiver_for_load_failure(
         return None
     if load_check.failure_code != "runtime_not_installed":
         return None
-    allowed = set(manifest.verification_policy.allowed_waiver_reasons)
+    if not manifest.verification_policy.waiver_allowed:
+        return None
     if (
-        not manifest.verification_policy.waiver_allowed
-        or export_target_manifest_pb2.EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED not in allowed
+        export_target_manifest_pb2.EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED
+        not in manifest.verification_policy.allowed_waiver_reasons
     ):
         return None
     reason = "EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED"

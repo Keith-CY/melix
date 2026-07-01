@@ -154,6 +154,53 @@ def test_export_target_smoke_records_runtime_unavailable_waiver(
     assert updated_report["ok"] is True
 
 
+def test_export_target_smoke_waiver_reason_membership_avoids_set_materialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = FIXTURE_ROOT / "ollama/export-target-manifest.json"
+    export_report = materialize_export_target_layout(
+        manifest_path,
+        tmp_path,
+        create_placeholder_files=True,
+    )
+    target_root = tmp_path / str(export_report["target_root"])
+    manifest, validation_report = validate_export_target_manifest_file(
+        target_root / "export-target-manifest.json",
+        return_manifest=True,
+    )
+    assert validation_report.ok is True
+
+    load_check = export_target_smoke._CheckResult(
+        status=export_target_smoke.CHECK_STATUS_FAILED,
+        started_at="2026-07-01T00:00:00Z",
+        ended_at="2026-07-01T00:00:00Z",
+        duration_ms=0.0,
+        timeout_ms=1000,
+        failure_code="runtime_not_installed",
+        failure_message="runtime binary not installed: ollama",
+        evidence_path="smoke/smoke-receipt.json",
+        diagnostics_receipt_path="diagnostics/diagnostics-receipt.json",
+    )
+
+    def fail_set(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError(  # pragma: no cover - exercised only on regression
+            "waiver reason membership should not materialize a set"
+        )
+
+    monkeypatch.setattr(export_target_smoke, "set", fail_set, raising=False)
+
+    waiver = export_target_smoke._waiver_for_load_failure(
+        manifest,
+        load_check,
+        operator_id="ci-smoke",
+        now=0.0,
+    )
+
+    assert waiver is not None
+    assert waiver["reason"] == "EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED"
+
+
 def test_export_target_smoke_bounds_generation_preview_and_omits_host_paths(
     tmp_path: Path,
 ) -> None:
