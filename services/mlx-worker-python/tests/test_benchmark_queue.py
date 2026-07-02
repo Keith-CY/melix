@@ -51,6 +51,19 @@ def test_benchmark_queue_record_uses_slots_without_instance_dict() -> None:
     assert hasattr(record, "__dict__") is False
 
 
+def test_metadata_key_from_stat_reuses_integer_fields(tmp_path: Path) -> None:
+    record_path = tmp_path / "queue-item.json"
+    record_path.write_text("{}", encoding="utf-8")
+    stat_result = record_path.stat()
+
+    assert BenchmarkQueueStore._metadata_key_from_stat(stat_result) == (
+        stat_result.st_mtime_ns,
+        stat_result.st_size,
+        stat_result.st_ino,
+        stat_result.st_dev,
+    )
+
+
 def test_benchmark_queue_record_from_dict_preserves_string_fast_path_and_coerces_fallback() -> None:
     record = BenchmarkQueueRecord.from_dict(
         {
