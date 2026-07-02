@@ -1470,6 +1470,13 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
             "optional_note": None,
             "metadata": {
                 "labels": ("retrieved", {"kind": "document"}, {"bucket": 1}),
+                "long_labels": (
+                    "retrieved",
+                    {"kind": "document"},
+                    {"bucket": 1},
+                    {"source": "local"},
+                    {"shard": 4},
+                ),
                 "scores": [3, 4, {"rank": 0}],
                 "single_key_detail": {"summary": {"nested": "copied"}},
             },
@@ -1500,6 +1507,18 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
     assert (
         copied["retrieved_context"]["metadata"]["labels"]
         is not payload["retrieved_context"]["metadata"]["labels"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["long_labels"]
+        == payload["retrieved_context"]["metadata"]["long_labels"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["long_labels"]
+        is not payload["retrieved_context"]["metadata"]["long_labels"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["long_labels"][1]
+        is not payload["retrieved_context"]["metadata"]["long_labels"][1]
     )
     assert copied["retrieved_context"]["optional_note"] is None
     assert copied["retrieved_context"]["title"] is payload["retrieved_context"]["title"]
