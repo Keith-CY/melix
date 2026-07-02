@@ -167,12 +167,14 @@ class ToolDescriptor:
 
     def schema_payload(self) -> dict[str, Any]:
         schema_properties = self._cached_schema_properties
+        cached_required_arguments = self._cached_required_arguments_list
         copy_dict = _COPY_DICT
+        copy_list = _COPY_LIST
         return {
             "type": "object",
             "additionalProperties": False,
             "properties": {name: copy_dict(schema) for name, schema in schema_properties},
-            "required": _COPY_LIST(self._cached_required_arguments_list),
+            "required": copy_list(cached_required_arguments),
         }
 
     def json_schema(self) -> str:
