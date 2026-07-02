@@ -892,10 +892,12 @@ struct OpenAIHandlerTests {
         let inspectSession = try #require(inspectPayload["session"] as? [String: Any])
 
         let privatePrompt = "PRIVATE PROMPT: do not expose this companion secret"
+        let privateQuery = "token=abc123"
+        let privateFragment = "frag-secret"
         let mutationResponse = try await handler.handle(
             HTTPRequest(
                 method: .post,
-                path: "/v1/chat/completions",
+                path: "/v1/chat/completions?\(privateQuery)#\(privateFragment)",
                 headers: [
                     "content-type": "application/json",
                     "X-Melix-Session": sessionToken,
@@ -915,6 +917,7 @@ struct OpenAIHandlerTests {
             JSONSerialization.jsonObject(with: Data(mutationBody.utf8)) as? [String: Any]
         )
         let mutationError = try #require(mutationPayload["error"] as? [String: Any])
+        let mutationRoute = try #require(mutationError["route"] as? [String: Any])
 
         let signOutResponse = try await handler.handle(
             HTTPRequest(
@@ -943,7 +946,10 @@ struct OpenAIHandlerTests {
         #expect(inspectSession["scope"] as? String == "companion_read_only")
         #expect(mutationResponse.statusCode == 403)
         #expect(mutationError["code"] as? String == "companion_read_only_scope_violation")
+        #expect(mutationRoute["path"] as? String == "/v1/chat/completions")
         #expect(mutationBody.contains(privatePrompt) == false)
+        #expect(mutationBody.contains(privateQuery) == false)
+        #expect(mutationBody.contains(privateFragment) == false)
         #expect(signOutResponse.statusCode == 200)
         #expect(revokedModelsResponse.statusCode == 401)
         #expect(revokedError["code"] as? String == "revoked_session")
@@ -2410,7 +2416,7 @@ struct OpenAIHandlerTests {
                 "input"
             ),
             (
-                "/v1/chat/completions",
+                "/v1/chat/completions?token=abc123#frag-secret",
                 "/v1/chat/completions",
                 """
                 {

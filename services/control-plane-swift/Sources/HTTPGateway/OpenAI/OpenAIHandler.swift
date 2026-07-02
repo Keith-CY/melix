@@ -1661,14 +1661,25 @@ button.primary:active {
 
     private func handleChatCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = now()
+        if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+            return invalidGenerationBoundsResponse(boundsFailure)
+        }
+        if let unsupportedField = unsupportedChatCompletionsField(in: request.body) {
+            return unsupportedRequestFieldResponse(field: unsupportedField)
+        }
+        let chatRequest: OpenAIChatCompletionsRequest
         do {
-            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
-                return invalidGenerationBoundsResponse(boundsFailure)
-            }
-            if let unsupportedField = unsupportedChatCompletionsField(in: request.body) {
-                return unsupportedRequestFieldResponse(field: unsupportedField)
-            }
-            let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
+            chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed multimodal chat payload."
+            )
+        } catch let error as MultimodalRequestNormalizationError {
+            return mediaNormalizationErrorResponse(error)
+        }
+        do {
             if let resumeRequestID = chatRequest.resumeRequestID?.trimmingCharacters(in: .whitespacesAndNewlines),
                !resumeRequestID.isEmpty {
                 return try await resumeStreamResponse(
@@ -1703,12 +1714,6 @@ button.primary:active {
                 return invalidArgumentResponse(message: error.operatorMessage)
             }
             return mediaNormalizationErrorResponse(error)
-        } catch let error as DecodingError {
-            return invalidRequestSchemaResponse(
-                route: request.path,
-                field: decodingErrorField(error),
-                message: "Malformed multimodal chat payload."
-            )
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
@@ -1722,11 +1727,20 @@ button.primary:active {
 
     private func handleCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
+        if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+            return invalidGenerationBoundsResponse(boundsFailure)
+        }
+        let completionsRequest: OpenAICompletionsRequest
         do {
-            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
-                return invalidGenerationBoundsResponse(boundsFailure)
-            }
-            let completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
+            completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed completions payload."
+            )
+        }
+        do {
             let normalized = try translator.normalize(completionsRequest)
             return try await streamNormalizedTextRequest(
                 normalized,
@@ -1739,12 +1753,6 @@ button.primary:active {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ChatTemplatePolicyError {
             return invalidArgumentResponse(message: error.operatorMessage)
-        } catch let error as DecodingError {
-            return invalidRequestSchemaResponse(
-                route: request.path,
-                field: decodingErrorField(error),
-                message: "Malformed completions payload."
-            )
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
@@ -1752,11 +1760,20 @@ button.primary:active {
 
     private func handleResponses(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
+        if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+            return invalidGenerationBoundsResponse(boundsFailure)
+        }
+        let responsesRequest: OpenAIResponsesRequest
         do {
-            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
-                return invalidGenerationBoundsResponse(boundsFailure)
-            }
-            let responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
+            responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed responses payload."
+            )
+        }
+        do {
             let normalized = try translator.normalize(responsesRequest)
             return try await streamNormalizedTextRequest(
                 normalized,
@@ -1769,12 +1786,6 @@ button.primary:active {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ChatTemplatePolicyError {
             return invalidArgumentResponse(message: error.operatorMessage)
-        } catch let error as DecodingError {
-            return invalidRequestSchemaResponse(
-                route: request.path,
-                field: decodingErrorField(error),
-                message: "Malformed responses payload."
-            )
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
@@ -1782,11 +1793,20 @@ button.primary:active {
 
     private func handleMessages(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
+        if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+            return invalidGenerationBoundsResponse(boundsFailure)
+        }
+        let messagesRequest: MelixMessagesRequest
         do {
-            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
-                return invalidGenerationBoundsResponse(boundsFailure)
-            }
-            let messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
+            messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed messages payload."
+            )
+        }
+        do {
             let normalized = try translator.normalize(messagesRequest)
             return try await streamNormalizedTextRequest(
                 normalized,
@@ -1800,12 +1820,6 @@ button.primary:active {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ChatTemplatePolicyError {
             return invalidArgumentResponse(message: error.operatorMessage)
-        } catch let error as DecodingError {
-            return invalidRequestSchemaResponse(
-                route: request.path,
-                field: decodingErrorField(error),
-                message: "Malformed messages payload."
-            )
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
         }
@@ -5630,7 +5644,7 @@ button.primary:active {
                         ],
                         "route": [
                             "method": request.method.rawValue,
-                            "path": request.path,
+                            "path": sanitizedRequestRoutePath(request.path),
                         ],
                     ]
                 ]

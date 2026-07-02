@@ -19,6 +19,11 @@ stable sanitized envelope instead of raw submitted payload content.
   unchanged.
 - Report only the request-target path in privacy receipts; query strings and
   fragments are treated as sensitive ingress material and omitted.
+- Reuse the same request-target sanitizer for companion read-only rejection
+  envelopes so scoped-auth failures do not echo query strings or fragments.
+- Keep decode-phase privacy receipts scoped to the initial JSON/schema decode so
+  later normalization or dispatch failures cannot be mislabeled as ingress
+  decode failures.
 - Add sentinel tests proving error bodies do not contain submitted email, token,
   path, query, fragment, or local implementation fingerprints.
 
