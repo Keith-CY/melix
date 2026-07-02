@@ -409,6 +409,15 @@ def test_scope_report_selects_lora_aux_modules_probe() -> None:
     assert _selected_probe_ids(scope) == ["lora-aux-modules-scandir"]
 
 
+def test_lora_aux_modules_sidecar_delta_metrics_are_informational() -> None:
+    probes = load_probe_registry(REGISTRY_PATH)
+    probe = next(probe for probe in probes if probe.probe_id == "lora-aux-modules-scandir")
+    directions = {metric.key: metric.direction for metric in probe.metrics}
+
+    assert directions["processor_resume_delta_ms"] == "informational"
+    assert directions["quantized_kind_delta_ms"] == "informational"
+
+
 def test_scope_report_selects_trajectory_provenance_copy_elision_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,

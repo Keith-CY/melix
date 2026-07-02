@@ -424,8 +424,14 @@ def _str_value(raw_value: Any) -> str:
 def _quantized_kind_from_text(raw_value: str) -> str:
     # The boundary regex already treats leading/trailing whitespace as a
     # non-alphanumeric delimiter, so avoid an extra full-string strip in this
-    # hot parser loop.
+    # hot parser loop. Check already-lowercase tokens before allocating a lower
+    # copy; model/profile identifiers in this path are commonly lowercase.
+    for kind, pattern in _QUANTIZED_KIND_PATTERNS:
+        if kind in raw_value and pattern.search(raw_value):
+            return kind
     normalized = raw_value.lower()
+    if normalized == raw_value:
+        return "unknown"
     for kind, pattern in _QUANTIZED_KIND_PATTERNS:
         if kind in normalized and pattern.search(normalized):
             return kind
