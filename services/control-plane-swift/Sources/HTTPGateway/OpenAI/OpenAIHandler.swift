@@ -1151,7 +1151,8 @@ button.primary:active {
                 response = rateLimitFailure
                 break
             }
-            switch (request.method, request.path) {
+            let routePath = sanitizedRequestRoutePath(request.path)
+            switch (request.method, routePath) {
             case (.get, "/.well-known/melix.json"):
                 response = try await handleDiscoveryWellKnown()
             case (.get, "/api/capabilities"):
@@ -1660,14 +1661,25 @@ button.primary:active {
 
     private func handleChatCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = now()
+        if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+            return invalidGenerationBoundsResponse(boundsFailure)
+        }
+        if let unsupportedField = unsupportedChatCompletionsField(in: request.body) {
+            return unsupportedRequestFieldResponse(field: unsupportedField)
+        }
+        let chatRequest: OpenAIChatCompletionsRequest
         do {
-            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
-                return invalidGenerationBoundsResponse(boundsFailure)
-            }
-            if let unsupportedField = unsupportedChatCompletionsField(in: request.body) {
-                return unsupportedRequestFieldResponse(field: unsupportedField)
-            }
-            let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
+            chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed multimodal chat payload."
+            )
+        } catch let error as MultimodalRequestNormalizationError {
+            return mediaNormalizationErrorResponse(error)
+        }
+        do {
             if let resumeRequestID = chatRequest.resumeRequestID?.trimmingCharacters(in: .whitespacesAndNewlines),
                !resumeRequestID.isEmpty {
                 return try await resumeStreamResponse(
@@ -1702,11 +1714,6 @@ button.primary:active {
                 return invalidArgumentResponse(message: error.operatorMessage)
             }
             return mediaNormalizationErrorResponse(error)
-        } catch let error as DecodingError {
-            return invalidRequestSchemaResponse(
-                field: decodingErrorField(error),
-                message: "Malformed multimodal chat payload."
-            )
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
@@ -1720,11 +1727,20 @@ button.primary:active {
 
     private func handleCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
+        if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+            return invalidGenerationBoundsResponse(boundsFailure)
+        }
+        let completionsRequest: OpenAICompletionsRequest
         do {
-            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
-                return invalidGenerationBoundsResponse(boundsFailure)
-            }
-            let completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
+            completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed completions payload."
+            )
+        }
+        do {
             let normalized = try translator.normalize(completionsRequest)
             return try await streamNormalizedTextRequest(
                 normalized,
@@ -1744,11 +1760,20 @@ button.primary:active {
 
     private func handleResponses(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
+        if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+            return invalidGenerationBoundsResponse(boundsFailure)
+        }
+        let responsesRequest: OpenAIResponsesRequest
         do {
-            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
-                return invalidGenerationBoundsResponse(boundsFailure)
-            }
-            let responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
+            responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed responses payload."
+            )
+        }
+        do {
             let normalized = try translator.normalize(responsesRequest)
             return try await streamNormalizedTextRequest(
                 normalized,
@@ -1768,11 +1793,20 @@ button.primary:active {
 
     private func handleMessages(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
+        if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+            return invalidGenerationBoundsResponse(boundsFailure)
+        }
+        let messagesRequest: MelixMessagesRequest
         do {
-            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
-                return invalidGenerationBoundsResponse(boundsFailure)
-            }
-            let messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
+            messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed messages payload."
+            )
+        }
+        do {
             let normalized = try translator.normalize(messagesRequest)
             return try await streamNormalizedTextRequest(
                 normalized,
@@ -1860,7 +1894,16 @@ button.primary:active {
     }
 
     private func handleEmbeddings(_ request: HTTPRequest) async throws -> HTTPResponse {
-        let embeddingsRequest = try decoder.decode(OpenAIEmbeddingsRequest.self, from: request.body)
+        let embeddingsRequest: OpenAIEmbeddingsRequest
+        do {
+            embeddingsRequest = try decoder.decode(OpenAIEmbeddingsRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed embeddings payload."
+            )
+        }
         if let validationFailure = await endpointCompatibilityFailureResponse(
             modelID: embeddingsRequest.model,
             endpoint: .embedding
@@ -4895,7 +4938,7 @@ button.primary:active {
         )
     }
 
-    private func invalidRequestSchemaResponse(field: String, message: String) -> HTTPResponse {
+    private func invalidRequestSchemaResponse(route: String, field: String, message: String) -> HTTPResponse {
         jsonResponse(
             statusCode: 400,
             payload: [
@@ -4904,9 +4947,42 @@ button.primary:active {
                     "field": field,
                     "phase": "decode",
                     "message": message,
+                    "privacy_receipt": ingressPrivacyReceipt(
+                        route: route,
+                        field: field,
+                        phase: "decode",
+                        action: "redacted",
+                        redactionPolicy: "raw_payload_omitted"
+                    ),
                 ],
             ]
         )
+    }
+
+    private func ingressPrivacyReceipt(
+        route: String,
+        field: String,
+        phase: String,
+        action: String,
+        redactionPolicy: String
+    ) -> [String: Any] {
+        [
+            "schema_version": "melix.ingress_privacy_receipt.v1",
+            "surface": "openai_request_ingress",
+            "route": sanitizedRequestRoutePath(route),
+            "field": field,
+            "phase": phase,
+            "action": action,
+            "redaction_policy": redactionPolicy,
+            "raw_payload_included": false,
+        ]
+    }
+
+    private func sanitizedRequestRoutePath(_ route: String) -> String {
+        guard let separatorIndex = route.firstIndex(where: { $0 == "?" || $0 == "#" }) else {
+            return route
+        }
+        return String(route[..<separatorIndex])
     }
 
     private func decodingErrorField(_ error: DecodingError) -> String {
@@ -5517,7 +5593,8 @@ button.primary:active {
     }
 
     private func authorizationRoute(for request: HTTPRequest) -> GatewayAuthorizationRoute {
-        switch (request.method, request.path) {
+        let routePath = sanitizedRequestRoutePath(request.path)
+        switch (request.method, routePath) {
         case (.get, "/v1/melix/companion"):
             return .publicAsset
         case (.get, "/health"):
@@ -5567,7 +5644,7 @@ button.primary:active {
                         ],
                         "route": [
                             "method": request.method.rawValue,
-                            "path": request.path,
+                            "path": sanitizedRequestRoutePath(request.path),
                         ],
                     ]
                 ]

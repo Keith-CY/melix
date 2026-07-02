@@ -892,10 +892,12 @@ struct OpenAIHandlerTests {
         let inspectSession = try #require(inspectPayload["session"] as? [String: Any])
 
         let privatePrompt = "PRIVATE PROMPT: do not expose this companion secret"
+        let privateQuery = "token=abc123"
+        let privateFragment = "frag-secret"
         let mutationResponse = try await handler.handle(
             HTTPRequest(
                 method: .post,
-                path: "/v1/chat/completions",
+                path: "/v1/chat/completions?\(privateQuery)#\(privateFragment)",
                 headers: [
                     "content-type": "application/json",
                     "X-Melix-Session": sessionToken,
@@ -915,6 +917,7 @@ struct OpenAIHandlerTests {
             JSONSerialization.jsonObject(with: Data(mutationBody.utf8)) as? [String: Any]
         )
         let mutationError = try #require(mutationPayload["error"] as? [String: Any])
+        let mutationRoute = try #require(mutationError["route"] as? [String: Any])
 
         let signOutResponse = try await handler.handle(
             HTTPRequest(
@@ -943,7 +946,10 @@ struct OpenAIHandlerTests {
         #expect(inspectSession["scope"] as? String == "companion_read_only")
         #expect(mutationResponse.statusCode == 403)
         #expect(mutationError["code"] as? String == "companion_read_only_scope_violation")
+        #expect(mutationRoute["path"] as? String == "/v1/chat/completions")
         #expect(mutationBody.contains(privatePrompt) == false)
+        #expect(mutationBody.contains(privateQuery) == false)
+        #expect(mutationBody.contains(privateFragment) == false)
         #expect(signOutResponse.statusCode == 200)
         #expect(revokedModelsResponse.statusCode == 401)
         #expect(revokedError["code"] as? String == "revoked_session")
@@ -2340,6 +2346,147 @@ struct OpenAIHandlerTests {
         #expect(error["code"] as? String == "invalid_generation_bounds")
         #expect(error["bounds_rejection_reason"] as? String == expectedReason)
         #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test(
+        "OpenAI ingress validation errors include sanitized privacy receipts",
+        arguments: [
+            (
+                "/v1/chat/completions?token=abc123#frag-secret",
+                "/v1/chat/completions",
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stream": true,
+                  "messages": "operator@example.test hf_secret_token /Users/operator/private token=abc123 #frag-secret"
+                }
+                """,
+                "invalid_request_schema",
+                "messages"
+            ),
+            (
+                "/v1/completions",
+                "/v1/completions",
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stream": true,
+                  "prompt": ["operator@example.test", "hf_secret_token", "/Users/operator/private?token=abc123#frag-secret"]
+                }
+                """,
+                "invalid_request_schema",
+                "prompt"
+            ),
+            (
+                "/v1/responses",
+                "/v1/responses",
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stream": true,
+                  "input": { "content": "operator@example.test hf_secret_token /Users/operator/private?token=abc123#frag-secret" }
+                }
+                """,
+                "invalid_request_schema",
+                "input"
+            ),
+            (
+                "/v1/messages",
+                "/v1/messages",
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stream": true,
+                  "messages": "operator@example.test hf_secret_token /Users/operator/private?token=abc123#frag-secret"
+                }
+                """,
+                "invalid_request_schema",
+                "messages"
+            ),
+            (
+                "/v1/embeddings",
+                "/v1/embeddings",
+                """
+                {
+                  "model": "melix-dev-embedding",
+                  "input": { "content": "operator@example.test hf_secret_token /Users/operator/private?token=abc123#frag-secret" }
+                }
+                """,
+                "invalid_request_schema",
+                "input"
+            ),
+            (
+                "/v1/chat/completions?token=abc123#frag-secret",
+                "/v1/chat/completions",
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stream": true,
+                  "messages": [
+                    { "role": "user", "content": "operator@example.test hf_secret_token /Users/operator/private?token=abc123#frag-secret" }
+                  ],
+                """,
+                "invalid_request_schema",
+                "body"
+            ),
+        ]
+    )
+    func openAIIngressValidationErrorsIncludeSanitizedPrivacyReceipts(
+        path: String,
+        expectedRoute: String,
+        bodyJSON: String,
+        expectedCode: String,
+        expectedField: String
+    ) async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: path,
+                headers: ["content-type": "application/json"],
+                body: Data(bodyJSON.utf8)
+            )
+        )
+        let bodyData = try await collectBodyData(response.body)
+        let body = try #require(String(data: bodyData, encoding: .utf8))
+        let payload = try jsonPayload(from: bodyData)
+        let error = try #require(payload["error"] as? [String: Any])
+        let receipt = try #require(error["privacy_receipt"] as? [String: Any])
+        let sentinelFragments = [
+            "operator@example.test",
+            "hf_secret_token",
+            "/Users/operator/private",
+            "token=abc123",
+            "frag-secret",
+            "DecodingError",
+            "OpenAIHandler",
+            "Swift.DecodingError",
+        ]
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == expectedCode)
+        #expect(error["field"] as? String == expectedField)
+        #expect(error["phase"] as? String == "decode")
+        #expect(receipt["schema_version"] as? String == "melix.ingress_privacy_receipt.v1")
+        #expect(receipt["surface"] as? String == "openai_request_ingress")
+        #expect(receipt["route"] as? String == expectedRoute)
+        #expect(receipt["phase"] as? String == "decode")
+        #expect(receipt["field"] as? String == expectedField)
+        #expect(receipt["action"] as? String == "redacted")
+        #expect(receipt["redaction_policy"] as? String == "raw_payload_omitted")
+        #expect(receipt["raw_payload_included"] as? Bool == false)
+        #expect(await workerClient.lastGenerateRequest == nil)
+        for fragment in sentinelFragments {
+            #expect(body.contains(fragment) == false, "ingress privacy envelope leak: \(fragment)")
+        }
     }
 
     @Test("generation bounds validation ignores field-like text inside JSON strings")
