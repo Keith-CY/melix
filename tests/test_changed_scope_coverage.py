@@ -547,6 +547,33 @@ def test_measurable_changed_lines_checks_singletons_before_range_overlap(
     assert missed == []
 
 
+def test_measurable_changed_lines_singleton_entries_do_not_scan_changed_set(tmp_path: Path) -> None:
+    class MembershipOnlySet(set[int]):
+        def __iter__(self):  # type: ignore[override]
+            raise AssertionError("singleton coverage entries should not iterate changed lines")
+
+    (tmp_path / "foo.py").write_text("covered\nmissed\n", encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [1],
+                "missing_lines": [2],
+            }
+        }
+    }
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        MembershipOnlySet({2, 100_000, 200_000}),
+    )
+
+    assert measurable == [2]
+    assert covered == []
+    assert missed == [2]
+
+
 def test_line_ranges_may_overlap_single_changed_line_avoids_changed_minmax(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
