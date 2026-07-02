@@ -109,15 +109,15 @@ def prepare_video_input(part) -> PreparedVideoInput:
         start_ms=start_ms,
         end_ms=end_ms,
         sha256_hex=_uri_identity_hash(
-            uri=uri,
-            mime_type=mime_type,
-            format_name=resolved_format,
-            filename=resolved_filename,
-            byte_length=byte_length,
-            duration_ms=duration_ms,
-            frame_budget=frame_budget,
-            start_ms=start_ms,
-            end_ms=end_ms,
+            uri,
+            mime_type,
+            resolved_format,
+            resolved_filename,
+            byte_length,
+            duration_ms,
+            frame_budget,
+            start_ms,
+            end_ms,
         ),
     )
 
@@ -291,7 +291,6 @@ def _filename_from_reference(reference: str | ParsedVideoReference) -> str:
 
 @lru_cache(maxsize=VIDEO_REFERENCE_PARSE_CACHE_SIZE)
 def _uri_identity_hash(
-    *,
     uri: str,
     mime_type: str,
     format_name: str,
