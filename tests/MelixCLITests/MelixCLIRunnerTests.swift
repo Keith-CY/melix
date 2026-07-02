@@ -10341,8 +10341,8 @@ struct MelixCLIRunnerTests {
                   "schema_version": "melix.dataset_ingest_receipt.v1",
                   "status": "ready",
                   "workspace_project_id": "m-courtyard-demo",
-                  "upload_cap_bytes": 4096,
-                  "observed_payload_bytes": 2048,
+                  "upload_cap_bytes": 5000000000,
+                  "observed_payload_bytes": 4000000000,
                   "metrics": {
                     "source_file_count": 2,
                     "segment_count": 5
@@ -10465,7 +10465,7 @@ struct MelixCLIRunnerTests {
             )
         )
 
-	        #expect(ingestOutput == "Dataset ingest ready for m-courtyard-demo\nSources: 2, segments: 5\nUpload cap: 4096 bytes, observed: 2048 bytes\n")
+        #expect(ingestOutput == "Dataset ingest ready for m-courtyard-demo\nSources: 2, segments: 5\nUpload cap: 5000000000 bytes, observed: 4000000000 bytes\n")
         #expect(preflightOutput.contains("Workspace preflight blocked for m-courtyard-demo"))
         #expect(preflightOutput.contains("- WORKSPACE_ROOT_MISSING: Workspace artifact root is missing"))
         #expect(preflightOutput.contains("Create the missing root before running the workspace."))

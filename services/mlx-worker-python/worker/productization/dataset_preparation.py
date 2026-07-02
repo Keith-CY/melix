@@ -92,8 +92,7 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
     )
     _write_json(workspace_preflight_receipt_path, workspace_preflight_receipt)
 
-    upload_cap_bytes = int(request.upload_cap_bytes or 0)
-    source_cap_bytes = int(request.source_cap_bytes or 0)
+    upload_cap_bytes, source_cap_bytes, limit_policy_failure = _ingest_limit_policy_failure(request)
     if workspace_preflight_receipt.get("status") != "ready":
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         operator_failures = _workspace_preflight_failures(workspace_preflight_receipt)
@@ -117,10 +116,6 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         return receipt
 
     operator_failures: list[dict[str, Any]] = []
-    limit_policy_failure = _limit_policy_failure(
-        upload_cap_bytes=upload_cap_bytes,
-        source_cap_bytes=source_cap_bytes,
-    )
     if limit_policy_failure is not None:
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         receipt = _blocked_ingest_receipt(
@@ -486,6 +481,31 @@ def _blocked_ingest_receipt(
     }
 
 
+def _ingest_limit_policy_failure(
+    request: DatasetIngestRequest,
+) -> tuple[int, int, dict[str, Any] | None]:
+    try:
+        upload_cap_bytes = int(request.upload_cap_bytes or 0)
+        source_cap_bytes = int(request.source_cap_bytes or 0)
+    except (TypeError, ValueError) as exc:
+        return 0, 0, _limit_policy_invalid_type_failure(exc)
+    return upload_cap_bytes, source_cap_bytes, _limit_policy_failure(
+        upload_cap_bytes=upload_cap_bytes,
+        source_cap_bytes=source_cap_bytes,
+    )
+
+
+def _limit_policy_invalid_type_failure(exc: BaseException) -> dict[str, Any]:
+    return {
+        "id": "dataset-ingest-limit-policy-invalid-type",
+        "code": "DATASET_INGEST_LIMIT_POLICY_INVALID",
+        "path": "",
+        "detail": f"Dataset ingest limits must be valid integer byte counts: {exc}",
+        "recovery_hint": "Set --upload-cap-bytes and --source-cap-bytes to valid integers.",
+        "reason": "limit_policy_invalid",
+    }
+
+
 def _limit_policy_failure(
     *,
     upload_cap_bytes: int,
@@ -581,15 +601,15 @@ def _partial_artifact_cleanup_not_needed(path: Path) -> dict[str, Any]:
 
 
 def _cleanup_partial_artifact(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    try:
+        path.unlink()
+    except FileNotFoundError:
         return {
             "status": "missing",
             "target_path": str(path),
             "removed": False,
             "error": "",
         }
-    try:
-        path.unlink()
     except OSError as exc:
         return {
             "status": "failed",

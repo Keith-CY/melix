@@ -28,11 +28,19 @@ def exercise_dataset_ingest_limit_contract(
     _assert_rejects_over_upload_cap_before_reading_sources(tmp_path / "over-upload", monkeypatch)
     _assert_rejects_over_source_cap_before_expensive_processing(tmp_path / "over-source")
     _assert_rejects_over_limit_settings_before_reading_sources(tmp_path / "invalid-relation", monkeypatch)
+    _assert_rejects_non_integer_limit_settings_with_structured_receipt(
+        tmp_path / "invalid-type",
+        monkeypatch,
+    )
     _assert_rejects_negative_limit_settings_before_source_scan(tmp_path / "negative")
     _assert_accepted_upload_uses_bounded_source_reader(tmp_path / "accepted", monkeypatch)
     _assert_records_zero_observed_bytes_when_source_stat_fails(tmp_path / "stat-fails", monkeypatch)
     _assert_blocks_unreadable_source_and_reports_cleanup(tmp_path / "unreadable")
     _assert_cleanup_reports_failed_partial_removal(tmp_path / "cleanup-fails", monkeypatch)
+    _assert_cleanup_unlinks_partial_artifact_without_prechecking_exists(
+        tmp_path / "cleanup-without-exists",
+        monkeypatch,
+    )
     _assert_bounded_source_reader_rejects_over_cap(tmp_path / "reader-cap")
     _assert_removes_partial_segments_artifact_on_write_failure(tmp_path / "write-fails", monkeypatch)
     _assert_dataset_version_persists_ingest_limit_and_cleanup_evidence(tmp_path / "version")
@@ -155,6 +163,50 @@ def _assert_rejects_over_limit_settings_before_reading_sources(
     assert receipt["rejection_reason"] == "limit_policy_invalid"
     assert receipt["partial_artifact_cleanup"]["status"] == "missing"
     assert receipt["operator_failures"][0]["code"] == "DATASET_INGEST_LIMIT_POLICY_INVALID"
+    assert not (output_root / "segments.jsonl").exists()
+    assert source_read_attempts == []
+
+
+def _assert_rejects_non_integer_limit_settings_with_structured_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_root = tmp_path / "raw-inputs"
+    output_root = tmp_path / "prepared"
+    input_root.mkdir(parents=True)
+    source_path = input_root / "notes.txt"
+    source_path.write_text("ok", encoding="utf-8")
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
+    original_read_text = Path.read_text
+    source_read_attempts: list[str] = []
+
+    def fail_source_read(path: Path, *args: object, **kwargs: object) -> str:
+        if path == source_path:  # pragma: no cover - failure path only
+            source_read_attempts.append(str(path))
+            raise AssertionError("invalid ingest limit settings should reject before reading source text")
+        return original_read_text(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "read_text", fail_source_read)
+        receipt = prepare_dataset_ingest(
+            DatasetIngestRequest(
+                workspace_project_id="m-courtyard-demo",
+                workspace_manifest_path=manifest_path,
+                input_path=input_root,
+                output_dir=output_root,
+                dataset_preparation_id="prep-invalid-limit-type",
+                upload_cap_bytes="not-an-integer",  # type: ignore[arg-type]
+            )
+        )
+
+    assert receipt["status"] == "blocked"
+    assert receipt["upload_cap_bytes"] == 0
+    assert receipt["source_cap_bytes"] == 0
+    assert receipt["observed_payload_bytes"] == 0
+    assert receipt["rejection_reason"] == "limit_policy_invalid"
+    assert receipt["partial_artifact_cleanup"]["status"] == "missing"
+    assert receipt["operator_failures"][0]["code"] == "DATASET_INGEST_LIMIT_POLICY_INVALID"
+    assert "valid integer" in receipt["operator_failures"][0]["detail"]
     assert not (output_root / "segments.jsonl").exists()
     assert source_read_attempts == []
 
@@ -307,6 +359,32 @@ def _assert_cleanup_reports_failed_partial_removal(
         "error": "locked",
     }
     assert partial_path.exists()
+
+
+def _assert_cleanup_unlinks_partial_artifact_without_prechecking_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path.mkdir(parents=True)
+    partial_path = tmp_path / "segments.jsonl"
+    partial_path.write_text('{"partial": true}\n', encoding="utf-8")
+
+    def fail_exists(path: Path) -> bool:
+        if path == partial_path:  # pragma: no cover - failure path only
+            raise AssertionError("partial artifact cleanup should unlink without prechecking exists")
+        return False
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "exists", fail_exists)
+        cleanup = dataset_preparation_module._cleanup_partial_artifact(partial_path)
+
+    assert cleanup == {
+        "status": "removed",
+        "target_path": str(partial_path),
+        "removed": True,
+        "error": "",
+    }
+    assert not partial_path.exists()
 
 
 def _assert_bounded_source_reader_rejects_over_cap(tmp_path: Path) -> None:
