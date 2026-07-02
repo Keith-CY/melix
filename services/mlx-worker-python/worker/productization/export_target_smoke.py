@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from itertools import chain
 import json
 import time
 from dataclasses import dataclass
@@ -259,20 +260,47 @@ def build_smoke_metrics_report(
             errors.append(str(exc))
 
     elapsed_ms = (time.perf_counter() - started) * 1000.0
-    metrics = [receipt["metrics"] for receipt in receipts if isinstance(receipt.get("metrics"), dict)]
+    metric_totals = _aggregate_smoke_metrics(receipts)
     return {
         "schema_version": EXPORT_SMOKE_METRICS_SCHEMA_VERSION,
         "ok": not errors and all(receipt.get("status") in {"passed", "waived"} for receipt in receipts),
         "target_count": len(receipts),
         "smoke_policy_latency_ms": elapsed_ms,
-        "metadata_check_latency_ms": sum(float(metric.get("metadata_check_latency_ms", 0)) for metric in metrics),
-        "load_smoke_latency_ms": sum(float(metric.get("load_smoke_latency_ms", 0)) for metric in metrics),
-        "generation_smoke_latency_ms": sum(float(metric.get("generation_smoke_latency_ms", 0)) for metric in metrics),
-        "output_preview_byte_count": sum(int(metric.get("output_preview_byte_count", 0)) for metric in metrics),
-        "timeout_count": sum(int(metric.get("timeout_count", 0)) for metric in metrics),
-        "waiver_count": sum(int(metric.get("waiver_count", 0)) for metric in metrics),
+        "metadata_check_latency_ms": metric_totals["metadata_check_latency_ms"],
+        "load_smoke_latency_ms": metric_totals["load_smoke_latency_ms"],
+        "generation_smoke_latency_ms": metric_totals["generation_smoke_latency_ms"],
+        "output_preview_byte_count": metric_totals["output_preview_byte_count"],
+        "timeout_count": metric_totals["timeout_count"],
+        "waiver_count": metric_totals["waiver_count"],
         "errors": errors,
         "receipts": receipts,
+    }
+
+
+def _aggregate_smoke_metrics(receipts: Iterable[dict[str, object]]) -> dict[str, float | int]:
+    metadata_check_latency_ms = 0.0
+    load_smoke_latency_ms = 0.0
+    generation_smoke_latency_ms = 0.0
+    output_preview_byte_count = 0
+    timeout_count = 0
+    waiver_count = 0
+    for receipt in receipts:
+        metric = receipt.get("metrics")
+        if not isinstance(metric, dict):
+            continue
+        metadata_check_latency_ms += float(metric.get("metadata_check_latency_ms", 0))
+        load_smoke_latency_ms += float(metric.get("load_smoke_latency_ms", 0))
+        generation_smoke_latency_ms += float(metric.get("generation_smoke_latency_ms", 0))
+        output_preview_byte_count += int(metric.get("output_preview_byte_count", 0))
+        timeout_count += int(metric.get("timeout_count", 0))
+        waiver_count += int(metric.get("waiver_count", 0))
+    return {
+        "metadata_check_latency_ms": metadata_check_latency_ms,
+        "load_smoke_latency_ms": load_smoke_latency_ms,
+        "generation_smoke_latency_ms": generation_smoke_latency_ms,
+        "output_preview_byte_count": output_preview_byte_count,
+        "timeout_count": timeout_count,
+        "waiver_count": waiver_count,
     }
 
 
@@ -364,7 +392,7 @@ def _check_manifest_files(
 ) -> None:
     missing: list[str] = []
     mismatched: list[str] = []
-    for row in (*manifest.generated_files, *manifest.required_files):
+    for row in _manifest_file_rows(manifest):
         if row.path == "export-target-manifest.json":
             continue
         path = _target_relative_path(layout, row.path)
@@ -406,10 +434,11 @@ def _waiver_for_load_failure(
         return None
     if load_check.failure_code != "runtime_not_installed":
         return None
-    allowed = set(manifest.verification_policy.allowed_waiver_reasons)
+    if not manifest.verification_policy.waiver_allowed:
+        return None
     if (
-        not manifest.verification_policy.waiver_allowed
-        or export_target_manifest_pb2.EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED not in allowed
+        export_target_manifest_pb2.EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED
+        not in manifest.verification_policy.allowed_waiver_reasons
     ):
         return None
     reason = "EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED"
@@ -621,11 +650,17 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _manifest_file_rows(
+    manifest: export_target_manifest_pb2.ExportTargetManifest,
+):
+    return chain(manifest.generated_files, manifest.required_files)
+
+
 def _write_digest_fixture_files(
     target_root: Path,
     manifest: export_target_manifest_pb2.ExportTargetManifest,
 ) -> None:
-    for row in (*manifest.generated_files, *manifest.required_files):
+    for row in _manifest_file_rows(manifest):
         if row.path == "export-target-manifest.json":
             continue
         path = target_root / row.path

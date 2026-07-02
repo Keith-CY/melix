@@ -87,6 +87,7 @@ def test_quantization_summary_preserves_alias_order_from_lowered_tags() -> None:
         _quantization_summary(["2-bit", "3bit", "8-bit", "float32", "bf16"])
         == "2-bit, 3-bit, 8-bit, fp32, bf16"
     )
+    assert _quantization_summary([], lowered_tags={"family-test", "4-bit", "optiq"}) == "4-bit, optiq"
 
 
 def test_string_list_preserves_exact_list_and_list_subclass_inputs() -> None:
@@ -121,6 +122,21 @@ def test_mlx_repo_id_detection_preserves_case_insensitive_matches() -> None:
     assert _repo_id_contains_mlx("plain/model") is False
     assert _repo_id_contains_mlx("owner/model-mlx-suffix") is True
     assert _repo_id_contains_mlx("owner/model-MLX-suffix") is True
+
+
+def test_payload_mlx_tag_detection_preserves_exact_list_and_subclass_semantics() -> None:
+    class TagList(list[str]):
+        pass
+
+    assert _payload_is_mlx_compatible(
+        {"id": "plain/model", "tags": ["Text-Generation", "MLX", object()]}
+    ) is True
+    assert _payload_is_mlx_compatible(
+        {"id": "plain/model", "tags": TagList(["Text-Generation", "mLx"])}
+    ) is True
+    assert _payload_is_mlx_compatible(
+        {"id": "plain/model", "tags": ["Text-Generation"], "cardData": {"tags": ["audio"]}}
+    ) is False
 
 
 class FakeHTTPResponse:
@@ -365,6 +381,19 @@ def test_repo_id_mlx_substring_match_preserves_ascii_case_insensitivity() -> Non
     assert _payload_is_mlx_compatible(
         {"id": "owner/model", "tags": [], "cardData": {"library_name": "MLX"}}
     ) is True
+
+
+def test_payload_repo_id_mlx_match_skips_tag_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    tag_scan = Mock(side_effect=AssertionError("repo-id MLX matches should not scan tag payloads"))
+    monkeypatch.setattr(hub_catalog_module, "_tag_payload_contains_mlx", tag_scan)
+
+    assert (
+        _payload_is_mlx_compatible(
+            {"id": "owner/model-mlx-suffix", "tags": ["slow", object()], "cardData": {}}
+        )
+        is True
+    )
+    tag_scan.assert_not_called()
 
 
 def test_size_hint_single_readme_uses_direct_explicit_marker_before_regex(
@@ -808,6 +837,15 @@ def test_next_cursor_from_link_accepts_cursor_at_query_start() -> None:
     link_header = '<https://huggingface.co/api/models?cursor=page%2Fstart&limit=10>; rel="next"'
 
     assert hub_catalog_module._next_cursor_from_link(link_header) == "page/start"
+
+
+def test_next_cursor_from_link_skips_cursor_substrings_outside_query_parameters() -> None:
+    link_header = (
+        '<https://huggingface.co/api/models/cursor=path?mycursor=wrong&cursor=right%2Fvalue'
+        '#cursor=fragment>; rel="next"'
+    )
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "right/value"
 
 
 def test_next_cursor_from_link_decodes_plus_space_cursor_without_percent_escape() -> None:

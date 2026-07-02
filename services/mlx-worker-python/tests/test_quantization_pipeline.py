@@ -230,6 +230,35 @@ def test_structural_smoke_wrapper_reports_invalid_json(tmp_path: Path) -> None:
     assert "config.json is not readable JSON" in evidence.failure_reason
 
 
+def test_structural_smoke_reads_json_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle_path = tmp_path / "json-byte-bundle"
+    bundle_path.mkdir()
+    (bundle_path / "config.json").write_text('{"model_id":"demo"}\n', encoding="utf-8")
+    (bundle_path / "tokenizer.json").write_text('{"tokenizer_hash":"tok"}\n', encoding="utf-8")
+    (bundle_path / "weights.safetensors").write_bytes(b"weights")
+    original_read_bytes = Path.read_bytes
+    read_bytes_calls: list[str] = []
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        raise AssertionError("structural smoke should validate JSON via read_bytes")
+
+    def tracking_read_bytes(self: Path) -> bytes:
+        if self.parent == bundle_path and self.suffix == ".json":
+            read_bytes_calls.append(self.name)
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+    monkeypatch.setattr(Path, "read_bytes", tracking_read_bytes)
+
+    evidence = OQQuantizationPipeline._run_structural_smoke_evidence(bundle_path)
+
+    assert evidence.status == "passed"
+    assert read_bytes_calls == ["config.json", "tokenizer.json"]
+
+
 def test_quantize_job_records_structured_smoke_failure_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

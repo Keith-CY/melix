@@ -77,6 +77,9 @@ It measures:
 - `unknown_failure_count`
 - `redaction_count`
 - `diagnostic_latency_ms`
+- `path_redaction_elapsed_ms_mean`
+- `diagnosis_matching_elapsed_ms_mean`
+- `diagnosis_matching_line_count`
 
 The 2026-06-25 optimization slice keeps the parser contract unchanged and caches
 `layout.target_root.resolve(strict=False)` once per redacted excerpt build. It
@@ -93,6 +96,94 @@ redactor, but skip the bearer-token, named-secret, URL credential, OpenAI key,
 certificate, and identity regex passes. Lines with `:`, `=`, `@`, `sk-`, or a
 certificate preamble continue through the relevant guarded regexes before path
 redaction.
+
+A 2026-06-25 metric aggregation slice keeps the receipt schema and parser
+semantics unchanged while deriving parsed-failure count, unknown-failure count,
+and matched diagnosis codes in a single pass. The aggregate report also folds
+receipt metrics and diagnosis code discovery into one receipt pass, avoiding the
+previous extra comprehensions and metric summations on every diagnostic report.
+
+A follow-up 2026-06-25 path-redaction slice keeps the same redaction contract
+but checks whether a matched absolute path is lexically under the resolved target
+root before constructing a fallback `Path`. Clean target-local paths now produce
+the same `<target>/...` labels through string slicing, while paths with `..`
+segments or paths outside the target root continue through the existing
+normalization fallback.
+
+A follow-up 2026-06-25 diagnosis matching slice keeps the diagnosis semantics
+unchanged while adding cheap lowercase marker gates to each diagnosis pattern.
+Runtime lines whose text cannot contain a given failure class now skip that
+class's regex expressions, while lines that contain a marker continue through the
+same compiled regexes and matched-pattern ids as before. This reduces repeated
+regex scans across bounded excerpts with many non-matching lines.
+
+A follow-up 2026-06-26 diagnosis matching slice keeps the same parser semantics
+but computes each source line's lowercase form once per diagnosis scan and shares
+it across all marker-gated diagnosis patterns. This preserves the per-pattern
+marker checks and regex match ids while avoiding repeated `str.lower()` calls on
+large bounded excerpts with many non-matching progress lines.
+
+A follow-up 2026-06-26 source-row iteration slice keeps source collection
+semantics unchanged while iterating generated, required, and intermediate file
+repeated fields separately instead of expanding them into one temporary tuple.
+This avoids an intermediate container allocation when each diagnostic receipt
+scans manifest rows for runtime logs.
+
+A follow-up 2026-06-27 diagnosis prefilter slice keeps the existing per-pattern
+marker gates and regex expressions, but first checks each lowercased source line
+against the union of known diagnosis markers. Lines with no diagnostic marker
+skip the pattern loop entirely, while matching lines still use the same compiled
+regexes and matched-pattern ids as before. This reduces bounded-excerpt scans
+with many progress lines that contain no supported failure terms.
+
+A follow-up 2026-06-28 all-known-code short-circuit slice keeps the parser
+semantics unchanged while stopping diagnosis matching once every known diagnosis
+code has already been emitted for the bounded excerpt. Later lines cannot add a
+new known-code diagnosis at that point because duplicate codes are already
+suppressed, so the parser avoids lowercasing and marker scans across trailing
+runtime-log noise.
+
+A follow-up 2026-06-29 private-line redaction marker slice keeps the redaction
+contract unchanged while gating the private prompt/response regex behind a cheap
+leading-character marker. Runtime log lines that cannot begin one of the
+registered private-text labels (`prompt`, `private prompt template`, `response`,
+`completion`, `generated text`, `dataset row`, or `operator input`, after leading
+whitespace) skip the anchored regex; lines with a compatible leading label still
+use the same regex and redaction counters as before.
+
+A follow-up 2026-06-29 diagnosis pattern loop slice keeps the diagnosis
+semantics and pattern priority unchanged while shrinking per-pattern matching.
+Each pattern now uses explicit marker and expression loops instead of
+generator-backed `any(...)` calls. Duplicate diagnosis codes are still suppressed
+for a bounded excerpt; overlapping later lines still fall through to the
+remaining lower-priority patterns, and the scan still stops once every known code
+has matched.
+
+A follow-up 2026-06-29 diagnosis marker prefilter loop slice keeps the same
+prefilter semantics while replacing the excerpt-wide marker `any(...)` generator
+with an explicit loop helper. Lines still enter the per-pattern matcher only when
+one registered diagnosis marker appears in the lowercased source text, but the
+hot scan path avoids creating a generator for every bounded excerpt line.
+
+A follow-up 2026-07-01 redacted excerpt byte accounting slice keeps the same
+bounded excerpt text, line map, and byte-limit semantics while using an ASCII
+fast path for rendered excerpt lines. ASCII runtime log lines now account for
+`len(rendered) + 1` directly and only encode the uncommon non-ASCII path, while
+clipped ASCII lines preserve the existing newline-inclusive byte boundary.
+
+A follow-up 2026-07-01 private-line marker scan slice keeps the redaction
+contract unchanged while short-circuiting prompt/response label checks before
+building lowercased prefix substrings. The marker helper now checks the second
+character for the `p*` and `r*` branches first, so common runtime lines such as
+`runtime load failed ...` and ordinary `plain ...` status lines can skip the
+anchored private-text regex without transient lowercased prefix strings.
+
+A follow-up 2026-07-01 excerpt line-number accounting slice keeps the redacted
+excerpt text, truncation behavior, and source-line map unchanged while carrying
+the emitted output-line count, bound output append method, and last source-path
+prefix in the loop. This avoids repeated `len()` calls on the growing output
+list, repeated append attribute lookups, and repeated prefix formatting for
+adjacent bounded log lines from the same source path.
 
 Focused verification:
 

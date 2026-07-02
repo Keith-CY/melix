@@ -5,6 +5,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import stat
 from typing import Any
 
 import pytest
@@ -363,7 +364,9 @@ def test_top_level_weight_file_bytes_streams_iterdir_entries(
 
 def test_top_level_weight_file_bytes_handles_direntry_non_files_and_errors() -> None:
     class FakeStat:
-        st_size = 13
+        def __init__(self, *, mode: int = stat.S_IFREG, size: int = 13) -> None:
+            self.st_mode = mode
+            self.st_size = size
 
     class FakeEntry:
         def __init__(
@@ -371,29 +374,22 @@ def test_top_level_weight_file_bytes_handles_direntry_non_files_and_errors() -> 
             name: str,
             *,
             is_file: bool = True,
-            is_file_raises: bool = False,
             stat_raises: bool = False,
         ) -> None:
             self.name = name
             self._is_file = is_file
-            self._is_file_raises = is_file_raises
             self._stat_raises = stat_raises
-
-        def is_file(self) -> bool:
-            if self._is_file_raises:
-                raise OSError("entry unavailable")
-            return self._is_file
 
         def stat(self) -> FakeStat:
             if self._stat_raises:
                 raise OSError("stat unavailable")
-            return FakeStat()
+            mode = stat.S_IFREG if self._is_file else stat.S_IFDIR
+            return FakeStat(mode=mode)
 
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("README.md")) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("notes.txt")) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry(".bin")) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("nested.safetensors", is_file=False)) == 0
-    assert runtime_utils._weight_dir_entry_file_size(FakeEntry("broken.safetensors", is_file_raises=True)) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("missing.safetensors", stat_raises=True)) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("model.safetensors")) == 13
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("adapter.SAFEtensors")) == 13

@@ -19,7 +19,7 @@ import worker.dataset_registry.catalog as catalog
 from worker.dataset_registry.catalog import DatasetCatalog
 
 
-def _write_probe_snapshot(home: Path, *, file_count: int) -> tuple[Path, int]:
+def _write_probe_snapshot(home: Path, *, file_count: int, sidecar_count: int) -> tuple[Path, int]:
     cache_repo_dir = home / ".cache" / "huggingface" / "hub" / "datasets--org--probe"
     snapshot_dir = cache_repo_dir / "snapshots" / "snapshot-probe"
     refs_dir = cache_repo_dir / "refs"
@@ -35,12 +35,17 @@ def _write_probe_snapshot(home: Path, *, file_count: int) -> tuple[Path, int]:
         path = data_dir / f"{split}-{index:05d}.jsonl"
         path.write_text('{"prompt":"hello","answer":"world"}\n', encoding="utf-8")
         expected_files += 1
+    for index in range(sidecar_count):
+        config = f"config-{index % 12:02d}"
+        data_dir = snapshot_dir / config
+        data_dir.mkdir(parents=True, exist_ok=True)
+        data_dir.joinpath(f"sidecar-{index:05d}.txt").write_text("ignored\n", encoding="utf-8")
     snapshot_dir.joinpath("README.md").write_text("# Probe dataset\n", encoding="utf-8")
     expected_files += 1
     return snapshot_dir, expected_files
 
 
-def run_probe(*, file_count: int = 2400, samples: int = 5) -> dict[str, Any]:
+def run_probe(*, file_count: int = 2400, samples: int = 5, sidecar_count: int = 2400) -> dict[str, Any]:
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
     helper_call_samples: list[float] = []
@@ -51,7 +56,11 @@ def run_probe(*, file_count: int = 2400, samples: int = 5) -> dict[str, Any]:
     for _ in range(samples):
         with tempfile.TemporaryDirectory(prefix="melix-dataset-registry-probe-") as tmp:
             home = Path(tmp) / "home"
-            _snapshot_dir, expected_files = _write_probe_snapshot(home, file_count=file_count)
+            _snapshot_dir, expected_files = _write_probe_snapshot(
+                home,
+                file_count=file_count,
+                sidecar_count=sidecar_count,
+            )
             helper_calls = 0
 
             def counted_split(relative_path: str) -> str:
@@ -107,7 +116,9 @@ def run_probe(*, file_count: int = 2400, samples: int = 5) -> dict[str, Any]:
 def main() -> int:
     file_count = int(os.environ.get("MELIX_DATASET_REGISTRY_PROBE_FILE_COUNT", "2400"))
     samples = int(os.environ.get("MELIX_DATASET_REGISTRY_PROBE_SAMPLES", "5"))
-    metrics = run_probe(file_count=file_count, samples=samples)
+    sidecar_count = int(os.environ.get("MELIX_DATASET_REGISTRY_PROBE_SIDECAR_COUNT", str(file_count)))
+    metrics = run_probe(file_count=file_count, samples=samples, sidecar_count=sidecar_count)
+    metrics["sidecar_count_mean"] = float(sidecar_count)
     print(json.dumps(metrics, sort_keys=True))
     return 0
 

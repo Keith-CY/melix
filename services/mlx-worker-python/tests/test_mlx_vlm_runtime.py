@@ -69,8 +69,10 @@ from worker.runtime.native_mtp import mlx_lm_loader as native_mtp_loader_module
 from worker.runtime.quantized_tensor_metadata import (
     EMPTY_QUANTIZED_TENSOR_METADATA,
     QuantizedTensorMetadata,
+    _native_multimodal_high_precision_module,
     cross_shard_quantized_metadata_fixup_count,
     native_multimodal_quantization_preserves_precision,
+    quantized_scales_present,
     quantized_tensor_metadata_from_model_dir,
     quantized_tensor_metadata_from_index_payload,
     quantized_tensor_metadata_from_safetensor_headers,
@@ -2453,6 +2455,94 @@ def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
         ] = "model-00003.safetensors"
     assert not EMPTY_QUANTIZED_TENSOR_METADATA.tensor_names
     assert cross_shard_quantized_metadata_fixup_count(EMPTY_QUANTIZED_TENSOR_METADATA) == 0
+    assert (
+        quantized_tensor_metadata_from_index_payload({"weight_map": {}})
+        is EMPTY_QUANTIZED_TENSOR_METADATA
+    )
+
+
+class _CountingEmptyWeights(dict[str, object]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.contains_calls = 0
+
+    def __contains__(self, key: object) -> bool:
+        self.contains_calls += 1
+        return super().__contains__(key)
+
+
+class _StringifiedOnce:
+    def __init__(self, value: str) -> None:
+        self.value = value
+        self.calls = 0
+
+    def __str__(self) -> str:
+        self.calls += 1
+        return self.value
+
+
+def test_quantized_tensor_metadata_normalizes_index_keys_once() -> None:
+    tensor_name = _StringifiedOnce("language_model.layers.0.q_proj.scales")
+    empty_tensor_name = _StringifiedOnce("")
+    shard_name = _StringifiedOnce("model-00001.safetensors")
+
+    metadata = quantized_tensor_metadata_from_index_payload(
+        {"weight_map": {tensor_name: shard_name, empty_tensor_name: "ignored.safetensors"}}
+    )
+
+    assert metadata.tensor_to_shard == {
+        "language_model.layers.0.q_proj.scales": "model-00001.safetensors"
+    }
+    assert metadata.tensor_names == frozenset(("language_model.layers.0.q_proj.scales",))
+    assert metadata.tensor_names is metadata.tensor_names
+    assert tensor_name.calls == 1
+    assert empty_tensor_name.calls == 1
+    assert shard_name.calls == 1
+
+    with pytest.raises(TypeError):
+        metadata.tensor_to_shard["language_model.layers.1.q_proj.scales"] = (
+            "model-00002.safetensors"
+        )
+
+
+def test_quantized_scales_present_skips_empty_weight_lookup() -> None:
+    metadata = QuantizedTensorMetadata(
+        {"language_model.layers.0.q_proj.scales": "model-00001.safetensors"}
+    )
+    empty_weights = _CountingEmptyWeights()
+
+    assert (
+        quantized_scales_present(
+            "language_model.layers.0.q_proj",
+            metadata=metadata,
+            weights=empty_weights,
+        )
+        is True
+    )
+    assert empty_weights.contains_calls == 0
+
+    missing_empty_weights = _CountingEmptyWeights()
+    assert (
+        quantized_scales_present(
+            "language_model.layers.9.q_proj",
+            metadata=EMPTY_QUANTIZED_TENSOR_METADATA,
+            weights=missing_empty_weights,
+        )
+        is False
+    )
+    assert missing_empty_weights.contains_calls == 0
+
+    materialized_weights = _CountingEmptyWeights()
+    materialized_weights["language_model.layers.1.q_proj.scales"] = object()
+    assert (
+        quantized_scales_present(
+            "language_model.layers.1.q_proj",
+            metadata=EMPTY_QUANTIZED_TENSOR_METADATA,
+            weights=materialized_weights,
+        )
+        is True
+    )
+    assert materialized_weights.contains_calls == 1
 
 
 def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_entries(
@@ -2544,6 +2634,10 @@ def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_ent
         processor = SimpleNamespace(image_processor=object())
         return model, processor
 
+    _write_fake_safetensors_header(
+        valid_shard,
+        ("language_model.layers.9.q_proj.weight",),
+    )
     _write_fake_safetensors_header(
         model_dir / "model-00002.safetensors",
         ("language_model.layers.1.q_proj.weight",),
@@ -2637,6 +2731,17 @@ def _assert_native_multimodal_quantization_preserves_precision_without_explicit_
 
 def test_native_multimodal_quantization_preserves_precision_without_explicit_scales() -> None:
     _assert_native_multimodal_quantization_preserves_precision_without_explicit_scales()
+
+
+def test_native_multimodal_high_precision_module_segment_scan_preserves_boundaries() -> None:
+    assert _native_multimodal_high_precision_module("vision_tower.patch_embed") is True
+    assert _native_multimodal_high_precision_module("model.visual.patch_embed") is True
+    assert _native_multimodal_high_precision_module("language_model.lm_head") is True
+    assert _native_multimodal_high_precision_module("model..vision_tower") is True
+    assert _native_multimodal_high_precision_module("language_model.layers.0.q_proj") is False
+    assert _native_multimodal_high_precision_module("prevision_tower.patch_embed") is False
+    assert _native_multimodal_high_precision_module("model.visualizer.patch_embed") is False
+    assert _native_multimodal_high_precision_module("language_model.output_projection") is False
 
 
 def test_native_mtp_weight_key_detection_preserves_string_and_custom_keys() -> None:

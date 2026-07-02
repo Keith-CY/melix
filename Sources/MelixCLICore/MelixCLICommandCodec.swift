@@ -24,6 +24,12 @@ public enum MelixCLICommandCodec {
             return "config.metadata"
         case .workspacePreflight:
             return "workspace.preflight"
+        case .storageInventory:
+            return "storage.inventory"
+        case .storageCleanupPlan:
+            return "storage.cleanup.plan"
+        case .storageCleanupApply:
+            return "storage.cleanup.apply"
         case .doctor:
             return "doctor"
         case .system:
@@ -294,6 +300,18 @@ public enum MelixCLICommandCodec {
             appendOption("--manifest", value: options.manifestPath, into: &arguments)
             appendOption("--output", value: options.outputPath, into: &arguments)
             json = options.json
+        case .storageInventory(let options):
+            arguments = ["storage", "inventory"]
+            appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
+            json = options.json
+        case .storageCleanupPlan(let options):
+            arguments = ["storage", "cleanup", "plan"]
+            appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
+            json = options.json
+        case .storageCleanupApply(let options):
+            arguments = ["storage", "cleanup", "apply"]
+            appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
+            json = options.json
         case .doctor(let options):
             arguments = ["doctor"]
             json = options.json
@@ -430,6 +448,8 @@ public enum MelixCLICommandCodec {
             arguments.append(contentsOf: ["--fuzzy-dedup", options.fuzzyDedup ? "true" : "false"])
             arguments.append(contentsOf: ["--segmentation", options.segmentation ? "true" : "false"])
             appendOption("--segmentation-strategy", value: options.segmentationStrategy, into: &arguments)
+            appendOption("--upload-cap-bytes", value: options.uploadCapBytes, into: &arguments)
+            appendOption("--source-cap-bytes", value: options.sourceCapBytes, into: &arguments)
             json = options.json
         case .datasetPrepareVersion(let options):
             arguments = ["dataset", "prepare", "version"]

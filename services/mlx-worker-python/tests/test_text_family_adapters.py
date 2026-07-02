@@ -420,3 +420,63 @@ def test_resolve_text_family_config_reads_config_mapping_without_copying() -> No
     assert len(config) == 516
     assert dict(config)["model_type"] == "qwen3_moe"
     assert config.copy_attempts == 1
+
+
+def test_resolve_text_family_config_skips_config_hints_when_metadata_overrides() -> None:
+    class AccessCountingConfig(Mapping[str, Any]):
+        def __init__(self, payload: Mapping[str, Any]) -> None:
+            self._payload = dict(payload)
+            self.keys_read: list[str] = []
+
+        def __getitem__(self, key: str) -> Any:
+            self.keys_read.append(key)
+            return self._payload[key]
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(self._payload)
+
+        def __len__(self) -> int:
+            return len(self._payload)
+
+    config = AccessCountingConfig(
+        {
+            "model_type": "qwen3_moe",
+            "attention_impl": "mla",
+            "rope_scaling": {"type": "yarn", "interleaved": True},
+            "num_local_experts": 128,
+            "moe_gate_dequant": False,
+        }
+    )
+
+    resolved = resolve_text_family_config(
+        {
+            "text_family_id": "qwen3moe",
+            "melix.text.attention_profile": "gqa",
+            "melix.text.rope_profile": "standard",
+            "melix.text.moe.gate_dequant": "true",
+        },
+        model_path="models/qwen3-moe-128e",
+        config_payload=config,
+        default_route_kind="swift_text",
+    )
+
+    assert resolved.attention_profile == "gqa"
+    assert resolved.rope_profile == "standard"
+    assert resolved.moe_gate_dequant is True
+    assert resolved.expert_count == 128
+    assert list(config)[:1] == ["model_type"]
+    assert len(config) == 5
+    assert set(config.keys_read).isdisjoint(
+        {
+            "attention_type",
+            "attn_type",
+            "attention_impl",
+            "attn_impl",
+            "use_mla",
+            "rope_scaling",
+            "rope_interleaved",
+            "moe_gate_dequant",
+            "dequantize_router_logits",
+            "moe_gate_requires_dequant",
+        }
+    )

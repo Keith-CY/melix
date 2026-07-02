@@ -100,6 +100,18 @@ def test_built_in_tool_config_returns_isolated_template_copies() -> None:
     assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
 
 
+def test_tool_registry_worker_config_reuses_isolated_template_copy() -> None:
+    registry = ToolRegistry(built_in_tool_registry().tools)
+    first_config = registry.as_worker_tool_config()
+    first_config.tools.pop()
+    first_config.schema_version = "mutated"
+
+    second_config = registry.as_worker_tool_config()
+
+    assert len(second_config.tools) == len(BUILTIN_AGENTIC_TOOL_NAMES)
+    assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
+
+
 def test_built_in_tool_config_full_tuple_selection_returns_full_template_copy() -> None:
     selected_config = built_in_tool_config(BUILTIN_AGENTIC_TOOL_NAMES)
     selected_config.tools.pop()
@@ -195,6 +207,19 @@ def test_tool_registry_metrics_snapshot_updates_for_selected_registry() -> None:
     )
 
 
+def test_tool_registry_empty_selection_reuses_cached_registry() -> None:
+    registry = built_in_tool_registry()
+
+    selected = registry.select([])
+
+    assert selected.names() == ()
+    assert selected.metrics().tool_count == 0
+    assert selected.metrics().schema_bytes == 0
+    assert selected.metrics().required_argument_count == 0
+    assert registry.select(()) is selected
+    assert registry.select([]) is selected
+
+
 def test_tool_registry_names_reuses_registry_snapshot() -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
     expected_names = registry.names()
@@ -202,6 +227,24 @@ def test_tool_registry_names_reuses_registry_snapshot() -> None:
 
     assert registry.names() is expected_names
     assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
+
+
+def test_keyword_tool_matches_reuses_compiled_rule_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool_registry_module._keyword_tool_matches.cache_clear()
+    expected_matches = tool_registry_module._keyword_tool_matches(
+        "Search local evidence, crop the image, and visit fixture://docs/provider-contract."
+    )
+    tool_registry_module._keyword_tool_matches.cache_clear()
+    monkeypatch.setattr(tool_registry_module, "_BUILTIN_TOOL_KEYWORD_HINT_RULES", {})
+
+    matches = tool_registry_module._keyword_tool_matches(
+        "Search local evidence, crop the image, and visit fixture://docs/provider-contract."
+    )
+
+    assert matches == expected_matches
+    assert matches == ("image_crop", "text_search", "visit")
 
 
 def test_tool_registry_descriptors_use_slotted_snapshots() -> None:
@@ -285,6 +328,52 @@ def test_tool_registry_select_trims_blanks_and_deduplicates_in_one_pass() -> Non
     assert selected.names() == ("visit", "image_crop")
 
 
+def test_append_selected_tool_skips_strip_for_canonical_names() -> None:
+    class StripCountingName(str):
+        strip_calls = 0
+
+        def strip(self, chars: str | None = None) -> str:
+            type(self).strip_calls += 1
+            return super().strip(chars)
+
+    selected_names: list[str] = []
+    selected_sources: dict[str, str] = {}
+    canonical_name = StripCountingName("text_search")
+
+    assert tool_registry_module._append_selected_tool(
+        selected_names,
+        selected_sources,
+        canonical_name,
+        "keyword",
+        4,
+    )
+
+    assert StripCountingName.strip_calls == 0
+    assert selected_names == ["text_search"]
+    assert selected_sources == {"text_search": "keyword"}
+
+    whitespace_name = StripCountingName("  visit  ")
+    assert tool_registry_module._append_selected_tool(
+        selected_names,
+        selected_sources,
+        whitespace_name,
+        "keyword",
+        4,
+    )
+    assert StripCountingName.strip_calls == 1
+    assert selected_names == ["text_search", "visit"]
+    assert selected_sources["visit"] == "keyword"
+
+    assert not tool_registry_module._append_selected_tool(
+        selected_names,
+        selected_sources,
+        StripCountingName("   "),
+        "keyword",
+        4,
+    )
+    assert StripCountingName.strip_calls == 2
+
+
 def test_tool_registry_select_reuses_cached_name_index() -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
     object.__setattr__(registry, "_tools", ())
@@ -327,8 +416,10 @@ def test_tool_registry_select_reuses_missing_name_sentinel_between_calls() -> No
         def __init__(self, values: dict[str, ToolDescriptor]) -> None:
             super().__init__(values)
             self.default_ids: list[int] = []
+            self.get_calls = 0
 
         def get(self, key: str, default: object = None) -> ToolDescriptor | object:
+            self.get_calls += 1
             self.default_ids.append(id(default))
             return super().get(key, default)
 
@@ -341,6 +432,7 @@ def test_tool_registry_select_reuses_missing_name_sentinel_between_calls() -> No
             registry.select([missing_name])
 
     assert len(set(index.default_ids)) == 1
+    assert index.get_calls == 2
 
 
 def test_tool_registry_select_reuses_cached_selected_registry() -> None:
@@ -635,6 +727,42 @@ def test_agentic_tool_selection_preserves_always_available_tools_with_vector_hit
     )
 
 
+def test_agentic_tool_selection_caps_vector_hits_without_optional_routing() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search local evidence, then visit fixture://docs/provider-contract.",
+            vector_selected_tool_ids=("text_search", "visit"),
+            vector_available=True,
+            max_selected_tools=2,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selection_mode"] == "vector"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "vector"},
+    ]
+
+
+def test_agentic_tool_selection_ignores_blank_and_duplicate_vector_hits() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search local evidence.",
+            vector_selected_tool_ids=("", " text_search ", "text_search"),
+            vector_available=True,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selection_mode"] == "vector"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "vector"},
+    ]
+
+
 def test_agentic_tool_selection_uses_builtin_name_set_for_membership() -> None:
     result = select_agentic_tools_for_turn(
         ToolSelectionInput(
@@ -696,6 +824,41 @@ def test_agentic_tool_selection_compiles_keyword_hint_rules_once_per_hint() -> N
         compiled_rules["visit"][1][0],
         literal=compiled_rules["visit"][1][1],
     )
+
+
+def test_agentic_tool_selection_always_only_reuses_cached_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_select(self: ToolRegistry, names: list[str] | tuple[str, ...]) -> ToolRegistry:
+        raise AssertionError(  # pragma: no cover
+            f"always-only selection should reuse cached registry for {names!r}"
+        )
+
+    monkeypatch.setattr(ToolRegistry, "select", fail_select)
+
+    result = select_agentic_tools_for_turn(ToolSelectionInput(max_selected_tools=1))
+
+    assert result.registry is tool_registry_module._ALWAYS_ONLY_TOOL_REGISTRY
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selected_schema_bytes"] == (
+        tool_registry_module._ALWAYS_ONLY_TOOL_METRICS.schema_bytes
+    )
+
+
+def test_agentic_tool_selection_always_only_supports_custom_registry() -> None:
+    registry = ToolRegistry(tool_registry_module.agentic_tool_catalog_registry().tools)
+
+    result = tool_registry_module._build_always_only_tool_selection_result(
+        registry,
+        ToolSelectionInput(vector_available=True),
+    )
+
+    assert result.registry is registry.select(("local_compute",))
+    assert result.registry is not tool_registry_module._ALWAYS_ONLY_TOOL_REGISTRY
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"}
+    ]
 
 
 def test_agentic_tool_selection_max_always_only_skips_optional_routing_scans(
@@ -771,6 +934,35 @@ def test_agentic_tool_selection_whitespace_turn_skips_casefold() -> None:
     assert result.registry.names() == ("local_compute",)
     assert result.receipt["selection_mode"] == "fallback"
     assert result.receipt["fallback_reason"] == "no_keyword_match"
+
+
+def test_agentic_tool_selection_whitespace_turn_skips_keyword_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_keyword_tool_matches(text: str) -> tuple[str, ...]:  # pragma: no cover
+        raise AssertionError(f"whitespace fast path should not scan keywords: {text!r}")
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "_keyword_tool_matches",
+        fail_keyword_tool_matches,
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn=" \t\n  ",
+            vector_available=True,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+    assert result.receipt["vector_available"] is True
+    assert result.receipt["fallback_reason"] == "no_keyword_match"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+    ]
 
 
 def test_agentic_tool_selection_skips_empty_context_keyword_scan(
@@ -983,6 +1175,13 @@ def test_agentic_tool_selection_keyword_matches_reuse_bounded_cache() -> None:
     assert first_info.maxsize == 128
     assert first_info.misses == 1
     assert second_info.hits == first_info.hits + 1
+
+
+def test_agentic_tool_selection_keyword_matches_preserve_non_ascii_ascii_hint() -> None:
+    matcher = tool_registry_module._keyword_tool_matches
+    matcher.cache_clear()
+
+    assert matcher("Please SEARCH café evidence.") == ("text_search",)
 
 
 def test_agentic_tool_selection_keyword_rule_compiler_filters_empty_hints() -> None:

@@ -73,6 +73,142 @@ def test_check_for_updates_reports_missing_latest_version(tmp_path: Path) -> Non
     assert "does not declare latest_version" in result.detail
 
 
+def test_check_for_updates_reads_channel_bytes_without_text_decoder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel_path = tmp_path / "stable.json"
+    channel_path.write_text(
+        json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
+        encoding="utf-8",
+    )
+    startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
+    read_bytes_calls = 0
+    original_read_bytes = Path.read_bytes
+
+    def fail_read_text(*args: object, **kwargs: object) -> str:  # pragma: no cover - sentinel
+        raise AssertionError("check_for_updates should parse channel JSON from bytes")
+
+    def counted_read_bytes(self: Path) -> bytes:
+        nonlocal read_bytes_calls
+        if self == channel_path:
+            read_bytes_calls += 1
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+    monkeypatch.setattr(Path, "read_bytes", counted_read_bytes)
+
+    result = check_for_updates("0.1.0", channel_path)
+
+    assert result.update_available is True
+    assert read_bytes_calls == 1
+
+
+def test_check_for_updates_reuses_stat_valid_channel_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel_path = tmp_path / "stable.json"
+    channel_path.write_text(
+        json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
+        encoding="utf-8",
+    )
+    startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_STAT_CACHE.clear()
+
+    assert check_for_updates("0.1.0", channel_path).update_available is True
+
+    read_bytes_calls = 0
+    original_read_bytes = Path.read_bytes
+
+    def counted_read_bytes(self: Path) -> bytes:  # pragma: no cover - sentinel
+        nonlocal read_bytes_calls
+        if self == channel_path:
+            read_bytes_calls += 1
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", counted_read_bytes)
+
+    assert check_for_updates("0.1.0", channel_path).update_available is True
+    assert read_bytes_calls == 0
+
+
+def test_check_for_updates_reuses_cached_result_without_recompare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel_path = tmp_path / "stable.json"
+    channel_path.write_text(
+        json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
+        encoding="utf-8",
+    )
+    startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_STAT_CACHE.clear()
+
+    first_result = check_for_updates("0.1.0", channel_path)
+
+    def fail_compare_versions(*args: object, **kwargs: object) -> int:  # pragma: no cover - sentinel
+        raise AssertionError("cached update check result should skip version comparison")
+
+    monkeypatch.setattr(startup_signals_module, "compare_versions", fail_compare_versions)
+
+    second_result = check_for_updates("0.1.0", channel_path)
+
+    assert second_result is first_result
+
+
+def test_check_for_updates_reuses_stat_valid_result_before_channel_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel_path = tmp_path / "stable.json"
+    channel_path.write_text(
+        json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
+        encoding="utf-8",
+    )
+    startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_STAT_CACHE.clear()
+
+    first_result = check_for_updates("0.1.0", channel_path)
+
+    def fail_read_bytes(self: Path) -> bytes:  # pragma: no cover - sentinel
+        if self == channel_path:
+            raise AssertionError("stat-valid result cache should skip channel JSON decode")
+        return Path.read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
+
+    second_result = check_for_updates("0.1.0", channel_path)
+
+    assert second_result is first_result
+
+
+def test_check_for_updates_refreshes_stat_valid_result_after_channel_change(
+    tmp_path: Path,
+) -> None:
+    channel_path = tmp_path / "stable.json"
+    channel_path.write_text(
+        json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
+        encoding="utf-8",
+    )
+    startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_STAT_CACHE.clear()
+
+    first_result = check_for_updates("0.1.0", channel_path)
+    channel_path.write_text(
+        json.dumps({"channel": "stable"}),
+        encoding="utf-8",
+    )
+
+    second_result = check_for_updates("0.1.0", channel_path)
+
+    assert first_result.update_available is True
+    assert second_result.checked is False
+
+
 def test_read_product_version_reads_project_version(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "melix"\nversion = "1.2.3"\n', encoding="utf-8")
 
@@ -180,6 +316,7 @@ def test_compare_versions_ignores_build_metadata_suffix() -> None:
     assert normalized_version_parts("v1.2.3+abcdef1") == [1, 2, 3]
     assert compare_versions("1.2.3+build.4", "1.2.3") == 0
     assert compare_versions("1.2.3", "1.2.3+abcdef1") == 0
+    assert compare_versions("v1.2.3+build.4", "1.2.3+abcdef1") == 0
     assert compare_versions("1.2.4", "1.2.3+abcdef1") == 1
     assert compare_versions("1.2.2", "1.2.3") == -1
 
@@ -189,6 +326,30 @@ def test_compare_versions_handles_suffixes_without_padding_lists() -> None:
     assert normalized_version_parts("release") == [0]
     assert compare_versions("2.10rc1", "2.9.99") == 1
     assert compare_versions("2.10", "2.10.0.0") == 0
+
+
+def test_compare_versions_reuses_cached_result_for_repeated_pairs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compare_versions.cache_clear()
+    calls = 0
+    original_compare_parts = startup_signals_module._compare_normalized_version_parts
+
+    def counted_compare_parts(left: str, right: str, left_index: int, right_index: int) -> int:
+        nonlocal calls
+        calls += 1
+        return original_compare_parts(left, right, left_index, right_index)
+
+    monkeypatch.setattr(
+        startup_signals_module,
+        "_compare_normalized_version_parts",
+        counted_compare_parts,
+    )
+
+    assert compare_versions("v3.2.1+build", "3.2.0") == 1
+    assert compare_versions("v3.2.1+build", "3.2.0") == 1
+    assert calls == 1
+    compare_versions.cache_clear()
 
 
 def test_compare_versions_streams_parts_without_materialized_normalization(

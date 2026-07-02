@@ -903,16 +903,16 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
 
 
 def _percentile_value(ordered_values: list[float], percentile: float) -> float:
-    if len(ordered_values) == 1:
+    last_index = len(ordered_values) - 1
+    if last_index == 0:
         return ordered_values[0]
-    position = min(
-        len(ordered_values) - 1,
-        max(0.0, (len(ordered_values) - 1) * percentile),
-    )
+    position = last_index * percentile
+    if position <= 0.0:
+        return ordered_values[0]
+    if position >= last_index:
+        return ordered_values[last_index]
     lower_index = int(position)
-    upper_index = min(len(ordered_values) - 1, lower_index + 1)
-    if lower_index == upper_index:
-        return ordered_values[lower_index]
+    upper_index = lower_index + 1
     weight = position - lower_index
     return ordered_values[lower_index] + (
         ordered_values[upper_index] - ordered_values[lower_index]

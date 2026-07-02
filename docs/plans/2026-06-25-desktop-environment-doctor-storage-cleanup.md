@@ -97,6 +97,12 @@ Required top-level fields:
 - `redaction_summary`
 - `metrics`
 
+The diagnostic `summary` must include the aggregate `status`, `check_count`,
+`failed_check_count`, `warning_check_count`, `passed_check_count`, and
+`unknown_check_count`. The status breakdown counts must reconcile with
+`check_count` so deferred probes remain visible without being counted as passes
+or warnings.
+
 Each diagnostic check must include:
 
 - `check_id`
@@ -351,6 +357,27 @@ Probe success criteria:
 - Apply must delete only unchanged cleanable Melix-owned artifacts and must
   protect active or changed artifacts.
 - Desktop and CLI fixture outputs must agree on summary counts and receipt IDs.
+
+## #1516 Implementation Notes
+
+The #1516 implementation emits the shared environment diagnostic receipt through
+existing `melix doctor --json`, `melix system --json`, and debug bundle JSON
+paths before introducing a new long-lived protobuf API. The receipt is built in
+shared Swift diagnostics code so CLI and Desktop decode the same fields. Debug
+bundles write the receipt both as `environment-diagnostic.json` and as the
+manifest summary payload.
+
+`melix doctor --json` and `melix system --json` intentionally expose
+`environment_diagnostic` as a top-level field. `doctor --json` also preserves
+the nested `system.environment_diagnostic` value inherited from the shared
+system payload. The top-level field is the stable convenience path for Desktop
+and CLI automation; the nested copy remains part of the system payload shape.
+
+The first slice keeps version and local-server probes bounded to the effective
+process environment. It records executable resolution and health-probe
+availability without spawning dependency imports or opening network
+connections, so Finder-style PATH and redaction failures are visible without
+turning diagnostics into a long-running runtime probe.
 
 ## Verification
 

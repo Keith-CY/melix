@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from packages.protocol.python.workspace.v1 import export_target_manifest_pb2
@@ -23,7 +24,18 @@ from worker.productization.export_target_diagnostics import (
     build_export_diagnostics_receipt,
     write_export_diagnostics_receipt,
     _SourceLine,
+    _DiagnosisPattern,
     _build_redacted_excerpt,
+    _collect_source_lines,
+    _diagnoses_from_excerpt,
+    _diagnosis_metric_counts,
+    _extend_source_lines,
+    _has_diagnosis_marker,
+    _has_identity_marker,
+    _has_named_secret_marker,
+    _has_private_text_line_marker,
+    _has_secret_redaction_marker,
+    _split_source_lines,
 )
 from worker.productization.export_target_layout import (
     build_export_target_layout,
@@ -36,6 +48,19 @@ FIXTURE_ROOT = (
     Path(__file__).resolve().parents[1]
     / "fixtures/runtime-export/target-manifests.dev.v1"
 )
+
+
+def test_export_target_diagnostics_source_line_extension_matches_split_helper() -> None:
+    lines: list[_SourceLine] = []
+
+    _extend_source_lines(lines, "logs/runtime.log", "first\nsecond\n")
+
+    assert lines == _split_source_lines("logs/runtime.log", "first\nsecond\n")
+    assert [line.source_path for line in lines] == ["logs/runtime.log", "logs/runtime.log"]
+    assert [line.text for line in lines] == ["first", "second"]
+
+    _extend_source_lines(lines, "logs/empty.log", "")
+    assert len(lines) == 2
 
 
 @pytest.mark.parametrize(
@@ -81,6 +106,132 @@ def test_export_target_diagnostics_parser_matches_common_runtime_failures(
     assert excerpt_path.read_text(encoding="utf-8").startswith("[logs/ollama-create.log]")
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("plain log line", False),
+        ("api_key=super-secret-value", True),
+        ("status: failed", True),
+        ("proxy=http://user:pass@example.test", True),
+        ("openai key sk-live", True),
+        ("-----BEGIN TOKEN-----abc123-----END TOKEN-----", True),
+    ],
+)
+def test_export_target_diagnostics_secret_marker_fast_path_matches_registered_markers(
+    text: str,
+    expected: bool,
+) -> None:
+    assert _has_secret_redaction_marker(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("plain runtime status", False),
+        ("api_key=super-secret-value", True),
+        ("access_token=abc", True),
+        ("password: abc", True),
+        ("contains secret value", True),
+    ],
+)
+def test_export_target_diagnostics_named_secret_marker_fast_path_matches_markers(
+    text: str,
+    expected: bool,
+) -> None:
+    assert _has_named_secret_marker(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("plain runtime status", False),
+        ("operator_id=chenyu", True),
+        ("user_name=alice", True),
+    ],
+)
+def test_export_target_diagnostics_identity_marker_fast_path_matches_markers(
+    text: str,
+    expected: bool,
+) -> None:
+    assert _has_identity_marker(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("plain runtime status", False),
+        ("p", False),
+        ("R", False),
+        ("  prompt: private customer prompt", True),
+        ("Private prompt template: hidden", True),
+        ("\tPrIvAtE pRoMpT tEmPlAtE: hidden", True),
+        ("Response=private completion", True),
+        ("runtime load failed at /tmp/melix/model", False),
+        ("completion: private text", True),
+        ("generated text: hidden", True),
+        ("dataset row: hidden", True),
+        ("operator input: hidden", True),
+    ],
+)
+def test_export_target_diagnostics_private_line_marker_fast_path_matches_registered_prefixes(
+    text: str,
+    expected: bool,
+) -> None:
+    assert _has_private_text_line_marker(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("ordinary runtime status", False),
+        ("unsupported architecture arm64 required", True),
+        ("duplicate tensor name decoder.layers.0", True),
+        ("missing blob sha256-777777 not found", True),
+        ("runtime binary not installed: ollama", True),
+        ("invalid runtime path /tmp/melix/bad-target", True),
+        ("generation smoke timed out after deadline exceeded", True),
+        ("permission denied opening model weights", True),
+        ("Metal out of memory during load", True),
+        ("runtime load failed while opening model", True),
+    ],
+)
+def test_export_target_diagnostics_diagnosis_marker_fast_path_matches_registered_markers(
+    text: str,
+    expected: bool,
+) -> None:
+    assert _has_diagnosis_marker(text.lower()) is expected
+
+
+def test_export_target_diagnostics_skips_private_line_regex_for_unrelated_runtime_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    class FailPrivateLinePattern:
+        def search(self, _text: str) -> None:  # pragma: no cover - regression guard
+            raise AssertionError("private text regex should be skipped for unrelated runtime lines")
+
+    monkeypatch.setattr(
+        export_target_diagnostics_module,
+        "_PRIVATE_TEXT_LINE_PATTERN",
+        FailPrivateLinePattern(),
+    )
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [_SourceLine(source_path="logs/ollama-create.log", text="runtime load failed at /tmp/melix/model")],
+        bounded_bytes=4096,
+        bounded_lines=8,
+    )
+
+    assert "runtime load failed" in excerpt.text
+
+
 def test_export_target_diagnostics_redacts_paths_secrets_private_text_and_identity(
     tmp_path: Path,
 ) -> None:
@@ -123,6 +274,51 @@ def test_export_target_diagnostics_redacts_paths_secrets_private_text_and_identi
     assert receipt["redaction_summary"]["redacted_secret_count"] >= 3
     assert receipt["redaction_summary"]["redacted_prompt_or_response_count"] == 1
     assert receipt["redaction_summary"]["redacted_identity_count"] >= 1
+
+
+def test_export_target_diagnostics_excerpt_byte_count_reuses_incremental_accounting(
+    tmp_path: Path,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [
+            _SourceLine("logs/runtime.log", "runtime load failed at café"),
+            _SourceLine("logs/runtime.log", "permission denied opening weights"),
+        ],
+        bounded_bytes=4096,
+        bounded_lines=8,
+    )
+
+    assert excerpt.summary.excerpt_byte_count == len(excerpt.text.encode("utf-8"))
+    assert excerpt.summary.excerpt_line_count == 2
+
+
+def test_export_target_diagnostics_non_ascii_clipped_line_keeps_line_number(
+    tmp_path: Path,
+) -> None:
+    _target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [_SourceLine("logs/runtime.log", "runtime load failed at café")],
+        bounded_bytes=34,
+        bounded_lines=8,
+    )
+
+    assert excerpt.summary.truncated is True
+    assert excerpt.summary.excerpt_line_count == 1
+    assert excerpt.line_numbers == {0: 1}
+    assert excerpt.summary.excerpt_byte_count <= 34
 
 
 def test_export_target_diagnostics_resolves_target_root_once_for_many_path_redactions(
@@ -170,6 +366,190 @@ def test_export_target_diagnostics_resolves_target_root_once_for_many_path_redac
     assert "<target>/artifacts/model.gguf" in excerpt.text
     assert "<target>/artifacts/blobs/sha256-777777" in excerpt.text
     assert "<target>/logs/ollama-create.log" in excerpt.text
+
+
+def test_export_target_diagnostics_uses_lexical_target_path_fast_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    def fail_path_construction(*_args: object, **_kwargs: object) -> Path:  # pragma: no cover
+        raise AssertionError("clean target paths should not allocate fallback Path objects")
+
+    monkeypatch.setattr(export_target_diagnostics_module, "Path", fail_path_construction)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text=f"runtime load failed at {target_root / 'artifacts/model.gguf'}.",
+            ),
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text=f"missing blob at {target_root / 'artifacts/blobs/sha256-777777'})",
+            ),
+        ],
+        bounded_bytes=4096,
+        bounded_lines=20,
+    )
+
+    assert "<target>/artifacts/model.gguf." in excerpt.text
+    assert "<target>/artifacts/blobs/sha256-777777)" in excerpt.text
+    assert excerpt.summary.redacted_absolute_path_count == 2
+    assert export_target_diagnostics_module._target_relative_text(
+        str(target_root), str(target_root)
+    ) == "."
+    assert export_target_diagnostics_module._target_relative_text(
+        f"{target_root}-sibling/artifact", str(target_root)
+    ) is None
+
+
+def test_export_target_diagnostics_ascii_excerpt_fast_path_preserves_byte_budget(
+    tmp_path: Path,
+) -> None:
+    _target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [
+            _SourceLine("logs/runtime.log", "runtime load failed while opening model"),
+            _SourceLine("logs/runtime.log", "plain ascii progress line"),
+        ],
+        bounded_bytes=77,
+        bounded_lines=20,
+    )
+
+    assert excerpt.summary.truncated is True
+    assert excerpt.summary.excerpt_byte_count == 77
+    assert excerpt.summary.excerpt_byte_count <= 77
+    assert "runtime load failed" in excerpt.text
+    assert excerpt.text.startswith("[logs/runtime.log] runtime load failed while opening model")
+
+
+def test_export_target_diagnostics_lowercases_source_line_once_per_match_scan() -> None:
+    class TrackingText(str):
+        lower_calls = 0
+
+        def lower(self) -> str:
+            type(self).lower_calls += 1
+            return super().lower()
+
+    text = TrackingText("progress line loaded shard metadata without failure")
+
+    diagnoses = _diagnoses_from_excerpt(
+        [_SourceLine(source_path="logs/ollama-create.log", text=text)],
+        {0: 1},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert diagnoses == []
+    assert text.lower_calls == 1
+
+
+def test_export_target_diagnostics_stops_after_all_known_codes_match() -> None:
+    class TrackingText(str):
+        lower_calls = 0
+
+        def lower(self) -> str:  # pragma: no cover - must stay uncalled
+            type(self).lower_calls += 1
+            return super().lower()
+
+    source_lines = [
+        _SourceLine("logs/runtime.log", "runtime load failed while opening model"),
+        _SourceLine("logs/runtime.log", "unsupported architecture arm64 required"),
+        _SourceLine("logs/runtime.log", "duplicate tensor name decoder.layers.0"),
+        _SourceLine("logs/runtime.log", "missing blob sha256-777777 not found"),
+        _SourceLine("logs/runtime.log", "runtime binary not installed: ollama"),
+        _SourceLine("logs/runtime.log", "invalid runtime path /tmp/melix/bad-target"),
+        _SourceLine("logs/runtime.log", "generation smoke timed out after deadline exceeded"),
+        _SourceLine("logs/runtime.log", "permission denied opening model weights"),
+        _SourceLine("logs/runtime.log", "Metal out of memory during load"),
+        _SourceLine("logs/runtime.log", TrackingText("late duplicate runtime load failed marker")),
+    ]
+    line_numbers = {index: index + 1 for index in range(len(source_lines))}
+
+    diagnoses = _diagnoses_from_excerpt(
+        source_lines,
+        line_numbers,
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert {diagnosis["code"] for diagnosis in diagnoses} == set(
+        export_target_diagnostics_module._KNOWN_DIAGNOSIS_CODE_SET
+    )
+    assert TrackingText.lower_calls == 0
+
+
+def test_export_target_diagnostics_preserves_overlap_priority_after_prior_match() -> None:
+    diagnoses = _diagnoses_from_excerpt(
+        [
+            _SourceLine("logs/runtime.log", "unsupported architecture arm64 required"),
+            _SourceLine(
+                "logs/runtime.log",
+                "unsupported architecture warning followed by runtime load failed",
+            ),
+        ],
+        {0: 1, 1: 2},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert [diagnosis["code"] for diagnosis in diagnoses] == [
+        CODE_UNSUPPORTED_ARCHITECTURE,
+        CODE_RUNTIME_LOAD_FAILED,
+    ]
+
+
+def test_export_target_diagnostics_runtime_load_markers_skip_progress_regexes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_load_pattern = next(
+        pattern
+        for pattern in export_target_diagnostics_module._DIAGNOSIS_PATTERNS
+        if pattern.code == CODE_RUNTIME_LOAD_FAILED
+    )
+    expressions = tuple(Mock(wraps=expression) for expression in runtime_load_pattern.expressions)
+    patched_pattern = _DiagnosisPattern(
+        code=runtime_load_pattern.code,
+        severity=runtime_load_pattern.severity,
+        pattern_id=runtime_load_pattern.pattern_id,
+        expressions=expressions,
+        operator_message=runtime_load_pattern.operator_message,
+        remediation=runtime_load_pattern.remediation,
+        markers=runtime_load_pattern.markers,
+    )
+    monkeypatch.setattr(
+        export_target_diagnostics_module,
+        "_DIAGNOSIS_PATTERNS",
+        (patched_pattern,),
+    )
+
+    diagnoses = _diagnoses_from_excerpt(
+        [
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text="progress line loaded shard metadata without failure",
+            ),
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text="runtime load failed while opening model",
+            ),
+        ],
+        {0: 1, 1: 2},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert [diagnosis["code"] for diagnosis in diagnoses] == [CODE_RUNTIME_LOAD_FAILED]
+    assert [expression.search.call_count for expression in expressions] == [1, 1, 1, 0, 0]
 
 
 def test_export_target_diagnostics_skips_secret_regexes_for_plain_path_lines(
@@ -324,6 +704,34 @@ def test_export_target_diagnostics_reads_only_bounded_log_chunk(
     assert receipt["status"] == "matched"
 
 
+def test_export_target_diagnostics_source_collection_skips_duplicates_and_missing_logs(
+    tmp_path: Path,
+) -> None:
+    target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+    log_path = "logs/ollama-create.log"
+    (target_root / log_path).write_text("runtime load failed\n", encoding="utf-8")
+    duplicate_row = manifest.required_files.add()
+    duplicate_row.path = log_path
+    duplicate_row.role = export_target_manifest_pb2.EXPORT_TARGET_FILE_ROLE_RUNTIME_LOG
+    missing_row = manifest.intermediate_files.add()
+    missing_row.path = "logs/missing-runtime.log"
+    missing_row.role = export_target_manifest_pb2.EXPORT_TARGET_FILE_ROLE_RUNTIME_LOG
+
+    lines = _collect_source_lines(
+        layout,
+        manifest,
+        failure_checks=(),
+        bounded_bytes=1024,
+    )
+
+    assert [line.source_path for line in lines].count(log_path) == 1
+    assert all(line.source_path != "logs/missing-runtime.log" for line in lines)
+
+
 def test_export_target_diagnostics_falls_back_when_path_resolution_raises_oserror(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -355,6 +763,110 @@ def test_export_target_diagnostics_falls_back_when_path_resolution_raises_oserro
     assert receipt["status"] == "matched"
     assert str(raw_path) not in excerpt
     assert "<absolute-path>" in excerpt
+
+
+def test_export_target_diagnostics_metric_counts_single_pass() -> None:
+    parsed_count, unknown_count, matched_codes = _diagnosis_metric_counts(
+        [
+            {"code": CODE_RUNTIME_LOAD_FAILED},
+            {"code": CODE_UNKNOWN_FAILURE},
+            {"code": CODE_MISSING_BINARY},
+        ]
+    )
+
+    assert parsed_count == 2
+    assert unknown_count == 1
+    assert matched_codes == {CODE_RUNTIME_LOAD_FAILED, CODE_MISSING_BINARY}
+
+
+def test_export_target_diagnostics_pattern_markers_skip_unrelated_regex() -> None:
+    expression = Mock()
+    pattern = _DiagnosisPattern(
+        code=CODE_MISSING_BLOB,
+        severity="error",
+        pattern_id="missing-blob-v1",
+        expressions=(expression,),
+        operator_message="message",
+        remediation="remediation",
+        markers=("blob",),
+    )
+
+    assert pattern.matches("runtime emitted a harmless progress line") is False
+    expression.search.assert_not_called()
+
+
+def test_export_target_diagnostics_pattern_markers_preserve_matching_regex() -> None:
+    expression = Mock()
+    expression.search.return_value = object()
+    pattern = _DiagnosisPattern(
+        code=CODE_MISSING_BLOB,
+        severity="error",
+        pattern_id="missing-blob-v1",
+        expressions=(expression,),
+        operator_message="message",
+        remediation="remediation",
+        markers=("blob",),
+    )
+
+    assert pattern.matches("missing blob sha256-777777") is True
+    expression.search.assert_called_once_with("missing blob sha256-777777")
+
+
+def test_export_target_diagnostics_pattern_markers_normalize_case() -> None:
+    expression = Mock()
+    expression.search.return_value = object()
+    pattern = _DiagnosisPattern(
+        code=CODE_MISSING_BLOB,
+        severity="error",
+        pattern_id="missing-blob-v1",
+        expressions=(expression,),
+        operator_message="message",
+        remediation="remediation",
+        markers=("BLOB",),
+    )
+
+    assert pattern.markers == ("blob",)
+    assert pattern.matches("missing blob sha256-777777") is True
+    expression.search.assert_called_once_with("missing blob sha256-777777")
+
+
+def test_export_target_diagnostics_prefilters_unmarked_lines_before_pattern_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pattern = Mock()
+    pattern.code = CODE_MISSING_BLOB
+    pattern.matches.return_value = True
+    monkeypatch.setattr(export_target_diagnostics_module, "_DIAGNOSIS_PATTERNS", (pattern,))
+    monkeypatch.setattr(export_target_diagnostics_module, "_DIAGNOSIS_MARKERS", ("blob",))
+
+    diagnoses = export_target_diagnostics_module._diagnoses_from_excerpt(
+        [_SourceLine(source_path="logs/runtime.log", text="progress line without diagnostic terms")],
+        {0: 1},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert diagnoses == []
+    pattern.matches.assert_not_called()
+
+
+def test_export_target_diagnostics_skips_path_regex_for_slashless_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path_pattern = Mock()
+    monkeypatch.setattr(export_target_diagnostics_module, "_ABSOLUTE_PATH_PATTERN", path_pattern)
+    summary = export_target_diagnostics_module._RedactionSummary()
+
+    redacted = export_target_diagnostics_module._redact_text(
+        "runtime load failed while opening model",
+        tmp_path,
+        str(tmp_path),
+        summary,
+    )
+
+    assert redacted == "runtime load failed while opening model"
+    path_pattern.sub.assert_not_called()
+    assert summary.redaction_count == 0
 
 
 def test_export_target_diagnostics_not_applicable_without_logs_or_failures(

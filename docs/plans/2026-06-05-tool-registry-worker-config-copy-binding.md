@@ -22,12 +22,23 @@ isolation while avoiding the selection-cache dictionary lookup on the hot full
 selection path. The slice also binds the copy helper locally inside
 `built_in_tool_config()` so all return branches reuse the same fast local lookup.
 
+## Follow-up slice: worker config template copy
+
+A 2026-06-28 follow-up keeps the same protobuf isolation contract for
+`ToolRegistry.as_worker_tool_config()` but caches the built `ToolConfig` object as
+an internal template. Repeated calls now copy the cached template directly instead
+of reparsing the cached serialized bytes. The method still returns a fresh
+protobuf object every time, so caller mutations cannot affect later callers or the
+registry cache.
+
 ## Verification plan
 
-- Focused tool-registry tests, including full tuple selection copy isolation.
+- Focused tool-registry tests, including full tuple selection copy isolation and
+  direct `ToolRegistry.as_worker_tool_config()` copy isolation.
 - Registered changed-scope coverage for the tool-registry probe scope.
 - Registered local probe on Linux, comparing the pre-change and post-change
-  `full_selection_tool_config_elapsed_ms_mean` and adjacent metrics.
+  `full_selection_tool_config_elapsed_ms_mean`,
+  `partial_selection_tool_config_elapsed_ms_mean`, and adjacent metrics.
 
 ## Boundary
 

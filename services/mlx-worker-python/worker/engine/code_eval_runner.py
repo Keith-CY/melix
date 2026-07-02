@@ -21,7 +21,6 @@ _PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
 _PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 _ASCII_SPLITLINE_BOUNDARIES = frozenset("\n\r\v\f\x1c\x1d\x1e")
 _ASCII_NON_LINE_WHITESPACE = frozenset(" \t\x1f")
-_COUNT_TESTS_SPLITLINES_MAX_CHARS = 500_000
 _ORD_ZERO = ord("0")
 _ORD_QUOTE = ord('"')
 _ORD_COLON = ord(":")
@@ -321,19 +320,20 @@ def _count_assert_nodes(
 
 
 def _count_nonblank_test_lines(test_code: str) -> int:
-    if len(test_code) <= _COUNT_TESTS_SPLITLINES_MAX_CHARS:
-        return sum(1 for line in test_code.splitlines() if line.strip())
     count = 0
     line_has_content = False
     if test_code.isascii():
         splitline_boundaries = _ASCII_SPLITLINE_BOUNDARIES
         non_line_whitespace = _ASCII_NON_LINE_WHITESPACE
         for character in test_code:
-            if character in splitline_boundaries:
+            if not line_has_content:
+                if character in splitline_boundaries:
+                    continue
+                if character not in non_line_whitespace:
+                    count += 1
+                    line_has_content = True
+            elif character in splitline_boundaries:
                 line_has_content = False
-            elif not line_has_content and character not in non_line_whitespace:
-                count += 1
-                line_has_content = True
         return count
     splitline_boundaries = _PYTHON_SPLITLINE_BOUNDARIES
     for character in test_code:
@@ -411,7 +411,6 @@ _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY = (
 )
 _CODE_EVAL_PAYLOAD_RUNNER_PREFIX = b'{"compile_status"'
 
-
 _JSON_PAYLOAD_WHITESPACE = b" \t\r\n"
 
 
@@ -449,7 +448,7 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
         else:
             field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY
     else:
-        field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_FRIENDLY
+        return _extract_sorted_code_eval_payload_fields(payload_bytes)
 
     payload: dict[str, object] = {}
     search_start = 0
@@ -482,6 +481,71 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
     return payload
 
 
+def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object] | None:
+    payload: dict[str, object] = {}
+    field_value_start = _json_field_value_start_for_token
+    extract_int_and_end = _extract_json_int_field_value_and_end
+
+    failure_start = field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"],
+    )
+    if failure_start is None or not payload_bytes.startswith(b'""', failure_start):
+        return None
+    payload["failure_detail"] = ""
+
+    runtime_start = field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"],
+        start=failure_start + 2,
+    )
+    if runtime_start is None or not payload_bytes.startswith(b'"ok"', runtime_start):
+        return None
+    payload["runtime_status"] = "ok"
+
+    test_start = field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"],
+        start=runtime_start + 4,
+    )
+    if test_start is None or not payload_bytes.startswith(b'"passed"', test_start):
+        return None
+    payload["test_status"] = "passed"
+
+    passed_start = field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"],
+        start=test_start + 8,
+    )
+    passed_result = extract_int_and_end(payload_bytes, passed_start)
+    if passed_result is None:
+        return None
+    tests_passed, passed_end = passed_result
+    payload["tests_passed"] = tests_passed
+
+    total_start = field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"],
+        start=passed_end,
+    )
+    total_result = extract_int_and_end(payload_bytes, total_start)
+    if total_result is None:
+        return None
+    tests_total, total_end = total_result
+    payload["tests_total"] = tests_total
+
+    timeout_start = field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"],
+        start=total_end,
+    )
+    if timeout_start is None or not payload_bytes.startswith(b'"ok"', timeout_start):
+        return None
+    payload["timeout_status"] = "ok"
+
+    return payload
+
+
 def _json_field_value_start(payload_bytes: bytes, key: str) -> int | None:
     key_token = _CODE_EVAL_PAYLOAD_KEY_TOKENS.get(key)
     if key_token is None:
@@ -501,9 +565,15 @@ def _json_field_value_start_for_token(
     cursor = key_index + len(key_token)
     payload_length = len(payload_bytes)
     whitespace = _JSON_PAYLOAD_WHITESPACE
+    colon = _ORD_COLON
+    if cursor < payload_length and payload_bytes[cursor] == colon:
+        cursor += 1
+        while cursor < payload_length and payload_bytes[cursor] in whitespace:
+            cursor += 1
+        return cursor if cursor < payload_length else None
+
     while cursor < payload_length and payload_bytes[cursor] in whitespace:
         cursor += 1
-    colon = _ORD_COLON
     if cursor >= payload_length or payload_bytes[cursor] != colon:
         return None
     cursor += 1
@@ -534,7 +604,39 @@ def _extract_json_string_field_at(payload_bytes: bytes, start: int | None) -> st
         return None
     if payload_bytes.find(b"\\", value_start, value_end) >= 0:
         return None
+    known_value = _known_code_eval_payload_string_value(payload_bytes, value_start, value_end)
+    if known_value is not None:
+        return known_value
     return payload_bytes[value_start:value_end].decode("utf-8")
+
+
+def _known_code_eval_payload_string_value(
+    payload_bytes: bytes,
+    value_start: int,
+    value_end: int,
+) -> str | None:
+    value_length = value_end - value_start
+    if value_length == 0:
+        return ""
+    if value_length == 2:
+        return "ok" if payload_bytes.startswith(b"ok", value_start) else None
+    if value_length == 5:
+        return "error" if payload_bytes.startswith(b"error", value_start) else None
+    if value_length == 6:
+        if payload_bytes.startswith(b"failed", value_start):
+            return "failed"
+        return "passed" if payload_bytes.startswith(b"passed", value_start) else None
+    if value_length == 7:
+        if payload_bytes.startswith(b"not_run", value_start):
+            return "not_run"
+        return "timeout" if payload_bytes.startswith(b"timeout", value_start) else None
+    if value_length == 8:
+        return "compiled" if payload_bytes.startswith(b"compiled", value_start) else None
+    if value_length == 9:
+        return "timed_out" if payload_bytes.startswith(b"timed_out", value_start) else None
+    if value_length == 12:
+        return "syntax_error" if payload_bytes.startswith(b"syntax_error", value_start) else None
+    return None
 
 
 def _extract_json_int_field(payload_bytes: bytes, key: str) -> int | None:
@@ -642,10 +744,7 @@ def _summarize_stdio(*, stdout_tail: str, stderr_tail: str) -> str:
 
 def _sandbox_profile(*, temp_root: Path) -> str:
     static_profile = _sandbox_static_profile_fragments(_sandbox_static_profile_key())
-    temp_read_filters = " ".join(
-        f"(subpath {json.dumps(str(path))})"
-        for path in _sandbox_allow_path_variants((temp_root,))
-    )
+    temp_read_filters = _sandbox_temp_root_read_filters(temp_root)
     return " ".join(
         (
             static_profile.prefix,
@@ -653,6 +752,19 @@ def _sandbox_profile(*, temp_root: Path) -> str:
             f"(allow file-write* (subpath {json.dumps(str(temp_root))}))",
         )
     )
+
+
+def _sandbox_temp_root_read_filters(temp_root: Path) -> str:
+    temp_root_text = str(temp_root)
+    try:
+        resolved = temp_root.resolve()
+    except OSError:
+        resolved = temp_root
+    resolved_text = str(resolved)
+    temp_filter = f"(subpath {json.dumps(temp_root_text)})"
+    if resolved_text == temp_root_text:
+        return temp_filter
+    return f"{temp_filter} (subpath {json.dumps(resolved_text)})"
 
 
 @dataclass(frozen=True)
@@ -825,9 +937,8 @@ def _sandbox_allow_path_variants(paths: tuple[Path, ...]) -> tuple[Path, ...]:
     return tuple(deduped)
 
 
-@lru_cache(maxsize=1)
-def _runner_script() -> str:
-    script = """
+_RUNNER_SCRIPT = textwrap.dedent(
+    """
         from __future__ import annotations
 
         import ast
@@ -979,4 +1090,9 @@ def _runner_script() -> str:
         if __name__ == "__main__":
             raise SystemExit(main())
         """
-    return textwrap.dedent(script).strip() + "\n"
+).strip() + "\n"
+
+
+@lru_cache(maxsize=1)
+def _runner_script() -> str:
+    return _RUNNER_SCRIPT

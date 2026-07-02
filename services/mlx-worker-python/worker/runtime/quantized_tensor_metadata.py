@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -11,23 +11,24 @@ from typing import Any, Mapping, Sequence
 @dataclass(frozen=True, slots=True)
 class QuantizedTensorMetadata:
     tensor_to_shard: Mapping[str, str]
+    _tensor_names: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        normalized: dict[str, str] = {}
+        for raw_name, raw_shard in self.tensor_to_shard.items():
+            name = str(raw_name)
+            if name:
+                normalized[name] = str(raw_shard)
         object.__setattr__(
             self,
             "tensor_to_shard",
-            MappingProxyType(
-                {
-                    str(name): str(shard)
-                    for name, shard in self.tensor_to_shard.items()
-                    if str(name)
-                }
-            ),
+            MappingProxyType(normalized),
         )
+        object.__setattr__(self, "_tensor_names", frozenset(normalized))
 
     @property
     def tensor_names(self) -> frozenset[str]:
-        return frozenset(self.tensor_to_shard)
+        return self._tensor_names
 
     def has_tensor(self, tensor_name: str) -> bool:
         return tensor_name in self.tensor_to_shard
@@ -51,6 +52,17 @@ class QuantizedTensorMetadata:
 
 EMPTY_QUANTIZED_TENSOR_METADATA = QuantizedTensorMetadata({})
 MAX_SAFETENSORS_HEADER_BYTES = 100 * 1024 * 1024
+
+
+def _metadata_from_normalized_mapping(tensor_to_shard: dict[str, str]) -> QuantizedTensorMetadata:
+    if not tensor_to_shard:
+        return EMPTY_QUANTIZED_TENSOR_METADATA
+    metadata = object.__new__(QuantizedTensorMetadata)
+    object.__setattr__(metadata, "tensor_to_shard", MappingProxyType(tensor_to_shard))
+    object.__setattr__(metadata, "_tensor_names", frozenset(tensor_to_shard))
+    return metadata
+
+
 _NATIVE_MULTIMODAL_HIGH_PRECISION_PREFIXES = (
     "audio_tower",
     "embed_audio",
@@ -69,6 +81,11 @@ _NATIVE_MULTIMODAL_HIGH_PRECISION_SUFFIXES = (
     ".output_layer",
     ".score",
 )
+_NATIVE_MULTIMODAL_HIGH_PRECISION_SEGMENTS = frozenset(_NATIVE_MULTIMODAL_HIGH_PRECISION_PREFIXES)
+_NATIVE_MULTIMODAL_HIGH_PRECISION_OUTPUT_SEGMENTS = frozenset(
+    suffix[1:] for suffix in _NATIVE_MULTIMODAL_HIGH_PRECISION_SUFFIXES
+)
+_NATIVE_MULTIMODAL_CONTAINER_SEGMENTS = frozenset(("model", "language_model"))
 
 
 def _load_json_payload(path: Path) -> dict[str, Any]:
@@ -85,13 +102,12 @@ def quantized_tensor_metadata_from_index_payload(
     weight_map = index_payload.get("weight_map") if isinstance(index_payload, Mapping) else None
     if not isinstance(weight_map, Mapping):
         return EMPTY_QUANTIZED_TENSOR_METADATA
-    return QuantizedTensorMetadata(
-        {
-            str(tensor_name): str(shard_name)
-            for tensor_name, shard_name in weight_map.items()
-            if str(tensor_name)
-        }
-    )
+    tensor_to_shard: dict[str, str] = {}
+    for raw_tensor_name, raw_shard_name in weight_map.items():
+        tensor_name = str(raw_tensor_name)
+        if tensor_name:
+            tensor_to_shard[tensor_name] = str(raw_shard_name)
+    return _metadata_from_normalized_mapping(tensor_to_shard)
 
 
 def quantized_tensor_metadata_from_safetensor_headers(
@@ -105,7 +121,7 @@ def quantized_tensor_metadata_from_safetensor_headers(
             tensor_to_shard[tensor_name] = shard_name
     if not tensor_to_shard:
         return EMPTY_QUANTIZED_TENSOR_METADATA
-    return QuantizedTensorMetadata(tensor_to_shard)
+    return _metadata_from_normalized_mapping(tensor_to_shard)
 
 
 def quantized_tensor_metadata_from_model_dir(
@@ -141,7 +157,7 @@ def cross_shard_quantized_metadata_fixup_count(
     metadata: QuantizedTensorMetadata,
 ) -> int:
     prefixes: set[str] = set()
-    for tensor_name in metadata.tensor_names:
+    for tensor_name in metadata.tensor_to_shard:
         if tensor_name.endswith(".weight"):
             prefixes.add(tensor_name[: -len(".weight")])
         elif tensor_name.endswith(".scales"):
@@ -162,7 +178,11 @@ def quantized_scales_present(
     weights: Mapping[str, object],
 ) -> bool:
     scales_key = f"{prefix}.scales"
-    return metadata.has_tensor(scales_key) or scales_key in weights
+    if metadata.has_tensor(scales_key):
+        return True
+    if not weights:
+        return False
+    return scales_key in weights
 
 
 def native_multimodal_quantization_preserves_precision(
@@ -191,18 +211,38 @@ def native_multimodal_quantization_preserves_precision(
 
 
 def _native_multimodal_high_precision_module(prefix: str) -> bool:
-    segments = tuple(segment for segment in prefix.split(".") if segment)
-    for index, segment in enumerate(segments):
-        if segment in _NATIVE_MULTIMODAL_HIGH_PRECISION_PREFIXES:
+    if (
+        "vision" not in prefix
+        and "visual" not in prefix
+        and "projector" not in prefix
+        and "lm_head" not in prefix
+        and "output" not in prefix
+        and "score" not in prefix
+    ):
+        return False
+    start = 0
+    prefix_length = len(prefix)
+    previous_segment = ""
+    while start <= prefix_length:
+        separator_index = prefix.find(".", start)
+        if separator_index < 0:
+            segment = prefix[start:]
+            start = prefix_length + 1
+        else:
+            segment = prefix[start:separator_index]
+            start = separator_index + 1
+        if not segment:
+            continue
+        if segment in _NATIVE_MULTIMODAL_HIGH_PRECISION_SEGMENTS:
             return True
         if (
-            segment in {"model", "language_model"}
-            and index + 1 < len(segments)
-            and segments[index + 1] in _NATIVE_MULTIMODAL_HIGH_PRECISION_PREFIXES
+            previous_segment in _NATIVE_MULTIMODAL_CONTAINER_SEGMENTS
+            and segment in _NATIVE_MULTIMODAL_HIGH_PRECISION_SEGMENTS
         ):
             return True
-        if segment in {"lm_head", "output", "output_layer", "score"}:
+        if segment in _NATIVE_MULTIMODAL_HIGH_PRECISION_OUTPUT_SEGMENTS:
             return True
+        previous_segment = segment
     return False
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterator, Mapping, NamedTuple
 
@@ -28,6 +29,7 @@ _VERSION_CANONICAL_PREFIX = b'version = "'
 _QUOTE_BYTE = 34
 _EQUALS_BYTE = 61
 _PRODUCT_VERSION_CACHE: dict[str, tuple[int, int, str]] = {}
+_UPDATE_CHANNEL_CACHE: dict[str, tuple[int, int, str, str]] = {}
 
 
 class UpdateCheckResult(NamedTuple):
@@ -38,6 +40,10 @@ class UpdateCheckResult(NamedTuple):
     channel: str
     summary: str
     detail: str
+
+
+_UPDATE_CHECK_RESULT_CACHE: dict[tuple[str, str, str, str], UpdateCheckResult] = {}
+_UPDATE_CHECK_RESULT_STAT_CACHE: dict[tuple[str, str], tuple[int, int, UpdateCheckResult]] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,13 +160,32 @@ def port_is_available(port: int, *, host: str = "127.0.0.1") -> bool:
 
 
 def check_for_updates(installed_version: str, channel_path: str | Path) -> UpdateCheckResult:
-    payload = json.loads(Path(channel_path).expanduser().resolve().read_text(encoding="utf-8"))
-    latest_version = str(payload.get("latest_version", "")).strip()
-    channel = str(payload.get("channel", "stable")).strip() or "stable"
+    resolved_channel_path = (
+        channel_path
+        if isinstance(channel_path, Path) and channel_path.is_absolute()
+        else Path(channel_path).expanduser().resolve()
+    )
+    stat_result = resolved_channel_path.stat()
+    channel_path_text = str(resolved_channel_path)
+    stat_cache_key = (channel_path_text, installed_version)
+    stat_cached = _UPDATE_CHECK_RESULT_STAT_CACHE.get(stat_cache_key)
+    if stat_cached is not None:
+        cached_mtime_ns, cached_size, cached_result = stat_cached
+        if (
+            cached_mtime_ns == stat_result.st_mtime_ns
+            and cached_size == stat_result.st_size
+        ):
+            return cached_result
+    latest_version, channel = _read_update_channel_version(
+        resolved_channel_path,
+        stat_result=stat_result,
+        cache_key=channel_path_text,
+    )
+    cache_key = (channel_path_text, installed_version, latest_version, channel)
     if latest_version:
         comparison = compare_versions(latest_version, installed_version)
         if comparison > 0:
-            return UpdateCheckResult(
+            result = UpdateCheckResult(
                 checked=True,
                 update_available=True,
                 installed_version=installed_version,
@@ -169,7 +194,14 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
                 summary=f"Update available: {latest_version}",
                 detail=f"Current {installed_version} on {channel}",
             )
-        return UpdateCheckResult(
+            _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
+            _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
+                stat_result.st_mtime_ns,
+                stat_result.st_size,
+                result,
+            )
+            return result
+        result = UpdateCheckResult(
             checked=True,
             update_available=False,
             installed_version=installed_version,
@@ -178,17 +210,55 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
             summary="Update: up to date",
             detail=f"Current {installed_version} on {channel}",
         )
-    return UpdateCheckResult(
+        _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
+        _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
+            stat_result.st_mtime_ns,
+            stat_result.st_size,
+            result,
+        )
+        return result
+    result = UpdateCheckResult(
         checked=False,
         update_available=False,
         installed_version=installed_version,
         latest_version="",
         channel=channel,
         summary="Update check failed",
-        detail=f"Channel metadata at {Path(channel_path).expanduser().resolve()} does not declare latest_version",
+        detail=f"Channel metadata at {resolved_channel_path} does not declare latest_version",
     )
+    _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
+    _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
+        stat_result.st_mtime_ns,
+        stat_result.st_size,
+        result,
+    )
+    return result
 
 
+def _read_update_channel_version(
+    channel_path: Path,
+    *,
+    stat_result: Any,
+    cache_key: str,
+) -> tuple[str, str]:
+    cached = _UPDATE_CHANNEL_CACHE.get(cache_key)
+    if cached is not None:
+        cached_mtime_ns, cached_size, cached_latest_version, cached_channel = cached
+        if cached_mtime_ns == stat_result.st_mtime_ns and cached_size == stat_result.st_size:
+            return cached_latest_version, cached_channel
+    payload = json.loads(channel_path.read_bytes())
+    latest_version = str(payload.get("latest_version", "")).strip()
+    channel = str(payload.get("channel", "stable")).strip() or "stable"
+    _UPDATE_CHANNEL_CACHE[cache_key] = (
+        stat_result.st_mtime_ns,
+        stat_result.st_size,
+        latest_version,
+        channel,
+    )
+    return latest_version, channel
+
+
+@lru_cache(maxsize=16_384)
 def compare_versions(left: str, right: str) -> int:
     if left == right:
         return 0
@@ -300,6 +370,8 @@ def _compare_normalized_version_parts(
             return -1
         if left_value > right_value:
             return 1
+        if left_index >= left_length and right_index >= right_length:
+            return 0
 
 
 def _next_normalized_version_part(value: str, index: int) -> tuple[int, int, bool]:

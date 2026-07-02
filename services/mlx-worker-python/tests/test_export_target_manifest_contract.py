@@ -11,7 +11,9 @@ import pytest
 from packages.protocol.python.workspace.v1 import export_target_manifest_pb2
 from worker.productization.export_target_manifest import (
     REQUIRED_EXPORT_TARGET_TYPES,
+    _contains_parent_path_component,
     _safe_relative_path_error,
+    _validate_metrics,
     validate_export_target_manifest_file,
 )
 
@@ -153,6 +155,40 @@ def test_export_target_manifest_reports_required_field_errors(tmp_path: Path) ->
     assert "evidence.redaction_policy_id is required" in report.errors
 
 
+def test_export_target_manifest_reports_all_retention_decision_errors(
+    tmp_path: Path,
+) -> None:
+    def mutate_retention_policy(manifest: dict[str, object]) -> None:
+        retention_policy = manifest["retention_policy"]
+        assert isinstance(retention_policy, dict)
+        retention_policy.update(
+            {
+                "required_default_decision": "EXPORT_RETENTION_DECISION_CLEANABLE",
+                "evidence_default_decision": "EXPORT_RETENTION_DECISION_CLEANABLE",
+                "runtime_log_default_decision": "EXPORT_RETENTION_DECISION_RETAIN",
+                "intermediate_default_decision": "EXPORT_RETENTION_DECISION_RETAIN",
+                "cache_default_decision": "EXPORT_RETENTION_DECISION_RETAIN",
+                "temporary_default_decision": "EXPORT_RETENTION_DECISION_RETAIN",
+            }
+        )
+
+    manifest_path = _write_manifest(
+        tmp_path,
+        "melix_managed",
+        mutate_retention_policy,
+    )
+
+    report = validate_export_target_manifest_file(manifest_path)
+
+    assert report.ok is False
+    assert "retention_policy.required_default_decision must be EXPORT_RETENTION_DECISION_RETAIN" in report.errors
+    assert "retention_policy.evidence_default_decision must be EXPORT_RETENTION_DECISION_RETAIN" in report.errors
+    assert "retention_policy.runtime_log_default_decision must be EXPORT_RETENTION_DECISION_DELETE_AFTER_TTL" in report.errors
+    assert "retention_policy.intermediate_default_decision must be EXPORT_RETENTION_DECISION_CLEANABLE" in report.errors
+    assert "retention_policy.cache_default_decision must be EXPORT_RETENTION_DECISION_CLEANABLE" in report.errors
+    assert "retention_policy.temporary_default_decision must be EXPORT_RETENTION_DECISION_DELETE_AFTER_SUCCESS" in report.errors
+
+
 def test_export_target_manifest_rejects_unknown_numeric_target_type(
     tmp_path: Path,
 ) -> None:
@@ -224,6 +260,25 @@ def test_export_target_manifest_safe_relative_path_uses_string_checks(
     assert "parent-directory" in str(target._safe_relative_path_error("artifacts/../model.gguf"))
     assert "Windows absolute" in str(target._safe_relative_path_error("C:/Models/model.gguf"))
     assert "absolute" in str(target._safe_relative_path_error("/tmp/export.bin"))
+
+
+@pytest.mark.parametrize(
+    ("path_value", "expected"),
+    [
+        ("..", True),
+        ("../model.gguf", True),
+        ("artifacts/..", True),
+        ("artifacts/../model.gguf", True),
+        ("artifacts/.../model.gguf", False),
+        ("artifacts/model..gguf", False),
+        ("artifacts/..model/model.gguf", False),
+    ],
+)
+def test_export_target_manifest_parent_path_component_scan_preserves_split_semantics(
+    path_value: str,
+    expected: bool,
+) -> None:
+    assert _contains_parent_path_component(path_value) is expected
 
 
 def test_export_target_manifest_rejects_file_row_contract_violations(
@@ -452,6 +507,38 @@ def test_export_target_manifest_rejects_metric_mismatches(tmp_path: Path) -> Non
     assert "metrics.artifact_byte_size must equal generated_files byte_size sum" in report.errors
     assert "metrics.required_byte_size must equal required_files byte_size sum" in report.errors
     assert "metrics.evidence_byte_size must equal evidence file byte_size sum" in report.errors
+
+
+def test_export_target_manifest_metrics_evidence_bytes_cover_all_file_sections() -> None:
+    evidence = export_target_manifest_pb2.EXPORT_RETENTION_CLASS_EVIDENCE
+    manifest = export_target_manifest_pb2.ExportTargetManifest()
+    manifest.generated_files.add(byte_size=11, retention_class=evidence)
+    manifest.generated_files.add(
+        byte_size=13,
+        retention_class=export_target_manifest_pb2.EXPORT_RETENTION_CLASS_REQUIRED,
+    )
+    manifest.required_files.add(byte_size=17, retention_class=evidence)
+    manifest.required_files.add(
+        byte_size=19,
+        retention_class=export_target_manifest_pb2.EXPORT_RETENTION_CLASS_REQUIRED,
+    )
+    manifest.intermediate_files.add(byte_size=23, retention_class=evidence)
+    manifest.intermediate_files.add(
+        byte_size=29,
+        retention_class=export_target_manifest_pb2.EXPORT_RETENTION_CLASS_CACHE,
+    )
+    manifest.metrics.generated_file_count = 2
+    manifest.metrics.required_file_count = 2
+    manifest.metrics.intermediate_file_count = 2
+    manifest.metrics.artifact_byte_size = 24
+    manifest.metrics.required_byte_size = 36
+    manifest.metrics.evidence_byte_size = 51
+
+    assert _validate_metrics(manifest) == []
+
+    manifest.metrics.evidence_byte_size = 50
+
+    assert "metrics.evidence_byte_size must equal evidence file byte_size sum" in _validate_metrics(manifest)
 
 
 def test_export_target_manifest_metrics_cli_returns_nonzero_for_invalid_manifest(

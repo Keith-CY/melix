@@ -6,6 +6,7 @@ import sys
 
 import pytest
 
+from dataset_ingest_limit_contract import exercise_dataset_ingest_limit_contract
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     DatasetRetryFailedRequest,
@@ -29,6 +30,20 @@ WORKSPACE_FIXTURE = (
     Path(__file__).resolve().parents[1]
     / "fixtures/workspace/m-courtyard-smoke.dev.v1/workspace-manifest.json"
 )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _exercise_dataset_ingest_limit_contract_for_pr_scoped_coverage(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        exercise_dataset_ingest_limit_contract(
+            tmp_path_factory.mktemp("dataset-ingest-limit-contract"),
+            monkeypatch,
+        )
+    finally:
+        monkeypatch.undo()
 
 
 def test_dataset_version_writes_schema_backed_package_and_quality_summary(
@@ -136,13 +151,37 @@ def test_dataset_version_failed_segment_partition_preserves_failed_id_semantics(
         {"segment_id": "a", "text": "first"},
         {"segment_id": "b", "text": "second"},
         {"segment_id": "b", "text": "duplicate"},
+        {"text": "missing id"},
         {"segment_id": "c", "text": "third"},
     ]
 
     successful_segments, failed_segments = _partition_failed_segments(segments, ("b",))
 
-    assert successful_segments == [segments[0], segments[3]]
+    assert successful_segments == [segments[0], segments[3], segments[4]]
     assert failed_segments == [segments[1], segments[2]]
+
+
+def test_dataset_version_failed_segment_partition_scans_nonempty_failures_once() -> None:
+    class CountingSegments(list[dict[str, object]]):
+        iter_calls = 0
+
+        def __iter__(self):
+            self.iter_calls += 1
+            return super().__iter__()
+
+    segments = CountingSegments(
+        [
+            {"segment_id": "a", "text": "first"},
+            {"segment_id": "b", "text": "second"},
+            {"segment_id": "c", "text": "third"},
+        ]
+    )
+
+    successful_segments, failed_segments = _partition_failed_segments(segments, ("b",))
+
+    assert successful_segments == [segments[0], segments[2]]
+    assert failed_segments == [segments[1]]
+    assert segments.iter_calls == 1
 
 
 def test_dataset_quality_output_lengths_preserve_completion_and_message_semantics() -> None:

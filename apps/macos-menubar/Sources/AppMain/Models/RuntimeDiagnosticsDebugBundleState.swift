@@ -41,6 +41,196 @@ public struct RuntimeDiagnosticsServingDiagnosticsSummary: Equatable, Sendable, 
     }
 }
 
+public struct RuntimeEnvironmentDiagnosticSummaryState: Equatable, Sendable, Decodable {
+    public let schemaVersion: String
+    public let status: String
+    public let checkCount: Int
+    public let failedCheckCount: Int
+    public let warningCheckCount: Int
+    public let redactedFieldCount: Int
+    public let diagnosticLatencyMS: Int
+
+    public var summaryText: String {
+        let normalizedStatus = status.isEmpty ? "unknown" : status
+        return "\(normalizedStatus) • \(checkCount) checks • \(failedCheckCount) failed • \(warningCheckCount) warnings"
+    }
+
+    public var redactionText: String {
+        "\(redactedFieldCount) fields redacted"
+    }
+
+    public var latencyText: String {
+        "\(diagnosticLatencyMS) ms"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = RichOutputSanitizer.sanitized(
+            try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? ""
+        )
+        let summary = try container.decodeIfPresent(SummaryPayload.self, forKey: .summary)
+        let redactionSummary = try container.decodeIfPresent(RedactionSummaryPayload.self, forKey: .redactionSummary)
+        let metrics = try container.decodeIfPresent(MetricsPayload.self, forKey: .metrics)
+        status = RichOutputSanitizer.sanitized(summary?.status ?? "")
+        checkCount = max(0, summary?.checkCount ?? 0)
+        failedCheckCount = max(0, summary?.failedCheckCount ?? 0)
+        warningCheckCount = max(0, summary?.warningCheckCount ?? 0)
+        redactedFieldCount = max(0, redactionSummary?.redactedFieldCount ?? 0)
+        diagnosticLatencyMS = max(0, metrics?.diagnosticLatencyMS ?? 0)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case summary
+        case redactionSummary = "redaction_summary"
+        case metrics
+    }
+
+    private struct SummaryPayload: Decodable {
+        let status: String?
+        let checkCount: Int?
+        let failedCheckCount: Int?
+        let warningCheckCount: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case status
+            case checkCount = "check_count"
+            case failedCheckCount = "failed_check_count"
+            case warningCheckCount = "warning_check_count"
+        }
+    }
+
+    private struct RedactionSummaryPayload: Decodable {
+        let redactedFieldCount: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case redactedFieldCount = "redacted_field_count"
+        }
+    }
+
+    private struct MetricsPayload: Decodable {
+        let diagnosticLatencyMS: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case diagnosticLatencyMS = "diagnostic_latency_ms"
+        }
+    }
+}
+
+public struct RuntimeStorageInventorySummaryState: Equatable, Sendable, Decodable {
+    public let artifactCount: Int
+    public let cleanableByteSize: Int
+    public let protectedByteSize: Int
+
+    public var summaryText: String {
+        "\(artifactCount) artifacts • \(cleanableByteSize) B cleanable • \(protectedByteSize) B protected"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let summary = try container.decodeIfPresent(SummaryPayload.self, forKey: .summary)
+        artifactCount = max(0, summary?.artifactCount ?? 0)
+        cleanableByteSize = max(0, summary?.cleanableByteSize ?? 0)
+        protectedByteSize = max(0, summary?.protectedByteSize ?? 0)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case summary
+    }
+
+    private struct SummaryPayload: Decodable {
+        let artifactCount: Int?
+        let cleanableByteSize: Int?
+        let protectedByteSize: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case artifactCount = "artifact_count"
+            case cleanableByteSize = "cleanable_byte_size"
+            case protectedByteSize = "protected_byte_size"
+        }
+    }
+}
+
+public struct RuntimeStorageCleanupPlanSummaryState: Equatable, Sendable, Decodable {
+    public let mode: String
+    public let cleanableEntryCount: Int
+    public let retainedEntryCount: Int
+    public let protectedEntryCount: Int
+    public let blockedEntryCount: Int
+
+    public var summaryText: String {
+        let normalizedMode = mode.isEmpty ? "dry_run" : mode
+        return "\(normalizedMode) • \(cleanableEntryCount) cleanable • \(retainedEntryCount) retained • \(protectedEntryCount) protected • \(blockedEntryCount) blocked"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = RichOutputSanitizer.sanitized(try container.decodeIfPresent(String.self, forKey: .mode) ?? "")
+        let summary = try container.decodeIfPresent(SummaryPayload.self, forKey: .summary)
+        cleanableEntryCount = max(0, summary?.cleanableEntryCount ?? 0)
+        retainedEntryCount = max(0, summary?.retainedEntryCount ?? 0)
+        protectedEntryCount = max(0, summary?.protectedEntryCount ?? 0)
+        blockedEntryCount = max(0, summary?.blockedEntryCount ?? 0)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode
+        case summary
+    }
+
+    private struct SummaryPayload: Decodable {
+        let cleanableEntryCount: Int?
+        let retainedEntryCount: Int?
+        let protectedEntryCount: Int?
+        let blockedEntryCount: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case cleanableEntryCount = "cleanable_entry_count"
+            case retainedEntryCount = "retained_entry_count"
+            case protectedEntryCount = "protected_entry_count"
+            case blockedEntryCount = "blocked_entry_count"
+        }
+    }
+}
+
+public struct RuntimeStorageCleanupReceiptSummaryState: Equatable, Sendable, Decodable {
+    public let safeDeleteCount: Int
+    public let deletedByteSize: Int
+    public let protectedEntryCount: Int
+    public let failedEntryCount: Int
+
+    public var summaryText: String {
+        "\(safeDeleteCount) deleted • \(deletedByteSize) B reclaimed • \(protectedEntryCount) protected • \(failedEntryCount) failed"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let summary = try container.decodeIfPresent(SummaryPayload.self, forKey: .summary)
+        safeDeleteCount = max(0, summary?.safeDeleteCount ?? 0)
+        deletedByteSize = max(0, summary?.deletedByteSize ?? 0)
+        protectedEntryCount = max(0, summary?.protectedEntryCount ?? 0)
+        failedEntryCount = max(0, summary?.failedEntryCount ?? 0)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case summary
+    }
+
+    private struct SummaryPayload: Decodable {
+        let safeDeleteCount: Int?
+        let deletedByteSize: Int?
+        let protectedEntryCount: Int?
+        let failedEntryCount: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case safeDeleteCount = "safe_delete_count"
+            case deletedByteSize = "deleted_byte_size"
+            case protectedEntryCount = "protected_entry_count"
+            case failedEntryCount = "failed_entry_count"
+        }
+    }
+}
+
 public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable {
     public let schemaVersion: String
     public let bundleID: String
@@ -55,6 +245,10 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
     public let artifacts: [String: String]
     public let mediaRouteReceipt: RuntimeDiscoveryMediaRouteReceiptState?
     public let servingDiagnostics: RuntimeDiagnosticsServingDiagnosticsSummary?
+    public let environmentDiagnostic: RuntimeEnvironmentDiagnosticSummaryState?
+    public let storageInventory: RuntimeStorageInventorySummaryState?
+    public let storageCleanupPlan: RuntimeStorageCleanupPlanSummaryState?
+    public let storageCleanupReceipt: RuntimeStorageCleanupReceiptSummaryState?
 
     public var manifestPath: String {
         guard bundlePath.isEmpty == false else {
@@ -155,6 +349,22 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
             RuntimeDiagnosticsServingDiagnosticsSummary.self,
             forKey: .servingDiagnostics
         )
+        environmentDiagnostic = try container.decodeIfPresent(
+            RuntimeEnvironmentDiagnosticSummaryState.self,
+            forKey: .environmentDiagnostic
+        )
+        storageInventory = try container.decodeIfPresent(
+            RuntimeStorageInventorySummaryState.self,
+            forKey: .storageInventory
+        )
+        storageCleanupPlan = try container.decodeIfPresent(
+            RuntimeStorageCleanupPlanSummaryState.self,
+            forKey: .storageCleanupPlan
+        )
+        storageCleanupReceipt = try container.decodeIfPresent(
+            RuntimeStorageCleanupReceiptSummaryState.self,
+            forKey: .storageCleanupReceipt
+        )
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -171,6 +381,10 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
         case artifacts
         case mediaRouteReceipt = "media_route_receipt"
         case servingDiagnostics = "serving_diagnostics"
+        case environmentDiagnostic = "environment_diagnostic"
+        case storageInventory = "storage_inventory"
+        case storageCleanupPlan = "storage_cleanup_plan"
+        case storageCleanupReceipt = "storage_cleanup_receipt"
     }
 
     private func artifactPath(_ relativePath: String) -> String {
