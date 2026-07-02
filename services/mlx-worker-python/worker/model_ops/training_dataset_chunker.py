@@ -272,38 +272,24 @@ def _chunk_single_turn(
         for k in range(k_floor, word_count + 1):
             chunks: list[list[dict[str, str]]] = []
             append_chunk = chunks.append
-            segment_count = 0
             for segment in iter_word_segments(words, k):
-                segment_count += 1
                 user_segment = {"role": "user", "content": segment}
                 chunk = system_prefix + [user_segment, assistant]
                 if render_len(chunk, tokenizer, tools=tools) > chunk_size:
                     break
                 append_chunk(chunk)
-            if segment_count < k:
-                # User content has fewer words than buckets — caller must try a
-                # smaller K. In practice this only fires when k > word_count,
-                # which the guard above already rejects.
-                continue
             if len(chunks) == k:
                 return chunks
     else:
         for k in range(k_floor, word_count + 1):
             chunks: list[list[dict[str, str]]] = []
             append_chunk = chunks.append
-            segment_count = 0
             for segment in iter_word_segments(words, k):
-                segment_count += 1
                 user_segment = {"role": "user", "content": segment}
                 chunk = [user_segment, assistant]
                 if render_len(chunk, tokenizer, tools=tools) > chunk_size:
                     break
                 append_chunk(chunk)
-            if segment_count < k:
-                # User content has fewer words than buckets — caller must try a
-                # smaller K. In practice this only fires when k > word_count,
-                # which the guard above already rejects.
-                continue
             if len(chunks) == k:
                 return chunks
 
