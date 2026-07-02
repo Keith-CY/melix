@@ -296,6 +296,297 @@ struct MelixCLIRunnerTests {
         #expect(findings[0]["severity"] as? String == "warning")
     }
 
+    @Test("storage inventory cleanup plan and apply share safe receipts")
+    func storageInventoryCleanupPlanAndApplyShareSafeReceipts() async throws {
+        let fixture = try makeStorageMaintenanceFixtureForTest()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": fixture.melixHome.path,
+                "MELIX_PROJECT_ROOT": fixture.workspace.path,
+            ]
+        )
+
+        let inventoryCommand = try MelixCLIParser.parse([
+            "storage",
+            "inventory",
+            "--workspace-manifest",
+            fixture.manifest.path,
+            "--json",
+        ])
+        let inventoryOutput = try await runner.run(inventoryCommand)
+        let inventory = try #require(parseJSONObject(inventoryOutput))
+        let inventoryEntries = try #require(inventory["artifact_entries"] as? [[String: Any]])
+        let inventoryEntriesByID = Dictionary(
+            uniqueKeysWithValues: inventoryEntries.compactMap { entry -> (String, [String: Any])? in
+                guard let artifactID = entry["artifact_id"] as? String else {
+                    return nil
+                }
+                return (artifactID, entry)
+            }
+        )
+        let inventoryKinds = Set(inventoryEntries.compactMap { $0["artifact_kind"] as? String })
+        let inventorySummary = try #require(inventory["summary"] as? [String: Any])
+        let inventoryMetrics = try #require(inventory["metrics"] as? [String: Any])
+        let externalEntry = try #require(inventoryEntriesByID["external-raw"])
+        let unknownEntry = try #require(inventoryEntriesByID["unknown-custom"])
+        let missingEntry = try #require(inventoryEntriesByID["missing-cleaned"])
+        let unsafeEntry = try #require(inventoryEntriesByID["unsafe-escape"])
+        let directoryEntry = try #require(inventoryEntriesByID["export-cache-dir"])
+
+        #expect(inventory["schema_version"] as? String == "melix.storage_inventory_receipt.v1")
+        #expect(inventoryKinds.isSuperset(of: [
+            "raw_file",
+            "cleaned_segment",
+            "dataset_version",
+            "checkpoint",
+            "adapter_output",
+            "export_intermediate",
+            "runtime_log",
+            "stale_temp_file",
+            "evidence_bundle",
+            "unknown",
+        ]))
+        #expect((inventorySummary["artifact_count"] as? NSNumber)?.intValue ?? 0 >= 9)
+        #expect((inventoryMetrics["storage_inventory_latency_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+        #expect((inventoryMetrics["inventory_artifact_count"] as? NSNumber)?.intValue ?? 0 >= 9)
+        #expect(externalEntry["cleanup_eligibility"] as? String == "blocked_external")
+        #expect(externalEntry["cleanup_reason"] as? String == "external_read_only_root")
+        #expect(unknownEntry["cleanup_eligibility"] as? String == "blocked_unknown")
+        #expect(unknownEntry["cleanup_reason"] as? String == "unknown_artifact_or_ownership")
+        #expect(missingEntry["cleanup_eligibility"] as? String == "missing")
+        #expect(missingEntry["cleanup_reason"] as? String == "artifact_missing")
+        #expect(unsafeEntry["cleanup_eligibility"] as? String == "blocked_unsafe_path")
+        #expect(unsafeEntry["cleanup_reason"] as? String == "artifact_path_outside_root")
+        #expect((directoryEntry["byte_size"] as? NSNumber)?.intValue ?? 0 > 0)
+        #expect(inventoryOutput.contains(fixture.workspace.path) == false)
+
+        let planCommand = try MelixCLIParser.parse([
+            "storage",
+            "cleanup",
+            "plan",
+            "--workspace-manifest",
+            fixture.manifest.path,
+            "--json",
+        ])
+        let planOutput = try await runner.run(planCommand)
+        let plan = try #require(parseJSONObject(planOutput))
+        let cleanableEntries = try #require(plan["cleanable_entries"] as? [[String: Any]])
+        let protectedEntries = try #require(plan["protected_entries"] as? [[String: Any]])
+        let blockedEntries = try #require(plan["blocked_entries"] as? [[String: Any]])
+        let retainedEntries = try #require(plan["retained_entries"] as? [[String: Any]])
+        let planSummary = try #require(plan["summary"] as? [String: Any])
+        let planMetrics = try #require(plan["metrics"] as? [String: Any])
+
+        #expect(plan["schema_version"] as? String == "melix.storage_cleanup_plan.v1")
+        #expect(plan["mode"] as? String == "dry_run")
+        #expect(cleanableEntries.contains { $0["artifact_kind"] as? String == "cleaned_segment" })
+        #expect(cleanableEntries.contains { $0["artifact_kind"] as? String == "stale_temp_file" })
+        #expect(cleanableEntries.contains { $0["artifact_id"] as? String == "export-cache-dir" })
+        #expect(protectedEntries.contains { $0["artifact_kind"] as? String == "checkpoint" })
+        #expect(blockedEntries.contains { $0["artifact_id"] as? String == "external-raw" })
+        #expect(blockedEntries.contains { $0["artifact_id"] as? String == "unknown-custom" })
+        #expect(blockedEntries.contains { $0["artifact_id"] as? String == "missing-cleaned" })
+        #expect(blockedEntries.contains { $0["artifact_id"] as? String == "unsafe-escape" })
+        #expect(retainedEntries.contains { $0["artifact_kind"] as? String == "raw_file" })
+        #expect((planSummary["cleanable_byte_size"] as? NSNumber)?.intValue ?? 0 > 0)
+        #expect((planSummary["retained_byte_size"] as? NSNumber)?.intValue ?? 0 > 0)
+        #expect((planSummary["protected_byte_size"] as? NSNumber)?.intValue ?? 0 > 0)
+        #expect((planMetrics["cleanup_dry_run_latency_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+        #expect(FileManager.default.fileExists(atPath: fixture.cleanableCleaned.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.cleanableTemp.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.protectedCheckpoint.path))
+
+        let applyCommand = try MelixCLIParser.parse([
+            "storage",
+            "cleanup",
+            "apply",
+            "--workspace-manifest",
+            fixture.manifest.path,
+            "--json",
+        ])
+        let applyOutput = try await runner.run(applyCommand)
+        let receipt = try #require(parseJSONObject(applyOutput))
+        let deletedEntries = try #require(receipt["deleted_entries"] as? [[String: Any]])
+        let receiptProtectedEntries = try #require(receipt["protected_entries"] as? [[String: Any]])
+        let receiptSummary = try #require(receipt["summary"] as? [String: Any])
+        let receiptMetrics = try #require(receipt["metrics"] as? [String: Any])
+
+        #expect(receipt["schema_version"] as? String == "melix.storage_cleanup_receipt.v1")
+        #expect(deletedEntries.contains { $0["artifact_kind"] as? String == "cleaned_segment" })
+        #expect(deletedEntries.contains { $0["artifact_kind"] as? String == "stale_temp_file" })
+        #expect(deletedEntries.contains { $0["artifact_id"] as? String == "export-cache-dir" })
+        #expect(receiptProtectedEntries.contains { $0["artifact_kind"] as? String == "checkpoint" })
+        #expect(receiptProtectedEntries.contains { $0["artifact_id"] as? String == "external-raw" })
+        #expect(receiptProtectedEntries.contains { $0["artifact_id"] as? String == "unknown-custom" })
+        #expect(receiptProtectedEntries.contains { $0["artifact_id"] as? String == "missing-cleaned" })
+        #expect(receiptProtectedEntries.contains { $0["artifact_id"] as? String == "unsafe-escape" })
+        #expect((receiptSummary["safe_delete_count"] as? NSNumber)?.intValue ?? 0 >= 2)
+        #expect((receiptSummary["deleted_byte_size"] as? NSNumber)?.intValue ?? 0 > 0)
+        #expect((receiptMetrics["cleanup_apply_latency_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+        #expect((receiptMetrics["cleanup_failure_count"] as? NSNumber)?.intValue ?? -1 == 0)
+        let receiptPathRedaction = try #require(receipt["receipt_path_redaction"] as? String)
+        let receiptPathDigest = try #require(receipt["receipt_path_digest"] as? String)
+        #expect(receiptPathRedaction.hasPrefix("$MELIX_HOME/storage-cleanup/cleanup-receipts/"))
+        #expect(receiptPathDigest.isEmpty == false)
+        let receiptDirectory = fixture.melixHome
+            .appendingPathComponent("storage-cleanup", isDirectory: true)
+            .appendingPathComponent("cleanup-receipts", isDirectory: true)
+        let receiptFiles = try FileManager.default.contentsOfDirectory(
+            at: receiptDirectory,
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "json" }
+        #expect(receiptFiles.count == 1)
+        let persistedReceipt = try #require(try parseJSONFile(receiptFiles[0].path))
+        #expect(persistedReceipt["schema_version"] as? String == "melix.storage_cleanup_receipt.v1")
+        #expect(persistedReceipt["cleanup_receipt_id"] as? String == receipt["cleanup_receipt_id"] as? String)
+        #expect(FileManager.default.fileExists(atPath: fixture.cleanableCleaned.path) == false)
+        #expect(FileManager.default.fileExists(atPath: fixture.cleanableDirectory.path) == false)
+        #expect(FileManager.default.fileExists(atPath: fixture.cleanableTemp.path) == false)
+        #expect(FileManager.default.fileExists(atPath: fixture.externalRaw.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.unknownArtifact.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.unsafeEscapeTarget.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.missingCleaned.path) == false)
+        #expect(FileManager.default.fileExists(atPath: fixture.protectedCheckpoint.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.retainedRaw.path))
+        #expect(applyOutput.contains(fixture.workspace.path) == false)
+    }
+
+    @Test("storage cleanup text output summarizes the same safe plan")
+    func storageCleanupTextOutputSummarizesTheSameSafePlan() async throws {
+        let fixture = try makeStorageMaintenanceFixtureForTest()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": fixture.melixHome.path,
+                "MELIX_PROJECT_ROOT": fixture.workspace.path,
+            ]
+        )
+
+        let inventoryText = try await runner.run(
+            try MelixCLIParser.parse([
+                "storage",
+                "inventory",
+                "--workspace-manifest",
+                fixture.manifest.path,
+            ])
+        )
+        #expect(inventoryText.hasPrefix("Storage inventory: "))
+        #expect(inventoryText.contains(" artifacts, "))
+        #expect(inventoryText.contains(" cleanable, "))
+        #expect(inventoryText.contains(" protected."))
+
+        let planText = try await runner.run(
+            try MelixCLIParser.parse([
+                "storage",
+                "cleanup",
+                "plan",
+                "--workspace-manifest",
+                fixture.manifest.path,
+            ])
+        )
+        #expect(planText.hasPrefix("Storage cleanup dry-run: "))
+        #expect(planText.contains(" cleanable, "))
+        #expect(planText.contains(" retained, "))
+        #expect(planText.contains(" protected, "))
+        #expect(planText.contains(" blocked, "))
+        #expect(planText.contains(" reclaimable."))
+        #expect(FileManager.default.fileExists(atPath: fixture.cleanableCleaned.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.cleanableDirectory.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.cleanableTemp.path))
+
+        let applyText = try await runner.run(
+            try MelixCLIParser.parse([
+                "storage",
+                "cleanup",
+                "apply",
+                "--workspace-manifest",
+                fixture.manifest.path,
+            ])
+        )
+        #expect(applyText.hasPrefix("Storage cleanup applied: "))
+        #expect(applyText.contains(" deleted, "))
+        #expect(applyText.contains(" reclaimed, "))
+        #expect(applyText.contains(" protected, "))
+        #expect(applyText.contains(" failed."))
+        #expect(FileManager.default.fileExists(atPath: fixture.cleanableCleaned.path) == false)
+        #expect(FileManager.default.fileExists(atPath: fixture.cleanableDirectory.path) == false)
+        #expect(FileManager.default.fileExists(atPath: fixture.cleanableTemp.path) == false)
+        #expect(FileManager.default.fileExists(atPath: fixture.externalRaw.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.unknownArtifact.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.unsafeEscapeTarget.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.protectedCheckpoint.path))
+        #expect(applyText.contains(fixture.workspace.path) == false)
+    }
+
+    @Test("debug bundle embeds latest storage cleanup receipt for Desktop result parity")
+    func debugBundleEmbedsLatestStorageCleanupReceiptForDesktopResultParity() async throws {
+        let fixture = try makeStorageMaintenanceFixtureForTest()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": fixture.melixHome.path,
+                "MELIX_PROJECT_ROOT": fixture.workspace.path,
+            ]
+        )
+        let applyOutput = try await runner.run(
+            try MelixCLIParser.parse([
+                "storage",
+                "cleanup",
+                "apply",
+                "--workspace-manifest",
+                fixture.manifest.path,
+                "--json",
+            ])
+        )
+        let applyReceipt = try #require(parseJSONObject(applyOutput))
+        let applyReceiptID = try #require(applyReceipt["cleanup_receipt_id"] as? String)
+        let runRoot = fixture.melixHome
+            .appendingPathComponent("jobs", isDirectory: true)
+            .appendingPathComponent("model-ops", isDirectory: true)
+            .appendingPathComponent("bench", isDirectory: true)
+            .appendingPathComponent("storage-debug-bundle", isDirectory: true)
+        try FileManager.default.createDirectory(at: runRoot, withIntermediateDirectories: true)
+        try writeJSONObjectForTest(
+            makeRunRecordPayloadForTest(
+                runID: "storage-debug-bundle",
+                runKind: "benchmark",
+                runRoot: runRoot,
+                startedAtUnixMS: 1_712_100_000_000
+            ),
+            to: runRoot.appendingPathComponent("run-record.json")
+        )
+
+        let bundleRoot = fixture.root.appendingPathComponent("debug-bundle", isDirectory: true)
+        let bundleOutput = try await runner.run(
+            .debugBundle(
+                .init(
+                    runID: "storage-debug-bundle",
+                    outputPath: bundleRoot.path,
+                    json: true
+                )
+            )
+        )
+        let bundle = try #require(parseJSONObject(bundleOutput))
+        let artifacts = try #require(bundle["artifacts"] as? [String: String])
+        let cleanupReceipt = try #require(bundle["storage_cleanup_receipt"] as? [String: Any])
+
+        #expect(artifacts["storage_cleanup_receipt"] == "storage-cleanup-receipt.json")
+        #expect(cleanupReceipt["schema_version"] as? String == "melix.storage_cleanup_receipt.v1")
+        #expect(cleanupReceipt["cleanup_receipt_id"] as? String == applyReceiptID)
+        let receiptFile = try #require(try parseJSONFile(
+            bundleRoot.appendingPathComponent("storage-cleanup-receipt.json").path
+        ))
+        #expect(receiptFile["cleanup_receipt_id"] as? String == applyReceiptID)
+        #expect(bundleOutput.contains(fixture.workspace.path) == false)
+    }
+
     @Test("json v1 wraps command results in a stable envelope")
     func jsonV1WrapsCommandResultsInAStableEnvelope() async throws {
         let client = StubControlPlaneXPCClient()
@@ -12561,6 +12852,8 @@ struct MelixCLIRunnerTests {
             "metrics.json",
             "error.json",
             "environment-diagnostic.json",
+            "storage-inventory.json",
+            "storage-cleanup-plan.json",
             "manifest.json",
         ] {
             #expect(FileManager.default.fileExists(atPath: bundleOutputRoot.appendingPathComponent(filename).path))
@@ -12595,9 +12888,17 @@ struct MelixCLIRunnerTests {
         let manifestProxyVariables = try #require(manifestProxyObserved["variables"] as? [[String: Any]])
         let manifestProxyExpected = try #require(manifestProxyCheck["expected"] as? [String: Any])
         let manifestArtifacts = try #require(bundleManifest["artifacts"] as? [String: String])
+        let manifestStorageInventory = try #require(bundleManifest["storage_inventory"] as? [String: Any])
+        let manifestStorageCleanupPlan = try #require(bundleManifest["storage_cleanup_plan"] as? [String: Any])
         let bundleMediaRouteReceipt = try #require(capabilityReceipts["media_route_receipt"] as? [String: Any])
         let environmentDiagnosticFile = try #require(try parseJSONFile(
             bundleOutputRoot.appendingPathComponent("environment-diagnostic.json").path
+        ))
+        let storageInventoryFile = try #require(try parseJSONFile(
+            bundleOutputRoot.appendingPathComponent("storage-inventory.json").path
+        ))
+        let storageCleanupPlanFile = try #require(try parseJSONFile(
+            bundleOutputRoot.appendingPathComponent("storage-cleanup-plan.json").path
         ))
         #expect(bundleLogs.contains("sk-secret-log") == false)
         #expect(bundleEnv.contains("sk-secret-env") == false)
@@ -12611,8 +12912,16 @@ struct MelixCLIRunnerTests {
         #expect(bundleManifest["debug_jsonl_enabled"] as? Bool == true)
         #expect(bundleManifest["debug_jsonl_event_limit"] as? Int == 256)
         #expect(manifestArtifacts["environment_diagnostic"] == "environment-diagnostic.json")
+        #expect(manifestArtifacts["storage_inventory"] == "storage-inventory.json")
+        #expect(manifestArtifacts["storage_cleanup_plan"] == "storage-cleanup-plan.json")
         #expect(manifestEnvironmentDiagnostic["schema_version"] as? String == "melix.desktop_environment_diagnostic_receipt.v1")
         #expect(environmentDiagnosticFile["schema_version"] as? String == "melix.desktop_environment_diagnostic_receipt.v1")
+        #expect(manifestStorageInventory["schema_version"] as? String == "melix.storage_inventory_receipt.v1")
+        #expect(manifestStorageCleanupPlan["schema_version"] as? String == "melix.storage_cleanup_plan.v1")
+        #expect(manifestStorageCleanupPlan["mode"] as? String == "dry_run")
+        #expect(storageInventoryFile["schema_version"] as? String == "melix.storage_inventory_receipt.v1")
+        #expect(storageCleanupPlanFile["schema_version"] as? String == "melix.storage_cleanup_plan.v1")
+        #expect(storageCleanupPlanFile["mode"] as? String == "dry_run")
         #expect((manifestEnvironmentSummary["check_count"] as? Int ?? 0) >= 10)
         #expect(manifestProxyVariables.allSatisfy { $0["contains_credentials"] is Bool })
         #expect(manifestProxyExpected["secret_values_redacted"] as? Bool == true)
@@ -14526,7 +14835,99 @@ private func requireExecutablePathForTest(_ executableName: String) throws -> St
     throw MelixCLIError.runtime("Required test executable '\(executableName)' was not found in PATH.")
 }
 
-private func writeWorkspaceManifestForPreflightTest(to url: URL) throws {
+private func writeWorkspaceManifestForPreflightTest(
+    to url: URL,
+    extraArtifactRoots: [[String: Any]] = [],
+    extraArtifacts: [[String: Any]] = []
+) throws {
+    let artifactRoots: [[String: Any]] = [
+        [
+            "root_id": "workspace",
+            "kind": "ARTIFACT_ROOT_KIND_WORKSPACE",
+            "path": ".",
+            "uri": "melix-workspace://swift-preflight",
+            "melix_owned": true,
+            "redaction_scope": "relative_path_only",
+        ],
+        [
+            "root_id": "jobs",
+            "kind": "ARTIFACT_ROOT_KIND_JOBS",
+            "path": "jobs",
+            "uri": "melix-workspace://swift-preflight/jobs",
+            "melix_owned": true,
+            "redaction_scope": "relative_path_only",
+        ],
+    ] + extraArtifactRoots
+    let artifacts: [[String: Any]] = [
+        [
+            "artifact_id": "raw-dialogues",
+            "artifact_type": "WORKSPACE_ARTIFACT_TYPE_RAW_INPUTS",
+            "root_id": "workspace",
+            "relative_path": "raw/dialogues.jsonl",
+            "media_type": "application/jsonl",
+            "provenance_ref_ids": ["operator-import"],
+        ],
+        [
+            "artifact_id": "cleaned-dialogues",
+            "artifact_type": "WORKSPACE_ARTIFACT_TYPE_CLEANED_DATA",
+            "root_id": "workspace",
+            "relative_path": "cleaned/dialogues.clean.jsonl",
+            "media_type": "application/jsonl",
+            "provenance_ref_ids": ["operator-import"],
+        ],
+        [
+            "artifact_id": "dataset-v1",
+            "artifact_type": "WORKSPACE_ARTIFACT_TYPE_DATASET_VERSION",
+            "root_id": "workspace",
+            "relative_path": "dataset/20260524T000000Z/manifest.json",
+            "schema_version": "melix.training_dataset_package.v1",
+            "media_type": "application/json",
+            "provenance_ref_ids": ["operator-import", "dataset-generation-v1"],
+        ],
+        [
+            "artifact_id": "adapter-v1",
+            "artifact_type": "WORKSPACE_ARTIFACT_TYPE_ADAPTER",
+            "root_id": "jobs",
+            "relative_path": "train_lora/model-ops-0001/train_lora.adapter.json",
+            "schema_version": "melix.lora_adapter_package.v1",
+            "media_type": "application/json",
+            "provenance_ref_ids": ["dataset-generation-v1", "lora-train-v1"],
+        ],
+        [
+            "artifact_id": "training-log",
+            "artifact_type": "WORKSPACE_ARTIFACT_TYPE_LOG",
+            "root_id": "jobs",
+            "relative_path": "train_lora/model-ops-0001/run.log",
+            "media_type": "text/plain",
+            "provenance_ref_ids": ["lora-train-v1"],
+        ],
+        [
+            "artifact_id": "adapter-export",
+            "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EXPORT",
+            "root_id": "workspace",
+            "relative_path": "exports/adapter-v1/export-manifest.json",
+            "media_type": "application/json",
+            "provenance_ref_ids": ["lora-train-v1"],
+        ],
+        [
+            "artifact_id": "evaluation-report",
+            "artifact_type": "WORKSPACE_ARTIFACT_TYPE_REPORT",
+            "root_id": "workspace",
+            "relative_path": "reports/evaluation-summary.json",
+            "media_type": "application/json",
+            "provenance_ref_ids": ["eval-compare-v1"],
+        ],
+        [
+            "artifact_id": "release-evidence",
+            "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EVIDENCE_BUNDLE",
+            "root_id": "workspace",
+            "relative_path": "evidence/release-compare.bundle.json",
+            "schema_version": "melix.run_evidence_bundle.v1",
+            "media_type": "application/json",
+            "provenance_ref_ids": ["eval-compare-v1"],
+        ],
+    ] + extraArtifacts
+
     try writeJSONObjectForTest(
         [
             "schema_version": "melix.workspace_manifest.v1",
@@ -14537,93 +14938,8 @@ private func writeWorkspaceManifestForPreflightTest(to url: URL) throws {
                 "created_at": "2026-05-24T00:00:00Z",
                 "updated_at": "2026-05-24T00:00:00Z",
             ],
-            "artifact_roots": [
-                [
-                    "root_id": "workspace",
-                    "kind": "ARTIFACT_ROOT_KIND_WORKSPACE",
-                    "path": ".",
-                    "uri": "melix-workspace://swift-preflight",
-                    "melix_owned": true,
-                    "redaction_scope": "relative_path_only",
-                ],
-                [
-                    "root_id": "jobs",
-                    "kind": "ARTIFACT_ROOT_KIND_JOBS",
-                    "path": "jobs",
-                    "uri": "melix-workspace://swift-preflight/jobs",
-                    "melix_owned": true,
-                    "redaction_scope": "relative_path_only",
-                ],
-            ],
-            "artifacts": [
-                [
-                    "artifact_id": "raw-dialogues",
-                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_RAW_INPUTS",
-                    "root_id": "workspace",
-                    "relative_path": "raw/dialogues.jsonl",
-                    "media_type": "application/jsonl",
-                    "provenance_ref_ids": ["operator-import"],
-                ],
-                [
-                    "artifact_id": "cleaned-dialogues",
-                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_CLEANED_DATA",
-                    "root_id": "workspace",
-                    "relative_path": "cleaned/dialogues.clean.jsonl",
-                    "media_type": "application/jsonl",
-                    "provenance_ref_ids": ["operator-import"],
-                ],
-                [
-                    "artifact_id": "dataset-v1",
-                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_DATASET_VERSION",
-                    "root_id": "workspace",
-                    "relative_path": "dataset/20260524T000000Z/manifest.json",
-                    "schema_version": "melix.training_dataset_package.v1",
-                    "media_type": "application/json",
-                    "provenance_ref_ids": ["operator-import", "dataset-generation-v1"],
-                ],
-                [
-                    "artifact_id": "adapter-v1",
-                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_ADAPTER",
-                    "root_id": "jobs",
-                    "relative_path": "train_lora/model-ops-0001/train_lora.adapter.json",
-                    "schema_version": "melix.lora_adapter_package.v1",
-                    "media_type": "application/json",
-                    "provenance_ref_ids": ["dataset-generation-v1", "lora-train-v1"],
-                ],
-                [
-                    "artifact_id": "training-log",
-                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_LOG",
-                    "root_id": "jobs",
-                    "relative_path": "train_lora/model-ops-0001/run.log",
-                    "media_type": "text/plain",
-                    "provenance_ref_ids": ["lora-train-v1"],
-                ],
-                [
-                    "artifact_id": "adapter-export",
-                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EXPORT",
-                    "root_id": "workspace",
-                    "relative_path": "exports/adapter-v1/export-manifest.json",
-                    "media_type": "application/json",
-                    "provenance_ref_ids": ["lora-train-v1"],
-                ],
-                [
-                    "artifact_id": "evaluation-report",
-                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_REPORT",
-                    "root_id": "workspace",
-                    "relative_path": "reports/evaluation-summary.json",
-                    "media_type": "application/json",
-                    "provenance_ref_ids": ["eval-compare-v1"],
-                ],
-                [
-                    "artifact_id": "release-evidence",
-                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EVIDENCE_BUNDLE",
-                    "root_id": "workspace",
-                    "relative_path": "evidence/release-compare.bundle.json",
-                    "schema_version": "melix.run_evidence_bundle.v1",
-                    "media_type": "application/json",
-                    "provenance_ref_ids": ["eval-compare-v1"],
-                ],
-            ],
+            "artifact_roots": artifactRoots,
+            "artifacts": artifacts,
             "provenance": [
                 [
                     "provenance_ref_id": "operator-import",
@@ -14684,6 +15000,165 @@ private func writeWorkspaceManifestForPreflightTest(to url: URL) throws {
             ] as [String: Any],
         ],
         to: url
+    )
+}
+
+private struct StorageMaintenanceFixtureForTest {
+    let root: URL
+    let workspace: URL
+    let melixHome: URL
+    let manifest: URL
+    let retainedRaw: URL
+    let cleanableCleaned: URL
+    let cleanableDirectory: URL
+    let cleanableTemp: URL
+    let externalRaw: URL
+    let unknownArtifact: URL
+    let missingCleaned: URL
+    let unsafeEscapeTarget: URL
+    let protectedCheckpoint: URL
+}
+
+private func makeStorageMaintenanceFixtureForTest() throws -> StorageMaintenanceFixtureForTest {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("melix-storage-maintenance-\(UUID().uuidString)", isDirectory: true)
+    let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+    let melixHome = root.appendingPathComponent("home", isDirectory: true)
+    let manifest = workspace.appendingPathComponent("workspace-manifest.json")
+    let retainedRaw = workspace.appendingPathComponent("raw/dialogues.jsonl")
+    let cleanableCleaned = workspace.appendingPathComponent("cleaned/dialogues.clean.jsonl")
+    let cleanableDirectory = workspace.appendingPathComponent("exports/cache-dir", isDirectory: true)
+    let cleanableDirectoryFile = cleanableDirectory.appendingPathComponent("chunk.bin")
+    let datasetVersion = workspace.appendingPathComponent("dataset/20260524T000000Z/manifest.json")
+    let adapterManifest = workspace.appendingPathComponent("jobs/train_lora/model-ops-0001/train_lora.adapter.json")
+    let runtimeLog = workspace.appendingPathComponent("jobs/train_lora/model-ops-0001/run.log")
+    let exportManifest = workspace.appendingPathComponent("exports/adapter-v1/export-manifest.json")
+    let report = workspace.appendingPathComponent("reports/evaluation-summary.json")
+    let evidenceBundle = workspace.appendingPathComponent("evidence/release-compare.bundle.json")
+    let externalRaw = root.appendingPathComponent("external/external-source.jsonl")
+    let unknownArtifact = workspace.appendingPathComponent("unknown/custom.bin")
+    let missingCleaned = workspace.appendingPathComponent("missing/missing.clean.jsonl")
+    let unsafeEscapeTarget = root.appendingPathComponent("outside-cache.bin")
+    let cleanableTemp = melixHome
+        .appendingPathComponent("run", isDirectory: true)
+        .appendingPathComponent("stale-temp", isDirectory: true)
+        .appendingPathComponent("download.tmp")
+    let protectedRunRoot = melixHome
+        .appendingPathComponent("jobs", isDirectory: true)
+        .appendingPathComponent("model-ops", isDirectory: true)
+        .appendingPathComponent("bench", isDirectory: true)
+        .appendingPathComponent("active-cleanup", isDirectory: true)
+    let protectedCheckpoint = protectedRunRoot
+        .appendingPathComponent("checkpoint-1", isDirectory: true)
+        .appendingPathComponent("adapters.safetensors")
+    let activeRecordPath = protectedRunRoot.appendingPathComponent("run-record.json")
+    let logsDirectory = melixHome.appendingPathComponent("logs", isDirectory: true)
+    let melixLog = logsDirectory.appendingPathComponent("runtime.log")
+
+    for file in [
+        retainedRaw,
+        cleanableCleaned,
+        cleanableDirectoryFile,
+        datasetVersion,
+        adapterManifest,
+        runtimeLog,
+        exportManifest,
+        report,
+        evidenceBundle,
+        externalRaw,
+        unknownArtifact,
+        unsafeEscapeTarget,
+        cleanableTemp,
+        protectedCheckpoint,
+        melixLog,
+    ] {
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "storage-fixture-\(file.lastPathComponent)\n".write(to: file, atomically: true, encoding: .utf8)
+    }
+
+    try writeJSONObjectForTest(
+        makeRunRecordPayloadForTest(
+            runID: "active-cleanup",
+            runKind: "benchmark",
+            runRoot: protectedRunRoot,
+            startedAtUnixMS: 1_712_100_000_000,
+            status: "running"
+        ),
+        to: activeRecordPath
+    )
+    try writeWorkspaceManifestForPreflightTest(
+        to: manifest,
+        extraArtifactRoots: [
+            [
+                "root_id": "external",
+                "kind": "ARTIFACT_ROOT_KIND_WORKSPACE",
+                "path": externalRaw.deletingLastPathComponent().path,
+                "uri": "file://external",
+                "melix_owned": false,
+                "redaction_scope": "absolute_path_hash",
+            ],
+        ],
+        extraArtifacts: [
+            [
+                "artifact_id": "export-cache-dir",
+                "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EXPORT",
+                "root_id": "workspace",
+                "relative_path": "exports/cache-dir",
+                "media_type": "application/octet-stream",
+                "provenance_ref_ids": ["lora-train-v1"],
+            ],
+            [
+                "artifact_id": "external-raw",
+                "artifact_type": "WORKSPACE_ARTIFACT_TYPE_RAW_INPUTS",
+                "root_id": "external",
+                "relative_path": externalRaw.lastPathComponent,
+                "media_type": "application/jsonl",
+                "provenance_ref_ids": ["operator-import"],
+            ],
+            [
+                "artifact_id": "unknown-custom",
+                "artifact_type": "WORKSPACE_ARTIFACT_TYPE_UNSPECIFIED",
+                "root_id": "workspace",
+                "relative_path": "unknown/custom.bin",
+                "media_type": "application/octet-stream",
+                "provenance_ref_ids": ["operator-import"],
+            ],
+            [
+                "artifact_id": "missing-cleaned",
+                "artifact_type": "WORKSPACE_ARTIFACT_TYPE_CLEANED_DATA",
+                "root_id": "workspace",
+                "relative_path": "missing/missing.clean.jsonl",
+                "media_type": "application/jsonl",
+                "provenance_ref_ids": ["operator-import"],
+            ],
+            [
+                "artifact_id": "unsafe-escape",
+                "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EXPORT",
+                "root_id": "workspace",
+                "relative_path": "../outside-cache.bin",
+                "media_type": "application/octet-stream",
+                "provenance_ref_ids": ["operator-import"],
+            ],
+        ]
+    )
+
+    return StorageMaintenanceFixtureForTest(
+        root: root,
+        workspace: workspace,
+        melixHome: melixHome,
+        manifest: manifest,
+        retainedRaw: retainedRaw,
+        cleanableCleaned: cleanableCleaned,
+        cleanableDirectory: cleanableDirectory,
+        cleanableTemp: cleanableTemp,
+        externalRaw: externalRaw,
+        unknownArtifact: unknownArtifact,
+        missingCleaned: missingCleaned,
+        unsafeEscapeTarget: unsafeEscapeTarget,
+        protectedCheckpoint: protectedCheckpoint
     )
 }
 
