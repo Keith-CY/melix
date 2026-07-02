@@ -129,9 +129,9 @@ def test_dataset_version_writes_schema_backed_package_and_quality_summary(
     assert quality["dedup_ratio"] == 0
     assert quality["metrics"]["quality_scoring_latency_ms"] >= 0
     assert _sample_output_lengths(
-        [{"messages": "not-a-list"}],
-        [{"messages": [{"content": "hello"}, "skip-me"]}],
-    ) == [0, 5]
+        [{"completion": 12345}, {"messages": "not-a-list"}],
+        [{"messages": [{"content": "hello"}, {"content": 678}, "skip-me"]}],
+    ) == [5, 0, 8]
 
 
 def test_dataset_version_failed_segment_partition_fast_paths_empty_failures() -> None:
