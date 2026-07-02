@@ -1202,6 +1202,8 @@ def _mask_pii(text: str) -> tuple[str, int]:
 
 
 def _normalize_line_endings(text: str) -> str:
+    if "\r" not in text:
+        return text
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
