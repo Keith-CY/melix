@@ -1050,6 +1050,19 @@ def _inferred_config(relative_path: str) -> str:
 
 
 def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
+    slash_index = relative_path.find("/")
+    if slash_index > 0 and "\\" not in relative_path:
+        next_slash_index = relative_path.find("/", slash_index + 1)
+        if next_slash_index < 0 and slash_index < len(relative_path) - 1:
+            first = relative_path[:slash_index]
+            filename = relative_path[slash_index + 1 :]
+            stem = filename.rsplit(".", 1)[0]
+            split = _split_alias_from_candidate(stem)
+            if not split and first not in _DEFAULT_CONFIG_PARTS:
+                split = _split_alias_from_candidate(first)
+            if first in _DEFAULT_CONFIG_FIRST_PARTS:
+                return split, "default"
+            return split, first
     parts = [part for part in relative_path.replace("\\", "/").split("/") if part]
     if not parts:
         return "", "default"
