@@ -90,6 +90,8 @@ public struct DatasetPrepareIngestOptions: Equatable, Sendable {
     public let fuzzyDedup: Bool
     public let segmentation: Bool
     public let segmentationStrategy: String
+    public let uploadCapBytes: String
+    public let sourceCapBytes: String
     public let json: Bool
 
     public init(
@@ -104,6 +106,8 @@ public struct DatasetPrepareIngestOptions: Equatable, Sendable {
         fuzzyDedup: Bool = true,
         segmentation: Bool = true,
         segmentationStrategy: String = "paragraph",
+        uploadCapBytes: String = "",
+        sourceCapBytes: String = "",
         json: Bool = false
     ) {
         self.workspaceProjectID = workspaceProjectID
@@ -117,6 +121,8 @@ public struct DatasetPrepareIngestOptions: Equatable, Sendable {
         self.fuzzyDedup = fuzzyDedup
         self.segmentation = segmentation
         self.segmentationStrategy = segmentationStrategy
+        self.uploadCapBytes = uploadCapBytes
+        self.sourceCapBytes = sourceCapBytes
         self.json = json
     }
 }
@@ -2643,7 +2649,7 @@ public enum MelixCLIParser {
       melix dataset list [--json]
       melix dataset hub download --repo-id HF_DATASET [--revision REV] [--hf-token TOKEN] [--json]
       melix dataset remove --repo-id HF_DATASET [--revision REV | --snapshot-id SHA] [--json]
-      melix dataset prepare ingest --workspace-project-id ID --workspace-manifest PATH --input PATH --output-dir PATH --dataset-preparation-id ID [--output PATH] [--pii-mask true|false] [--exact-dedup true|false] [--fuzzy-dedup true|false] [--segmentation true|false] [--segmentation-strategy STRATEGY] [--json]
+      melix dataset prepare ingest --workspace-project-id ID --workspace-manifest PATH --input PATH --output-dir PATH --dataset-preparation-id ID [--output PATH] [--pii-mask true|false] [--exact-dedup true|false] [--fuzzy-dedup true|false] [--segmentation true|false] [--segmentation-strategy STRATEGY] [--upload-cap-bytes N] [--source-cap-bytes N] [--json]
       melix dataset prepare version --workspace-manifest PATH --ingest-receipt PATH --output-root PATH --dataset-id ID [--version-id ID] [--created-at ISO8601] [--mode MODE] [--generator-model MODEL] [--output-kind KIND] [--output-format FORMAT] [--validation-ratio N] [--fail-segment-id ID ...] [--json]
       melix dataset prepare retry-failed --workspace-manifest PATH --dataset-version PATH --output-root PATH [--version-id ID] [--created-at ISO8601] [--generator-model MODEL] [--json]
       melix dataset prepare list-versions --workspace-manifest PATH --output-root PATH --dataset-id ID [--json]
@@ -3431,6 +3437,8 @@ public enum MelixCLIParser {
                 fuzzyDedup: try parseRequiredBooleanValue(values.single["--fuzzy-dedup"], option: "--fuzzy-dedup", defaultValue: true),
                 segmentation: try parseRequiredBooleanValue(values.single["--segmentation"], option: "--segmentation", defaultValue: true),
                 segmentationStrategy: values.single["--segmentation-strategy"] ?? "paragraph",
+                uploadCapBytes: values.single["--upload-cap-bytes"] ?? "",
+                sourceCapBytes: values.single["--source-cap-bytes"] ?? "",
                 json: values.flags.contains("--json")
             )
         )
@@ -6547,6 +6555,8 @@ public actor MelixCLIRunner {
         arguments.append(contentsOf: ["--fuzzy-dedup", options.fuzzyDedup ? "true" : "false"])
         arguments.append(contentsOf: ["--segmentation", options.segmentation ? "true" : "false"])
         appendOption("--segmentation-strategy", value: options.segmentationStrategy, into: &arguments)
+        appendOption("--upload-cap-bytes", value: options.uploadCapBytes, into: &arguments)
+        appendOption("--source-cap-bytes", value: options.sourceCapBytes, into: &arguments)
         return arguments
     }
 
@@ -6613,6 +6623,11 @@ public actor MelixCLIRunner {
         ]
         if let sourceFiles, let segments {
             lines.append("Sources: \(sourceFiles.intValue), segments: \(segments.intValue)")
+        }
+        if let uploadCap = payload["upload_cap_bytes"] as? NSNumber,
+           let observedBytes = payload["observed_payload_bytes"] as? NSNumber,
+           uploadCap.intValue > 0 {
+            lines.append("Upload cap: \(uploadCap.intValue) bytes, observed: \(observedBytes.intValue) bytes")
         }
         return lines.joined(separator: "\n") + "\n"
     }

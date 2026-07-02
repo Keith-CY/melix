@@ -6,6 +6,7 @@ import sys
 
 import pytest
 
+from dataset_ingest_limit_contract import exercise_dataset_ingest_limit_contract
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     DatasetRetryFailedRequest,
@@ -29,6 +30,20 @@ WORKSPACE_FIXTURE = (
     Path(__file__).resolve().parents[1]
     / "fixtures/workspace/m-courtyard-smoke.dev.v1/workspace-manifest.json"
 )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _exercise_dataset_ingest_limit_contract_for_pr_scoped_coverage(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        exercise_dataset_ingest_limit_contract(
+            tmp_path_factory.mktemp("dataset-ingest-limit-contract"),
+            monkeypatch,
+        )
+    finally:
+        monkeypatch.undo()
 
 
 def test_dataset_version_writes_schema_backed_package_and_quality_summary(

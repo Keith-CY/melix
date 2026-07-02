@@ -10063,6 +10063,9 @@ struct MelixCLIRunnerTests {
                   "status": "ready",
                   "workspace_project_id": "m-courtyard-demo",
                   "dataset_preparation_id": "prep-1",
+                  "upload_cap_bytes": 4096,
+                  "observed_payload_bytes": 2048,
+                  "source_cap_bytes": 1024,
                   "source_inventory": [
                     {
                       "source_id": "source-notes",
@@ -10103,6 +10106,8 @@ struct MelixCLIRunnerTests {
                     fuzzyDedup: true,
                     segmentation: true,
                     segmentationStrategy: "paragraph",
+                    uploadCapBytes: "4096",
+                    sourceCapBytes: "1024",
                     json: true
                 )
             )
@@ -10140,10 +10145,14 @@ struct MelixCLIRunnerTests {
                 "true",
                 "--segmentation",
                 "true",
-                "--segmentation-strategy",
-                "paragraph",
-            ],
-        ])
+	                "--segmentation-strategy",
+	                "paragraph",
+	                "--upload-cap-bytes",
+	                "4096",
+	                "--source-cap-bytes",
+	                "1024",
+	            ],
+	        ])
     }
 
     @Test("dataset prepare version commands shell out through the Python version builder")
@@ -10332,6 +10341,8 @@ struct MelixCLIRunnerTests {
                   "schema_version": "melix.dataset_ingest_receipt.v1",
                   "status": "ready",
                   "workspace_project_id": "m-courtyard-demo",
+                  "upload_cap_bytes": 5000000000,
+                  "observed_payload_bytes": 4000000000,
                   "metrics": {
                     "source_file_count": 2,
                     "segment_count": 5
@@ -10454,7 +10465,7 @@ struct MelixCLIRunnerTests {
             )
         )
 
-        #expect(ingestOutput == "Dataset ingest ready for m-courtyard-demo\nSources: 2, segments: 5\n")
+        #expect(ingestOutput == "Dataset ingest ready for m-courtyard-demo\nSources: 2, segments: 5\nUpload cap: 5000000000 bytes, observed: 4000000000 bytes\n")
         #expect(preflightOutput.contains("Workspace preflight blocked for m-courtyard-demo"))
         #expect(preflightOutput.contains("- WORKSPACE_ROOT_MISSING: Workspace artifact root is missing"))
         #expect(preflightOutput.contains("Create the missing root before running the workspace."))

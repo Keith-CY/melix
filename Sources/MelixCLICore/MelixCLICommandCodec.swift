@@ -448,6 +448,8 @@ public enum MelixCLICommandCodec {
             arguments.append(contentsOf: ["--fuzzy-dedup", options.fuzzyDedup ? "true" : "false"])
             arguments.append(contentsOf: ["--segmentation", options.segmentation ? "true" : "false"])
             appendOption("--segmentation-strategy", value: options.segmentationStrategy, into: &arguments)
+            appendOption("--upload-cap-bytes", value: options.uploadCapBytes, into: &arguments)
+            appendOption("--source-cap-bytes", value: options.sourceCapBytes, into: &arguments)
             json = options.json
         case .datasetPrepareVersion(let options):
             arguments = ["dataset", "prepare", "version"]
