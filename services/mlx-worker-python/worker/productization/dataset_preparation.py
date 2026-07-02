@@ -569,11 +569,13 @@ def _iter_source_records(
         if source_kind == "structured_data":
             yield from _structured_records(path, text)
         else:
+            normalized_text = _normalize_line_endings(text)
             yield _record(
                 path=path,
                 source_kind=source_kind,
-                text=_normalize_line_endings(text),
+                text=normalized_text,
                 metadata=_metadata_for_path(path, source_kind),
+                normalized=True,
             )
 
 
@@ -767,9 +769,16 @@ def _structured_text(payload: Any) -> str:
     return str(payload)
 
 
-def _record(path: Path, source_kind: str, text: str, metadata: dict[str, Any]) -> dict[str, Any]:
-    normalized = _normalize_line_endings(text)
-    normalized_bytes = normalized.encode("utf-8")
+def _record(
+    path: Path,
+    source_kind: str,
+    text: str,
+    metadata: dict[str, Any],
+    *,
+    normalized: bool = False,
+) -> dict[str, Any]:
+    normalized_text = text if normalized else _normalize_line_endings(text)
+    normalized_bytes = normalized_text.encode("utf-8")
     record_metadata = dict(metadata) if metadata else {}
     sha256 = hashlib.sha256
     path_name = path.name
@@ -781,7 +790,7 @@ def _record(path: Path, source_kind: str, text: str, metadata: dict[str, Any]) -
         "content_sha256": sha256(normalized_bytes).hexdigest(),
         "byte_size": len(normalized_bytes),
         "record_count": 1,
-        "text": normalized,
+        "text": normalized_text,
         "metadata": record_metadata,
     }
 
