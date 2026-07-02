@@ -1134,12 +1134,62 @@ public struct MelixDiagnosticsStore {
             to: root.appendingPathComponent("error.json")
         )
 
-        let manifestPayload: [String: Any] = [
+        let storageStore = MelixStorageMaintenanceStore(
+            melixHome: melixHome,
+            environment: environment,
+            fileManager: fileManager
+        )
+        let storageReceipts = try storageStore.inventoryAndCleanupPlan()
+        let redactedStorageInventory = MelixDiagnosticsRedaction.redactMapping(storageReceipts.inventory)
+        let redactedStorageCleanupPlan = MelixDiagnosticsRedaction.redactMapping(storageReceipts.cleanupPlan)
+        totalRedacted += redactedStorageInventory.redactedFieldCount
+            + redactedStorageCleanupPlan.redactedFieldCount
+        try writeJSON(
+            redactedStorageInventory.payload,
+            to: root.appendingPathComponent("storage-inventory.json")
+        )
+        try writeJSON(
+            redactedStorageCleanupPlan.payload,
+            to: root.appendingPathComponent("storage-cleanup-plan.json")
+        )
+        let redactedStorageCleanupReceipt: (payload: [String: Any], redactedFieldCount: Int)?
+        if let latestCleanupReceipt = try? storageStore.latestCleanupReceipt() {
+            let redacted = MelixDiagnosticsRedaction.redactMapping(latestCleanupReceipt)
+            totalRedacted += redacted.redactedFieldCount
+            redactedStorageCleanupReceipt = redacted
+            try writeJSON(
+                redacted.payload,
+                to: root.appendingPathComponent("storage-cleanup-receipt.json")
+            )
+        } else {
+            redactedStorageCleanupReceipt = nil
+        }
+        var debugBundleArtifacts: [String: String] = [
+            "command": "command.txt",
+            "redacted_env": "redacted-env.json",
+            "environment_diagnostic": "environment-diagnostic.json",
+            "effective_config": "effective-config.json",
+            "system": "system.json",
+            "capability_receipts": "capability-receipts.json",
+            "memory_estimate": "memory-estimate.json",
+            "logs": "logs.txt",
+            "metrics": "metrics.json",
+            "error": "error.json",
+            "storage_inventory": "storage-inventory.json",
+            "storage_cleanup_plan": "storage-cleanup-plan.json",
+        ]
+        if redactedStorageCleanupReceipt != nil {
+            debugBundleArtifacts["storage_cleanup_receipt"] = "storage-cleanup-receipt.json"
+        }
+
+        var manifestPayload: [String: Any] = [
             "schema_version": "melix.diagnostics.bundle.v1",
             "bundle_id": record.runID,
             "created_at_unix_ms": currentUnixMilliseconds(),
             "diagnostics_consent_state": MelixSystemDiagnostics.diagnosticsConsentState,
             "media_route_receipt": Self.mediaRouteReceipt(for: record),
+            "storage_inventory": redactedStorageInventory.payload,
+            "storage_cleanup_plan": redactedStorageCleanupPlan.payload,
             "probe_policy": Self.probePolicyPayload(environment: environment),
             "debug_artifact_policy": "explicit_cli_command",
             "debug_jsonl_enabled": MelixProbeMode.fromEnvironment(environment).debugArtifactsEnabled,
@@ -1147,19 +1197,11 @@ public struct MelixDiagnosticsStore {
             "redaction_schema_version": MelixDiagnosticsRedaction.schemaVersion,
             "redacted_field_count": totalRedacted,
             "source_run_record_path": record.path,
-            "artifacts": [
-                "command": "command.txt",
-                "redacted_env": "redacted-env.json",
-                "environment_diagnostic": "environment-diagnostic.json",
-                "effective_config": "effective-config.json",
-                "system": "system.json",
-                "capability_receipts": "capability-receipts.json",
-                "memory_estimate": "memory-estimate.json",
-                "logs": "logs.txt",
-                "metrics": "metrics.json",
-                "error": "error.json",
-            ],
+            "artifacts": debugBundleArtifacts,
         ]
+        if let redactedStorageCleanupReceipt {
+            manifestPayload["storage_cleanup_receipt"] = redactedStorageCleanupReceipt.payload
+        }
         let redactedManifest = MelixDiagnosticsRedaction.redactMapping(manifestPayload)
         totalRedacted += redactedManifest.redactedFieldCount
         var manifest = redactedManifest.payload

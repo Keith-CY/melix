@@ -68,6 +68,16 @@ public struct WorkspacePreflightOptions: Equatable, Sendable {
     }
 }
 
+public struct StorageMaintenanceOptions: Equatable, Sendable {
+    public let workspaceManifestPath: String
+    public let json: Bool
+
+    public init(workspaceManifestPath: String = "", json: Bool = false) {
+        self.workspaceManifestPath = workspaceManifestPath
+        self.json = json
+    }
+}
+
 public struct DatasetPrepareIngestOptions: Equatable, Sendable {
     public let workspaceProjectID: String
     public let workspaceManifestPath: String
@@ -2342,6 +2352,9 @@ public enum MelixCLICommand: Equatable, Sendable {
     case schema(DiscoveryJSONOptions)
     case configMetadata(DiscoveryJSONOptions)
     case workspacePreflight(WorkspacePreflightOptions)
+    case storageInventory(StorageMaintenanceOptions)
+    case storageCleanupPlan(StorageMaintenanceOptions)
+    case storageCleanupApply(StorageMaintenanceOptions)
     case doctor(DoctorOptions)
     case system(SystemOptions)
     case monitor(MonitorOptions)
@@ -2525,6 +2538,8 @@ public enum MelixCLIParser {
             return try parseConfig(tail)
         case "workspace":
             return try parseWorkspace(tail)
+        case "storage":
+            return try parseStorage(tail)
         case "doctor":
             return try parseDoctor(tail)
         case "system":
@@ -2592,6 +2607,9 @@ public enum MelixCLIParser {
       melix schema --json
       melix config metadata --json
       melix workspace preflight --manifest PATH [--output PATH] [--json]
+      melix storage inventory [--workspace-manifest PATH] [--json]
+      melix storage cleanup plan [--workspace-manifest PATH] [--json]
+      melix storage cleanup apply [--workspace-manifest PATH] [--json]
       melix doctor [--json]
       melix system --json
       melix monitor [--from PATH] [--json]
@@ -2891,6 +2909,42 @@ public enum MelixCLIParser {
                 json: values.flags.contains("--json")
             )
         )
+    }
+
+    private static func parseStorage(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(Self.usageText)
+        }
+        let tail = Array(arguments.dropFirst())
+        switch action {
+        case "inventory":
+            let values = try ArgumentCursor(arguments: tail).parse()
+            return .storageInventory(
+                .init(
+                    workspaceManifestPath: values.single["--workspace-manifest"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "cleanup":
+            guard let mode = tail.first else {
+                throw MelixCLIError.usage(Self.usageText)
+            }
+            let values = try ArgumentCursor(arguments: Array(tail.dropFirst())).parse()
+            let options = StorageMaintenanceOptions(
+                workspaceManifestPath: values.single["--workspace-manifest"] ?? "",
+                json: values.flags.contains("--json")
+            )
+            switch mode {
+            case "plan":
+                return .storageCleanupPlan(options)
+            case "apply":
+                return .storageCleanupApply(options)
+            default:
+                throw MelixCLIError.usage(Self.usageText)
+            }
+        default:
+            throw MelixCLIError.usage(Self.usageText)
+        }
     }
 
     private static func parseDoctor(_ arguments: [String]) throws -> MelixCLICommand {
@@ -7820,6 +7874,18 @@ public actor MelixCLIRunner {
             return try prettyJSON(payload)
         case .workspacePreflight(let options):
             return try await runWorkspacePreflight(options)
+        case .storageInventory(let options):
+            let store = storageMaintenanceStore()
+            let receipt = try store.inventory(workspaceManifestPath: options.workspaceManifestPath)
+            return options.json ? try prettyJSON(receipt) : renderStorageInventory(receipt)
+        case .storageCleanupPlan(let options):
+            let store = storageMaintenanceStore()
+            let plan = try store.cleanupPlan(workspaceManifestPath: options.workspaceManifestPath)
+            return options.json ? try prettyJSON(plan) : renderStorageCleanupPlan(plan)
+        case .storageCleanupApply(let options):
+            let store = storageMaintenanceStore()
+            let receipt = try store.applyCleanup(workspaceManifestPath: options.workspaceManifestPath)
+            return options.json ? try prettyJSON(receipt) : renderStorageCleanupReceipt(receipt)
         case .uriInspect(let options):
             return try runURIInspect(options)
         case .uriImport(let options):
@@ -9632,6 +9698,13 @@ public actor MelixCLIRunner {
         )
     }
 
+    private func storageMaintenanceStore() -> MelixStorageMaintenanceStore {
+        MelixStorageMaintenanceStore(
+            melixHome: MelixHome(environment: environment),
+            environment: environment
+        )
+    }
+
     private func jobStatusStore() -> MelixJobStatusStore {
         let melixHome = MelixHome(environment: environment)
         return MelixJobStatusStore(
@@ -10449,6 +10522,47 @@ public actor MelixCLIRunner {
             return "\(bytes) B"
         }
         return String(format: "%.2f %@", locale: Locale(identifier: "en_US_POSIX"), value, units[unitIndex])
+    }
+
+    private func renderStorageInventory(_ receipt: [String: Any]) -> String {
+        let summary = receipt["summary"] as? [String: Any] ?? [:]
+        let artifactCount = intValue(summary["artifact_count"])
+        let cleanableBytes = uint64Value(summary["cleanable_byte_size"])
+        let protectedBytes = uint64Value(summary["protected_byte_size"])
+        return "Storage inventory: \(artifactCount) artifacts, \(formatBinaryBytes(cleanableBytes)) cleanable, \(formatBinaryBytes(protectedBytes)) protected.\n"
+    }
+
+    private func renderStorageCleanupPlan(_ plan: [String: Any]) -> String {
+        let summary = plan["summary"] as? [String: Any] ?? [:]
+        let cleanableCount = intValue(summary["cleanable_entry_count"])
+        let retainedCount = intValue(summary["retained_entry_count"])
+        let protectedCount = intValue(summary["protected_entry_count"])
+        let blockedCount = intValue(summary["blocked_entry_count"])
+        let cleanableBytes = uint64Value(summary["cleanable_byte_size"])
+        return "Storage cleanup dry-run: \(cleanableCount) cleanable, \(retainedCount) retained, \(protectedCount) protected, \(blockedCount) blocked, \(formatBinaryBytes(cleanableBytes)) reclaimable.\n"
+    }
+
+    private func renderStorageCleanupReceipt(_ receipt: [String: Any]) -> String {
+        let summary = receipt["summary"] as? [String: Any] ?? [:]
+        let deleteCount = intValue(summary["safe_delete_count"])
+        let deletedBytes = uint64Value(summary["deleted_byte_size"])
+        let protectedCount = intValue(summary["protected_entry_count"])
+        let failedCount = intValue(summary["failed_entry_count"])
+        return "Storage cleanup applied: \(deleteCount) deleted, \(formatBinaryBytes(deletedBytes)) reclaimed, \(protectedCount) protected, \(failedCount) failed.\n"
+    }
+
+    private func intValue(_ value: Any?) -> Int {
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        return value as? Int ?? 0
+    }
+
+    private func uint64Value(_ value: Any?) -> UInt64 {
+        if let number = value as? NSNumber {
+            return number.uint64Value
+        }
+        return value as? UInt64 ?? 0
     }
 
     private func renderRegistryRoots(_ roots: [String]) -> String {

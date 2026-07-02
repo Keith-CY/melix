@@ -23,6 +23,9 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("melix capabilities --json [--model-query MODEL]"))
         #expect(MelixCLIParser.usageText.contains("melix config metadata --json"))
         #expect(MelixCLIParser.usageText.contains("melix workspace preflight --manifest PATH [--output PATH] [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix storage inventory [--workspace-manifest PATH] [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix storage cleanup plan [--workspace-manifest PATH] [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix storage cleanup apply [--workspace-manifest PATH] [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix dataset prepare ingest --workspace-project-id ID --workspace-manifest PATH --input PATH --output-dir PATH --dataset-preparation-id ID"))
         #expect(MelixCLIParser.usageText.contains("melix dataset prepare version --workspace-manifest PATH --ingest-receipt PATH --output-root PATH --dataset-id ID"))
         #expect(MelixCLIParser.usageText.contains("melix dataset prepare retry-failed --workspace-manifest PATH --dataset-version PATH --output-root PATH"))
@@ -54,6 +57,29 @@ struct MelixCLIParserTests {
                 "/tmp/melix-workspace/workspace-preflight-receipt.json",
                 "--json",
             ], "workspace.preflight"),
+            ([
+                "storage",
+                "inventory",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--json",
+            ], "storage.inventory"),
+            ([
+                "storage",
+                "cleanup",
+                "plan",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--json",
+            ], "storage.cleanup.plan"),
+            ([
+                "storage",
+                "cleanup",
+                "apply",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--json",
+            ], "storage.cleanup.apply"),
             ([
                 "dataset",
                 "prepare",
@@ -227,6 +253,15 @@ struct MelixCLIParserTests {
         }
         #expect(throws: MelixCLIError.missingRequired("--manifest is required for melix workspace preflight.")) {
             _ = try MelixCLIParser.parse(["workspace", "preflight", "--json"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["storage"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["storage", "cleanup"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["storage", "cleanup", "unknown", "--json"])
         }
         #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
             _ = try MelixCLIParser.parse(["jobs"])
@@ -700,6 +735,9 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("melix monitor [--from PATH] [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix logs JOB_ID"))
         #expect(MelixCLIParser.usageText.contains("melix debug bundle RUN_OR_JOB_ID"))
+        #expect(MelixCLIParser.usageText.contains("melix storage inventory [--workspace-manifest PATH] [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix storage cleanup plan [--workspace-manifest PATH] [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix storage cleanup apply [--workspace-manifest PATH] [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix convert --model-id MODEL_ID"))
         #expect(MelixCLIParser.usageText.contains("melix quantize --model-id MODEL_ID"))
         #expect(MelixCLIParser.usageText.contains("melix upload --model-id MODEL_ID"))
@@ -730,6 +768,26 @@ struct MelixCLIParserTests {
             "bench-1",
             "--from", "/tmp/melix/jobs",
             "--output", "/tmp/melix-debug/bench-1",
+            "--json",
+        ])
+        let storageInventoryCommand = try MelixCLIParser.parse([
+            "storage",
+            "inventory",
+            "--workspace-manifest", "/tmp/workspace/workspace-manifest.json",
+            "--json",
+        ])
+        let storageCleanupPlanCommand = try MelixCLIParser.parse([
+            "storage",
+            "cleanup",
+            "plan",
+            "--workspace-manifest", "/tmp/workspace/workspace-manifest.json",
+            "--json",
+        ])
+        let storageCleanupApplyCommand = try MelixCLIParser.parse([
+            "storage",
+            "cleanup",
+            "apply",
+            "--workspace-manifest", "/tmp/workspace/workspace-manifest.json",
             "--json",
         ])
         let convertCommand = try MelixCLIParser.parse([
@@ -816,6 +874,12 @@ struct MelixCLIParserTests {
         #expect(debugBundleOptions.sourcePath == "/tmp/melix/jobs")
         #expect(debugBundleOptions.outputPath == "/tmp/melix-debug/bench-1")
         #expect(debugBundleOptions.json)
+        #expect(String(describing: storageInventoryCommand).contains("storageInventory"))
+        #expect(String(describing: storageInventoryCommand).contains("/tmp/workspace/workspace-manifest.json"))
+        #expect(String(describing: storageCleanupPlanCommand).contains("storageCleanupPlan"))
+        #expect(String(describing: storageCleanupPlanCommand).contains("/tmp/workspace/workspace-manifest.json"))
+        #expect(String(describing: storageCleanupApplyCommand).contains("storageCleanupApply"))
+        #expect(String(describing: storageCleanupApplyCommand).contains("/tmp/workspace/workspace-manifest.json"))
         #expect(convertOptions.modelID == "melix-dev-text")
         #expect(convertOptions.outputDir == "/tmp/melix-convert")
         #expect(convertOptions.targetFormat == "melix_model_bundle")

@@ -8574,6 +8574,24 @@ struct DesktopDiagnosticsToolSectionView: View {
                     value: result.servingDiagnosticsDropSummaryText
                 )
             }
+            if let storageInventory = result.storageInventory {
+                debugBundleResultRow(
+                    title: "Storage Inventory",
+                    value: storageInventory.summaryText
+                )
+            }
+            if let storageCleanupPlan = result.storageCleanupPlan {
+                debugBundleResultRow(
+                    title: "Storage Cleanup Plan",
+                    value: storageCleanupPlan.summaryText
+                )
+            }
+            if let storageCleanupReceipt = result.storageCleanupReceipt {
+                debugBundleResultRow(
+                    title: "Storage Cleanup Result",
+                    value: storageCleanupReceipt.summaryText
+                )
+            }
             ForEach(Array(result.artifactRows.prefix(6))) { row in
                 debugBundleResultRow(title: row.kindText, value: row.path, allowsArtifactActions: true)
             }

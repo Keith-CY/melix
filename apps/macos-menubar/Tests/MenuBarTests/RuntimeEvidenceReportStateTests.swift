@@ -266,6 +266,86 @@ struct RuntimeEvidenceReportStateTests {
         #expect(renderedTexts.contains("24 debug events were dropped; diagnosis may be partial."))
     }
 
+    @Test("diagnostics renders storage cleanup receipts from debug bundle state")
+    @MainActor
+    func diagnosticsRendersStorageCleanupReceiptsFromDebugBundleState() throws {
+        let storageMaintenanceJSON = """
+        "storage_inventory": {
+          "schema_version": "melix.storage_inventory_receipt.v1",
+          "summary": {
+            "artifact_count": 9,
+            "inventory_byte_size": 96,
+            "retained_byte_size": 32,
+            "cleanable_byte_size": 48,
+            "protected_byte_size": 16,
+            "blocked_byte_size": 0
+          },
+          "metrics": {
+            "storage_inventory_latency_ms": 7,
+            "protected_active_artifact_count": 1
+          }
+        },
+        "storage_cleanup_plan": {
+          "schema_version": "melix.storage_cleanup_plan.v1",
+          "mode": "dry_run",
+          "cleanup_plan_id": "cleanup-plan-1",
+          "summary": {
+            "retained_entry_count": 4,
+            "cleanable_entry_count": 3,
+            "protected_entry_count": 1,
+            "blocked_entry_count": 1,
+            "retained_byte_size": 32,
+            "cleanable_byte_size": 48,
+            "protected_byte_size": 16,
+            "blocked_byte_size": 0
+          },
+          "metrics": {
+            "cleanup_dry_run_latency_ms": 5
+          }
+        },
+        "storage_cleanup_receipt": {
+          "schema_version": "melix.storage_cleanup_receipt.v1",
+          "cleanup_plan_id": "cleanup-plan-1",
+          "summary": {
+            "safe_delete_count": 2,
+            "deleted_byte_size": 40,
+            "protected_entry_count": 1,
+            "failed_entry_count": 0
+          },
+          "metrics": {
+            "cleanup_apply_latency_ms": 9,
+            "cleanup_failure_count": 0
+          }
+        },
+        """
+        let result = try RuntimeDiagnosticsDebugBundleState.decode(
+            json: makeDiagnosticsDebugBundleJSON().replacingOccurrences(
+                of: "\"media_route_receipt\": {",
+                with: "\(storageMaintenanceJSON)\n      \"media_route_receipt\": {"
+            )
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.applyDiagnosticsDebugBundleResult(result)
+
+        let view = evidenceHostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 2600)
+        )
+        let renderedTexts = evidenceRenderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Storage Inventory"))
+        #expect(renderedTexts.contains("9 artifacts • 48 B cleanable • 16 B protected"))
+        #expect(renderedTexts.contains("Storage Cleanup Plan"))
+        #expect(renderedTexts.contains("dry_run • 3 cleanable • 4 retained • 1 protected • 1 blocked"))
+        #expect(renderedTexts.contains("Storage Cleanup Result"))
+        #expect(renderedTexts.contains("2 deleted • 40 B reclaimed • 1 protected • 0 failed"))
+    }
+
     @Test("diagnostics renders debug bundle redaction state")
     @MainActor
     func diagnosticsRendersDebugBundleRedactionState() throws {

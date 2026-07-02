@@ -24,6 +24,12 @@ public enum MelixCLICommandCodec {
             return "config.metadata"
         case .workspacePreflight:
             return "workspace.preflight"
+        case .storageInventory:
+            return "storage.inventory"
+        case .storageCleanupPlan:
+            return "storage.cleanup.plan"
+        case .storageCleanupApply:
+            return "storage.cleanup.apply"
         case .doctor:
             return "doctor"
         case .system:
@@ -293,6 +299,18 @@ public enum MelixCLICommandCodec {
             arguments = ["workspace", "preflight"]
             appendOption("--manifest", value: options.manifestPath, into: &arguments)
             appendOption("--output", value: options.outputPath, into: &arguments)
+            json = options.json
+        case .storageInventory(let options):
+            arguments = ["storage", "inventory"]
+            appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
+            json = options.json
+        case .storageCleanupPlan(let options):
+            arguments = ["storage", "cleanup", "plan"]
+            appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
+            json = options.json
+        case .storageCleanupApply(let options):
+            arguments = ["storage", "cleanup", "apply"]
+            appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
             json = options.json
         case .doctor(let options):
             arguments = ["doctor"]
