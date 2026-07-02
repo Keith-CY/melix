@@ -475,7 +475,16 @@ def _lowered_tag_set(tags: list[str]) -> set[str]:
 
 
 def _is_mlx_atom(value: str) -> bool:
-    return len(value) == 3 and value[0] in "mM" and value[1] in "lL" and value[2] in "xX"
+    if len(value) != 3:
+        return False
+    first = ord(value[0])
+    second = ord(value[1])
+    third = ord(value[2])
+    return (
+        (first == 77 or first == 109)
+        and (second == 76 or second == 108)
+        and (third == 88 or third == 120)
+    )
 
 
 def _tag_payload_contains_mlx(value: Any) -> bool:
