@@ -1153,7 +1153,7 @@ public struct MelixDiagnosticsStore {
             to: root.appendingPathComponent("storage-cleanup-plan.json")
         )
         let redactedStorageCleanupReceipt: (payload: [String: Any], redactedFieldCount: Int)?
-        if let latestCleanupReceipt = try storageStore.latestCleanupReceipt() {
+        if let latestCleanupReceipt = try? storageStore.latestCleanupReceipt() {
             let redacted = MelixDiagnosticsRedaction.redactMapping(latestCleanupReceipt)
             totalRedacted += redacted.redactedFieldCount
             redactedStorageCleanupReceipt = redacted

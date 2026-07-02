@@ -113,7 +113,7 @@ public final class MelixStorageMaintenanceStore {
 
         for entry in plannedEntries where entry.cleanupEligibility == "cleanable" {
             do {
-                guard let refreshed = try refresh(entry: entry, activeRoots: activeRoots) else {
+                guard let refreshed = refresh(entry: entry, activeRoots: activeRoots) else {
                     var missing = entry
                     missing.cleanupEligibility = "missing"
                     missing.cleanupReason = "artifact_missing_before_apply"
@@ -207,8 +207,8 @@ public final class MelixStorageMaintenanceStore {
             guard url.pathExtension == "json" else {
                 return nil
             }
-            let values = try url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
-            guard values.isRegularFile != false else {
+            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
+                  values.isRegularFile == true else {
                 return nil
             }
             return (url, values.contentModificationDate ?? .distantPast)
@@ -333,7 +333,7 @@ public final class MelixStorageMaintenanceStore {
         guard isDirectory(root) else {
             return []
         }
-        return try shallowFiles(root).map { url in
+        return shallowFiles(root).map { url in
             makeEntry(
                 artifactID: stableID(prefix: kind, seed: url.path),
                 artifactKind: kind,
@@ -349,7 +349,7 @@ public final class MelixStorageMaintenanceStore {
         guard isDirectory(root) else {
             return []
         }
-        let files = try shallowFiles(root).filter { url in
+        let files = shallowFiles(root).filter { url in
             let name = url.lastPathComponent.lowercased()
             let path = url.path.lowercased()
             return name.contains("tmp") || name.contains("temp") || path.contains("/tmp/") || path.contains("/temp/")
@@ -371,7 +371,7 @@ public final class MelixStorageMaintenanceStore {
             return []
         }
         var entries: [StorageArtifactEntry] = []
-        for url in try shallowFiles(root) {
+        for url in shallowFiles(root) {
             let path = url.path.lowercased()
             let kind: String?
             if path.contains("/checkpoint") {
@@ -441,7 +441,7 @@ public final class MelixStorageMaintenanceStore {
         )
     }
 
-    private func refresh(entry: StorageArtifactEntry, activeRoots: [URL]) throws -> StorageArtifactEntry? {
+    private func refresh(entry: StorageArtifactEntry, activeRoots: [URL]) -> StorageArtifactEntry? {
         guard fileManager.fileExists(atPath: entry.url.path) else {
             return nil
         }
@@ -456,7 +456,7 @@ public final class MelixStorageMaintenanceStore {
     }
 
     private func loadActiveArtifactRoots() throws -> [URL] {
-        let runRecords = try MelixRunRecordStore(melixHome: melixHome, fileManager: fileManager).loadRecords()
+        let runRecords = (try? MelixRunRecordStore(melixHome: melixHome, fileManager: fileManager).loadRecords()) ?? []
         let recordRoots = runRecords
             .filter { isActiveStatus($0.status) }
             .compactMap { nonEmptyURL($0.artifactRoot) }
@@ -528,47 +528,59 @@ public final class MelixStorageMaintenanceStore {
         }
     }
 
-    private func shallowFiles(_ root: URL, maxDepth: Int = 4) throws -> [URL] {
+    private func shallowFiles(_ root: URL, maxDepth: Int = 4) -> [URL] {
         var results: [URL] = []
-        func walk(_ directory: URL, depth: Int) throws {
+        func walk(_ directory: URL, depth: Int) {
             guard depth <= maxDepth else {
                 return
             }
-            let children = try fileManager.contentsOfDirectory(
+            guard let children = try? fileManager.contentsOfDirectory(
                 at: directory,
                 includingPropertiesForKeys: [.isDirectoryKey],
                 options: [.skipsHiddenFiles]
-            )
+            ) else {
+                return
+            }
             for child in children {
-                if isDirectory(child) {
-                    try walk(child, depth: depth + 1)
+                let isDirectory = (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                if isDirectory {
+                    walk(child, depth: depth + 1)
                 } else {
                     results.append(child)
                 }
             }
         }
-        try walk(root, depth: 0)
+        walk(root, depth: 0)
         return results
     }
 
     private func fileStats(_ url: URL) -> (exists: Bool, byteSize: UInt64, mtimeUnixMS: Int) {
-        guard fileManager.fileExists(atPath: url.path) else {
+        var isDirectory = ObjCBool(false)
+        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
             return (false, 0, 0)
         }
-        if isDirectory(url) {
-            let files = (try? shallowFiles(url, maxDepth: 8)) ?? []
-            let size = files.reduce(UInt64(0)) { partial, file in
-                partial + fileStats(file).byteSize
+        if isDirectory.boolValue {
+            let files = shallowFiles(url, maxDepth: 8)
+            var totalSize: UInt64 = 0
+            var maxMtimeUnixMS = 0
+            for file in files {
+                let stats = regularFileStats(file)
+                totalSize += stats.byteSize
+                maxMtimeUnixMS = max(maxMtimeUnixMS, stats.mtimeUnixMS)
             }
-            let mtime = files.map { fileStats($0).mtimeUnixMS }.max() ?? 0
-            return (true, size, mtime)
+            return (true, totalSize, maxMtimeUnixMS)
         }
+        let stats = regularFileStats(url)
+        return (true, stats.byteSize, stats.mtimeUnixMS)
+    }
+
+    private func regularFileStats(_ url: URL) -> (byteSize: UInt64, mtimeUnixMS: Int) {
         guard let attributes = try? fileManager.attributesOfItem(atPath: url.path) else {
-            return (true, 0, 0)
+            return (0, 0)
         }
         let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
         let mtime = ((attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0) * 1000
-        return (true, size, Int(mtime))
+        return (size, Int(mtime))
     }
 
     private func isDirectory(_ url: URL) -> Bool {
@@ -681,7 +693,9 @@ public final class MelixStorageMaintenanceStore {
         let rootURL = baseURL.standardizedFileURL
         let trimmed = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
         let candidate = rootURL.appendingPathComponent(trimmed).standardizedFileURL
-        guard isSafeManifestRelativePath(trimmed), path(candidate, isInside: rootURL) else {
+        guard isSafeManifestRelativePath(trimmed),
+              path(candidate, isInside: rootURL),
+              candidate.path != rootURL.path else {
             return (candidate, false)
         }
         return (candidate, true)

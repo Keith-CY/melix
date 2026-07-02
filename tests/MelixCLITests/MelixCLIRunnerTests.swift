@@ -334,6 +334,7 @@ struct MelixCLIRunnerTests {
         let unknownEntry = try #require(inventoryEntriesByID["unknown-custom"])
         let missingEntry = try #require(inventoryEntriesByID["missing-cleaned"])
         let unsafeEntry = try #require(inventoryEntriesByID["unsafe-escape"])
+        let rootAliasEntry = try #require(inventoryEntriesByID["workspace-root-alias"])
         let directoryEntry = try #require(inventoryEntriesByID["export-cache-dir"])
 
         #expect(inventory["schema_version"] as? String == "melix.storage_inventory_receipt.v1")
@@ -360,6 +361,8 @@ struct MelixCLIRunnerTests {
         #expect(missingEntry["cleanup_reason"] as? String == "artifact_missing")
         #expect(unsafeEntry["cleanup_eligibility"] as? String == "blocked_unsafe_path")
         #expect(unsafeEntry["cleanup_reason"] as? String == "artifact_path_outside_root")
+        #expect(rootAliasEntry["cleanup_eligibility"] as? String == "blocked_unsafe_path")
+        #expect(rootAliasEntry["cleanup_reason"] as? String == "artifact_path_outside_root")
         #expect((directoryEntry["byte_size"] as? NSNumber)?.intValue ?? 0 > 0)
         #expect(inventoryOutput.contains(fixture.workspace.path) == false)
 
@@ -390,6 +393,7 @@ struct MelixCLIRunnerTests {
         #expect(blockedEntries.contains { $0["artifact_id"] as? String == "unknown-custom" })
         #expect(blockedEntries.contains { $0["artifact_id"] as? String == "missing-cleaned" })
         #expect(blockedEntries.contains { $0["artifact_id"] as? String == "unsafe-escape" })
+        #expect(blockedEntries.contains { $0["artifact_id"] as? String == "workspace-root-alias" })
         #expect(retainedEntries.contains { $0["artifact_kind"] as? String == "raw_file" })
         #expect((planSummary["cleanable_byte_size"] as? NSNumber)?.intValue ?? 0 > 0)
         #expect((planSummary["retained_byte_size"] as? NSNumber)?.intValue ?? 0 > 0)
@@ -423,6 +427,7 @@ struct MelixCLIRunnerTests {
         #expect(receiptProtectedEntries.contains { $0["artifact_id"] as? String == "unknown-custom" })
         #expect(receiptProtectedEntries.contains { $0["artifact_id"] as? String == "missing-cleaned" })
         #expect(receiptProtectedEntries.contains { $0["artifact_id"] as? String == "unsafe-escape" })
+        #expect(receiptProtectedEntries.contains { $0["artifact_id"] as? String == "workspace-root-alias" })
         #expect((receiptSummary["safe_delete_count"] as? NSNumber)?.intValue ?? 0 >= 2)
         #expect((receiptSummary["deleted_byte_size"] as? NSNumber)?.intValue ?? 0 > 0)
         #expect((receiptMetrics["cleanup_apply_latency_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
@@ -448,6 +453,7 @@ struct MelixCLIRunnerTests {
         #expect(FileManager.default.fileExists(atPath: fixture.externalRaw.path))
         #expect(FileManager.default.fileExists(atPath: fixture.unknownArtifact.path))
         #expect(FileManager.default.fileExists(atPath: fixture.unsafeEscapeTarget.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.workspace.path))
         #expect(FileManager.default.fileExists(atPath: fixture.missingCleaned.path) == false)
         #expect(FileManager.default.fileExists(atPath: fixture.protectedCheckpoint.path))
         #expect(FileManager.default.fileExists(atPath: fixture.retainedRaw.path))
@@ -585,6 +591,66 @@ struct MelixCLIRunnerTests {
         ))
         #expect(receiptFile["cleanup_receipt_id"] as? String == applyReceiptID)
         #expect(bundleOutput.contains(fixture.workspace.path) == false)
+    }
+
+    @Test("debug bundle skips invalid latest storage cleanup receipt")
+    func debugBundleSkipsInvalidLatestStorageCleanupReceipt() async throws {
+        let fixture = try makeStorageMaintenanceFixtureForTest()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let receiptDirectory = fixture.melixHome
+            .appendingPathComponent("storage-cleanup", isDirectory: true)
+            .appendingPathComponent("cleanup-receipts", isDirectory: true)
+        try FileManager.default.createDirectory(at: receiptDirectory, withIntermediateDirectories: true)
+        try "{".write(
+            to: receiptDirectory.appendingPathComponent("invalid-latest.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_HOME": fixture.melixHome.path,
+                "MELIX_PROJECT_ROOT": fixture.workspace.path,
+            ]
+        )
+        let runRoot = fixture.melixHome
+            .appendingPathComponent("jobs", isDirectory: true)
+            .appendingPathComponent("model-ops", isDirectory: true)
+            .appendingPathComponent("bench", isDirectory: true)
+            .appendingPathComponent("storage-debug-bad-receipt", isDirectory: true)
+        try FileManager.default.createDirectory(at: runRoot, withIntermediateDirectories: true)
+        try writeJSONObjectForTest(
+            makeRunRecordPayloadForTest(
+                runID: "storage-debug-bad-receipt",
+                runKind: "benchmark",
+                runRoot: runRoot,
+                startedAtUnixMS: 1_712_100_000_000
+            ),
+            to: runRoot.appendingPathComponent("run-record.json")
+        )
+
+        let bundleRoot = fixture.root.appendingPathComponent("debug-bundle-bad-receipt", isDirectory: true)
+        let bundleOutput = try await runner.run(
+            .debugBundle(
+                .init(
+                    runID: "storage-debug-bad-receipt",
+                    outputPath: bundleRoot.path,
+                    json: true
+                )
+            )
+        )
+        let bundle = try #require(parseJSONObject(bundleOutput))
+        let artifacts = try #require(bundle["artifacts"] as? [String: String])
+
+        #expect(artifacts["storage_inventory"] == "storage-inventory.json")
+        #expect(artifacts["storage_cleanup_plan"] == "storage-cleanup-plan.json")
+        #expect(artifacts["storage_cleanup_receipt"] == nil)
+        #expect(bundle["storage_cleanup_receipt"] == nil)
+        #expect(FileManager.default.fileExists(
+            atPath: bundleRoot.appendingPathComponent("storage-cleanup-receipt.json").path
+        ) == false)
     }
 
     @Test("json v1 wraps command results in a stable envelope")
@@ -15139,6 +15205,14 @@ private func makeStorageMaintenanceFixtureForTest() throws -> StorageMaintenance
                 "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EXPORT",
                 "root_id": "workspace",
                 "relative_path": "../outside-cache.bin",
+                "media_type": "application/octet-stream",
+                "provenance_ref_ids": ["operator-import"],
+            ],
+            [
+                "artifact_id": "workspace-root-alias",
+                "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EXPORT",
+                "root_id": "workspace",
+                "relative_path": ".",
                 "media_type": "application/octet-stream",
                 "provenance_ref_ids": ["operator-import"],
             ],
