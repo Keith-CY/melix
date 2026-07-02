@@ -138,6 +138,20 @@ def test_dataset_ingest_record_copies_nonempty_metadata_and_fast_paths_empty_met
     assert record["metadata"] == {"language": "python"}
 
 
+def test_dataset_ingest_record_accepts_pre_normalized_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_normalize(text: str) -> str:  # pragma: no cover - failure path only
+        raise AssertionError(f"pre-normalized record text should not be normalized again: {text!r}")
+
+    monkeypatch.setattr(dataset_preparation_module, "_normalize_line_endings", fail_normalize)
+
+    record = _record(Path("sample.txt"), "text", "hello\n", {}, normalized=True)
+
+    assert record["text"] == "hello\n"
+    assert record["byte_size"] == len(b"hello\n")
+
+
 def test_dataset_ingest_source_file_paths_skips_scandir_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
