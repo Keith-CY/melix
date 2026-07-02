@@ -26,6 +26,8 @@ _ORD_QUOTE = ord('"')
 _ORD_COLON = ord(":")
 _ORD_OBJECT_START = ord("{")
 _ORD_OBJECT_END = ord("}")
+_ASSERT_NODE_COUNT_CACHE_ATTR = "_melix_assert_node_count_cache"
+_ASSERT_STMT_CONTAINER_TYPES = (ast.stmt, ast.ExceptHandler, ast.match_case)
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,18 +285,37 @@ def _count_tests(test_code: str) -> int:
 def _count_assert_nodes(
     module: ast.AST,
     *,
-    _stmt_container_types=(ast.stmt, ast.ExceptHandler, ast.match_case),
+    _stmt_container_types=_ASSERT_STMT_CONTAINER_TYPES,
     _assert_type=ast.Assert,
     _isinstance=isinstance,
     _type=type,
 ) -> int:
     module_body = getattr(module, "body", ())
+    use_cache = (
+        _stmt_container_types is _ASSERT_STMT_CONTAINER_TYPES
+        and _assert_type is ast.Assert
+        and _isinstance is isinstance
+        and _type is type
+    )
+    if use_cache:
+        cached = getattr(module, _ASSERT_NODE_COUNT_CACHE_ATTR, None)
+        if cached is not None:
+            body_id, body_length, count = cached
+            if body_id == id(module_body) and body_length == len(module_body):
+                return count
     if module_body:
         for node in module_body:
             if _type(node) is not _assert_type:
                 break
         else:
-            return len(module_body)
+            count = len(module_body)
+            if use_cache:
+                setattr(
+                    module,
+                    _ASSERT_NODE_COUNT_CACHE_ATTR,
+                    (id(module_body), count, count),
+                )
+            return count
 
     count = 0
     stack: list[ast.AST] = []
@@ -316,6 +337,8 @@ def _count_assert_nodes(
                 for item in child:
                     if _isinstance(item, _stmt_container_types):
                         stack_append(item)
+    if use_cache:
+        setattr(module, _ASSERT_NODE_COUNT_CACHE_ATTR, (id(module_body), len(module_body), count))
     return count
 
 

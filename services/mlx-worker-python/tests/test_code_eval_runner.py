@@ -475,6 +475,22 @@ def test_count_assert_nodes_fast_paths_all_top_level_asserts() -> None:
     assert code_eval_runner._count_assert_nodes(module, _isinstance=fail_isinstance) == 16
 
 
+def test_count_assert_nodes_reuses_cached_count_for_same_module() -> None:
+    module = code_eval_runner.ast.parse(
+        "\n".join(f"assert identity({index}) == {index}" for index in range(16)),
+        filename="<tests>",
+        mode="exec",
+    )
+
+    assert code_eval_runner._count_assert_nodes(module) == 16
+    assert getattr(module, code_eval_runner._ASSERT_NODE_COUNT_CACHE_ATTR) == (
+        id(module.body),
+        16,
+        16,
+    )
+    assert code_eval_runner._count_assert_nodes(module) == 16
+
+
 def test_count_assert_nodes_returns_zero_without_asserts() -> None:
     module = code_eval_runner.ast.parse(
         "value = identity(1)\nif enabled:\n    value += identity(2)",
