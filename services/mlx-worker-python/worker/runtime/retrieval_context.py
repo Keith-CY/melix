@@ -658,6 +658,14 @@ def _copy_payload_value(value: Any) -> Any:
         return [copy_value(item) for item in value]
     if value_type is tuple:
         value_len = len(value)
+        if value_len == 5:
+            return (
+                copy_value(value[0]),
+                copy_value(value[1]),
+                copy_value(value[2]),
+                copy_value(value[3]),
+                copy_value(value[4]),
+            )
         if value_len == 4:
             return (
                 copy_value(value[0]),

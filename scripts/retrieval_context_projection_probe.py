@@ -92,6 +92,7 @@ def _build_lookup_payload(count: int) -> dict[str, Any]:
                     {"kind": "document" if index % 2 == 0 else "image"},
                     {"bucket": index % 3},
                     {"source": index % 5},
+                    {"shard": index % 11},
                 ),
             },
         }
