@@ -115,6 +115,22 @@ Expected effect:
 - leave registry selection, protobuf config serialization, and tool definitions
   unchanged.
 
+## Follow-up Slice: Required List Local Binding
+
+The 2026-07-02 follow-up keeps `ToolDescriptor.schema_payload()` behavior
+unchanged and still returns an isolated mutable required-argument list, but binds
+the cached required-argument list and the module-level `list.copy` helper to
+locals before constructing the payload. This completes the schema-payload helper
+binding pattern for both property dictionaries and required-argument lists.
+
+Expected effect:
+
+- reduce repeated required-list copy overhead measured by
+  `tool-registry-schema-bytes-cache` `schema_payload_elapsed_ms_mean`;
+- preserve copy-on-return isolation for returned `required` lists;
+- leave registry selection, schema serialization, protobuf config handling, and
+  tool definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
