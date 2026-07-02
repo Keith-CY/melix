@@ -262,6 +262,35 @@ struct MelixCLIRunnerTests {
         #expect(payload["diagnostics_consent_state"] as? String == "local_only")
         #expect(payload["redaction_schema_version"] as? String == MelixDiagnosticsRedaction.schemaVersion)
         #expect((payload["redacted_field_count"] as? Int ?? 0) >= 1)
+        let environmentDiagnostic = try #require(payload["environment_diagnostic"] as? [String: Any])
+        let environmentChecks = try #require(environmentDiagnostic["checks"] as? [[String: Any]])
+        let environmentKinds = Set(environmentChecks.compactMap { $0["check_kind"] as? String })
+        let environmentRedactionSummary = try #require(environmentDiagnostic["redaction_summary"] as? [String: Any])
+        let environmentMetrics = try #require(environmentDiagnostic["metrics"] as? [String: Any])
+        #expect(environmentDiagnostic["schema_version"] as? String == "melix.desktop_environment_diagnostic_receipt.v1")
+        #expect(environmentKinds.isSuperset(of: [
+            "shell_path",
+            "runtime_binary",
+            "python_version",
+            "uv_version",
+            "mlx_version",
+            "proxy_environment",
+            "certificate_environment",
+            "melix_home",
+            "runtime_directory",
+            "local_server_health",
+        ]))
+        #expect((environmentRedactionSummary["redacted_field_count"] as? Int ?? 0) >= 1)
+        #expect(environmentMetrics["diagnostic_latency_ms"] != nil)
+        #expect(environmentMetrics["path_candidate_count"] != nil)
+        #expect(environmentMetrics["runtime_binary_probe_latency_ms"] != nil)
+        #expect(environmentMetrics["version_probe_latency_ms"] != nil)
+        #expect(environmentMetrics["proxy_check_latency_ms"] != nil)
+        #expect(environmentMetrics["certificate_check_latency_ms"] != nil)
+        #expect(environmentMetrics["local_server_health_latency_ms"] != nil)
+        #expect(environmentMetrics["diagnostic_failure_count"] != nil)
+        #expect(environmentMetrics["redaction_count"] != nil)
+        #expect(jsonOutput.contains("sk-secret-doctor") == false)
         #expect(findings.count >= 1)
         #expect(findings[0]["code"] as? String == "cache_warning")
         #expect(findings[0]["severity"] as? String == "warning")
@@ -11968,6 +11997,213 @@ struct MelixCLIRunnerTests {
         let mediaRouteReceipt = try #require(capabilityReceipts["media_route_receipt"] as? [String: Any])
         #expect(mediaRouteReceipt["media_route"] as? String == "swift_text")
         #expect(mediaRouteReceipt["unsupported_reason"] as? String == "none")
+        let bundleManifest = try #require(try parseJSONFile(
+            bundleRoot.appendingPathComponent("manifest.json").path
+        ))
+        let manifestEnvironmentDiagnostic = try #require(
+            bundleManifest["environment_diagnostic"] as? [String: Any]
+        )
+        let manifestArtifacts = try #require(bundleManifest["artifacts"] as? [String: String])
+        #expect(
+            manifestEnvironmentDiagnostic["schema_version"] as? String
+                == "melix.desktop_environment_diagnostic_receipt.v1"
+        )
+        #expect(manifestArtifacts["environment_diagnostic"] == "environment-diagnostic.json")
+    }
+
+    @Test("desktop environment diagnostic receipt redacts GUI runtime inputs")
+    func desktopEnvironmentDiagnosticReceiptRedactsGUIRuntimeInputs() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-env-diagnostic-\(UUID().uuidString)")
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        let cert = root.appendingPathComponent("certs/root.pem")
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let homeRelativeRoot = home.appendingPathComponent(".melix-env-diagnostic-\(UUID().uuidString)")
+        let homeRelativeBin = homeRelativeRoot.appendingPathComponent("bin", isDirectory: true)
+        let homeRelativeCert = homeRelativeRoot.appendingPathComponent("certs/root.pem")
+        defer { try? FileManager.default.removeItem(at: root) }
+        defer { try? FileManager.default.removeItem(at: homeRelativeRoot) }
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cert.deletingLastPathComponent(), withIntermediateDirectories: true)
+        for name in ["melix", "uv", "python3", "mlx_lm"] {
+            let executable = bin.appendingPathComponent(name)
+            try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        }
+        try "fixture cert\n".write(to: cert, atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: homeRelativeBin, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: homeRelativeCert.deletingLastPathComponent(), withIntermediateDirectories: true)
+        for name in ["melix", "uv", "python3", "mlx_lm"] {
+            let executable = homeRelativeBin.appendingPathComponent(name)
+            try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        }
+        try "fixture home cert\n".write(to: homeRelativeCert, atomically: true, encoding: .utf8)
+        let tildeBinPath = "~/" + homeRelativeBin.path.replacingOccurrences(of: home.path + "/", with: "")
+        let tildeCertPath = "~/" + homeRelativeCert.path.replacingOccurrences(of: home.path + "/", with: "")
+
+        let melixHome = MelixHome(environment: [
+            "MELIX_HOME": root.path,
+            "MELIX_RUNTIME_DIR": root.appendingPathComponent("runtime", isDirectory: true).path,
+        ])
+        try FileManager.default.createDirectory(at: melixHome.rootURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome.runtimeDirectoryURL, withIntermediateDirectories: true)
+        let receipt = MelixDesktopEnvironmentDiagnosticBuilder.build(
+            melixHome: melixHome,
+            environment: [
+                "MELIX_HOME": melixHome.rootURL.path,
+                "MELIX_RUNTIME_DIR": melixHome.runtimeDirectoryURL.path,
+                "PATH": tildeBinPath,
+                "MELIX_PYTHON_BRIDGE_EXECUTABLE": bin.appendingPathComponent("python3").path,
+                "MELIX_UV": bin.appendingPathComponent("uv").path,
+                "MELIX_MLX_LM": bin.appendingPathComponent("mlx_lm").path,
+                "HTTP_PROXY": "http://alice:sk-secret-proxy@example.test:8080",
+                "HTTPS_PROXY": "alice:hunter2@example.test:8080",
+                "SSL_CERT_FILE": tildeCertPath,
+                "MELIX_HTTP_PORT": "0",
+                "MELIX_WORKER_SOCKET_PATH": root.appendingPathComponent("runtime/sk-secret-socket.sock").path,
+            ]
+        )
+
+        let checks = try #require(receipt.payload["checks"] as? [[String: Any]])
+        func check(_ kind: String) throws -> [String: Any] {
+            try #require(checks.first { $0["check_kind"] as? String == kind })
+        }
+        let proxy = try check("proxy_environment")
+        let proxyObserved = try #require(proxy["observed"] as? [String: Any])
+        let proxyVariables = try #require(proxyObserved["variables"] as? [[String: Any]])
+        let certificate = try check("certificate_environment")
+        let certificateObserved = try #require(certificate["observed"] as? [String: Any])
+        let certificateVariables = try #require(certificateObserved["variables"] as? [[String: Any]])
+        let localServer = try check("local_server_health")
+        let localServerObserved = try #require(localServer["observed"] as? [String: Any])
+        let metrics = try #require(receipt.payload["metrics"] as? [String: Any])
+        let summary = try #require(receipt.payload["summary"] as? [String: Any])
+
+        #expect(receipt.payload["schema_version"] as? String == "melix.desktop_environment_diagnostic_receipt.v1")
+        #expect(summary["failed_check_count"] as? Int == 0)
+        #expect(proxy["status"] as? String == "warn")
+        #expect(proxy["redaction_count"] as? Int == 2)
+        #expect(proxyVariables.first?["contains_credentials"] as? Bool == true)
+        #expect(proxyVariables.contains { ($0["contains_credentials"] as? Bool) == true })
+        for variable in proxyVariables {
+            let value = variable["value"] as? String ?? ""
+            #expect(value.contains("sk-secret-proxy") == false)
+            #expect(value.contains("hunter2") == false)
+        }
+        #expect(certificate["status"] as? String == "pass")
+        #expect(certificateVariables.first?["exists"] as? Bool == true)
+        #expect(certificateVariables.first?["readable"] as? Bool == true)
+        #expect(certificateVariables.first?["path"] as? String != homeRelativeCert.path)
+        #expect(localServer["status"] as? String == "warn")
+        #expect(localServerObserved["http_port"] as? String == "0")
+        #expect(localServerObserved["worker_socket_path_count"] as? Int == 1)
+        #expect(metrics["runtime_binary_probe_latency_ms"] != nil)
+        #expect(metrics["version_probe_latency_ms"] != nil)
+        #expect(metrics["proxy_check_latency_ms"] != nil)
+        #expect(metrics["certificate_check_latency_ms"] != nil)
+        #expect(metrics["local_server_health_latency_ms"] != nil)
+        #expect(receipt.redactedFieldCount >= 1)
+
+        let data = try JSONSerialization.data(withJSONObject: receipt.payload)
+        let json = try #require(String(data: data, encoding: .utf8))
+        #expect(json.contains("sk-secret-proxy") == false)
+        #expect(json.contains("hunter2") == false)
+        #expect(json.contains("sk-secret-socket") == false)
+        #expect(json.contains(cert.path) == false)
+    }
+
+    @Test("desktop environment diagnostic receipt redacts malformed proxy credentials")
+    func desktopEnvironmentDiagnosticReceiptRedactsMalformedProxyCredentials() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-env-proxy-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let melixHome = MelixHome(environment: ["MELIX_HOME": root.path])
+        try FileManager.default.createDirectory(at: melixHome.rootURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome.runtimeDirectoryURL, withIntermediateDirectories: true)
+
+        let receipt = MelixDesktopEnvironmentDiagnosticBuilder.build(
+            melixHome: melixHome,
+            environment: [
+                "MELIX_HOME": melixHome.rootURL.path,
+                "MELIX_RUNTIME_DIR": melixHome.runtimeDirectoryURL.path,
+                "HTTP_PROXY": "http://svcacct:my pass@proxy.internal:8080",
+                "HTTPS_PROXY": "http://svcacct:p%off@proxy.internal:8080",
+                "ALL_PROXY": "http://svcacct:pa#ss@proxy.internal:8080",
+            ]
+        )
+
+        let checks = try #require(receipt.payload["checks"] as? [[String: Any]])
+        let proxy = try #require(checks.first { $0["check_kind"] as? String == "proxy_environment" })
+        let proxyObserved = try #require(proxy["observed"] as? [String: Any])
+        let proxyVariables = try #require(proxyObserved["variables"] as? [[String: Any]])
+
+        #expect(proxy["status"] as? String == "warn")
+        #expect(proxy["redaction_count"] as? Int == 3)
+        #expect(proxyVariables.allSatisfy { ($0["contains_credentials"] as? Bool) == true })
+        for variable in proxyVariables {
+            let value = variable["value"] as? String ?? ""
+            #expect(value.contains("my pass") == false)
+            #expect(value.contains("p%off") == false)
+            #expect(value.contains("pa#ss") == false)
+            #expect(value.contains("redacted") == true)
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: receipt.payload)
+        let json = try #require(String(data: data, encoding: .utf8))
+        #expect(json.contains("my pass") == false)
+        #expect(json.contains("p%off") == false)
+        #expect(json.contains("pa#ss") == false)
+    }
+
+    @Test("desktop environment diagnostic receipt reconciles shell path and unknown summary counts")
+    func desktopEnvironmentDiagnosticReceiptReconcilesShellPathAndUnknownSummaryCounts() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-env-summary-\(UUID().uuidString)")
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for name in ["melix", "uv", "python3", "mlx_lm"] {
+            let executable = bin.appendingPathComponent(name)
+            try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        }
+        let melixHome = MelixHome(environment: [
+            "MELIX_HOME": root.appendingPathComponent("home", isDirectory: true).path,
+            "MELIX_RUNTIME_DIR": root.appendingPathComponent("runtime", isDirectory: true).path,
+        ])
+        try FileManager.default.createDirectory(at: melixHome.rootURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: melixHome.runtimeDirectoryURL, withIntermediateDirectories: true)
+
+        let receipt = MelixDesktopEnvironmentDiagnosticBuilder.build(
+            melixHome: melixHome,
+            environment: [
+                "MELIX_HOME": melixHome.rootURL.path,
+                "MELIX_RUNTIME_DIR": melixHome.runtimeDirectoryURL.path,
+                "PATH": bin.path,
+                "MELIX_PYTHON_BRIDGE_EXECUTABLE": bin.appendingPathComponent("python3").path,
+                "MELIX_UV": bin.appendingPathComponent("uv").path,
+                "MELIX_MLX_LM": bin.appendingPathComponent("mlx_lm").path,
+            ]
+        )
+
+        let checks = try #require(receipt.payload["checks"] as? [[String: Any]])
+        let shellPath = try #require(checks.first { $0["check_kind"] as? String == "shell_path" })
+        let shellPathEvidence = try #require(shellPath["evidence"] as? [String: Any])
+        let summary = try #require(receipt.payload["summary"] as? [String: Any])
+        let checkCount = try #require(summary["check_count"] as? Int)
+        let failedCount = try #require(summary["failed_check_count"] as? Int)
+        let warningCount = try #require(summary["warning_check_count"] as? Int)
+        let passedCount = try #require(summary["passed_check_count"] as? Int)
+        let unknownCount = try #require(summary["unknown_check_count"] as? Int)
+
+        #expect(shellPath["status"] as? String == "pass")
+        #expect(shellPathEvidence["failure_modes"] as? [String] == [])
+        #expect(shellPath["redaction_count"] as? Int == 4)
+        #expect(failedCount == 0)
+        #expect(warningCount == 0)
+        #expect(unknownCount == 2)
+        #expect(failedCount + warningCount + passedCount + unknownCount == checkCount)
     }
 
     @Test("lora list fails when the server snapshot has no models")
@@ -12101,6 +12337,10 @@ struct MelixCLIRunnerTests {
         #expect(systemPayload["diagnostics_consent_state"] as? String == "local_only")
         #expect(systemPayload["redaction_schema_version"] as? String == MelixDiagnosticsRedaction.schemaVersion)
         #expect((systemPayload["redacted_field_count"] as? Int ?? 0) >= 1)
+        let systemEnvironmentDiagnostic = try #require(
+            systemPayload["environment_diagnostic"] as? [String: Any]
+        )
+        #expect(systemEnvironmentDiagnostic["schema_version"] as? String == "melix.desktop_environment_diagnostic_receipt.v1")
 
         let monitorJSON = try await runner.run(.monitor(.init(sourcePath: sourceRoot.path, json: true)))
         let monitorPayload = try #require(parseJSONObject(monitorJSON))
@@ -12320,6 +12560,7 @@ struct MelixCLIRunnerTests {
             "logs.txt",
             "metrics.json",
             "error.json",
+            "environment-diagnostic.json",
             "manifest.json",
         ] {
             #expect(FileManager.default.fileExists(atPath: bundleOutputRoot.appendingPathComponent(filename).path))
@@ -12338,7 +12579,26 @@ struct MelixCLIRunnerTests {
         let capabilityReceipts = try #require(capabilityReceiptsPayload)
         let probePolicy = try #require(bundleManifest["probe_policy"] as? [String: Any])
         let manifestMediaRouteReceipt = try #require(bundleManifest["media_route_receipt"] as? [String: Any])
+        let manifestEnvironmentDiagnostic = try #require(
+            bundleManifest["environment_diagnostic"] as? [String: Any]
+        )
+        let manifestEnvironmentSummary = try #require(
+            manifestEnvironmentDiagnostic["summary"] as? [String: Any]
+        )
+        let manifestEnvironmentChecks = try #require(
+            manifestEnvironmentDiagnostic["checks"] as? [[String: Any]]
+        )
+        let manifestProxyCheck = try #require(
+            manifestEnvironmentChecks.first { $0["check_kind"] as? String == "proxy_environment" }
+        )
+        let manifestProxyObserved = try #require(manifestProxyCheck["observed"] as? [String: Any])
+        let manifestProxyVariables = try #require(manifestProxyObserved["variables"] as? [[String: Any]])
+        let manifestProxyExpected = try #require(manifestProxyCheck["expected"] as? [String: Any])
+        let manifestArtifacts = try #require(bundleManifest["artifacts"] as? [String: String])
         let bundleMediaRouteReceipt = try #require(capabilityReceipts["media_route_receipt"] as? [String: Any])
+        let environmentDiagnosticFile = try #require(try parseJSONFile(
+            bundleOutputRoot.appendingPathComponent("environment-diagnostic.json").path
+        ))
         #expect(bundleLogs.contains("sk-secret-log") == false)
         #expect(bundleEnv.contains("sk-secret-env") == false)
         #expect(bundleCommand.contains("hidden-prompt-token") == false)
@@ -12350,6 +12610,12 @@ struct MelixCLIRunnerTests {
         #expect(bundleManifest["debug_artifact_policy"] as? String == "explicit_cli_command")
         #expect(bundleManifest["debug_jsonl_enabled"] as? Bool == true)
         #expect(bundleManifest["debug_jsonl_event_limit"] as? Int == 256)
+        #expect(manifestArtifacts["environment_diagnostic"] == "environment-diagnostic.json")
+        #expect(manifestEnvironmentDiagnostic["schema_version"] as? String == "melix.desktop_environment_diagnostic_receipt.v1")
+        #expect(environmentDiagnosticFile["schema_version"] as? String == "melix.desktop_environment_diagnostic_receipt.v1")
+        #expect((manifestEnvironmentSummary["check_count"] as? Int ?? 0) >= 10)
+        #expect(manifestProxyVariables.allSatisfy { $0["contains_credentials"] is Bool })
+        #expect(manifestProxyExpected["secret_values_redacted"] as? Bool == true)
         #expect(manifestMediaRouteReceipt["media_route"] as? String == "swift_text")
         #expect(manifestMediaRouteReceipt["media_parts_count"] as? Int == 0)
         #expect(manifestMediaRouteReceipt["media_turn_count"] as? Int == 0)

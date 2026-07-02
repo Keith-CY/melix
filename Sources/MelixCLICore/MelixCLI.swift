@@ -10650,6 +10650,7 @@ public actor MelixCLIRunner {
             "redacted_field_count": (resolvedSystemPayload["redacted_field_count"] as? Int ?? 0)
                 + redactedReport.redactedFieldCount,
             "system": resolvedSystemPayload,
+            "environment_diagnostic": resolvedSystemPayload["environment_diagnostic"] as? [String: Any] ?? [:],
             "findings": (redactedReport.payload["findings"] as? [[String: Any]] ?? []) + systemFindings,
         ]
         if report.markdown.isEmpty && systemFindings.isEmpty == false {

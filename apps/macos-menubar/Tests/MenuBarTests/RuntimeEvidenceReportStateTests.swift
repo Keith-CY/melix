@@ -185,7 +185,44 @@ struct RuntimeEvidenceReportStateTests {
         #expect(renderedTexts.contains("Manifest"))
         #expect(renderedTexts.contains("/tmp/melix-debug/bench-1/manifest.json"))
         #expect(renderedTexts.contains("Effective Config"))
+        #expect(renderedTexts.contains("Environment Doctor"))
+        #expect(renderedTexts.contains("warn • 10 checks • 0 failed • 2 warnings"))
+        #expect(renderedTexts.contains("Environment Redaction"))
+        #expect(renderedTexts.contains("4 fields redacted"))
+        #expect(renderedTexts.contains("Environment Latency"))
+        #expect(renderedTexts.contains("12 ms"))
         #expect(renderedTexts.contains("Debug bundle ready at /tmp/melix-debug/bench-1."))
+    }
+
+    @Test("diagnostics debug bundle tolerates sparse environment diagnostic payloads")
+    func diagnosticsDebugBundleToleratesSparseEnvironmentDiagnosticPayloads() throws {
+        let result = try RuntimeDiagnosticsDebugBundleState.decode(
+            json: makeDiagnosticsDebugBundleJSON(
+                environmentDiagnosticJSON: """
+                  "environment_diagnostic": {
+                    "schema_version": "melix.desktop_environment_diagnostic_receipt.v1",
+                    "summary": {},
+                    "redaction_summary": {},
+                    "metrics": {}
+                  }
+                """
+            )
+        )
+
+        #expect(result.environmentDiagnostic?.schemaVersion == "melix.desktop_environment_diagnostic_receipt.v1")
+        #expect(result.environmentDiagnostic?.summaryText == "unknown • 0 checks • 0 failed • 0 warnings")
+        #expect(result.environmentDiagnostic?.redactionText == "0 fields redacted")
+        #expect(result.environmentDiagnostic?.latencyText == "0 ms")
+    }
+
+    @Test("diagnostics debug bundle fixture supports missing environment diagnostic")
+    func diagnosticsDebugBundleFixtureSupportsMissingEnvironmentDiagnostic() throws {
+        let result = try RuntimeDiagnosticsDebugBundleState.decode(
+            json: makeDiagnosticsDebugBundleJSON(environmentDiagnosticJSON: "")
+        )
+
+        #expect(result.environmentDiagnostic == nil)
+        #expect(result.mediaRouteReceipt?.mediaRoute == "swift_text")
     }
 
     @Test("diagnostics summarizes serving diagnostics queue retention and drops")
