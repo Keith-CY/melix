@@ -161,6 +161,10 @@ message RuntimeStats {
   uint64 native_quantized_load_count = 89;
   uint64 bridge_quantized_fallback_count = 90;
   uint64 cross_shard_metadata_fixup_count = 91;
+  uint64 speculative_probe_enabled_count = 92;
+  uint64 speculative_probe_fallback_count = 93;
+  uint64 speculative_probe_position_aligned_count = 94;
+  uint64 speculative_probe_cache_aligned_count = 95;
 }
 
 message GetRuntimeStatsRequest {}

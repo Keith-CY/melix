@@ -519,6 +519,28 @@ Executable unit issues:
   `bridge_quantized_fallback_count`, and surface the same counts through the
   worker `RuntimeStats`, control-plane `vision.*` metrics, phase-6 acceptance
   report, benchmark samples, and focused supported/unsupported fixtures.
+- Unit 4.1.1 adds a verification-only speculative probe receipt for
+  media-bearing VLM requests behind `melix.vlm.speculative_probe.enabled` (or
+  `melix.multimodal.speculative_probe.enabled`). The probe runs before any
+  drafter load or target speculative decode when `ACCELERATION_MODE_SPECULATIVE_DECODE`
+  is requested, records the requested draft model, media counts, position/cache
+  alignment, and typed fallback reason, and then leaves generation on the
+  existing baseline path. If baseline fallback is disabled, the receipt is still
+  recorded before the typed runtime refusal. The feature gate intentionally
+  accepts the existing truthy operator spellings (`1`, `true`, `yes`, `on`, and
+  `enabled`), cache alignment accepts both the current `cache_scope_id` and
+  legacy `scope_id` metadata spellings, and position alignment treats aggregate
+  media-position counts plus image/video counts as independent positive signals
+  because not every fast-path receipt reports all three counters. The entry
+  receipt is restored after baseline probe refreshes and cleanup paths so a
+  generation exception cannot erase the verification-only receipt. Default
+  disabled receipts reuse a read-only sentinel so text-only baseline generation
+  does not allocate a speculative receipt dictionary on the hot path. The
+  `multimodal-speculative-probe-receipt` performance probe is a static schema
+  sentinel: focused pytest coverage validates behavior, while the probe command
+  emits informational metrics only and is not a latency gate. Unit 4.1.2 owns
+  per-sequence accepted/rejected token and rollback counters; Unit 4.1.3 owns
+  full single-request and concurrent parity fixtures.
 
 ## Verification Policy
 

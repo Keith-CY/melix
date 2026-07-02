@@ -108,8 +108,8 @@ struct ControlPlaneXPCClientTests {
 
         #expect(await service.lastSubscriptionRequest == 12)
         #expect(firstEvent?.eventType == "bench.progress")
-        try? await Task.sleep(nanoseconds: 10_000_000)
-        #expect(await service.unsubscribedIDs == ["streaming"])
+        let unsubscribedIDs = await waitForUnsubscribedIDs(service, expected: ["streaming"])
+        #expect(unsubscribedIDs == ["streaming"])
     }
 
     @Test("load and unload surface request failures for unknown models")
@@ -1453,6 +1453,21 @@ private struct DefaultImagelessControlPlaneXPCClient: ControlPlaneXPCClient {
         return Melix_Controlplane_V1_ModelOperationResult()
     }
 
+}
+
+private func waitForUnsubscribedIDs(
+    _ service: StreamingExecuteControlPlaneService,
+    expected: [String],
+    attempts: Int = 1_000
+) async -> [String] {
+    for _ in 0..<attempts {
+        let ids = await service.unsubscribedIDs
+        if ids == expected {
+            return ids
+        }
+        try? await Task.sleep(nanoseconds: 1_000_000)
+    }
+    return await service.unsubscribedIDs
 }
 
 private actor FailingExecuteControlPlaneService: ControlPlaneExecuting {

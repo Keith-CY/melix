@@ -912,6 +912,12 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
             native_quantized_load_count=1,
             bridge_quantized_fallback_count=0,
             cross_shard_metadata_fixup_count=2,
+            speculative_probe_receipt={
+                "enabled": True,
+                "status": "fallback",
+                "position_aligned": True,
+                "cache_aligned": True,
+            },
             hybrid_state_patch_mode="family_scoped",
             hybrid_state_advance_count=42,
             family_fast_path_override_count=1,
@@ -971,6 +977,10 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert vision_stats.native_quantized_load_count == 1
     assert vision_stats.bridge_quantized_fallback_count == 0
     assert vision_stats.cross_shard_metadata_fixup_count == 2
+    assert vision_stats.speculative_probe_enabled_count == 1
+    assert vision_stats.speculative_probe_fallback_count == 1
+    assert vision_stats.speculative_probe_position_aligned_count == 1
+    assert vision_stats.speculative_probe_cache_aligned_count == 1
 
     registry.record_vision_probe(
         "ocr",
@@ -1009,6 +1019,7 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
             native_quantized_load_count=-1,
             bridge_quantized_fallback_count=3,
             cross_shard_metadata_fixup_count=4,
+            speculative_probe_receipt="not-a-dict",
         ),
     )
     media_stats = registry.runtime_stats()
@@ -1023,6 +1034,10 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert media_stats.native_quantized_load_count == 0
     assert media_stats.bridge_quantized_fallback_count == 3
     assert media_stats.cross_shard_metadata_fixup_count == 4
+    assert media_stats.speculative_probe_enabled_count == 0
+    assert media_stats.speculative_probe_fallback_count == 0
+    assert media_stats.speculative_probe_position_aligned_count == 0
+    assert media_stats.speculative_probe_cache_aligned_count == 0
     assert vision_stats.last_hybrid_state_patch_mode == "family_scoped"
     assert vision_stats.last_hybrid_state_advance_count == 42
     assert vision_stats.last_family_fast_path_override_count == 1

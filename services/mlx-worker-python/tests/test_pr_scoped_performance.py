@@ -1974,17 +1974,237 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py"],
     )
 
-    assert scope["selected_count"] == 4
+    assert scope["selected_count"] == 5
     assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "multimodal-speculative-probe-receipt",
         "vlm-batch1-comparison-artifact",
         "mlx-vlm-family-config-cache",
         "mlx-vlm-gemma4-weight-presence-single-pass",
         "quantized-tensor-metadata-prepass",
     ]
     coverage_commands = " ".join(str(probe["coverage_command"]) for probe in scope["selected_probes"])
+    assert "test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_fallback" in coverage_commands
     assert "test_mlx_vlm_runtime_image_batch1_step_keeps_ineligible_requests_on_stream" in coverage_commands
     assert "test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available" in coverage_commands
     assert "test_mtp_drafter_acceptance_stats_ignore_unusable_accept_lens" in coverage_commands
+
+
+def test_mlx_vlm_family_config_probe_tolerates_timer_noise_without_weakening_resolve_gate() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-vlm-family-config-cache"
+    )
+    metrics = {metric.key: metric for metric in probe.metrics}
+
+    assert metrics["elapsed_ms_mean"].warn_abs == 0.2
+    assert metrics["resolve_calls_mean"].warn_abs == 0.0
+    assert metrics["resolve_calls_mean"].warn_pct == 0.0
+
+    scope = {
+        "changed_files": ["services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py"],
+        "force_all": False,
+        "matched_probe_ids": [probe.probe_id],
+        "selected_count": 1,
+        "selected_probes": [probe.to_scope_dict()],
+    }
+    result = {
+        "probe": scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 100.0},
+        },
+        "base_probe": {
+            "ok": True,
+            "metrics": {"elapsed_ms_mean": 1.264657, "resolve_calls_mean": 1.0},
+        },
+        "head_probe": {
+            "ok": True,
+            "metrics": {"elapsed_ms_mean": 1.39495, "resolve_calls_mean": 1.0},
+        },
+    }
+
+    timer_noise_report = build_performance_report(scope=scope, probe_results=[result])
+    timer_noise_metrics = {
+        metric["key"]: metric
+        for metric in timer_noise_report["rows"][0]["metrics"]
+    }
+
+    assert timer_noise_report["summary"]["status"] == "ok"
+    assert timer_noise_metrics["elapsed_ms_mean"]["status"] == "neutral"
+
+    result["head_probe"]["metrics"]["resolve_calls_mean"] = 2.0
+    resolve_regression_report = build_performance_report(scope=scope, probe_results=[result])
+    resolve_regression_metrics = {
+        metric["key"]: metric
+        for metric in resolve_regression_report["rows"][0]["metrics"]
+    }
+
+    assert resolve_regression_report["summary"]["status"] == "regression"
+    assert resolve_regression_metrics["resolve_calls_mean"]["status"] == "regression"
+
+
+def test_native_mtp_weight_load_probe_tolerates_loader_timer_noise_without_weakening_counts() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "native-mtp-loader-safetensor-scandir"
+    )
+    metrics = {metric.key: metric for metric in probe.metrics}
+
+    assert metrics["weight_load_new_mean_ms"].warn_abs == 15.0
+    assert metrics["weight_load_result_count"].warn_abs == 0.0
+    assert metrics["weight_load_result_count"].warn_pct == 0.0
+
+    scope = {
+        "changed_files": ["services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py"],
+        "force_all": False,
+        "matched_probe_ids": [probe.probe_id],
+        "selected_count": 1,
+        "selected_probes": [probe.to_scope_dict()],
+    }
+    result = {
+        "probe": scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 100.0},
+        },
+        "base_probe": {
+            "ok": True,
+            "metrics": {"weight_load_new_mean_ms": 138.492933, "weight_load_result_count": 3002.0},
+        },
+        "head_probe": {
+            "ok": True,
+            "metrics": {"weight_load_new_mean_ms": 149.378175, "weight_load_result_count": 3002.0},
+        },
+    }
+
+    timer_noise_report = build_performance_report(scope=scope, probe_results=[result])
+    timer_noise_metrics = {
+        metric["key"]: metric
+        for metric in timer_noise_report["rows"][0]["metrics"]
+    }
+
+    assert timer_noise_report["summary"]["status"] == "ok"
+    assert timer_noise_metrics["weight_load_new_mean_ms"]["status"] == "neutral"
+
+    result["head_probe"]["metrics"]["weight_load_result_count"] = 3001.0
+    count_regression_report = build_performance_report(scope=scope, probe_results=[result])
+    count_regression_metrics = {
+        metric["key"]: metric
+        for metric in count_regression_report["rows"][0]["metrics"]
+    }
+
+    assert count_regression_report["summary"]["status"] == "regression"
+    assert count_regression_metrics["weight_load_result_count"]["status"] == "regression"
+
+
+def test_native_mtp_model_listing_probe_tolerates_loader_timer_noise_without_weakening_counts() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "native-mtp-loader-safetensor-scandir"
+    )
+    metrics = {metric.key: metric for metric in probe.metrics}
+
+    assert metrics["model_listing_new_mean_ms"].warn_abs == 1.0
+    assert metrics["model_listing_result_count"].warn_abs == 0.0
+    assert metrics["model_listing_result_count"].warn_pct == 0.0
+
+    scope = {
+        "changed_files": ["services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py"],
+        "force_all": False,
+        "matched_probe_ids": [probe.probe_id],
+        "selected_count": 1,
+        "selected_probes": [probe.to_scope_dict()],
+    }
+    result = {
+        "probe": scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 100.0},
+        },
+        "base_probe": {
+            "ok": True,
+            "metrics": {
+                "model_listing_new_mean_ms": 5.453525006305426,
+                "model_listing_result_count": 1502.0,
+            },
+        },
+        "head_probe": {
+            "ok": True,
+            "metrics": {
+                "model_listing_new_mean_ms": 6.065241596661508,
+                "model_listing_result_count": 1502.0,
+            },
+        },
+    }
+
+    timer_noise_report = build_performance_report(scope=scope, probe_results=[result])
+    timer_noise_metrics = {
+        metric["key"]: metric
+        for metric in timer_noise_report["rows"][0]["metrics"]
+    }
+
+    assert timer_noise_report["summary"]["status"] == "ok"
+    assert timer_noise_metrics["model_listing_new_mean_ms"]["status"] == "neutral"
+
+    result["head_probe"]["metrics"]["model_listing_result_count"] = 1501.0
+    count_regression_report = build_performance_report(scope=scope, probe_results=[result])
+    count_regression_metrics = {
+        metric["key"]: metric
+        for metric in count_regression_report["rows"][0]["metrics"]
+    }
+
+    assert count_regression_report["summary"]["status"] == "regression"
+    assert count_regression_metrics["model_listing_result_count"]["status"] == "regression"
+
+
+def test_scope_report_selects_multimodal_speculative_probe_receipt() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/multimodal_speculative_probe.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "multimodal-speculative-probe-receipt"
+    ]
+    probe = scope["selected_probes"][0]
+    assert probe["coverage_paths"] == [
+        "services/mlx-worker-python/worker/runtime/multimodal_speculative_probe.py"
+    ]
+    assert "test_mlx_vlm_runtime_records_verification_only_probe_before_speculative_refusal" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_restores_verification_only_probe_after_generation_exception" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_restores_verification_only_probe_after_probe_exception" in str(
+        probe["coverage_command"]
+    )
+
+
+def test_multimodal_speculative_probe_receipt_probe_is_schema_sentinel() -> None:
+    registry_payload = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    raw_probe = next(
+        raw_probe
+        for raw_probe in registry_payload
+        if raw_probe["id"] == "multimodal-speculative-probe-receipt"
+    )
+    parsed_probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "multimodal-speculative-probe-receipt"
+    )
+
+    assert "schema sentinel" in str(raw_probe.get("description", "")).lower()
+    assert raw_probe["probe_command"].startswith("python3 -c 'import json;")
+    assert {metric.direction for metric in parsed_probe.metrics} == {"informational"}
+    assert {metric.key for metric in parsed_probe.metrics} == {
+        "receipt_schema_version_count",
+        "sample_count",
+    }
 
 
 def test_scope_report_selects_deterministic_vlm_completion_probe() -> None:
@@ -1993,8 +2213,9 @@ def test_scope_report_selects_deterministic_vlm_completion_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/deterministic_vlm_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
+    assert scope["selected_count"] == 2
     assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "multimodal-speculative-probe-receipt",
         "deterministic-vlm-completion-token-scan"
     ]
 
@@ -3911,6 +4132,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "mlx-vlm-gemma4-weight-presence-single-pass",
         "model-registry-plain-local-manifest-stat-elision",
         "model-registry-readme-source-fastpath",
+        "multimodal-speculative-probe-receipt",
         "multimodal-fast-path-signature-top-level-key-cache",
         "multimodal-preprocessing-local-uri-parse-elision",
         "multimodal-preprocessing-image-uri-single-parse",
@@ -4007,6 +4229,11 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_load_model_returns_handle_and_lists_model" in worker_registry_probe.test_command
     assert "test_worker_registry_reuses_sorted_handles_across_listing_calls" in worker_registry_probe.coverage_command
     assert "test_load_model_returns_handle_and_lists_model" in worker_registry_probe.coverage_command
+    worker_registry_metrics = {
+        metric.key: metric for metric in worker_registry_probe.metrics
+    }
+    assert worker_registry_metrics["elapsed_ms_mean"].warn_abs == 0.001
+    assert worker_registry_metrics["request_stats_elapsed_ms_mean"].warn_abs == 0.001
 
     assert registry_probe is not None
     assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.test_command
@@ -4067,6 +4294,10 @@ def test_registered_probes_expose_focused_commands() -> None:
     gemma4_weight_presence_metrics = {
         metric.key: metric for metric in gemma4_weight_presence_probe.metrics
     }
+    assert gemma4_weight_presence_metrics["elapsed_ms_mean"].direction == "informational"
+    assert gemma4_weight_presence_metrics["elapsed_ms_min"].direction == "informational"
+    assert gemma4_weight_presence_metrics["visited_names_mean"].direction == "lower_is_better"
+    assert gemma4_weight_presence_metrics["visited_names_mean"].warn_pct == 0.0
     assert gemma4_weight_presence_metrics["peak_bytes_mean"].warn_pct == 5.0
     assert gemma4_weight_presence_metrics["peak_bytes_mean"].warn_abs == 64.0
 
@@ -4208,8 +4439,10 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         "speedup",
         "old_peak_bytes_mean",
         "extra_old_mean_ms",
+        "extra_delta_ms",
         "extra_old_peak_bytes_mean",
         "model_listing_old_mean_ms",
+        "model_listing_delta_ms",
         "model_listing_old_peak_bytes_mean",
         "key_old_mean_ms",
         "key_delta_ms",
@@ -4219,8 +4452,12 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         assert native_mtp_metrics[metric_key]["direction"] == "informational"
         assert "warn_pct" not in native_mtp_metrics[metric_key]
     assert native_mtp_metrics["model_listing_new_mean_ms"]["direction"] == "lower_is_better"
-    assert native_mtp_metrics["model_listing_delta_ms"]["direction"] == "lower_is_better"
     assert native_mtp_metrics["model_listing_speedup"]["direction"] == "higher_is_better"
+    assert native_mtp_metrics["new_mean_ms"]["warn_abs"] == 0.5
+    assert native_mtp_metrics["model_listing_new_mean_ms"]["warn_abs"] == 1.0
+    assert native_mtp_metrics["model_listing_speedup"]["warn_abs"] == 0.5
+    assert native_mtp_metrics["extra_new_mean_ms"]["warn_abs"] == 10.0
+    assert native_mtp_metrics["extra_speedup"]["warn_abs"] == 0.5
     assert native_mtp_metrics["key_new_mean_ms"]["direction"] == "lower_is_better"
 
     quantized_metadata_metrics = {
@@ -5664,9 +5901,19 @@ def test_metric_and_probe_helpers_cover_error_branches() -> None:
         base_metrics={"count": 0.0},
         head_metrics={"count": 1.0},
     )
+    higher_is_better_with_abs_tolerance = _build_metric_row(
+        key="speedup",
+        unit="x",
+        direction="higher_is_better",
+        warn_pct=5.0,
+        warn_abs=0.5,
+        base_metrics={"speedup": 2.3},
+        head_metrics={"speedup": 2.16},
+    )
 
     assert missing["status"] == "missing"
     assert higher_is_better["status"] == "regression"
+    assert higher_is_better_with_abs_tolerance["status"] == "neutral"
     assert informational_faster["delta"] == -2.0
     assert informational_faster["status"] == "neutral"
     assert informational_slower["delta"] == 20.0
@@ -6041,6 +6288,7 @@ def test_mlx_vlm_gemma4_weight_presence_probe_script_emits_metrics() -> None:
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["elapsed_ms_mean"] > 0
+    assert 0 < metrics["elapsed_ms_min"] <= metrics["elapsed_ms_mean"]
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["visited_names_mean"] > 0
     assert metrics["has_vision"] == 1.0
