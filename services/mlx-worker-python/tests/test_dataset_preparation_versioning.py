@@ -136,12 +136,13 @@ def test_dataset_version_failed_segment_partition_preserves_failed_id_semantics(
         {"segment_id": "a", "text": "first"},
         {"segment_id": "b", "text": "second"},
         {"segment_id": "b", "text": "duplicate"},
+        {"text": "missing id"},
         {"segment_id": "c", "text": "third"},
     ]
 
     successful_segments, failed_segments = _partition_failed_segments(segments, ("b",))
 
-    assert successful_segments == [segments[0], segments[3]]
+    assert successful_segments == [segments[0], segments[3], segments[4]]
     assert failed_segments == [segments[1], segments[2]]
 
 
