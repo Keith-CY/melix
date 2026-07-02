@@ -169,6 +169,16 @@ known trainability guardrail is marked failed without an explicit remediation,
 the store may fill the default guardrail remediation so CLI and Desktop expose a
 single operator-facing recovery path.
 
+Training admission must distinguish source model references from generated run
+artifact names. A source `model_id` may be a Hugging Face repository ID or a
+local absolute path outside the managed workspace, but default writable run
+directories are derived from a sanitized `defaultTrainingRunName(modelRef:)`
+candidate under the configured training output root. Explicit run directories
+must be normalized and proven contained by that configured root before queue
+persistence or worker launch. Escaping paths fail with the typed
+`path_escape_detected` operator error and include `path_escape_detected=true`
+plus the sanitized candidate name in the refusal evidence.
+
 Required queue error codes are:
 
 - `training_queue_busy`
@@ -177,6 +187,7 @@ Required queue error codes are:
 - `training_queue_restore_failed`
 - `training_queue_cancel_failed`
 - `training_queue_admission_failed`
+- `path_escape_detected`
 
 Metrics:
 
@@ -191,6 +202,9 @@ Verification:
 
 - Swift store tests for queue round-trip, restore, exclusive admission,
   cancellation persistence, and malformed document handling.
+- Swift store tests for sanitized default run names, local absolute source
+  paths, long model references, traversal strings, and escaping output path
+  refusals.
 - CLI parser/runner tests for queue status and admission surfaces.
 - Desktop state and detail rendering tests proving queued and running jobs
   survive app reconstruction from the same `MELIX_HOME` and expose recovery

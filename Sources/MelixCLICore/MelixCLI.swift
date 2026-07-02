@@ -68,6 +68,16 @@ public struct WorkspacePreflightOptions: Equatable, Sendable {
     }
 }
 
+public struct StorageMaintenanceOptions: Equatable, Sendable {
+    public let workspaceManifestPath: String
+    public let json: Bool
+
+    public init(workspaceManifestPath: String = "", json: Bool = false) {
+        self.workspaceManifestPath = workspaceManifestPath
+        self.json = json
+    }
+}
+
 public struct DatasetPrepareIngestOptions: Equatable, Sendable {
     public let workspaceProjectID: String
     public let workspaceManifestPath: String
@@ -80,6 +90,8 @@ public struct DatasetPrepareIngestOptions: Equatable, Sendable {
     public let fuzzyDedup: Bool
     public let segmentation: Bool
     public let segmentationStrategy: String
+    public let uploadCapBytes: String
+    public let sourceCapBytes: String
     public let json: Bool
 
     public init(
@@ -94,6 +106,8 @@ public struct DatasetPrepareIngestOptions: Equatable, Sendable {
         fuzzyDedup: Bool = true,
         segmentation: Bool = true,
         segmentationStrategy: String = "paragraph",
+        uploadCapBytes: String = "",
+        sourceCapBytes: String = "",
         json: Bool = false
     ) {
         self.workspaceProjectID = workspaceProjectID
@@ -107,6 +121,8 @@ public struct DatasetPrepareIngestOptions: Equatable, Sendable {
         self.fuzzyDedup = fuzzyDedup
         self.segmentation = segmentation
         self.segmentationStrategy = segmentationStrategy
+        self.uploadCapBytes = uploadCapBytes
+        self.sourceCapBytes = sourceCapBytes
         self.json = json
     }
 }
@@ -2342,6 +2358,9 @@ public enum MelixCLICommand: Equatable, Sendable {
     case schema(DiscoveryJSONOptions)
     case configMetadata(DiscoveryJSONOptions)
     case workspacePreflight(WorkspacePreflightOptions)
+    case storageInventory(StorageMaintenanceOptions)
+    case storageCleanupPlan(StorageMaintenanceOptions)
+    case storageCleanupApply(StorageMaintenanceOptions)
     case doctor(DoctorOptions)
     case system(SystemOptions)
     case monitor(MonitorOptions)
@@ -2525,6 +2544,8 @@ public enum MelixCLIParser {
             return try parseConfig(tail)
         case "workspace":
             return try parseWorkspace(tail)
+        case "storage":
+            return try parseStorage(tail)
         case "doctor":
             return try parseDoctor(tail)
         case "system":
@@ -2592,6 +2613,9 @@ public enum MelixCLIParser {
       melix schema --json
       melix config metadata --json
       melix workspace preflight --manifest PATH [--output PATH] [--json]
+      melix storage inventory [--workspace-manifest PATH] [--json]
+      melix storage cleanup plan [--workspace-manifest PATH] [--json]
+      melix storage cleanup apply [--workspace-manifest PATH] [--json]
       melix doctor [--json]
       melix system --json
       melix monitor [--from PATH] [--json]
@@ -2625,7 +2649,7 @@ public enum MelixCLIParser {
       melix dataset list [--json]
       melix dataset hub download --repo-id HF_DATASET [--revision REV] [--hf-token TOKEN] [--json]
       melix dataset remove --repo-id HF_DATASET [--revision REV | --snapshot-id SHA] [--json]
-      melix dataset prepare ingest --workspace-project-id ID --workspace-manifest PATH --input PATH --output-dir PATH --dataset-preparation-id ID [--output PATH] [--pii-mask true|false] [--exact-dedup true|false] [--fuzzy-dedup true|false] [--segmentation true|false] [--segmentation-strategy STRATEGY] [--json]
+      melix dataset prepare ingest --workspace-project-id ID --workspace-manifest PATH --input PATH --output-dir PATH --dataset-preparation-id ID [--output PATH] [--pii-mask true|false] [--exact-dedup true|false] [--fuzzy-dedup true|false] [--segmentation true|false] [--segmentation-strategy STRATEGY] [--upload-cap-bytes N] [--source-cap-bytes N] [--json]
       melix dataset prepare version --workspace-manifest PATH --ingest-receipt PATH --output-root PATH --dataset-id ID [--version-id ID] [--created-at ISO8601] [--mode MODE] [--generator-model MODEL] [--output-kind KIND] [--output-format FORMAT] [--validation-ratio N] [--fail-segment-id ID ...] [--json]
       melix dataset prepare retry-failed --workspace-manifest PATH --dataset-version PATH --output-root PATH [--version-id ID] [--created-at ISO8601] [--generator-model MODEL] [--json]
       melix dataset prepare list-versions --workspace-manifest PATH --output-root PATH --dataset-id ID [--json]
@@ -2891,6 +2915,42 @@ public enum MelixCLIParser {
                 json: values.flags.contains("--json")
             )
         )
+    }
+
+    private static func parseStorage(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(Self.usageText)
+        }
+        let tail = Array(arguments.dropFirst())
+        switch action {
+        case "inventory":
+            let values = try ArgumentCursor(arguments: tail).parse()
+            return .storageInventory(
+                .init(
+                    workspaceManifestPath: values.single["--workspace-manifest"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        case "cleanup":
+            guard let mode = tail.first else {
+                throw MelixCLIError.usage(Self.usageText)
+            }
+            let values = try ArgumentCursor(arguments: Array(tail.dropFirst())).parse()
+            let options = StorageMaintenanceOptions(
+                workspaceManifestPath: values.single["--workspace-manifest"] ?? "",
+                json: values.flags.contains("--json")
+            )
+            switch mode {
+            case "plan":
+                return .storageCleanupPlan(options)
+            case "apply":
+                return .storageCleanupApply(options)
+            default:
+                throw MelixCLIError.usage(Self.usageText)
+            }
+        default:
+            throw MelixCLIError.usage(Self.usageText)
+        }
     }
 
     private static func parseDoctor(_ arguments: [String]) throws -> MelixCLICommand {
@@ -3377,6 +3437,8 @@ public enum MelixCLIParser {
                 fuzzyDedup: try parseRequiredBooleanValue(values.single["--fuzzy-dedup"], option: "--fuzzy-dedup", defaultValue: true),
                 segmentation: try parseRequiredBooleanValue(values.single["--segmentation"], option: "--segmentation", defaultValue: true),
                 segmentationStrategy: values.single["--segmentation-strategy"] ?? "paragraph",
+                uploadCapBytes: values.single["--upload-cap-bytes"] ?? "",
+                sourceCapBytes: values.single["--source-cap-bytes"] ?? "",
                 json: values.flags.contains("--json")
             )
         )
@@ -6493,6 +6555,8 @@ public actor MelixCLIRunner {
         arguments.append(contentsOf: ["--fuzzy-dedup", options.fuzzyDedup ? "true" : "false"])
         arguments.append(contentsOf: ["--segmentation", options.segmentation ? "true" : "false"])
         appendOption("--segmentation-strategy", value: options.segmentationStrategy, into: &arguments)
+        appendOption("--upload-cap-bytes", value: options.uploadCapBytes, into: &arguments)
+        appendOption("--source-cap-bytes", value: options.sourceCapBytes, into: &arguments)
         return arguments
     }
 
@@ -6559,6 +6623,11 @@ public actor MelixCLIRunner {
         ]
         if let sourceFiles, let segments {
             lines.append("Sources: \(sourceFiles.intValue), segments: \(segments.intValue)")
+        }
+        if let uploadCap = payload["upload_cap_bytes"] as? NSNumber,
+           let observedBytes = payload["observed_payload_bytes"] as? NSNumber,
+           uploadCap.intValue > 0 {
+            lines.append("Upload cap: \(uploadCap.intValue) bytes, observed: \(observedBytes.intValue) bytes")
         }
         return lines.joined(separator: "\n") + "\n"
     }
@@ -7217,7 +7286,8 @@ public actor MelixCLIRunner {
     private func runLoraTrainOperation(
         _ options: LoraTrainOptions,
         outputDir: String = "",
-        trainingModeOverride: String = ""
+        trainingModeOverride: String = "",
+        managedOutputRoot: String = ""
     ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
         var ext = options.parameters
         if options.preflightFitCheck {
@@ -7252,6 +7322,7 @@ public actor MelixCLIRunner {
                 adapterName: options.adapterName,
                 trainingMode: trainingMode,
                 runDirectory: outputDir,
+                managedOutputRoot: managedOutputRoot,
                 parameters: ext
             )
         )
@@ -7263,7 +7334,7 @@ public actor MelixCLIRunner {
             let result = try await performModelOperation(
                 modelID: options.modelID,
                 operation: "train_lora",
-                outputDir: outputDir,
+                outputDir: admitted.runDirectory,
                 ext: ext
             )
             _ = try? queue.markSucceeded(jobID: admitted.jobID)
@@ -7319,7 +7390,8 @@ public actor MelixCLIRunner {
         let trainResult = try await runLoraTrainOperation(
             options.training,
             outputDir: trainOutputDir.path,
-            trainingModeOverride: resolvedTrainingMode
+            trainingModeOverride: resolvedTrainingMode,
+            managedOutputRoot: outputRoot.path
         )
         let adapterManifestPath = try Self.resolveLoraAdapterManifestPath(
             from: trainResult,
@@ -7820,6 +7892,18 @@ public actor MelixCLIRunner {
             return try prettyJSON(payload)
         case .workspacePreflight(let options):
             return try await runWorkspacePreflight(options)
+        case .storageInventory(let options):
+            let store = storageMaintenanceStore()
+            let receipt = try store.inventory(workspaceManifestPath: options.workspaceManifestPath)
+            return options.json ? try prettyJSON(receipt) : renderStorageInventory(receipt)
+        case .storageCleanupPlan(let options):
+            let store = storageMaintenanceStore()
+            let plan = try store.cleanupPlan(workspaceManifestPath: options.workspaceManifestPath)
+            return options.json ? try prettyJSON(plan) : renderStorageCleanupPlan(plan)
+        case .storageCleanupApply(let options):
+            let store = storageMaintenanceStore()
+            let receipt = try store.applyCleanup(workspaceManifestPath: options.workspaceManifestPath)
+            return options.json ? try prettyJSON(receipt) : renderStorageCleanupReceipt(receipt)
         case .uriInspect(let options):
             return try runURIInspect(options)
         case .uriImport(let options):
@@ -9632,6 +9716,13 @@ public actor MelixCLIRunner {
         )
     }
 
+    private func storageMaintenanceStore() -> MelixStorageMaintenanceStore {
+        MelixStorageMaintenanceStore(
+            melixHome: MelixHome(environment: environment),
+            environment: environment
+        )
+    }
+
     private func jobStatusStore() -> MelixJobStatusStore {
         let melixHome = MelixHome(environment: environment)
         return MelixJobStatusStore(
@@ -10451,6 +10542,47 @@ public actor MelixCLIRunner {
         return String(format: "%.2f %@", locale: Locale(identifier: "en_US_POSIX"), value, units[unitIndex])
     }
 
+    private func renderStorageInventory(_ receipt: [String: Any]) -> String {
+        let summary = receipt["summary"] as? [String: Any] ?? [:]
+        let artifactCount = intValue(summary["artifact_count"])
+        let cleanableBytes = uint64Value(summary["cleanable_byte_size"])
+        let protectedBytes = uint64Value(summary["protected_byte_size"])
+        return "Storage inventory: \(artifactCount) artifacts, \(formatBinaryBytes(cleanableBytes)) cleanable, \(formatBinaryBytes(protectedBytes)) protected.\n"
+    }
+
+    private func renderStorageCleanupPlan(_ plan: [String: Any]) -> String {
+        let summary = plan["summary"] as? [String: Any] ?? [:]
+        let cleanableCount = intValue(summary["cleanable_entry_count"])
+        let retainedCount = intValue(summary["retained_entry_count"])
+        let protectedCount = intValue(summary["protected_entry_count"])
+        let blockedCount = intValue(summary["blocked_entry_count"])
+        let cleanableBytes = uint64Value(summary["cleanable_byte_size"])
+        return "Storage cleanup dry-run: \(cleanableCount) cleanable, \(retainedCount) retained, \(protectedCount) protected, \(blockedCount) blocked, \(formatBinaryBytes(cleanableBytes)) reclaimable.\n"
+    }
+
+    private func renderStorageCleanupReceipt(_ receipt: [String: Any]) -> String {
+        let summary = receipt["summary"] as? [String: Any] ?? [:]
+        let deleteCount = intValue(summary["safe_delete_count"])
+        let deletedBytes = uint64Value(summary["deleted_byte_size"])
+        let protectedCount = intValue(summary["protected_entry_count"])
+        let failedCount = intValue(summary["failed_entry_count"])
+        return "Storage cleanup applied: \(deleteCount) deleted, \(formatBinaryBytes(deletedBytes)) reclaimed, \(protectedCount) protected, \(failedCount) failed.\n"
+    }
+
+    private func intValue(_ value: Any?) -> Int {
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        return value as? Int ?? 0
+    }
+
+    private func uint64Value(_ value: Any?) -> UInt64 {
+        if let number = value as? NSNumber {
+            return number.uint64Value
+        }
+        return value as? UInt64 ?? 0
+    }
+
     private func renderRegistryRoots(_ roots: [String]) -> String {
         guard roots.isEmpty == false else {
             return "No registry roots configured.\n"
@@ -10650,6 +10782,7 @@ public actor MelixCLIRunner {
             "redacted_field_count": (resolvedSystemPayload["redacted_field_count"] as? Int ?? 0)
                 + redactedReport.redactedFieldCount,
             "system": resolvedSystemPayload,
+            "environment_diagnostic": resolvedSystemPayload["environment_diagnostic"] as? [String: Any] ?? [:],
             "findings": (redactedReport.payload["findings"] as? [[String: Any]] ?? []) + systemFindings,
         ]
         if report.markdown.isEmpty && systemFindings.isEmpty == false {

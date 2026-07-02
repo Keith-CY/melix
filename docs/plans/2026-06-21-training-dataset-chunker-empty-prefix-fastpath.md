@@ -5,11 +5,13 @@ This Python performance slice is limited to single-turn long-context chunking in
 
 ## Goal
 
-Keep chunking behavior unchanged while avoiding empty-list concatenation when a
-single-turn sample has no system prefix. This is the common synthetic/probe path
+Keep chunking behavior unchanged while avoiding per-segment prefix branching when
+a single-turn sample has no system prefix. This is the common synthetic/probe path
 and many training examples are user/assistant only, so the chunk candidate loop
-can build `[user, assistant]` message lists directly instead of evaluating
-`system_prefix + [...]` for an empty prefix on every candidate segment.
+can build `[user, assistant]` message lists directly on a dedicated branch while
+the system-prefix branch preserves `system_prefix + [...]` semantics. The loop
+also binds the render and segment iterator helpers once per chunk operation to
+avoid repeated global lookups in the candidate hot path.
 
 ## Probe coverage
 

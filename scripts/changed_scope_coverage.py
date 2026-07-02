@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from bisect import bisect_left
-from collections.abc import Mapping
+from collections.abc import Mapping, Set
 from functools import lru_cache
 import json
 import os
@@ -26,6 +26,8 @@ _ASCII_PLUS = ord("+")
 _ASCII_MINUS = ord("-")
 _ASCII_AT = ord("@")
 _ASCII_LOWER_D = ord("d")
+_EMPTY_CHANGED_LINES: frozenset[int] = frozenset()
+_DENSE_CHANGED_LINE_SCAN_THRESHOLD = 32
 
 
 def _is_diff_file_marker(line: str) -> bool:
@@ -89,15 +91,20 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     header_prefix_len = len(header_prefix)
     header_separator_len = len(header_separator)
     parse_hunk_new_start_from_digit = _parse_hunk_new_start_from_digit_bytes
+    ascii_backslash = _ASCII_BACKSLASH
+    ascii_plus = _ASCII_PLUS
+    ascii_minus = _ASCII_MINUS
+    ascii_at = _ASCII_AT
+    ascii_lower_d = _ASCII_LOWER_D
     add_changed_line = None
     new_line: int | None = None
-    for line in diff_text.encode().split(b"\n"):
+    for line in diff_text.encode().splitlines():
         if not line:
             if add_changed_line is not None and new_line is not None:
                 new_line += 1
             continue
         first_char = line[0]
-        if first_char == _ASCII_LOWER_D and line.startswith(header_prefix):
+        if first_char == ascii_lower_d and line.startswith(header_prefix):
             separator_index = line.find(header_separator, header_prefix_len)
             add_changed_line = None
             if separator_index >= 0:
@@ -105,7 +112,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
                 add_changed_line = changed_by_path_setdefault(current_path, set()).add
             new_line = None
             continue
-        if first_char == _ASCII_AT and len(line) > 1 and line[1] == _ASCII_AT:
+        if first_char == ascii_at and len(line) > 1 and line[1] == ascii_at:
             new_range_index = line.find(b" +")
             if new_range_index < 0:
                 new_line = None
@@ -114,12 +121,12 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
             continue
         if add_changed_line is None or new_line is None:
             continue
-        if first_char == _ASCII_BACKSLASH:
+        if first_char == ascii_backslash:
             continue
-        if first_char == _ASCII_PLUS:
+        if first_char == ascii_plus:
             add_changed_line(new_line)
             new_line += 1
-        elif first_char == _ASCII_MINUS:
+        elif first_char == ascii_minus:
             continue
         else:
             new_line += 1
@@ -179,12 +186,32 @@ def _filter_coverage_paths(paths: list[str], allowlist: frozenset[str] | None) -
 
 
 def _line_ranges_may_overlap(
-    changed: set[int],
+    changed: Set[int],
     executed_lines: list[int],
     missing_lines: list[int],
 ) -> bool:
     if not changed:
         return False
+    if len(changed) == 1:
+        changed_line = next(iter(changed))
+        if executed_lines:
+            first_line = executed_lines[0]
+            last_line = executed_lines[-1]
+            if first_line > last_line:
+                first_line = min(executed_lines)
+                last_line = max(executed_lines)
+            if first_line <= changed_line <= last_line:
+                return True
+        if missing_lines:
+            first_line = missing_lines[0]
+            last_line = missing_lines[-1]
+            if first_line > last_line:
+                first_line = min(missing_lines)
+                last_line = max(missing_lines)
+            if first_line <= changed_line <= last_line:
+                return True
+        return False
+
     min_changed = min(changed)
     max_changed = max(changed)
     if executed_lines:
@@ -215,7 +242,7 @@ def _measurable_changed_lines(
     repo_root: Path,
     coverage_payload: dict[str, object],
     rel_path: str,
-    changed: set[int],
+    changed: Set[int],
 ) -> tuple[list[int], list[int], list[int]]:
     if not changed:
         return [], [], []
@@ -247,12 +274,22 @@ def _measurable_changed_lines(
         else:
             missing_lookup = missing_lines
         if isinstance(executed_lookup, list) and isinstance(missing_lookup, list):
-            measured_changed = [
-                line_no
-                for line_no in changed
-                if _sorted_line_list_contains(executed_lookup, line_no)
-                or _sorted_line_list_contains(missing_lookup, line_no)
-            ]
+            measured_line_count = len(executed_lookup) + len(missing_lookup)
+            if (
+                measured_line_count
+                and len(changed) >= _DENSE_CHANGED_LINE_SCAN_THRESHOLD
+                and len(changed) * 4 >= measured_line_count
+            ):
+                executed_lookup = {line_no for line_no in executed_lines if line_no in changed}
+                missing_lookup = {line_no for line_no in missing_lines if line_no in changed}
+                measured_changed = list(executed_lookup | missing_lookup)
+            else:
+                measured_changed = [
+                    line_no
+                    for line_no in changed
+                    if _sorted_line_list_contains(executed_lookup, line_no)
+                    or _sorted_line_list_contains(missing_lookup, line_no)
+                ]
         else:
             measured_changed = [
                 line_no
@@ -280,8 +317,15 @@ def _measurable_changed_lines(
             if _sorted_line_list_contains(missing_lookup, line_no)
         ]
     else:
-        covered = [line_no for line_no in measurable if line_no in executed_lookup]
-        missed = [line_no for line_no in measurable if line_no in missing_lookup]
+        covered = []
+        missed = []
+        covered_append = covered.append
+        missed_append = missed.append
+        for line_no in measurable:
+            if line_no in executed_lookup:
+                covered_append(line_no)
+            elif line_no in missing_lookup:
+                missed_append(line_no)
     return measurable, covered, missed
 
 
@@ -313,7 +357,7 @@ def main() -> int:
             repo_root,
             coverage_payload,
             rel_path,
-            changed_lines_by_path.get(rel_path, set()),
+            changed_lines_by_path.get(rel_path, _EMPTY_CHANGED_LINES),
         )
         total_measurable += len(measurable)
         total_covered += len(covered)

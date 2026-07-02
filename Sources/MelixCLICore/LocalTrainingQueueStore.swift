@@ -179,6 +179,7 @@ public struct LocalTrainingQueueAdmissionRequest: Sendable {
     public var trainingMode: String
     public var resourceClass: String
     public var runDirectory: String
+    public var managedOutputRoot: String
     public var parameters: [String: String]
 
     public init(
@@ -188,6 +189,7 @@ public struct LocalTrainingQueueAdmissionRequest: Sendable {
         trainingMode: String = "",
         resourceClass: String = "exclusive_local_training",
         runDirectory: String = "",
+        managedOutputRoot: String = "",
         parameters: [String: String] = [:]
     ) {
         self.modelID = modelID
@@ -196,6 +198,7 @@ public struct LocalTrainingQueueAdmissionRequest: Sendable {
         self.trainingMode = trainingMode
         self.resourceClass = resourceClass
         self.runDirectory = runDirectory
+        self.managedOutputRoot = managedOutputRoot
         self.parameters = parameters
     }
 }
@@ -210,6 +213,26 @@ public final class LocalTrainingQueueStore: @unchecked Sendable {
     public init(melixHome: MelixHome, fileManager: FileManager = .default) {
         self.melixHome = melixHome
         self.fileManager = fileManager
+    }
+
+    public static func defaultTrainingRunName(modelRef: String) -> String {
+        let identity = modelRunIdentity(modelRef)
+        let normalized = identity
+            .folding(options: [.diacriticInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .lowercased()
+        let characters = normalized.unicodeScalars.map { scalar -> Character in
+            if isASCIILetterOrDigit(scalar) {
+                return Character(scalar)
+            }
+            return "-"
+        }
+        var candidate = String(characters)
+            .split(separator: "-", omittingEmptySubsequences: true)
+            .joined(separator: "-")
+        if candidate.isEmpty {
+            candidate = "model"
+        }
+        return boundedRunName(candidate)
     }
 
     public func list() throws -> [LocalTrainingQueueJob] {
@@ -244,9 +267,12 @@ public final class LocalTrainingQueueStore: @unchecked Sendable {
 
             let now = currentUnixMilliseconds()
             let jobID = nextJobID(document.jobs)
-            let runDirectory = normalizedRunDirectory(
+            let managedOutputRoot = normalizedManagedOutputRoot(request.managedOutputRoot)
+            let runDirectory = try normalizedRunDirectory(
                 request.runDirectory,
-                jobID: jobID
+                jobID: jobID,
+                modelRef: request.modelID,
+                managedOutputRoot: managedOutputRoot
             )
             let job = LocalTrainingQueueJob(
                 jobID: jobID,
@@ -456,15 +482,41 @@ public final class LocalTrainingQueueStore: @unchecked Sendable {
         try? fileManager.removeItem(at: url)
     }
 
-    private func normalizedRunDirectory(_ value: String, jobID: String) -> String {
+    private func normalizedRunDirectory(
+        _ value: String,
+        jobID: String,
+        modelRef: String,
+        managedOutputRoot: URL
+    ) throws -> String {
+        let root = managedOutputRoot.standardizedFileURL
+        let candidateRunName = Self.defaultTrainingRunName(modelRef: modelRef)
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            return URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath).path
+            let candidate = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
+                .standardizedFileURL
+            guard Self.isPath(candidate, containedBy: root) else {
+                throw MelixCLIError.requestFailed(
+                    code: "path_escape_detected",
+                    message: "Training run directory escapes the managed output root. path_escape_detected=true sanitized_run_name=\(candidateRunName) requested_path=\(candidate.path) managed_output_root=\(root.path)"
+                )
+            }
+            return candidate.path
+        }
+        return root
+            .appendingPathComponent("\(candidateRunName)-\(jobID)", isDirectory: true)
+            .standardizedFileURL
+            .path
+    }
+
+    private func normalizedManagedOutputRoot(_ value: String) -> URL {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath, isDirectory: true)
+                .standardizedFileURL
         }
         return melixHome.modelOpsJobsRootURL
             .appendingPathComponent("train_lora", isDirectory: true)
-            .appendingPathComponent(jobID, isDirectory: true)
-            .path
+            .standardizedFileURL
     }
 
     private func isExclusive(_ resourceClass: String) -> Bool {
@@ -539,6 +591,74 @@ public final class LocalTrainingQueueStore: @unchecked Sendable {
     }()
 
     private static let decoder = JSONDecoder()
+
+    private static func modelRunIdentity(_ modelRef: String) -> String {
+        let trimmed = modelRef.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "model"
+        }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") || trimmed.hasPrefix("~") {
+            let url = URL(fileURLWithPath: expanded)
+            let last = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+            return last.isEmpty ? "model" : last
+        }
+
+        let rawComponents = trimmed.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        let safeComponents = rawComponents.filter { component in
+            let normalized = component.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !normalized.isEmpty && normalized != "." && normalized != ".."
+        }
+        guard !safeComponents.isEmpty else {
+            return "model"
+        }
+        let hasTraversal = rawComponents.contains { component in
+            let normalized = component.trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalized == "." || normalized == ".."
+        }
+        if hasTraversal {
+            return safeComponents.last ?? "model"
+        }
+        return safeComponents.joined(separator: "-")
+    }
+
+    private static func isASCIILetterOrDigit(_ scalar: UnicodeScalar) -> Bool {
+        (scalar.value >= 48 && scalar.value <= 57)
+            || (scalar.value >= 65 && scalar.value <= 90)
+            || (scalar.value >= 97 && scalar.value <= 122)
+    }
+
+    private static func boundedRunName(_ candidate: String) -> String {
+        let maxLength = 80
+        guard candidate.count > maxLength else {
+            return candidate
+        }
+        let digest = stableHexDigest(candidate)
+        let suffix = "-\(digest.prefix(12))"
+        let prefixLength = maxLength - suffix.count
+        let prefix = String(candidate.prefix(prefixLength))
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        if prefix.isEmpty {
+            return "model\(suffix)"
+        }
+        return "\(prefix)\(suffix)"
+    }
+
+    private static func stableHexDigest(_ value: String) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return String(format: "%016llx", hash)
+    }
+
+    private static func isPath(_ candidate: URL, containedBy root: URL) -> Bool {
+        let candidatePath = candidate.standardizedFileURL.path
+        let rootPath = root.standardizedFileURL.path
+        let rootPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        return candidatePath == rootPath || candidatePath.hasPrefix(rootPrefix)
+    }
 }
 
 private struct LocalTrainingQueueDocument: Codable, Equatable, Sendable {

@@ -2330,6 +2330,14 @@ class MLXVLMRuntime:
             raise RuntimeError(
                 "The loaded Gemma 4 MLX package does not include vision weights, so image inputs are unavailable."
             )
+
+        def restore_speculative_probe_receipt() -> None:
+            if speculative_fallback_reason and speculative_probe is not None:
+                self._last_probe = replace(
+                    self._last_probe,
+                    speculative_probe_receipt=speculative_probe.receipt,
+                )
+
         attention_policy = self._attention_prefill_policy(
             loaded_model=loaded_model,
             prepared_request=prepared_request,
@@ -2405,18 +2413,15 @@ class MLXVLMRuntime:
                 ),
                 image_batch1_step_greedy_sampling=self._sampling_is_greedy(sampling),
             )
-            if speculative_fallback_reason and speculative_probe is not None:
-                # The baseline probe refresh replaces _last_probe; restore the
-                # entry-captured speculative receipt so it is not recomputed
-                # from post-generation position metadata.
-                self._last_probe = replace(
-                    self._last_probe,
-                    speculative_probe_receipt=speculative_probe.receipt,
-                )
+            # The baseline probe refresh replaces _last_probe; restore the
+            # entry-captured speculative receipt so it is not recomputed from
+            # post-generation position metadata.
+            restore_speculative_probe_receipt()
         except Exception:
             if image_batch1_temp_media_session is not None:
                 cleanup_image_batch1_temp_media_session(image_batch1_temp_media_session)
                 image_batch1_temp_media_session = None
+            restore_speculative_probe_receipt()
             raise
         enforce_attention_prefill_policy(attention_policy)
         try:
@@ -2515,6 +2520,7 @@ class MLXVLMRuntime:
         finally:
             if image_batch1_temp_media_session is not None:
                 cleanup_image_batch1_temp_media_session(image_batch1_temp_media_session)
+            restore_speculative_probe_receipt()
 
         temp_media_session = self._temp_media_session_factory(
             temp_root=self._temp_root,
@@ -2689,6 +2695,7 @@ class MLXVLMRuntime:
                 temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
                 temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
             )
+            restore_speculative_probe_receipt()
 
     def _generate_mtp_speculative_tokens(
         self,

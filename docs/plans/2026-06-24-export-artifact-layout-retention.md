@@ -75,7 +75,17 @@ The PR-scoped probe records layout materialization latency, target count,
 retained byte size, cleanable byte size, deleted file count, and retention
 decision count. Runtime-log TTL decisions reuse the file metadata collected
 while checking manifest-row existence, avoiding an extra stat call on the
-retention hot path while preserving the missing-file race fallback.
+retention hot path while preserving the missing-file race fallback. A follow-up
+2026-06-26 metrics slice reuses the retention report already written during
+materialization for `cleanup="dry-run"` metrics reports, avoiding a second
+manifest validation and retention-decision pass when no cleanup side effects are
+requested.
+
+A follow-up 2026-06-29 placeholder materialization slice keeps the symlink-escape
+guard unchanged while resolving each target root once per placeholder pass and
+reusing that resolved root for manifest rows and evidence files. This avoids
+repeated target-root resolution during layout materialization without relaxing
+per-file path normalization or target-root containment checks.
 
 ## Verification
 

@@ -11,6 +11,7 @@ import pytest
 from packages.protocol.python.workspace.v1 import export_target_manifest_pb2
 from worker.productization.export_target_manifest import (
     REQUIRED_EXPORT_TARGET_TYPES,
+    _contains_parent_path_component,
     _safe_relative_path_error,
     _validate_metrics,
     validate_export_target_manifest_file,
@@ -154,6 +155,40 @@ def test_export_target_manifest_reports_required_field_errors(tmp_path: Path) ->
     assert "evidence.redaction_policy_id is required" in report.errors
 
 
+def test_export_target_manifest_reports_all_retention_decision_errors(
+    tmp_path: Path,
+) -> None:
+    def mutate_retention_policy(manifest: dict[str, object]) -> None:
+        retention_policy = manifest["retention_policy"]
+        assert isinstance(retention_policy, dict)
+        retention_policy.update(
+            {
+                "required_default_decision": "EXPORT_RETENTION_DECISION_CLEANABLE",
+                "evidence_default_decision": "EXPORT_RETENTION_DECISION_CLEANABLE",
+                "runtime_log_default_decision": "EXPORT_RETENTION_DECISION_RETAIN",
+                "intermediate_default_decision": "EXPORT_RETENTION_DECISION_RETAIN",
+                "cache_default_decision": "EXPORT_RETENTION_DECISION_RETAIN",
+                "temporary_default_decision": "EXPORT_RETENTION_DECISION_RETAIN",
+            }
+        )
+
+    manifest_path = _write_manifest(
+        tmp_path,
+        "melix_managed",
+        mutate_retention_policy,
+    )
+
+    report = validate_export_target_manifest_file(manifest_path)
+
+    assert report.ok is False
+    assert "retention_policy.required_default_decision must be EXPORT_RETENTION_DECISION_RETAIN" in report.errors
+    assert "retention_policy.evidence_default_decision must be EXPORT_RETENTION_DECISION_RETAIN" in report.errors
+    assert "retention_policy.runtime_log_default_decision must be EXPORT_RETENTION_DECISION_DELETE_AFTER_TTL" in report.errors
+    assert "retention_policy.intermediate_default_decision must be EXPORT_RETENTION_DECISION_CLEANABLE" in report.errors
+    assert "retention_policy.cache_default_decision must be EXPORT_RETENTION_DECISION_CLEANABLE" in report.errors
+    assert "retention_policy.temporary_default_decision must be EXPORT_RETENTION_DECISION_DELETE_AFTER_SUCCESS" in report.errors
+
+
 def test_export_target_manifest_rejects_unknown_numeric_target_type(
     tmp_path: Path,
 ) -> None:
@@ -225,6 +260,25 @@ def test_export_target_manifest_safe_relative_path_uses_string_checks(
     assert "parent-directory" in str(target._safe_relative_path_error("artifacts/../model.gguf"))
     assert "Windows absolute" in str(target._safe_relative_path_error("C:/Models/model.gguf"))
     assert "absolute" in str(target._safe_relative_path_error("/tmp/export.bin"))
+
+
+@pytest.mark.parametrize(
+    ("path_value", "expected"),
+    [
+        ("..", True),
+        ("../model.gguf", True),
+        ("artifacts/..", True),
+        ("artifacts/../model.gguf", True),
+        ("artifacts/.../model.gguf", False),
+        ("artifacts/model..gguf", False),
+        ("artifacts/..model/model.gguf", False),
+    ],
+)
+def test_export_target_manifest_parent_path_component_scan_preserves_split_semantics(
+    path_value: str,
+    expected: bool,
+) -> None:
+    assert _contains_parent_path_component(path_value) is expected
 
 
 def test_export_target_manifest_rejects_file_row_contract_violations(

@@ -56,3 +56,12 @@ probe and reorders `_may_contain_model_marker(...)` so uppercase `MODEL SIZE`
 text exits on the first substring scan. Hugging Face card/readme metadata often
 uses uppercase headings, while the helper still checks all four case combinations
 and preserves the downstream regex fallback behavior.
+
+## 2026-06-27 Follow-up: Uppercase Size Label Search Order
+
+This slice keeps the same registered `hub-catalog-size-hint-regex-precompile`
+probe and moves the uppercase `MODEL SIZE` checks ahead of mixed-case checks in
+`_direct_explicit_size_hint_from_text(...)` and `_strip_model_size_label(...)`.
+The probe's hot payloads use uppercase Hub card/readme size labels, so the direct
+parser avoids one failed substring/prefix scan per uppercase label while keeping
+the existing mixed-case and lowercase fallback behavior intact.

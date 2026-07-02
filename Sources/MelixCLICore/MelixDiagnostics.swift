@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MelixControlPlaneCore
 import MelixControlPlaneProtocol
@@ -159,8 +160,13 @@ public struct MelixSystemDiagnostics {
     public static func payload(
         melixHome: MelixHome,
         environment: [String: String],
-        redactedFieldCount: Int
+        redactedFieldCount: Int,
+        environmentDiagnostic: MelixDesktopEnvironmentDiagnosticReceipt? = nil
     ) -> [String: Any] {
+        let diagnostic = environmentDiagnostic ?? MelixDesktopEnvironmentDiagnosticBuilder.build(
+            melixHome: melixHome,
+            environment: environment
+        )
         let redactedHome = MelixDiagnosticsRedaction.redactMapping([
             "root": melixHome.rootURL.path,
             "config": melixHome.configDirectoryURL.path,
@@ -176,11 +182,13 @@ public struct MelixSystemDiagnostics {
         let totalRedactedFieldCount = redactedFieldCount
             + redactedHome.redactedFieldCount
             + redactedWritability.redactedFieldCount
+            + diagnostic.redactedFieldCount
         return [
             "schema_version": schemaVersion,
             "diagnostics_consent_state": diagnosticsConsentState,
             "redaction_schema_version": MelixDiagnosticsRedaction.schemaVersion,
             "redacted_field_count": totalRedactedFieldCount,
+            "environment_diagnostic": diagnostic.payload,
             "platform": [
                 "operating_system": ProcessInfo.processInfo.operatingSystemVersionString,
                 "processor_count": ProcessInfo.processInfo.processorCount,
@@ -236,6 +244,577 @@ public struct MelixSystemDiagnostics {
                 "writable": FileManager.default.isWritableFile(atPath: url.path),
             ]
         }
+    }
+}
+
+public struct MelixDesktopEnvironmentDiagnosticReceipt {
+    public static let schemaVersion = "melix.desktop_environment_diagnostic_receipt.v1"
+
+    public let payload: [String: Any]
+    public let redactedFieldCount: Int
+
+    public init(payload: [String: Any], redactedFieldCount: Int) {
+        self.payload = payload
+        self.redactedFieldCount = redactedFieldCount
+    }
+}
+
+public enum MelixDesktopEnvironmentDiagnosticBuilder {
+    private static let proxyKeys = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"]
+    private static let certificateKeys = ["SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"]
+
+    public static func build(
+        melixHome: MelixHome,
+        environment: [String: String],
+        fileManager: FileManager = .default
+    ) -> MelixDesktopEnvironmentDiagnosticReceipt {
+        let startedAt = currentUnixMilliseconds()
+        var redactedFieldCount = 0
+        var checks: [[String: Any]] = []
+
+        func append(_ check: [String: Any]) {
+            checks.append(check)
+            redactedFieldCount += check["redaction_count"] as? Int ?? 0
+        }
+
+        append(shellPathCheck(environment: environment, fileManager: fileManager))
+        append(runtimeBinaryCheck(environment: environment, fileManager: fileManager))
+        append(versionCheck(
+            id: "python_version",
+            kind: "python_version",
+            displayName: "Python Version",
+            environment: environment,
+            binaryNames: ["python3", "python"],
+            overrideKeys: ["MELIX_PYTHON_BRIDGE_EXECUTABLE", "PYTHON"],
+            missingFailureMode: "python_missing",
+            fileManager: fileManager
+        ))
+        append(versionCheck(
+            id: "uv_version",
+            kind: "uv_version",
+            displayName: "uv Version",
+            environment: environment,
+            binaryNames: ["uv"],
+            overrideKeys: ["MELIX_UV"],
+            missingFailureMode: "uv_missing",
+            fileManager: fileManager
+        ))
+        append(mlxVersionCheck(environment: environment, fileManager: fileManager))
+        append(proxyEnvironmentCheck(environment: environment))
+        append(certificateEnvironmentCheck(environment: environment, fileManager: fileManager))
+        append(directoryCheck(
+            id: "melix_home",
+            kind: "melix_home",
+            displayName: "Melix Home",
+            url: melixHome.rootURL,
+            environmentKey: "MELIX_HOME",
+            environment: environment,
+            missingFailureMode: "melix_home_missing",
+            fileManager: fileManager
+        ))
+        append(directoryCheck(
+            id: "runtime_directory",
+            kind: "runtime_directory",
+            displayName: "Runtime Directory",
+            url: melixHome.runtimeDirectoryURL,
+            environmentKey: "MELIX_RUNTIME_DIR",
+            environment: environment,
+            missingFailureMode: "runtime_directory_missing",
+            fileManager: fileManager
+        ))
+        append(localServerHealthCheck(environment: environment))
+
+        let failedCount = checks.filter { ($0["status"] as? String) == "fail" }.count
+        let warningCount = checks.filter { ($0["status"] as? String) == "warn" }.count
+        let unknownCount = checks.filter { ($0["status"] as? String) == "unknown" }.count
+        let completedAt = currentUnixMilliseconds()
+        func checkLatency(_ kind: String) -> Int {
+            checks.reduce(0) { partial, check in
+                guard check["check_kind"] as? String == kind else {
+                    return partial
+                }
+                return partial + (check["latency_ms"] as? Int ?? 0)
+            }
+        }
+        let versionProbeLatencyMS = checkLatency("python_version")
+            + checkLatency("uv_version")
+            + checkLatency("mlx_version")
+        let payload: [String: Any] = [
+            "schema_version": MelixDesktopEnvironmentDiagnosticReceipt.schemaVersion,
+            "diagnostic_id": "desktop-env-\(startedAt)",
+            "started_at_unix_ms": startedAt,
+            "completed_at_unix_ms": completedAt,
+            "invocation_context": [
+                "surface": "cli_or_desktop",
+                "diagnostics_consent_state": MelixSystemDiagnostics.diagnosticsConsentState,
+                "probe_policy": MelixDiagnosticsStore.probePolicyPayload(environment: environment),
+            ],
+            "checks": checks,
+            "summary": [
+                "status": failedCount > 0 ? "fail" : (warningCount > 0 ? "warn" : "pass"),
+                "check_count": checks.count,
+                "failed_check_count": failedCount,
+                "warning_check_count": warningCount,
+                "passed_check_count": checks.filter { ($0["status"] as? String) == "pass" }.count,
+                "unknown_check_count": unknownCount,
+            ],
+            "redaction_summary": [
+                "schema_version": MelixDiagnosticsRedaction.schemaVersion,
+                "redacted_field_count": redactedFieldCount,
+            ],
+            "metrics": [
+                "diagnostic_latency_ms": max(0, completedAt - startedAt),
+                "path_candidate_count": pathEntries(environment["PATH"]).count,
+                "runtime_binary_probe_latency_ms": checkLatency("runtime_binary"),
+                "version_probe_latency_ms": versionProbeLatencyMS,
+                "proxy_check_latency_ms": checkLatency("proxy_environment"),
+                "certificate_check_latency_ms": checkLatency("certificate_environment"),
+                "local_server_health_latency_ms": checkLatency("local_server_health"),
+                "diagnostic_failure_count": failedCount,
+                "redaction_count": redactedFieldCount,
+            ],
+        ]
+        return MelixDesktopEnvironmentDiagnosticReceipt(payload: payload, redactedFieldCount: redactedFieldCount)
+    }
+
+    private static func shellPathCheck(environment: [String: String], fileManager: FileManager) -> [String: Any] {
+        let started = currentUnixMilliseconds()
+        let entries = pathEntries(environment["PATH"])
+        let observedEntries = entries.map { pathRedaction($0) }
+        let requiredBinaryNames = ["melix", "uv", "python3"]
+        var resolvedPathRedactionCount = 0
+        let resolved = requiredBinaryNames.map { name -> [String: Any] in
+            let candidate = resolveExecutable(named: name, environment: environment, fileManager: fileManager)
+            if candidate != nil {
+                resolvedPathRedactionCount += 1
+            }
+            return [
+                "name": name,
+                "path": candidate.map(pathRedaction(_:)) ?? "",
+                "resolved": candidate != nil,
+            ]
+        }
+        let missing = resolved.compactMap { (($0["resolved"] as? Bool) == true) ? nil : ($0["name"] as? String) }
+        let status: String = entries.isEmpty || missing.isEmpty == false ? "warn" : "pass"
+        return checkPayload(
+            id: "shell_path",
+            kind: "shell_path",
+            displayName: "Shell PATH",
+            status: status,
+            severity: status == "pass" ? "info" : "actionable",
+            observed: [
+                "path_entry_count": entries.count,
+                "path_entries": observedEntries,
+                "required_binaries": resolved,
+            ],
+            expected: [
+                "required_binaries": requiredBinaryNames,
+                "finder_launch_safe": true,
+            ],
+            remediation: status == "pass"
+                ? "No PATH remediation is needed."
+                : "Configure packaged launch environment or MELIX_CLI/MELIX_PYTHON_BRIDGE_EXECUTABLE so Finder-launched Desktop can resolve runtime binaries.",
+            evidence: [
+                "failure_modes": shellPathFailureModes(entries: entries, missing: missing),
+            ],
+            redactionCount: observedEntries.count + resolvedPathRedactionCount,
+            startedAtUnixMS: started
+        )
+    }
+
+    private static func shellPathFailureModes(entries: [String], missing: [String]) -> [String] {
+        var modes: [String] = []
+        if entries.isEmpty {
+            modes.append("missing_path_entry")
+        }
+        if missing.isEmpty == false {
+            modes.append("binary_not_found")
+        }
+        return modes
+    }
+
+    private static func runtimeBinaryCheck(environment: [String: String], fileManager: FileManager) -> [String: Any] {
+        let started = currentUnixMilliseconds()
+        let specs: [(name: String, keys: [String], fallbackNames: [String], required: Bool)] = [
+            ("melix_cli", ["MELIX_CLI", "MELIX_PUBLIC_CLI_PATH"], ["melix"], false),
+            ("python_bridge", ["MELIX_PYTHON_BRIDGE_EXECUTABLE"], ["python3", "python"], true),
+            ("uv", ["MELIX_UV"], ["uv"], true),
+            ("mlx_lm", ["MELIX_MLX_LM"], ["mlx_lm"], false),
+        ]
+        let binaries = specs.map { spec -> [String: Any] in
+            let configured = spec.keys.compactMap { normalized(environment[$0]) }.first
+            let resolved = configured.flatMap { executableCandidate(path: $0, fileManager: fileManager) }
+                ?? spec.fallbackNames.compactMap { resolveExecutable(named: $0, environment: environment, fileManager: fileManager) }.first
+            let exists = resolved.map { fileManager.fileExists(atPath: $0) } ?? false
+            let executable = resolved.map { fileManager.isExecutableFile(atPath: $0) } ?? false
+            return [
+                "name": spec.name,
+                "configured": configured.map(pathRedaction(_:)) ?? "",
+                "resolved_path": resolved.map(pathRedaction(_:)) ?? "",
+                "exists": exists,
+                "executable": executable,
+                "required": spec.required,
+            ]
+        }
+        let requiredFailures = binaries.filter {
+            ($0["required"] as? Bool) == true && (($0["executable"] as? Bool) != true)
+        }
+        let optionalFailures = binaries.filter {
+            ($0["required"] as? Bool) == false && (($0["resolved_path"] as? String) ?? "").isEmpty
+        }
+        let status: String = requiredFailures.isEmpty ? (optionalFailures.isEmpty ? "pass" : "warn") : "fail"
+        return checkPayload(
+            id: "runtime_binary",
+            kind: "runtime_binary",
+            displayName: "Runtime Binaries",
+            status: status,
+            severity: requiredFailures.isEmpty ? (optionalFailures.isEmpty ? "info" : "actionable") : "blocking",
+            observed: ["binaries": binaries],
+            expected: ["required": specs.filter { $0.required }.map { $0.name }],
+            remediation: requiredFailures.isEmpty
+                ? "Optional runtime binaries may be installed later."
+                : "Install or configure executable Python and uv paths for packaged Desktop runtime commands.",
+            evidence: ["failure_modes": requiredFailures.isEmpty ? [] : ["not_found", "not_executable"]],
+            redactionCount: binaries.reduce(0) { partial, item in
+                partial
+                    + (((item["configured"] as? String) ?? "").isEmpty ? 0 : 1)
+                    + (((item["resolved_path"] as? String) ?? "").isEmpty ? 0 : 1)
+            },
+            startedAtUnixMS: started
+        )
+    }
+
+    private static func versionCheck(
+        id: String,
+        kind: String,
+        displayName: String,
+        environment: [String: String],
+        binaryNames: [String],
+        overrideKeys: [String],
+        missingFailureMode: String,
+        fileManager: FileManager
+    ) -> [String: Any] {
+        let started = currentUnixMilliseconds()
+        let configured = overrideKeys.compactMap { normalized(environment[$0]) }.first
+        let resolved = configured.flatMap { executableCandidate(path: $0, fileManager: fileManager) }
+            ?? binaryNames.compactMap { resolveExecutable(named: $0, environment: environment, fileManager: fileManager) }.first
+        let executable = resolved.map { fileManager.isExecutableFile(atPath: $0) } ?? false
+        let status = executable ? "pass" : "warn"
+        return checkPayload(
+            id: id,
+            kind: kind,
+            displayName: displayName,
+            status: status,
+            severity: executable ? "info" : "actionable",
+            observed: [
+                "configured_path": configured.map(pathRedaction(_:)) ?? "",
+                "resolved_path": resolved.map(pathRedaction(_:)) ?? "",
+                "version_source": executable ? "executable_path" : "not_available_without_process_probe",
+                "version": "",
+            ],
+            expected: ["compatible_with_locked_worker_project": true],
+            remediation: executable ? "Version probe can run from the resolved executable path." : "Install or configure \(displayName) for Finder-launched Desktop diagnostics.",
+            evidence: ["failure_modes": executable ? [] : [missingFailureMode]],
+            redactionCount: [configured, resolved].compactMap { $0 }.count,
+            startedAtUnixMS: started
+        )
+    }
+
+    private static func mlxVersionCheck(environment: [String: String], fileManager: FileManager) -> [String: Any] {
+        let started = currentUnixMilliseconds()
+        let python = normalized(environment["MELIX_PYTHON_BRIDGE_EXECUTABLE"])
+            .flatMap { executableCandidate(path: $0, fileManager: fileManager) }
+            ?? resolveExecutable(named: "python3", environment: environment, fileManager: fileManager)
+        let hasPython = python.map { fileManager.isExecutableFile(atPath: $0) } ?? false
+        return checkPayload(
+            id: "mlx_version",
+            kind: "mlx_version",
+            displayName: "MLX Version",
+            status: hasPython ? "unknown" : "warn",
+            severity: hasPython ? "info" : "actionable",
+            observed: [
+                "python_path": python.map(pathRedaction(_:)) ?? "",
+                "version_source": "deferred_import_probe",
+                "version": "",
+            ],
+            expected: ["mlx_import_available": true],
+            remediation: hasPython
+                ? "Run the worker dependency probe when package imports are needed."
+                : "Configure Python before checking MLX imports.",
+            evidence: ["failure_modes": hasPython ? ["import_probe_deferred"] : ["mlx_missing"]],
+            redactionCount: python == nil ? 0 : 1,
+            startedAtUnixMS: started
+        )
+    }
+
+    private static func proxyEnvironmentCheck(environment: [String: String]) -> [String: Any] {
+        let started = currentUnixMilliseconds()
+        var redactionCount = 0
+        let values = proxyKeys.compactMap { key -> [String: Any]? in
+            guard let raw = normalized(environment[key]) else {
+                return nil
+            }
+            let redacted = redactProxy(raw)
+            if redacted != raw {
+                redactionCount += 1
+            }
+            return [
+                "key": key,
+                "set": true,
+                "value": redacted,
+                "contains_credentials": containsURLUserInfo(raw),
+            ]
+        }
+        let invalid = values.filter { (($0["value"] as? String) ?? "").contains(" ") }
+        let credentialCount = values.filter { ($0["contains_credentials"] as? Bool) == true }.count
+        let status = invalid.isEmpty ? (credentialCount > 0 ? "warn" : "pass") : "fail"
+        return checkPayload(
+            id: "proxy_environment",
+            kind: "proxy_environment",
+            displayName: "Proxy Environment",
+            status: status,
+            severity: invalid.isEmpty ? (credentialCount > 0 ? "actionable" : "info") : "blocking",
+            observed: [
+                "proxy_variable_count": values.count,
+                "variables": values,
+            ],
+            expected: ["secret_values_redacted": true, "valid_proxy_urls": true],
+            remediation: credentialCount > 0
+                ? "Keep proxy credentials in secrets storage and verify redacted environment propagation."
+                : "No proxy remediation is needed.",
+            evidence: ["failure_modes": invalid.isEmpty ? [] : ["proxy_url_invalid"]],
+            redactionCount: redactionCount,
+            startedAtUnixMS: started
+        )
+    }
+
+    private static func certificateEnvironmentCheck(environment: [String: String], fileManager: FileManager) -> [String: Any] {
+        let started = currentUnixMilliseconds()
+        let values = certificateKeys.compactMap { key -> [String: Any]? in
+            guard let raw = normalized(environment[key]) else {
+                return nil
+            }
+            let expanded = (raw as NSString).expandingTildeInPath
+            return [
+                "key": key,
+                "path": pathRedaction(raw),
+                "exists": fileManager.fileExists(atPath: expanded),
+                "readable": fileManager.isReadableFile(atPath: expanded),
+            ]
+        }
+        let missing = values.filter { ($0["exists"] as? Bool) != true || ($0["readable"] as? Bool) != true }
+        let status = missing.isEmpty ? "pass" : "warn"
+        return checkPayload(
+            id: "certificate_environment",
+            kind: "certificate_environment",
+            displayName: "Certificate Environment",
+            status: status,
+            severity: missing.isEmpty ? "info" : "actionable",
+            observed: [
+                "certificate_variable_count": values.count,
+                "variables": values,
+            ],
+            expected: ["configured_certificate_paths_readable": true],
+            remediation: missing.isEmpty
+                ? "No certificate remediation is needed."
+                : "Update certificate bundle variables to point to readable local files or directories.",
+            evidence: ["failure_modes": missing.isEmpty ? [] : ["certificate_path_missing", "certificate_path_unreadable"]],
+            redactionCount: values.count,
+            startedAtUnixMS: started
+        )
+    }
+
+    private static func directoryCheck(
+        id: String,
+        kind: String,
+        displayName: String,
+        url: URL,
+        environmentKey: String,
+        environment: [String: String],
+        missingFailureMode: String,
+        fileManager: FileManager
+    ) -> [String: Any] {
+        let started = currentUnixMilliseconds()
+        var isDirectory = ObjCBool(false)
+        let exists = fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
+        let directory = exists && isDirectory.boolValue
+        let writable = fileManager.isWritableFile(atPath: url.path)
+        let status = directory && writable ? "pass" : "warn"
+        return checkPayload(
+            id: id,
+            kind: kind,
+            displayName: displayName,
+            status: status,
+            severity: status == "pass" ? "info" : "actionable",
+            observed: [
+                "environment_key": environmentKey,
+                "environment_set": normalized(environment[environmentKey]) != nil,
+                "path": pathRedaction(url.path),
+                "exists": exists,
+                "is_directory": directory,
+                "writable": writable,
+            ],
+            expected: ["directory_exists": true, "writable": true],
+            remediation: status == "pass"
+                ? "No directory remediation is needed."
+                : "Create the directory or configure \(environmentKey) to a writable Melix-owned path.",
+            evidence: ["failure_modes": status == "pass" ? [] : [missingFailureMode]],
+            redactionCount: 1,
+            startedAtUnixMS: started
+        )
+    }
+
+    private static func localServerHealthCheck(environment: [String: String]) -> [String: Any] {
+        let started = currentUnixMilliseconds()
+        let port = normalized(environment["MELIX_HTTP_PORT"]) ?? String(MelixGatewayDefaults.port)
+        let socketPaths = ["MELIX_WORKER_SOCKET_PATH", "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"].compactMap { key -> [String: Any]? in
+            guard let value = normalized(environment[key]) else {
+                return nil
+            }
+            return ["key": key, "path": pathRedaction(value)]
+        }
+        let validPort = UInt16(port).map { $0 > 0 } == true
+        return checkPayload(
+            id: "local_server_health",
+            kind: "local_server_health",
+            displayName: "Local Server Health",
+            status: validPort ? "unknown" : "warn",
+            severity: validPort ? "info" : "actionable",
+            observed: [
+                "http_port": port,
+                "health_probe": "not_started_from_environment_receipt",
+                "worker_socket_path_count": socketPaths.count,
+                "worker_socket_paths": socketPaths,
+            ],
+            expected: ["valid_http_port": true, "control_plane_health_probe_available": true],
+            remediation: validPort
+                ? "Use the control-plane health endpoint for live server status."
+                : "Set MELIX_HTTP_PORT to a valid TCP port before starting the local server.",
+            evidence: ["failure_modes": validPort ? ["health_probe_deferred"] : ["port_conflict"]],
+            redactionCount: socketPaths.count,
+            startedAtUnixMS: started
+        )
+    }
+
+    private static func checkPayload(
+        id: String,
+        kind: String,
+        displayName: String,
+        status: String,
+        severity: String,
+        observed: [String: Any],
+        expected: [String: Any],
+        remediation: String,
+        evidence: [String: Any],
+        redactionCount: Int,
+        startedAtUnixMS: Int
+    ) -> [String: Any] {
+        [
+            "check_id": id,
+            "check_kind": kind,
+            "display_name": displayName,
+            "status": status,
+            "severity": severity,
+            "observed": observed,
+            "expected": expected,
+            "remediation": remediation,
+            "evidence": evidence,
+            "redaction_count": redactionCount,
+            "latency_ms": max(0, currentUnixMilliseconds() - startedAtUnixMS),
+        ]
+    }
+
+    private static func pathEntries(_ value: String?) -> [String] {
+        (value ?? "")
+            .split(separator: ":", omittingEmptySubsequences: true)
+            .map(String.init)
+    }
+
+    private static func resolveExecutable(named name: String, environment: [String: String], fileManager: FileManager) -> String? {
+        for entry in pathEntries(environment["PATH"]) {
+            let expandedEntry = (entry as NSString).expandingTildeInPath
+            let candidate = URL(fileURLWithPath: expandedEntry).appendingPathComponent(name).path
+            if fileManager.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    private static func executableCandidate(path: String, fileManager: FileManager) -> String? {
+        let expanded = (path as NSString).expandingTildeInPath
+        return fileManager.isExecutableFile(atPath: expanded) ? expanded : nil
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func pathRedaction(_ path: String) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        let basename = URL(fileURLWithPath: expanded).lastPathComponent
+        let digest = SHA256.hash(data: Data(expanded.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return [
+            "basename": MelixDiagnosticsRedaction.redactString(basename.isEmpty ? expanded : basename),
+            "digest": String(digest.prefix(12)),
+        ].map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ";")
+    }
+
+    private static func redactProxy(_ value: String) -> String {
+        guard let proxy = proxyComponentsWithUserInfo(value) else {
+            return MelixDiagnosticsRedaction.redactString(redactProxyUserInfoFallback(value))
+        }
+        var components = proxy.components
+        components.user = "<redacted>"
+        components.password = components.password == nil ? nil : "<redacted>"
+        let redacted = components.string.map { proxy.schemelessAuthority && $0.hasPrefix("//") ? String($0.dropFirst(2)) : $0 }
+            ?? value
+        return MelixDiagnosticsRedaction.redactString(redacted)
+    }
+
+    private static func containsURLUserInfo(_ value: String) -> Bool {
+        proxyComponentsWithUserInfo(value) != nil || proxyUserInfoRangeFallback(value) != nil
+    }
+
+    private static func proxyComponentsWithUserInfo(_ value: String) -> (components: URLComponents, schemelessAuthority: Bool)? {
+        if let components = URLComponents(string: value), components.user != nil || components.password != nil {
+            return (components, false)
+        }
+
+        guard value.contains("@"), value.contains("://") == false else {
+            return nil
+        }
+        guard let components = URLComponents(string: "//" + value), components.user != nil || components.password != nil else {
+            return nil
+        }
+        return (components, true)
+    }
+
+    private static func redactProxyUserInfoFallback(_ value: String) -> String {
+        guard let range = proxyUserInfoRangeFallback(value) else {
+            return value
+        }
+        var redacted = value
+        redacted.replaceSubrange(range, with: "<redacted>")
+        return redacted
+    }
+
+    private static func proxyUserInfoRangeFallback(_ value: String) -> Range<String.Index>? {
+        guard let atIndex = value.firstIndex(of: "@") else {
+            return nil
+        }
+        let prefix = value[..<atIndex]
+        let userInfoStart = prefix.range(of: "://", options: .backwards)?.upperBound ?? value.startIndex
+        let userInfo = value[userInfoStart..<atIndex]
+        guard userInfo.isEmpty == false,
+              userInfo.rangeOfCharacter(from: .whitespacesAndNewlines.inverted) != nil
+        else {
+            return nil
+        }
+        return userInfoStart..<atIndex
     }
 }
 
@@ -327,6 +906,12 @@ public struct MelixDiagnosticsStore {
         )
         let redactedEnvironment = MelixDiagnosticsRedaction.redactEnvironment(environment)
         try writeJSON(redactedEnvironment.payload, to: root.appendingPathComponent("redacted-env.json"))
+        let environmentDiagnostic = MelixDesktopEnvironmentDiagnosticBuilder.build(
+            melixHome: melixHome,
+            environment: environment,
+            fileManager: fileManager
+        )
+        try writeJSON(environmentDiagnostic.payload, to: root.appendingPathComponent("environment-diagnostic.json"))
         let effectiveConfig: [String: Any] = [
             "schema_version": "melix.diagnostics.effective_config.v1",
             "command_id": commandID,
@@ -340,7 +925,8 @@ public struct MelixDiagnosticsStore {
         let systemPayload = MelixSystemDiagnostics.payload(
             melixHome: melixHome,
             environment: environment,
-            redactedFieldCount: totalRedactedFieldCount
+            redactedFieldCount: totalRedactedFieldCount,
+            environmentDiagnostic: environmentDiagnostic
         )
         totalRedactedFieldCount = systemPayload["redacted_field_count"] as? Int ?? totalRedactedFieldCount
         try writeJSON(systemPayload, to: root.appendingPathComponent("system.json"))
@@ -397,9 +983,11 @@ public struct MelixDiagnosticsStore {
             "redaction_schema_version": MelixDiagnosticsRedaction.schemaVersion,
             "redacted_field_count": totalRedactedFieldCount,
             "command_id": commandID,
+            "environment_diagnostic": environmentDiagnostic.payload,
             "artifacts": [
                 "command": "command.txt",
                 "redacted_env": "redacted-env.json",
+                "environment_diagnostic": "environment-diagnostic.json",
                 "effective_config": "effective-config.json",
                 "system": "system.json",
                 "capability_receipts": "capability-receipts.json",
@@ -468,6 +1056,12 @@ public struct MelixDiagnosticsStore {
 
         let redactedEnvironment = MelixDiagnosticsRedaction.redactEnvironment(environment)
         try writeJSON(redactedEnvironment.payload, to: root.appendingPathComponent("redacted-env.json"))
+        let environmentDiagnostic = MelixDesktopEnvironmentDiagnosticBuilder.build(
+            melixHome: melixHome,
+            environment: environment,
+            fileManager: fileManager
+        )
+        try writeJSON(environmentDiagnostic.payload, to: root.appendingPathComponent("environment-diagnostic.json"))
 
         let redactedEffectiveConfig = MelixDiagnosticsRedaction.redactMapping([
             "schema_version": "melix.diagnostics.effective_config.v1",
@@ -482,7 +1076,8 @@ public struct MelixDiagnosticsStore {
         let system = MelixSystemDiagnostics.payload(
             melixHome: melixHome,
             environment: environment,
-            redactedFieldCount: totalRedacted
+            redactedFieldCount: totalRedacted,
+            environmentDiagnostic: environmentDiagnostic
         )
         totalRedacted = system["redacted_field_count"] as? Int ?? totalRedacted
         try writeJSON(system, to: root.appendingPathComponent("system.json"))
@@ -539,12 +1134,62 @@ public struct MelixDiagnosticsStore {
             to: root.appendingPathComponent("error.json")
         )
 
-        let redactedManifest = MelixDiagnosticsRedaction.redactMapping([
+        let storageStore = MelixStorageMaintenanceStore(
+            melixHome: melixHome,
+            environment: environment,
+            fileManager: fileManager
+        )
+        let storageReceipts = try storageStore.inventoryAndCleanupPlan()
+        let redactedStorageInventory = MelixDiagnosticsRedaction.redactMapping(storageReceipts.inventory)
+        let redactedStorageCleanupPlan = MelixDiagnosticsRedaction.redactMapping(storageReceipts.cleanupPlan)
+        totalRedacted += redactedStorageInventory.redactedFieldCount
+            + redactedStorageCleanupPlan.redactedFieldCount
+        try writeJSON(
+            redactedStorageInventory.payload,
+            to: root.appendingPathComponent("storage-inventory.json")
+        )
+        try writeJSON(
+            redactedStorageCleanupPlan.payload,
+            to: root.appendingPathComponent("storage-cleanup-plan.json")
+        )
+        let redactedStorageCleanupReceipt: (payload: [String: Any], redactedFieldCount: Int)?
+        if let latestCleanupReceipt = try? storageStore.latestCleanupReceipt() {
+            let redacted = MelixDiagnosticsRedaction.redactMapping(latestCleanupReceipt)
+            totalRedacted += redacted.redactedFieldCount
+            redactedStorageCleanupReceipt = redacted
+            try writeJSON(
+                redacted.payload,
+                to: root.appendingPathComponent("storage-cleanup-receipt.json")
+            )
+        } else {
+            redactedStorageCleanupReceipt = nil
+        }
+        var debugBundleArtifacts: [String: String] = [
+            "command": "command.txt",
+            "redacted_env": "redacted-env.json",
+            "environment_diagnostic": "environment-diagnostic.json",
+            "effective_config": "effective-config.json",
+            "system": "system.json",
+            "capability_receipts": "capability-receipts.json",
+            "memory_estimate": "memory-estimate.json",
+            "logs": "logs.txt",
+            "metrics": "metrics.json",
+            "error": "error.json",
+            "storage_inventory": "storage-inventory.json",
+            "storage_cleanup_plan": "storage-cleanup-plan.json",
+        ]
+        if redactedStorageCleanupReceipt != nil {
+            debugBundleArtifacts["storage_cleanup_receipt"] = "storage-cleanup-receipt.json"
+        }
+
+        var manifestPayload: [String: Any] = [
             "schema_version": "melix.diagnostics.bundle.v1",
             "bundle_id": record.runID,
             "created_at_unix_ms": currentUnixMilliseconds(),
             "diagnostics_consent_state": MelixSystemDiagnostics.diagnosticsConsentState,
             "media_route_receipt": Self.mediaRouteReceipt(for: record),
+            "storage_inventory": redactedStorageInventory.payload,
+            "storage_cleanup_plan": redactedStorageCleanupPlan.payload,
             "probe_policy": Self.probePolicyPayload(environment: environment),
             "debug_artifact_policy": "explicit_cli_command",
             "debug_jsonl_enabled": MelixProbeMode.fromEnvironment(environment).debugArtifactsEnabled,
@@ -552,20 +1197,15 @@ public struct MelixDiagnosticsStore {
             "redaction_schema_version": MelixDiagnosticsRedaction.schemaVersion,
             "redacted_field_count": totalRedacted,
             "source_run_record_path": record.path,
-            "artifacts": [
-                "command": "command.txt",
-                "redacted_env": "redacted-env.json",
-                "effective_config": "effective-config.json",
-                "system": "system.json",
-                "capability_receipts": "capability-receipts.json",
-                "memory_estimate": "memory-estimate.json",
-                "logs": "logs.txt",
-                "metrics": "metrics.json",
-                "error": "error.json",
-            ],
-        ])
+            "artifacts": debugBundleArtifacts,
+        ]
+        if let redactedStorageCleanupReceipt {
+            manifestPayload["storage_cleanup_receipt"] = redactedStorageCleanupReceipt.payload
+        }
+        let redactedManifest = MelixDiagnosticsRedaction.redactMapping(manifestPayload)
         totalRedacted += redactedManifest.redactedFieldCount
         var manifest = redactedManifest.payload
+        manifest["environment_diagnostic"] = environmentDiagnostic.payload
         manifest["redacted_field_count"] = totalRedacted
         try writeJSON(manifest, to: root.appendingPathComponent("manifest.json"))
         return MelixDebugBundleResult(bundleRoot: root, manifest: manifest)

@@ -178,9 +178,10 @@ class LocalJobSessionFollowupProjectionBatch:
 class LocalJobContinuationStore:
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
+        self._root_fspath = os.fspath(self.root)
 
     def load_record(self, job_id: str) -> LocalJobContinuationRecord | None:
-        path = self._record_path(job_id)
+        path = self._record_path_text(job_id)
         try:
             with open(path, "rb") as record_file:
                 content = record_file.read()
@@ -360,17 +361,24 @@ class LocalJobContinuationStore:
             if live_evidence_by_job_id is not None
             else _missing_live_evidence
         )
-        root = self.root
+        root_fspath = self._root_fspath
         try:
             record_job_ids: list[str] = []
             record_job_ids_append = record_job_ids.append
-            for entry in os.scandir(os.fspath(root)):
+            json_suffix = ".json"
+            json_suffix_length = len(json_suffix)
+            for entry in os.scandir(root_fspath):
                 name = entry.name
-                if name.endswith(".json") and entry.is_file(follow_symlinks=False):
+                if (
+                    len(name) < json_suffix_length
+                    or name[-json_suffix_length:] != json_suffix
+                ):
+                    continue
+                if entry.is_file(follow_symlinks=False):
                     # The scan has already filtered this to a .json file name.
                     # Slice directly rather than calling Path.stem or a helper for
                     # every record in large follow-up stores.
-                    record_job_ids_append(".json" if name == ".json" else name[:-5])
+                    record_job_ids_append(json_suffix if name == json_suffix else name[:-json_suffix_length])
             record_job_ids.sort()
         except FileNotFoundError:
             return LocalJobContinuationFollowupScan(candidates=(), receipts=())
@@ -548,6 +556,10 @@ class LocalJobContinuationStore:
     def _record_path(self, job_id: str) -> Path:
         safe_job_id = _safe_job_id(job_id)
         return self.root / f"{safe_job_id}.json"
+
+    def _record_path_text(self, job_id: str) -> str:
+        safe_job_id = _safe_job_id(job_id)
+        return os.path.join(self._root_fspath, f"{safe_job_id}.json")
 
     @contextmanager
     def _record_write_lock(self, path: Path) -> Iterator[None]:
@@ -913,9 +925,23 @@ def project_local_job_session_followups(
         claim_batch=claim_batch,
         projections=tuple(projections),
         followup_messages=tuple(followup_messages),
-        receipts=deepcopy(claim_batch.receipts),
-        refusal_receipts=deepcopy(claim_batch.refusal_receipts),
+        receipts=_copy_receipt_sequence(claim_batch.receipts),
+        refusal_receipts=_copy_receipt_sequence(claim_batch.refusal_receipts),
     )
+
+
+def _copy_receipt_sequence(
+    receipts: Sequence[dict[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    return tuple(_copy_receipt(receipt) for receipt in receipts)
+
+
+def _copy_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    copied = dict(receipt)
+    prompt_context_receipts = copied.get("prompt_context_receipts")
+    if prompt_context_receipts:
+        copied["prompt_context_receipts"] = [dict(item) for item in prompt_context_receipts]
+    return copied
 
 
 def _project_local_job_session_followup_claim(

@@ -328,6 +328,87 @@ Report evidence consumes the same schema-backed paths by rendering
 `dataset_ingest_receipt_path`, and `workspace_preflight_receipt_path` artifact
 rows when they appear in run evidence.
 
+## 2026-07-02 Ingest Limit And Cleanup Follow-Up
+
+Issue #1494 remains open for the reference-watch ingest safety follow-up after
+#1495 and #1496. The next executable slice adds a cheap limit preflight before
+dataset ingest performs source decoding, cleaning, segmentation, or dataset
+version materialization.
+
+`melix dataset prepare ingest` must accept explicit limit settings:
+
+- `--upload-cap-bytes N` records the configured dataset ingest request cap.
+  `0` means no request-level cap for local compatibility.
+- `--source-cap-bytes N` records the configured per-source or recipe cap.
+  `0` means no per-source cap for local compatibility.
+
+The Python worker remains the trust boundary for this slice. It must enumerate
+candidate source files with the existing `os.scandir` path, read file sizes
+from metadata before `read_text(...)`, and reject unsafe requests before any
+expensive source processing starts. Rejected ingest receipts must not write
+`segments.jsonl`.
+
+The ingest receipt must include these top-level fields:
+
+- `upload_cap_bytes`
+- `observed_payload_bytes`
+- `source_cap_bytes`
+- `rejection_reason`
+- `partial_artifact_cleanup`
+
+`partial_artifact_cleanup` records:
+
+- `status`: `not_needed`, `removed`, `missing`, or `failed`
+- `target_path`: the path that was checked or removed
+- `removed`: whether an artifact was removed
+- `error`: an empty string unless cleanup failed
+
+Required new failure codes:
+
+- `DATASET_INGEST_UPLOAD_CAP_EXCEEDED`
+- `DATASET_INGEST_SOURCE_CAP_EXCEEDED`
+- `DATASET_INGEST_LIMIT_POLICY_INVALID`
+
+The dataset version artifact must persist the ingest safety fields by copying
+`upload_cap_bytes` and `partial_artifact_cleanup` from the source ingest
+receipt into `dataset-version.json`. This keeps the version artifact
+self-describing even when operators inspect it without opening the copied
+ingest receipt.
+
+The first implementation slice intentionally does not add a new network upload
+service. It treats local CLI and Desktop-invoked dataset preparation as the
+operator request boundary, which is the executable surface already shipped for
+P1.2. Future HTTP upload surfaces must reuse the same receipt fields and
+failure codes.
+
+### Implementation Tasks
+
+- Add failing Python tests for request-cap rejection before source reads,
+  per-source cap rejection, accepted under-cap ingest through a bounded read
+  helper, partial `segments.jsonl` cleanup when an ingest failure happens after
+  the artifact path is created, and dataset-version propagation of
+  `upload_cap_bytes` plus `partial_artifact_cleanup`.
+- Add failing script/CLI tests for `--upload-cap-bytes` and
+  `--source-cap-bytes` arguments.
+- Extend `DatasetIngestRequest`, `scripts/dataset_preparation_ingest.py`, and
+  the Swift CLI parser/runner option surfaces with the new limit settings.
+- Keep existing zero-value defaults backward compatible for current fixtures.
+- Surface limit values in non-JSON CLI rendering so operators can see the
+  configured cap and observed bytes without opening the JSON receipt.
+
+### Performance Probes And Metrics
+
+The affected hot path is dataset ingest source enumeration and source reading
+in `services/mlx-worker-python/worker/productization/dataset_preparation.py`.
+The slice must report:
+
+- focused pytest coverage for dataset ingest/versioning tests;
+- changed-scope coverage for touched Python files with target `>=95%`;
+- `git diff --check`;
+- a PR-scoped performance report. The existing dataset source-kind/source-file
+  scan probes may select this path; selected probes must show no in-scope
+  regression.
+
 #1496 is complete when:
 
 - dataset version directories and `dataset-version.json` are deterministic;
@@ -363,9 +444,9 @@ U1.2.2 verification should include:
   success rate, quality scoring latency, generated sample count, and failed
   sample count.
 
-## Metrics Report For This Planning Slice
+## Historical Metrics Report For The Original Planning Slice
 
-This issue is documentation-only. Runtime metrics are `N/A` for this commit
-because no executable ingest, retry, or quality-scoring path changes in #1494.
-The required measurement points are defined above and must be implemented by
-#1495 and #1496 before their runtime changes are complete.
+The original #1494 planning commit was documentation-only, so runtime metrics
+were `N/A` for that commit. The 2026-07-02 follow-up above is an executable
+ingest-safety slice and must report the focused tests, changed-scope coverage,
+and PR-scoped performance result described in its performance section.

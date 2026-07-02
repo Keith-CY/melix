@@ -213,21 +213,21 @@ def _analyze_report(
                     "message": f"hardware telemetry failure: {failure}",
                 }
             )
+    source_evidence_ids = report.get("source_evidence_ids")
+    known_gaps = report.get("known_gaps")
     return {
         "path": str(path),
         "report_id": report.get("report_id", ""),
         "report_kind": report.get("report_kind", ""),
-        "source_evidence_ids": list(report.get("source_evidence_ids", []))
-        if isinstance(report.get("source_evidence_ids"), list)
+        "source_evidence_ids": list(source_evidence_ids)
+        if isinstance(source_evidence_ids, list)
         else [],
         "markdown_report_path": artifacts.get("markdown_report_path", ""),
         "validation_errors": validation_errors,
         "gate_result": gate_result.get("overall_result", "fail"),
         "blocking_failures": blocking_failures,
         "informational_results": _dict_list(gate_result.get("informational_results")),
-        "known_gaps": list(report.get("known_gaps", []))
-        if isinstance(report.get("known_gaps"), list)
-        else [],
+        "known_gaps": list(known_gaps) if isinstance(known_gaps, list) else [],
         "telemetry_failures": telemetry_failures,
         "slowest_probe_phases": _slowest_probe_phases(report),
         "evidence_validity_metrics": gate_result.get("evidence_validity_metrics", {})
@@ -281,7 +281,11 @@ def _release_matrix_rows(
                 "role": role,
                 "required": bool(rule.get("required", True)),
                 "present": bool(evidence_ids),
-                "evidence_ids": sorted(evidence_ids) if evidence_ids else [],
+                "evidence_ids": [next(iter(evidence_ids))]
+                if evidence_ids and len(evidence_ids) == 1
+                else sorted(evidence_ids)
+                if evidence_ids
+                else [],
                 "description": str(rule.get("description", "")),
             }
         )
@@ -385,16 +389,44 @@ def _rule_matches_report(
                 return True
     metric_prefixes = rule.get("metric_prefixes", ())
     if metric_prefixes:
-        (
-            metric_prefix_tuple,
-            metric_prefix_initials,
-            metric_prefix_matches_empty,
-        ) = _string_prefix_tuple(metric_prefixes)
+        if isinstance(metric_prefixes, tuple):
+            cached_metric_prefix_state = rule.get("_melix_cached_metric_prefix_state")
+            if (
+                isinstance(cached_metric_prefix_state, tuple)
+                and len(cached_metric_prefix_state) == 4
+                and cached_metric_prefix_state[0] is metric_prefixes
+                and isinstance(cached_metric_prefix_state[1], tuple)
+                and isinstance(cached_metric_prefix_state[2], frozenset)
+                and isinstance(cached_metric_prefix_state[3], bool)
+            ):
+                metric_prefix_tuple = cached_metric_prefix_state[1]
+                metric_prefix_initials = cached_metric_prefix_state[2]
+                metric_prefix_matches_empty = cached_metric_prefix_state[3]
+            else:
+                (
+                    metric_prefix_tuple,
+                    metric_prefix_initials,
+                    metric_prefix_matches_empty,
+                ) = _string_prefix_tuple_from_tuple(metric_prefixes)
+                rule["_melix_cached_metric_prefix_state"] = (
+                    metric_prefixes,
+                    metric_prefix_tuple,
+                    metric_prefix_initials,
+                    metric_prefix_matches_empty,
+                )
+        else:
+            (
+                metric_prefix_tuple,
+                metric_prefix_initials,
+                metric_prefix_matches_empty,
+            ) = _string_prefix_tuple(metric_prefixes)
         metric_key = "metric"
         to_string = str
+        if metric_prefix_matches_empty:
+            return bool(metrics)
         for metric in metrics:
             metric_value = to_string(metric.get(metric_key, ""))
-            if metric_prefix_matches_empty or (
+            if (
                 metric_value
                 and metric_value[0] in metric_prefix_initials
                 and metric_value.startswith(metric_prefix_tuple)
@@ -402,7 +434,19 @@ def _rule_matches_report(
                 return True
     target_fields = rule.get("target_fields", ())
     if target_fields:
-        target_field_set = _string_frozenset(target_fields)
+        if isinstance(target_fields, tuple):
+            cached_target_field_set = rule.get("_melix_cached_target_field_set")
+            if rule.get("_melix_cached_target_fields") is target_fields and isinstance(
+                cached_target_field_set,
+                frozenset,
+            ):
+                target_field_set = cached_target_field_set
+            else:
+                target_field_set = _string_frozenset_from_tuple(target_fields)
+                rule["_melix_cached_target_fields"] = target_fields
+                rule["_melix_cached_target_field_set"] = target_field_set
+        else:
+            target_field_set = _string_frozenset(target_fields)
         target_fields_are_disjoint = target_field_set.isdisjoint
         for target in targets:
             if target_fields_are_disjoint(target):
@@ -418,7 +462,20 @@ def _rule_matches_report(
     required_probe_phases = rule.get("probe_phases", ())
     if not required_probe_phases:
         return False
-    return _string_frozenset(required_probe_phases).issubset(probe_phases)
+    if isinstance(required_probe_phases, tuple):
+        cached_probe_phase_set = rule.get("_melix_cached_probe_phase_set")
+        if rule.get("_melix_cached_probe_phases") is required_probe_phases and isinstance(
+            cached_probe_phase_set,
+            frozenset,
+        ):
+            required_probe_phase_set = cached_probe_phase_set
+        else:
+            required_probe_phase_set = _string_frozenset_from_tuple(required_probe_phases)
+            rule["_melix_cached_probe_phases"] = required_probe_phases
+            rule["_melix_cached_probe_phase_set"] = required_probe_phase_set
+    else:
+        required_probe_phase_set = _string_frozenset(required_probe_phases)
+    return required_probe_phase_set.issubset(probe_phases)
 
 
 @lru_cache(maxsize=128)
@@ -528,19 +585,33 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
     probe_summary = report.get("probe_summary")
     if not isinstance(probe_summary, dict):
         return phases
+    phases_add = phases.add
+    to_string = str
+    buckets = ("slowest_phases", "failed_phases", "skipped_phases", "fallback_phases")
     for side in ("baseline", "candidate"):
         side_summary = probe_summary.get(side)
         if not isinstance(side_summary, dict):
             continue
-        for bucket in ("slowest_phases", "failed_phases", "skipped_phases", "fallback_phases"):
-            for row in _dict_list(side_summary.get(bucket)):
-                phase = str(row.get("phase", "")).strip()
+        side_summary_get = side_summary.get
+        for bucket in buckets:
+            rows = side_summary_get(bucket)
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                phase = to_string(row.get("phase", "")).strip()
                 if phase:
-                    phases.add(phase)
+                    phases_add(phase)
     return phases
 
 
 def _dict_list(value: object) -> list[dict[str, object]]:
+    if type(value) is list:
+        for item in value:
+            if type(item) is not dict and not isinstance(item, dict):
+                return [item for item in value if isinstance(item, dict)]
+        return cast(list[dict[str, object]], value)
     if not isinstance(value, list):
         return []
     for item in value:

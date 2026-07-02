@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 import pytest
 
+from worker.productization import export_target_layout as export_target_layout_module
 from worker.productization.export_target_layout import (
     EXPORT_RETENTION_REPORT_SCHEMA_VERSION,
     build_export_target_layout,
@@ -393,6 +394,42 @@ def test_export_target_layout_rejects_empty_relative_path(tmp_path: Path) -> Non
         _target_relative_path(layout, "")
 
 
+def test_materialize_placeholder_files_reuses_resolved_target_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = FIXTURE_ROOT / "ollama/export-target-manifest.json"
+    manifest, validation_report = validate_export_target_manifest_file(
+        manifest_path,
+        return_manifest=True,
+    )
+    assert validation_report.ok is True
+    layout = build_export_target_layout(tmp_path, manifest)
+    original_target_relative_path = export_target_layout_module._target_relative_path
+    resolved_roots: list[Path | None] = []
+
+    def track_resolved_root(
+        layout_arg: export_target_layout_module.ExportTargetLayout,
+        relative_path: str,
+        *,
+        resolved_root: Path | None = None,
+    ) -> Path:
+        resolved_roots.append(resolved_root)
+        return original_target_relative_path(  # type: ignore[arg-type]
+            layout_arg,
+            relative_path,
+            resolved_root=resolved_root,
+        )
+
+    monkeypatch.setattr(export_target_layout_module, "_target_relative_path", track_resolved_root)
+
+    export_target_layout_module._materialize_placeholder_files(layout, manifest)
+
+    assert resolved_roots
+    assert all(resolved_root is not None for resolved_root in resolved_roots)
+    assert len({id(resolved_root) for resolved_root in resolved_roots}) == 1
+
+
 def test_layout_metrics_report_aggregates_target_retention_counts(tmp_path: Path) -> None:
     manifest_paths = sorted(FIXTURE_ROOT.glob("*/export-target-manifest.json"))
 
@@ -410,6 +447,33 @@ def test_layout_metrics_report_aggregates_target_retention_counts(tmp_path: Path
     assert payload["cleanable_byte_size"] == 0
     assert payload["deleted_file_count"] == 0
     assert payload["layout_materialization_latency_ms"] >= 0
+
+
+def test_layout_metrics_report_reuses_materialized_dry_run_retention_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_paths = sorted(FIXTURE_ROOT.glob("*/export-target-manifest.json"))
+
+    def fail_cleanup(*_args: object, **_kwargs: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError("dry-run metrics should reuse materialized retention reports")
+
+    def fail_read_text(*_args: object, **_kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("dry-run metrics should keep retention reports in memory")
+
+    monkeypatch.setattr(export_target_layout_module, "cleanup_export_target", fail_cleanup)
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    payload = build_layout_metrics_report(
+        manifest_paths,
+        tmp_path,
+        cleanup="dry-run",
+        create_placeholder_files=True,
+    )
+
+    assert payload["ok"] is True
+    assert payload["retention_decision_count"] == 15
+    assert payload["retained_byte_size"] == 12141056
 
 
 def test_export_target_layout_retention_cli_writes_metrics(tmp_path: Path) -> None:

@@ -224,7 +224,10 @@ already read for protobuf JSON parsing instead of issuing a second filesystem
 stat call on every validation. Its metrics pass should accumulate generated,
 required, and evidence byte totals while iterating each manifest file section
 once instead of materializing a combined file-row tuple solely to count evidence
-bytes.
+bytes. Repeated validation policy gates should also reuse module-level enum
+membership constants for derived-model activation modes, runtime-binary-required
+target types, load-check-required target types, and the GGUF runtime-unavailable
+waiver instead of constructing short-lived sets on every manifest validation.
 
 ### Export Plan Receipt
 
@@ -431,9 +434,15 @@ The metrics-report path may reuse the already validated target manifest object
 when materializing fixture digest files and executing the smoke receipt writer.
 It must preserve the public `run_export_target_smoke()` validation boundary for
 external callers while avoiding an extra manifest parse on each probe iteration.
-The registered `runtime-export-smoke-policy` PR-scoped probe remains the
-evidence source for this Python slice and includes focused test, coverage, and
-`command_json` probe commands in `infra/perf/pr_scoped_probes.json`.
+Smoke metadata and fixture digest loops stream generated and required manifest
+file rows instead of materializing a combined tuple, preserving manifest order
+while reducing per-target allocation in the registered probe. Smoke metrics
+report aggregation sums all receipt metrics in a single pass so the metrics
+report path avoids rebuilding an intermediate metrics list and rescanning it for
+each output field. The registered `runtime-export-smoke-policy` PR-scoped probe
+remains the evidence source for this Python slice and includes focused test,
+coverage, and `command_json` probe commands in
+`infra/perf/pr_scoped_probes.json`.
 
 Bounded generation checks must use a repository-owned prompt fixture or a
 synthetic non-private prompt, a fixed token limit, a timeout, and a preview byte

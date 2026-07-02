@@ -1925,6 +1925,7 @@ class EvaluationCore:
     def _latency_stats(cls, values: list[float]) -> dict[str, float]:
         if not values:
             return {"mean": 0.0, "p50": 0.0, "p95": 0.0, "max": 0.0}
+        total = sum(values)
         sorted_values = sorted(values)
         value_count = len(sorted_values)
         round_ms = cls._round_ms
@@ -1943,7 +1944,7 @@ class EvaluationCore:
                 sorted_values[p95_lower + 1] - sorted_values[p95_lower]
             ) * p95_fraction
         return {
-            "mean": round_ms(sum(sorted_values) / value_count),
+            "mean": round_ms(total / value_count),
             "p50": round_ms(p50),
             "p95": round_ms(p95),
             "max": round_ms(sorted_values[-1]),
@@ -4112,6 +4113,8 @@ class EvaluationCore:
     def _answers_match(*, expected: str, predicted: str) -> bool:
         if not predicted.strip():
             return False
+        if expected == predicted:
+            return True
         normalized_expected = EvaluationCore._normalized_answer(expected)
         normalized_predicted = EvaluationCore._normalized_answer(predicted)
         return normalized_expected == normalized_predicted

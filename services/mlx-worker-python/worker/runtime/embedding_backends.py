@@ -65,7 +65,9 @@ class DeterministicEmbeddingBackend:
             if l2_norm == 0.0:
                 return [0.0] * 8
             inverse_l2_norm = 1.0 / l2_norm
-            return [_round(value * inverse_l2_norm, 6) for value in base_values]
+            for index, value in enumerate(base_values):
+                base_values[index] = _round(value * inverse_l2_norm, 6)
+            return base_values
         return self._project_digest_expanded(base_values, dimensions)
 
     def _project_digest_expanded(

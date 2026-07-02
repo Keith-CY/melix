@@ -5,7 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 from threading import Event
-from typing import Callable
+from types import MappingProxyType
+from typing import Callable, Mapping
 
 from packages.protocol.python.worker.v1 import cache_pb2, common_pb2
 
@@ -46,6 +47,9 @@ from worker.runtime.vision_family_adapters import (
 )
 
 _EMPTY_PROCESSOR_SHAPE_RECEIPT: dict[str, object] = {}
+_EMPTY_SPECULATIVE_PROBE_RECEIPT: Mapping[str, object] = MappingProxyType(
+    empty_speculative_probe_receipt()
+)
 _TEXT_ONLY_EMPTY_MODEL_FAST_PATH_SIGNATURE = (
     "(('model_id', ''), ('quant_profile_id', ''), "
     "('revision', ''), ('tokenizer_hash', ''))"
@@ -62,6 +66,10 @@ def _has_only_internal_fast_path_signature_metadata(loaded_model) -> bool:
         not loaded_model
         or (len(loaded_model) == 1 and "_vision_family_config" in loaded_model)
     )
+
+
+def _empty_speculative_probe_receipt() -> Mapping[str, object]:
+    return _EMPTY_SPECULATIVE_PROBE_RECEIPT
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,8 +122,8 @@ class VisionProbeSnapshot:
     preprocessing_policy_receipt: dict[str, object] = field(
         default_factory=empty_preprocessing_policy_receipt
     )
-    speculative_probe_receipt: dict[str, object] = field(
-        default_factory=empty_speculative_probe_receipt
+    speculative_probe_receipt: Mapping[str, object] = field(
+        default_factory=_empty_speculative_probe_receipt
     )
     text_batch_generator_submitted_request_count: int = 0
     text_batch_generator_completed_request_count: int = 0

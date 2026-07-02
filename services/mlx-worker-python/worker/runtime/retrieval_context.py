@@ -135,6 +135,7 @@ def project_retrieval_contexts(
     receipts_append = receipts.append
     user_payload_update = user_payload.update
     entry_type = RetrievalContextEntry
+    dict_copy = dict.copy
 
     for entry in entries:
         if type(entry) is entry_type:
@@ -206,7 +207,7 @@ def project_retrieval_contexts(
             admission = admit_entry(entry)
         except RetrievalContextAdmissionError as exc:
             for receipt in exc.refusal_receipts:
-                refusal_receipts_append(receipt.copy())
+                refusal_receipts_append(dict_copy(receipt))
             continue
 
         admission_payload = admission.user_payload
@@ -241,10 +242,10 @@ def project_retrieval_contexts(
             user_payload_update(admission_payload)
         admission_receipts = admission.untrusted_context_receipts
         if len(admission_receipts) == 1:
-            receipts_append(admission_receipts[0].copy())
+            receipts_append(dict_copy(admission_receipts[0]))
         else:
             for receipt in admission_receipts:
-                receipts_append(receipt.copy())
+                receipts_append(dict_copy(receipt))
 
     return RetrievalContextProjection(
         user_payload=user_payload,
@@ -286,6 +287,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     projection_refusal_receipts_extend = projection_refusal_receipts.extend
     receipts_append = receipts.append
     user_payload_update = user_payload.update
+    dict_copy = dict.copy
 
     for record in records:
         if type(record) is not dict and not isinstance(record, Mapping):
@@ -330,13 +332,13 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                 reason = record_get("reason", "")
                 corrective_action = record_get("corrective_action", "")
             if (
-                isinstance(source_id, str)
-                and isinstance(payload, dict)
-                and isinstance(owner_scope_checked, bool)
-                and isinstance(segment_id, str)
-                and isinstance(source_field, str)
-                and isinstance(reason, str)
-                and isinstance(corrective_action, str)
+                type(source_id) is str
+                and type(payload) is dict
+                and type(owner_scope_checked) is bool
+                and type(segment_id) is str
+                and type(source_field) is str
+                and type(reason) is str
+                and type(corrective_action) is str
             ):
                 normalized_source_id = source_id.strip()
                 normalized_segment_id = segment_id.strip()
@@ -399,7 +401,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             )
         except RetrievalContextAdmissionError as exc:
             for receipt in exc.refusal_receipts:
-                projection_refusal_receipts_append(receipt.copy())
+                projection_refusal_receipts_append(dict_copy(receipt))
             continue
 
         admission_payload = admission.user_payload
@@ -434,10 +436,10 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             user_payload_update(admission_payload)
         admission_receipts = admission.untrusted_context_receipts
         if len(admission_receipts) == 1:
-            receipts_append(admission_receipts[0].copy())
+            receipts_append(dict_copy(admission_receipts[0]))
         else:
             for receipt in admission_receipts:
-                receipts_append(receipt.copy())
+                receipts_append(dict_copy(receipt))
 
     if projection_refusal_receipts:
         store_refusal_receipts.extend(projection_refusal_receipts)
@@ -455,33 +457,106 @@ def project_retrieval_lookup_result(
     lookup_segment_id: Any = "",
     lookup_source_field: Any = "",
 ) -> RetrievalLookupResultProjection:
-    wrapper_metadata_refusal = _lookup_result_metadata_refusal(
-        lookup_source_id=lookup_source_id,
-        lookup_segment_id=lookup_segment_id,
-        lookup_source_field=lookup_source_field,
-    )
-    if wrapper_metadata_refusal is not None:
-        return RetrievalLookupResultProjection(
-            prompt_user_payload={},
-            untrusted_context_receipts=[],
-            refusal_receipts=[wrapper_metadata_refusal],
-            lookup_message=None,
-        )
-    normalized_lookup_source_id = _lookup_metadata_text_or_default(
-        lookup_source_id,
-        default="unknown-retrieval-lookup",
-    )
-    normalized_lookup_segment_id = _lookup_metadata_text_or_default(
-        lookup_segment_id,
-        default=f"{normalized_lookup_source_id}:lookup-result",
-    )
-    normalized_lookup_source_field = _lookup_metadata_text_or_default(
-        lookup_source_field,
-        default="lookup_result",
-    )
     has_lookup_metadata = (
         lookup_source_id != "" or lookup_segment_id != "" or lookup_source_field != ""
     )
+    if has_lookup_metadata:
+        if lookup_source_id == "":
+            normalized_lookup_source_id = "unknown-retrieval-lookup"
+        elif isinstance(lookup_source_id, str):
+            normalized_lookup_source_id = lookup_source_id.strip()
+            if not normalized_lookup_source_id:
+                return RetrievalLookupResultProjection(
+                    prompt_user_payload={},
+                    untrusted_context_receipts=[],
+                    refusal_receipts=[
+                        _lookup_result_refusal(
+                            source_id="unknown-retrieval-lookup",
+                            segment_id="unknown-retrieval-lookup:lookup-result",
+                            source_field="lookup_source_id",
+                        )
+                    ],
+                    lookup_message=None,
+                )
+        else:
+            return RetrievalLookupResultProjection(
+                prompt_user_payload={},
+                untrusted_context_receipts=[],
+                refusal_receipts=[
+                    _lookup_result_refusal(
+                        source_id="unknown-retrieval-lookup",
+                        segment_id="unknown-retrieval-lookup:lookup-result",
+                        source_field="lookup_source_id",
+                    )
+                ],
+                lookup_message=None,
+            )
+
+        if lookup_segment_id == "":
+            normalized_lookup_segment_id = f"{normalized_lookup_source_id}:lookup-result"
+        elif isinstance(lookup_segment_id, str):
+            normalized_lookup_segment_id = lookup_segment_id.strip()
+            if not normalized_lookup_segment_id:
+                return RetrievalLookupResultProjection(
+                    prompt_user_payload={},
+                    untrusted_context_receipts=[],
+                    refusal_receipts=[
+                        _lookup_result_refusal(
+                            source_id=normalized_lookup_source_id,
+                            segment_id=f"{normalized_lookup_source_id}:lookup-result",
+                            source_field="lookup_segment_id",
+                        )
+                    ],
+                    lookup_message=None,
+                )
+        else:
+            return RetrievalLookupResultProjection(
+                prompt_user_payload={},
+                untrusted_context_receipts=[],
+                refusal_receipts=[
+                    _lookup_result_refusal(
+                        source_id=normalized_lookup_source_id,
+                        segment_id=f"{normalized_lookup_source_id}:lookup-result",
+                        source_field="lookup_segment_id",
+                    )
+                ],
+                lookup_message=None,
+            )
+
+        if lookup_source_field == "":
+            normalized_lookup_source_field = "lookup_result"
+        elif isinstance(lookup_source_field, str):
+            normalized_lookup_source_field = lookup_source_field.strip()
+            if not normalized_lookup_source_field:
+                return RetrievalLookupResultProjection(
+                    prompt_user_payload={},
+                    untrusted_context_receipts=[],
+                    refusal_receipts=[
+                        _lookup_result_refusal(
+                            source_id=normalized_lookup_source_id,
+                            segment_id=normalized_lookup_segment_id,
+                            source_field="lookup_source_field",
+                        )
+                    ],
+                    lookup_message=None,
+                )
+        else:
+            return RetrievalLookupResultProjection(
+                prompt_user_payload={},
+                untrusted_context_receipts=[],
+                refusal_receipts=[
+                    _lookup_result_refusal(
+                        source_id=normalized_lookup_source_id,
+                        segment_id=normalized_lookup_segment_id,
+                        source_field="lookup_source_field",
+                    )
+                ],
+                lookup_message=None,
+            )
+    else:
+        normalized_lookup_source_id = "unknown-retrieval-lookup"
+        normalized_lookup_segment_id = "unknown-retrieval-lookup:lookup-result"
+        normalized_lookup_source_field = "lookup_result"
     if not isinstance(lookup_result, Mapping):
         return RetrievalLookupResultProjection(
             prompt_user_payload={},
@@ -566,6 +641,9 @@ def _copy_payload_value(value: Any) -> Any:
         return value
     copy_value = _copy_payload_value
     if value_type is dict:
+        if len(value) == 1:
+            key = next(iter(value))
+            return {key: copy_value(value[key])}
         return {key: copy_value(item) for key, item in value.items()}
     if value_type is list:
         value_len = len(value)
@@ -580,6 +658,14 @@ def _copy_payload_value(value: Any) -> Any:
         return [copy_value(item) for item in value]
     if value_type is tuple:
         value_len = len(value)
+        if value_len == 5:
+            return (
+                copy_value(value[0]),
+                copy_value(value[1]),
+                copy_value(value[2]),
+                copy_value(value[3]),
+                copy_value(value[4]),
+            )
         if value_len == 4:
             return (
                 copy_value(value[0]),

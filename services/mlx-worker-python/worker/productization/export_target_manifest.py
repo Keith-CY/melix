@@ -30,6 +30,37 @@ _TARGET_NAME_BY_TYPE = {
     value: export_target_manifest_pb2.ExportTargetType.Name(value)
     for value in _TARGET_RUNTIME_BY_TYPE
 }
+_DERIVED_MODEL_ACTIVATION_MODES = frozenset(
+    {
+        export_target_manifest_pb2.EXPORT_ACTIVATION_MODE_FUSED_DERIVED_MODEL,
+        export_target_manifest_pb2.EXPORT_ACTIVATION_MODE_ADAPTER_BACKED_RUNTIME,
+    }
+)
+_RUNTIME_BINARY_REQUIRED_TARGET_TYPES = frozenset(
+    {
+        export_target_manifest_pb2.EXPORT_TARGET_TYPE_OLLAMA,
+        export_target_manifest_pb2.EXPORT_TARGET_TYPE_MLX_RUNTIME,
+    }
+)
+_LOAD_CHECK_REQUIRED_TARGET_TYPES = frozenset(
+    {
+        export_target_manifest_pb2.EXPORT_TARGET_TYPE_MELIX_MANAGED,
+        export_target_manifest_pb2.EXPORT_TARGET_TYPE_OLLAMA,
+        export_target_manifest_pb2.EXPORT_TARGET_TYPE_MLX_RUNTIME,
+    }
+)
+_RUNTIME_NOT_INSTALLED_WAIVER = (
+    export_target_manifest_pb2.EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED
+)
+_RETENTION_DECISION_RETAIN = export_target_manifest_pb2.EXPORT_RETENTION_DECISION_RETAIN
+_RETENTION_DECISION_CLEANABLE = export_target_manifest_pb2.EXPORT_RETENTION_DECISION_CLEANABLE
+_RETENTION_DECISION_DELETE_AFTER_TTL = (
+    export_target_manifest_pb2.EXPORT_RETENTION_DECISION_DELETE_AFTER_TTL
+)
+_RETENTION_DECISION_DELETE_AFTER_SUCCESS = (
+    export_target_manifest_pb2.EXPORT_RETENTION_DECISION_DELETE_AFTER_SUCCESS
+)
+_RETENTION_DECISION_NAME = export_target_manifest_pb2.ExportRetentionDecision.Name
 
 
 @overload
@@ -141,11 +172,7 @@ def _validate_manifest(manifest: export_target_manifest_pb2.ExportTargetManifest
     )
     if (
         not manifest.source_derived_model_manifest_path
-        and manifest.activation_mode
-        in {
-            export_target_manifest_pb2.EXPORT_ACTIVATION_MODE_FUSED_DERIVED_MODEL,
-            export_target_manifest_pb2.EXPORT_ACTIVATION_MODE_ADAPTER_BACKED_RUNTIME,
-        }
+        and manifest.activation_mode in _DERIVED_MODEL_ACTIVATION_MODES
     ):
         errors.append(
             "source_derived_model_manifest_path is required for derived model activation modes"
@@ -239,10 +266,10 @@ def _validate_runtime_requirements(
         errors.append("runtime_requirements.runtime_name is required")
     elif runtime.runtime_name != manifest.target_runtime:
         errors.append("runtime_requirements.runtime_name must match target_runtime")
-    if manifest.target_type in {
-        export_target_manifest_pb2.EXPORT_TARGET_TYPE_OLLAMA,
-        export_target_manifest_pb2.EXPORT_TARGET_TYPE_MLX_RUNTIME,
-    } and not runtime.runtime_binary_required:
+    if (
+        manifest.target_type in _RUNTIME_BINARY_REQUIRED_TARGET_TYPES
+        and not runtime.runtime_binary_required
+    ):
         errors.append("runtime_requirements.runtime_binary_required is required for this target type")
     if runtime.runtime_binary_required and not runtime.runtime_binary_name:
         errors.append("runtime_requirements.runtime_binary_name is required when runtime_binary_required is true")
@@ -261,18 +288,13 @@ def _validate_verification_policy(
         errors.append("verification_policy.policy_id is required")
     if not policy.metadata_check_required:
         errors.append("verification_policy.metadata_check_required must be true")
-    if manifest.target_type in {
-        export_target_manifest_pb2.EXPORT_TARGET_TYPE_MELIX_MANAGED,
-        export_target_manifest_pb2.EXPORT_TARGET_TYPE_OLLAMA,
-        export_target_manifest_pb2.EXPORT_TARGET_TYPE_MLX_RUNTIME,
-    } and not policy.load_check_required:
+    if (
+        manifest.target_type in _LOAD_CHECK_REQUIRED_TARGET_TYPES
+        and not policy.load_check_required
+    ):
         errors.append("verification_policy.load_check_required must be true for this target type")
     if manifest.target_type == export_target_manifest_pb2.EXPORT_TARGET_TYPE_GGUF:
-        allowed = set(policy.allowed_waiver_reasons)
-        if (
-            export_target_manifest_pb2.EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED
-            not in allowed
-        ):
+        if _RUNTIME_NOT_INSTALLED_WAIVER not in policy.allowed_waiver_reasons:
             errors.append("gguf verification_policy must allow runtime_not_installed waivers")
     if status.state == export_target_manifest_pb2.EXPORT_VERIFICATION_STATE_UNSPECIFIED:
         errors.append("verification_status.state must be specified")
@@ -291,38 +313,36 @@ def _validate_retention_policy(
     errors: list[str] = []
     if not policy.policy_id:
         errors.append("retention_policy.policy_id is required")
-    expected_decisions = {
-        "required_default_decision": (
-            policy.required_default_decision,
-            export_target_manifest_pb2.EXPORT_RETENTION_DECISION_RETAIN,
-        ),
-        "evidence_default_decision": (
-            policy.evidence_default_decision,
-            export_target_manifest_pb2.EXPORT_RETENTION_DECISION_RETAIN,
-        ),
-        "runtime_log_default_decision": (
-            policy.runtime_log_default_decision,
-            export_target_manifest_pb2.EXPORT_RETENTION_DECISION_DELETE_AFTER_TTL,
-        ),
-        "intermediate_default_decision": (
-            policy.intermediate_default_decision,
-            export_target_manifest_pb2.EXPORT_RETENTION_DECISION_CLEANABLE,
-        ),
-        "cache_default_decision": (
-            policy.cache_default_decision,
-            export_target_manifest_pb2.EXPORT_RETENTION_DECISION_CLEANABLE,
-        ),
-        "temporary_default_decision": (
-            policy.temporary_default_decision,
-            export_target_manifest_pb2.EXPORT_RETENTION_DECISION_DELETE_AFTER_SUCCESS,
-        ),
-    }
-    for field_name, (actual, expected) in expected_decisions.items():
-        if actual != expected:
-            errors.append(
-                f"retention_policy.{field_name} must be "
-                f"{export_target_manifest_pb2.ExportRetentionDecision.Name(expected)}"
-            )
+    if policy.required_default_decision != _RETENTION_DECISION_RETAIN:
+        errors.append(
+            "retention_policy.required_default_decision must be "
+            f"{_RETENTION_DECISION_NAME(_RETENTION_DECISION_RETAIN)}"
+        )
+    if policy.evidence_default_decision != _RETENTION_DECISION_RETAIN:
+        errors.append(
+            "retention_policy.evidence_default_decision must be "
+            f"{_RETENTION_DECISION_NAME(_RETENTION_DECISION_RETAIN)}"
+        )
+    if policy.runtime_log_default_decision != _RETENTION_DECISION_DELETE_AFTER_TTL:
+        errors.append(
+            "retention_policy.runtime_log_default_decision must be "
+            f"{_RETENTION_DECISION_NAME(_RETENTION_DECISION_DELETE_AFTER_TTL)}"
+        )
+    if policy.intermediate_default_decision != _RETENTION_DECISION_CLEANABLE:
+        errors.append(
+            "retention_policy.intermediate_default_decision must be "
+            f"{_RETENTION_DECISION_NAME(_RETENTION_DECISION_CLEANABLE)}"
+        )
+    if policy.cache_default_decision != _RETENTION_DECISION_CLEANABLE:
+        errors.append(
+            "retention_policy.cache_default_decision must be "
+            f"{_RETENTION_DECISION_NAME(_RETENTION_DECISION_CLEANABLE)}"
+        )
+    if policy.temporary_default_decision != _RETENTION_DECISION_DELETE_AFTER_SUCCESS:
+        errors.append(
+            "retention_policy.temporary_default_decision must be "
+            f"{_RETENTION_DECISION_NAME(_RETENTION_DECISION_DELETE_AFTER_SUCCESS)}"
+        )
     return errors
 
 
@@ -408,6 +428,22 @@ def _safe_relative_path_error(path_value: str) -> str | None:
         return "current-directory paths are not allowed"
     if "//" in path_value:
         return "empty path components are not allowed"
-    if ".." in path_value.split("/"):
+    if _contains_parent_path_component(path_value):
         return "empty or parent-directory path components are not allowed"
     return None
+
+
+def _contains_parent_path_component(path_value: str) -> bool:
+    if ".." not in path_value:
+        return False
+    start = 0
+    while True:
+        index = path_value.find("..", start)
+        if index < 0:
+            return False
+        before_component = index == 0 or path_value[index - 1] == "/"
+        after_index = index + 2
+        after_component = after_index == len(path_value) or path_value[after_index] == "/"
+        if before_component and after_component:
+            return True
+        start = after_index

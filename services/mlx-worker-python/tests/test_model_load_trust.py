@@ -37,6 +37,29 @@ def test_trust_policy_non_empty_source_fast_path_preserves_blank_fallback() -> N
     assert model_load_trust_module._non_empty(" \t\n", "fallback") == "fallback"
 
 
+def test_requested_mode_reuses_valid_mode_membership_for_sources() -> None:
+    assert model_load_trust_module._non_empty(" request", "fallback") == " request"
+    model = WorkerModelCatalog.dev_text_model()
+    assert model_load_trust_module._requested_mode(model, None) == (
+        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
+        "default_safe",
+    )
+
+    model.settings.load_trust_mode = common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    assert model_load_trust_module._requested_mode(model, None) == (
+        common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
+        "model_settings",
+    )
+
+    request_policy = common_pb2.ModelLoadTrustPolicy(
+        requested_mode=common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
+    )
+    assert model_load_trust_module._requested_mode(model, request_policy) == (
+        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
+        "request",
+    )
+
+
 def test_worker_rejects_custom_loader_metadata_without_explicit_trust(tmp_path: Path) -> None:
     backend = RecordingTextBackend()
     service = WorkerRuntimeService(
@@ -437,7 +460,16 @@ def test_trust_policy_auto_map_custom_loader_scan_avoids_string_coercion_for_str
     assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": NoisyString("custom.Loader")}) is True
 
 
+def test_trust_policy_auto_map_common_string_uses_leading_character_fast_path() -> None:
+    class NoisyIsSpaceString(str):
+        def isspace(self) -> bool:  # pragma: no cover - only runs on regression.
+            raise AssertionError("non-blank auto_map values should not call isspace()")
+
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": NoisyIsSpaceString("custom.Loader")}) is True
+
+
 def test_trust_policy_auto_map_custom_loader_scan_preserves_blank_string_behavior() -> None:
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": ""}) is False
     assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": " \t\n"}) is False
     assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": "custom.Loader"}) is True
 
@@ -465,6 +497,15 @@ def test_route_class_runtime_kind_map_preserves_supported_defaults() -> None:
     for runtime_kind, route_class in expected_routes.items():
         assert model_load_trust_module._route_class(model, None, runtime_kind) == route_class
     assert model_load_trust_module._route_class(model, None, "unknown") == common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED
+
+
+def test_runtime_name_string_fast_path_preserves_exact_value() -> None:
+    runtime = NamedRuntime("mlx-lm")
+
+    assert model_load_trust_module._runtime_name(runtime) is runtime.runtime_name
+    assert model_load_trust_module._runtime_name(None) == ""
+    assert model_load_trust_module._runtime_name(type("Runtime", (), {"runtime_name": 0})()) == ""
+    assert model_load_trust_module._runtime_name(type("Runtime", (), {"runtime_name": 42})()) == "42"
 
 
 def test_trust_policy_skips_expanduser_for_plain_model_path(
@@ -511,6 +552,33 @@ def test_trust_policy_stats_plain_config_path_without_path_join(
 
     assert exc_info.value.policy.custom_loader_required is True
     assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
+
+
+def test_trust_policy_caches_config_path_text_by_model_path(tmp_path: Path) -> None:
+    model = _custom_loader_text_model(tmp_path)
+    path_cache = model_load_trust_module._model_config_path_for_model_path
+    path_cache.cache_clear()
+
+    first_path = model_load_trust_module._model_config_path(model)
+    second_path = model_load_trust_module._model_config_path(model)
+
+    assert first_path == second_path
+    assert path_cache.cache_info().hits == 1
+
+
+def test_read_model_config_reuses_cached_config_path_text(tmp_path: Path) -> None:
+    model = _custom_loader_text_model(tmp_path)
+    path_cache = model_load_trust_module._model_config_path_for_model_path
+    path_cache.cache_clear()
+    model_load_trust_module._read_model_config_for_stat.cache_clear()
+
+    first_config = model_load_trust_module._read_model_config(model)
+    second_config = model_load_trust_module._read_model_config(model)
+
+    assert first_config == second_config
+    assert first_config is not None
+    assert first_config["auto_map"] == {"AutoModelForCausalLM": "custom.Loader"}
+    assert path_cache.cache_info().hits == 1
 
 
 def test_trust_policy_expands_tilde_model_path(
@@ -617,6 +685,18 @@ def test_trust_policy_treats_blank_model_path_as_absent(tmp_path: Path) -> None:
 
     assert policy.custom_loader_required is False
     assert policy.custom_loader_detection_source == "config_json:absent"
+
+    empty_path_model = WorkerModelCatalog.dev_text_model()
+    empty_path_model.model_path = ""
+    empty_path_policy = resolve_model_load_trust_policy(
+        empty_path_model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=RecordingTextBackend(),
+    )
+
+    assert empty_path_policy.custom_loader_required is False
+    assert empty_path_policy.custom_loader_detection_source == "config_json:absent"
 
     missing_path_model = WorkerModelCatalog.dev_text_model()
     missing_path_model.model_path = str(tmp_path / "nonexistent-subdir")

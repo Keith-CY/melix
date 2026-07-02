@@ -849,6 +849,9 @@ def test_project_retrieval_store_records_projects_records_without_entry_reentry(
     assert multi_projection.user_payload == MultiAdmission.user_payload
     assert multi_projection.untrusted_context_receipts == MultiAdmission.untrusted_context_receipts
     assert multi_projection.untrusted_context_receipts[0] is not MultiAdmission.untrusted_context_receipts[0]
+    assert multi_projection.untrusted_context_receipts[1] is not MultiAdmission.untrusted_context_receipts[1]
+    MultiAdmission.untrusted_context_receipts[0]["mutated"] = "true"
+    assert "mutated" not in multi_projection.untrusted_context_receipts[0]
 
     class SeedAdmission:
         user_payload = {"retrieved_document": {"title": "Seed"}}
@@ -978,6 +981,36 @@ def test_project_retrieval_store_records_fast_paths_complete_dict_records(
     assert duplicate_projection.refusal_receipts[0]["reason"] == (
         "duplicate_retrieved_document_context_field"
     )
+
+
+def test_project_retrieval_store_records_complete_dict_fast_path_avoids_isinstance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_isinstance(_value: object, _types: object) -> bool:  # pragma: no cover - regression guard
+        raise AssertionError("complete plain dict store records should use exact type guards")
+
+    monkeypatch.setattr(retrieval_context_module, "isinstance", fail_isinstance, raising=False)
+
+    projection = project_retrieval_store_records(
+        [
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "doc:exact-type",
+                "payload": {"title": "Exact type note"},
+                "owner_scope_checked": True,
+                "segment_id": "doc:exact-type:retrieved-document-context",
+                "source_field": "retrieved_document_exact_type",
+                "reason": "retrieved document evidence is prompt data",
+                "corrective_action": "keep retrieved document evidence in user data",
+            }
+        ]
+    )
+
+    assert projection.user_payload == {
+        "retrieved_document_exact_type": {"title": "Exact type note"}
+    }
+    assert projection.refusal_receipts == []
+    assert projection.untrusted_context_receipts[0]["source_id"] == "doc:exact-type"
 
 
 def test_project_retrieval_store_records_redacts_nonpublic_source_ids_with_fast_check() -> None:
@@ -1437,7 +1470,15 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
             "optional_note": None,
             "metadata": {
                 "labels": ("retrieved", {"kind": "document"}, {"bucket": 1}),
+                "long_labels": (
+                    "retrieved",
+                    {"kind": "document"},
+                    {"bucket": 1},
+                    {"source": "local"},
+                    {"shard": 4},
+                ),
                 "scores": [3, 4, {"rank": 0}],
+                "single_key_detail": {"summary": {"nested": "copied"}},
             },
         }
     }
@@ -1448,6 +1489,17 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
     assert copied is not payload
     assert copied["retrieved_context"] is not payload["retrieved_context"]
     assert copied["retrieved_context"]["metadata"] is not payload["retrieved_context"]["metadata"]
+    assert copied["retrieved_context"]["metadata"]["single_key_detail"] == {
+        "summary": {"nested": "copied"}
+    }
+    assert (
+        copied["retrieved_context"]["metadata"]["single_key_detail"]
+        is not payload["retrieved_context"]["metadata"]["single_key_detail"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["single_key_detail"]["summary"]
+        is not payload["retrieved_context"]["metadata"]["single_key_detail"]["summary"]
+    )
     assert (
         copied["retrieved_context"]["metadata"]["labels"]
         == payload["retrieved_context"]["metadata"]["labels"]
@@ -1455,6 +1507,18 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
     assert (
         copied["retrieved_context"]["metadata"]["labels"]
         is not payload["retrieved_context"]["metadata"]["labels"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["long_labels"]
+        == payload["retrieved_context"]["metadata"]["long_labels"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["long_labels"]
+        is not payload["retrieved_context"]["metadata"]["long_labels"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["long_labels"][1]
+        is not payload["retrieved_context"]["metadata"]["long_labels"][1]
     )
     assert copied["retrieved_context"]["optional_note"] is None
     assert copied["retrieved_context"]["title"] is payload["retrieved_context"]["title"]
@@ -1747,6 +1811,50 @@ def test_lookup_result_metadata_refusal_skips_default_normalization_for_valid_me
     )
 
 
+def test_project_retrieval_lookup_result_normalizes_valid_metadata_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_metadata_refusal(  # pragma: no cover - regression guard
+        *args: object,
+        **kwargs: object,
+    ) -> dict[str, object] | None:
+        raise AssertionError(
+            "project_retrieval_lookup_result should validate and normalize metadata in one pass"
+        )
+
+    def fail_default_normalization(  # pragma: no cover - regression guard
+        *args: object,
+        **kwargs: object,
+    ) -> str:
+        raise AssertionError(
+            "project_retrieval_lookup_result should not re-strip valid metadata fields"
+        )
+
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "_lookup_result_metadata_refusal",
+        fail_metadata_refusal,
+    )
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "_lookup_metadata_text_or_default",
+        fail_default_normalization,
+    )
+
+    projection = project_retrieval_lookup_result(
+        {"records": None},
+        lookup_source_id=" live-rag:search-8 ",
+        lookup_segment_id=" live-rag:search-8:lookup ",
+        lookup_source_field=" live_rag_records ",
+    )
+
+    assert projection.prompt_user_payload == {}
+    assert projection.lookup_message is None
+    assert projection.refusal_receipts[0]["source_id"] == "live-rag:search-8"
+    assert projection.refusal_receipts[0]["segment_id"] == "live-rag:search-8:lookup"
+    assert projection.refusal_receipts[0]["source_field"] == "live_rag_records"
+
+
 def test_project_retrieval_lookup_result_preserves_valid_tuple_records_with_metadata() -> None:
     projection = project_retrieval_lookup_result(
         {
@@ -1911,16 +2019,57 @@ def test_project_retrieval_lookup_result_metadata_refusal_skips_store_projection
 
 
 @pytest.mark.parametrize(
-    ("kwargs", "expected_field"),
+    ("kwargs", "expected_field", "expected_source_id", "expected_segment_id"),
     (
-        ({"lookup_source_id": 123}, "lookup_source_id"),
-        ({"lookup_segment_id": "   "}, "lookup_segment_id"),
-        ({"lookup_source_field": None}, "lookup_source_field"),
+        (
+            {"lookup_source_id": 123},
+            "lookup_source_id",
+            "unknown-retrieval-lookup",
+            "unknown-retrieval-lookup:lookup-result",
+        ),
+        (
+            {"lookup_source_id": "   "},
+            "lookup_source_id",
+            "unknown-retrieval-lookup",
+            "unknown-retrieval-lookup:lookup-result",
+        ),
+        (
+            {"lookup_source_id": "live-rag:search-8", "lookup_segment_id": "   "},
+            "lookup_segment_id",
+            "live-rag:search-8",
+            "live-rag:search-8:lookup-result",
+        ),
+        (
+            {"lookup_source_id": "live-rag:search-8", "lookup_segment_id": 123},
+            "lookup_segment_id",
+            "live-rag:search-8",
+            "live-rag:search-8:lookup-result",
+        ),
+        (
+            {"lookup_segment_id": "live-rag:search-8:lookup", "lookup_source_field": ""},
+            "lookup_result",
+            "unknown-retrieval-lookup",
+            "live-rag:search-8:lookup",
+        ),
+        (
+            {"lookup_source_field": None},
+            "lookup_source_field",
+            "unknown-retrieval-lookup",
+            "unknown-retrieval-lookup:lookup-result",
+        ),
+        (
+            {"lookup_source_field": "   "},
+            "lookup_source_field",
+            "unknown-retrieval-lookup",
+            "unknown-retrieval-lookup:lookup-result",
+        ),
     ),
 )
 def test_project_retrieval_lookup_result_refuses_malformed_wrapper_metadata(
     kwargs: dict[str, object],
     expected_field: str,
+    expected_source_id: str,
+    expected_segment_id: str,
 ) -> None:
     projection = project_retrieval_lookup_result(
         {"records": []},
@@ -1930,13 +2079,16 @@ def test_project_retrieval_lookup_result_refuses_malformed_wrapper_metadata(
     assert projection.prompt_user_payload == {}
     assert projection.untrusted_context_receipts == []
     assert projection.lookup_message is None
+    if expected_field == "lookup_result":
+        assert projection.refusal_receipts == []
+        return
     assert projection.refusal_receipts == [
         {
             "schema_version": "melix.untrusted_context_receipt.v1",
-            "segment_id": "unknown-retrieval-lookup:lookup-result",
+            "segment_id": expected_segment_id,
             "source_type": "retrieval_lookup",
             "source_field": expected_field,
-            "source_id": "unknown-retrieval-lookup",
+            "source_id": expected_source_id,
             "message_role": "user",
             "trust_level": "untrusted",
             "policy": "data_only",

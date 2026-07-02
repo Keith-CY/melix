@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import textwrap
+from typing import cast
 
 import pytest
 
@@ -499,11 +500,11 @@ def test_count_nonblank_test_lines_matches_splitlines_semantics() -> None:
         )
 
 
-def test_count_tests_fallback_uses_splitlines_fast_path() -> None:
+def test_count_tests_fallback_counts_nonblank_lines() -> None:
     assert code_eval_runner._count_tests("def broken(:\nassert one\nassert two") == 3
 
 
-def test_count_tests_no_assert_fallback_uses_splitlines_fast_path() -> None:
+def test_count_tests_no_assert_fallback_counts_nonblank_lines() -> None:
     test_code = textwrap.dedent(
         """
         def check(candidate):
@@ -558,6 +559,12 @@ def test_count_nonblank_lines_streams_without_filtered_list() -> None:
     )
 
     assert code_eval_runner._count_nonblank_test_lines(test_code) == 66_666
+
+
+def test_count_nonblank_lines_streams_short_inputs_without_splitlines() -> None:
+    test_code = _SplitlinesGuard("assert value\n   \nassert other")
+
+    assert code_eval_runner._count_nonblank_test_lines(test_code) == 2
 
 
 def test_read_limited_text_handles_missing_and_oversized_files(tmp_path: Path) -> None:
@@ -773,7 +780,38 @@ def test_sandbox_static_profile_key_reuses_cached_fingerprint_without_tuple_rebu
     code_eval_runner._sandbox_static_profile_key_cache_clear()
 
 
-def test_runner_script_reuses_dedented_static_payload(monkeypatch) -> None:
+def test_sandbox_temp_root_read_filters_elides_duplicate_resolved_path(
+    tmp_path: Path,
+) -> None:
+    filters = code_eval_runner._sandbox_temp_root_read_filters(tmp_path)
+
+    assert filters == f"(subpath {json.dumps(str(tmp_path))})"
+
+
+def test_sandbox_temp_root_read_filters_preserves_relative_and_resolved_paths() -> None:
+    temp_root = Path("relative-eval-root")
+    filters = code_eval_runner._sandbox_temp_root_read_filters(temp_root)
+
+    assert filters == (
+        f"(subpath {json.dumps(str(temp_root))}) "
+        f"(subpath {json.dumps(str(temp_root.resolve()))})"
+    )
+
+
+def test_sandbox_temp_root_read_filters_falls_back_when_resolve_raises() -> None:
+    class BrokenTempRoot:
+        def __str__(self) -> str:
+            return "broken-temp-root"
+
+        def resolve(self):
+            raise OSError("broken resolve")
+
+    filters = code_eval_runner._sandbox_temp_root_read_filters(cast(Path, BrokenTempRoot()))
+
+    assert filters == f"(subpath {json.dumps('broken-temp-root')})"
+
+
+def test_runner_script_reuses_precomputed_static_payload(monkeypatch) -> None:
     code_eval_runner._runner_script.cache_clear()
     calls = 0
     original_dedent = code_eval_runner.textwrap.dedent
@@ -788,8 +826,9 @@ def test_runner_script_reuses_dedented_static_payload(monkeypatch) -> None:
     first_script = code_eval_runner._runner_script()
     second_script = code_eval_runner._runner_script()
 
-    assert calls == 1
+    assert calls == 0
     assert first_script is second_script
+    assert first_script is code_eval_runner._RUNNER_SCRIPT
     assert "def main() -> int:" in first_script
     assert first_script.endswith("\n")
 
@@ -968,6 +1007,124 @@ def test_load_payload_file_fast_path_extracts_runner_fields_without_metadata_par
     assert payload_path.read_bytes_calls == 1
 
 
+def test_load_payload_file_fast_path_extracts_sorted_payload_without_json_parse() -> None:
+    payload_path = _BytesOnlyPayloadPath(
+        json.dumps(
+            {
+                "failure_detail": "",
+                "metadata": {f"case_{index}": "ignored" for index in range(128)},
+                "runtime_status": "ok",
+                "test_status": "passed",
+                "tests_passed": 7,
+                "tests_total": 7,
+                "timeout_status": "ok",
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+
+    def fail_json_loads(*_args: object, **_kwargs: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError("sorted code-eval payload should stay on the fast path")
+
+    assert (
+        code_eval_runner._load_payload_file(cast(Path, payload_path), _loads=fail_json_loads)
+        == {
+            "failure_detail": "",
+            "runtime_status": "ok",
+            "test_status": "passed",
+            "tests_passed": 7,
+            "tests_total": 7,
+            "timeout_status": "ok",
+        }
+    )
+    assert payload_path.read_bytes_calls == 1
+
+
+def test_sorted_payload_fast_path_returns_none_for_missing_or_malformed_fields() -> None:
+    assert (
+        code_eval_runner._extract_sorted_code_eval_payload_fields(
+            b'{"failure_detail":"","test_status":"passed","tests_passed":1,'
+            b'"tests_total":1,"timeout_status":"ok"}'
+        )
+        is None
+    )
+    assert (
+        code_eval_runner._extract_sorted_code_eval_payload_fields(
+            b'{"failure_detail":"","runtime_status":"ok","test_status":"passed",'
+            b'"tests_passed":x,"tests_total":1,"timeout_status":"ok"}'
+        )
+        is None
+    )
+    assert (
+        code_eval_runner._extract_sorted_code_eval_payload_fields(
+            b'{"failure_detail":"","runtime_status":"ok","test_status":"passed",'
+            b'"tests_passed":1,"tests_total":x,"timeout_status":"ok"}'
+        )
+        is None
+    )
+    assert (
+        code_eval_runner._extract_sorted_code_eval_payload_fields(
+            b'{"failure_detail":"","runtime_status":"ok","test_status":"passed",'
+            b'"tests_passed":1,"tests_total":1,"timeout_status":ok}'
+        )
+        is None
+    )
+
+
+def test_code_eval_payload_fast_path_decodes_known_status_values() -> None:
+    payload = json.dumps(
+        {
+            "compile_status": "compiled",
+            "runtime_status": "timeout",
+            "timeout_status": "timed_out",
+            "test_status": "failed",
+            "tests_passed": 0,
+            "tests_total": 3,
+            "failure_detail": "",
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    assert code_eval_runner._extract_code_eval_payload_fields(payload) == {
+        "compile_status": "compiled",
+        "runtime_status": "timeout",
+        "timeout_status": "timed_out",
+        "test_status": "failed",
+        "tests_passed": 0,
+        "tests_total": 3,
+        "failure_detail": "",
+    }
+    for known_value in (
+        "",
+        "compiled",
+        "syntax_error",
+        "not_run",
+        "ok",
+        "error",
+        "timeout",
+        "timed_out",
+        "failed",
+        "passed",
+    ):
+        token = known_value.encode("utf-8")
+        assert (
+            code_eval_runner._known_code_eval_payload_string_value(
+                b'"' + token + b'"',
+                1,
+                len(token) + 1,
+            )
+            == known_value
+        )
+    assert (
+        code_eval_runner._known_code_eval_payload_string_value(
+            b'"custom_failure"',
+            1,
+            len(b'"custom_failure"') - 1,
+        )
+        is None
+    )
+
+
 def test_code_eval_payload_missing_required_field_falls_back_to_json_parse(
     tmp_path: Path,
 ) -> None:
@@ -1106,6 +1263,7 @@ def test_payload_fast_path_field_extractors_cover_malformed_edges() -> None:
     assert code_eval_runner._json_object_payload_bounds(b' \n {"runtime_status":"ok"}\t ') == (3, 25)
     assert code_eval_runner._json_object_payload_bounds(b"   ") is None
     assert code_eval_runner._json_object_payload_bounds(b' {"runtime_status":"ok"] ') is None
+    assert code_eval_runner._json_field_value_start(b'{"runtime_status":"ok"}', "runtime_status") == 18
     assert code_eval_runner._json_field_value_start(b'{"runtime_status" : "ok"}', "runtime_status") == 20
     assert code_eval_runner._json_field_value_start(b'{"runtime_status" "ok"}', "runtime_status") is None
     assert code_eval_runner._json_field_value_start(b'{"runtime_status": ', "runtime_status") is None

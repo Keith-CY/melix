@@ -19,6 +19,7 @@ def speculative_probe_enabled(execution_ext: Mapping[str, str] | None) -> bool:
         return False
     for key in _FEATURE_GATE_KEYS:
         value = str(execution_ext.get(key, "") or "").strip().lower()
+        # Keep the operator-facing flag tolerant of existing truthy spellings.
         if value in {"1", "true", "yes", "on", "enabled"}:
             return True
     return False
@@ -83,6 +84,8 @@ def build_speculative_probe_receipt(
     position_aligned = _position_metadata_aligned(position_metadata_receipt)
     metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
     cache_identity = str(metadata.get("cache_identity", "") or "").strip()
+    # ``scope_id`` is accepted as the legacy cache-scope spelling emitted by
+    # older fast-path fixtures; new receipts should prefer ``cache_scope_id``.
     cache_scope_id = str(metadata.get("scope_id", "") or metadata.get("cache_scope_id", "") or "").strip()
     # Verification-only probes may run before the target/draft cache identity
     # contract exists. In that case, media position alignment is the narrow
@@ -141,6 +144,10 @@ def _position_metadata_aligned(position_metadata_receipt: Mapping[str, object] |
     if str(position_metadata_receipt.get("fallback_reason", "") or "").strip():
         return False
     status = str(position_metadata_receipt.get("status", "") or "").strip()
+    # Older position receipts may omit status; positive counters still provide
+    # the alignment proof. The counters are independent OR signals because a
+    # receipt may report only aggregate media positions or only typed media
+    # counts, depending on the fast-path stage that produced it.
     if status and status not in {"ok", "aligned", "not_applicable"}:
         return False
     media_position_count = int(position_metadata_receipt.get("media_position_count", 0) or 0)

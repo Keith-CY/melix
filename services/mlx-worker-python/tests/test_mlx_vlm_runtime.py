@@ -75,8 +75,10 @@ from worker.runtime.native_mtp import mlx_lm_loader as native_mtp_loader_module
 from worker.runtime.quantized_tensor_metadata import (
     EMPTY_QUANTIZED_TENSOR_METADATA,
     QuantizedTensorMetadata,
+    _native_multimodal_high_precision_module,
     cross_shard_quantized_metadata_fixup_count,
     native_multimodal_quantization_preserves_precision,
+    quantized_scales_present,
     quantized_tensor_metadata_from_model_dir,
     quantized_tensor_metadata_from_index_payload,
     quantized_tensor_metadata_from_safetensor_headers,
@@ -2459,6 +2461,94 @@ def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
         ] = "model-00003.safetensors"
     assert not EMPTY_QUANTIZED_TENSOR_METADATA.tensor_names
     assert cross_shard_quantized_metadata_fixup_count(EMPTY_QUANTIZED_TENSOR_METADATA) == 0
+    assert (
+        quantized_tensor_metadata_from_index_payload({"weight_map": {}})
+        is EMPTY_QUANTIZED_TENSOR_METADATA
+    )
+
+
+class _CountingEmptyWeights(dict[str, object]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.contains_calls = 0
+
+    def __contains__(self, key: object) -> bool:
+        self.contains_calls += 1
+        return super().__contains__(key)
+
+
+class _StringifiedOnce:
+    def __init__(self, value: str) -> None:
+        self.value = value
+        self.calls = 0
+
+    def __str__(self) -> str:
+        self.calls += 1
+        return self.value
+
+
+def test_quantized_tensor_metadata_normalizes_index_keys_once() -> None:
+    tensor_name = _StringifiedOnce("language_model.layers.0.q_proj.scales")
+    empty_tensor_name = _StringifiedOnce("")
+    shard_name = _StringifiedOnce("model-00001.safetensors")
+
+    metadata = quantized_tensor_metadata_from_index_payload(
+        {"weight_map": {tensor_name: shard_name, empty_tensor_name: "ignored.safetensors"}}
+    )
+
+    assert metadata.tensor_to_shard == {
+        "language_model.layers.0.q_proj.scales": "model-00001.safetensors"
+    }
+    assert metadata.tensor_names == frozenset(("language_model.layers.0.q_proj.scales",))
+    assert metadata.tensor_names is metadata.tensor_names
+    assert tensor_name.calls == 1
+    assert empty_tensor_name.calls == 1
+    assert shard_name.calls == 1
+
+    with pytest.raises(TypeError):
+        metadata.tensor_to_shard["language_model.layers.1.q_proj.scales"] = (
+            "model-00002.safetensors"
+        )
+
+
+def test_quantized_scales_present_skips_empty_weight_lookup() -> None:
+    metadata = QuantizedTensorMetadata(
+        {"language_model.layers.0.q_proj.scales": "model-00001.safetensors"}
+    )
+    empty_weights = _CountingEmptyWeights()
+
+    assert (
+        quantized_scales_present(
+            "language_model.layers.0.q_proj",
+            metadata=metadata,
+            weights=empty_weights,
+        )
+        is True
+    )
+    assert empty_weights.contains_calls == 0
+
+    missing_empty_weights = _CountingEmptyWeights()
+    assert (
+        quantized_scales_present(
+            "language_model.layers.9.q_proj",
+            metadata=EMPTY_QUANTIZED_TENSOR_METADATA,
+            weights=missing_empty_weights,
+        )
+        is False
+    )
+    assert missing_empty_weights.contains_calls == 0
+
+    materialized_weights = _CountingEmptyWeights()
+    materialized_weights["language_model.layers.1.q_proj.scales"] = object()
+    assert (
+        quantized_scales_present(
+            "language_model.layers.1.q_proj",
+            metadata=EMPTY_QUANTIZED_TENSOR_METADATA,
+            weights=materialized_weights,
+        )
+        is True
+    )
+    assert materialized_weights.contains_calls == 1
 
 
 def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_entries(
@@ -2550,6 +2640,10 @@ def test_quantized_tensor_metadata_model_dir_scans_top_level_headers_and_bad_ent
         processor = SimpleNamespace(image_processor=object())
         return model, processor
 
+    _write_fake_safetensors_header(
+        valid_shard,
+        ("language_model.layers.9.q_proj.weight",),
+    )
     _write_fake_safetensors_header(
         model_dir / "model-00002.safetensors",
         ("language_model.layers.1.q_proj.weight",),
@@ -2643,6 +2737,17 @@ def _assert_native_multimodal_quantization_preserves_precision_without_explicit_
 
 def test_native_multimodal_quantization_preserves_precision_without_explicit_scales() -> None:
     _assert_native_multimodal_quantization_preserves_precision_without_explicit_scales()
+
+
+def test_native_multimodal_high_precision_module_segment_scan_preserves_boundaries() -> None:
+    assert _native_multimodal_high_precision_module("vision_tower.patch_embed") is True
+    assert _native_multimodal_high_precision_module("model.visual.patch_embed") is True
+    assert _native_multimodal_high_precision_module("language_model.lm_head") is True
+    assert _native_multimodal_high_precision_module("model..vision_tower") is True
+    assert _native_multimodal_high_precision_module("language_model.layers.0.q_proj") is False
+    assert _native_multimodal_high_precision_module("prevision_tower.patch_embed") is False
+    assert _native_multimodal_high_precision_module("model.visualizer.patch_embed") is False
+    assert _native_multimodal_high_precision_module("language_model.output_projection") is False
 
 
 def test_native_mtp_weight_key_detection_preserves_string_and_custom_keys() -> None:
@@ -7546,6 +7651,163 @@ def test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_f
     assert position_receipt["fallback_reason"] == "post-generation metadata changed"
 
 
+def test_mlx_vlm_runtime_restores_verification_only_probe_after_generation_exception() -> None:
+    drafter_loads: list[str] = []
+    loaded_model_holder: dict[str, object] = {}
+    prepared_holder: dict[str, PreparedVisionRequest] = {}
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"), vision_tower=object())
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = prompt
+        _ = image
+        _ = kwargs
+        runtime._last_fast_path_signature = None
+        runtime._ensure_fast_path_probe(
+            loaded_model_holder["loaded_model"],
+            prepared_holder["prepared"],
+        )
+        raise RuntimeError("stream failed after probe refresh")
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=lambda processor, config, prompt, num_images=0: f"formatted:{num_images}:{prompt}",
+            load_drafter_fn=lambda model_id, *, kind="mtp": drafter_loads.append(model_id) or object(),
+            batch_generate_fn=lambda *args, **kwargs: [SimpleNamespace(text="unexpected")],
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe this image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"fake-image-payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="sample.jpg",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+    loaded_model_holder["loaded_model"] = loaded_model
+    prepared_holder["prepared"] = prepared
+
+    with pytest.raises(RuntimeError, match="stream failed after probe refresh"):
+        list(
+            runtime.generate_tokens(
+                loaded_model,
+                prepared,
+                common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
+                Event(),
+                execution_ext={"melix.vlm.speculative_probe.enabled": "enabled"},
+                acceleration_policy=common_pb2.AccelerationPolicy(
+                    mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                    draft_model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
+                    num_draft_tokens=6,
+                    allow_baseline_fallback=True,
+                ),
+            )
+        )
+
+    assert drafter_loads == []
+    receipt = runtime.last_probe_snapshot().speculative_probe_receipt
+    assert receipt["enabled"] is True
+    assert receipt["status"] == "fallback"
+    assert receipt["mode"] == "verification_only"
+    assert receipt["draft_model_id"] == "mlx-community/gemma-4-E2B-it-assistant-bf16"
+    assert receipt["fallback_reason"] == "media inputs are not supported by the Gemma 4 MTP path yet"
+    assert receipt["draft_loaded"] is False
+    assert receipt["target_decode_started"] is False
+
+
+def test_mlx_vlm_runtime_restores_verification_only_probe_after_probe_exception() -> None:
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda model_path, revision="main": (
+                SimpleNamespace(config=SimpleNamespace(model_type="gemma4"), vision_tower=object()),
+                SimpleNamespace(image_processor=object()),
+            ),
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda processor, config, prompt, num_images=0: f"formatted:{num_images}:{prompt}",
+            load_drafter_fn=lambda *args, **kwargs: pytest.fail("drafter must not load on fallback probe"),
+        )
+    )
+    original_ensure_fast_path_probe = runtime._ensure_fast_path_probe
+    ensure_calls = 0
+
+    def fail_second_fast_path_probe(*args, **kwargs):
+        nonlocal ensure_calls
+        ensure_calls += 1
+        if ensure_calls == 2:
+            runtime._last_fast_path_signature = None
+            original_ensure_fast_path_probe(*args, **kwargs)
+            raise RuntimeError("baseline probe failed")
+        original_ensure_fast_path_probe(*args, **kwargs)
+
+    runtime._ensure_fast_path_probe = fail_second_fast_path_probe
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe this image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"fake-image-payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="sample.jpg",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    with pytest.raises(RuntimeError, match="baseline probe failed"):
+        list(
+            runtime.generate_tokens(
+                loaded_model,
+                prepared,
+                common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
+                Event(),
+                execution_ext={"melix.vlm.speculative_probe.enabled": "true"},
+                acceleration_policy=common_pb2.AccelerationPolicy(
+                    mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                    draft_model_id="draft-model",
+                    num_draft_tokens=4,
+                    allow_baseline_fallback=True,
+                ),
+            )
+        )
+
+    assert ensure_calls == 2
+    receipt = runtime.last_probe_snapshot().speculative_probe_receipt
+    assert receipt["enabled"] is True
+    assert receipt["status"] == "fallback"
+    assert receipt["draft_model_id"] == "draft-model"
+    assert receipt["num_draft_tokens"] == 4
+    assert receipt["fallback_reason"] == "media inputs are not supported by the Gemma 4 MTP path yet"
+
+
 def test_mlx_vlm_runtime_records_verification_only_probe_before_speculative_refusal() -> None:
     runtime = MLXVLMRuntime(
         backend=AutoMLXVLMBackend(
@@ -7620,6 +7882,8 @@ def test_multimodal_speculative_probe_receipt_covers_disabled_and_admitted_edges
 
     assert speculative_probe_enabled(None) is False
     assert speculative_probe_enabled({"melix.vlm.speculative_probe.enabled": "false"}) is False
+    assert speculative_probe_enabled({"melix.vlm.speculative_probe.enabled": "yes"}) is True
+    assert speculative_probe_enabled({"melix.multimodal.speculative_probe.enabled": "enabled"}) is True
     disabled = build_speculative_probe_receipt(
         enabled=False,
         fallback_reason="",
@@ -7646,6 +7910,16 @@ def test_multimodal_speculative_probe_receipt_covers_disabled_and_admitted_edges
     assert admitted.receipt["position_aligned"] is False
     assert admitted.receipt["cache_aligned"] is True
 
+    legacy_scope = speculative_probe_admission(
+        enabled=True,
+        fallback_reason="",
+        loaded_model={"metadata": {"scope_id": "legacy-scope"}},
+        prepared_request=prepared,
+        acceleration_policy=None,
+        position_metadata_receipt=None,
+    )
+    assert legacy_scope.receipt["cache_aligned"] is True
+
     position_only = speculative_probe_admission(
         enabled=True,
         fallback_reason="media fallback",
@@ -7656,6 +7930,26 @@ def test_multimodal_speculative_probe_receipt_covers_disabled_and_admitted_edges
     )
     assert position_only.receipt["position_aligned"] is True
     assert position_only.receipt["cache_aligned"] is True
+
+    image_count_only = speculative_probe_admission(
+        enabled=True,
+        fallback_reason="media fallback",
+        loaded_model={"metadata": {}},
+        prepared_request=prepared,
+        acceleration_policy=None,
+        position_metadata_receipt={"image_count": 1},
+    )
+    assert image_count_only.receipt["position_aligned"] is True
+
+    video_count_only = speculative_probe_admission(
+        enabled=True,
+        fallback_reason="media fallback",
+        loaded_model={"metadata": {}},
+        prepared_request=prepared,
+        acceleration_policy=None,
+        position_metadata_receipt={"status": "not_applicable", "video_count": 1},
+    )
+    assert video_count_only.receipt["position_aligned"] is True
 
 
 def test_multimodal_speculative_probe_receipt_rejects_unaligned_position_status() -> None:

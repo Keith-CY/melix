@@ -315,7 +315,7 @@ def _score_json_result(
     target: str,
     profile: EvaluationProfileDefinition,
 ) -> ScoringOutcome:
-    output_schema = profile.output_schema or {}
+    output_schema = profile.output_schema
     if not output_schema:
         try:
             return _cached_schema_free_json_scoring_outcome(

@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+from builtins import open as _builtin_open
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 _JSON_LOADS = json.loads
 _PATH_READ_BYTES = Path.read_bytes
+_OPEN = _builtin_open
 _STR = str
+_TYPE = type
 
 
 def _strip_manifest_text(value: Any) -> str:
@@ -52,16 +56,18 @@ def _is_clean_manifest_text(value: Any) -> bool:
 
 def _copy_json_list(value: list[Any]) -> list[Any]:
     immutable_types = _JSON_IMMUTABLE_TYPE_SET
+    value_type = _TYPE
     for item in value:
-        if type(item) not in immutable_types:
+        if value_type(item) not in immutable_types:
             return [_copy_trajectory_provenance_value(item) for item in value]
-    return value.copy()
+    return [*value]
 
 
 def _copy_json_tuple(value: tuple[Any, ...]) -> tuple[Any, ...]:
     immutable_types = _JSON_IMMUTABLE_TYPE_SET
+    value_type = _TYPE
     for item in value:
-        if type(item) not in immutable_types:
+        if value_type(item) not in immutable_types:
             return tuple(_copy_trajectory_provenance_value(item) for item in value)
     return value
 
@@ -307,15 +313,21 @@ def _trajectory_provenance_from_snapshot_manifest(
 
 
 def load_trajectory_provenance_from_snapshot_manifest(
-    manifest_path: Path | str,
+    manifest_path: Path | str | os.PathLike[str],
 ) -> dict[str, Any]:
     read_bytes = _PATH_READ_BYTES
+    open_file = _OPEN
     loads = _JSON_LOADS
     extract_provenance = _trajectory_provenance_from_snapshot_manifest
-    if not isinstance(manifest_path, Path):
-        manifest_path = Path(manifest_path)
-    manifest_path_text = _STR(manifest_path)
-    payload = loads(read_bytes(manifest_path))
+    if type(manifest_path) is str:
+        manifest_path_text = manifest_path
+        with open_file(manifest_path, "rb") as manifest_file:
+            payload = loads(manifest_file.read())
+    else:
+        if not isinstance(manifest_path, Path):
+            manifest_path = Path(manifest_path)
+        manifest_path_text = _STR(manifest_path)
+        payload = loads(read_bytes(manifest_path))
     if type(payload) is dict:
         return extract_provenance(
             payload,

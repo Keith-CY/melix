@@ -34,3 +34,9 @@ The probe builds one synthetic sample with many top-level metadata fields and lo
 - Focused tests pass.
 - Changed-scope coverage is at least 95% for touched executable Python/test/probe files.
 - Local base-vs-head probe shows reduced or neutral latency/peak memory on the synthetic many-chunk workload.
+
+## 2026-06-29 Follow-up Slice: Message Copy Binding
+
+A follow-up Python-only slice may reuse the same registered probe and focused coverage because it touches the same hot chunk emission path. The slice binds `dict.copy` once for per-chunk output-base and message-container copies, avoiding repeated bound-method lookup while preserving shallow-copy semantics for top-level payloads and independent message dict containers.
+
+Validation remains the registered `training-dataset-chunker-top-level-base-copy` test, coverage, and probe command.

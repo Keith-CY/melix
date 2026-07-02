@@ -60,6 +60,12 @@ _PROMPT_CONTEXT_RECEIPT_METRIC_KEYS = {
     "melix.prompt_context.receipt_count": "prompt_context_receipt_count",
     "melix.prompt_context.receipts_json": "prompt_context_receipts_json",
 }
+_EMPTY_MEDIA_FEATURE_USAGE = {
+    "media_feature_cache_hits": 0,
+    "media_feature_cache_misses": 0,
+    "media_feature_encoder_calls_saved": 0,
+    "media_feature_work_saved_bytes": 0,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,14 +184,14 @@ def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> in
 
 
 def _media_feature_usage_from_probe(probe: object | None) -> dict[str, int]:
+    if probe is None:
+        return _EMPTY_MEDIA_FEATURE_USAGE
     usage = {
         "media_feature_cache_hits": 0,
         "media_feature_cache_misses": 0,
         "media_feature_encoder_calls_saved": 0,
         "media_feature_work_saved_bytes": 0,
     }
-    if probe is None:
-        return usage
 
     for key in usage:
         usage[key] = _probe_counter_value(
@@ -212,11 +218,19 @@ def _usage_delta(
     cached_prompt_tokens: int = 0,
     media_usage: dict[str, int] | None = None,
 ) -> inference_pb2.UsageDelta:
-    media_usage = media_usage or {}
+    prompt_tokens_value = _non_negative_int(prompt_tokens)
+    completion_tokens_value = _non_negative_int(completion_tokens)
+    cached_prompt_tokens_value = _non_negative_int(cached_prompt_tokens)
+    if not media_usage:
+        return inference_pb2.UsageDelta(
+            prompt_tokens=prompt_tokens_value,
+            completion_tokens=completion_tokens_value,
+            cached_prompt_tokens=cached_prompt_tokens_value,
+        )
     return inference_pb2.UsageDelta(
-        prompt_tokens=_non_negative_int(prompt_tokens),
-        completion_tokens=_non_negative_int(completion_tokens),
-        cached_prompt_tokens=_non_negative_int(cached_prompt_tokens),
+        prompt_tokens=prompt_tokens_value,
+        completion_tokens=completion_tokens_value,
+        cached_prompt_tokens=cached_prompt_tokens_value,
         media_feature_cache_hits=_non_negative_int(media_usage.get("media_feature_cache_hits", 0)),
         media_feature_cache_misses=_non_negative_int(media_usage.get("media_feature_cache_misses", 0)),
         media_feature_encoder_calls_saved=_non_negative_int(

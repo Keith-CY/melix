@@ -135,6 +135,23 @@ def test_local_job_continuation_load_record_uses_direct_binary_open(
     assert store.load_record("job-7") == saved
 
 
+def test_local_job_continuation_load_record_avoids_path_join_wrapper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    saved = store.save_record(_record(status="completed", exit_status=0))
+
+    def fail_path_join(self: Path, key: str) -> Path:
+        raise AssertionError(  # pragma: no cover - must stay uncalled for this regression
+            f"load_record() should avoid pathlib join overhead for {self}/{key}"
+        )
+
+    monkeypatch.setattr(Path, "__truediv__", fail_path_join)
+
+    assert store.load_record("job-7") == saved
+
+
 def test_stale_completed_record_with_live_progress_is_revived() -> None:
     result = reconcile_local_job_continuation(
         _record(status="completed", exit_status=0),
@@ -1121,6 +1138,15 @@ def test_store_scan_followup_candidates_reconciles_and_filters_ready_records(
         projection_batch.claim_batch.receipts[claimed_receipt_index]["reason"]
         == "followup_claimed"
     )
+    projection_batch.receipts[claimed_receipt_index]["prompt_context_receipts"][0][
+        "segment_id"
+    ] = "downstream-mutation"
+    assert (
+        projection_batch.claim_batch.receipts[claimed_receipt_index][
+            "prompt_context_receipts"
+        ][0]["segment_id"]
+        != "downstream-mutation"
+    )
     assert projection_batch.refusal_receipts == ()
     assert projection_store.load_record("projection-live") == replace(
         projection_live,
@@ -1267,6 +1293,54 @@ def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
         "b-ready",
     ]
     assert scandir_calls == [os.fspath(tmp_path)]
+
+
+def test_store_scan_followup_candidates_filters_suffix_before_file_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+
+    class FakeEntry:
+        def __init__(self, name: str, *, is_file: bool, fail_if_stat: bool = False) -> None:
+            self.name = name
+            self._is_file = is_file
+            self.fail_if_stat = fail_if_stat
+            self.stat_calls = 0
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
+            self.stat_calls += 1
+            if self.fail_if_stat:
+                raise AssertionError(f"non-record entry should not be statted: {self.name}")
+            return self._is_file
+
+    non_json_entry = FakeEntry("ignored.json.tmp", is_file=True, fail_if_stat=True)
+    text_entry = FakeEntry("notes.txt", is_file=True, fail_if_stat=True)
+    ready_entry = FakeEntry("ready.json", is_file=True)
+    directory_entry = FakeEntry("nested.json", is_file=False)
+
+    monkeypatch.setattr(
+        local_job_continuation_module.os,
+        "scandir",
+        lambda path: iter((non_json_entry, text_entry, ready_entry, directory_entry)),
+    )
+
+    scan = store.scan_followup_candidates()
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == ["ready"]
+    assert non_json_entry.stat_calls == 0
+    assert text_entry.stat_calls == 0
+    assert ready_entry.stat_calls == 1
+    assert directory_entry.stat_calls == 1
 
 
 def test_store_scan_followup_candidates_does_not_follow_record_symlinks(
@@ -2006,9 +2080,11 @@ def test_load_record_tolerates_record_deleted_between_path_resolution_and_read(
     saved = store.save_record(_record(status="running"))
     original_open = builtins.open
 
-    def delete_before_open(path: Path, *args: Any, **kwargs: Any) -> Any:
-        if path == tmp_path / "job-7.json":
-            path.unlink()
+    target_path = os.fspath(tmp_path / "job-7.json")
+
+    def delete_before_open(path: str | os.PathLike[str], *args: Any, **kwargs: Any) -> Any:
+        if os.fspath(path) == target_path:
+            os.unlink(path)
         return original_open(path, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "open", delete_before_open)
