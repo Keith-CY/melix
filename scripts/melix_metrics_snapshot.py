@@ -105,6 +105,7 @@ def discover_latest_metrics_paths(runtime_dir: Path | None, source_names: tuple[
         latest_paths: dict[str, str | None] = {name: None for name in source_names}
         latest_mtimes: dict[str, float | None] = {name: None for name in source_names}
         latest_paths_set = latest_paths.__setitem__
+        latest_mtimes_get = latest_mtimes.get
         latest_mtimes_set = latest_mtimes.__setitem__
         empty_prefix_matchers = prefix_matchers_by_initial.get("", ())
         with os.scandir(os.fspath(runtime_dir.expanduser())) as entries:
@@ -145,13 +146,13 @@ def discover_latest_metrics_paths(runtime_dir: Path | None, source_names: tuple[
                     continue
                 mtime = entry.stat().st_mtime
                 if matched_source_names is None:
-                    latest_mtime = latest_mtimes[matched_source_name]
+                    latest_mtime = latest_mtimes_get(matched_source_name)
                     if latest_mtime is None or mtime > latest_mtime:
                         latest_paths_set(matched_source_name, entry.path)
                         latest_mtimes_set(matched_source_name, mtime)
                     continue
                 for source_name in matched_source_names:
-                    latest_mtime = latest_mtimes[source_name]
+                    latest_mtime = latest_mtimes_get(source_name)
                     if latest_mtime is None or mtime > latest_mtime:
                         latest_paths_set(source_name, entry.path)
                         latest_mtimes_set(source_name, mtime)

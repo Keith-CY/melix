@@ -67,3 +67,16 @@ and testing entries that cannot match any unresolved source.
 The behavior contract remains unchanged: argument and environment precedence are
 preserved, partially unresolved calls still perform one runtime scan, and missing
 runtime directories still return unresolved source paths without raising.
+
+## 2026-07-02 follow-up slice: bind latest mtime lookup
+
+This Python-only follow-up keeps the same registered
+`melix-metrics-snapshot-runtime-scandir` probe and narrows to the hot per-entry
+update path in `discover_latest_metrics_paths(...)`. The implementation binds the
+latest-mtime dictionary lookup once before the scan loop, matching the existing
+bound setter pattern and reducing repeated method resolution while preserving the
+single-scan runtime discovery behavior.
+
+The behavior contract remains unchanged: exact, prefix/suffix, empty-prefix, and
+multi-wildcard runtime pattern matches still select the newest regular file per
+source, and configured sources still bypass runtime scanning.
