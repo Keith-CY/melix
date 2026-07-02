@@ -31,6 +31,8 @@ def build_receipt(
     fuzzy_dedup: bool,
     segmentation: bool,
     segmentation_strategy: str,
+    upload_cap_bytes: int = 0,
+    source_cap_bytes: int = 0,
     output_path: Path | None = None,
 ) -> dict[str, object]:
     receipt = prepare_dataset_ingest(
@@ -45,6 +47,8 @@ def build_receipt(
             fuzzy_dedup=fuzzy_dedup,
             segmentation=segmentation,
             segmentation_strategy=segmentation_strategy,
+            upload_cap_bytes=upload_cap_bytes,
+            source_cap_bytes=source_cap_bytes,
         )
     )
     if output_path:
@@ -66,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fuzzy-dedup", type=_parse_bool, default=True)
     parser.add_argument("--segmentation", type=_parse_bool, default=True)
     parser.add_argument("--segmentation-strategy", default="paragraph")
+    parser.add_argument("--upload-cap-bytes", type=int, default=0)
+    parser.add_argument("--source-cap-bytes", type=int, default=0)
     args = parser.parse_args(argv)
 
     receipt = build_receipt(
@@ -79,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
         fuzzy_dedup=args.fuzzy_dedup,
         segmentation=args.segmentation,
         segmentation_strategy=args.segmentation_strategy,
+        upload_cap_bytes=args.upload_cap_bytes,
+        source_cap_bytes=args.source_cap_bytes,
         output_path=args.output,
     )
     print(json.dumps(receipt, indent=2, sort_keys=True))

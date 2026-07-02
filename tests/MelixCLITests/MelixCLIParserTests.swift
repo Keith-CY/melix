@@ -27,6 +27,7 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("melix storage cleanup plan [--workspace-manifest PATH] [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix storage cleanup apply [--workspace-manifest PATH] [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix dataset prepare ingest --workspace-project-id ID --workspace-manifest PATH --input PATH --output-dir PATH --dataset-preparation-id ID"))
+        #expect(MelixCLIParser.usageText.contains("[--upload-cap-bytes N] [--source-cap-bytes N]"))
         #expect(MelixCLIParser.usageText.contains("melix dataset prepare version --workspace-manifest PATH --ingest-receipt PATH --output-root PATH --dataset-id ID"))
         #expect(MelixCLIParser.usageText.contains("melix dataset prepare retry-failed --workspace-manifest PATH --dataset-version PATH --output-root PATH"))
         #expect(MelixCLIParser.usageText.contains("melix dataset prepare list-versions --workspace-manifest PATH --output-root PATH --dataset-id ID"))
@@ -104,6 +105,10 @@ struct MelixCLIParserTests {
                 "true",
                 "--segmentation-strategy",
                 "paragraph",
+                "--upload-cap-bytes",
+                "4096",
+                "--source-cap-bytes",
+                "2048",
                 "--output",
                 "/tmp/melix-workspace/reports/dataset-ingest-receipt.json",
                 "--json",

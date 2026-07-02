@@ -7,6 +7,7 @@ import sys
 
 import pytest
 
+from dataset_ingest_limit_contract import exercise_dataset_ingest_limit_contract
 import worker.productization.dataset_preparation as dataset_preparation_module
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
@@ -358,7 +359,10 @@ def test_dataset_ingest_controls_can_be_inspected_independently(tmp_path: Path) 
     assert "jane@example.com" in segment_text
 
 
-def test_dataset_ingest_emits_typed_operator_failures(tmp_path: Path) -> None:
+def test_dataset_ingest_emits_typed_operator_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     input_root = tmp_path / "raw-inputs"
     output_root = tmp_path / "prepared"
     input_root.mkdir()
@@ -390,6 +394,8 @@ def test_dataset_ingest_emits_typed_operator_failures(tmp_path: Path) -> None:
     assert all(failure["recovery_hint"] for failure in receipt["operator_failures"])
     assert receipt["metrics"]["source_record_count"] == 0
     assert receipt["metrics"]["segment_count"] == 0
+
+    exercise_dataset_ingest_limit_contract(tmp_path / "ingest-limit-contract", monkeypatch)
 
 
 def test_dataset_ingest_blocks_on_workspace_preflight_before_segmenting_sources(
@@ -454,6 +460,10 @@ def test_dataset_ingest_cli_writes_stable_json_receipt(tmp_path: Path) -> None:
             "false",
             "--segmentation",
             "true",
+            "--upload-cap-bytes",
+            "1024",
+            "--source-cap-bytes",
+            "512",
         ]
     )
 
@@ -461,6 +471,10 @@ def test_dataset_ingest_cli_writes_stable_json_receipt(tmp_path: Path) -> None:
     assert exit_code == 0
     assert payload["schema_version"] == "melix.dataset_ingest_receipt.v1"
     assert payload["dataset_preparation_id"] == "prep-cli"
+    assert payload["upload_cap_bytes"] == 1024
+    assert payload["observed_payload_bytes"] > 0
+    assert payload["source_cap_bytes"] == 512
+    assert payload["partial_artifact_cleanup"]["status"] == "not_needed"
     assert payload["cleaning_controls"]["pii_mask"]["enabled"] is True
     assert payload["cleaning_controls"]["exact_dedup"]["enabled"] is False
     assert payload["metrics"]["pii_mask_count"] == 1

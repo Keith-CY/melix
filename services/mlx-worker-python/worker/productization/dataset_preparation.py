@@ -48,6 +48,8 @@ class DatasetIngestRequest:
     fuzzy_dedup: bool = True
     segmentation: bool = True
     segmentation_strategy: str = "paragraph"
+    upload_cap_bytes: int = 0
+    source_cap_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -90,55 +92,116 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
     )
     _write_json(workspace_preflight_receipt_path, workspace_preflight_receipt)
 
+    upload_cap_bytes = int(request.upload_cap_bytes or 0)
+    source_cap_bytes = int(request.source_cap_bytes or 0)
     if workspace_preflight_receipt.get("status") != "ready":
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         operator_failures = _workspace_preflight_failures(workspace_preflight_receipt)
-        receipt = {
-            "schema_version": DATASET_INGEST_RECEIPT_SCHEMA_VERSION,
-            "status": "blocked",
-            "workspace_project_id": request.workspace_project_id,
-            "workspace_manifest_path": str(Path(request.workspace_manifest_path)),
-            "workspace_preflight_receipt_path": str(workspace_preflight_receipt_path),
-            "workspace_preflight_receipt": workspace_preflight_receipt,
-            "dataset_preparation_id": request.dataset_preparation_id,
-            "source_inventory": [],
-            "cleaning_controls": _cleaning_controls(request),
-            "segmentation_policy": _segmentation_policy(request),
-            "segment_artifacts": {
-                "segments_path": str(segments_path),
-                "receipt_path": str(receipt_path),
-            },
-            "quality_control_summary": {
-                "source_file_count": 0,
-                "source_record_count": 0,
-                "segment_count": 0,
-                "pii_mask_count": 0,
-                "exact_dedup_count": 0,
-                "fuzzy_dedup_count": 0,
-                "fuzzy_dedup_ratio": 0.0,
-            },
-            "operator_failures": operator_failures,
-            "metrics": {
-                "ingest_latency_ms": elapsed_ms,
-                "ingest_throughput_bytes_per_second": 0.0,
-                "source_file_count": 0,
-                "source_record_count": 0,
-                "segment_count": 0,
-                "pii_mask_count": 0,
-                "exact_dedup_count": 0,
-                "fuzzy_dedup_count": 0,
-                "fuzzy_dedup_ratio": 0.0,
-                "segmentation_latency_ms": 0.0,
-                "workspace_preflight_status": workspace_preflight_receipt.get("status", "unknown"),
-            },
-        }
+        receipt = _blocked_ingest_receipt(
+            request=request,
+            segments_path=segments_path,
+            receipt_path=receipt_path,
+            workspace_preflight_receipt_path=workspace_preflight_receipt_path,
+            workspace_preflight_receipt=workspace_preflight_receipt,
+            operator_failures=operator_failures,
+            elapsed_ms=elapsed_ms,
+            source_inventory=[],
+            source_file_count=0,
+            observed_payload_bytes=0,
+            upload_cap_bytes=upload_cap_bytes,
+            source_cap_bytes=source_cap_bytes,
+            rejection_reason="workspace_preflight_blocked",
+            partial_artifact_cleanup=_partial_artifact_cleanup_not_needed(segments_path),
+        )
         _write_json(receipt_path, receipt)
         return receipt
 
     operator_failures: list[dict[str, Any]] = []
-    records = list(_iter_source_records(input_path, operator_failures))
+    limit_policy_failure = _limit_policy_failure(
+        upload_cap_bytes=upload_cap_bytes,
+        source_cap_bytes=source_cap_bytes,
+    )
+    if limit_policy_failure is not None:
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        receipt = _blocked_ingest_receipt(
+            request=request,
+            segments_path=segments_path,
+            receipt_path=receipt_path,
+            workspace_preflight_receipt_path=workspace_preflight_receipt_path,
+            workspace_preflight_receipt=workspace_preflight_receipt,
+            operator_failures=[limit_policy_failure],
+            elapsed_ms=elapsed_ms,
+            source_inventory=[],
+            source_file_count=0,
+            observed_payload_bytes=0,
+            upload_cap_bytes=upload_cap_bytes,
+            source_cap_bytes=source_cap_bytes,
+            rejection_reason="limit_policy_invalid",
+            partial_artifact_cleanup=_cleanup_partial_artifact(segments_path),
+        )
+        _write_json(receipt_path, receipt)
+        return receipt
+
+    source_paths = _input_source_paths(input_path)
+    source_size_entries = _source_size_entries(source_paths)
+    observed_payload_bytes = sum(size for _, size in source_size_entries)
+    limit_failure = _ingest_limit_failure(
+        source_size_entries=source_size_entries,
+        observed_payload_bytes=observed_payload_bytes,
+        upload_cap_bytes=upload_cap_bytes,
+        source_cap_bytes=source_cap_bytes,
+    )
+    if limit_failure is not None:
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        receipt = _blocked_ingest_receipt(
+            request=request,
+            segments_path=segments_path,
+            receipt_path=receipt_path,
+            workspace_preflight_receipt_path=workspace_preflight_receipt_path,
+            workspace_preflight_receipt=workspace_preflight_receipt,
+            operator_failures=[limit_failure],
+            elapsed_ms=elapsed_ms,
+            source_inventory=[],
+            source_file_count=len(source_size_entries),
+            observed_payload_bytes=observed_payload_bytes,
+            upload_cap_bytes=upload_cap_bytes,
+            source_cap_bytes=source_cap_bytes,
+            rejection_reason=str(limit_failure.get("reason", "")),
+            partial_artifact_cleanup=_cleanup_partial_artifact(segments_path),
+        )
+        _write_json(receipt_path, receipt)
+        return receipt
+
+    try:
+        records = list(_iter_source_records(
+            input_path,
+            operator_failures,
+            source_paths=source_paths,
+            upload_cap_bytes=upload_cap_bytes,
+            source_cap_bytes=source_cap_bytes,
+        ))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        receipt = _blocked_ingest_receipt(
+            request=request,
+            segments_path=segments_path,
+            receipt_path=receipt_path,
+            workspace_preflight_receipt_path=workspace_preflight_receipt_path,
+            workspace_preflight_receipt=workspace_preflight_receipt,
+            operator_failures=[_ingest_processing_failure(exc)],
+            elapsed_ms=elapsed_ms,
+            source_inventory=[],
+            source_file_count=len(source_size_entries),
+            observed_payload_bytes=observed_payload_bytes,
+            upload_cap_bytes=upload_cap_bytes,
+            source_cap_bytes=source_cap_bytes,
+            rejection_reason="source_processing_failed",
+            partial_artifact_cleanup=_cleanup_partial_artifact(segments_path),
+        )
+        _write_json(receipt_path, receipt)
+        return receipt
     source_inventory = _source_inventory(records)
-    total_bytes = sum(record["byte_size"] for record in records)
+    total_bytes = observed_payload_bytes
 
     pii_mask_count = 0
     exact_dedup_count = 0
@@ -174,7 +237,28 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
     segmentation_started = time.perf_counter()
     segments = list(_segment_records(cleaned_records, request))
     segmentation_latency_ms = (time.perf_counter() - segmentation_started) * 1000.0
-    _write_jsonl(segments_path, segments)
+    try:
+        _write_jsonl(segments_path, segments)
+    except OSError as exc:
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        receipt = _blocked_ingest_receipt(
+            request=request,
+            segments_path=segments_path,
+            receipt_path=receipt_path,
+            workspace_preflight_receipt_path=workspace_preflight_receipt_path,
+            workspace_preflight_receipt=workspace_preflight_receipt,
+            operator_failures=[_ingest_processing_failure(exc)],
+            elapsed_ms=elapsed_ms,
+            source_inventory=source_inventory,
+            source_file_count=len(source_inventory),
+            observed_payload_bytes=observed_payload_bytes,
+            upload_cap_bytes=upload_cap_bytes,
+            source_cap_bytes=source_cap_bytes,
+            rejection_reason="segment_artifact_write_failed",
+            partial_artifact_cleanup=_cleanup_partial_artifact(segments_path),
+        )
+        _write_json(receipt_path, receipt)
+        return receipt
 
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     fuzzy_ratio = fuzzy_dedup_count / len(records) if records else 0.0
@@ -199,6 +283,9 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         "fuzzy_dedup_ratio": fuzzy_ratio,
         "segmentation_latency_ms": segmentation_latency_ms,
         "workspace_preflight_status": workspace_preflight_receipt.get("status", "unknown"),
+        "upload_cap_bytes": upload_cap_bytes,
+        "observed_payload_bytes": observed_payload_bytes,
+        "source_cap_bytes": source_cap_bytes,
     }
     receipt = {
         "schema_version": DATASET_INGEST_RECEIPT_SCHEMA_VERSION,
@@ -215,6 +302,11 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
             "segments_path": str(segments_path),
             "receipt_path": str(receipt_path),
         },
+        "upload_cap_bytes": upload_cap_bytes,
+        "observed_payload_bytes": observed_payload_bytes,
+        "source_cap_bytes": source_cap_bytes,
+        "rejection_reason": "",
+        "partial_artifact_cleanup": _partial_artifact_cleanup_not_needed(segments_path),
         "quality_control_summary": summary,
         "operator_failures": operator_failures,
         "metrics": metrics,
@@ -325,6 +417,192 @@ def _raise_if_ingest_receipt_blocked(ingest_receipt: dict[str, Any]) -> None:
     ] if isinstance(failures, list) else []
     code_suffix = ",".join(failure_codes) if failure_codes else "unknown"
     raise ValueError(f"DATASET_VERSION_SOURCE_RECEIPT_BLOCKED: {code_suffix}")
+
+
+def _blocked_ingest_receipt(
+    *,
+    request: DatasetIngestRequest,
+    segments_path: Path,
+    receipt_path: Path,
+    workspace_preflight_receipt_path: Path,
+    workspace_preflight_receipt: dict[str, Any],
+    operator_failures: list[dict[str, Any]],
+    elapsed_ms: float,
+    source_inventory: list[dict[str, Any]],
+    source_file_count: int,
+    observed_payload_bytes: int,
+    upload_cap_bytes: int,
+    source_cap_bytes: int,
+    rejection_reason: str,
+    partial_artifact_cleanup: dict[str, Any],
+) -> dict[str, Any]:
+    summary = {
+        "source_file_count": source_file_count,
+        "source_record_count": 0,
+        "segment_count": 0,
+        "pii_mask_count": 0,
+        "exact_dedup_count": 0,
+        "fuzzy_dedup_count": 0,
+        "fuzzy_dedup_ratio": 0.0,
+    }
+    return {
+        "schema_version": DATASET_INGEST_RECEIPT_SCHEMA_VERSION,
+        "status": "blocked",
+        "workspace_project_id": request.workspace_project_id,
+        "workspace_manifest_path": str(Path(request.workspace_manifest_path)),
+        "workspace_preflight_receipt_path": str(workspace_preflight_receipt_path),
+        "workspace_preflight_receipt": workspace_preflight_receipt,
+        "dataset_preparation_id": request.dataset_preparation_id,
+        "source_inventory": source_inventory,
+        "cleaning_controls": _cleaning_controls(request),
+        "segmentation_policy": _segmentation_policy(request),
+        "segment_artifacts": {
+            "segments_path": str(segments_path),
+            "receipt_path": str(receipt_path),
+        },
+        "upload_cap_bytes": upload_cap_bytes,
+        "observed_payload_bytes": observed_payload_bytes,
+        "source_cap_bytes": source_cap_bytes,
+        "rejection_reason": rejection_reason,
+        "partial_artifact_cleanup": partial_artifact_cleanup,
+        "quality_control_summary": summary,
+        "operator_failures": operator_failures,
+        "metrics": {
+            "ingest_latency_ms": elapsed_ms,
+            "ingest_throughput_bytes_per_second": 0.0,
+            "source_file_count": source_file_count,
+            "source_record_count": 0,
+            "segment_count": 0,
+            "pii_mask_count": 0,
+            "exact_dedup_count": 0,
+            "fuzzy_dedup_count": 0,
+            "fuzzy_dedup_ratio": 0.0,
+            "segmentation_latency_ms": 0.0,
+            "workspace_preflight_status": workspace_preflight_receipt.get("status", "unknown"),
+            "upload_cap_bytes": upload_cap_bytes,
+            "observed_payload_bytes": observed_payload_bytes,
+            "source_cap_bytes": source_cap_bytes,
+        },
+    }
+
+
+def _limit_policy_failure(
+    *,
+    upload_cap_bytes: int,
+    source_cap_bytes: int,
+) -> dict[str, Any] | None:
+    if upload_cap_bytes < 0 or source_cap_bytes < 0:
+        return {
+            "id": "dataset-ingest-limit-policy-invalid-negative-cap",
+            "code": "DATASET_INGEST_LIMIT_POLICY_INVALID",
+            "path": "",
+            "detail": "Dataset ingest limits must be zero or positive byte counts.",
+            "recovery_hint": "Set --upload-cap-bytes and --source-cap-bytes to zero or positive integers.",
+            "reason": "limit_policy_invalid",
+        }
+    if upload_cap_bytes > 0 and source_cap_bytes > upload_cap_bytes:
+        return {
+            "id": "dataset-ingest-limit-policy-invalid-source-cap",
+            "code": "DATASET_INGEST_LIMIT_POLICY_INVALID",
+            "path": "",
+            "detail": "The per-source cap exceeds the configured dataset upload cap.",
+            "recovery_hint": "Set --source-cap-bytes less than or equal to --upload-cap-bytes, or set either cap to 0.",
+            "reason": "limit_policy_invalid",
+        }
+    return None
+
+
+def _input_source_paths(input_path: Path) -> list[Path]:
+    return [input_path] if input_path.is_file() else _iter_source_file_paths(input_path)
+
+
+def _source_size_entries(paths: list[Path]) -> list[tuple[Path, int]]:
+    entries: list[tuple[Path, int]] = []
+    for path in paths:
+        try:
+            entries.append((path, path.stat().st_size))
+        except OSError:
+            entries.append((path, 0))
+    return entries
+
+
+def _ingest_limit_failure(
+    *,
+    source_size_entries: list[tuple[Path, int]],
+    observed_payload_bytes: int,
+    upload_cap_bytes: int,
+    source_cap_bytes: int,
+) -> dict[str, Any] | None:
+    if upload_cap_bytes > 0 and observed_payload_bytes > upload_cap_bytes:
+        return {
+            "id": "dataset-ingest-upload-cap-exceeded",
+            "code": "DATASET_INGEST_UPLOAD_CAP_EXCEEDED",
+            "path": "",
+            "detail": f"Dataset ingest observed {observed_payload_bytes} bytes, above the configured {upload_cap_bytes} byte upload cap.",
+            "recovery_hint": "Reduce the input size or raise --upload-cap-bytes for this local ingest request.",
+            "upload_cap_bytes": upload_cap_bytes,
+            "observed_payload_bytes": observed_payload_bytes,
+            "reason": "upload_cap_exceeded",
+        }
+    if source_cap_bytes > 0:
+        for path, size in source_size_entries:
+            if size <= source_cap_bytes:
+                continue
+            return {
+                "id": _failure_id("source-cap-exceeded", path.name),
+                "code": "DATASET_INGEST_SOURCE_CAP_EXCEEDED",
+                "path": path.name,
+                "detail": f"Dataset source is {size} bytes, above the configured {source_cap_bytes} byte source cap.",
+                "recovery_hint": "Split, remove, or lower the source file size before preparing the dataset.",
+                "source_cap_bytes": source_cap_bytes,
+                "observed_source_bytes": size,
+                "reason": "source_cap_exceeded",
+            }
+    return None
+
+
+def _ingest_processing_failure(exc: BaseException) -> dict[str, Any]:
+    return {
+        "id": "dataset-ingest-processing-failed",
+        "code": "DATASET_INGEST_PARSE_FAILED",
+        "path": "",
+        "detail": f"Dataset ingest failed before a complete segment artifact could be written: {exc}",
+        "recovery_hint": "Inspect the input data and retry after fixing unreadable sources or output storage errors.",
+    }
+
+
+def _partial_artifact_cleanup_not_needed(path: Path) -> dict[str, Any]:
+    return {
+        "status": "not_needed",
+        "target_path": str(path),
+        "removed": False,
+        "error": "",
+    }
+
+
+def _cleanup_partial_artifact(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "status": "missing",
+            "target_path": str(path),
+            "removed": False,
+            "error": "",
+        }
+    try:
+        path.unlink()
+    except OSError as exc:
+        return {
+            "status": "failed",
+            "target_path": str(path),
+            "removed": False,
+            "error": str(exc),
+        }
+    return {
+        "status": "removed",
+        "target_path": str(path),
+        "removed": True,
+        "error": "",
+    }
 
 
 def _partition_failed_segments(
@@ -546,8 +824,16 @@ def _iter_dataset_version_manifest_paths(versions_root: Path) -> Iterable[str]:
 def _iter_source_records(
     input_path: Path,
     operator_failures: list[dict[str, Any]],
+    *,
+    source_paths: list[Path] | None = None,
+    upload_cap_bytes: int = 0,
+    source_cap_bytes: int = 0,
 ) -> Iterable[dict[str, Any]]:
-    paths = [input_path] if input_path.is_file() else _iter_source_file_paths(input_path)
+    paths = source_paths if source_paths is not None else _input_source_paths(input_path)
+    read_cap_bytes = _source_read_cap_bytes(
+        upload_cap_bytes=upload_cap_bytes,
+        source_cap_bytes=source_cap_bytes,
+    )
     for path in paths:
         source_kind = _source_kind(path)
         if source_kind is None:
@@ -561,7 +847,7 @@ def _iter_source_records(
                 }
             )
             continue
-        text = path.read_text(encoding="utf-8")
+        text = _read_source_text(path, cap_bytes=read_cap_bytes)
         if not text or text.isspace():
             operator_failures.append(
                 {
@@ -584,6 +870,27 @@ def _iter_source_records(
                 metadata=_metadata_for_path(path, source_kind),
                 normalized=True,
             )
+
+
+def _source_read_cap_bytes(*, upload_cap_bytes: int, source_cap_bytes: int) -> int:
+    if source_cap_bytes > 0:
+        return source_cap_bytes
+    return upload_cap_bytes if upload_cap_bytes > 0 else 0
+
+
+def _read_source_text(path: Path, *, cap_bytes: int = 0) -> str:
+    chunks: list[bytes] = []
+    observed = 0
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(64 * 1024)
+            if not chunk:
+                break
+            observed += len(chunk)
+            if cap_bytes > 0 and observed > cap_bytes:
+                raise OSError(f"source exceeded configured read cap of {cap_bytes} bytes")
+            chunks.append(chunk)
+    return b"".join(chunks).decode("utf-8")
 
 
 def _iter_source_file_paths(input_path: Path) -> list[Path]:
@@ -1211,5 +1518,7 @@ def _dataset_version_payload(
         "samples_path": str(samples_path),
         "validation_samples_path": str(valid_path),
         "failed_segments_path": str(failed_segments_path),
+        "upload_cap_bytes": int(ingest_receipt.get("upload_cap_bytes", 0) or 0),
+        "partial_artifact_cleanup": dict(ingest_receipt.get("partial_artifact_cleanup", {})),
         "metrics": metrics,
     }
