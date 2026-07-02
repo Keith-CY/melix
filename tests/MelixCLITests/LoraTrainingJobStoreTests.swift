@@ -260,6 +260,79 @@ struct LoraTrainingJobStoreTests {
         #expect(metrics["admission_refusal_count"] as? Int == 1)
     }
 
+    @Test("local training queue derives contained run names from model references")
+    func localTrainingQueueDerivesContainedRunNamesFromModelReferences() throws {
+        let home = temporaryMelixHome()
+        defer { try? FileManager.default.removeItem(at: home.rootURL) }
+        let store = LocalTrainingQueueStore(melixHome: home)
+        let managedRoot = home.modelOpsJobsRootURL.appendingPathComponent("train_lora", isDirectory: true)
+
+        #expect(
+            LocalTrainingQueueStore.defaultTrainingRunName(modelRef: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+                == "mlx-community-qwen3-5-0-8b-optiq-4bit"
+        )
+        #expect(
+            LocalTrainingQueueStore.defaultTrainingRunName(modelRef: "/Volumes/External Models/raw/Qwen 3.5 9B Instruct")
+                == "qwen-3-5-9b-instruct"
+        )
+        #expect(
+            LocalTrainingQueueStore.defaultTrainingRunName(modelRef: "../escape/../../Qwen 3.5")
+                == "qwen-3-5"
+        )
+        let longName = LocalTrainingQueueStore.defaultTrainingRunName(
+            modelRef: "mlx-community/\(String(repeating: "VeryLongModelName", count: 12))"
+        )
+        #expect(longName.count <= 80)
+        #expect(longName.hasPrefix("mlx-community-verylongmodelname"))
+
+        let admitted = try store.admit(
+            LocalTrainingQueueAdmissionRequest(
+                modelID: "/Volumes/External Models/raw/Qwen 3.5 9B Instruct",
+                datasetURI: "/tmp/datasets/alpaca.jsonl",
+                adapterName: "demo-adapter",
+                resourceClass: "background_training"
+            )
+        )
+        let runDirectory = URL(fileURLWithPath: admitted.runDirectory).standardizedFileURL.path
+
+        #expect(runDirectory.hasPrefix(managedRoot.standardizedFileURL.path + "/"))
+        #expect(runDirectory.hasSuffix("/qwen-3-5-9b-instruct-training-queue-0001"))
+        #expect(!runDirectory.lowercased().contains("volumes"))
+        #expect(!runDirectory.lowercased().contains("external-models"))
+    }
+
+    @Test("local training queue rejects escaping run directories with typed evidence")
+    func localTrainingQueueRejectsEscapingRunDirectoriesWithTypedEvidence() throws {
+        let home = temporaryMelixHome()
+        defer { try? FileManager.default.removeItem(at: home.rootURL) }
+        let store = LocalTrainingQueueStore(melixHome: home)
+        let escaped = home.modelOpsJobsRootURL
+            .appendingPathComponent("train_lora", isDirectory: true)
+            .appendingPathComponent("../escaped-run", isDirectory: true)
+
+        do {
+            _ = try store.admit(
+                LocalTrainingQueueAdmissionRequest(
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    datasetURI: "/tmp/datasets/alpaca.jsonl",
+                    adapterName: "demo-adapter",
+                    runDirectory: escaped.path
+                )
+            )
+            Issue.record("Expected escaping training run directory to be rejected.")
+        } catch let error as MelixCLIError {
+            guard case .requestFailed(let code, let message) = error else {
+                Issue.record("Unexpected escaping path error: \(error).")
+                return
+            }
+            #expect(code == "path_escape_detected")
+            #expect(message.contains("path_escape_detected=true"))
+            #expect(message.contains("sanitized_run_name=mlx-community-qwen3-5-0-8b-optiq-4bit"))
+        }
+
+        #expect(!FileManager.default.fileExists(atPath: home.localTrainingQueueFileURL.path))
+    }
+
     @Test("local training queue rejects malformed queue schema with typed restore error")
     func localTrainingQueueRejectsMalformedQueueSchemaWithTypedRestoreError() throws {
         let home = temporaryMelixHome()
@@ -321,7 +394,7 @@ struct LoraTrainingJobStoreTests {
         #expect(first.datasetID == "explicit-dataset")
         #expect(first.recoveryPolicy == "custom_policy")
         #expect(first.preflightReceiptPath == "/tmp/preflight-receipt.json")
-        #expect(first.runDirectory.hasSuffix("/jobs/model-ops/train_lora/training-queue-0001"))
+        #expect(first.runDirectory.hasSuffix("/jobs/model-ops/train_lora/mlx-community-qwen3-5-0-8b-optiq-4bit-training-queue-0001"))
         #expect(second.jobID == "training-queue-0002")
         #expect(failed.status == .failed)
         #expect(failed.operatorErrors == [
@@ -424,7 +497,10 @@ struct LoraTrainingJobStoreTests {
         defer { try? FileManager.default.removeItem(at: home.rootURL) }
         let store = LocalTrainingQueueStore(melixHome: home)
         try FileManager.default.createDirectory(at: home.rootURL, withIntermediateDirectories: true)
-        let blockedRunDirectory = home.rootURL.appendingPathComponent("blocked-run-directory")
+        let blockedRunDirectory = home.modelOpsJobsRootURL
+            .appendingPathComponent("train_lora", isDirectory: true)
+            .appendingPathComponent("blocked-run-directory", isDirectory: true)
+        try FileManager.default.createDirectory(at: blockedRunDirectory.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("not a directory".utf8).write(to: blockedRunDirectory)
         let admitted = try store.admit(
             LocalTrainingQueueAdmissionRequest(

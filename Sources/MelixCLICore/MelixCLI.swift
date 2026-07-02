@@ -7271,7 +7271,8 @@ public actor MelixCLIRunner {
     private func runLoraTrainOperation(
         _ options: LoraTrainOptions,
         outputDir: String = "",
-        trainingModeOverride: String = ""
+        trainingModeOverride: String = "",
+        managedOutputRoot: String = ""
     ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
         var ext = options.parameters
         if options.preflightFitCheck {
@@ -7306,6 +7307,7 @@ public actor MelixCLIRunner {
                 adapterName: options.adapterName,
                 trainingMode: trainingMode,
                 runDirectory: outputDir,
+                managedOutputRoot: managedOutputRoot,
                 parameters: ext
             )
         )
@@ -7317,7 +7319,7 @@ public actor MelixCLIRunner {
             let result = try await performModelOperation(
                 modelID: options.modelID,
                 operation: "train_lora",
-                outputDir: outputDir,
+                outputDir: admitted.runDirectory,
                 ext: ext
             )
             _ = try? queue.markSucceeded(jobID: admitted.jobID)
@@ -7373,7 +7375,8 @@ public actor MelixCLIRunner {
         let trainResult = try await runLoraTrainOperation(
             options.training,
             outputDir: trainOutputDir.path,
-            trainingModeOverride: resolvedTrainingMode
+            trainingModeOverride: resolvedTrainingMode,
+            managedOutputRoot: outputRoot.path
         )
         let adapterManifestPath = try Self.resolveLoraAdapterManifestPath(
             from: trainResult,

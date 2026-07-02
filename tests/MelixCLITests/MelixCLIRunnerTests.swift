@@ -8397,6 +8397,45 @@ struct MelixCLIRunnerTests {
         #expect(queueJob["dataset_version_id"] as? String == "dataset-v2")
     }
 
+    @Test("lora train uses contained default output dir for local model paths")
+    func loraTrainUsesContainedDefaultOutputDirForLocalModelPaths() async throws {
+        let client = StubControlPlaneXPCClient()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-local-path-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = MelixHome(environment: ["MELIX_HOME": root.path])
+        await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/train_lora/local-path-job"))
+
+        _ = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": root.path]
+        ).run(
+            .loraTrain(
+                .init(
+                    modelID: "/Volumes/External Models/raw/Qwen 3.5 9B Instruct",
+                    datasetSourceKind: "local_package",
+                    datasetURI: "/tmp/datasets/alpaca.jsonl",
+                    adapterName: "demo-adapter",
+                    trainingMode: "lora",
+                    json: true
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        let queuePayload = try #require(try parseJSONFile(home.localTrainingQueueFileURL.path))
+        let jobs = try #require(queuePayload["jobs"] as? [[String: Any]])
+        let queueJob = try #require(jobs.first)
+        let runDirectory = try #require(queueJob["run_directory"] as? String)
+        let managedRoot = home.modelOpsJobsRootURL.appendingPathComponent("train_lora", isDirectory: true)
+
+        #expect(call.operation == "train_lora")
+        #expect(call.outputDir == runDirectory)
+        #expect(URL(fileURLWithPath: runDirectory).standardizedFileURL.path.hasPrefix(managedRoot.standardizedFileURL.path + "/"))
+        #expect(runDirectory.hasSuffix("/qwen-3-5-9b-instruct-training-queue-0001"))
+        #expect(!runDirectory.lowercased().contains("volumes"))
+        #expect(!runDirectory.lowercased().contains("external-models"))
+    }
+
     @Test("lora train rejects busy durable queue before worker launch")
     func loraTrainRejectsBusyDurableQueueBeforeWorkerLaunch() async throws {
         let client = StubControlPlaneXPCClient()
