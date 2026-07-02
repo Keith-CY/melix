@@ -612,7 +612,11 @@ public final class LocalTrainingQueueStore: @unchecked Sendable {
         guard !safeComponents.isEmpty else {
             return "model"
         }
-        if rawComponents.contains(where: { $0 == "." || $0 == ".." }) {
+        let hasTraversal = rawComponents.contains { component in
+            let normalized = component.trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalized == "." || normalized == ".."
+        }
+        if hasTraversal {
             return safeComponents.last ?? "model"
         }
         return safeComponents.joined(separator: "-")
@@ -652,7 +656,8 @@ public final class LocalTrainingQueueStore: @unchecked Sendable {
     private static func isPath(_ candidate: URL, containedBy root: URL) -> Bool {
         let candidatePath = candidate.standardizedFileURL.path
         let rootPath = root.standardizedFileURL.path
-        return candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")
+        let rootPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        return candidatePath == rootPath || candidatePath.hasPrefix(rootPrefix)
     }
 }
 

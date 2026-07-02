@@ -279,6 +279,10 @@ struct LoraTrainingJobStoreTests {
             LocalTrainingQueueStore.defaultTrainingRunName(modelRef: "../escape/../../Qwen 3.5")
                 == "qwen-3-5"
         )
+        #expect(
+            LocalTrainingQueueStore.defaultTrainingRunName(modelRef: "repo/ .. /Qwen 3.5")
+                == "qwen-3-5"
+        )
         let longName = LocalTrainingQueueStore.defaultTrainingRunName(
             modelRef: "mlx-community/\(String(repeating: "VeryLongModelName", count: 12))"
         )
@@ -331,6 +335,26 @@ struct LoraTrainingJobStoreTests {
         }
 
         #expect(!FileManager.default.fileExists(atPath: home.localTrainingQueueFileURL.path))
+    }
+
+    @Test("local training queue containment accepts absolute run paths under filesystem root")
+    func localTrainingQueueContainmentAcceptsAbsoluteRunPathsUnderFilesystemRoot() throws {
+        let home = temporaryMelixHome()
+        defer { try? FileManager.default.removeItem(at: home.rootURL) }
+        let store = LocalTrainingQueueStore(melixHome: home)
+        let runDirectory = home.rootURL.appendingPathComponent("root-contained-run", isDirectory: true)
+
+        let admitted = try store.admit(
+            LocalTrainingQueueAdmissionRequest(
+                modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                datasetURI: "/tmp/datasets/alpaca.jsonl",
+                adapterName: "demo-adapter",
+                runDirectory: runDirectory.path,
+                managedOutputRoot: "/"
+            )
+        )
+
+        #expect(URL(fileURLWithPath: admitted.runDirectory).standardizedFileURL.path == runDirectory.standardizedFileURL.path)
     }
 
     @Test("local training queue rejects malformed queue schema with typed restore error")
