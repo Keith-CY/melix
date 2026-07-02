@@ -101,7 +101,7 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
                 dataset_preparation._record(
                     path=path,
                     source_kind=source_kind,
-                    text="Melix source row\r\n",
+                    text="Melix source row\n",
                     metadata={},
                 )
                 for path, source_kind in zip(paths, source_kinds)

@@ -2332,7 +2332,9 @@ class MLXVLMRuntime:
             )
 
         def restore_speculative_probe_receipt() -> None:
-            if speculative_fallback_reason and speculative_probe is not None:
+            # Restore any entry-captured verification receipt, independent of
+            # whether the receipt classified the request as fallback or admitted.
+            if speculative_probe is not None:
                 self._last_probe = replace(
                     self._last_probe,
                     speculative_probe_receipt=speculative_probe.receipt,

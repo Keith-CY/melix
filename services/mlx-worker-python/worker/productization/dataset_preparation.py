@@ -1202,6 +1202,8 @@ def _mask_pii(text: str) -> tuple[str, int]:
 
 
 def _normalize_line_endings(text: str) -> str:
+    if "\r" not in text:
+        return text
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
@@ -1462,23 +1464,32 @@ def _append_rows_output_lengths(
     rows: list[dict[str, Any]],
 ) -> None:
     append = lengths.append
+    len_ = len
     str_ = str
     for row in rows:
-        if "completion" in row:
-            append(len(str_(row["completion"])))
-            continue
-        messages = row.get("messages", [])
-        if not isinstance(messages, list):
-            append(0)
-            continue
-        total = 0
-        for item in messages:
-            try:
-                content = item.get("content", "")
-            except AttributeError:
+        try:
+            completion = row["completion"]
+        except KeyError:
+            messages = row.get("messages", [])
+            if not isinstance(messages, list):
+                append(0)
                 continue
-            total += len(str_(content))
-        append(total)
+            total = 0
+            for item in messages:
+                try:
+                    content = item.get("content", "")
+                except AttributeError:
+                    continue
+                if type(content) is str:
+                    total += len_(content)
+                else:
+                    total += len_(str_(content))
+            append(total)
+        else:
+            if type(completion) is str:
+                append(len_(completion))
+            else:
+                append(len_(str_(completion)))
 
 
 def _p95(values: list[int]) -> int:
