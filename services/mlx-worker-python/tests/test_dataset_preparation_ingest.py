@@ -14,6 +14,7 @@ from worker.productization.dataset_preparation import (
     _SOURCE_KIND_BY_NAME,
     _SOURCE_KIND_NAME_CACHE_MAX,
     _iter_source_file_paths,
+    _normalize_line_endings,
     _record,
     _source_kind,
     _source_kind_for_name,
@@ -151,6 +152,13 @@ def test_dataset_ingest_record_accepts_pre_normalized_text(
 
     assert record["text"] == "hello\n"
     assert record["byte_size"] == len(b"hello\n")
+
+
+def test_dataset_ingest_normalize_line_endings_fast_paths_lf_only_text() -> None:
+    text = "hello\nMelix\n"
+
+    assert _normalize_line_endings(text) == text
+    assert _normalize_line_endings("hello\r\nMelix\r") == "hello\nMelix\n"
 
 
 def test_dataset_ingest_source_file_paths_skips_scandir_errors(
