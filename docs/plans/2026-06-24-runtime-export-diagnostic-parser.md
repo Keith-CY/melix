@@ -185,6 +185,15 @@ prefix in the loop. This avoids repeated `len()` calls on the growing output
 list, repeated append attribute lookups, and repeated prefix formatting for
 adjacent bounded log lines from the same source path.
 
+A follow-up 2026-07-03 diagnosis loop binding slice keeps matched codes,
+pattern priority, and evidence pointers unchanged while binding hot loop helpers
+and pattern/source containers once per excerpt scan. The matcher still lowers
+each considered line once, applies the same union-marker prefilter, suppresses
+duplicate codes, and stops after every known diagnosis code has matched. It also
+inlines the per-pattern marker/expression loops inside the excerpt scan so the
+hot path avoids repeated global, method, and helper lookups in the registered
+diagnostic parser probe.
+
 Focused verification:
 
 ```bash

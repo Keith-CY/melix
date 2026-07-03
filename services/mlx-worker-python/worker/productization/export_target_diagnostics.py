@@ -792,24 +792,42 @@ def _diagnoses_from_excerpt(
     excerpt_path: str,
 ) -> list[dict[str, object]]:
     diagnoses: list[dict[str, object]] = []
+    diagnoses_append = diagnoses.append
     seen_codes: set[str] = set()
+    seen_codes_add = seen_codes.add
+    patterns = _DIAGNOSIS_PATTERNS
+    source_lines_local = source_lines
+    has_diagnosis_marker = _has_diagnosis_marker
     known_code_count = len(_KNOWN_DIAGNOSIS_CODE_SET)
     for index, line_number in line_numbers.items():
         if len(seen_codes) == known_code_count:
             break
-        text = source_lines[index].text
+        text = source_lines_local[index].text
         lowered_text = text.lower()
-        if not _has_diagnosis_marker(lowered_text):
+        if not has_diagnosis_marker(lowered_text):
             continue
-        for pattern in _DIAGNOSIS_PATTERNS:
-            if pattern.code in seen_codes:
+        for pattern in patterns:
+            pattern_code = pattern.code
+            if pattern_code in seen_codes:
                 continue
-            if not pattern.matches(text, lowered_text):
+            marker_matched = not pattern.markers
+            for marker in pattern.markers:
+                if marker in lowered_text:
+                    marker_matched = True
+                    break
+            if not marker_matched:
                 continue
-            seen_codes.add(pattern.code)
-            diagnoses.append(
+            expression_matched = False
+            for expression in pattern.expressions:
+                if expression.search(text):
+                    expression_matched = True
+                    break
+            if not expression_matched:
+                continue
+            seen_codes_add(pattern_code)
+            diagnoses_append(
                 {
-                    "code": pattern.code,
+                    "code": pattern_code,
                     "severity": pattern.severity,
                     "matched_pattern_id": pattern.pattern_id,
                     "operator_message": pattern.operator_message,
