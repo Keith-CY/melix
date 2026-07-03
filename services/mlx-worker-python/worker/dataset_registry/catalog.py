@@ -546,6 +546,13 @@ def _supported_scan_entry_records(
         name = entry.name
         if name <= after:
             continue
+        if name not in _README_NAMES and _is_supported_dataset_file_name(name):
+            try:
+                if entry.is_file(follow_symlinks=False):
+                    yield name, entry.path, False, True
+                    continue
+            except OSError:
+                pass
         try:
             is_dir = entry.is_dir(follow_symlinks=False)
             if is_dir:
@@ -555,12 +562,6 @@ def _supported_scan_entry_records(
             continue
         if name in _README_NAMES or not _is_supported_dataset_file_name(name):
             continue
-        try:
-            is_file = entry.is_file(follow_symlinks=False)
-        except OSError:
-            continue
-        if is_file:
-            yield name, entry.path, False, True
 
 
 def _first_supported_dataset_file(directory: Path) -> Path | None:
