@@ -20,6 +20,20 @@ This slice moves missing/non-file manifest handling to the direct `open(..., "rb
 4. Run changed-scope coverage for the registered probe and require at least 95% on the touched scope.
 5. Run the registered probe locally on Linux against `origin/main` versus the slice branch before creating the PR.
 
+## 2026-07-03 follow-up slice: complete-manifest direct field extraction
+
+This follow-up keeps the same registered `dataset-version-listing-scandir` probe
+and remains limited to `list_dataset_versions(...)`. Complete generated
+`dataset-version.json` manifests are the common path during listing, so the loop
+now extracts the listing fields by direct dictionary lookup and falls back to the
+existing default-preserving `dict.get(...)` path only for incomplete legacy or
+hand-written manifests. Behavior for missing manifest files, directory-valued
+manifest candidates, and malformed JSON is unchanged.
+
+Verification remains the registered focused test command, changed-scope coverage,
+and the local Linux registered probe before PR creation. The CI PR-scoped
+performance report remains the merge gate for the registered probe.
+
 ## Boundary
 
 This is a Linux-verified Python slice. No Swift runtime effect is claimed.
