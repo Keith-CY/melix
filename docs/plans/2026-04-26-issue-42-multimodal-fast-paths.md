@@ -614,6 +614,16 @@ Executable unit issues:
   same runtime stats fields; changed-line coverage at or above 95%; and the
   existing request-coordinator/OpenAI scoped performance probes reporting no
   in-scope regression.
+- Plan 4.2 is closed out by Unit 4.2.1 (#1468, PR #2541), Unit 4.2.2
+  (#1469, PR #2548), and Unit 4.2.3 (#1470, PR #2551). Together those units
+  satisfy the Plan 4.2 acceptance gate: receipts cover native draft heads,
+  target/draft compatibility, adaptive block policy, request gates, runtime
+  scope, and fallback reasons; operator overrides support `auto`, `off`, and
+  `force` while suppressing stale saved settings with visible receipts; and
+  native acceleration receipts render across health, CLI status, diagnostics,
+  and benchmark artifacts without emitting an optimistic success state before
+  receipt gates pass. Plan 4.3 continues promotion evidence, comparison
+  artifacts, Apple Silicon smoke probes, and default-on release gates.
 
 ## Verification Policy
 
