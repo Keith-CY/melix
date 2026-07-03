@@ -5,7 +5,6 @@ import os
 import re
 from collections.abc import Mapping
 from contextlib import contextmanager
-from copy import deepcopy
 from dataclasses import dataclass, replace
 from errno import EPERM
 from pathlib import Path
@@ -947,8 +946,10 @@ def _copy_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
 def _project_local_job_session_followup_claim(
     claim: LocalJobContinuationFollowupClaim,
 ) -> LocalJobSessionFollowupProjection:
-    prompt_user_payload = deepcopy(claim.prompt_context.user_payload)
-    receipts = deepcopy(claim.prompt_context.untrusted_context_receipts)
+    prompt_user_payload = _copy_prompt_user_payload(claim.prompt_context.user_payload)
+    receipts = _copy_untrusted_context_receipts(
+        claim.prompt_context.untrusted_context_receipts
+    )
     followup_message: dict[str, Any] | None = None
     if prompt_user_payload:
         followup_message = {
@@ -958,11 +959,34 @@ def _project_local_job_session_followup_claim(
         }
     return LocalJobSessionFollowupProjection(
         claim=claim,
-        claim_receipt=deepcopy(claim.reconciliation.receipt),
+        claim_receipt=_copy_receipt(claim.reconciliation.receipt),
         prompt_user_payload=prompt_user_payload,
         untrusted_context_receipts=receipts,
         followup_message=followup_message,
     )
+
+
+def _copy_prompt_user_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: _copy_json_like_value(value) for key, value in payload.items()}
+
+
+def _copy_untrusted_context_receipts(
+    receipts: Sequence[dict[str, object]],
+) -> list[dict[str, object]]:
+    return [
+        {key: _copy_json_like_value(value) for key, value in receipt.items()}
+        for receipt in receipts
+    ]
+
+
+def _copy_json_like_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _copy_json_like_value(nested) for key, nested in value.items()}
+    if isinstance(value, list):
+        return [_copy_json_like_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_copy_json_like_value(item) for item in value)
+    return value
 
 
 def _claim_input_mapping_or_error(
