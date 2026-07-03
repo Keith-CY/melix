@@ -80,3 +80,16 @@ single-scan runtime discovery behavior.
 The behavior contract remains unchanged: exact, prefix/suffix, empty-prefix, and
 multi-wildcard runtime pattern matches still select the newest regular file per
 source, and configured sources still bypass runtime scanning.
+
+## 2026-07-03 follow-up slice: index-backed latest tracking
+
+This Python-only follow-up keeps the same registered
+`melix-metrics-snapshot-runtime-scandir` probe and remains scoped to
+`discover_latest_metrics_paths(...)`. The scan precomputes source indexes for
+exact, prefix/suffix, and wildcard matchers, then tracks latest paths and mtimes
+in fixed-size lists instead of per-source dictionaries on the hot update path.
+
+The behavior contract remains unchanged: the returned mapping is still keyed by
+source name, overlapping source matches still receive the newest matching file,
+configured sources still bypass runtime scanning, and missing runtime directories
+still return unresolved source paths without raising.
