@@ -282,13 +282,14 @@ def _detect_executable_model_files(model_spec: common_pb2.ModelSpec) -> tuple[st
         scan_path: str | os.PathLike[str] = Path(model_path).expanduser()
     else:
         scan_path = model_path
+    is_executable_model_file_entry = _is_executable_model_file_entry
     try:
         with os.scandir(scan_path) as entries:
             return tuple(
                 sorted(
                     entry.name
                     for entry in entries
-                    if _is_executable_model_file_entry(entry)
+                    if is_executable_model_file_entry(entry)
                 )
             )
     except OSError:
