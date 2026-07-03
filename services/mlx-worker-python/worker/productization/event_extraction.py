@@ -1786,13 +1786,10 @@ def _event_field_cache_key(value: object) -> tuple[str, ...]:
         return ()
     if not isinstance(value, list):
         raise ValueError("event field values must be null or a list of strings")
-    values: list[str] = []
-    values_append = values.append
     for item in value:
         if not isinstance(item, str):
             raise ValueError("event field values must be null or a list of strings")
-        values_append(item)
-    return tuple(values)
+    return tuple(value)
 
 
 @lru_cache(maxsize=1024)
