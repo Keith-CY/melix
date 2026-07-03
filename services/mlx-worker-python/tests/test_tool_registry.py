@@ -338,11 +338,13 @@ def test_append_selected_tool_skips_strip_for_canonical_names() -> None:
 
     selected_names: list[str] = []
     selected_sources: dict[str, str] = {}
+    selected_tools: list[dict[str, str]] = []
     canonical_name = StripCountingName("text_search")
 
     assert tool_registry_module._append_selected_tool(
         selected_names,
         selected_sources,
+        selected_tools,
         canonical_name,
         "keyword",
         4,
@@ -351,11 +353,13 @@ def test_append_selected_tool_skips_strip_for_canonical_names() -> None:
     assert StripCountingName.strip_calls == 0
     assert selected_names == ["text_search"]
     assert selected_sources == {"text_search": "keyword"}
+    assert selected_tools == [{"tool_id": "text_search", "source": "keyword"}]
 
     whitespace_name = StripCountingName("  visit  ")
     assert tool_registry_module._append_selected_tool(
         selected_names,
         selected_sources,
+        selected_tools,
         whitespace_name,
         "keyword",
         4,
@@ -363,15 +367,24 @@ def test_append_selected_tool_skips_strip_for_canonical_names() -> None:
     assert StripCountingName.strip_calls == 1
     assert selected_names == ["text_search", "visit"]
     assert selected_sources["visit"] == "keyword"
+    assert selected_tools == [
+        {"tool_id": "text_search", "source": "keyword"},
+        {"tool_id": "visit", "source": "keyword"},
+    ]
 
     assert not tool_registry_module._append_selected_tool(
         selected_names,
         selected_sources,
+        selected_tools,
         StripCountingName("   "),
         "keyword",
         4,
     )
     assert StripCountingName.strip_calls == 2
+    assert selected_tools == [
+        {"tool_id": "text_search", "source": "keyword"},
+        {"tool_id": "visit", "source": "keyword"},
+    ]
 
 
 def test_tool_registry_select_reuses_cached_name_index() -> None:

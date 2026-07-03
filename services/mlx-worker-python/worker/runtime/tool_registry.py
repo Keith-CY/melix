@@ -511,6 +511,7 @@ def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> co
 def _append_selected_tool(
     selected_names: list[str],
     selected_sources: dict[str, str],
+    selected_tools: list[dict[str, str]],
     tool_name: str,
     source: str,
     max_selected_tools: int,
@@ -529,6 +530,7 @@ def _append_selected_tool(
         return False
     selected_sources[normalized_name] = source
     selected_names.append(normalized_name)
+    selected_tools.append({"tool_id": normalized_name, "source": source})
     return True
 
 
@@ -546,12 +548,20 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
         return _build_always_only_tool_selection_result(registry, selection_input)
     selected_sources: dict[str, str] = {}
     selected_names: list[str] = []
+    selected_tools: list[dict[str, str]] = []
     append_selected_tool = _append_selected_tool
     has_vector_selection = False
     has_keyword_selection = False
 
     for tool_name in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES:
-        append_selected_tool(selected_names, selected_sources, tool_name, "always", max_selected_tools)
+        append_selected_tool(
+            selected_names,
+            selected_sources,
+            selected_tools,
+            tool_name,
+            "always",
+            max_selected_tools,
+        )
 
     selection_mode = "fallback"
     fallback_reason = "no_keyword_match"
@@ -559,7 +569,7 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
         return _build_tool_selection_result(
             registry,
             selected_names,
-            selected_sources,
+            selected_tools,
             selection_input,
             selection_mode,
             fallback_reason,
@@ -570,6 +580,7 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
             if append_selected_tool(
                 selected_names,
                 selected_sources,
+                selected_tools,
                 tool_name,
                 "vector",
                 max_selected_tools,
@@ -579,7 +590,7 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
             return _build_tool_selection_result(
                 registry,
                 selected_names,
-                selected_sources,
+                selected_tools,
                 selection_input,
                 "vector",
                 "",
@@ -591,6 +602,7 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
             if append_selected_tool(
                 selected_names,
                 selected_sources,
+                selected_tools,
                 tool_name,
                 "keyword",
                 max_selected_tools,
@@ -604,6 +616,7 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
                 if append_selected_tool(
                     selected_names,
                     selected_sources,
+                    selected_tools,
                     tool_name,
                     "keyword_context",
                     max_selected_tools,
@@ -616,7 +629,7 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
     return _build_tool_selection_result(
         registry,
         selected_names,
-        selected_sources,
+        selected_tools,
         selection_input,
         selection_mode,
         fallback_reason,
@@ -656,7 +669,7 @@ def _build_always_only_tool_selection_result(
 def _build_tool_selection_result(
     registry: ToolRegistry,
     selected_names: list[str],
-    selected_sources: dict[str, str],
+    selected_tools: list[dict[str, str]],
     selection_input: ToolSelectionInput,
     selection_mode: str,
     fallback_reason: str,
@@ -664,13 +677,8 @@ def _build_tool_selection_result(
     if len(selected_names) == 1:
         selected_name = selected_names[0]
         selected_registry = registry.select((selected_name,))
-        selected_tools = [{"tool_id": selected_name, "source": selected_sources[selected_name]}]
     else:
         selected_registry = registry.select(tuple(selected_names))
-        selected_tools = [
-            {"tool_id": tool_name, "source": selected_sources[tool_name]}
-            for tool_name in selected_names
-        ]
     registry_metrics = registry.metrics()
     selected_metrics = selected_registry.metrics()
     selected_tool_count = selected_metrics.tool_count
