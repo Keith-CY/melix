@@ -5228,7 +5228,8 @@ class MaintenanceCore:
             return ()
         if not values:
             return tuple(0.0 for _ in percentiles)
-        ordered = sorted(values)
+        ordered = values.copy()
+        ordered.sort()
         return tuple(MaintenanceCore._ordered_percentile(ordered, percentile) for percentile in percentiles)
 
     @staticmethod
@@ -5243,12 +5244,11 @@ class MaintenanceCore:
         else:
             clamped_percentile = percentile
         rank = (ordered_count - 1) * clamped_percentile / 100.0
-        lower_index = math.floor(rank)
-        upper_index = math.ceil(rank)
+        lower_index = int(rank)
         lower_value = ordered[lower_index]
-        upper_value = ordered[upper_index]
-        if lower_index == upper_index:
+        if rank == lower_index:
             return round(lower_value, 2)
+        upper_value = ordered[lower_index + 1]
         weight = rank - lower_index
         return round(lower_value + (upper_value - lower_value) * weight, 2)
 
