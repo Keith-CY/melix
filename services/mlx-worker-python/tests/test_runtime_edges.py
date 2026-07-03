@@ -1022,6 +1022,32 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     registry.record_vision_probe(
         "ocr",
         SimpleNamespace(
+            speculative_probe_receipt={
+                "enabled": "true",
+                "status": "admitted",
+                "mode": "speculative_decode",
+                "draft_supported": "1",
+                "position_aligned": "yes",
+                "cache_aligned": "0",
+                "output_mutation_allowed": "on",
+                "draft_loaded": "0",
+                "target_decode_started": "False",
+                "sampling_matches_baseline": "no",
+            },
+        ),
+    )
+    string_bool_stats = registry.runtime_stats()
+    assert string_bool_stats.speculative_probe_enabled_count == 1
+    assert string_bool_stats.speculative_probe_position_aligned_count == 1
+    assert string_bool_stats.speculative_probe_cache_aligned_count == 0
+    assert string_bool_stats.speculative_probe_runtime_active is False
+    assert string_bool_stats.speculative_probe_draft_supported is True
+    assert string_bool_stats.speculative_probe_autoregressive_fallback is True
+    assert string_bool_stats.speculative_probe_sampling_matches_baseline is False
+
+    registry.record_vision_probe(
+        "ocr",
+        SimpleNamespace(
             media_feature_cache_hits=-1,
             media_feature_cache_misses=None,
             media_feature_encoder_calls_saved=-1,

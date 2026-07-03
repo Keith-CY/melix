@@ -122,6 +122,12 @@ def _non_negative_float(value: object) -> float:
     return max(0.0, parsed)
 
 
+def _parse_bool(value: object) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> int:
     value = getattr(probe, primary_key, None)
     if value is None or value == -1:
@@ -1391,14 +1397,14 @@ class WorkerRegistry:
             speculative_probe_receipt = getattr(probe, "speculative_probe_receipt", {})
             if not isinstance(speculative_probe_receipt, Mapping):
                 speculative_probe_receipt = {}
-            speculative_probe_enabled = bool(speculative_probe_receipt.get("enabled", False))
+            speculative_probe_enabled = _parse_bool(speculative_probe_receipt.get("enabled", False))
             speculative_probe_fallback = (
                 str(speculative_probe_receipt.get("status", "") or "") == "fallback"
             )
-            speculative_probe_position_aligned = bool(
+            speculative_probe_position_aligned = _parse_bool(
                 speculative_probe_receipt.get("position_aligned", False)
             )
-            speculative_probe_cache_aligned = bool(
+            speculative_probe_cache_aligned = _parse_bool(
                 speculative_probe_receipt.get("cache_aligned", False)
             )
             speculative_probe_status = str(speculative_probe_receipt.get("status", "") or "")
@@ -1412,7 +1418,7 @@ class WorkerRegistry:
             speculative_probe_runtime_scope = str(
                 speculative_probe_receipt.get("runtime_scope", "") or ""
             )
-            speculative_probe_draft_supported = bool(
+            speculative_probe_draft_supported = _parse_bool(
                 speculative_probe_receipt.get("draft_supported", False)
             )
             speculative_probe_runtime_active = bool(
@@ -1420,9 +1426,9 @@ class WorkerRegistry:
                 and speculative_probe_status == "admitted"
                 and speculative_probe_mode == "speculative_decode"
                 and speculative_probe_draft_supported
-                and speculative_probe_receipt.get("output_mutation_allowed", False)
-                and speculative_probe_receipt.get("draft_loaded", False)
-                and speculative_probe_receipt.get("target_decode_started", False)
+                and _parse_bool(speculative_probe_receipt.get("output_mutation_allowed", False))
+                and _parse_bool(speculative_probe_receipt.get("draft_loaded", False))
+                and _parse_bool(speculative_probe_receipt.get("target_decode_started", False))
             )
             speculative_probe_autoregressive_fallback = bool(
                 speculative_probe_enabled and not speculative_probe_runtime_active
@@ -1448,7 +1454,7 @@ class WorkerRegistry:
                 _non_negative_float(speculative_probe_receipt.get("draft_propose_ms", 0.0)),
                 _non_negative_float(speculative_probe_receipt.get("target_verify_ms", 0.0)),
                 speculative_probe_autoregressive_fallback,
-                bool(speculative_probe_receipt.get("sampling_matches_baseline", False)),
+                _parse_bool(speculative_probe_receipt.get("sampling_matches_baseline", False)),
             )
             self._text_batch_generator_submitted_request_count = int(
                 getattr(probe, "text_batch_generator_submitted_request_count", 0)
