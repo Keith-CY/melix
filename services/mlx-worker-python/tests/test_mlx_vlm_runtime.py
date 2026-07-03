@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import builtins
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
 import sys
+from threading import Barrier
+from threading import BrokenBarrierError
 from threading import Event
 from threading import get_ident
+from threading import Lock
 import time
 from types import ModuleType, SimpleNamespace
 
@@ -7316,6 +7320,406 @@ def test_mlx_vlm_runtime_falls_back_when_mtp_drafter_api_is_unavailable_and_fall
     assert events[-1].speculative_fallback_count == 1
     assert events[-1].speculative_num_draft_tokens == 0
     assert events[-1].speculative_draft_model_configured is False
+
+
+def test_mlx_vlm_runtime_media_speculative_probe_preserves_single_request_outputs() -> None:
+    def run_request(*, speculative_probe: bool):
+        stream_calls: list[dict[str, object]] = []
+        drafter_loads: list[str] = []
+
+        def fake_load(model_path: str, revision: str = "main"):
+            _ = model_path
+            _ = revision
+            model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"), vision_tower=object())
+            processor = SimpleNamespace(image_processor=object())
+            return model, processor
+
+        def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+            _ = model
+            _ = processor
+            stream_calls.append(
+                {
+                    "prompt": prompt,
+                    "image_count": len(image or []),
+                    "max_tokens": kwargs.get("max_tokens"),
+                    "temperature": kwargs.get("temperature"),
+                    "top_p": kwargs.get("top_p"),
+                    "top_k": kwargs.get("top_k"),
+                }
+            )
+            yield SimpleNamespace(
+                text="baseline ",
+                prompt_tokens=9,
+                generation_tokens=1,
+                token_ids=[101],
+                token_logprobs=[-0.1],
+                token_bytes=b"baseline ",
+            )
+            yield SimpleNamespace(
+                text="image",
+                prompt_tokens=9,
+                generation_tokens=2,
+                token_ids=[102],
+                token_logprobs=[-0.2],
+                token_bytes=b"image",
+            )
+
+        runtime = MLXVLMRuntime(
+            backend=AutoMLXVLMBackend(
+                load_fn=fake_load,
+                stream_generate_fn=fake_stream_generate,
+                apply_chat_template_fn=(
+                    lambda processor, config, prompt, num_images=0: f"formatted:{num_images}:{prompt}"
+                ),
+                load_drafter_fn=lambda model_id, *, kind="mtp": drafter_loads.append(model_id) or object(),
+                batch_generate_fn=lambda *args, **kwargs: [SimpleNamespace(text="unexpected")],
+            )
+        )
+        loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+        prepared = runtime.render_prompt(
+            [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[
+                        common_pb2.MessagePart(text="Describe this image."),
+                        common_pb2.MessagePart(
+                            image_bytes=b"fake-image-payload",
+                            media=common_pb2.MediaMetadata(
+                                media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                                filename="sample.jpg",
+                            ),
+                        ),
+                    ],
+                )
+            ],
+            loaded_model=loaded_model,
+        )
+        acceleration_policy = (
+            common_pb2.AccelerationPolicy(
+                mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                draft_model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
+                num_draft_tokens=6,
+                allow_baseline_fallback=True,
+            )
+            if speculative_probe
+            else None
+        )
+        events = list(
+            runtime.generate_tokens(
+                loaded_model,
+                prepared,
+                common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
+                Event(),
+                execution_ext=(
+                    {"melix.vlm.speculative_probe.enabled": "true"} if speculative_probe else None
+                ),
+                acceleration_policy=acceleration_policy,
+            )
+        )
+        event_trace = [
+            (
+                event.text,
+                event.raw_text,
+                event.prompt_tokens,
+                event.completion_tokens,
+                event.token_ids,
+                event.token_logprobs,
+                event.token_bytes,
+                event.finish_reason,
+            )
+            for event in events
+        ]
+        return event_trace, stream_calls, drafter_loads, runtime.last_probe_snapshot().speculative_probe_receipt, events
+
+    baseline_trace, baseline_stream_calls, baseline_drafter_loads, _, _ = run_request(
+        speculative_probe=False
+    )
+    speculative_trace, speculative_stream_calls, speculative_drafter_loads, receipt, speculative_events = (
+        run_request(speculative_probe=True)
+    )
+
+    assert speculative_trace == baseline_trace
+    assert speculative_stream_calls == baseline_stream_calls
+    assert baseline_stream_calls == [
+        {
+            "prompt": "formatted:1:Describe this image.",
+            "image_count": 1,
+            "max_tokens": 16,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": 0,
+        }
+    ]
+    assert baseline_drafter_loads == []
+    assert speculative_drafter_loads == []
+    assert speculative_events[-1].speculative_fallback_count == 1
+    assert speculative_events[-1].speculative_num_draft_tokens == 0
+    assert speculative_events[-1].speculative_draft_model_configured is False
+    assert receipt["status"] == "fallback"
+    assert receipt["mode"] == "verification_only"
+    assert receipt["fallback_reason"] == "media inputs are not supported by the Gemma 4 MTP path yet"
+    assert receipt["media_present"] is True
+    assert receipt["image_count"] == 1
+    assert receipt["draft_loaded"] is False
+    assert receipt["target_decode_started"] is False
+    assert receipt["sampling_matches_baseline"] is True
+
+
+def test_mlx_vlm_runtime_concurrent_media_speculative_fallbacks_do_not_share_drafter_state() -> None:
+    stream_barrier = Barrier(4, timeout=10.0)
+    stream_lock = Lock()
+    stream_calls: list[str] = []
+    drafter_loads: list[str] = []
+    active_streams = 0
+    max_parallel_streams = 0
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"), vision_tower=object())
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        _ = image
+        _ = kwargs
+        nonlocal active_streams, max_parallel_streams
+        with stream_lock:
+            stream_calls.append(prompt)
+            active_streams += 1
+            max_parallel_streams = max(max_parallel_streams, active_streams)
+        try:
+            stream_barrier.wait()
+        except BrokenBarrierError as exc:  # pragma: no cover - failure path
+            raise AssertionError("concurrent media fallback requests serialized before stream generation") from exc
+        finally:
+            with stream_lock:
+                active_streams -= 1
+        yield SimpleNamespace(text=f"baseline::{prompt}", prompt_tokens=9, generation_tokens=1)
+
+    def fake_load_drafter(model_id: str, *, kind: str = "mtp"):
+        _ = kind
+        with stream_lock:
+            drafter_loads.append(model_id)
+        return object()
+
+    backend = AutoMLXVLMBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        apply_chat_template_fn=lambda processor, config, prompt, num_images=0: f"formatted:{num_images}:{prompt}",
+        load_drafter_fn=fake_load_drafter,
+        batch_generate_fn=lambda *args, **kwargs: [SimpleNamespace(text="unexpected")],
+    )
+
+    def run_request(index: int):
+        runtime = MLXVLMRuntime(backend=backend)
+        loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+        prepared = runtime.render_prompt(
+            [
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[
+                        common_pb2.MessagePart(text=f"Describe image {index}."),
+                        common_pb2.MessagePart(
+                            image_bytes=f"fake-image-payload-{index}".encode("utf-8"),
+                            media=common_pb2.MediaMetadata(
+                                media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                                filename=f"sample-{index}.jpg",
+                            ),
+                        ),
+                    ],
+                )
+            ],
+            loaded_model=loaded_model,
+        )
+        events = list(
+            runtime.generate_tokens(
+                loaded_model,
+                prepared,
+                common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
+                Event(),
+                execution_ext={"melix.vlm.speculative_probe.enabled": "enabled"},
+                acceleration_policy=common_pb2.AccelerationPolicy(
+                    mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                    draft_model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
+                    num_draft_tokens=6,
+                    allow_baseline_fallback=True,
+                ),
+            )
+        )
+        return index, [event.text for event in events], runtime.last_probe_snapshot().speculative_probe_receipt
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(run_request, range(4)))
+
+    assert drafter_loads == []
+    assert max_parallel_streams == 4
+    assert sorted(stream_calls) == [
+        "formatted:1:Describe image 0.",
+        "formatted:1:Describe image 1.",
+        "formatted:1:Describe image 2.",
+        "formatted:1:Describe image 3.",
+    ]
+    for index, texts, receipt in results:
+        assert texts == [f"baseline::formatted:1:Describe image {index}."]
+        assert receipt["status"] == "fallback"
+        assert receipt["mode"] == "verification_only"
+        assert receipt["fallback_reason"] == "media inputs are not supported by the Gemma 4 MTP path yet"
+        assert receipt["draft_loaded"] is False
+        assert receipt["target_decode_started"] is False
+        assert receipt["sampling_matches_baseline"] is True
+
+
+@pytest.mark.parametrize(
+    (
+        "case_name",
+        "model_type",
+        "family_id",
+        "sampling",
+        "acceleration_policy",
+        "expected_reason",
+        "sampling_matches_baseline",
+    ),
+    [
+        (
+            "unsupported_family",
+            "llava",
+            "llava-v1",
+            common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
+            common_pb2.AccelerationPolicy(
+                mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                draft_model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
+                num_draft_tokens=6,
+                allow_baseline_fallback=True,
+            ),
+            "target model is not Gemma 4",
+            True,
+        ),
+        (
+            "missing_draft",
+            "gemma4",
+            "gemma4-v1",
+            common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
+            common_pb2.AccelerationPolicy(
+                mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                allow_baseline_fallback=True,
+            ),
+            "draft_model_id is required",
+            True,
+        ),
+        (
+            "non_deterministic_sampling",
+            "gemma4",
+            "gemma4-v1",
+            common_pb2.SamplingConfig(temperature=0.7, top_p=0.95, top_k=40, max_output_tokens=16),
+            common_pb2.AccelerationPolicy(
+                mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                draft_model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
+                num_draft_tokens=6,
+                allow_baseline_fallback=True,
+            ),
+            "only greedy sampling is supported",
+            False,
+        ),
+    ],
+)
+def test_mlx_vlm_runtime_speculative_gate_fallbacks_preserve_prompt_only_baseline_outputs(
+    case_name: str,
+    model_type: str,
+    family_id: str,
+    sampling: common_pb2.SamplingConfig,
+    acceleration_policy: common_pb2.AccelerationPolicy,
+    expected_reason: str,
+    sampling_matches_baseline: bool,
+) -> None:
+    def run_request(*, speculative: bool):
+        stream_calls: list[str] = []
+        drafter_loads: list[str] = []
+
+        def fake_load(model_path: str, revision: str = "main"):
+            _ = model_path
+            _ = revision
+            return SimpleNamespace(config=SimpleNamespace(model_type=model_type)), SimpleNamespace()
+
+        def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+            _ = model
+            _ = processor
+            _ = image
+            _ = kwargs
+            stream_calls.append(prompt)
+            yield SimpleNamespace(
+                text=f"{case_name} baseline",
+                prompt_tokens=5,
+                generation_tokens=1,
+                token_ids=[201],
+                token_logprobs=[-0.3],
+                token_bytes=case_name.encode("utf-8"),
+            )
+
+        runtime = MLXVLMRuntime(
+            backend=AutoMLXVLMBackend(
+                load_fn=fake_load,
+                stream_generate_fn=fake_stream_generate,
+                apply_chat_template_fn=lambda processor, config, prompt, num_images=0: f"formatted::{prompt}",
+                load_drafter_fn=lambda model_id, *, kind="mtp": drafter_loads.append(model_id) or object(),
+                batch_generate_fn=lambda *args, **kwargs: [SimpleNamespace(text="unexpected")],
+            )
+        )
+        model_spec = imported_gemma4_vlm_model()
+        model_spec.ext["vision_family_id"] = family_id
+        loaded_model = runtime.load_model(model_spec)
+        prepared = runtime.render_prompt(
+            [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
+            loaded_model=loaded_model,
+        )
+        events = list(
+            runtime.generate_tokens(
+                loaded_model,
+                prepared,
+                sampling,
+                Event(),
+                execution_ext={"melix.vlm.speculative_probe.enabled": "yes"} if speculative else None,
+                acceleration_policy=acceleration_policy if speculative else None,
+            )
+        )
+        event_trace = [
+            (
+                event.text,
+                event.raw_text,
+                event.prompt_tokens,
+                event.completion_tokens,
+                event.token_ids,
+                event.token_logprobs,
+                event.token_bytes,
+                event.finish_reason,
+            )
+            for event in events
+        ]
+        return event_trace, stream_calls, drafter_loads, runtime.last_probe_snapshot().speculative_probe_receipt, events
+
+    baseline_trace, baseline_stream_calls, baseline_drafter_loads, _, _ = run_request(speculative=False)
+    speculative_trace, speculative_stream_calls, speculative_drafter_loads, receipt, speculative_events = (
+        run_request(speculative=True)
+    )
+
+    assert speculative_trace == baseline_trace
+    assert speculative_stream_calls == baseline_stream_calls == ["formatted::Say hello."]
+    assert baseline_drafter_loads == []
+    assert speculative_drafter_loads == []
+    assert speculative_events[-1].speculative_fallback_count == 1
+    assert speculative_events[-1].speculative_num_draft_tokens == 0
+    assert speculative_events[-1].speculative_draft_model_configured is False
+    assert receipt["status"] == "fallback"
+    assert receipt["mode"] == "verification_only"
+    assert receipt["fallback_reason"] == expected_reason
+    assert receipt["media_present"] is False
+    assert receipt["draft_loaded"] is False
+    assert receipt["target_decode_started"] is False
+    assert receipt["sampling_matches_baseline"] is sampling_matches_baseline
 
 
 def test_mlx_vlm_runtime_stops_mtp_path_when_cancelled_before_backend_work() -> None:

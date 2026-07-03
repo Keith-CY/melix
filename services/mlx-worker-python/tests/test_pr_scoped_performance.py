@@ -1982,8 +1982,20 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
         "mlx-vlm-gemma4-weight-presence-single-pass",
         "quantized-tensor-metadata-prepass",
     ]
+    required_parity_tests = (
+        "test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_fallback",
+        "test_mlx_vlm_runtime_media_speculative_probe_preserves_single_request_outputs",
+        "test_mlx_vlm_runtime_concurrent_media_speculative_fallbacks_do_not_share_drafter_state",
+        "test_mlx_vlm_runtime_speculative_gate_fallbacks_preserve_prompt_only_baseline_outputs",
+    )
+    for probe in scope["selected_probes"]:
+        test_command = str(probe["test_command"])
+        coverage_command = str(probe["coverage_command"])
+        for test_name in required_parity_tests:
+            assert test_name in test_command
+            assert test_name in coverage_command
+
     coverage_commands = " ".join(str(probe["coverage_command"]) for probe in scope["selected_probes"])
-    assert "test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_fallback" in coverage_commands
     assert "test_mlx_vlm_runtime_image_batch1_step_keeps_ineligible_requests_on_stream" in coverage_commands
     assert "test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available" in coverage_commands
     assert (
@@ -2180,6 +2192,15 @@ def test_scope_report_selects_multimodal_speculative_probe_receipt() -> None:
         "services/mlx-worker-python/worker/runtime/multimodal_speculative_probe.py"
     ]
     assert "test_mlx_vlm_runtime_records_verification_only_probe_before_speculative_refusal" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_media_speculative_probe_preserves_single_request_outputs" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_concurrent_media_speculative_fallbacks_do_not_share_drafter_state" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_speculative_gate_fallbacks_preserve_prompt_only_baseline_outputs" in str(
         probe["coverage_command"]
     )
     assert "test_mlx_vlm_runtime_restores_verification_only_probe_after_generation_exception" in str(

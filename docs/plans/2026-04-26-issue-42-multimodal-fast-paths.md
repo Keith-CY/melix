@@ -552,6 +552,18 @@ Executable unit issues:
   and the baseline parity flag so media-bearing speculative requests remain
   baseline-only until later parity units. Unit 4.1.3 owns full single-request
   and concurrent parity fixtures.
+- Unit 4.1.3 adds focused speculative parity fixtures for the Unit 4.1
+  verification scope. The single-request fixture compares a media-bearing
+  baseline run with a feature-gated speculative request and asserts the final
+  token stream, raw text, token metadata, media routing, and prompt formatting
+  remain identical while the speculative receipt records verification-only
+  fallback. The concurrent fixture runs four media-bearing speculative requests
+  against shared backend state, proves they all enter baseline stream generation
+  concurrently, and asserts no drafter load is shared or serialized for the
+  media fallback path. Prompt-only gate fixtures compare baseline and
+  speculative-fallback outputs for unsupported target family, missing draft
+  model, and non-greedy sampling requests while preserving the typed fallback
+  reason and sampling-parity receipt field.
 
 ## Verification Policy
 
