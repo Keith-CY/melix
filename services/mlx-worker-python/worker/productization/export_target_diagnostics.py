@@ -794,22 +794,27 @@ def _diagnoses_from_excerpt(
     diagnoses: list[dict[str, object]] = []
     seen_codes: set[str] = set()
     known_code_count = len(_KNOWN_DIAGNOSIS_CODE_SET)
+    diagnosis_patterns = _DIAGNOSIS_PATTERNS
+    has_diagnosis_marker = _has_diagnosis_marker
+    append_diagnosis = diagnoses.append
+    add_seen_code = seen_codes.add
     for index, line_number in line_numbers.items():
         if len(seen_codes) == known_code_count:
             break
         text = source_lines[index].text
         lowered_text = text.lower()
-        if not _has_diagnosis_marker(lowered_text):
+        if not has_diagnosis_marker(lowered_text):
             continue
-        for pattern in _DIAGNOSIS_PATTERNS:
-            if pattern.code in seen_codes:
+        for pattern in diagnosis_patterns:
+            code = pattern.code
+            if code in seen_codes:
                 continue
             if not pattern.matches(text, lowered_text):
                 continue
-            seen_codes.add(pattern.code)
-            diagnoses.append(
+            add_seen_code(code)
+            append_diagnosis(
                 {
-                    "code": pattern.code,
+                    "code": code,
                     "severity": pattern.severity,
                     "matched_pattern_id": pattern.pattern_id,
                     "operator_message": pattern.operator_message,
