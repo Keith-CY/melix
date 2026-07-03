@@ -4806,6 +4806,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: workerClient,
+                visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
             ),
@@ -4849,19 +4850,209 @@ struct RequestCoordinatorTests {
             } catch {}
         }
 
-        let generatedRequest = try #require(await workerClient.generatedRequests.last)
-
         #expect(translated.workerRequest.execution.ext["melix.gateway.acceleration_mode"] == "baseline")
         #expect(translated.workerRequest.execution.ext["melix.gateway.acceleration_profile"] == "balanced")
         #expect(translated.workerRequest.execution.ext["melix.gateway.max_concurrent_requests"] == "3")
         #expect(translated.workerRequest.execution.ext["melix.gateway.draft_model_id"] == nil)
         #expect(translated.workerRequest.execution.ext["melix.gateway.num_draft_tokens"] == "0")
+        let generatedRequest = try #require(await workerClient.generatedRequests.last)
         #expect(generatedRequest.execution.acceleration.mode == .baseline)
         #expect(generatedRequest.execution.acceleration.profileID == "balanced")
         #expect(generatedRequest.execution.acceleration.draftModelID.isEmpty)
         #expect(generatedRequest.execution.acceleration.numDraftTokens == 0)
 
         await workerClient.finish(requestID: "req-gateway-speculative-vlm-downgrade")
+        _ = await consumer.result
+    }
+
+    @Test("gateway speculative defaults preserve native VLM launch flags before worker dispatch")
+    func gatewaySpeculativeDefaultsPreserveNativeVLMLaunchFlagsBeforeWorkerDispatch() async throws {
+        for routePolicy in ["auto", "force"] {
+            let workerClient = PhaseAwareWorkerClient()
+            var vlmModel = nativeSpeculativeVLMModel()
+            vlmModel.state = .modelWarm
+            let catalog = ModelCatalog(seedModels: [vlmModel])
+            let coordinator = RequestCoordinator(
+                workerRegistry: WorkerRegistry(
+                    defaultTextClient: workerClient,
+                    visionClient: workerClient,
+                    pythonCompatibilityClient: workerClient,
+                    modelCatalog: catalog
+                ),
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            )
+
+            let gatewayDefaults = GatewayServingDefaultsPolicy(
+                temperature: nil,
+                topP: nil,
+                maxTokens: nil,
+                streamIntervalTokens: nil,
+                maxConcurrentRequests: 2,
+                concurrentProcessingEnabled: true,
+                prefillBatchSize: 2,
+                completionBatchSize: 2,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-vlm",
+                numDraftTokens: 4,
+                accelerationProfile: "throughput",
+                speculativeRoutePolicy: routePolicy
+            ).resolvingAccelerationCompatibility(for: vlmModel)
+            let requestID = "req-gateway-native-vlm-speculative-\(routePolicy)"
+            let translator = ChatRequestTranslator(
+                requestIDGenerator: { requestID }
+            )
+            let normalized = try translator.normalize(
+                OpenAIChatCompletionsRequest(
+                    model: "melix-dev-vlm",
+                    messages: [
+                        .init(
+                            role: "user",
+                            contentParts: [
+                                OpenAIMultimodalContentPart(
+                                    type: .text,
+                                    text: "Describe this image."
+                                ),
+                                OpenAIMultimodalContentPart(
+                                    type: .inputImage,
+                                    inputImage: OpenAIMultimodalImageReference(
+                                        data: "dmxtLWZpeHR1cmU=",
+                                        mimeType: "image/png"
+                                    )
+                                ),
+                            ]
+                        ),
+                    ]
+                )
+            )
+            let translated = try translator.translate(
+                normalized,
+                modelHandle: "melix-dev-vlm::python",
+                gatewayServingDefaults: gatewayDefaults
+            )
+
+            let execution = try await coordinator.startChatCompletion(translated)
+            let consumer = Task {
+                do {
+                    for try await _ in execution.stream {}
+                } catch {}
+            }
+
+            let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+            let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+            #expect(translated.workerRequest.execution.ext["melix.gateway.acceleration_mode"] == "speculative_decode")
+            #expect(translated.workerRequest.execution.ext["melix.gateway.draft_model_id"] == "melix-dev-vlm")
+            #expect(translated.workerRequest.execution.ext["melix.gateway.num_draft_tokens"] == "4")
+            #expect(translated.workerRequest.execution.ext["melix.gateway.speculative_route_policy"] == routePolicy)
+            #expect(translated.workerRequest.execution.ext["melix.gateway.effective_speculative_mode"] == "speculative_decode")
+            #expect(translated.workerRequest.execution.ext["melix.gateway.speculative.disabled_reason"] == nil)
+            #expect(prefillRequest.execution.acceleration.mode == .speculativeDecode)
+            #expect(prefillRequest.execution.acceleration.profileID == "throughput")
+            #expect(prefillRequest.execution.acceleration.draftModelID == "melix-dev-vlm")
+            #expect(prefillRequest.execution.acceleration.numDraftTokens == 4)
+            #expect(decodeRequest.execution.acceleration.mode == .speculativeDecode)
+            #expect(decodeRequest.execution.acceleration.profileID == "throughput")
+            #expect(decodeRequest.execution.acceleration.draftModelID == "melix-dev-vlm")
+            #expect(decodeRequest.execution.acceleration.numDraftTokens == 4)
+
+            await workerClient.finishDecode(requestID: requestID)
+            _ = await consumer.result
+        }
+    }
+
+    @Test("gateway speculative off policy emits zero native VLM launch flags before worker dispatch")
+    func gatewaySpeculativeOffPolicyEmitsZeroNativeVLMLaunchFlagsBeforeWorkerDispatch() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var vlmModel = nativeSpeculativeVLMModel()
+        vlmModel.state = .modelWarm
+        let catalog = ModelCatalog(seedModels: [vlmModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: workerClient,
+                visionClient: workerClient,
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let gatewayDefaults = GatewayServingDefaultsPolicy(
+            temperature: nil,
+            topP: nil,
+            maxTokens: nil,
+            streamIntervalTokens: nil,
+            maxConcurrentRequests: 2,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 2,
+            completionBatchSize: 2,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-vlm",
+            numDraftTokens: 4,
+            accelerationProfile: "throughput",
+            speculativeRoutePolicy: "off"
+        ).resolvingAccelerationCompatibility(for: vlmModel)
+        let translator = ChatRequestTranslator(
+            requestIDGenerator: { "req-gateway-native-vlm-speculative-off" }
+        )
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-vlm",
+                messages: [
+                    .init(
+                        role: "user",
+                        contentParts: [
+                            OpenAIMultimodalContentPart(
+                                type: .text,
+                                text: "Describe this image."
+                            ),
+                            OpenAIMultimodalContentPart(
+                                type: .inputImage,
+                                inputImage: OpenAIMultimodalImageReference(
+                                    data: "dmxtLWZpeHR1cmU=",
+                                    mimeType: "image/png"
+                                )
+                            ),
+                        ]
+                    ),
+                ]
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-vlm::python",
+            gatewayServingDefaults: gatewayDefaults
+        )
+
+        let execution = try await coordinator.startChatCompletion(translated)
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(translated.workerRequest.execution.ext["melix.gateway.acceleration_mode"] == "baseline")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.acceleration_profile"] == "balanced")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.draft_model_id"] == nil)
+        #expect(translated.workerRequest.execution.ext["melix.gateway.num_draft_tokens"] == "0")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.speculative_route_policy"] == "off")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.effective_speculative_mode"] == "baseline")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.speculative.disabled_reason"] == "operator_disabled")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.suppressed_overrides"] == "speculative_decode")
+        #expect(prefillRequest.execution.acceleration.mode == .baseline)
+        #expect(prefillRequest.execution.acceleration.profileID == "balanced")
+        #expect(prefillRequest.execution.acceleration.draftModelID.isEmpty)
+        #expect(prefillRequest.execution.acceleration.numDraftTokens == 0)
+        #expect(decodeRequest.execution.acceleration.mode == .baseline)
+        #expect(decodeRequest.execution.acceleration.profileID == "balanced")
+        #expect(decodeRequest.execution.acceleration.draftModelID.isEmpty)
+        #expect(decodeRequest.execution.acceleration.numDraftTokens == 0)
+
+        await workerClient.finishDecode(requestID: "req-gateway-native-vlm-speculative-off")
         _ = await consumer.result
     }
 
@@ -6317,6 +6508,20 @@ private func makeWorkerVideoMessage(
 
     message.parts = [textPart, videoPart]
     return message
+}
+
+private func nativeSpeculativeVLMModel() -> Melix_Controlplane_V1_ModelSummary {
+    var model = ModelCatalog.devVLMModel()
+    model.settings.defaultAccelerationMode = .unspecified
+    model.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+    model.settings.ext["melix.acceleration.valid_draft_model_ids"] = model.modelID
+    model.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+    model.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+    model.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+    model.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+    model.settings.ext["melix.native_mtp.active"] = "true"
+    model.settings.ext["melix.native_mtp.depth"] = "4"
+    return model
 }
 
 private func makeCoordinatorTextModel(

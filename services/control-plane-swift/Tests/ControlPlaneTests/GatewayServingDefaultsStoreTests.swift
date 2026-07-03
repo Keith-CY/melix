@@ -565,6 +565,193 @@ struct GatewayServingDefaultsStoreTests {
         #expect(session.effectiveMultimodalRoute == "python_vlm")
     }
 
+    @Test("compatibility recognizes text and native multimodal draft metadata")
+    func compatibilityRecognizesTextAndNativeMultimodalDraftMetadata() {
+        let policy = Self.speculativeDefaultsPolicy()
+
+        var swiftText = ModelCatalog.devTextModel()
+        swiftText.routeClass = .workerRouteSwiftText
+        let swiftTextResolved = policy.resolvingAccelerationCompatibility(for: swiftText)
+        #expect(swiftTextResolved.accelerationMode == .speculativeDecode)
+        #expect(swiftTextResolved.overrideReceiptExt["melix.gateway.speculative.disabled_reason"] == nil)
+
+        var unknownRoute = ModelCatalog.devTextModel()
+        unknownRoute.routeClass = .unspecified
+        unknownRoute.settings.ext.removeAll()
+        let unknownRouteResolved = policy.resolvingAccelerationCompatibility(for: unknownRoute)
+        #expect(unknownRouteResolved.accelerationMode == .baseline)
+        #expect(unknownRouteResolved.overrideReceiptExt["melix.gateway.speculative.disabled_reason"] == "unsupported_route")
+
+        var capabilityVLM = ModelCatalog.devVLMModel()
+        capabilityVLM.routeClass = .unspecified
+        capabilityVLM.settings.ext.removeAll()
+        capabilityVLM.settings.ext["melix.native_mtp.weights_present"] = "enabled"
+        let capabilityVLMResolved = policy.resolvingAccelerationCompatibility(for: capabilityVLM)
+        #expect(capabilityVLMResolved.accelerationMode == .speculativeDecode)
+        #expect(capabilityVLMResolved.overrideReceiptExt["melix.gateway.speculative.disabled_reason"] == nil)
+
+        var routeMetadataVLM = ModelCatalog.devTextModel()
+        routeMetadataVLM.capabilityClass = .unspecified
+        routeMetadataVLM.routeClass = .unspecified
+        routeMetadataVLM.settings.ext.removeAll()
+        routeMetadataVLM.settings.ext["melix.capability.route_kind"] = "python_vlm"
+        routeMetadataVLM.settings.ext["melix.native_mtp.weight_count"] = "2"
+        let routeMetadataResolved = policy.resolvingAccelerationCompatibility(for: routeMetadataVLM)
+        #expect(routeMetadataResolved.accelerationMode == .speculativeDecode)
+        #expect(routeMetadataResolved.overrideReceiptExt["melix.gateway.speculative.disabled_reason"] == nil)
+
+        var capabilityMetadataVLM = ModelCatalog.devTextModel()
+        capabilityMetadataVLM.capabilityClass = .unspecified
+        capabilityMetadataVLM.routeClass = .unspecified
+        capabilityMetadataVLM.settings.ext.removeAll()
+        capabilityMetadataVLM.settings.ext["melix.capability.class"] = "vlm"
+        capabilityMetadataVLM.settings.ext["melix.speculative_head.artifact_available"] = "true"
+        capabilityMetadataVLM.settings.ext["melix.speculative_head.configured"] = "yes"
+        let capabilityMetadataResolved = policy.resolvingAccelerationCompatibility(for: capabilityMetadataVLM)
+        #expect(capabilityMetadataResolved.accelerationMode == .speculativeDecode)
+        #expect(capabilityMetadataResolved.overrideReceiptExt["melix.gateway.speculative.disabled_reason"] == nil)
+
+        var speculativeHeadRuntimeVLM = ModelCatalog.devVLMModel()
+        speculativeHeadRuntimeVLM.routeClass = .unspecified
+        speculativeHeadRuntimeVLM.settings.ext.removeAll()
+        speculativeHeadRuntimeVLM.settings.ext["melix.speculative_head.artifact_available"] = "true"
+        speculativeHeadRuntimeVLM.settings.ext["melix.speculative_head.runtime_available"] = "on"
+        let speculativeHeadRuntimeResolved = policy.resolvingAccelerationCompatibility(for: speculativeHeadRuntimeVLM)
+        #expect(speculativeHeadRuntimeResolved.accelerationMode == .speculativeDecode)
+        #expect(speculativeHeadRuntimeResolved.overrideReceiptExt["melix.gateway.speculative.disabled_reason"] == nil)
+    }
+
+    @Test("summary preserves native multimodal speculative overrides for auto and force policies")
+    func summaryPreservesNativeMultimodalSpeculativeOverridesForAutoAndForcePolicies() async throws {
+        for routePolicy in ["auto", "force"] {
+            let temporaryRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-serving-defaults-native-vlm-\(routePolicy)-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+            let store = GatewayServingDefaultsStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+                defaults: [:]
+            )
+            var command = Self.speculativeDefaultsCommand()
+            command.speculativeRoutePolicy = routePolicy
+            try await store.apply(command: command)
+
+            let vlmModel = Self.nativeSpeculativeVLMModel()
+            let summary = await store.summary(
+                serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+                defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: vlmModel.modelID],
+                modelSettingsByModelID: [vlmModel.modelID: vlmModel.settings]
+            )
+            let session = try #require(summary.sessions.first)
+
+            #expect(session.multimodalRoutePolicy == "auto")
+            #expect(session.effectiveMultimodalRoute == "python_vlm")
+            #expect(session.speculativeRoutePolicy == routePolicy)
+            #expect(session.effectiveSpeculativeMode == "speculative_decode")
+            #expect(session.effectiveAccelerationMode == .speculativeDecode)
+            #expect(session.effectiveDraftModelID == "melix-dev-vlm")
+            #expect(session.effectiveNumDraftTokens == 4)
+            #expect(session.speculativeDisabledReason.isEmpty)
+            #expect(!session.suppressedOverrides.split(separator: ",").contains("speculative_decode"))
+        }
+    }
+
+    @Test("summary suppresses stale native multimodal speculative overrides when policy is off")
+    func summarySuppressesStaleNativeMultimodalSpeculativeOverridesWhenPolicyIsOff() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-native-vlm-off-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        var command = Self.speculativeDefaultsCommand()
+        command.speculativeRoutePolicy = "off"
+        try await store.apply(command: command)
+
+        let vlmModel = Self.nativeSpeculativeVLMModel()
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: vlmModel.modelID],
+            modelSettingsByModelID: [vlmModel.modelID: vlmModel.settings]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(session.speculativeRoutePolicy == "off")
+        #expect(session.effectiveSpeculativeMode == "baseline")
+        #expect(session.effectiveAccelerationMode == .baseline)
+        #expect(session.effectiveDraftModelID.isEmpty)
+        #expect(session.effectiveNumDraftTokens == 0)
+        #expect(session.speculativeDisabledReason == "operator_disabled")
+        #expect(session.suppressedOverrides.split(separator: ",").contains("speculative_decode"))
+    }
+
+    @Test("summary suppresses unsupported VLM speculative overrides without native draft metadata")
+    func summarySuppressesUnsupportedVLMSpeculativeOverridesWithoutNativeDraftMetadata() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-unsupported-vlm-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        try await store.apply(command: Self.speculativeDefaultsCommand())
+
+        var vlmModel = ModelCatalog.devVLMModel()
+        vlmModel.settings.defaultAccelerationMode = .unspecified
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: vlmModel.modelID],
+            modelSettingsByModelID: [vlmModel.modelID: vlmModel.settings]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(session.effectiveMultimodalRoute == "python_vlm")
+        #expect(session.effectiveSpeculativeMode == "baseline")
+        #expect(session.effectiveAccelerationMode == .baseline)
+        #expect(session.effectiveDraftModelID.isEmpty)
+        #expect(session.effectiveNumDraftTokens == 0)
+        #expect(session.speculativeDisabledReason == "unsupported_route")
+        #expect(session.suppressedOverrides.split(separator: ",").contains("speculative_decode"))
+    }
+
+    @Test("summary suppresses stale speculative overrides for capability-only VLM metadata")
+    func summarySuppressesStaleSpeculativeOverridesForCapabilityOnlyVLMMetadata() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-capability-only-vlm-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        try await store.apply(command: Self.speculativeDefaultsCommand())
+
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.defaultAccelerationMode = .unspecified
+        modelSettings.ext["melix.capability.class"] = "vlm"
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "capability-only-vlm"],
+            modelSettingsByModelID: ["capability-only-vlm": modelSettings]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(session.effectiveMultimodalRoute == "python_vlm")
+        #expect(session.effectiveSpeculativeMode == "baseline")
+        #expect(session.effectiveAccelerationMode == .baseline)
+        #expect(session.effectiveDraftModelID.isEmpty)
+        #expect(session.effectiveNumDraftTokens == 0)
+        #expect(session.speculativeDisabledReason == "unsupported_route")
+        #expect(session.suppressedOverrides.split(separator: ",").contains("speculative_decode"))
+    }
+
     @Test("summary does not serialize route identifiers as policy tokens")
     func summaryDoesNotSerializeRouteIdentifiersAsPolicyTokens() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
@@ -641,5 +828,52 @@ struct GatewayServingDefaultsStoreTests {
         #expect(session.multimodalRoutePolicy == "auto")
         #expect(session.speculativeRoutePolicy == "auto")
         #expect(session.effectiveMultimodalRoute == "swift_text")
+    }
+
+    private static func speculativeDefaultsCommand() -> Melix_Controlplane_V1_ApplyServingDefaults {
+        var command = Melix_Controlplane_V1_ApplyServingDefaults()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.temperature = 0.4
+        command.topP = 0.9
+        command.maxTokens = 256
+        command.streamIntervalTokens = 2
+        command.maxConcurrentRequests = 4
+        command.concurrentProcessingEnabled = true
+        command.prefillBatchSize = 2
+        command.completionBatchSize = 2
+        command.accelerationMode = .speculativeDecode
+        command.draftModelID = "melix-dev-vlm"
+        command.numDraftTokens = 4
+        command.accelerationProfile = "balanced"
+        return command
+    }
+
+    private static func speculativeDefaultsPolicy() -> GatewayServingDefaultsPolicy {
+        GatewayServingDefaultsPolicy(
+            temperature: nil,
+            topP: nil,
+            maxTokens: nil,
+            streamIntervalTokens: nil,
+            maxConcurrentRequests: 4,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 2,
+            completionBatchSize: 2,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-vlm",
+            numDraftTokens: 4,
+            accelerationProfile: "balanced"
+        )
+    }
+
+    private static func nativeSpeculativeVLMModel() -> Melix_Controlplane_V1_ModelSummary {
+        var model = ModelCatalog.devVLMModel()
+        model.settings.defaultAccelerationMode = .unspecified
+        model.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        model.settings.ext["melix.acceleration.valid_draft_model_ids"] = model.modelID
+        model.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        model.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        model.settings.ext["melix.native_mtp.active"] = "true"
+        model.settings.ext["melix.native_mtp.depth"] = "4"
+        return model
     }
 }

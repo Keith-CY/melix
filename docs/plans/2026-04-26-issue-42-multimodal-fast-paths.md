@@ -573,6 +573,20 @@ Executable unit issues:
   supported, media-bearing requests without draft tensors stay on the normal
   multimodal path, and text-only requests with draft tensors use the existing
   text MTP speculative path rather than the VLM media path.
+- Unit 4.2.2 makes the route-policy override contract deterministic for native
+  multimodal speculative admission. `auto` and `force` may preserve
+  worker-facing speculative launch flags only when the selected VLM model
+  advertises native draft support through native MTP or speculative-head
+  metadata; otherwise they fail closed to baseline with
+  `unsupported_route`. `off` always suppresses speculative launch flags before
+  dispatch, clears draft/profile fields, and emits `operator_disabled` with the
+  stale `speculative_decode` override listed in the gateway receipt. Summary
+  receipts and launch-bound execution metadata must agree on the effective
+  route, effective speculative mode, suppressed override names, and disabled
+  reason. Success is measured with focused Swift translation/coordinator/store
+  tests for `auto`, `off`, `force`, and stale saved overrides; request-path
+  performance is covered by the existing gateway/request-coordinator scoped
+  probes and should report no in-scope regression.
 
 ## Verification Policy
 
