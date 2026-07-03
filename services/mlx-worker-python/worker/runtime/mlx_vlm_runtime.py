@@ -3762,14 +3762,18 @@ class MLXVLMRuntime:
         return int(value)
 
     @staticmethod
-    def _optional_stats_float(stats: dict[str, float | int], key: str) -> float | None:
+    def _optional_stats_float(stats: dict[str, float | int] | None, key: str) -> float | None:
+        if stats is None:
+            return None
         value = stats.get(key)
         if value is None:
             return None
         return float(value)
 
     @staticmethod
-    def _optional_stats_int(stats: dict[str, float | int], key: str) -> int | None:
+    def _optional_stats_int(stats: dict[str, float | int] | None, key: str) -> int | None:
+        if stats is None:
+            return None
         value = stats.get(key)
         if value is None:
             return None
@@ -3781,6 +3785,8 @@ class MLXVLMRuntime:
         *,
         cycle_count: int | None,
     ) -> NativeMTPBatchTimings | None:
+        if response is None:
+            return None
         mtp_head_ms = self._optional_response_float(response, "speculative_mtp_head_ms")
         sample_ms = self._optional_response_float(response, "speculative_sample_ms")
         cache_ops_ms = self._optional_response_float(response, "speculative_cache_ops_ms")

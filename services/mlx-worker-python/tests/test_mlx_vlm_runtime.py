@@ -8115,6 +8115,11 @@ def test_mlx_vlm_runtime_mtp_response_helpers_handle_alternate_shapes() -> None:
     assert MLXVLMRuntime._optional_response_int(SimpleNamespace(), "missing") is None
     assert MLXVLMRuntime._optional_stats_float({}, "missing") is None
     assert MLXVLMRuntime._optional_stats_int({}, "missing") is None
+    assert MLXVLMRuntime._optional_stats_float(None, "missing") is None
+    assert MLXVLMRuntime._optional_stats_int(None, "missing") is None
+
+    runtime = MLXVLMRuntime()
+    assert runtime._native_mtp_batch_timings_from_response(None, cycle_count=None) is None
 
 
 def test_mlx_vlm_runtime_supports_prompt_only_generation_for_multimodal_models() -> None:
