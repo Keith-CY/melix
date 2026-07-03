@@ -265,12 +265,23 @@ struct OpenAIHandlerTests {
 
     @Test("health diagnostics includes local server security receipt")
     func healthDiagnosticsIncludesLocalServerSecurityReceipt() async throws {
+        let runtimeStats = nativeAccelerationRuntimeStats()
+        let textClient = ScriptedWorkerClient(events: [])
+        let vlmClient = ScriptedWorkerClient(
+            events: [],
+            runtimeStatsResponseOverride: runtimeStats
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: vlmClient
+        )
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
             requestCoordinator: RequestCoordinator(
-                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                workerRegistry: workerRegistry,
                 abortRegistry: AbortRegistry()
             ),
+            workerRegistry: workerRegistry,
             gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 12_436),
             environment: [
                 "MELIX_ALLOWED_ORIGINS": "http://localhost:5173",
@@ -287,12 +298,34 @@ struct OpenAIHandlerTests {
         )
         let payload = try await jsonPayload(from: response.body)
         let receipt = try #require(payload["local_server_security"] as? [String: Any])
+        let nativeAcceleration = try #require(payload["native_acceleration"] as? [String: Any])
+        let forwardCounts = try #require(nativeAcceleration["forward_counts"] as? [String: Any])
+        let timings = try #require(nativeAcceleration["timings"] as? [String: Any])
+        let acceptanceByDepth = try #require(nativeAcceleration["acceptance_by_depth"] as? [String: Any])
 
         #expect(response.statusCode == 200)
         #expect(receipt["schema_version"] as? String == "melix.local_server_security.v1")
         #expect(receipt["bind_host"] as? String == "127.0.0.1")
         #expect(receipt["browser_cors_policy"] as? String == "explicit_allowlist")
         #expect((receipt["allowed_origins"] as? [String]) == ["http://localhost:5173"])
+        #expect(nativeAcceleration["schema_version"] as? String == "melix.native_acceleration.status.v1")
+        #expect(nativeAcceleration["runtime_active"] as? Bool == true)
+        #expect(nativeAcceleration["status"] as? String == "admitted")
+        #expect(nativeAcceleration["mode"] as? String == "speculative_decode")
+        #expect(nativeAcceleration["draft_supported"] as? Bool == true)
+        #expect(nativeAcceleration["effective_depth"] as? Int == 4)
+        #expect(nativeAcceleration["request_gate"] as? String == "media_draft_eligible")
+        #expect(nativeAcceleration["runtime_scope"] as? String == "vlm_mtp")
+        #expect(nativeAcceleration["fallback_reason"] as? String == "")
+        #expect(nativeAcceleration["autoregressive_fallback"] as? Bool == false)
+        #expect(nativeAcceleration["sampling_matches_baseline"] as? Bool == true)
+        #expect(forwardCounts["rounds"] as? Int == 3)
+        #expect(forwardCounts["accepted_tokens"] as? Int == 9)
+        #expect(forwardCounts["rejected_tokens"] as? Int == 3)
+        #expect(timings["draft_propose_ms"] as? Double == 12.5)
+        #expect(timings["target_verify_ms"] as? Double == 25)
+        #expect(acceptanceByDepth["effective_depth"] as? Int == 4)
+        #expect(acceptanceByDepth["acceptance_rate"] as? Double == 0.75)
     }
 
     @Test("GET /v1/models accepts configured shared-access API keys and records metrics")
@@ -1250,16 +1283,22 @@ struct OpenAIHandlerTests {
             totalSteps: 4
         )
 
+        let vlmClient = ScriptedWorkerClient(
+            events: [],
+            runtimeStatsResponseOverride: nativeAccelerationRuntimeStats()
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: ScriptedWorkerClient(events: []),
+            pythonCompatibilityClient: vlmClient,
+            embeddingClient: ScriptedWorkerClient(events: [])
+        )
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [publicWarmModel(), publicWarmEmbeddingModel()]),
             requestCoordinator: RequestCoordinator(
-                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                workerRegistry: workerRegistry,
                 abortRegistry: AbortRegistry()
             ),
-            workerRegistry: WorkerRegistry(
-                defaultTextClient: ScriptedWorkerClient(events: []),
-                embeddingClient: ScriptedWorkerClient(events: [])
-            ),
+            workerRegistry: workerRegistry,
             metricsStore: metricsStore,
             schedulerReadModel: schedulerReadModel,
             imageJobReadModel: imageJobReadModel,
@@ -1310,6 +1349,8 @@ struct OpenAIHandlerTests {
         let payload = try #require(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
         let authorization = try #require(payload["authorization"] as? [String: Any])
         let runtime = try #require(payload["runtime"] as? [String: Any])
+        let nativeAcceleration = try #require(runtime["native_acceleration"] as? [String: Any])
+        let forwardCounts = try #require(nativeAcceleration["forward_counts"] as? [String: Any])
         let models = try #require(payload["models"] as? [String: Any])
         let cache = try #require(payload["cache"] as? [String: Any])
         let queue = try #require(payload["queue"] as? [String: Any])
@@ -1323,8 +1364,15 @@ struct OpenAIHandlerTests {
         #expect(payload["read_only"] as? Bool == true)
         #expect(authorization["scope"] as? String == "companion_read_only")
         #expect(authorization["state"] as? String == "active")
-        #expect(runtime["status"] as? String == "degraded")
+        #expect(runtime["status"] as? String == "ok")
         #expect((runtime["routes"] as? [String: Any])?["swift_text"] as? Bool == true)
+        #expect(nativeAcceleration["runtime_active"] as? Bool == true)
+        #expect(nativeAcceleration["status"] as? String == "admitted")
+        #expect(nativeAcceleration["mode"] as? String == "speculative_decode")
+        #expect(nativeAcceleration["fallback_reason"] as? String == "")
+        #expect(forwardCounts["rounds"] as? Int == 3)
+        #expect(forwardCounts["accepted_tokens"] as? Int == 9)
+        #expect(forwardCounts["rejected_tokens"] as? Int == 3)
         #expect(models["ready"] as? Int == 2)
         #expect(models["total"] as? Int == 2)
         #expect(cache["l1_bytes"] as? Int == 2048)
@@ -13782,6 +13830,28 @@ struct OpenAIHandlerTests {
         model.settings.alias = "Qwen 3.5 9B"
         model.settings.ext.removeValue(forKey: "melix.visibility")
         return model
+    }
+
+    private func nativeAccelerationRuntimeStats() -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+        response.stats.speculativeProbeStatus = "admitted"
+        response.stats.speculativeProbeMode = "speculative_decode"
+        response.stats.speculativeProbeFallbackReason = ""
+        response.stats.speculativeProbeRequestGate = "media_draft_eligible"
+        response.stats.speculativeProbeRuntimeScope = "vlm_mtp"
+        response.stats.speculativeProbeRuntimeActive = true
+        response.stats.speculativeProbeDraftSupported = true
+        response.stats.speculativeProbeEffectiveDepth = 4
+        response.stats.speculativeProbeRounds = 3
+        response.stats.speculativeProbeAcceptedTokens = 9
+        response.stats.speculativeProbeRejectedTokens = 3
+        response.stats.speculativeProbeAcceptanceRate = 0.75
+        response.stats.speculativeProbeRollbackRate = 0.25
+        response.stats.speculativeProbeDraftProposeMs = 12.5
+        response.stats.speculativeProbeTargetVerifyMs = 25
+        response.stats.speculativeProbeAutoregressiveFallback = false
+        response.stats.speculativeProbeSamplingMatchesBaseline = true
+        return response
     }
 
     private func publicWarmEmbeddingModel() -> Melix_Controlplane_V1_ModelSummary {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
@@ -38,7 +39,29 @@ _MULTIMODAL_REQUEST_KINDS = frozenset({"ocr", "vlm", "transcription", "speech", 
 _COMPLETED_UNLOAD_RECEIPT_LIMIT = 256
 _DEFAULT_HYBRID_STATE_PROBE = ("", 0, 0)
 _DEFAULT_QUANTIZED_LOAD_ACCEPTANCE_PROBE = (0, 0, 0)
-_DEFAULT_SPECULATIVE_PROBE_RECEIPT_PROBE = (0, 0, 0, 0)
+_DEFAULT_SPECULATIVE_PROBE_RECEIPT_PROBE = (
+    0,
+    0,
+    0,
+    0,
+    "",
+    "",
+    "",
+    "",
+    "",
+    False,
+    False,
+    0,
+    0,
+    0,
+    0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    False,
+    False,
+)
 
 
 @dataclass(slots=True)
@@ -87,6 +110,22 @@ def _non_negative_int(value: object) -> int:
         return max(0, int(value or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _non_negative_float(value: object) -> float:
+    try:
+        parsed = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(parsed):
+        return 0.0
+    return max(0.0, parsed)
+
+
+def _parse_bool(value: object) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> int:
@@ -1205,6 +1244,23 @@ class WorkerRegistry:
             stats.speculative_probe_fallback_count,
             stats.speculative_probe_position_aligned_count,
             stats.speculative_probe_cache_aligned_count,
+            stats.speculative_probe_status,
+            stats.speculative_probe_mode,
+            stats.speculative_probe_fallback_reason,
+            stats.speculative_probe_request_gate,
+            stats.speculative_probe_runtime_scope,
+            stats.speculative_probe_runtime_active,
+            stats.speculative_probe_draft_supported,
+            stats.speculative_probe_effective_depth,
+            stats.speculative_probe_rounds,
+            stats.speculative_probe_accepted_tokens,
+            stats.speculative_probe_rejected_tokens,
+            stats.speculative_probe_acceptance_rate,
+            stats.speculative_probe_rollback_rate,
+            stats.speculative_probe_draft_propose_ms,
+            stats.speculative_probe_target_verify_ms,
+            stats.speculative_probe_autoregressive_fallback,
+            stats.speculative_probe_sampling_matches_baseline,
             stats.text_batch_generator_submitted_request_count,
             stats.text_batch_generator_completed_request_count,
             stats.text_batch_generator_step_count,
@@ -1339,23 +1395,66 @@ class WorkerRegistry:
                 _non_negative_int(getattr(probe, "cross_shard_metadata_fixup_count", 0)),
             )
             speculative_probe_receipt = getattr(probe, "speculative_probe_receipt", {})
-            if not isinstance(speculative_probe_receipt, dict):
+            if not isinstance(speculative_probe_receipt, Mapping):
                 speculative_probe_receipt = {}
-            speculative_probe_enabled = bool(speculative_probe_receipt.get("enabled", False))
+            speculative_probe_enabled = _parse_bool(speculative_probe_receipt.get("enabled", False))
             speculative_probe_fallback = (
                 str(speculative_probe_receipt.get("status", "") or "") == "fallback"
             )
-            speculative_probe_position_aligned = bool(
+            speculative_probe_position_aligned = _parse_bool(
                 speculative_probe_receipt.get("position_aligned", False)
             )
-            speculative_probe_cache_aligned = bool(
+            speculative_probe_cache_aligned = _parse_bool(
                 speculative_probe_receipt.get("cache_aligned", False)
+            )
+            speculative_probe_status = str(speculative_probe_receipt.get("status", "") or "")
+            speculative_probe_mode = str(speculative_probe_receipt.get("mode", "") or "")
+            speculative_probe_fallback_reason = str(
+                speculative_probe_receipt.get("fallback_reason", "") or ""
+            )
+            speculative_probe_request_gate = str(
+                speculative_probe_receipt.get("request_gate", "") or ""
+            )
+            speculative_probe_runtime_scope = str(
+                speculative_probe_receipt.get("runtime_scope", "") or ""
+            )
+            speculative_probe_draft_supported = _parse_bool(
+                speculative_probe_receipt.get("draft_supported", False)
+            )
+            speculative_probe_runtime_active = bool(
+                speculative_probe_enabled
+                and speculative_probe_status == "admitted"
+                and speculative_probe_mode == "speculative_decode"
+                and speculative_probe_draft_supported
+                and _parse_bool(speculative_probe_receipt.get("output_mutation_allowed", False))
+                and _parse_bool(speculative_probe_receipt.get("draft_loaded", False))
+                and _parse_bool(speculative_probe_receipt.get("target_decode_started", False))
+            )
+            speculative_probe_autoregressive_fallback = bool(
+                speculative_probe_enabled and not speculative_probe_runtime_active
             )
             self._last_speculative_probe_receipt_probe = (
                 int(speculative_probe_enabled),
                 int(speculative_probe_enabled and speculative_probe_fallback),
                 int(speculative_probe_enabled and speculative_probe_position_aligned),
                 int(speculative_probe_enabled and speculative_probe_cache_aligned),
+                speculative_probe_status,
+                speculative_probe_mode,
+                speculative_probe_fallback_reason,
+                speculative_probe_request_gate,
+                speculative_probe_runtime_scope,
+                speculative_probe_runtime_active,
+                speculative_probe_draft_supported,
+                _non_negative_int(speculative_probe_receipt.get("effective_depth", 0)),
+                _non_negative_int(speculative_probe_receipt.get("rounds", 0)),
+                _non_negative_int(speculative_probe_receipt.get("accepted_tokens", 0)),
+                _non_negative_int(speculative_probe_receipt.get("rejected_tokens", 0)),
+                _non_negative_float(speculative_probe_receipt.get("acceptance_rate", 0.0)),
+                _non_negative_float(speculative_probe_receipt.get("rollback_rate", 0.0)),
+                _non_negative_float(speculative_probe_receipt.get("draft_propose_ms", 0.0)),
+                _non_negative_float(speculative_probe_receipt.get("target_verify_ms", 0.0)),
+                speculative_probe_autoregressive_fallback,
+                _parse_bool(speculative_probe_receipt.get("sampling_matches_baseline", False)),
             )
             self._text_batch_generator_submitted_request_count = int(
                 getattr(probe, "text_batch_generator_submitted_request_count", 0)

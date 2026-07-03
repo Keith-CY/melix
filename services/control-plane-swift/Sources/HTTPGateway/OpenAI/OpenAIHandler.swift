@@ -1389,6 +1389,7 @@ button.primary:active {
         let startedAt = Date()
         let routes = await healthRoutes()
         let models = await modelCatalog.listModels()
+        let nativeAcceleration = await nativeAccelerationStatus()
         let readyCount = models.filter { $0.state == .modelWarm || $0.state == .modelPinned }.count
         let status = routes.values.allSatisfy { $0 } ? "ok" : "degraded"
         let response = HealthDiagnosticsResponse(
@@ -1399,7 +1400,8 @@ button.primary:active {
             models: models
                 .filter(ModelCatalogPresentation.isUserVisible)
                 .map(HealthDiagnosticsModelResponse.init(model:)),
-            localServerSecurity: localServerSecurityPolicy.receipt
+            localServerSecurity: localServerSecurityPolicy.receipt,
+            nativeAcceleration: nativeAcceleration
         )
         await metricsStore.set(
             Date().timeIntervalSince(startedAt) * 1000,
@@ -1443,6 +1445,7 @@ button.primary:active {
         async let queueSnapshotTask = companionQueueSnapshot()
         async let imageJobsSnapshotTask = companionImageJobsSnapshot()
         async let imageJobLogsTask = companionImageJobLogTail()
+        async let nativeAccelerationTask = nativeAccelerationStatus()
 
         let routes = await routesTask
         let models = await modelsTask
@@ -1452,13 +1455,15 @@ button.primary:active {
         let queueSnapshot = await queueSnapshotTask
         let imageJobsSnapshot = await imageJobsSnapshotTask
         let imageJobLogs = await imageJobLogsTask
+        let nativeAcceleration = await nativeAccelerationTask
         let status = routes.values.allSatisfy { $0 } ? "ok" : "degraded"
         let response = CompanionStatusResponse(
             readOnly: true,
             status: status,
             runtime: CompanionRuntimeStatusPayload(
                 status: status,
-                routes: routes
+                routes: routes,
+                nativeAcceleration: nativeAcceleration
             ),
             authorization: CompanionAuthorizationStatusPayload(authorization: authorization),
             models: CompanionModelStatusPayload(
@@ -1493,6 +1498,20 @@ button.primary:active {
 
     private func companionImageJobsSnapshot() async -> [Melix_Controlplane_V1_ImageJobSummary] {
         await imageJobReadModel?.snapshot() ?? []
+    }
+
+    private func nativeAccelerationStatus() async -> NativeAccelerationStatusPayload {
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonVLM),
+            let introspectingClient = workerClient as? any RuntimeIntrospectingWorkerClientProtocol,
+            let runtimeStats = try? await introspectingClient.runtimeStats()
+        else {
+            return .unavailable
+        }
+        return NativeAccelerationStatusPayload(
+            summary: Melix_Controlplane_V1_NativeAccelerationStatusSummary(runtimeStats: runtimeStats.stats)
+        )
     }
 
     private func companionImageJobLogTail() async -> (entries: [ImageJobLogEntry], total: Int) {
@@ -6560,6 +6579,7 @@ private struct HealthDiagnosticsResponse: Codable {
     let modelsTotal: Int
     let models: [HealthDiagnosticsModelResponse]
     let localServerSecurity: LocalServerSecurityReceipt
+    let nativeAcceleration: NativeAccelerationStatusPayload
 
     enum CodingKeys: String, CodingKey {
         case status
@@ -6568,6 +6588,7 @@ private struct HealthDiagnosticsResponse: Codable {
         case modelsTotal = "models_total"
         case models
         case localServerSecurity = "local_server_security"
+        case nativeAcceleration = "native_acceleration"
     }
 }
 
@@ -6623,6 +6644,151 @@ private struct CompanionStatusResponse: Encodable {
 private struct CompanionRuntimeStatusPayload: Codable {
     let status: String
     let routes: [String: Bool]
+    let nativeAcceleration: NativeAccelerationStatusPayload
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case routes
+        case nativeAcceleration = "native_acceleration"
+    }
+}
+
+private struct NativeAccelerationStatusPayload: Codable {
+    static let unavailable = NativeAccelerationStatusPayload(summary: .unavailable)
+
+    let schemaVersion: String
+    let status: String
+    let mode: String
+    let runtimeActive: Bool
+    let draftSupported: Bool
+    let effectiveDepth: UInt32
+    let requestGate: String
+    let runtimeScope: String
+    let fallbackReason: String
+    let autoregressiveFallback: Bool
+    let samplingMatchesBaseline: Bool
+    let forwardCounts: NativeAccelerationForwardCountsPayload
+    let timings: NativeAccelerationTimingPayload
+    let acceptanceByDepth: NativeAccelerationAcceptanceByDepthPayload
+
+    init(summary: Melix_Controlplane_V1_NativeAccelerationStatusSummary) {
+        self.init(
+            schemaVersion: summary.schemaVersion,
+            status: summary.status,
+            mode: summary.mode,
+            runtimeActive: summary.runtimeActive,
+            draftSupported: summary.draftSupported,
+            effectiveDepth: summary.effectiveDepth,
+            requestGate: summary.requestGate,
+            runtimeScope: summary.runtimeScope,
+            fallbackReason: summary.fallbackReason,
+            autoregressiveFallback: summary.autoregressiveFallback,
+            samplingMatchesBaseline: summary.samplingMatchesBaseline,
+            forwardCounts: NativeAccelerationForwardCountsPayload(
+                rounds: summary.forwardCounts.rounds,
+                acceptedTokens: summary.forwardCounts.acceptedTokens,
+                rejectedTokens: summary.forwardCounts.rejectedTokens
+            ),
+            timings: NativeAccelerationTimingPayload(
+                draftProposeMs: summary.timings.draftProposeMs,
+                targetVerifyMs: summary.timings.targetVerifyMs
+            ),
+            acceptanceByDepth: NativeAccelerationAcceptanceByDepthPayload(
+                effectiveDepth: summary.acceptanceByDepth.effectiveDepth,
+                acceptedTokens: summary.acceptanceByDepth.acceptedTokens,
+                rejectedTokens: summary.acceptanceByDepth.rejectedTokens,
+                acceptanceRate: summary.acceptanceByDepth.acceptanceRate,
+                rollbackRate: summary.acceptanceByDepth.rollbackRate
+            )
+        )
+    }
+
+    init(
+        schemaVersion: String,
+        status: String,
+        mode: String,
+        runtimeActive: Bool,
+        draftSupported: Bool,
+        effectiveDepth: UInt32,
+        requestGate: String,
+        runtimeScope: String,
+        fallbackReason: String,
+        autoregressiveFallback: Bool,
+        samplingMatchesBaseline: Bool,
+        forwardCounts: NativeAccelerationForwardCountsPayload,
+        timings: NativeAccelerationTimingPayload,
+        acceptanceByDepth: NativeAccelerationAcceptanceByDepthPayload
+    ) {
+        self.schemaVersion = schemaVersion
+        self.status = status
+        self.mode = mode
+        self.runtimeActive = runtimeActive
+        self.draftSupported = draftSupported
+        self.effectiveDepth = effectiveDepth
+        self.requestGate = requestGate
+        self.runtimeScope = runtimeScope
+        self.fallbackReason = fallbackReason
+        self.autoregressiveFallback = autoregressiveFallback
+        self.samplingMatchesBaseline = samplingMatchesBaseline
+        self.forwardCounts = forwardCounts
+        self.timings = timings
+        self.acceptanceByDepth = acceptanceByDepth
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case status
+        case mode
+        case runtimeActive = "runtime_active"
+        case draftSupported = "draft_supported"
+        case effectiveDepth = "effective_depth"
+        case requestGate = "request_gate"
+        case runtimeScope = "runtime_scope"
+        case fallbackReason = "fallback_reason"
+        case autoregressiveFallback = "autoregressive_fallback"
+        case samplingMatchesBaseline = "sampling_matches_baseline"
+        case forwardCounts = "forward_counts"
+        case timings
+        case acceptanceByDepth = "acceptance_by_depth"
+    }
+}
+
+private struct NativeAccelerationForwardCountsPayload: Codable {
+    let rounds: UInt64
+    let acceptedTokens: UInt64
+    let rejectedTokens: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case rounds
+        case acceptedTokens = "accepted_tokens"
+        case rejectedTokens = "rejected_tokens"
+    }
+}
+
+private struct NativeAccelerationTimingPayload: Codable {
+    let draftProposeMs: Double
+    let targetVerifyMs: Double
+
+    enum CodingKeys: String, CodingKey {
+        case draftProposeMs = "draft_propose_ms"
+        case targetVerifyMs = "target_verify_ms"
+    }
+}
+
+private struct NativeAccelerationAcceptanceByDepthPayload: Codable {
+    let effectiveDepth: UInt32
+    let acceptedTokens: UInt64
+    let rejectedTokens: UInt64
+    let acceptanceRate: Double
+    let rollbackRate: Double
+
+    enum CodingKeys: String, CodingKey {
+        case effectiveDepth = "effective_depth"
+        case acceptedTokens = "accepted_tokens"
+        case rejectedTokens = "rejected_tokens"
+        case acceptanceRate = "acceptance_rate"
+        case rollbackRate = "rollback_rate"
+    }
 }
 
 private struct CompanionAuthorizationStatusPayload: Codable {

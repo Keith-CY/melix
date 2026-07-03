@@ -18,6 +18,64 @@ struct MelixCLIRunnerTests {
         #expect(output.contains("server_ready\tserver-session-1\tready\tactive\tinitial_boot"))
     }
 
+    @Test("server snapshot json renders native acceleration status")
+    func serverSnapshotJSONRendersNativeAccelerationStatus() async throws {
+        let client = StubControlPlaneXPCClient()
+        var snapshot = makeServerSnapshot(runtimeSessions: [makeRuntimeSession()])
+        var nativeAcceleration = Melix_Controlplane_V1_NativeAccelerationStatusSummary.unavailable
+        nativeAcceleration.status = "admitted"
+        nativeAcceleration.mode = "speculative_decode"
+        nativeAcceleration.runtimeActive = true
+        nativeAcceleration.draftSupported = true
+        nativeAcceleration.effectiveDepth = 4
+        nativeAcceleration.requestGate = "admitted"
+        nativeAcceleration.runtimeScope = "image_text_to_text"
+        nativeAcceleration.fallbackReason = "none"
+        nativeAcceleration.autoregressiveFallback = false
+        nativeAcceleration.samplingMatchesBaseline = true
+        nativeAcceleration.forwardCounts.rounds = 5
+        nativeAcceleration.forwardCounts.acceptedTokens = 13
+        nativeAcceleration.forwardCounts.rejectedTokens = 2
+        nativeAcceleration.timings.draftProposeMs = 7.5
+        nativeAcceleration.timings.targetVerifyMs = 11.25
+        nativeAcceleration.acceptanceByDepth.effectiveDepth = 4
+        nativeAcceleration.acceptanceByDepth.acceptedTokens = 13
+        nativeAcceleration.acceptanceByDepth.rejectedTokens = 2
+        nativeAcceleration.acceptanceByDepth.acceptanceRate = 0.86
+        nativeAcceleration.acceptanceByDepth.rollbackRate = 0.14
+        snapshot.nativeAcceleration = nativeAcceleration
+        await client.setServerSnapshot(snapshot)
+
+        let output = try await MelixCLIRunner(client: client).run(.serverSnapshot(.init(json: true)))
+        let payload = try #require(parseJSONObject(output))
+        let status = try #require(payload["native_acceleration"] as? [String: Any])
+        let forwardCounts = try #require(status["forward_counts"] as? [String: Any])
+        let timings = try #require(status["timings"] as? [String: Any])
+        let acceptanceByDepth = try #require(status["acceptance_by_depth"] as? [String: Any])
+
+        #expect(status["schema_version"] as? String == Melix_Controlplane_V1_NativeAccelerationStatusSummary.currentSchemaVersion)
+        #expect(status["status"] as? String == "admitted")
+        #expect(status["mode"] as? String == "speculative_decode")
+        #expect(status["runtime_active"] as? Bool == true)
+        #expect(status["draft_supported"] as? Bool == true)
+        #expect(status["effective_depth"] as? Int == 4)
+        #expect(status["request_gate"] as? String == "admitted")
+        #expect(status["runtime_scope"] as? String == "image_text_to_text")
+        #expect(status["fallback_reason"] as? String == "none")
+        #expect(status["autoregressive_fallback"] as? Bool == false)
+        #expect(status["sampling_matches_baseline"] as? Bool == true)
+        #expect(forwardCounts["rounds"] as? Int == 5)
+        #expect(forwardCounts["accepted_tokens"] as? Int == 13)
+        #expect(forwardCounts["rejected_tokens"] as? Int == 2)
+        #expect(timings["draft_propose_ms"] as? Double == 7.5)
+        #expect(timings["target_verify_ms"] as? Double == 11.25)
+        #expect(acceptanceByDepth["effective_depth"] as? Int == 4)
+        #expect(acceptanceByDepth["accepted_tokens"] as? Int == 13)
+        #expect(acceptanceByDepth["rejected_tokens"] as? Int == 2)
+        #expect(acceptanceByDepth["acceptance_rate"] as? Double == 0.86)
+        #expect(acceptanceByDepth["rollback_rate"] as? Double == 0.14)
+    }
+
     @Test("model hub search renders typed search results")
     func modelHubSearchRendersTypedSearchResults() async throws {
         let client = StubControlPlaneXPCClient()

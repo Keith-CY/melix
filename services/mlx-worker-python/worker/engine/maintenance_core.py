@@ -12,6 +12,7 @@ import resource
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from threading import Event
 import time
 from typing import Any, Iterator, NoReturn
@@ -179,6 +180,23 @@ class BenchSample:
     speculative_draft_model_configured: bool = False
     speculative_draft_propose_ms: float = 0.0
     speculative_target_verify_ms: float = 0.0
+    native_acceleration_status: str = ""
+    native_acceleration_mode: str = ""
+    native_acceleration_runtime_active: bool = False
+    native_acceleration_draft_supported: bool = False
+    native_acceleration_effective_depth: int = 0
+    native_acceleration_request_gate: str = ""
+    native_acceleration_runtime_scope: str = ""
+    native_acceleration_fallback_reason: str = ""
+    native_acceleration_rounds: int = 0
+    native_acceleration_accepted_tokens: int = 0
+    native_acceleration_rejected_tokens: int = 0
+    native_acceleration_acceptance_rate: float = 0.0
+    native_acceleration_rollback_rate: float = 0.0
+    native_acceleration_draft_propose_ms: float = 0.0
+    native_acceleration_target_verify_ms: float = 0.0
+    native_acceleration_autoregressive_fallback: bool = False
+    native_acceleration_sampling_matches_baseline: bool = False
     dflash_enabled: bool = False
     dflash_block_size: int = 0
     dflash_rollback_count: int = 0
@@ -3827,6 +3845,42 @@ class MaintenanceCore:
             return default
 
     @staticmethod
+    def _probe_speculative_receipt(probe: object | None) -> Mapping[str, object]:
+        if probe is None:  # pragma: no cover - defensive probe bridge
+            return {}
+        receipt = getattr(probe, "speculative_probe_receipt", {})
+        if isinstance(receipt, Mapping):
+            return receipt
+        return {}
+
+    @staticmethod
+    def _receipt_text(receipt: Mapping[str, object], field_name: str) -> str:
+        value = receipt.get(field_name, "")
+        return value if isinstance(value, str) else ""
+
+    @staticmethod
+    def _receipt_bool(receipt: Mapping[str, object], field_name: str) -> bool:
+        value = receipt.get(field_name, False)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    @staticmethod
+    def _receipt_int(receipt: Mapping[str, object], field_name: str) -> int:
+        try:
+            return max(int(receipt.get(field_name, 0) or 0), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _receipt_float(receipt: Mapping[str, object], field_name: str) -> float:
+        try:
+            value = float(receipt.get(field_name, 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        return value if math.isfinite(value) and value >= 0.0 else 0.0
+
+    @staticmethod
     def _annotated_text_benchmark_input(
         rendered_prompt: str | PreparedVisionRequest,
         *,
@@ -4031,6 +4085,20 @@ class MaintenanceCore:
             "image_feature_work_saved_bytes",
             -1,
         )
+        speculative_receipt = self._probe_speculative_receipt(probe)
+        native_runtime_active = (
+            self._receipt_bool(speculative_receipt, "enabled")
+            and self._receipt_text(speculative_receipt, "status") == "admitted"
+            and self._receipt_text(speculative_receipt, "mode") == "speculative_decode"
+            and self._receipt_bool(speculative_receipt, "draft_supported")
+            and self._receipt_bool(speculative_receipt, "output_mutation_allowed")
+            and self._receipt_bool(speculative_receipt, "draft_loaded")
+            and self._receipt_bool(speculative_receipt, "target_decode_started")
+        )
+        native_autoregressive_fallback = (
+            self._receipt_bool(speculative_receipt, "enabled")
+            and not native_runtime_active
+        )
         return _bench_sample_with_cache_counters(  # pragma: no cover - VLM work-saved bridge
             WorkSavedCacheCounters(
                 media_feature_cache_hits=image_feature_cache_hits,
@@ -4099,6 +4167,59 @@ class MaintenanceCore:
                     if probe is not None
                     else "not_reported"
                 )
+            ),
+            native_acceleration_status=self._receipt_text(speculative_receipt, "status"),
+            native_acceleration_mode=self._receipt_text(speculative_receipt, "mode"),
+            native_acceleration_runtime_active=native_runtime_active,
+            native_acceleration_draft_supported=self._receipt_bool(
+                speculative_receipt,
+                "draft_supported",
+            ),
+            native_acceleration_effective_depth=self._receipt_int(
+                speculative_receipt,
+                "effective_depth",
+            ),
+            native_acceleration_request_gate=self._receipt_text(
+                speculative_receipt,
+                "request_gate",
+            ),
+            native_acceleration_runtime_scope=self._receipt_text(
+                speculative_receipt,
+                "runtime_scope",
+            ),
+            native_acceleration_fallback_reason=self._receipt_text(
+                speculative_receipt,
+                "fallback_reason",
+            ),
+            native_acceleration_rounds=self._receipt_int(speculative_receipt, "rounds"),
+            native_acceleration_accepted_tokens=self._receipt_int(
+                speculative_receipt,
+                "accepted_tokens",
+            ),
+            native_acceleration_rejected_tokens=self._receipt_int(
+                speculative_receipt,
+                "rejected_tokens",
+            ),
+            native_acceleration_acceptance_rate=self._receipt_float(
+                speculative_receipt,
+                "acceptance_rate",
+            ),
+            native_acceleration_rollback_rate=self._receipt_float(
+                speculative_receipt,
+                "rollback_rate",
+            ),
+            native_acceleration_draft_propose_ms=self._receipt_float(
+                speculative_receipt,
+                "draft_propose_ms",
+            ),
+            native_acceleration_target_verify_ms=self._receipt_float(
+                speculative_receipt,
+                "target_verify_ms",
+            ),
+            native_acceleration_autoregressive_fallback=native_autoregressive_fallback,
+            native_acceleration_sampling_matches_baseline=self._receipt_bool(
+                speculative_receipt,
+                "sampling_matches_baseline",
             ),
             model_id=(getattr(loaded_model, "handle", "") or "").split("::", 1)[0],
             task_kind=task_kind,
@@ -4264,7 +4385,63 @@ class MaintenanceCore:
                 "decode_ms": sample.decode_ms or max(sample.total_latency_ms - sample.ttft_ms, 0.0),
                 "completion_tokens": float(sample.completion_tokens),
             },
+            native_acceleration=MaintenanceCore._vlm_native_acceleration_payload(sample),
         )
+
+    @staticmethod
+    def _vlm_native_acceleration_payload(sample: BenchSample) -> dict[str, object]:
+        has_receipt = any(
+            (
+                sample.native_acceleration_status,
+                sample.native_acceleration_mode,
+                sample.native_acceleration_request_gate,
+                sample.native_acceleration_runtime_scope,
+                sample.native_acceleration_fallback_reason,
+                sample.native_acceleration_runtime_active,
+                sample.native_acceleration_draft_supported,
+                sample.native_acceleration_effective_depth,
+                sample.native_acceleration_rounds,
+                sample.native_acceleration_accepted_tokens,
+                sample.native_acceleration_rejected_tokens,
+                sample.native_acceleration_acceptance_rate,
+                sample.native_acceleration_rollback_rate,
+                sample.native_acceleration_draft_propose_ms,
+                sample.native_acceleration_target_verify_ms,
+                sample.native_acceleration_autoregressive_fallback,
+                sample.native_acceleration_sampling_matches_baseline,
+            )
+        )
+        if not has_receipt:
+            return {}
+        return {
+            "schema_version": "melix.native_acceleration.status.v1",
+            "runtime_active": bool(sample.native_acceleration_runtime_active),
+            "status": sample.native_acceleration_status,
+            "mode": sample.native_acceleration_mode,
+            "draft_supported": bool(sample.native_acceleration_draft_supported),
+            "effective_depth": int(sample.native_acceleration_effective_depth),
+            "request_gate": sample.native_acceleration_request_gate,
+            "runtime_scope": sample.native_acceleration_runtime_scope,
+            "fallback_reason": sample.native_acceleration_fallback_reason,
+            "autoregressive_fallback": bool(sample.native_acceleration_autoregressive_fallback),
+            "sampling_matches_baseline": bool(sample.native_acceleration_sampling_matches_baseline),
+            "forward_counts": {
+                "rounds": int(sample.native_acceleration_rounds),
+                "accepted_tokens": int(sample.native_acceleration_accepted_tokens),
+                "rejected_tokens": int(sample.native_acceleration_rejected_tokens),
+            },
+            "timings": {
+                "draft_propose_ms": float(sample.native_acceleration_draft_propose_ms),
+                "target_verify_ms": float(sample.native_acceleration_target_verify_ms),
+            },
+            "acceptance_by_depth": {
+                "effective_depth": int(sample.native_acceleration_effective_depth),
+                "accepted_tokens": int(sample.native_acceleration_accepted_tokens),
+                "rejected_tokens": int(sample.native_acceleration_rejected_tokens),
+                "acceptance_rate": float(sample.native_acceleration_acceptance_rate),
+                "rollback_rate": float(sample.native_acceleration_rollback_rate),
+            },
+        }
 
     @staticmethod
     def _vlm_batch1_comparison_status_metrics(

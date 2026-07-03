@@ -1358,6 +1358,42 @@ message ImageDefaultsSummary {
   uint32 request_timeout_seconds = 17;
 }
 
+message NativeAccelerationForwardCountsSummary {
+  uint64 rounds = 1;
+  uint64 accepted_tokens = 2;
+  uint64 rejected_tokens = 3;
+}
+
+message NativeAccelerationTimingSummary {
+  double draft_propose_ms = 1;
+  double target_verify_ms = 2;
+}
+
+message NativeAccelerationAcceptanceByDepthSummary {
+  uint32 effective_depth = 1;
+  uint64 accepted_tokens = 2;
+  uint64 rejected_tokens = 3;
+  double acceptance_rate = 4;
+  double rollback_rate = 5;
+}
+
+message NativeAccelerationStatusSummary {
+  string schema_version = 1;
+  bool runtime_active = 2;
+  string status = 3;
+  string mode = 4;
+  bool draft_supported = 5;
+  uint32 effective_depth = 6;
+  string request_gate = 7;
+  string runtime_scope = 8;
+  string fallback_reason = 9;
+  bool autoregressive_fallback = 10;
+  bool sampling_matches_baseline = 11;
+  NativeAccelerationForwardCountsSummary forward_counts = 12;
+  NativeAccelerationTimingSummary timings = 13;
+  NativeAccelerationAcceptanceByDepthSummary acceptance_by_depth = 14;
+}
+
 message ServerSnapshot {
   ServerState server_state = 1;
   repeated WorkerSummary workers = 2;
@@ -1377,6 +1413,7 @@ message ServerSnapshot {
   ToolingSettingsSummary tooling_settings = 16;
   APIOnboardingSummary api_onboarding = 17;
   ImageDefaultsSummary image_defaults = 18;
+  NativeAccelerationStatusSummary native_acceleration = 19;
 }
 
 message WorkerSummary {

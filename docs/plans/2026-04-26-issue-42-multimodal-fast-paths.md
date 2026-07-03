@@ -587,6 +587,25 @@ Executable unit issues:
   tests for `auto`, `off`, `force`, and stale saved overrides; request-path
   performance is covered by the existing gateway/request-coordinator scoped
   probes and should report no in-scope regression.
+- Unit 4.2.3 renders the native speculative acceleration receipt across the
+  operator-visible status surfaces that already consume worker runtime stats.
+  Worker `RuntimeStats` must expose the last VLM speculative receipt's status,
+  mode, runtime-active gate, draft support, effective depth, request gate,
+  runtime scope, fallback reason, accepted/rejected token counts, acceptance and
+  rollback rates, draft propose and target verify timings, and explicit
+  autoregressive fallback state. A speculative route is `runtime_active` only
+  after receipt gates prove an admitted speculative decode with draft support,
+  draft load, target decode start, and output mutation enabled; verification-only
+  probes, non-greedy requests, unsupported media routes, and operator-disabled
+  routes remain visible as autoregressive fallback with a typed fallback reason.
+  Control-plane health diagnostics, companion/operator status JSON, metrics,
+  diagnostics bundle summaries, and benchmark artifacts must project the same
+  receipt fields without emitting an optimistic success state before the worker
+  receipt gates pass. Success is measured with focused Python worker stats,
+  diagnostics, and benchmark tests; focused Swift health/metrics tests for the
+  same runtime stats fields; changed-line coverage at or above 95%; and the
+  existing request-coordinator/OpenAI scoped performance probes reporting no
+  in-scope regression.
 
 ## Verification Policy
 
