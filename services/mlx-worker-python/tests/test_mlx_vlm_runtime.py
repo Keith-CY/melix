@@ -27,6 +27,8 @@ from worker.runtime.multimodal_preprocessing import (
     PreparedVisionRequest,
 )
 from worker.runtime.multimodal_speculative_probe import (
+    _int_metadata,
+    _truthy_metadata,
     build_speculative_probe_receipt,
     speculative_probe_admission,
     speculative_probe_enabled,
@@ -6654,6 +6656,12 @@ def test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_gen
     assert receipt["mode"] == "speculative_decode"
     assert receipt["draft_model_id"] == "mlx-community/gemma-4-E2B-it-assistant-bf16"
     assert receipt["num_draft_tokens"] == 6
+    assert receipt["draft_supported"] is True
+    assert receipt["effective_depth"] == 6
+    assert receipt["depth_source"] == "request"
+    assert receipt["adaptive_block_policy"] == "fixed"
+    assert receipt["request_gate"] == "text_speculative_path"
+    assert receipt["runtime_scope"] == "text_mtp"
     assert receipt["rounds"] == 3
     assert receipt["accepted_tokens"] == 6
     assert receipt["rejected_tokens"] == 2
@@ -8080,6 +8088,12 @@ def test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_f
         "fallback_reason": "media inputs are not supported by the Gemma 4 MTP path yet",
         "draft_model_id": "mlx-community/gemma-4-E2B-it-assistant-bf16",
         "num_draft_tokens": 6,
+        "draft_supported": True,
+        "effective_depth": 6,
+        "depth_source": "request",
+        "adaptive_block_policy": "fixed",
+        "request_gate": "media_draft_eligible",
+        "runtime_scope": "vlm_mtp",
         "media_present": True,
         "image_count": 1,
         "video_count": 0,
@@ -8100,6 +8114,78 @@ def test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_f
     position_receipt = runtime.last_probe_snapshot().position_metadata_receipt
     assert position_receipt["media_position_count"] == 0
     assert position_receipt["fallback_reason"] == "post-generation metadata changed"
+
+    stream_calls: list[dict[str, object]] = []
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        model = SimpleNamespace(config=SimpleNamespace(model_type="gemma4"), vision_tower=object())
+        processor = SimpleNamespace(image_processor=object())
+        return model, processor
+
+    def fake_stream_generate(model, processor, prompt: str, image=None, **kwargs):
+        _ = model
+        _ = processor
+        stream_calls.append({"prompt": prompt, "image_count": len(image or []), "kwargs": dict(kwargs)})
+        yield SimpleNamespace(text="normal multimodal", prompt_tokens=9, generation_tokens=1)
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=fake_stream_generate,
+            apply_chat_template_fn=lambda _processor, _config, prompt, num_images=0: f"formatted:{num_images}:{prompt}",
+            load_drafter_fn=lambda *args, **kwargs: pytest.fail("drafter must not load without draft tensors"),
+            batch_generate_fn=lambda *args, **kwargs: [SimpleNamespace(text="unexpected")],
+        )
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe this image."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"fake-image-payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="sample.jpg",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
+            Event(),
+            execution_ext={"melix.vlm.speculative_probe.enabled": "true"},
+            acceleration_policy=common_pb2.AccelerationPolicy(
+                mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                allow_baseline_fallback=True,
+            ),
+        )
+    )
+
+    assert [event.text for event in events] == ["normal multimodal"]
+    assert stream_calls[0]["prompt"] == "formatted:1:Describe this image."
+    assert stream_calls[0]["image_count"] == 1
+    receipt = runtime.last_probe_snapshot().speculative_probe_receipt
+    assert receipt["status"] == "fallback"
+    assert receipt["draft_supported"] is False
+    assert receipt["effective_depth"] == 0
+    assert receipt["depth_source"] == "not_configured"
+    assert receipt["adaptive_block_policy"] == "fixed"
+    assert receipt["request_gate"] == "normal_multimodal_path"
+    assert receipt["runtime_scope"] == "vlm_multimodal"
+    assert receipt["fallback_reason"] == "draft_model_id is required"
 
 
 def test_mlx_vlm_runtime_restores_verification_only_probe_after_generation_exception() -> None:
@@ -8352,22 +8438,38 @@ def test_multimodal_speculative_probe_receipt_covers_disabled_and_admitted_edges
     )
     assert disabled["status"] == "not_requested"
     assert disabled["enabled"] is False
+    assert disabled["draft_supported"] is False
+    assert disabled["effective_depth"] == 0
+    assert disabled["depth_source"] == "not_requested"
+    assert disabled["adaptive_block_policy"] == "none"
+    assert disabled["request_gate"] == "not_requested"
+    assert disabled["runtime_scope"] == "none"
 
     admitted = speculative_probe_admission(
         enabled=True,
         fallback_reason="",
         loaded_model={"metadata": {"cache_scope_id": "scope-1"}},
         prepared_request=prepared,
-        acceleration_policy=None,
+        acceleration_policy=common_pb2.AccelerationPolicy(
+            draft_model_id="draft",
+            num_draft_tokens=4,
+            ext={"melix.speculative.adaptive_block_policy": "acceptance_rate"},
+        ),
         position_metadata_receipt={"fallback_reason": "shape mismatch"},
     )
 
     assert admitted.fallback_count == 0
-    assert admitted.draft_model_configured is False
-    assert admitted.num_draft_tokens == 0
+    assert admitted.draft_model_configured is True
+    assert admitted.num_draft_tokens == 4
     assert admitted.receipt["status"] == "admitted"
     assert admitted.receipt["position_aligned"] is False
     assert admitted.receipt["cache_aligned"] is True
+    assert admitted.receipt["draft_supported"] is True
+    assert admitted.receipt["effective_depth"] == 4
+    assert admitted.receipt["depth_source"] == "request"
+    assert admitted.receipt["adaptive_block_policy"] == "acceptance_rate"
+    assert admitted.receipt["request_gate"] == "text_speculative_path"
+    assert admitted.receipt["runtime_scope"] == "text_mtp"
 
     legacy_scope = speculative_probe_admission(
         enabled=True,
@@ -8409,6 +8511,75 @@ def test_multimodal_speculative_probe_receipt_covers_disabled_and_admitted_edges
         position_metadata_receipt={"status": "not_applicable", "video_count": 1},
     )
     assert video_count_only.receipt["position_aligned"] is True
+
+    def receipt_for(loaded_model: object) -> dict[str, object]:
+        return build_speculative_probe_receipt(
+            enabled=True,
+            fallback_reason="",
+            loaded_model=loaded_model,
+            prepared_request=prepared,
+            acceleration_policy=None,
+        )
+
+    active = receipt_for(
+        {
+            "metadata": {
+                "melix.native_mtp.active": "enabled",
+                "melix.native_mtp.depth": "3",
+            }
+        }
+    )
+    assert active["draft_supported"] is True
+    assert active["effective_depth"] == 3
+    assert active["depth_source"] == "metadata"
+
+    weights_present = receipt_for({"metadata": {"melix.native_mtp.weights_present": "true"}})
+    assert weights_present["draft_supported"] is True
+
+    weight_count = receipt_for({"metadata": {"melix.native_mtp.weight_count": "2"}})
+    assert weight_count["draft_supported"] is True
+
+    speculative_head = receipt_for(
+        {
+            "metadata": {
+                "melix.speculative_head.artifact_available": "yes",
+                "melix.speculative_head.runtime_available": "on",
+            }
+        }
+    )
+    assert speculative_head["draft_supported"] is True
+    assert speculative_head["effective_depth"] == 6
+    assert speculative_head["depth_source"] == "runtime_default"
+
+    model_attribute = receipt_for(
+        {
+            "model": SimpleNamespace(_melix_native_mtp_active=True),
+            "metadata": {"melix.native_mtp.depth": "invalid"},
+        }
+    )
+    assert model_attribute["draft_supported"] is True
+    assert model_attribute["effective_depth"] == 6
+    assert model_attribute["depth_source"] == "runtime_default"
+
+    no_draft = receipt_for({"metadata": {"melix.native_mtp.depth": "invalid"}})
+    assert no_draft["draft_supported"] is False
+    assert no_draft["effective_depth"] == 0
+    assert no_draft["depth_source"] == "not_configured"
+    assert no_draft["request_gate"] == "text_baseline_path"
+    assert no_draft["runtime_scope"] == "text_baseline"
+
+    malformed_metadata = build_speculative_probe_receipt(
+        enabled=True,
+        fallback_reason="",
+        loaded_model={"metadata": None},
+        prepared_request=prepared,
+        acceleration_policy=SimpleNamespace(ext=()),
+    )
+    assert malformed_metadata["draft_supported"] is False
+    assert malformed_metadata["effective_depth"] == 0
+    assert malformed_metadata["adaptive_block_policy"] == "fixed"
+    assert _truthy_metadata(None, "melix.native_mtp.active") is False
+    assert _int_metadata(None, "melix.native_mtp.weight_count") == 0
 
 
 def test_multimodal_speculative_probe_receipt_rejects_unaligned_position_status() -> None:

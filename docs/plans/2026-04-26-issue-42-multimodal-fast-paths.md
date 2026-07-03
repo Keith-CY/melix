@@ -564,6 +564,15 @@ Executable unit issues:
   speculative-fallback outputs for unsupported target family, missing draft
   model, and non-greedy sampling requests while preserving the typed fallback
   reason and sampling-parity receipt field.
+- Unit 4.2.1 extends the speculative probe receipt with native draft admission
+  evidence before changing default routing. Receipts must record
+  `draft_supported`, `effective_depth`, `depth_source`, `adaptive_block_policy`,
+  `request_gate`, `runtime_scope`, and `fallback_reason` for verification-only
+  fallback, refusal, and admitted speculative decode. Media-bearing requests with
+  a configured draft remain baseline-routed until VLM draft tensors are
+  supported, media-bearing requests without draft tensors stay on the normal
+  multimodal path, and text-only requests with draft tensors use the existing
+  text MTP speculative path rather than the VLM media path.
 
 ## Verification Policy
 
