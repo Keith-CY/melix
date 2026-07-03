@@ -29,6 +29,7 @@ _VERSION_CANONICAL_PREFIX = b'version = "'
 _QUOTE_BYTE = 34
 _EQUALS_BYTE = 61
 _PRODUCT_VERSION_CACHE: dict[str, tuple[int, int, str]] = {}
+_PRODUCT_VERSION_PATH_CACHE: dict[str, Path] = {}
 _UPDATE_CHANNEL_CACHE: dict[str, tuple[int, int, str, str]] = {}
 
 
@@ -74,7 +75,11 @@ def read_product_version(repo_root: str | Path) -> str:
         if isinstance(repo_root, Path) and repo_root.is_absolute()
         else Path(repo_root).expanduser().resolve()
     )
-    pyproject_path = root / "pyproject.toml"
+    root_text = str(root)
+    pyproject_path = _PRODUCT_VERSION_PATH_CACHE.get(root_text)
+    if pyproject_path is None:
+        pyproject_path = root / "pyproject.toml"
+        _PRODUCT_VERSION_PATH_CACHE[root_text] = pyproject_path
     stat_result = pyproject_path.stat()
     cache_key = str(pyproject_path)
     cached = _PRODUCT_VERSION_CACHE.get(cache_key)
