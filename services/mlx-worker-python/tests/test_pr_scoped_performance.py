@@ -2672,8 +2672,13 @@ def test_scope_report_selects_melix_metrics_snapshot_probe() -> None:
         changed_files=["scripts/melix_metrics_snapshot.py"],
     )
 
-    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert "melix-metrics-snapshot-runtime-scandir" in probe_ids
+    selected_probes = {probe["id"]: probe for probe in scope["selected_probes"]}
+    assert "melix-metrics-snapshot-runtime-scandir" in selected_probes
+    selected_metrics = selected_probes["melix-metrics-snapshot-runtime-scandir"]["metrics"]
+    assert isinstance(selected_metrics, list)
+    metrics = {metric["key"]: metric for metric in selected_metrics}
+    assert metrics["configured_elapsed_ms_mean"]["warn_abs"] == 0.01
+    assert metrics["configured_elapsed_ms_min"]["warn_abs"] == 0.01
 
 
 def test_scope_report_selects_dev_up_mlx_metal_dist_info_probe() -> None:

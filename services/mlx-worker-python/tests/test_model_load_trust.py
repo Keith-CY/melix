@@ -390,6 +390,43 @@ def test_trust_policy_reads_config_json_bytes_with_direct_open(
     assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
 
 
+def test_trust_policy_reads_config_json_with_bound_json_loads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_load_trust_module._read_model_config_for_stat.cache_clear()
+    model_load_trust_module._detect_custom_loader_requirement_for_stat.cache_clear()
+    model = _custom_loader_text_model(tmp_path)
+    loads_calls = 0
+    original_loads = json.loads
+
+    def counted_loads(payload: bytes) -> object:
+        nonlocal loads_calls
+        loads_calls += 1
+        return original_loads(payload)
+
+    monkeypatch.setattr(model_load_trust_module, "_JSON_LOADS", counted_loads)
+    monkeypatch.setattr(
+        model_load_trust_module.json,
+        "loads",
+        lambda payload: (_ for _ in ()).throw(
+            AssertionError("config.json should use the module-local JSON loads binding")
+        ),
+    )
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+        resolve_model_load_trust_policy(
+            model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=RecordingTextBackend(),
+        )
+
+    assert loads_calls == 1
+    assert exc_info.value.policy.custom_loader_required is True
+    assert exc_info.value.policy.custom_loader_detection_source == "config_json:auto_map"
+
+
 def test_trust_policy_caches_config_json_by_file_stat(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
