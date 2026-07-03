@@ -1,6 +1,43 @@
 import Foundation
 import MelixControlPlaneProtocol
 
+private enum GatewayNativeDraftMetadata {
+    static func supportsSpeculativeDraft(_ ext: [String: String]) -> Bool {
+        if truthy(ext["melix.native_mtp.active"]) {
+            return true
+        }
+        if truthy(ext["melix.native_mtp.weights_present"]) {
+            return true
+        }
+        if intValue(ext["melix.native_mtp.weight_count"]) > 0 {
+            return true
+        }
+        return truthy(ext["melix.speculative_head.artifact_available"])
+            && (
+                truthy(ext["melix.speculative_head.runtime_available"])
+                    || truthy(ext["melix.speculative_head.configured"])
+            )
+    }
+
+    private static func truthy(_ rawValue: String?) -> Bool {
+        switch rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on", "enabled":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func intValue(_ rawValue: String?) -> Int {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let parsed = Int(rawValue)
+        else {
+            return 0
+        }
+        return parsed
+    }
+}
+
 public enum ServingDefaultsValidationError: Error, Equatable, Sendable {
     case missingServerSessionID
     case invalidTemperature
@@ -254,7 +291,38 @@ public struct GatewayServingDefaultsPolicy: Sendable, Equatable {
         guard let model else {
             return false
         }
-        return model.capabilityClass == .modelCapabilityText && model.routeClass == .workerRouteSwiftText
+        if model.capabilityClass == .modelCapabilityText,
+           model.routeClass == .workerRouteSwiftText {
+            return true
+        }
+        guard modelUsesNativeMultimodalSpeculativeRoute(
+            capabilityClass: model.capabilityClass,
+            routeKind: WorkerRouteKind(routeClass: model.routeClass),
+            ext: model.settings.ext
+        ) else {
+            return false
+        }
+        return GatewayNativeDraftMetadata.supportsSpeculativeDraft(model.settings.ext)
+    }
+
+    private static func modelUsesNativeMultimodalSpeculativeRoute(
+        capabilityClass: Melix_Controlplane_V1_ModelCapabilityClass?,
+        routeKind: WorkerRouteKind?,
+        ext: [String: String]
+    ) -> Bool {
+        if routeKind == .pythonVLM {
+            return true
+        }
+        if capabilityClass == .modelCapabilityVlm {
+            return true
+        }
+        if let routeKind = WorkerRouteKind(metadataIdentifier: ext["melix.capability.route_kind"]) {
+            return routeKind == .pythonVLM
+        }
+        if let routeKind = WorkerRouteKind(capabilityIdentifier: ext["melix.capability.class"]) {
+            return routeKind == .pythonVLM
+        }
+        return false
     }
 
     private static func effectiveBatchingDefaults(
@@ -1008,6 +1076,24 @@ public actor GatewayServingDefaultsStore {
         return WorkerRouteKind.swiftText.metadataIdentifier
     }
 
+    private static func modelSettingsUseNativeMultimodalSpeculativeRoute(
+        _ modelSettings: Melix_Controlplane_V1_ModelSettings
+    ) -> Bool {
+        if let routeKind = WorkerRouteKind(metadataIdentifier: modelSettings.ext["melix.capability.route_kind"]) {
+            return routeKind == .pythonVLM
+        }
+        if let routeKind = WorkerRouteKind(capabilityIdentifier: modelSettings.ext["melix.capability.class"]) {
+            return routeKind == .pythonVLM
+        }
+        return false
+    }
+
+    private static func modelSettingsAdvertiseNativeDraftSupport(
+        _ modelSettings: Melix_Controlplane_V1_ModelSettings
+    ) -> Bool {
+        return GatewayNativeDraftMetadata.supportsSpeculativeDraft(modelSettings.ext)
+    }
+
     private static func overrideReceiptExt(
         requestedMaxConcurrentRequests: UInt32,
         requestedPrefillBatchSize: UInt32,
@@ -1091,17 +1177,31 @@ public actor GatewayServingDefaultsStore {
         let modelProfile = normalizedProfileID(modelProfileRawValue)
         let hasModelProfileOverride = ServingAccelerationProfiles.normalizeProfileID(modelProfileRawValue) != nil
         let effectiveProfile = hasModelProfileOverride ? modelProfile : requestedProfile
-        let effectiveAccelerationMode = normalizedRoutePolicy(speculativeRoutePolicy) == "off"
+        let normalizedSpeculativeRoutePolicy = normalizedRoutePolicy(speculativeRoutePolicy)
+        var effectiveAccelerationMode = normalizedSpeculativeRoutePolicy == "off"
             ? Melix_Controlplane_V1_AccelerationMode.baseline
             : hasModelAccelerationOverride
             ? modelAccelerationMode
             : normalizedRequestedMode
+        let unsupportedNativeMultimodalSpeculativeRoute: Bool
+        if effectiveAccelerationMode == .speculativeDecode,
+           let modelSettings {
+            unsupportedNativeMultimodalSpeculativeRoute = modelSettingsUseNativeMultimodalSpeculativeRoute(modelSettings)
+                && !modelSettingsAdvertiseNativeDraftSupport(modelSettings)
+        } else {
+            unsupportedNativeMultimodalSpeculativeRoute = false
+        }
+        if unsupportedNativeMultimodalSpeculativeRoute {
+            effectiveAccelerationMode = .baseline
+        }
+        let clearsSpeculativeLaunchDefaults = normalizedRequestedMode == .speculativeDecode
+            && (normalizedSpeculativeRoutePolicy == "off" || unsupportedNativeMultimodalSpeculativeRoute)
         guard effectiveAccelerationMode == .speculativeDecode else {
             return (
                 effectiveAccelerationMode,
                 "",
                 0,
-                effectiveProfile,
+                clearsSpeculativeLaunchDefaults ? "" : effectiveProfile,
                 (hasModelAccelerationOverride && modelAccelerationMode != normalizedRequestedMode)
                     || (hasModelProfileOverride && modelProfile != requestedProfile)
             )
