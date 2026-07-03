@@ -592,25 +592,26 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
                 name = entry.name
                 if name <= after or (best_name and name >= best_name):
                     continue
+                if name not in _README_NAMES and _is_supported_dataset_file_name(name):
+                    try:
+                        if entry.is_file(follow_symlinks=False):
+                            best_name = name
+                            best_path_raw = entry.path
+                            best_is_dir = False
+                            best_is_file = True
+                            continue
+                    except OSError:
+                        continue
                 try:
                     is_dir = entry.is_dir(follow_symlinks=False)
                 except OSError:
                     continue
-                if is_dir:
-                    is_file = False
-                elif name in _README_NAMES or not _is_supported_dataset_file_name(name):
+                if not is_dir:
                     continue
-                else:
-                    try:
-                        is_file = entry.is_file(follow_symlinks=False)
-                    except OSError:
-                        continue
-                    if not is_file:
-                        continue
                 best_name = name
                 best_path_raw = entry.path
-                best_is_dir = is_dir
-                best_is_file = is_file
+                best_is_dir = True
+                best_is_file = False
     except OSError:
         return None
     if not best_path_raw:

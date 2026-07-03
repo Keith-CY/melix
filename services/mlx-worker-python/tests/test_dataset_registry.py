@@ -531,10 +531,12 @@ def test_dataset_catalog_scan_records_skip_file_stat_for_unsupported_names(
             self._is_dir = is_dir
             self._is_file = is_file
             self._file_error = file_error
+            self.is_dir_calls = 0
             self.is_file_calls = 0
 
         def is_dir(self, *, follow_symlinks: bool = True) -> bool:
             assert follow_symlinks is False
+            self.is_dir_calls += 1
             return self._is_dir
 
         def is_file(self, *, follow_symlinks: bool = True) -> bool:
@@ -587,6 +589,8 @@ def test_dataset_catalog_scan_records_skip_file_stat_for_unsupported_names(
     next_entry = catalog._next_supported_scan_entry(Path("/tmp"), after="")
 
     assert next_entry == ("train.jsonl", Path("/tmp/train.jsonl"), False, True)
+    assert supported.is_file_calls == 2
+    assert supported.is_dir_calls == 0
 
 
 def test_dataset_catalog_limited_preview_scan_streams_multiple_files_without_sorted_walk(
@@ -1087,14 +1091,32 @@ def test_dataset_catalog_first_preview_file_preserves_sorted_depth_first_edges(
             assert follow_symlinks is False
             return True
 
+    class FileStatErrorEntry:
+        name = "file-error.jsonl"
+        path = str(data_dir / "file-error.jsonl")
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
+            raise OSError("file stat failed")
+
     class FakeScandir:
+        def __init__(self, entries: list[object]) -> None:
+            self.entries = entries
+
         def __enter__(self):
-            return iter([BrokenEntry()])
+            return iter(self.entries)
 
         def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
             return False
 
-    monkeypatch.setattr(catalog.os, "scandir", lambda _path: FakeScandir())
+    monkeypatch.setattr(catalog.os, "scandir", lambda _path: FakeScandir([BrokenEntry()]))
+    assert catalog._next_supported_scan_entry(snapshot_dir, after="") == (
+        "broken.jsonl",
+        data_dir / "broken.jsonl",
+        False,
+        True,
+    )
+    monkeypatch.setattr(catalog.os, "scandir", lambda _path: FakeScandir([FileStatErrorEntry()]))
     assert catalog._next_supported_scan_entry(snapshot_dir, after="") is None
 
 
