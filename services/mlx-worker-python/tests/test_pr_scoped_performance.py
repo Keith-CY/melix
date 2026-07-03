@@ -1986,6 +1986,11 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
     assert "test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_fallback" in coverage_commands
     assert "test_mlx_vlm_runtime_image_batch1_step_keeps_ineligible_requests_on_stream" in coverage_commands
     assert "test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available" in coverage_commands
+    assert (
+        "test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_generation"
+        in coverage_commands
+    )
+    assert "test_mlx_vlm_runtime_mtp_response_helpers_handle_alternate_shapes" in coverage_commands
     assert "test_mtp_drafter_acceptance_stats_ignore_unusable_accept_lens" in coverage_commands
 
 
@@ -2181,6 +2186,15 @@ def test_scope_report_selects_multimodal_speculative_probe_receipt() -> None:
         probe["coverage_command"]
     )
     assert "test_mlx_vlm_runtime_restores_verification_only_probe_after_probe_exception" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_generation" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_mtp_response_helpers_handle_alternate_shapes" in str(
         probe["coverage_command"]
     )
 
