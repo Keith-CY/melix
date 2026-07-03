@@ -25,6 +25,15 @@ list directly when a role has exactly one evidence id. This preserves behavior
 for empty, single-id, and multi-id roles while reducing release-matrix row
 materialization overhead on the common single-id path.
 
+## 2026-07-03 follow-up: single run-kind role fast path
+
+This Python-only follow-up keeps the same registered probe and narrows to
+`_report_matrix_roles`. Release-matrix rows commonly use run-kind-only rules with
+a single tuple value, so the role scanner can test that tuple directly against the
+precomputed report run-kind set instead of dispatching through the general
+`_run_kind_rule_matches` helper on every role. Multi-value, non-tuple, and
+non-string run-kind rules continue to use the existing general matching behavior.
+
 ## Verification plan
 
 Run the registered focused test command, changed-scope coverage command, and the
