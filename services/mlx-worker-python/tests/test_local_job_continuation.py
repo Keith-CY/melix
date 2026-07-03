@@ -769,6 +769,74 @@ def test_project_local_job_session_followup_preserves_store_blocker_without_mess
     assert store.load_record("job-7") == projection.claim.reconciliation.record
 
 
+def test_project_local_job_session_followup_uses_narrow_receipt_copies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/job-7.json",),
+        )
+    )
+
+    def reject_generic_deepcopy(value: object) -> object:  # pragma: no cover - failure path
+        raise AssertionError(f"unexpected generic deepcopy for {type(value)!r}")
+
+    monkeypatch.setattr(
+        local_job_continuation_module,
+        "deepcopy",
+        reject_generic_deepcopy,
+        raising=False,
+    )
+
+    projection = project_local_job_session_followup(
+        store,
+        job_id="job-7",
+        followup_session_id="followup-session-7",
+        completion_summary={
+            "status": "completed",
+            "summary": "Redacted completion summary.",
+            "details": {
+                "items": [{"name": "artifact"}],
+                "coords": ("x", {"y": "z"}),
+            },
+        },
+        owner_scope_checked=True,
+    )
+
+    assert projection is not None
+    assert projection.claim_receipt["reason"] == "followup_claimed"
+    projection_summary = projection.prompt_user_payload["local_job_completion_summary"]
+    claim_summary = projection.claim.prompt_context.user_payload[
+        "local_job_completion_summary"
+    ]
+    assert projection_summary is not claim_summary
+    assert projection_summary["details"] is not claim_summary["details"]
+    assert projection_summary["details"]["items"] is not (
+        claim_summary["details"]["items"]
+    )
+    assert projection_summary["details"]["items"][0] is not (
+        claim_summary["details"]["items"][0]
+    )
+    assert projection_summary["details"]["coords"] is not (
+        claim_summary["details"]["coords"]
+    )
+    projection_summary["summary"] = "Downstream mutation."
+    projection_summary["details"]["items"][0]["name"] = "mutated"
+    assert claim_summary["summary"] == "Redacted completion summary."
+    assert claim_summary["details"]["items"][0]["name"] == "artifact"
+    assert projection.untrusted_context_receipts is not (
+        projection.claim.prompt_context.untrusted_context_receipts
+    )
+    projection.untrusted_context_receipts[0]["segment_id"] = "downstream-mutation"
+    assert projection.claim.prompt_context.untrusted_context_receipts[0]["segment_id"] == (
+        "job-7:local-job-followup"
+    )
+
+
 def test_project_local_job_session_followup_returns_none_for_missing_record(
     tmp_path: Path,
 ) -> None:
