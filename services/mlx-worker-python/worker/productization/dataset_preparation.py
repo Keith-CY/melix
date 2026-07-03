@@ -793,20 +793,35 @@ def list_dataset_versions(
                 version = json_loads(handle.read())
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             continue
-        version_get = version.get
-        versions_append(
-            {
-                "dataset_id": version_get("dataset_id", ""),
-                "version_id": version_get("version_id", ""),
-                "created_at": version_get("created_at", ""),
-                "status": version_get("status", ""),
-                "train_count": version_get("train_count", 0),
-                "validation_count": version_get("validation_count", 0),
-                "failed_count": version_get("failed_count", 0),
-                "quality_summary_path": version_get("quality_summary_path", ""),
-                "dataset_version_path": manifest_path,
-            }
-        )
+        try:
+            versions_append(
+                {
+                    "dataset_id": version["dataset_id"],
+                    "version_id": version["version_id"],
+                    "created_at": version["created_at"],
+                    "status": version["status"],
+                    "train_count": version["train_count"],
+                    "validation_count": version["validation_count"],
+                    "failed_count": version["failed_count"],
+                    "quality_summary_path": version["quality_summary_path"],
+                    "dataset_version_path": manifest_path,
+                }
+            )
+        except KeyError:
+            version_get = version.get
+            versions_append(
+                {
+                    "dataset_id": version_get("dataset_id", ""),
+                    "version_id": version_get("version_id", ""),
+                    "created_at": version_get("created_at", ""),
+                    "status": version_get("status", ""),
+                    "train_count": version_get("train_count", 0),
+                    "validation_count": version_get("validation_count", 0),
+                    "failed_count": version_get("failed_count", 0),
+                    "quality_summary_path": version_get("quality_summary_path", ""),
+                    "dataset_version_path": manifest_path,
+                }
+            )
     versions.sort(key=_dataset_version_list_sort_key)
     return {
         "schema_version": DATASET_VERSION_LIST_SCHEMA_VERSION,

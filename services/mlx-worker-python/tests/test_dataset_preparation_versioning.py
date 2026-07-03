@@ -397,6 +397,8 @@ def test_dataset_version_listing_skips_missing_or_directory_manifests(tmp_path: 
     )
 
     assert [item["version_id"] for item in listing["versions"]] == ["support-chat-v1"]
+    assert listing["versions"][0]["train_count"] == 0
+    assert listing["versions"][0]["quality_summary_path"] == ""
     assert listing["metrics"]["dataset_version_count"] == 1
 
 
