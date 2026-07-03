@@ -119,7 +119,7 @@ def run_probe() -> dict[str, float]:
             baseline_peak.append(float(peak))
             elapsed, peak = _measure(
                 load_trajectory_provenance_from_snapshot_manifest,
-                str(manifest_path),
+                manifest_path,
                 iterations,
             )
             optimized_ms.append(elapsed)
