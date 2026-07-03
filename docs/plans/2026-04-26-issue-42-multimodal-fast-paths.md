@@ -564,6 +564,14 @@ Executable unit issues:
   speculative-fallback outputs for unsupported target family, missing draft
   model, and non-greedy sampling requests while preserving the typed fallback
   reason and sampling-parity receipt field.
+- Plan 4.1 is closed out by Unit 4.1.1 (#1465, PR #2333), Unit 4.1.2
+  (#1466, PR #2530), and Unit 4.1.3 (#1467, PR #2535). Together those units
+  satisfy the Plan 4.1 acceptance gate: feature-gated media-bearing speculative
+  probes run without changing visible output, receipts record accepted/rejected
+  tokens, rounds, sampling parity, rollback, timing, and fallback reason, and
+  single-request plus concurrent VLM parity fixtures pass before any rollout path
+  is enabled. Plan 4.2 continues native draft admission and operator override
+  surfaces; Plan 4.3 owns promotion evidence and default-on release gates.
 - Unit 4.2.1 extends the speculative probe receipt with native draft admission
   evidence before changing default routing. Receipts must record
   `draft_supported`, `effective_depth`, `depth_source`, `adaptive_block_policy`,
