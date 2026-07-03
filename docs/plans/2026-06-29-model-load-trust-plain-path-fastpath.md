@@ -44,6 +44,21 @@ PY
 
 CI PR-scoped performance remains the merge gate for the registered probe result.
 
+## 2026-07-03 follow-up slice: local JSON loads binding
+
+This Python-only follow-up keeps the same registered
+`model-load-config-json-bytes` probe and narrows to config JSON parsing in
+`_read_model_config_for_stat(...)`. The implementation binds `json.loads` once at
+module import time and then hoists that module-local binding into a local variable
+inside the cached read helper before parsing bytes from `config.json`. This avoids
+the repeated `json.loads` attribute lookup on cache misses while preserving the
+existing binary read path, JSON decode fallback, non-dict fallback, stat-keyed
+cache behavior, and custom-loader `auto_map` detection semantics.
+
+The affected path remains covered by the existing focused `test_command`,
+`coverage_command`, and `probe_command` for `model-load-config-json-bytes` in
+`infra/perf/pr_scoped_probes.json`; no registry shape change is required.
+
 ## Success Criteria
 
 - Focused model-load trust tests pass.

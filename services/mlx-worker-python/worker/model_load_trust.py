@@ -22,6 +22,7 @@ BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST = "custom_loader_requires_trust_remote
 CONFIG_JSON_DETECTION = (False, CONFIG_JSON_SOURCE)
 CONFIG_JSON_ABSENT_DETECTION = (False, CONFIG_JSON_ABSENT_SOURCE)
 CONFIG_JSON_AUTO_MAP_DETECTION = (True, CONFIG_JSON_AUTO_MAP_SOURCE)
+_JSON_LOADS = json.loads
 EXECUTABLE_MODEL_FILE_PREFIXES = (
     "configuration",
     "feature_extraction",
@@ -388,9 +389,10 @@ def _read_model_config_for_stat(
     size: int,
 ) -> dict[str, Any] | None:
     _ = (mtime_ns, size)
+    loads = _JSON_LOADS
     try:
         with open(config_path, "rb") as handle:
-            payload = json.loads(handle.read())
+            payload = loads(handle.read())
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
