@@ -246,6 +246,26 @@ def test_read_product_version_reuses_stat_valid_cache(
     assert open_calls == 1
 
 
+def test_read_product_version_reuses_cached_pyproject_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pyproject_path = tmp_path / "pyproject.toml"
+    pyproject_path.write_text('[project]\nname = "melix"\nversion = "1.2.3"\n', encoding="utf-8")
+    startup_signals_module._PRODUCT_VERSION_CACHE.clear()
+    startup_signals_module._PRODUCT_VERSION_PATH_CACHE.clear()
+
+    assert read_product_version(tmp_path) == "1.2.3"
+    assert startup_signals_module._PRODUCT_VERSION_PATH_CACHE[str(tmp_path)] == pyproject_path
+
+    def fail_path_join(self: Path, key: str) -> Path:  # pragma: no cover - sentinel
+        raise AssertionError("stat-valid product version reads should reuse cached pyproject path")
+
+    monkeypatch.setattr(Path, "__truediv__", fail_path_join)
+
+    assert read_product_version(tmp_path) == "1.2.3"
+
+
 def test_read_product_version_scans_lines_without_full_file_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
