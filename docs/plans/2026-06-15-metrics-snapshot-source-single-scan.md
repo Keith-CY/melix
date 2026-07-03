@@ -80,3 +80,20 @@ single-scan runtime discovery behavior.
 The behavior contract remains unchanged: exact, prefix/suffix, empty-prefix, and
 multi-wildcard runtime pattern matches still select the newest regular file per
 source, and configured sources still bypass runtime scanning.
+
+## 2026-07-03 probe calibration slice: configured-path noise floor
+
+The rejected 2026-07-03 index-backed latest tracking slice showed that the
+registered `melix-metrics-snapshot-runtime-scandir` probe's configured-source
+metrics are too small to gate by percentage alone. The configured path bypasses
+runtime discovery entirely and normally runs in roughly 0.02 ms, so sub-0.01 ms
+host jitter can appear as a large percentage regression while the measured
+runtime directory scan remains neutral or improved.
+
+This Python/probe-only calibration keeps the existing probe, test command,
+coverage command, and runtime discovery metrics. It adds a 0.01 ms absolute
+warning floor to `configured_elapsed_ms_mean` and `configured_elapsed_ms_min` so
+future behavior slices are gated on meaningful configured-path regressions rather
+than measurement noise. The behavior contract remains unchanged: configured
+sources still bypass runtime scanning, and runtime-scan `elapsed_ms_*` metrics
+remain percentage-gated.
