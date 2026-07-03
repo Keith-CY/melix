@@ -34,6 +34,12 @@ def empty_speculative_probe_receipt() -> dict[str, object]:
         "fallback_reason": "",
         "draft_model_id": "",
         "num_draft_tokens": 0,
+        "draft_supported": False,
+        "effective_depth": 0,
+        "depth_source": "not_requested",
+        "adaptive_block_policy": "none",
+        "request_gate": "not_requested",
+        "runtime_scope": "none",
         "media_present": False,
         "image_count": 0,
         "video_count": 0,
@@ -92,6 +98,8 @@ def build_speculative_probe_receipt(
     media_present = image_count > 0 or video_count > 0
     position_aligned = _position_metadata_aligned(position_metadata_receipt)
     metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
+    if not hasattr(metadata, "get"):
+        metadata = {}
     cache_identity = str(metadata.get("cache_identity", "") or "").strip()
     # ``scope_id`` is accepted as the legacy cache-scope spelling emitted by
     # older fast-path fixtures; new receipts should prefer ``cache_scope_id``.
@@ -101,6 +109,16 @@ def build_speculative_probe_receipt(
     # cache-layout proof we can report without loading a drafter or mutating
     # output.
     cache_aligned = bool(cache_identity or cache_scope_id or position_aligned)
+    draft_supported = _draft_supported(
+        loaded_model=loaded_model,
+        metadata=metadata,
+        draft_model_id=draft_model_id,
+    )
+    effective_depth, depth_source = _effective_depth(
+        metadata=metadata,
+        draft_supported=draft_supported,
+        num_draft_tokens=num_draft_tokens,
+    )
 
     receipt.update(
         {
@@ -109,6 +127,18 @@ def build_speculative_probe_receipt(
             "fallback_reason": str(fallback_reason or ""),
             "draft_model_id": draft_model_id,
             "num_draft_tokens": num_draft_tokens,
+            "draft_supported": draft_supported,
+            "effective_depth": effective_depth,
+            "depth_source": depth_source,
+            "adaptive_block_policy": _adaptive_block_policy(acceleration_policy),
+            "request_gate": _request_gate(
+                media_present=media_present,
+                draft_supported=draft_supported,
+            ),
+            "runtime_scope": _runtime_scope(
+                media_present=media_present,
+                draft_supported=draft_supported,
+            ),
             "media_present": media_present,
             "image_count": image_count,
             "video_count": video_count,
@@ -190,6 +220,103 @@ def speculative_probe_admission(
         draft_model_configured=bool(receipt["draft_model_id"]),
         num_draft_tokens=int(receipt["num_draft_tokens"] or 0),
     )
+
+
+def _draft_supported(
+    *,
+    loaded_model: Any,
+    metadata: Mapping[str, object],
+    draft_model_id: str,
+) -> bool:
+    if draft_model_id:
+        return True
+    if _truthy_metadata(metadata, "melix.native_mtp.active"):
+        return True
+    if _truthy_metadata(metadata, "melix.native_mtp.weights_present"):
+        return True
+    if _int_metadata(metadata, "melix.native_mtp.weight_count") > 0:
+        return True
+    if _truthy_metadata(metadata, "melix.speculative_head.artifact_available") and (
+        _truthy_metadata(metadata, "melix.speculative_head.runtime_available")
+        or _truthy_metadata(metadata, "melix.speculative_head.configured")
+    ):
+        return True
+    model = loaded_model.get("model") if isinstance(loaded_model, dict) else loaded_model
+    if bool(getattr(model, "_melix_native_mtp_active", False)):
+        return True
+    language_model = getattr(model, "language_model", None)
+    return bool(getattr(language_model, "_melix_native_mtp_active", False))
+
+
+def _effective_depth(
+    *,
+    metadata: Mapping[str, object],
+    draft_supported: bool,
+    num_draft_tokens: int,
+) -> tuple[int, str]:
+    if num_draft_tokens > 0:
+        return num_draft_tokens, "request"
+    for key in (
+        "melix.native_mtp.depth",
+        "melix.native_mtp.layer_count",
+        "melix.speculative_head.configured_layers",
+    ):
+        depth = _int_metadata(metadata, key)
+        if depth > 0:
+            return depth, "metadata"
+    if draft_supported:
+        return 6, "runtime_default"
+    return 0, "not_configured"
+
+
+def _adaptive_block_policy(acceleration_policy: common_pb2.AccelerationPolicy | None) -> str:
+    ext = getattr(acceleration_policy, "ext", None) if acceleration_policy is not None else None
+    if ext is None or not hasattr(ext, "get"):
+        return "fixed"
+    for key in (
+        "melix.speculative.adaptive_block_policy",
+        "melix.native_mtp.adaptive_block_policy",
+        "adaptive_block_policy",
+    ):
+        value = str(ext.get(key, "") or "").strip()
+        if value:
+            return value
+    return "fixed"
+
+
+def _request_gate(*, media_present: bool, draft_supported: bool) -> str:
+    if media_present and draft_supported:
+        return "media_draft_eligible"
+    if media_present:
+        return "normal_multimodal_path"
+    if draft_supported:
+        return "text_speculative_path"
+    return "text_baseline_path"
+
+
+def _runtime_scope(*, media_present: bool, draft_supported: bool) -> str:
+    if media_present and draft_supported:
+        return "vlm_mtp"
+    if media_present:
+        return "vlm_multimodal"
+    if draft_supported:
+        return "text_mtp"
+    return "text_baseline"
+
+
+def _truthy_metadata(metadata: Mapping[str, object] | None, key: str) -> bool:
+    if not hasattr(metadata, "get"):
+        return False
+    return str(metadata.get(key, "") or "").strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
+def _int_metadata(metadata: Mapping[str, object] | None, key: str) -> int:
+    if not hasattr(metadata, "get"):
+        return 0
+    try:
+        return max(0, int(str(metadata.get(key, "") or "0").strip() or "0"))
+    except ValueError:
+        return 0
 
 
 def _position_metadata_aligned(position_metadata_receipt: Mapping[str, object] | None) -> bool:
