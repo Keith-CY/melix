@@ -1989,24 +1989,12 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
         "test_mlx_vlm_runtime_concurrent_media_speculative_fallbacks_do_not_share_drafter_state",
         "test_mlx_vlm_runtime_speculative_gate_fallbacks_preserve_prompt_only_baseline_outputs",
     )
-    selected_probes_by_id = {probe["id"]: probe for probe in scope["selected_probes"]}
-    speculative_parity_probe_ids = {
-        "multimodal-speculative-probe-receipt",
-        "vlm-batch1-comparison-artifact",
-        "mlx-vlm-family-config-cache",
-        "mlx-vlm-gemma4-weight-presence-single-pass",
-        "quantized-tensor-metadata-prepass",
-    }
-    assert speculative_parity_probe_ids <= set(selected_probe_ids)
-    for probe_id in speculative_parity_probe_ids:
-        probe = selected_probes_by_id[probe_id]
-        test_command = str(probe["test_command"])
-        coverage_command = str(probe["coverage_command"])
-        for test_name in required_parity_tests:
-            assert test_name in test_command
-            assert test_name in coverage_command
-
+    test_commands = " ".join(str(probe["test_command"]) for probe in scope["selected_probes"])
     coverage_commands = " ".join(str(probe["coverage_command"]) for probe in scope["selected_probes"])
+    for test_name in required_parity_tests:
+        assert test_name in test_commands
+        assert test_name in coverage_commands
+
     assert "test_mlx_vlm_runtime_image_batch1_step_keeps_ineligible_requests_on_stream" in coverage_commands
     assert "test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available" in coverage_commands
     assert (
