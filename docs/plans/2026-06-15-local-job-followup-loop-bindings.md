@@ -27,6 +27,12 @@ This Python-only follow-up keeps the same registered `local-job-followup-scan-sc
 
 The focused regression guard mutates both a copied top-level receipt field and a nested prompt-context receipt field to prove downstream projection mutations do not leak back into the claim batch. No record schema, reconciliation, claim, prompt-context admission, scan ordering, or receipt payload semantics change.
 
+## 2026-07-03 follow-up: projection claim narrow copies
+
+This Python-only follow-up keeps the same registered `local-job-followup-scan-scandir` probe and narrows `_project_local_job_session_followup_claim(...)`. The projection path now uses JSON-shape copy helpers for the prompt user payload, untrusted-context receipts, and claim receipt instead of invoking generic `deepcopy(...)` for every projected claim. The copy helpers preserve downstream mutation isolation for the local-job completion summary and receipt dictionaries while avoiding generic memo/type-dispatch overhead on the registered projection workload.
+
+The focused regression guard monkeypatches the module-level `deepcopy` symbol to reject generic deep copies, then mutates copied completion-summary and receipt data to prove projection changes do not leak back into the claim/prompt-context state. No record schema, reconciliation, claim, prompt-context admission, scan ordering, or receipt payload fields change.
+
 ## Linux validation boundary
 
 This is a Python-only slice and is locally verifiable on Linux. No Swift runtime behavior changes are included.
