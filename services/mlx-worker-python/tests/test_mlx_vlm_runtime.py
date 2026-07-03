@@ -7542,7 +7542,7 @@ def test_mlx_vlm_runtime_concurrent_media_speculative_fallbacks_do_not_share_dra
                 prepared,
                 common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0, max_output_tokens=16),
                 Event(),
-                execution_ext={"melix.vlm.speculative_probe.enabled": "enabled"},
+                execution_ext={"melix.vlm.speculative_probe.enabled": "true"},
                 acceleration_policy=common_pb2.AccelerationPolicy(
                     mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
                     draft_model_id="mlx-community/gemma-4-E2B-it-assistant-bf16",
@@ -7682,7 +7682,7 @@ def test_mlx_vlm_runtime_speculative_gate_fallbacks_preserve_prompt_only_baselin
                 prepared,
                 sampling,
                 Event(),
-                execution_ext={"melix.vlm.speculative_probe.enabled": "yes"} if speculative else None,
+                execution_ext={"melix.vlm.speculative_probe.enabled": "true"} if speculative else None,
                 acceleration_policy=acceleration_policy if speculative else None,
             )
         )
