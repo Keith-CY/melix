@@ -7513,10 +7513,10 @@ def test_mlx_vlm_runtime_concurrent_media_speculative_fallbacks_do_not_share_dra
         load_drafter_fn=fake_load_drafter,
         batch_generate_fn=lambda *args, **kwargs: [SimpleNamespace(text="unexpected")],
     )
+    runtime = MLXVLMRuntime(backend=backend)
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
 
     def run_request(index: int):
-        runtime = MLXVLMRuntime(backend=backend)
-        loaded_model = runtime.load_model(imported_gemma4_vlm_model())
         prepared = runtime.render_prompt(
             [
                 common_pb2.ChatMessage(
