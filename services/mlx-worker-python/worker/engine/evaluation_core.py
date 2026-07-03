@@ -4126,7 +4126,11 @@ class EvaluationCore:
             option = stripped.upper()
             if option.isalpha():
                 return option
-        if stripped and stripped[0] in "+-0123456789" and EvaluationCore._looks_like_numeric(stripped):
+        if (
+            stripped
+            and stripped[0] in "+-0123456789"
+            and _NUMERIC_TOKEN_PATTERN.fullmatch(stripped) is not None
+        ):
             return EvaluationCore._normalized_numeric_literal(stripped)
         is_ascii = stripped.isascii()
         if (
