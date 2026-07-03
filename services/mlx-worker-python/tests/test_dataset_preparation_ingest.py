@@ -16,6 +16,7 @@ from worker.productization.dataset_preparation import (
     _iter_source_file_paths,
     _normalize_line_endings,
     _record,
+    _read_source_text,
     _source_kind,
     _source_kind_for_name,
     prepare_dataset_ingest,
@@ -53,6 +54,42 @@ def test_dataset_ingest_source_file_paths_use_scandir_without_rglob(
         "b/b.txt",
         "z.txt",
     ]
+
+
+def test_dataset_ingest_unbounded_source_reader_uses_single_binary_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "notes.txt"
+    source_path.write_text("hello\nworld\n", encoding="utf-8")
+
+    class CountingBinaryFile:
+        read_calls = 0
+
+        def __enter__(self) -> "CountingBinaryFile":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            self.read_calls += 1
+            assert size == -1
+            return b"hello\nworld\n"
+
+    counting_file = CountingBinaryFile()
+
+    def counted_open(path: Path, mode: str = "r", *args: object, **kwargs: object) -> CountingBinaryFile:
+        assert path == source_path
+        assert mode == "rb"
+        assert args == ()
+        assert kwargs == {}
+        return counting_file
+
+    monkeypatch.setattr(Path, "open", counted_open)
+
+    assert _read_source_text(source_path) == "hello\nworld\n"
+    assert counting_file.read_calls == 1
 
 
 def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
