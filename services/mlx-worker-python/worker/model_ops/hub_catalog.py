@@ -918,7 +918,27 @@ def _direct_card_size_hint_from_text(text: str) -> int:
     return _direct_size_hint_from_text(text)
 
 
+def _direct_size_hint_from_line(text: str, value_start: int) -> int:
+    newline_index = text.find("\n", value_start)
+    if newline_index >= 0:
+        return _direct_size_hint_from_text(text[value_start:newline_index])
+    value_end = value_start
+    text_length = len(text)
+    while (
+        value_end < text_length
+        and text[value_end] not in "\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+    ):
+        value_end += 1
+    return _direct_size_hint_from_text(text[value_start:value_end])
+
+
 def _direct_explicit_size_hint_from_text(text: str) -> int:
+    marker_index = text.find("MODEL SIZE | ")
+    if marker_index >= 0:
+        return _direct_size_hint_from_line(text, marker_index + 13)
+    marker_index = text.find("Model size: ")
+    if marker_index >= 0:
+        return _direct_size_hint_from_line(text, marker_index + 12)
     marker_index = text.find("MODEL SIZE")
     if marker_index < 0:
         marker_index = text.find("Model size")
@@ -936,17 +956,7 @@ def _direct_explicit_size_hint_from_text(text: str) -> int:
     while value_start < text_length and text[value_start].isspace():
         value_start += 1
 
-    newline_index = text.find("\n", value_start)
-    if newline_index >= 0:
-        return _direct_size_hint_from_text(text[value_start:newline_index])
-
-    value_end = value_start
-    while (
-        value_end < text_length
-        and text[value_end] not in "\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
-    ):
-        value_end += 1
-    return _direct_size_hint_from_text(text[value_start:value_end])
+    return _direct_size_hint_from_line(text, value_start)
 
 
 def _strip_model_size_label(text: str) -> str:
