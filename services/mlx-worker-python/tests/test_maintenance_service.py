@@ -5781,6 +5781,23 @@ def test_vlm_batch1_comparison_artifact_records_route_metrics(tmp_path: Path) ->
         generation_config_json=generation_config_json,
         route_stability_status="stable",
         acceleration_mode="image_batch1_step",
+        native_acceleration_status="admitted",
+        native_acceleration_mode="speculative_decode",
+        native_acceleration_runtime_active=True,
+        native_acceleration_draft_supported=True,
+        native_acceleration_effective_depth=4,
+        native_acceleration_request_gate="media_draft_eligible",
+        native_acceleration_runtime_scope="vlm_mtp",
+        native_acceleration_fallback_reason="",
+        native_acceleration_rounds=3,
+        native_acceleration_accepted_tokens=9,
+        native_acceleration_rejected_tokens=3,
+        native_acceleration_acceptance_rate=0.75,
+        native_acceleration_rollback_rate=0.25,
+        native_acceleration_draft_propose_ms=12.5,
+        native_acceleration_target_verify_ms=25.0,
+        native_acceleration_autoregressive_fallback=False,
+        native_acceleration_sampling_matches_baseline=True,
     )
 
     paths = MaintenanceCore._write_vlm_batch1_comparison_artifact(
@@ -5799,6 +5816,22 @@ def test_vlm_batch1_comparison_artifact_records_route_metrics(tmp_path: Path) ->
     assert payload["runs"]["accelerated"]["metrics"]["ttft_ms"] == 12.0
     assert payload["runs"]["accelerated"]["metrics"]["decode_tokens_per_second"] == 166.7
     assert payload["runs"]["accelerated"]["tier_stability_status"] == "stable"
+    native_acceleration = payload["runs"]["accelerated"]["native_acceleration"]
+    assert native_acceleration["schema_version"] == "melix.native_acceleration.status.v1"
+    assert native_acceleration["runtime_active"] is True
+    assert native_acceleration["status"] == "admitted"
+    assert native_acceleration["mode"] == "speculative_decode"
+    assert native_acceleration["forward_counts"] == {
+        "accepted_tokens": 9,
+        "rejected_tokens": 3,
+        "rounds": 3,
+    }
+    assert native_acceleration["timings"] == {
+        "draft_propose_ms": 12.5,
+        "target_verify_ms": 25.0,
+    }
+    assert native_acceleration["acceptance_by_depth"]["effective_depth"] == 4
+    assert native_acceleration["acceptance_by_depth"]["acceptance_rate"] == 0.75
 
     metrics = MaintenanceCore._vlm_batch1_comparison_status_metrics(
         suite_id="smoke",
@@ -6223,6 +6256,119 @@ def test_vlm_bench_sample_carries_image_batch1_step_token_counters() -> None:
     assert sample.image_batch1_step_decode_token_counter_start == 6
     assert sample.image_batch1_step_decode_token_counter_end == 8
     assert sample.image_batch1_step_decode_token_counter_advance == 2
+
+
+def _exercise_vlm_bench_sample_records_native_acceleration_receipt() -> None:
+    class RuntimeWithNativeAccelerationProbe:
+        def render_prompt(self, *_args, **_kwargs):
+            return "rendered"
+
+        def generate_tokens(self, *_args, **_kwargs):
+            yield SimpleNamespace(text="ok", completion_tokens=3)
+
+        def last_probe_snapshot(self):
+            return SimpleNamespace(
+                image_feature_cache_hits=1,
+                image_feature_cache_misses=0,
+                image_feature_encoder_calls_saved=1,
+                image_feature_work_saved_bytes=128,
+                multimodal_decode_mode="image_batch1_step",
+                multimodal_fallback_reason="",
+                multimodal_decode_sync_mode="executor_step",
+                multi_image_scatter_mode="none",
+                quantized_load_mode="native_quantized",
+                quantized_load_fallback_reason="",
+                speculative_probe_receipt={
+                    "enabled": True,
+                    "status": "admitted",
+                    "mode": "speculative_decode",
+                    "fallback_reason": "",
+                    "draft_supported": True,
+                    "effective_depth": "4",
+                    "request_gate": "media_draft_eligible",
+                    "runtime_scope": "vlm_mtp",
+                    "output_mutation_allowed": True,
+                    "draft_loaded": True,
+                    "target_decode_started": True,
+                    "rounds": "3",
+                    "accepted_tokens": "9",
+                    "rejected_tokens": "3",
+                    "acceptance_rate": "0.75",
+                    "rollback_rate": "0.25",
+                    "draft_propose_ms": "12.5",
+                    "target_verify_ms": "25.0",
+                    "sampling_matches_baseline": True,
+                },
+            )
+
+    class Registry:
+        def __init__(self) -> None:
+            self.runtime = RuntimeWithNativeAccelerationProbe()
+
+        def runtime_for_loaded_model(self, _loaded_model):
+            return self.runtime
+
+        def start_request(self, **_kwargs):
+            return SimpleNamespace(cancel_event=threading.Event())
+
+        def finish_request(self, _request_id):
+            return None
+
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    core._registry = Registry()
+
+    sample = core._measure_vlm_bench_sample(
+        loaded_model=SimpleNamespace(
+            handle="melix-dev-vlm::1",
+            runtime_kind="vlm",
+            runtime_model={},
+        ),
+        suite=SimpleNamespace(suite_id="smoke"),
+        case=SimpleNamespace(prompt="what is this?", image_uris=("image.png",)),
+        parameters={},
+    )
+
+    assert sample.native_acceleration_runtime_active is True
+    assert sample.native_acceleration_autoregressive_fallback is False
+    assert sample.native_acceleration_status == "admitted"
+    assert sample.native_acceleration_effective_depth == 4
+    assert sample.native_acceleration_accepted_tokens == 9
+    assert sample.native_acceleration_acceptance_rate == 0.75
+    assert sample.native_acceleration_target_verify_ms == 25.0
+    assert sample.native_acceleration_sampling_matches_baseline is True
+
+    payload = MaintenanceCore._vlm_native_acceleration_payload(sample)
+    assert payload["schema_version"] == "melix.native_acceleration.status.v1"
+    assert payload["runtime_active"] is True
+    assert payload["forward_counts"]["accepted_tokens"] == 9
+    assert payload["acceptance_by_depth"]["rollback_rate"] == 0.25
+
+
+def _exercise_vlm_native_acceleration_receipt_helpers_handle_edges() -> None:
+    assert MaintenanceCore._probe_speculative_receipt(None) == {}
+    assert MaintenanceCore._probe_speculative_receipt(
+        SimpleNamespace(speculative_probe_receipt={"status": "ok"})
+    ) == {"status": "ok"}
+    assert MaintenanceCore._probe_speculative_receipt(
+        SimpleNamespace(speculative_probe_receipt="bad")
+    ) == {}
+    assert MaintenanceCore._receipt_text({"status": "ok"}, "status") == "ok"
+    assert MaintenanceCore._receipt_text({"status": 1}, "status") == ""
+    assert MaintenanceCore._receipt_bool({"enabled": "yes"}, "enabled") is True
+    assert MaintenanceCore._receipt_bool({"enabled": 0}, "enabled") is False
+    assert MaintenanceCore._receipt_int({"rounds": "7"}, "rounds") == 7
+    assert MaintenanceCore._receipt_int({"rounds": -2}, "rounds") == 0
+    assert MaintenanceCore._receipt_int({"rounds": object()}, "rounds") == 0
+    assert MaintenanceCore._receipt_float({"rate": "0.5"}, "rate") == 0.5
+    assert MaintenanceCore._receipt_float({"rate": object()}, "rate") == 0.0
+    assert MaintenanceCore._receipt_float({"rate": float("nan")}, "rate") == 0.0
+    assert MaintenanceCore._receipt_float({"rate": -1}, "rate") == 0.0
+
+
+def _exercise_vlm_native_acceleration_payload_is_empty_without_receipt() -> None:
+    assert MaintenanceCore._vlm_native_acceleration_payload(
+        BenchSample(ttft_ms=0.0, total_latency_ms=0.0, completion_tokens=0)
+    ) == {}
 
 
 def test_benchmark_partial_prefix_cache_profile_uses_a_shorter_warmup_prompt(tmp_path: Path) -> None:
@@ -8210,6 +8356,9 @@ def test_bench_events_vlm_mode_produces_vlm_metrics(tmp_path: Path) -> None:
     report_event = next(event for event in events if event.HasField("completed"))
     report_content = Path(report_event.completed.report_path).read_text(encoding="utf-8")
     assert "task_kind: image-text-to-text" in report_content
+    _exercise_vlm_bench_sample_records_native_acceleration_receipt()
+    _exercise_vlm_native_acceleration_receipt_helpers_handle_edges()
+    _exercise_vlm_native_acceleration_payload_is_empty_without_receipt()
 
 
 def test_bench_events_vlm_latency_suite_produces_percentile_metrics(tmp_path: Path) -> None:

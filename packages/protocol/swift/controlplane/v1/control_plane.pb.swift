@@ -6104,6 +6104,150 @@ public nonisolated struct Melix_Controlplane_V1_ImageDefaultsSummary: @unchecked
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
+public nonisolated struct Melix_Controlplane_V1_NativeAccelerationForwardCountsSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var rounds: UInt64 = 0
+
+  public var acceptedTokens: UInt64 = 0
+
+  public var rejectedTokens: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_NativeAccelerationTimingSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var draftProposeMs: Double = 0
+
+  public var targetVerifyMs: Double = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_NativeAccelerationAcceptanceByDepthSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var effectiveDepth: UInt32 = 0
+
+  public var acceptedTokens: UInt64 = 0
+
+  public var rejectedTokens: UInt64 = 0
+
+  public var acceptanceRate: Double = 0
+
+  public var rollbackRate: Double = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_NativeAccelerationStatusSummary: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var schemaVersion: String {
+    get {_storage._schemaVersion}
+    set {_uniqueStorage()._schemaVersion = newValue}
+  }
+
+  public var runtimeActive: Bool {
+    get {_storage._runtimeActive}
+    set {_uniqueStorage()._runtimeActive = newValue}
+  }
+
+  public var status: String {
+    get {_storage._status}
+    set {_uniqueStorage()._status = newValue}
+  }
+
+  public var mode: String {
+    get {_storage._mode}
+    set {_uniqueStorage()._mode = newValue}
+  }
+
+  public var draftSupported: Bool {
+    get {_storage._draftSupported}
+    set {_uniqueStorage()._draftSupported = newValue}
+  }
+
+  public var effectiveDepth: UInt32 {
+    get {_storage._effectiveDepth}
+    set {_uniqueStorage()._effectiveDepth = newValue}
+  }
+
+  public var requestGate: String {
+    get {_storage._requestGate}
+    set {_uniqueStorage()._requestGate = newValue}
+  }
+
+  public var runtimeScope: String {
+    get {_storage._runtimeScope}
+    set {_uniqueStorage()._runtimeScope = newValue}
+  }
+
+  public var fallbackReason: String {
+    get {_storage._fallbackReason}
+    set {_uniqueStorage()._fallbackReason = newValue}
+  }
+
+  public var autoregressiveFallback: Bool {
+    get {_storage._autoregressiveFallback}
+    set {_uniqueStorage()._autoregressiveFallback = newValue}
+  }
+
+  public var samplingMatchesBaseline: Bool {
+    get {_storage._samplingMatchesBaseline}
+    set {_uniqueStorage()._samplingMatchesBaseline = newValue}
+  }
+
+  public var forwardCounts: Melix_Controlplane_V1_NativeAccelerationForwardCountsSummary {
+    get {_storage._forwardCounts ?? Melix_Controlplane_V1_NativeAccelerationForwardCountsSummary()}
+    set {_uniqueStorage()._forwardCounts = newValue}
+  }
+  /// Returns true if `forwardCounts` has been explicitly set.
+  public var hasForwardCounts: Bool {_storage._forwardCounts != nil}
+  /// Clears the value of `forwardCounts`. Subsequent reads from it will return its default value.
+  public mutating func clearForwardCounts() {_uniqueStorage()._forwardCounts = nil}
+
+  public var timings: Melix_Controlplane_V1_NativeAccelerationTimingSummary {
+    get {_storage._timings ?? Melix_Controlplane_V1_NativeAccelerationTimingSummary()}
+    set {_uniqueStorage()._timings = newValue}
+  }
+  /// Returns true if `timings` has been explicitly set.
+  public var hasTimings: Bool {_storage._timings != nil}
+  /// Clears the value of `timings`. Subsequent reads from it will return its default value.
+  public mutating func clearTimings() {_uniqueStorage()._timings = nil}
+
+  public var acceptanceByDepth: Melix_Controlplane_V1_NativeAccelerationAcceptanceByDepthSummary {
+    get {_storage._acceptanceByDepth ?? Melix_Controlplane_V1_NativeAccelerationAcceptanceByDepthSummary()}
+    set {_uniqueStorage()._acceptanceByDepth = newValue}
+  }
+  /// Returns true if `acceptanceByDepth` has been explicitly set.
+  public var hasAcceptanceByDepth: Bool {_storage._acceptanceByDepth != nil}
+  /// Clears the value of `acceptanceByDepth`. Subsequent reads from it will return its default value.
+  public mutating func clearAcceptanceByDepth() {_uniqueStorage()._acceptanceByDepth = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
 public nonisolated struct Melix_Controlplane_V1_ServerSnapshot: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -6242,6 +6386,15 @@ public nonisolated struct Melix_Controlplane_V1_ServerSnapshot: @unchecked Senda
   public var hasImageDefaults: Bool {_storage._imageDefaults != nil}
   /// Clears the value of `imageDefaults`. Subsequent reads from it will return its default value.
   public mutating func clearImageDefaults() {_uniqueStorage()._imageDefaults = nil}
+
+  public var nativeAcceleration: Melix_Controlplane_V1_NativeAccelerationStatusSummary {
+    get {_storage._nativeAcceleration ?? Melix_Controlplane_V1_NativeAccelerationStatusSummary()}
+    set {_uniqueStorage()._nativeAcceleration = newValue}
+  }
+  /// Returns true if `nativeAcceleration` has been explicitly set.
+  public var hasNativeAcceleration: Bool {_storage._nativeAcceleration != nil}
+  /// Clears the value of `nativeAcceleration`. Subsequent reads from it will return its default value.
+  public mutating func clearNativeAcceleration() {_uniqueStorage()._nativeAcceleration = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -16773,9 +16926,295 @@ nonisolated extension Melix_Controlplane_V1_ImageDefaultsSummary: SwiftProtobuf.
   }
 }
 
+nonisolated extension Melix_Controlplane_V1_NativeAccelerationForwardCountsSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".NativeAccelerationForwardCountsSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}rounds\0\u{3}accepted_tokens\0\u{3}rejected_tokens\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.rounds) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.acceptedTokens) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.rejectedTokens) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.rounds != 0 {
+      try visitor.visitSingularUInt64Field(value: self.rounds, fieldNumber: 1)
+    }
+    if self.acceptedTokens != 0 {
+      try visitor.visitSingularUInt64Field(value: self.acceptedTokens, fieldNumber: 2)
+    }
+    if self.rejectedTokens != 0 {
+      try visitor.visitSingularUInt64Field(value: self.rejectedTokens, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_NativeAccelerationForwardCountsSummary, rhs: Melix_Controlplane_V1_NativeAccelerationForwardCountsSummary) -> Bool {
+    if lhs.rounds != rhs.rounds {return false}
+    if lhs.acceptedTokens != rhs.acceptedTokens {return false}
+    if lhs.rejectedTokens != rhs.rejectedTokens {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_NativeAccelerationTimingSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".NativeAccelerationTimingSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}draft_propose_ms\0\u{3}target_verify_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularDoubleField(value: &self.draftProposeMs) }()
+      case 2: try { try decoder.decodeSingularDoubleField(value: &self.targetVerifyMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.draftProposeMs.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.draftProposeMs, fieldNumber: 1)
+    }
+    if self.targetVerifyMs.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.targetVerifyMs, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_NativeAccelerationTimingSummary, rhs: Melix_Controlplane_V1_NativeAccelerationTimingSummary) -> Bool {
+    if lhs.draftProposeMs != rhs.draftProposeMs {return false}
+    if lhs.targetVerifyMs != rhs.targetVerifyMs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_NativeAccelerationAcceptanceByDepthSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".NativeAccelerationAcceptanceByDepthSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}effective_depth\0\u{3}accepted_tokens\0\u{3}rejected_tokens\0\u{3}acceptance_rate\0\u{3}rollback_rate\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.effectiveDepth) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.acceptedTokens) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.rejectedTokens) }()
+      case 4: try { try decoder.decodeSingularDoubleField(value: &self.acceptanceRate) }()
+      case 5: try { try decoder.decodeSingularDoubleField(value: &self.rollbackRate) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.effectiveDepth != 0 {
+      try visitor.visitSingularUInt32Field(value: self.effectiveDepth, fieldNumber: 1)
+    }
+    if self.acceptedTokens != 0 {
+      try visitor.visitSingularUInt64Field(value: self.acceptedTokens, fieldNumber: 2)
+    }
+    if self.rejectedTokens != 0 {
+      try visitor.visitSingularUInt64Field(value: self.rejectedTokens, fieldNumber: 3)
+    }
+    if self.acceptanceRate.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.acceptanceRate, fieldNumber: 4)
+    }
+    if self.rollbackRate.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.rollbackRate, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_NativeAccelerationAcceptanceByDepthSummary, rhs: Melix_Controlplane_V1_NativeAccelerationAcceptanceByDepthSummary) -> Bool {
+    if lhs.effectiveDepth != rhs.effectiveDepth {return false}
+    if lhs.acceptedTokens != rhs.acceptedTokens {return false}
+    if lhs.rejectedTokens != rhs.rejectedTokens {return false}
+    if lhs.acceptanceRate != rhs.acceptanceRate {return false}
+    if lhs.rollbackRate != rhs.rollbackRate {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_NativeAccelerationStatusSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".NativeAccelerationStatusSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}runtime_active\0\u{1}status\0\u{1}mode\0\u{3}draft_supported\0\u{3}effective_depth\0\u{3}request_gate\0\u{3}runtime_scope\0\u{3}fallback_reason\0\u{3}autoregressive_fallback\0\u{3}sampling_matches_baseline\0\u{3}forward_counts\0\u{1}timings\0\u{3}acceptance_by_depth\0")
+
+  fileprivate class _StorageClass {
+    var _schemaVersion: String = String()
+    var _runtimeActive: Bool = false
+    var _status: String = String()
+    var _mode: String = String()
+    var _draftSupported: Bool = false
+    var _effectiveDepth: UInt32 = 0
+    var _requestGate: String = String()
+    var _runtimeScope: String = String()
+    var _fallbackReason: String = String()
+    var _autoregressiveFallback: Bool = false
+    var _samplingMatchesBaseline: Bool = false
+    var _forwardCounts: Melix_Controlplane_V1_NativeAccelerationForwardCountsSummary? = nil
+    var _timings: Melix_Controlplane_V1_NativeAccelerationTimingSummary? = nil
+    var _acceptanceByDepth: Melix_Controlplane_V1_NativeAccelerationAcceptanceByDepthSummary? = nil
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _schemaVersion = source._schemaVersion
+      _runtimeActive = source._runtimeActive
+      _status = source._status
+      _mode = source._mode
+      _draftSupported = source._draftSupported
+      _effectiveDepth = source._effectiveDepth
+      _requestGate = source._requestGate
+      _runtimeScope = source._runtimeScope
+      _fallbackReason = source._fallbackReason
+      _autoregressiveFallback = source._autoregressiveFallback
+      _samplingMatchesBaseline = source._samplingMatchesBaseline
+      _forwardCounts = source._forwardCounts
+      _timings = source._timings
+      _acceptanceByDepth = source._acceptanceByDepth
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._schemaVersion) }()
+        case 2: try { try decoder.decodeSingularBoolField(value: &_storage._runtimeActive) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._status) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._mode) }()
+        case 5: try { try decoder.decodeSingularBoolField(value: &_storage._draftSupported) }()
+        case 6: try { try decoder.decodeSingularUInt32Field(value: &_storage._effectiveDepth) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._requestGate) }()
+        case 8: try { try decoder.decodeSingularStringField(value: &_storage._runtimeScope) }()
+        case 9: try { try decoder.decodeSingularStringField(value: &_storage._fallbackReason) }()
+        case 10: try { try decoder.decodeSingularBoolField(value: &_storage._autoregressiveFallback) }()
+        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._samplingMatchesBaseline) }()
+        case 12: try { try decoder.decodeSingularMessageField(value: &_storage._forwardCounts) }()
+        case 13: try { try decoder.decodeSingularMessageField(value: &_storage._timings) }()
+        case 14: try { try decoder.decodeSingularMessageField(value: &_storage._acceptanceByDepth) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if !_storage._schemaVersion.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._schemaVersion, fieldNumber: 1)
+      }
+      if _storage._runtimeActive != false {
+        try visitor.visitSingularBoolField(value: _storage._runtimeActive, fieldNumber: 2)
+      }
+      if !_storage._status.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._status, fieldNumber: 3)
+      }
+      if !_storage._mode.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._mode, fieldNumber: 4)
+      }
+      if _storage._draftSupported != false {
+        try visitor.visitSingularBoolField(value: _storage._draftSupported, fieldNumber: 5)
+      }
+      if _storage._effectiveDepth != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._effectiveDepth, fieldNumber: 6)
+      }
+      if !_storage._requestGate.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._requestGate, fieldNumber: 7)
+      }
+      if !_storage._runtimeScope.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._runtimeScope, fieldNumber: 8)
+      }
+      if !_storage._fallbackReason.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._fallbackReason, fieldNumber: 9)
+      }
+      if _storage._autoregressiveFallback != false {
+        try visitor.visitSingularBoolField(value: _storage._autoregressiveFallback, fieldNumber: 10)
+      }
+      if _storage._samplingMatchesBaseline != false {
+        try visitor.visitSingularBoolField(value: _storage._samplingMatchesBaseline, fieldNumber: 11)
+      }
+      try { if let v = _storage._forwardCounts {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
+      } }()
+      try { if let v = _storage._timings {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
+      } }()
+      try { if let v = _storage._acceptanceByDepth {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
+      } }()
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_NativeAccelerationStatusSummary, rhs: Melix_Controlplane_V1_NativeAccelerationStatusSummary) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._schemaVersion != rhs_storage._schemaVersion {return false}
+        if _storage._runtimeActive != rhs_storage._runtimeActive {return false}
+        if _storage._status != rhs_storage._status {return false}
+        if _storage._mode != rhs_storage._mode {return false}
+        if _storage._draftSupported != rhs_storage._draftSupported {return false}
+        if _storage._effectiveDepth != rhs_storage._effectiveDepth {return false}
+        if _storage._requestGate != rhs_storage._requestGate {return false}
+        if _storage._runtimeScope != rhs_storage._runtimeScope {return false}
+        if _storage._fallbackReason != rhs_storage._fallbackReason {return false}
+        if _storage._autoregressiveFallback != rhs_storage._autoregressiveFallback {return false}
+        if _storage._samplingMatchesBaseline != rhs_storage._samplingMatchesBaseline {return false}
+        if _storage._forwardCounts != rhs_storage._forwardCounts {return false}
+        if _storage._timings != rhs_storage._timings {return false}
+        if _storage._acceptanceByDepth != rhs_storage._acceptanceByDepth {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerSnapshot"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_state\0\u{1}workers\0\u{1}models\0\u{1}queues\0\u{1}cache\0\u{1}resources\0\u{1}metrics\0\u{1}sessions\0\u{3}recent_errors\0\u{3}image_jobs\0\u{3}mcp_tools\0\u{3}gateway_access\0\u{3}runtime_sessions\0\u{3}gateway_config\0\u{3}serving_defaults\0\u{3}tooling_settings\0\u{3}api_onboarding\0\u{3}image_defaults\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_state\0\u{1}workers\0\u{1}models\0\u{1}queues\0\u{1}cache\0\u{1}resources\0\u{1}metrics\0\u{1}sessions\0\u{3}recent_errors\0\u{3}image_jobs\0\u{3}mcp_tools\0\u{3}gateway_access\0\u{3}runtime_sessions\0\u{3}gateway_config\0\u{3}serving_defaults\0\u{3}tooling_settings\0\u{3}api_onboarding\0\u{3}image_defaults\0\u{3}native_acceleration\0")
 
   fileprivate class _StorageClass {
     var _serverState: Melix_Controlplane_V1_ServerState = .unspecified
@@ -16796,6 +17235,7 @@ nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Messag
     var _toolingSettings: Melix_Controlplane_V1_ToolingSettingsSummary? = nil
     var _apiOnboarding: Melix_Controlplane_V1_APIOnboardingSummary? = nil
     var _imageDefaults: Melix_Controlplane_V1_ImageDefaultsSummary? = nil
+    var _nativeAcceleration: Melix_Controlplane_V1_NativeAccelerationStatusSummary? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -16824,6 +17264,7 @@ nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Messag
       _toolingSettings = source._toolingSettings
       _apiOnboarding = source._apiOnboarding
       _imageDefaults = source._imageDefaults
+      _nativeAcceleration = source._nativeAcceleration
     }
   }
 
@@ -16860,6 +17301,7 @@ nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Messag
         case 16: try { try decoder.decodeSingularMessageField(value: &_storage._toolingSettings) }()
         case 17: try { try decoder.decodeSingularMessageField(value: &_storage._apiOnboarding) }()
         case 18: try { try decoder.decodeSingularMessageField(value: &_storage._imageDefaults) }()
+        case 19: try { try decoder.decodeSingularMessageField(value: &_storage._nativeAcceleration) }()
         default: break
         }
       }
@@ -16926,6 +17368,9 @@ nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Messag
       try { if let v = _storage._imageDefaults {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 18)
       } }()
+      try { if let v = _storage._nativeAcceleration {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 19)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -16953,6 +17398,7 @@ nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Messag
         if _storage._toolingSettings != rhs_storage._toolingSettings {return false}
         if _storage._apiOnboarding != rhs_storage._apiOnboarding {return false}
         if _storage._imageDefaults != rhs_storage._imageDefaults {return false}
+        if _storage._nativeAcceleration != rhs_storage._nativeAcceleration {return false}
         return true
       }
       if !storagesAreEqual {return false}

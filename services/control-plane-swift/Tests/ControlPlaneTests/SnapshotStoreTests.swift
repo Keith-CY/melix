@@ -53,6 +53,37 @@ struct SnapshotStoreTests {
         #expect(visionHybridStatePatchModeMetricValue("fallback") == 1)
         #expect(visionHybridStatePatchModeMetricValue("family_scoped") == 2)
         #expect(visionHybridStatePatchModeMetricValue("future_patch_mode") == -1)
+
+        #expect(visionSpeculativeProbeStatusMetricValue("") == 0)
+        #expect(visionSpeculativeProbeStatusMetricValue("admitted") == 1)
+        #expect(visionSpeculativeProbeStatusMetricValue("fallback") == 2)
+        #expect(visionSpeculativeProbeStatusMetricValue("future_status") == -1)
+
+        #expect(visionSpeculativeProbeModeMetricValue("disabled") == 0)
+        #expect(visionSpeculativeProbeModeMetricValue("verification_only") == 1)
+        #expect(visionSpeculativeProbeModeMetricValue("speculative_decode") == 2)
+        #expect(visionSpeculativeProbeModeMetricValue("future_mode") == -1)
+
+        #expect(visionSpeculativeProbeFallbackReasonMetricValue("") == 0)
+        #expect(visionSpeculativeProbeFallbackReasonMetricValue("non_greedy_sampling") == 1)
+        #expect(visionSpeculativeProbeFallbackReasonMetricValue("unsupported_route") == 2)
+        #expect(visionSpeculativeProbeFallbackReasonMetricValue("operator_disabled") == 3)
+        #expect(visionSpeculativeProbeFallbackReasonMetricValue("missing_draft_model") == 4)
+        #expect(visionSpeculativeProbeFallbackReasonMetricValue("future_reason") == -1)
+
+        #expect(visionSpeculativeProbeRequestGateMetricValue("") == 0)
+        #expect(visionSpeculativeProbeRequestGateMetricValue("media_draft_eligible") == 1)
+        #expect(visionSpeculativeProbeRequestGateMetricValue("normal_multimodal_path") == 2)
+        #expect(visionSpeculativeProbeRequestGateMetricValue("text_speculative_path") == 3)
+        #expect(visionSpeculativeProbeRequestGateMetricValue("text_baseline_path") == 4)
+        #expect(visionSpeculativeProbeRequestGateMetricValue("future_gate") == -1)
+
+        #expect(visionSpeculativeProbeRuntimeScopeMetricValue("") == 0)
+        #expect(visionSpeculativeProbeRuntimeScopeMetricValue("vlm_mtp") == 1)
+        #expect(visionSpeculativeProbeRuntimeScopeMetricValue("vlm_multimodal") == 2)
+        #expect(visionSpeculativeProbeRuntimeScopeMetricValue("text_mtp") == 3)
+        #expect(visionSpeculativeProbeRuntimeScopeMetricValue("text_baseline") == 4)
+        #expect(visionSpeculativeProbeRuntimeScopeMetricValue("future_scope") == -1)
     }
 
     @Test("cache metadata store defaults to an empty typed snapshot")
@@ -339,6 +370,36 @@ struct SnapshotStoreTests {
         #expect(failedSnapshot.serverState == .serverFailed)
         #expect(loadingSnapshot.serverState == .serverBooting)
         #expect(stoppedSnapshot.serverState == .serverStopped)
+    }
+
+    @Test("server snapshot builder includes native acceleration status")
+    func serverSnapshotBuilderIncludesNativeAccelerationStatus() {
+        var nativeAcceleration = Melix_Controlplane_V1_NativeAccelerationStatusSummary.unavailable
+        nativeAcceleration.status = "admitted"
+        nativeAcceleration.mode = "speculative_decode"
+        nativeAcceleration.runtimeActive = true
+        nativeAcceleration.effectiveDepth = 4
+        nativeAcceleration.forwardCounts.acceptedTokens = 11
+
+        let defaultSnapshot = ServerSnapshotBuilder().build(
+            models: [],
+            metrics: Melix_Controlplane_V1_MetricsSummary()
+        )
+        let explicitSnapshot = ServerSnapshotBuilder().build(
+            models: [],
+            metrics: Melix_Controlplane_V1_MetricsSummary(),
+            nativeAcceleration: nativeAcceleration
+        )
+
+        #expect(defaultSnapshot.hasNativeAcceleration)
+        #expect(defaultSnapshot.nativeAcceleration.schemaVersion == Melix_Controlplane_V1_NativeAccelerationStatusSummary.currentSchemaVersion)
+        #expect(defaultSnapshot.nativeAcceleration.status == "unavailable")
+        #expect(defaultSnapshot.nativeAcceleration.autoregressiveFallback)
+        #expect(explicitSnapshot.nativeAcceleration.status == "admitted")
+        #expect(explicitSnapshot.nativeAcceleration.mode == "speculative_decode")
+        #expect(explicitSnapshot.nativeAcceleration.runtimeActive)
+        #expect(explicitSnapshot.nativeAcceleration.effectiveDepth == 4)
+        #expect(explicitSnapshot.nativeAcceleration.forwardCounts.acceptedTokens == 11)
     }
 
     @Test("server snapshot builder resolves limited cache compatibility downgrades")

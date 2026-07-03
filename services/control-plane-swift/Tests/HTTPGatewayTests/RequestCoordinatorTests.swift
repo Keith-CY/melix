@@ -1407,6 +1407,23 @@ struct RequestCoordinatorTests {
             response.stats.speculativeProbeFallbackCount = 1
             response.stats.speculativeProbePositionAlignedCount = 1
             response.stats.speculativeProbeCacheAlignedCount = 0
+            response.stats.speculativeProbeStatus = "fallback"
+            response.stats.speculativeProbeMode = "verification_only"
+            response.stats.speculativeProbeFallbackReason = "non_greedy_sampling"
+            response.stats.speculativeProbeRequestGate = "media_draft_eligible"
+            response.stats.speculativeProbeRuntimeScope = "vlm_mtp"
+            response.stats.speculativeProbeRuntimeActive = false
+            response.stats.speculativeProbeDraftSupported = true
+            response.stats.speculativeProbeEffectiveDepth = 4
+            response.stats.speculativeProbeRounds = 3
+            response.stats.speculativeProbeAcceptedTokens = 9
+            response.stats.speculativeProbeRejectedTokens = 3
+            response.stats.speculativeProbeAcceptanceRate = 0.75
+            response.stats.speculativeProbeRollbackRate = 0.25
+            response.stats.speculativeProbeDraftProposeMs = 12.5
+            response.stats.speculativeProbeTargetVerifyMs = 25
+            response.stats.speculativeProbeAutoregressiveFallback = true
+            response.stats.speculativeProbeSamplingMatchesBaseline = false
             response.stats.textBatchGeneratorSubmittedRequestCount = 2
             response.stats.textBatchGeneratorCompletedRequestCount = 1
             response.stats.textBatchGeneratorStepCount = 16
@@ -1504,6 +1521,23 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.speculative_probe.fallback_count", default: -1] == 1)
         #expect(metrics.values["vision.speculative_probe.position_aligned_count", default: -1] == 1)
         #expect(metrics.values["vision.speculative_probe.cache_aligned_count", default: -1] == 0)
+        #expect(metrics.values["vision.speculative_probe.status_code", default: -1] == 2)
+        #expect(metrics.values["vision.speculative_probe.mode_code", default: -1] == 1)
+        #expect(metrics.values["vision.speculative_probe.fallback_reason_code", default: -1] == 1)
+        #expect(metrics.values["vision.speculative_probe.request_gate_code", default: -1] == 1)
+        #expect(metrics.values["vision.speculative_probe.runtime_scope_code", default: -1] == 1)
+        #expect(metrics.values["vision.speculative_probe.runtime_active", default: -1] == 0)
+        #expect(metrics.values["vision.speculative_probe.draft_supported", default: -1] == 1)
+        #expect(metrics.values["vision.speculative_probe.effective_depth", default: -1] == 4)
+        #expect(metrics.values["vision.speculative_probe.rounds", default: -1] == 3)
+        #expect(metrics.values["vision.speculative_probe.accepted_tokens", default: -1] == 9)
+        #expect(metrics.values["vision.speculative_probe.rejected_tokens", default: -1] == 3)
+        #expect(metrics.values["vision.speculative_probe.acceptance_rate", default: -1] == 0.75)
+        #expect(metrics.values["vision.speculative_probe.rollback_rate", default: -1] == 0.25)
+        #expect(metrics.values["vision.speculative_probe.draft_propose_ms", default: -1] == 12.5)
+        #expect(metrics.values["vision.speculative_probe.target_verify_ms", default: -1] == 25)
+        #expect(metrics.values["vision.speculative_probe.autoregressive_fallback", default: -1] == 1)
+        #expect(metrics.values["vision.speculative_probe.sampling_matches_baseline", default: -1] == 0)
         #expect(metrics.values["vision.text_batch_generator.submitted_request_count", default: -1] == 2)
         #expect(metrics.values["vision.text_batch_generator.completed_request_count", default: -1] == 1)
         #expect(metrics.values["vision.text_batch_generator.step_count", default: -1] == 16)

@@ -12413,6 +12413,7 @@ public actor MelixCLIRunner {
     ) -> [String: Any] {
         [
             "server_state": serverStateLabel(snapshot.serverState),
+            "native_acceleration": makeNativeAccelerationPayload(snapshot.nativeAcceleration),
             "runtime_sessions": snapshot.runtimeSessions.map { session in
                 [
                     "server_session_id": session.serverSessionID,
@@ -12426,6 +12427,43 @@ public actor MelixCLIRunner {
                     "updated_at_unix_ms": session.updatedAtUnixMs,
                 ]
             },
+        ]
+    }
+
+    private func makeNativeAccelerationPayload(
+        _ source: Melix_Controlplane_V1_NativeAccelerationStatusSummary
+    ) -> [String: Any] {
+        let summary = source.schemaVersion.isEmpty && source.status.isEmpty
+            ? Melix_Controlplane_V1_NativeAccelerationStatusSummary.unavailable
+            : source
+        return [
+            "schema_version": summary.schemaVersion,
+            "runtime_active": summary.runtimeActive,
+            "status": summary.status,
+            "mode": summary.mode,
+            "draft_supported": summary.draftSupported,
+            "effective_depth": NSNumber(value: summary.effectiveDepth),
+            "request_gate": summary.requestGate,
+            "runtime_scope": summary.runtimeScope,
+            "fallback_reason": summary.fallbackReason,
+            "autoregressive_fallback": summary.autoregressiveFallback,
+            "sampling_matches_baseline": summary.samplingMatchesBaseline,
+            "forward_counts": [
+                "rounds": NSNumber(value: summary.forwardCounts.rounds),
+                "accepted_tokens": NSNumber(value: summary.forwardCounts.acceptedTokens),
+                "rejected_tokens": NSNumber(value: summary.forwardCounts.rejectedTokens),
+            ],
+            "timings": [
+                "draft_propose_ms": summary.timings.draftProposeMs,
+                "target_verify_ms": summary.timings.targetVerifyMs,
+            ],
+            "acceptance_by_depth": [
+                "effective_depth": NSNumber(value: summary.acceptanceByDepth.effectiveDepth),
+                "accepted_tokens": NSNumber(value: summary.acceptanceByDepth.acceptedTokens),
+                "rejected_tokens": NSNumber(value: summary.acceptanceByDepth.rejectedTokens),
+                "acceptance_rate": summary.acceptanceByDepth.acceptanceRate,
+                "rollback_rate": summary.acceptanceByDepth.rollbackRate,
+            ],
         ]
     }
 

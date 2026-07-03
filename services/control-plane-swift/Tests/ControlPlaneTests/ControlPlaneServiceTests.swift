@@ -9713,6 +9713,51 @@ struct ControlPlaneServiceTests {
         #expect(interactiveLane?.backpressure == 1)
     }
 
+    @Test("server snapshot includes native acceleration status from VLM runtime stats")
+    func serverSnapshotIncludesNativeAccelerationStatusFromVLMRuntimeStats() async throws {
+        let runtimeStats = makeNativeAccelerationRuntimeStats()
+        let vlmClient = RuntimeStatsSnapshotWorkerClient(runtimeStatsResponse: runtimeStats)
+        let service = ControlPlaneService(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: vlmClient
+            )
+        )
+
+        let response = try await service.execute(makeServerSnapshotRequest())
+        let nativeAcceleration = response.server.snapshot.nativeAcceleration
+
+        #expect(nativeAcceleration.schemaVersion == Melix_Controlplane_V1_NativeAccelerationStatusSummary.currentSchemaVersion)
+        #expect(nativeAcceleration.status == "admitted")
+        #expect(nativeAcceleration.mode == "speculative_decode")
+        #expect(nativeAcceleration.runtimeActive)
+        #expect(nativeAcceleration.draftSupported)
+        #expect(nativeAcceleration.effectiveDepth == 4)
+        #expect(nativeAcceleration.requestGate == "admitted")
+        #expect(nativeAcceleration.runtimeScope == "image_text_to_text")
+        #expect(nativeAcceleration.fallbackReason == "none")
+        #expect(nativeAcceleration.autoregressiveFallback == false)
+        #expect(nativeAcceleration.samplingMatchesBaseline)
+        #expect(nativeAcceleration.forwardCounts.rounds == 5)
+        #expect(nativeAcceleration.forwardCounts.acceptedTokens == 13)
+        #expect(nativeAcceleration.forwardCounts.rejectedTokens == 2)
+        #expect(nativeAcceleration.timings.draftProposeMs == 7.5)
+        #expect(nativeAcceleration.timings.targetVerifyMs == 11.25)
+        #expect(nativeAcceleration.acceptanceByDepth.effectiveDepth == 4)
+        #expect(nativeAcceleration.acceptanceByDepth.acceptanceRate == 0.86)
+        #expect(nativeAcceleration.acceptanceByDepth.rollbackRate == 0.14)
+
+        #expect(await vlmClient.canDispatchRequests())
+        let stream = try await vlmClient.generate(request: Melix_Worker_V1_GenerateRequest())
+        for try await _ in stream {}
+        #expect(try await vlmClient.abort(requestID: "snapshot-native-acceleration") == false)
+        var loadRequest = Melix_Worker_V1_LoadModelRequest()
+        loadRequest.model.modelID = "melix-dev-vlm"
+        let loadResponse = try await vlmClient.loadModel(request: loadRequest)
+        #expect(loadResponse.ok)
+        #expect(loadResponse.modelHandle == "melix-dev-vlm::runtime-stats")
+    }
+
     @Test("handshake includes cache summary and session summaries")
     func handshakeIncludesCacheAndSessionSummaries() async throws {
         let cacheStore = CacheMetadataStore(snapshot: makeCacheSnapshot())
@@ -9780,6 +9825,28 @@ struct ControlPlaneServiceTests {
         request.server = Melix_Controlplane_V1_ServerCommand()
         request.server.getSnapshot = Melix_Controlplane_V1_GetServerSnapshot()
         return request
+    }
+
+    private func makeNativeAccelerationRuntimeStats() -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+        response.stats.speculativeProbeStatus = "admitted"
+        response.stats.speculativeProbeMode = "speculative_decode"
+        response.stats.speculativeProbeFallbackReason = "none"
+        response.stats.speculativeProbeRequestGate = "admitted"
+        response.stats.speculativeProbeRuntimeScope = "image_text_to_text"
+        response.stats.speculativeProbeRuntimeActive = true
+        response.stats.speculativeProbeDraftSupported = true
+        response.stats.speculativeProbeEffectiveDepth = 4
+        response.stats.speculativeProbeRounds = 5
+        response.stats.speculativeProbeAcceptedTokens = 13
+        response.stats.speculativeProbeRejectedTokens = 2
+        response.stats.speculativeProbeAcceptanceRate = 0.86
+        response.stats.speculativeProbeRollbackRate = 0.14
+        response.stats.speculativeProbeDraftProposeMs = 7.5
+        response.stats.speculativeProbeTargetVerifyMs = 11.25
+        response.stats.speculativeProbeAutoregressiveFallback = false
+        response.stats.speculativeProbeSamplingMatchesBaseline = true
+        return response
     }
 
     private func makeServerStartRequest(
@@ -11230,6 +11297,45 @@ private func waitForControlPlaneCondition(
 
 private struct ControlPlaneConditionTimeoutError: Error, CustomStringConvertible {
     let description: String
+}
+
+private actor RuntimeStatsSnapshotWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWorkerClientProtocol {
+    private let runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
+
+    init(runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse) {
+        self.runtimeStatsResponse = runtimeStatsResponse
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        _ = request
+        return AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        _ = requestID
+        return false
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "\(request.model.modelID)::runtime-stats"
+        return response
+    }
+
+    func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        runtimeStatsResponse
+    }
 }
 
 private actor ModelLifecycleWorkerClient: WorkerRoutingClient {

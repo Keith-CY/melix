@@ -165,6 +165,23 @@ message RuntimeStats {
   uint64 speculative_probe_fallback_count = 93;
   uint64 speculative_probe_position_aligned_count = 94;
   uint64 speculative_probe_cache_aligned_count = 95;
+  string speculative_probe_status = 96;
+  string speculative_probe_mode = 97;
+  string speculative_probe_fallback_reason = 98;
+  string speculative_probe_request_gate = 99;
+  string speculative_probe_runtime_scope = 100;
+  bool speculative_probe_runtime_active = 101;
+  bool speculative_probe_draft_supported = 102;
+  uint32 speculative_probe_effective_depth = 103;
+  uint64 speculative_probe_rounds = 104;
+  uint64 speculative_probe_accepted_tokens = 105;
+  uint64 speculative_probe_rejected_tokens = 106;
+  double speculative_probe_acceptance_rate = 107;
+  double speculative_probe_rollback_rate = 108;
+  double speculative_probe_draft_propose_ms = 109;
+  double speculative_probe_target_verify_ms = 110;
+  bool speculative_probe_autoregressive_fallback = 111;
+  bool speculative_probe_sampling_matches_baseline = 112;
 }
 
 message GetRuntimeStatsRequest {}

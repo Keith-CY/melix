@@ -67,6 +67,34 @@ def test_serving_diagnostics_bundle_writes_stable_layout_and_prefill_fields(
         memory_used_bytes=1024,
         memory_total_bytes=4096,
         peak_memory_bytes=2048,
+        native_acceleration={
+            "schema_version": "melix.native_acceleration.status.v1",
+            "runtime_active": True,
+            "status": "admitted",
+            "mode": "speculative_decode",
+            "draft_supported": True,
+            "effective_depth": 4,
+            "request_gate": "media_draft_eligible",
+            "runtime_scope": "vlm_mtp",
+            "fallback_reason": "",
+            "autoregressive_fallback": False,
+            "forward_counts": {
+                "rounds": 3,
+                "accepted_tokens": 9,
+                "rejected_tokens": 3,
+            },
+            "timings": {
+                "draft_propose_ms": 12.5,
+                "target_verify_ms": 25.0,
+            },
+            "acceptance_by_depth": {
+                "effective_depth": 4,
+                "accepted_tokens": 9,
+                "rejected_tokens": 3,
+                "acceptance_rate": 0.75,
+                "rollback_rate": 0.25,
+            },
+        },
     )
     event = ServingDiagnosticsEvent(
         request_id="req-1",
@@ -121,6 +149,34 @@ def test_serving_diagnostics_bundle_writes_stable_layout_and_prefill_fields(
     assert request_payload["cache_restored_tokens"] == 64
     assert request_payload["cache_computed_tokens"] == 64
     assert request_payload["finish_reason"] == "stop"
+    assert request_payload["native_acceleration"] == {
+        "acceptance_by_depth": {
+            "acceptance_rate": 0.75,
+            "accepted_tokens": 9,
+            "effective_depth": 4,
+            "rejected_tokens": 3,
+            "rollback_rate": 0.25,
+        },
+        "autoregressive_fallback": False,
+        "draft_supported": True,
+        "effective_depth": 4,
+        "fallback_reason": "",
+        "forward_counts": {
+            "accepted_tokens": 9,
+            "rejected_tokens": 3,
+            "rounds": 3,
+        },
+        "mode": "speculative_decode",
+        "request_gate": "media_draft_eligible",
+        "runtime_active": True,
+        "runtime_scope": "vlm_mtp",
+        "schema_version": "melix.native_acceleration.status.v1",
+        "status": "admitted",
+        "timings": {
+            "draft_propose_ms": 12.5,
+            "target_verify_ms": 25.0,
+        },
+    }
     assert not hasattr(summary, "__dict__")
 
     event_rows = [
@@ -1156,6 +1212,24 @@ def test_baseline_accelerated_evidence_requires_same_protocol_and_greedy_sampler
         acceleration_admitted=True,
         fallback_reason="",
         metrics={"prefill_ms": 7.0, "decode_ms": 20.0},
+        native_acceleration={
+            "schema_version": "melix.native_acceleration.status.v1",
+            "runtime_active": False,
+            "status": "fallback",
+            "mode": "verification_only",
+            "fallback_reason": "non_greedy_sampling",
+            "effective_depth": 4,
+            "forward_counts": {"rounds": 3, "accepted_tokens": 9, "rejected_tokens": 3},
+            "timings": {"draft_propose_ms": 12.5, "target_verify_ms": 25.0},
+            "acceptance_by_depth": {
+                "effective_depth": 4,
+                "accepted_tokens": 9,
+                "rejected_tokens": 3,
+                "acceptance_rate": 0.75,
+                "rollback_rate": 0.25,
+            },
+            "autoregressive_fallback": True,
+        },
     )
 
     paths = write_baseline_accelerated_evidence(
@@ -1181,6 +1255,21 @@ def test_baseline_accelerated_evidence_requires_same_protocol_and_greedy_sampler
     }
     assert payload["runs"]["accelerated"]["acceleration_admitted"] is True
     assert payload["runs"]["accelerated"]["fallback_reason"] == ""
+    assert payload["runs"]["accelerated"]["native_acceleration"]["runtime_active"] is False
+    assert (
+        payload["runs"]["accelerated"]["native_acceleration"]["fallback_reason"]
+        == "non_greedy_sampling"
+    )
+    assert (
+        payload["runs"]["accelerated"]["native_acceleration"]["forward_counts"]["accepted_tokens"]
+        == 9
+    )
+    assert (
+        payload["runs"]["accelerated"]["native_acceleration"]["acceptance_by_depth"][
+            "acceptance_rate"
+        ]
+        == 0.75
+    )
     prefill_row = next(row for row in payload["phase_rows"] if row["phase"] == "prefill")
     assert prefill_row["baseline"] == 10.0
     assert prefill_row["accelerated"] == 7.0
@@ -1255,6 +1344,7 @@ def _evidence_run(
     prompt_protocol_id: str = "chat.completions.v1",
     effective_temperature: float = 0.0,
     metrics: dict[str, float] | None = None,
+    native_acceleration: dict[str, object] | None = None,
 ) -> ServingEvidenceRun:
     return ServingEvidenceRun(
         run_id=run_id,
@@ -1272,4 +1362,5 @@ def _evidence_run(
         effective_top_k=1,
         tier_stability_status="stable",
         metrics=metrics or {"prefill_ms": 10.0, "decode_ms": 20.0},
+        native_acceleration=native_acceleration or {},
     )

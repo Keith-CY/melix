@@ -155,8 +155,10 @@ class ServingDiagnosticsRequestSummary:
     memory_used_bytes: int = 0
     memory_total_bytes: int = 0
     peak_memory_bytes: int = 0
+    native_acceleration: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES
 
     def to_dict(self) -> dict[str, object]:
+        native_acceleration = self.native_acceleration
         return {
             "schema_version": SERVING_DIAGNOSTICS_REQUEST_SCHEMA_VERSION,
             "request_id": self.request_id,
@@ -187,6 +189,9 @@ class ServingDiagnosticsRequestSummary:
             "memory_used_bytes": int(self.memory_used_bytes),
             "memory_total_bytes": int(self.memory_total_bytes),
             "peak_memory_bytes": int(self.peak_memory_bytes),
+            "native_acceleration": {}
+            if native_acceleration is _EMPTY_EVENT_ATTRIBUTES
+            else _stable_json_object(native_acceleration),
         }
 
 
@@ -254,8 +259,10 @@ class ServingEvidenceRun:
     effective_top_k: int
     tier_stability_status: str
     metrics: dict[str, float]
+    native_acceleration: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES
 
     def to_dict(self) -> dict[str, object]:
+        native_acceleration = self.native_acceleration
         return {
             "run_id": self.run_id,
             "model_id": self.model_id,
@@ -272,6 +279,9 @@ class ServingEvidenceRun:
             "effective_top_k": int(self.effective_top_k),
             "sampler_is_greedy": self.sampler_is_greedy,
             "tier_stability_status": self.tier_stability_status,
+            "native_acceleration": {}
+            if native_acceleration is _EMPTY_EVENT_ATTRIBUTES
+            else _stable_json_object(native_acceleration),
             "metrics": {
                 str(key): float(value)
                 for key, value in sorted(self.metrics.items())
