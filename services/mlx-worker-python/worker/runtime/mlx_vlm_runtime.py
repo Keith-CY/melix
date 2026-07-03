@@ -24,6 +24,7 @@ from worker.runtime.deterministic_vlm_runtime import (
 )
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import (
+    NativeMTPBatchTimings,
     RuntimeTokenEvent,
     _bytes_value,
     _first_present,
@@ -52,6 +53,7 @@ from worker.runtime.multimodal_preprocessing import (
     rebuild_multimodal_hash,
 )
 from worker.runtime.multimodal_speculative_probe import (
+    build_speculative_runtime_receipt,
     speculative_probe_admission,
     speculative_probe_enabled,
 )
@@ -2316,6 +2318,7 @@ class MLXVLMRuntime:
                     prepared_request=prepared_request,
                     acceleration_policy=acceleration_policy,
                     position_metadata_receipt=self._last_probe.position_metadata_receipt,
+                    sampling_matches_baseline=self._sampling_is_greedy(sampling),
                 )
                 self._last_probe = replace(
                     self._last_probe,
@@ -2747,6 +2750,7 @@ class MLXVLMRuntime:
                     draft_block_size=draft_block_size,
                     prompt_tokens=prompt_tokens,
                     prefill_step_size=selected_prefill_step_size,
+                    acceleration_policy=acceleration_policy,
                 )
                 return
 
@@ -2776,6 +2780,48 @@ class MLXVLMRuntime:
             if not text:
                 return
             first_token_at = time.perf_counter()
+            speculative_target_verify_ms = self._optional_response_float(
+                response,
+                "speculative_target_verify_ms",
+            )
+            if speculative_target_verify_ms is None:
+                speculative_target_verify_ms = self._optional_response_float(
+                    response,
+                    "speculative_backbone_ms",
+                )
+            speculative_draft_propose_ms = self._optional_response_float(
+                response,
+                "speculative_draft_propose_ms",
+            )
+            if speculative_draft_propose_ms is None:
+                speculative_draft_propose_ms = self._optional_response_float(
+                    response,
+                    "speculative_mtp_head_ms",
+                )
+            speculative_cycle_count = self._optional_response_int(
+                response,
+                "speculative_cycle_count",
+            )
+            speculative_accepted_tokens = self._optional_response_int(
+                response,
+                "speculative_accepted_tokens",
+            )
+            speculative_rejected_tokens = self._optional_response_int(
+                response,
+                "speculative_rejected_tokens",
+            )
+            speculative_acceptance_rate = self._optional_response_float(
+                response,
+                "speculative_acceptance_rate",
+            )
+            speculative_rollback_rate = self._optional_response_float(
+                response,
+                "speculative_rollback_rate",
+            )
+            native_mtp_timings = self._native_mtp_batch_timings_from_response(
+                response,
+                cycle_count=speculative_cycle_count,
+            )
             self._last_probe = replace(
                 self._last_probe,
                 preprocess_latency_ms=prepared_request.preprocess_latency_ms,
@@ -2788,6 +2834,20 @@ class MLXVLMRuntime:
                 cache_identity="",
                 cache_scope_id="",
                 cache_hit=False,
+                speculative_probe_receipt=build_speculative_runtime_receipt(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    acceleration_policy=acceleration_policy,
+                    position_metadata_receipt=self._last_probe.position_metadata_receipt,
+                    sampling_matches_baseline=self._sampling_is_greedy(sampling),
+                    rounds=speculative_cycle_count,
+                    accepted_tokens=speculative_accepted_tokens,
+                    rejected_tokens=speculative_rejected_tokens,
+                    acceptance_rate=speculative_acceptance_rate,
+                    rollback_rate=speculative_rollback_rate,
+                    draft_propose_ms=speculative_draft_propose_ms,
+                    target_verify_ms=speculative_target_verify_ms,
+                ),
             )
             completion_tokens = int(
                 self._response_number(response, "generation_tokens", "completion_tokens", default=1)
@@ -2801,17 +2861,18 @@ class MLXVLMRuntime:
                 generation_tps=float(self._response_number(response, "generation_tps", default=0.0) or 0.0),
                 peak_memory=float(self._response_number(response, "peak_memory", default=0.0) or 0.0),
                 finish_reason=str(getattr(response, "finish_reason", "") or "stop"),
-                speculative_acceptance_rate=self._optional_response_float(response, "speculative_acceptance_rate"),
-                speculative_rollback_rate=self._optional_response_float(response, "speculative_rollback_rate"),
-                speculative_accepted_tokens=self._optional_response_int(response, "speculative_accepted_tokens"),
-                speculative_rejected_tokens=self._optional_response_int(response, "speculative_rejected_tokens"),
+                speculative_acceptance_rate=speculative_acceptance_rate,
+                speculative_rollback_rate=speculative_rollback_rate,
+                speculative_accepted_tokens=speculative_accepted_tokens,
+                speculative_rejected_tokens=speculative_rejected_tokens,
                 speculative_fallback_count=int(
                     self._response_number(response, "speculative_fallback_count", default=0) or 0
                 ),
                 speculative_num_draft_tokens=draft_block_size,
                 speculative_draft_model_configured=True,
-                speculative_draft_propose_ms=self._optional_response_float(response, "speculative_draft_propose_ms"),
-                speculative_target_verify_ms=self._optional_response_float(response, "speculative_target_verify_ms"),
+                speculative_draft_propose_ms=speculative_draft_propose_ms,
+                speculative_target_verify_ms=speculative_target_verify_ms,
+                native_mtp_timings=native_mtp_timings,
             )
 
         event_iterable = backend_events() if self._executor is None else self._executor.iterate(backend_events)
@@ -2829,6 +2890,7 @@ class MLXVLMRuntime:
         draft_block_size: int,
         prompt_tokens: int,
         prefill_step_size: int | None,
+        acceleration_policy: common_pb2.AccelerationPolicy | None,
     ):
         import mlx.core as mx
         from mlx_vlm.utils import prepare_inputs
@@ -2908,6 +2970,28 @@ class MLXVLMRuntime:
         )
         generation_time = max(0.0, finished_at - (first_token_at or finished_at))
         acceptance_stats = self._mtp_drafter_acceptance_stats(drafter, draft_block_size) or {}
+        rounds = self._optional_stats_int(acceptance_stats, "rounds")
+        accepted_tokens = self._optional_stats_int(acceptance_stats, "accepted_tokens")
+        rejected_tokens = self._optional_stats_int(acceptance_stats, "rejected_tokens")
+        acceptance_rate = self._optional_stats_float(acceptance_stats, "acceptance_rate")
+        rollback_rate = self._optional_stats_float(acceptance_stats, "rollback_rate")
+        self._last_probe = replace(
+            self._last_probe,
+            speculative_probe_receipt=build_speculative_runtime_receipt(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                acceleration_policy=acceleration_policy,
+                position_metadata_receipt=self._last_probe.position_metadata_receipt,
+                sampling_matches_baseline=self._sampling_is_greedy(sampling),
+                rounds=rounds,
+                accepted_tokens=accepted_tokens,
+                rejected_tokens=rejected_tokens,
+                acceptance_rate=acceptance_rate,
+                rollback_rate=rollback_rate,
+                draft_propose_ms=None,
+                target_verify_ms=None,
+            ),
+        )
         yield RuntimeTokenEvent(
             text=text,
             prompt_tokens=prompt_tokens,
@@ -2916,13 +3000,26 @@ class MLXVLMRuntime:
             generation_tps=(completion_tokens / generation_time) if generation_time > 0 else 0.0,
             peak_memory=_mlx_peak_memory_gb(mx),
             finish_reason="stop",
-            speculative_acceptance_rate=acceptance_stats.get("acceptance_rate"),
-            speculative_rollback_rate=acceptance_stats.get("rollback_rate"),
-            speculative_accepted_tokens=acceptance_stats.get("accepted_tokens"),
-            speculative_rejected_tokens=acceptance_stats.get("rejected_tokens"),
+            speculative_acceptance_rate=acceptance_rate,
+            speculative_rollback_rate=rollback_rate,
+            speculative_accepted_tokens=accepted_tokens,
+            speculative_rejected_tokens=rejected_tokens,
             speculative_fallback_count=0,
             speculative_num_draft_tokens=draft_block_size,
             speculative_draft_model_configured=True,
+            native_mtp_timings=NativeMTPBatchTimings(
+                cycle_count=rounds,
+                mtp_head_ms=None,
+                sample_ms=None,
+                cache_ops_ms=None,
+                insert_ms=None,
+                prepare_ms=None,
+                prompt_encode_ms=None,
+                prefill_ms=None,
+                batch_insert_ms=None,
+                first_response_ms=None,
+                first_visible_ms=None,
+            ),
         )
 
     def _generate_text_only_step_events(
@@ -3665,6 +3762,45 @@ class MLXVLMRuntime:
         return int(value)
 
     @staticmethod
+    def _optional_stats_float(stats: dict[str, float | int], key: str) -> float | None:
+        value = stats.get(key)
+        if value is None:
+            return None
+        return float(value)
+
+    @staticmethod
+    def _optional_stats_int(stats: dict[str, float | int], key: str) -> int | None:
+        value = stats.get(key)
+        if value is None:
+            return None
+        return int(value)
+
+    def _native_mtp_batch_timings_from_response(
+        self,
+        response: Any,
+        *,
+        cycle_count: int | None,
+    ) -> NativeMTPBatchTimings | None:
+        mtp_head_ms = self._optional_response_float(response, "speculative_mtp_head_ms")
+        sample_ms = self._optional_response_float(response, "speculative_sample_ms")
+        cache_ops_ms = self._optional_response_float(response, "speculative_cache_ops_ms")
+        if cycle_count is None and mtp_head_ms is None and sample_ms is None and cache_ops_ms is None:
+            return None
+        return NativeMTPBatchTimings(
+            cycle_count=cycle_count,
+            mtp_head_ms=mtp_head_ms,
+            sample_ms=sample_ms,
+            cache_ops_ms=cache_ops_ms,
+            insert_ms=None,
+            prepare_ms=None,
+            prompt_encode_ms=None,
+            prefill_ms=None,
+            batch_insert_ms=None,
+            first_response_ms=None,
+            first_visible_ms=None,
+        )
+
+    @staticmethod
     def _mtp_drafter_acceptance_stats(drafter: Any, draft_block_size: int) -> dict[str, float | int] | None:
         accept_lens = getattr(drafter, "accept_lens", None)
         if accept_lens is None:
@@ -3693,6 +3829,7 @@ class MLXVLMRuntime:
             "rollback_rate": rejected_tokens / attempted_tokens,
             "accepted_tokens": accepted_tokens,
             "rejected_tokens": rejected_tokens,
+            "rounds": rounds,
         }
 
     def last_probe_snapshot(self) -> VisionProbeSnapshot | _MLXVLMProbeSnapshotView:

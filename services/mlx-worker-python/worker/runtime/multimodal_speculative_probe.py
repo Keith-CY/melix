@@ -42,6 +42,14 @@ def empty_speculative_probe_receipt() -> dict[str, object]:
         "output_mutation_allowed": False,
         "draft_loaded": False,
         "target_decode_started": False,
+        "rounds": 0,
+        "accepted_tokens": 0,
+        "rejected_tokens": 0,
+        "acceptance_rate": None,
+        "rollback_rate": None,
+        "draft_propose_ms": None,
+        "target_verify_ms": None,
+        "sampling_matches_baseline": False,
     }
 
 
@@ -61,6 +69,7 @@ def build_speculative_probe_receipt(
     prepared_request: PreparedVisionRequest,
     acceleration_policy: common_pb2.AccelerationPolicy | None,
     position_metadata_receipt: Mapping[str, object] | None = None,
+    sampling_matches_baseline: bool = False,
 ) -> dict[str, object]:
     """Build the verification-only receipt without loading a drafter.
 
@@ -108,6 +117,49 @@ def build_speculative_probe_receipt(
             "output_mutation_allowed": False,
             "draft_loaded": False,
             "target_decode_started": False,
+            "sampling_matches_baseline": bool(sampling_matches_baseline),
+        }
+    )
+    return receipt
+
+
+def build_speculative_runtime_receipt(
+    *,
+    loaded_model: Any,
+    prepared_request: PreparedVisionRequest,
+    acceleration_policy: common_pb2.AccelerationPolicy | None,
+    position_metadata_receipt: Mapping[str, object] | None = None,
+    sampling_matches_baseline: bool,
+    rounds: int | None,
+    accepted_tokens: int | None,
+    rejected_tokens: int | None,
+    acceptance_rate: float | None,
+    rollback_rate: float | None,
+    draft_propose_ms: float | None,
+    target_verify_ms: float | None,
+) -> dict[str, object]:
+    receipt = build_speculative_probe_receipt(
+        enabled=True,
+        fallback_reason="",
+        loaded_model=loaded_model,
+        prepared_request=prepared_request,
+        acceleration_policy=acceleration_policy,
+        position_metadata_receipt=position_metadata_receipt,
+        sampling_matches_baseline=sampling_matches_baseline,
+    )
+    receipt.update(
+        {
+            "mode": "speculative_decode",
+            "output_mutation_allowed": True,
+            "draft_loaded": True,
+            "target_decode_started": True,
+            "rounds": max(0, int(rounds or 0)),
+            "accepted_tokens": max(0, int(accepted_tokens or 0)),
+            "rejected_tokens": max(0, int(rejected_tokens or 0)),
+            "acceptance_rate": acceptance_rate,
+            "rollback_rate": rollback_rate,
+            "draft_propose_ms": draft_propose_ms,
+            "target_verify_ms": target_verify_ms,
         }
     )
     return receipt
@@ -121,6 +173,7 @@ def speculative_probe_admission(
     prepared_request: PreparedVisionRequest,
     acceleration_policy: common_pb2.AccelerationPolicy | None,
     position_metadata_receipt: Mapping[str, object] | None = None,
+    sampling_matches_baseline: bool = False,
 ) -> SpeculativeProbeAdmission:
     receipt = build_speculative_probe_receipt(
         enabled=enabled,
@@ -129,6 +182,7 @@ def speculative_probe_admission(
         prepared_request=prepared_request,
         acceleration_policy=acceleration_policy,
         position_metadata_receipt=position_metadata_receipt,
+        sampling_matches_baseline=sampling_matches_baseline,
     )
     return SpeculativeProbeAdmission(
         receipt=receipt,

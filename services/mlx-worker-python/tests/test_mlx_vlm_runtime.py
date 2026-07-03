@@ -6569,8 +6569,11 @@ def test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_gen
                 speculative_rollback_rate=0.25,
                 speculative_accepted_tokens=6,
                 speculative_rejected_tokens=2,
-                speculative_draft_propose_ms=4.5,
-                speculative_target_verify_ms=5.5,
+                speculative_cycle_count=3,
+                speculative_mtp_head_ms=4.5,
+                speculative_sample_ms=1.5,
+                speculative_cache_ops_ms=0.5,
+                speculative_backbone_ms=5.5,
             )
         ]
 
@@ -6635,8 +6638,30 @@ def test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_gen
     assert event.speculative_rollback_rate == 0.25
     assert event.speculative_accepted_tokens == 6
     assert event.speculative_rejected_tokens == 2
+    assert event.native_mtp_timings is not None
+    assert event.native_mtp_timings.cycle_count == 3
+    assert event.native_mtp_timings.mtp_head_ms == 4.5
+    assert event.native_mtp_timings.sample_ms == 1.5
+    assert event.native_mtp_timings.cache_ops_ms == 0.5
     assert event.speculative_draft_propose_ms == 4.5
     assert event.speculative_target_verify_ms == 5.5
+    receipt = runtime.last_probe_snapshot().speculative_probe_receipt
+    assert receipt["status"] == "admitted"
+    assert receipt["mode"] == "speculative_decode"
+    assert receipt["draft_model_id"] == "mlx-community/gemma-4-E2B-it-assistant-bf16"
+    assert receipt["num_draft_tokens"] == 6
+    assert receipt["rounds"] == 3
+    assert receipt["accepted_tokens"] == 6
+    assert receipt["rejected_tokens"] == 2
+    assert receipt["acceptance_rate"] == 0.75
+    assert receipt["rollback_rate"] == 0.25
+    assert receipt["draft_propose_ms"] == 4.5
+    assert receipt["target_verify_ms"] == 5.5
+    assert receipt["fallback_reason"] == ""
+    assert receipt["sampling_matches_baseline"] is True
+    assert receipt["draft_loaded"] is True
+    assert receipt["target_decode_started"] is True
+    assert receipt["output_mutation_allowed"] is True
 
 
 def _assert_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
@@ -6909,6 +6934,19 @@ def _assert_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
     assert events[-1].speculative_rollback_rate == 0.7
     assert events[-1].speculative_accepted_tokens == 3
     assert events[-1].speculative_rejected_tokens == 7
+    assert events[-1].native_mtp_timings is not None
+    assert events[-1].native_mtp_timings.cycle_count == 2
+    receipt = runtime.last_probe_snapshot().speculative_probe_receipt
+    assert receipt["status"] == "admitted"
+    assert receipt["mode"] == "speculative_decode"
+    assert receipt["rounds"] == 2
+    assert receipt["accepted_tokens"] == 3
+    assert receipt["rejected_tokens"] == 7
+    assert receipt["acceptance_rate"] == 0.3
+    assert receipt["rollback_rate"] == 0.7
+    assert receipt["sampling_matches_baseline"] is True
+    assert receipt["draft_loaded"] is True
+    assert receipt["target_decode_started"] is True
     assert generate_step_calls == [
         {
             "input_ids_shape": (1, 3),
@@ -7056,6 +7094,7 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
         "rollback_rate": 0.4,
         "accepted_tokens": 6,
         "rejected_tokens": 4,
+        "rounds": 2,
     }
     _assert_mtp_prompt_only_multimodal_requests_remain_supported()
     _assert_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
@@ -7645,6 +7684,14 @@ def test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_f
         "output_mutation_allowed": False,
         "draft_loaded": False,
         "target_decode_started": False,
+        "rounds": 0,
+        "accepted_tokens": 0,
+        "rejected_tokens": 0,
+        "acceptance_rate": None,
+        "rollback_rate": None,
+        "draft_propose_ms": None,
+        "target_verify_ms": None,
+        "sampling_matches_baseline": True,
     }
     position_receipt = runtime.last_probe_snapshot().position_metadata_receipt
     assert position_receipt["media_position_count"] == 0
@@ -7732,6 +7779,14 @@ def test_mlx_vlm_runtime_restores_verification_only_probe_after_generation_excep
     assert receipt["mode"] == "verification_only"
     assert receipt["draft_model_id"] == "mlx-community/gemma-4-E2B-it-assistant-bf16"
     assert receipt["fallback_reason"] == "media inputs are not supported by the Gemma 4 MTP path yet"
+    assert receipt["rounds"] == 0
+    assert receipt["accepted_tokens"] == 0
+    assert receipt["rejected_tokens"] == 0
+    assert receipt["acceptance_rate"] is None
+    assert receipt["rollback_rate"] is None
+    assert receipt["draft_propose_ms"] is None
+    assert receipt["target_verify_ms"] is None
+    assert receipt["sampling_matches_baseline"] is True
     assert receipt["draft_loaded"] is False
     assert receipt["target_decode_started"] is False
 
@@ -8058,6 +8113,8 @@ def test_mlx_vlm_runtime_mtp_response_helpers_handle_alternate_shapes() -> None:
     assert MLXVLMRuntime._batch_response_text(SimpleNamespace()) == "namespace()"
     assert MLXVLMRuntime._optional_response_float(SimpleNamespace(), "missing") is None
     assert MLXVLMRuntime._optional_response_int(SimpleNamespace(), "missing") is None
+    assert MLXVLMRuntime._optional_stats_float({}, "missing") is None
+    assert MLXVLMRuntime._optional_stats_int({}, "missing") is None
 
 
 def test_mlx_vlm_runtime_supports_prompt_only_generation_for_multimodal_models() -> None:

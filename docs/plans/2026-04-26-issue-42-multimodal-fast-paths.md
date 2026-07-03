@@ -538,9 +538,20 @@ Executable unit issues:
   does not allocate a speculative receipt dictionary on the hot path. The
   `multimodal-speculative-probe-receipt` performance probe is a static schema
   sentinel: focused pytest coverage validates behavior, while the probe command
-  emits informational metrics only and is not a latency gate. Unit 4.1.2 owns
-  per-sequence accepted/rejected token and rollback counters; Unit 4.1.3 owns
-  full single-request and concurrent parity fixtures.
+  emits informational metrics only and is not a latency gate.
+- Unit 4.1.2 upgrades admitted text-backed VLM MTP speculative decode paths to
+  restore an admitted `speculative_probe_receipt` after generation with
+  `mode=speculative_decode`, per-sequence rounds, accepted/rejected token
+  counts, acceptance and rollback rates, draft propose and target verify timing
+  fields, draft/target start markers, and greedy sampling parity. Batch-native
+  MTP receipts accept the existing native timing spellings from the response
+  (`speculative_mtp_head_ms` and `speculative_backbone_ms`) as aliases for draft
+  propose and target verify timing. Generate-step receipts derive counters from
+  drafter acceptance stats and keep unavailable timing fields null.
+  Verification-only fallback/refusal receipts keep zero counters, null timings,
+  and the baseline parity flag so media-bearing speculative requests remain
+  baseline-only until later parity units. Unit 4.1.3 owns full single-request
+  and concurrent parity fixtures.
 
 ## Verification Policy
 
