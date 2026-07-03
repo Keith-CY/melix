@@ -323,9 +323,12 @@ def load_trajectory_provenance_from_snapshot_manifest(
         manifest_path_text = manifest_path
         with open_file(manifest_path, "rb") as manifest_file:
             payload = loads(manifest_file.read())
+    elif isinstance(manifest_path, Path):
+        manifest_path_text = _STR(manifest_path)
+        with open_file(manifest_path, "rb") as manifest_file:
+            payload = loads(manifest_file.read())
     else:
-        if not isinstance(manifest_path, Path):
-            manifest_path = Path(manifest_path)
+        manifest_path = Path(manifest_path)
         manifest_path_text = _STR(manifest_path)
         payload = loads(read_bytes(manifest_path))
     if type(payload) is dict:

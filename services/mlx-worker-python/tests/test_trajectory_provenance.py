@@ -274,6 +274,39 @@ def test_load_trajectory_provenance_from_snapshot_manifest_string_path_uses_dire
     }
 
 
+def test_load_trajectory_provenance_from_snapshot_manifest_path_uses_direct_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+                "trajectory_split": "train",
+                "trajectory_trace_digest": "abc123",
+            }
+        ).encode("utf-8")
+    )
+
+    def fail_path_read_bytes(_self: Path) -> bytes:
+        raise AssertionError("exact Path manifest paths should use direct open")
+
+    monkeypatch.setattr(trajectory_provenance_module, "_PATH_READ_BYTES", fail_path_read_bytes)
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
+
+
 def test_load_trajectory_provenance_from_snapshot_manifest_keeps_pathlike_support(
     tmp_path: Path,
 ) -> None:
