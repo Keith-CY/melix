@@ -28,6 +28,8 @@ _SIZE_HINT_MULTIPLIERS = {
 
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
+_BARE_SIZE_HINT_SEARCH = _BARE_SIZE_HINT_RE.search
+_EXPLICIT_SIZE_HINT_SEARCH = _EXPLICIT_SIZE_HINT_RE.search
 _NEXT_LINK_REL_MARKER = 'rel="next"'
 _CURSOR_QUERY_KEY = "cursor="
 _CURSOR_QUERY_KEY_LEN = len(_CURSOR_QUERY_KEY)
@@ -984,8 +986,8 @@ def _starts_with_model_size_label(text: str) -> bool:
 def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
     if not text:
         return 0
-    pattern = _BARE_SIZE_HINT_RE if allow_bare else _EXPLICIT_SIZE_HINT_RE
-    match = pattern.search(text)
+    search_size_hint = _BARE_SIZE_HINT_SEARCH if allow_bare else _EXPLICIT_SIZE_HINT_SEARCH
+    match = search_size_hint(text)
     if not match:
         return 0
     value_text = match.group(1)
