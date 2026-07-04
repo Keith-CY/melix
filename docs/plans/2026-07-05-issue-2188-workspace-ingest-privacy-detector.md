@@ -55,7 +55,9 @@ The dataset ingest receipt gains:
 When the detector is off, the receipt still includes a passed aggregate receipt
 with `policy_mode: off`, zero matches, and a passed counter. This keeps the
 receipt contract stable for CLI, Desktop, reports, and future diagnostics
-consumers.
+consumers. Off mode must not scan source records or enter the detector
+aggregation helper, and reports zero detector latency because no detector pass
+ran.
 
 ## Operator Controls
 

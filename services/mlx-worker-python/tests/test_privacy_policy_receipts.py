@@ -335,6 +335,20 @@ def test_pattern_privacy_detector_matches_secret_assignment_parity_cases() -> No
         assert raw_fragment not in payload
 
 
+def test_pattern_privacy_detector_does_not_redact_past_unquoted_statement_separator() -> None:
+    result = detect_privacy_patterns(
+        "OPENAI_API_KEY=sk-secret;other_var=keep-me",
+        surface="workspace_ingest",
+        route_scope="source_import",
+    )
+
+    assert result.receipt["action"] == "redacted"
+    assert result.receipt["categories"] == ["secret"]
+    assert result.receipt["match_count"] == 1
+    assert result.redacted_text == "[REDACTED_SECRET];other_var=keep-me"
+    assert "sk-secret" not in result.redacted_text
+
+
 def test_privacy_detector_aggregate_defaults_unknown_mode_to_off() -> None:
     result = aggregate_privacy_detection_results(
         (),

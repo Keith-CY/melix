@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from worker.productization.privacy_policy_receipts import (
+    DEFAULT_PRIVACY_POLICY_ID,
+    PATTERN_PRIVACY_DETECTOR_ID,
+    PRIVACY_AUDIT_COUNTER_SCHEMA_VERSION,
+    PRIVACY_DETECTOR_RECEIPT_SCHEMA_VERSION,
     aggregate_privacy_detection_results,
     detect_privacy_patterns,
 )
@@ -471,26 +475,44 @@ def _workspace_privacy_detection_evidence(
     records: list[dict[str, Any]],
     request: DatasetIngestRequest,
 ) -> _WorkspacePrivacyDetectionEvidence:
-    started = time.perf_counter()
     mode = _privacy_detector_mode(request.privacy_detector_mode)
     if mode == "off":
-        aggregate = aggregate_privacy_detection_results(
-            (),
-            surface="workspace_ingest",
-            route_scope="source_import",
-            policy_mode=mode,
-        )
         return _WorkspacePrivacyDetectionEvidence(
             records=records,
-            receipt=aggregate.receipt,
-            audit_counter=aggregate.audit_counter,
-            latency_ms=(time.perf_counter() - started) * 1000.0,
+            receipt={
+                "schema_version": PRIVACY_DETECTOR_RECEIPT_SCHEMA_VERSION,
+                "surface": "workspace_ingest",
+                "route_scope": "source_import",
+                "detector_id": PATTERN_PRIVACY_DETECTOR_ID,
+                "policy_id": DEFAULT_PRIVACY_POLICY_ID,
+                "policy_mode": "off",
+                "action": "passed",
+                "categories": [],
+                "match_count": 0,
+                "redacted_span_count": 0,
+                "blocked_reason": "",
+                "confidence_source": "deterministic_pattern",
+                "raw_sensitive_span_count": 0,
+                "raw_text_included": False,
+            },
+            audit_counter={
+                "schema_version": PRIVACY_AUDIT_COUNTER_SCHEMA_VERSION,
+                "surface": "workspace_ingest",
+                "route_scope": "source_import",
+                "blocked_count": 0,
+                "redacted_count": 0,
+                "passed_count": 1,
+                "raw_sensitive_span_count": 0,
+            },
+            latency_ms=0.0,
         )
 
+    started = time.perf_counter()
     detection_results = []
     detected_records: list[dict[str, Any]] = []
     for record in records:
-        text = str(record.get("text", ""))
+        value = record.get("text")
+        text = str(value) if value is not None else ""
         result = detect_privacy_patterns(
             text,
             surface="workspace_ingest",
@@ -592,9 +614,12 @@ def _blocked_ingest_receipt(
         or privacy_detector_metrics is None
     ):
         evidence = _workspace_privacy_detection_evidence([], request)
-        privacy_detector_receipts = [evidence.receipt]
-        privacy_audit_counters = [evidence.audit_counter]
-        privacy_detector_metrics = _privacy_detector_metrics(evidence)
+        if privacy_detector_receipts is None:
+            privacy_detector_receipts = [evidence.receipt]
+        if privacy_audit_counters is None:
+            privacy_audit_counters = [evidence.audit_counter]
+        if privacy_detector_metrics is None:
+            privacy_detector_metrics = _privacy_detector_metrics(evidence)
     summary = {
         "source_file_count": source_file_count,
         "source_record_count": source_record_count,

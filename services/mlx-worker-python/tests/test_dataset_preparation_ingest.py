@@ -13,12 +13,14 @@ from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     _SOURCE_KIND_BY_NAME,
     _SOURCE_KIND_NAME_CACHE_MAX,
+    _blocked_ingest_receipt,
     _iter_source_file_paths,
     _normalize_line_endings,
     _record,
     _read_source_text,
     _source_kind,
     _source_kind_for_name,
+    _workspace_privacy_detection_evidence,
     prepare_dataset_ingest,
 )
 
@@ -525,6 +527,109 @@ def test_dataset_ingest_privacy_detector_block_mode_stops_before_segments(
     payload = json.dumps(receipt, sort_keys=True)
     for raw_fragment in ("HF_TOKEN", "sk-secret", "with,commas"):
         assert raw_fragment not in payload
+
+
+def test_dataset_ingest_privacy_detector_off_does_not_enter_detection_helpers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = [{"text": "OPENAI_API_KEY=sk-default-off"}]
+
+    def fail_aggregate(*_args: object, **_kwargs: object) -> object:  # pragma: no cover - failure path only
+        raise AssertionError("privacy detector off mode must not aggregate source records")
+
+    def fail_detect(*_args: object, **_kwargs: object) -> object:  # pragma: no cover - failure path only
+        raise AssertionError("privacy detector off mode must not scan source records")
+
+    monkeypatch.setattr(dataset_preparation_module, "aggregate_privacy_detection_results", fail_aggregate)
+    monkeypatch.setattr(dataset_preparation_module, "detect_privacy_patterns", fail_detect)
+
+    evidence = _workspace_privacy_detection_evidence(
+        records,
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=tmp_path / "workspace-manifest.json",
+            input_path=tmp_path / "raw-inputs",
+            output_dir=tmp_path / "prepared",
+            dataset_preparation_id="prep-detector-off",
+            privacy_detector_mode="off",
+        ),
+    )
+
+    assert evidence.records is records
+    assert evidence.receipt["policy_mode"] == "off"
+    assert evidence.receipt["action"] == "passed"
+    assert evidence.receipt["match_count"] == 0
+    assert evidence.audit_counter["passed_count"] == 1
+
+
+def test_dataset_ingest_privacy_detector_treats_none_text_as_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scanned_text: list[str] = []
+    real_detect = dataset_preparation_module.detect_privacy_patterns
+
+    def capture_detect(value: str, **kwargs: object) -> object:
+        scanned_text.append(value)
+        return real_detect(value, **kwargs)
+
+    monkeypatch.setattr(dataset_preparation_module, "detect_privacy_patterns", capture_detect)
+
+    evidence = _workspace_privacy_detection_evidence(
+        [{"text": None}],
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=tmp_path / "workspace-manifest.json",
+            input_path=tmp_path / "raw-inputs",
+            output_dir=tmp_path / "prepared",
+            dataset_preparation_id="prep-detector-none",
+            privacy_detector_mode="redact",
+        ),
+    )
+
+    assert scanned_text == [""]
+    assert evidence.records == [{"text": None}]
+    assert evidence.receipt["action"] == "passed"
+    assert evidence.receipt["match_count"] == 0
+
+
+def test_blocked_ingest_receipt_preserves_passed_privacy_fields_when_only_metrics_default(
+    tmp_path: Path,
+) -> None:
+    passed_receipts = [{"policy_mode": "redact", "action": "redacted", "match_count": 2}]
+    passed_counters = [{"redacted_count": 1, "passed_count": 0, "blocked_count": 0}]
+
+    receipt = _blocked_ingest_receipt(
+        request=DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=tmp_path / "workspace-manifest.json",
+            input_path=tmp_path / "raw-inputs",
+            output_dir=tmp_path / "prepared",
+            dataset_preparation_id="prep-blocked-default-metrics",
+            privacy_detector_mode="redact",
+        ),
+        segments_path=tmp_path / "prepared" / "segments.jsonl",
+        receipt_path=tmp_path / "prepared" / "dataset-ingest-receipt.json",
+        workspace_preflight_receipt_path=tmp_path / "prepared" / "workspace-preflight-receipt.json",
+        workspace_preflight_receipt={"status": "ready"},
+        operator_failures=[],
+        elapsed_ms=1.0,
+        source_inventory=[],
+        source_file_count=0,
+        observed_payload_bytes=0,
+        upload_cap_bytes=0,
+        source_cap_bytes=0,
+        rejection_reason="segment_artifact_write_failed",
+        partial_artifact_cleanup={"status": "missing"},
+        privacy_detector_receipts=passed_receipts,
+        privacy_audit_counters=passed_counters,
+        privacy_detector_metrics=None,
+    )
+
+    assert receipt["privacy_detector_receipts"] == passed_receipts
+    assert receipt["privacy_audit_counters"] == passed_counters
+    assert receipt["metrics"]["privacy_detector_match_count"] == 0
 
 
 def test_dataset_ingest_emits_typed_operator_failures(

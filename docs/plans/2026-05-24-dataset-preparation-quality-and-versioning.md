@@ -71,7 +71,9 @@ Cleaning controls must be independently enableable and reportable:
 
 - `privacy_detector`: optionally run the deterministic local privacy detector in
   `off`, `redact`, or `block` mode after source records are read and before
-  PII masking, deduplication, and segmentation.
+  PII masking, deduplication, and segmentation. `off` mode keeps the receipt
+  contract stable with a passed zero-match receipt, but must not scan source
+  records or enter detector aggregation.
 - `pii_mask`: mask email addresses, phone-like numbers, API-token-like
   strings, and configured literal denylist values before downstream samples are
   written.
@@ -114,6 +116,9 @@ The receipt metrics are:
 - `privacy_detector_latency_ms`
 - `privacy_detector_match_count`
 - `privacy_detector_redacted_span_count`
+
+When `privacy_detector` is `off`, `privacy_detector_latency_ms` is `0.0`
+because no detector pass ran.
 
 Operator failures must be typed and explainable without raw logs. Required
 failure codes are:

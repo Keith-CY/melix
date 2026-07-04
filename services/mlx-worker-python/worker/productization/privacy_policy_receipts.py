@@ -33,7 +33,7 @@ _SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"MELIX_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|"
     r"API_KEY|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN|SECRET_KEY|CLIENT_SECRET|"
     r"PASSWORD"
-    r")\s*=\s*(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|\S+)",
+    r")\s*=\s*(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s;]+)",
     flags=re.IGNORECASE,
 )
 _BEARER_TOKEN_PATTERN = re.compile(
