@@ -624,6 +624,23 @@ Executable unit issues:
   and benchmark artifacts without emitting an optimistic success state before
   receipt gates pass. Plan 4.3 continues promotion evidence, comparison
   artifacts, Apple Silicon smoke probes, and default-on release gates.
+- Unit 4.3.1 adds matched baseline-vs-accelerated benchmark evidence for the
+  multimodal speculative decode route. VLM benchmarks run a baseline leg with
+  `melix.vlm.speculative_probe.enabled=false` and an accelerated leg with the
+  probe enabled plus the requested speculative acceleration policy. The
+  comparison artifact reuses the serving-diagnostics
+  `baseline-vs-accelerated.json` contract, including prefill and decode phase
+  rows for both legs, greedy sampler status, admission/fallback reason, and the
+  native acceleration receipt payload. The shared verifier blocks claim-eligible
+  artifacts when prompt protocol, prompt digest, prompt template digest, model
+  id, task kind, generation config, greedy sampler, or route stability differ.
+  Benchmark metrics expose speculative comparison validity, claim-blocked,
+  identity-match, route-stability, reason-code, baseline/accelerated TTFT and
+  decode throughput, and artifact-present status. A public speculative speed
+  claim remains blocked unless the accelerated receipt proves
+  `native_acceleration_runtime_active=true`; media-bearing verification-only
+  fallbacks therefore stay visible as blocked evidence until later Plan 4.3
+  smoke and release gates admit them.
 
 ## Verification Policy
 
