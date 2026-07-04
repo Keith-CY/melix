@@ -594,7 +594,10 @@ def _effective_config_with_profile_receipt(
                 break
     if enriched_config == stable_config:
         return stable_config
-    return _stable_json_object(enriched_config)
+    return {
+        str(key): value
+        for key, value in sorted(enriched_config.items(), key=lambda item: str(item[0]))
+    }
 
 
 def _effective_config_metadata_sources(
