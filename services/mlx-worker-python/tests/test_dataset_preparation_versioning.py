@@ -202,6 +202,18 @@ def test_dataset_quality_output_lengths_preserve_completion_and_message_semantic
     assert _sample_output_length_stats([], []) == (0, 0, 0)
 
 
+def test_dataset_quality_message_rows_skip_completion_key_lookup() -> None:
+    class MessageRow(dict[str, object]):
+        def __getitem__(self, key: str) -> object:  # pragma: no cover - regression tripwire
+            if key == "completion":  # pragma: no cover - regression tripwire
+                raise AssertionError("message rows should use get() instead of exception-driven completion lookup")
+            return super().__getitem__(key)  # pragma: no cover - regression tripwire
+
+    row = MessageRow({"messages": [{"content": "hello"}, {"content": 678}, "skip-me"]})
+
+    assert _sample_output_lengths([], [row]) == [8]
+
+
 def test_dataset_quality_summary_reuses_train_validation_counts() -> None:
     class CountingRows(list[dict[str, object]]):
         len_calls = 0
