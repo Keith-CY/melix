@@ -312,6 +312,47 @@ metadata into execution ext fields:
 - `melix.acceleration.profile.fallback_reason`
 - `melix.acceleration.profile.recovery_hint`
 
+## Research Fetch Budget Receipts
+
+Deep-research and web-enabled source tools should emit
+`melix.research_fetch_budget_receipt.v1` receipts before any fetched source
+content becomes model-visible. These receipts are a byte-budget and cache-key
+contract only; they do not perform DNS, redirect, SSRF, or private-network
+admission. Real URL dereferencing must still pass through the network fetch
+policy layer described by #2188 before bytes are streamed into a research
+fetch-budget helper.
+
+Receipts use these status values:
+
+| Status | Meaning |
+| --- | --- |
+| `ok` | The source fit inside the effective byte budget and can be used as complete fetched evidence. |
+| `truncated` | Text content was soft-truncated at the effective byte budget and includes a model-visible partial-content notice. |
+| `blocked` | The helper returned no model-visible source content because the declared body exceeded the hard ceiling or a binary/PDF source would have been truncated. |
+
+Expected receipt fields include:
+
+- `source_id`
+- `source_url_hash`
+- `requested_max_bytes`
+- `default_max_bytes`
+- `effective_max_bytes`
+- `hard_max_bytes`
+- `fetched_bytes`
+- `declared_total_bytes`
+- `truncated`
+- `status`
+- `blocked_reason`
+- `content_type`
+- `partial_content_notice`
+- `refetch_hint`
+- `cache_key`
+- `raw_url_included`
+
+`cache_key` must include the effective byte budget and truncation state so a
+partial source cannot masquerade as a complete source. Receipts and diagnostics
+must not include raw URLs, query strings, credentials, or raw fetched content.
+
 ## Lightweight Status Diagnostics
 
 `ListLoadedModels` exposes per-loaded-model throughput counters with the same
