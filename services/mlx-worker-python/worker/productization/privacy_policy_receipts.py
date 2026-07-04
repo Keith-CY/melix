@@ -350,6 +350,12 @@ def _classify_host(host: str) -> str:
     normalized = host.strip("[]").lower()
     if normalized == "localhost" or normalized.endswith(".localhost"):
         return "loopback"
+    ipv4_tail = _ipv4_tail_from_ipv6_literal(normalized)
+    if ipv4_tail:
+        try:
+            return _classify_ip(ip_address(ipv4_tail))
+        except ValueError:
+            pass
     try:
         return _classify_ip(ip_address(normalized))
     except ValueError:
@@ -357,9 +363,15 @@ def _classify_host(host: str) -> str:
 
 
 def _classify_ip_literal(value: str) -> str:
-    stripped = str(value).strip().strip("[]")
+    stripped = str(value).strip().strip("[]").lower()
     if not stripped:
         return ""
+    ipv4_tail = _ipv4_tail_from_ipv6_literal(stripped)
+    if ipv4_tail:
+        try:
+            return _classify_ip(ip_address(ipv4_tail))
+        except ValueError:
+            pass
     try:
         return _classify_ip(ip_address(stripped))
     except ValueError:
@@ -367,6 +379,9 @@ def _classify_ip_literal(value: str) -> str:
 
 
 def _classify_ip(address: object) -> str:
+    ipv4_mapped = getattr(address, "ipv4_mapped", None)
+    if ipv4_mapped is not None:
+        address = ipv4_mapped
     if getattr(address, "is_loopback", False):
         return "loopback"
     if getattr(address, "is_link_local", False):
@@ -374,6 +389,18 @@ def _classify_ip(address: object) -> str:
     if getattr(address, "is_private", False):
         return "private"
     return "public"
+
+
+def _ipv4_tail_from_ipv6_literal(value: str) -> str:
+    if value.startswith("::ffff:"):
+        tail = value.removeprefix("::ffff:")
+    elif value.startswith("::"):
+        tail = value.removeprefix("::")
+    else:
+        return ""
+    if "." not in tail:
+        return ""
+    return tail
 
 
 def _effective_url_class(host_class: str, resolved_ip_class: str) -> str:
@@ -421,6 +448,11 @@ def _redacted_url(
 def _bool_value(value: object) -> bool | None:
     if isinstance(value, bool):
         return value
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in {"true", "1", "yes"}:

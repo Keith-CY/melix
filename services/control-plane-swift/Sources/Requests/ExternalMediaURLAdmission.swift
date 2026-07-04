@@ -307,6 +307,9 @@ public enum ExternalMediaURLAdmission {
             return "loopback"
         }
         if normalized.contains(":") {
+            if let ipv4Tail = ipv4TailFromIPv6Literal(normalized) {
+                return hostClass(for: ipv4Tail)
+            }
             if normalized == "::1" {
                 return "loopback"
             }
@@ -334,6 +337,18 @@ public enum ExternalMediaURLAdmission {
             return "private"
         }
         return "public"
+    }
+
+    private static func ipv4TailFromIPv6Literal(_ normalized: String) -> String? {
+        let tail: Substring
+        if normalized.hasPrefix("::ffff:") {
+            tail = normalized.dropFirst("::ffff:".count)
+        } else if normalized.hasPrefix("::") {
+            tail = normalized.dropFirst("::".count)
+        } else {
+            return nil
+        }
+        return tail.contains(".") ? String(tail) : nil
     }
 
     private static func isPrivateOrLoopbackHost(_ host: String) -> Bool {

@@ -4,6 +4,7 @@ import json
 
 from worker.productization.privacy_policy_receipts import (
     PrivacyAuditCounter,
+    network_fetch_policy_receipt_from_metadata,
     network_fetch_policy_receipt_for_url,
     privacy_audit_counter,
 )
@@ -60,6 +61,62 @@ def test_network_fetch_policy_receipt_blocks_private_targets_without_raw_url_lea
     assert "[REDACTED_PRIVATE_IP]" in payload
 
 
+def test_network_fetch_policy_receipt_blocks_ipv4_wrapped_loopback_targets() -> None:
+    host_receipt = network_fetch_policy_receipt_for_url(
+        "https://[::ffff:127.0.0.1]/private/source.png?token=sk-local",
+        surface="local_proxy_external_media",
+        route_scope="image_edit",
+    )
+    resolved_receipt = network_fetch_policy_receipt_for_url(
+        "https://public.example.test/private/source.png?token=sk-rebind",
+        surface="workspace_ingest",
+        route_scope="source_import",
+        resolved_ip="::ffff:127.0.0.1",
+    )
+    compatible_host_receipt = network_fetch_policy_receipt_for_url(
+        "https://[::127.0.0.1]/private/source.png?token=sk-compatible",
+        surface="local_proxy_external_media",
+        route_scope="image_edit",
+    )
+    compatible_resolved_receipt = network_fetch_policy_receipt_for_url(
+        "https://public.example.test/private/source.png?token=sk-compatible-rebind",
+        surface="workspace_ingest",
+        route_scope="source_import",
+        resolved_ip="::127.0.0.1",
+    )
+
+    assert host_receipt["action"] == "blocked"
+    assert host_receipt["url_class"] == "loopback"
+    assert host_receipt["host_class"] == "loopback"
+    assert host_receipt["blocked_reason"] == "private_or_loopback_host"
+    assert host_receipt["redacted_url"] == "https://[REDACTED_PRIVATE_HOST]/[redacted]"
+    assert resolved_receipt["action"] == "blocked"
+    assert resolved_receipt["host_class"] == "public"
+    assert resolved_receipt["resolved_ip"] == "[REDACTED_PRIVATE_IP]"
+    assert resolved_receipt["resolved_ip_class"] == "loopback"
+    assert resolved_receipt["blocked_reason"] == "resolved_private_or_loopback_ip"
+    assert compatible_host_receipt["action"] == "blocked"
+    assert compatible_host_receipt["url_class"] == "loopback"
+    assert compatible_host_receipt["host_class"] == "loopback"
+    assert compatible_resolved_receipt["action"] == "blocked"
+    assert compatible_resolved_receipt["resolved_ip"] == "[REDACTED_PRIVATE_IP]"
+    assert compatible_resolved_receipt["resolved_ip_class"] == "loopback"
+    payload = json.dumps(
+        [
+            host_receipt,
+            resolved_receipt,
+            compatible_host_receipt,
+            compatible_resolved_receipt,
+        ],
+        sort_keys=True,
+    )
+    assert "::ffff:127.0.0.1" not in payload
+    assert "::127.0.0.1" not in payload
+    assert "sk-local" not in payload
+    assert "sk-rebind" not in payload
+    assert "sk-compatible" not in payload
+
+
 def test_network_fetch_policy_receipt_passes_public_https_and_local_workspace_paths() -> None:
     public_receipt = network_fetch_policy_receipt_for_url(
         " HTTPS://Example.com/source.png?api_key=sk-public#frag ",
@@ -95,6 +152,30 @@ def test_network_fetch_policy_receipt_passes_public_https_and_local_workspace_pa
     assert local_receipt["url_scheme"] == "path"
     assert local_receipt["redacted_url"] == "[LOCAL_PATH]"
     assert "/Users/operator/private" not in json.dumps(local_receipt, sort_keys=True)
+
+
+def test_network_fetch_policy_receipt_metadata_accepts_numeric_boolean_values() -> None:
+    receipt = network_fetch_policy_receipt_from_metadata(
+        {
+            "melix.network_fetch.policy.surface": "local_proxy_external_media",
+            "melix.network_fetch.policy.route_scope": "image_edit",
+            "melix.network_fetch.policy.action": "passed",
+            "melix.network_fetch.policy.url_class": "public",
+            "melix.network_fetch.policy.url_scheme": "https",
+            "melix.network_fetch.policy.host_class": "public",
+            "melix.network_fetch.policy.resolved_ip": "93.184.216.34",
+            "melix.network_fetch.policy.resolved_ip_class": "public",
+            "melix.network_fetch.policy.redirect_hops_checked": "0",
+            "melix.network_fetch.policy.blocked_reason": "",
+            "melix.network_fetch.policy.redacted_url": "https://example.com/[redacted]",
+            "melix.network_fetch.policy.raw_url_included": 0,
+            "melix.network_fetch.policy.fetch_attempted": 1,
+        }
+    )
+
+    assert receipt
+    assert receipt["raw_url_included"] is False
+    assert receipt["fetch_attempted"] is True
 
 
 def test_privacy_audit_counter_counts_blocked_redacted_and_passed_decisions() -> None:

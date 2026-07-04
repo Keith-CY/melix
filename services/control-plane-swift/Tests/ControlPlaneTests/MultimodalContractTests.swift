@@ -266,6 +266,9 @@ struct MultimodalContractTests {
         #expect(networkPolicyReceipt.redactedURL == "https://example.com/[redacted]")
         #expect(networkPolicyReceipt.rawURLIncluded == false)
         #expect(networkPolicyReceipt.fetchAttempted == false)
+        #expect(ExternalMediaURLAdmission.hostClass(for: "::ffff:127.0.0.1") == "loopback")
+        #expect(ExternalMediaURLAdmission.hostClass(for: "::ffff:10.0.0.1") == "private")
+        #expect(ExternalMediaURLAdmission.hostClass(for: "::127.0.0.1") == "loopback")
 
         let refusals: [(String, ExternalMediaURLAdmissionError)] = [
             ("", .malformedURL("image")),
@@ -283,6 +286,9 @@ struct MultimodalContractTests {
             ("https://[fe80::1]/image.png", .privateHost("[fe80::1]")),
             ("https://[fc00::1]/image.png", .privateHost("[fc00::1]")),
             ("https://[fd00::1]/image.png", .privateHost("[fd00::1]")),
+            ("https://[::ffff:127.0.0.1]/image.png", .privateHost("[::ffff:127.0.0.1]")),
+            ("https://[::ffff:10.0.0.1]/image.png", .privateHost("[::ffff:10.0.0.1]")),
+            ("https://[::127.0.0.1]/image.png", .privateHost("[::127.0.0.1]")),
         ]
 
         for (rawURL, expectedError) in refusals {
