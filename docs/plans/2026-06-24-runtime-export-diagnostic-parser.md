@@ -202,6 +202,13 @@ the existing `<absolute-path>` label without constructing fallback `Path` object
 or calling `relative_to()`. Paths with `..` segments continue through the
 normalization fallback to preserve safe target-root labeling.
 
+A follow-up 2026-07-04 failure-status membership slice keeps failure-check
+semantics unchanged while reusing a module-level `frozenset` for statuses that
+should feed diagnostic source lines. Runtime export diagnostics still admit only
+failed and blocked smoke checks, but avoid constructing the two-item set inside
+each checked failure row while aggregating registered diagnostic parser probe
+fixtures.
+
 Focused verification:
 
 ```bash
