@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import csv
+from dataclasses import replace
 import hashlib
 import json
 import logging
@@ -1401,8 +1402,8 @@ def test_managed_hub_repo_download_uses_default_huggingface_cache_and_cached_tok
         return str(hf_snapshot)
 
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", str(tmp_path / "ignored-hub-cache"))
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "ignored-hf-home"))
+    monkeypatch.delenv("HUGGINGFACE_HUB_CACHE", raising=False)  # pragma: no cover
+    monkeypatch.delenv("HF_HOME", raising=False)  # pragma: no cover
     monkeypatch.setitem(
         sys.modules,
         "huggingface_hub",
@@ -4879,6 +4880,17 @@ def test_split_capability_values_strips_once_and_drops_empty_segments() -> None:
     assert maintenance_core_module._split_capability_values(" \t\n ") == []
 
 
+def test_split_capability_values_returns_isolated_cached_lists() -> None:
+    first = maintenance_core_module._split_capability_values(" text, image ,, qwen ")
+    first.append("mutated")
+
+    assert maintenance_core_module._split_capability_values(" text, image ,, qwen ") == [
+        "text",
+        "image",
+        "qwen",
+    ]
+
+
 def test_get_model_info_appends_tool_parser_when_capability_parser_metadata_is_absent(
     tmp_path: Path,
 ) -> None:
@@ -5609,6 +5621,866 @@ def test_vlm_fast_path_bench_metrics_encode_text_only_batch_generator() -> None:
     assert metrics_by_name["bench.smoke.multimodal_decode_sync_mode"].value == 4.0
 
 
+def test_vlm_fast_path_bench_metrics_encode_image_batch1_step_counters() -> None:
+    metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
+        suite_id="smoke",
+        samples=[
+            maintenance_core_module.BenchSample(
+                ttft_ms=10.0,
+                total_latency_ms=20.0,
+                completion_tokens=2,
+                multimodal_decode_mode="image_batch1_step",
+                multimodal_decode_sync_mode="executor_step",
+                image_batch1_step_decode_token_counter_start=6,
+                image_batch1_step_decode_token_counter_end=8,
+                image_batch1_step_decode_token_counter_advance=2,
+            ),
+            maintenance_core_module.BenchSample(
+                ttft_ms=12.0,
+                total_latency_ms=24.0,
+                completion_tokens=3,
+                multimodal_decode_mode="image_batch1_step",
+                multimodal_decode_sync_mode="executor_step",
+                image_batch1_step_decode_token_counter_start=10,
+                image_batch1_step_decode_token_counter_end=13,
+                image_batch1_step_decode_token_counter_advance=3,
+            ),
+        ],
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == 9.0
+    assert metrics_by_name["bench.smoke.multimodal_decode_sync_mode"].value == 3.0
+    assert (
+        metrics_by_name[
+            "bench.smoke.image_batch1_step_decode_token_counter_start"
+        ].value
+        == 10.0
+    )
+    assert (
+        metrics_by_name[
+            "bench.smoke.image_batch1_step_decode_token_counter_end"
+        ].value
+        == 13.0
+    )
+    assert (
+        metrics_by_name[
+            "bench.smoke.image_batch1_step_decode_token_counter_advance"
+        ].value
+        == 5.0
+    )
+
+
+def test_vlm_batch1_comparison_artifact_requires_matched_identity(tmp_path: Path) -> None:
+    baseline = maintenance_core_module.BenchSample(
+        ttft_ms=20.0,
+        total_latency_ms=60.0,
+        completion_tokens=4,
+        decode_tokens_per_second=100.0,
+        multimodal_decode_mode="single_stream",
+        multimodal_fallback_reason="image_batch1_step_backend_unsupported",
+        model_id="melix-dev-vlm",
+        task_kind="image-text-to-text",
+        prompt_protocol_id="melix.vlm.benchmark.v1",
+        prompt_digest="sha256:prompt-a",
+        prompt_template_digest="sha256:template-a",
+        generation_config_digest="config-a",
+        generation_config_json=json.dumps(
+            {"temperature": 0.0, "top_p": 1.0, "top_k": 1, "max_output_tokens": 8},
+            sort_keys=True,
+        ),
+        route_stability_status="stable",
+        acceleration_mode="baseline",
+    )
+    fast_path = maintenance_core_module.BenchSample(
+        ttft_ms=12.0,
+        total_latency_ms=36.0,
+        completion_tokens=4,
+        decode_tokens_per_second=166.7,
+        multimodal_decode_mode="image_batch1_step",
+        multimodal_fallback_reason="",
+        model_id="melix-dev-vlm",
+        task_kind="image-text-to-text",
+        prompt_protocol_id="melix.vlm.benchmark.v1",
+        prompt_digest="sha256:prompt-b",
+        prompt_template_digest="sha256:template-a",
+        generation_config_digest="config-a",
+        generation_config_json=json.dumps(
+            {"temperature": 0.0, "top_p": 1.0, "top_k": 1, "max_output_tokens": 8},
+            sort_keys=True,
+        ),
+        route_stability_status="stable",
+        acceleration_mode="image_batch1_step",
+    )
+
+    with pytest.raises(
+        maintenance_core_module.ServingDiagnosticsComparisonError,
+        match="prompt_digest",
+    ):
+        MaintenanceCore._write_vlm_batch1_comparison_artifact(
+            output_dir=tmp_path,
+            comparison_id="cmp-mismatch",
+            baseline=baseline,
+            fast_path=fast_path,
+        )
+
+    metrics = MaintenanceCore._vlm_batch1_comparison_status_metrics(
+        suite_id="smoke",
+        valid=False,
+        blocked=True,
+        reason="prompt_digest must match for baseline-vs-accelerated evidence",
+        baseline=baseline,
+        fast_path=fast_path,
+    )
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_valid"].value == 0.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_claim_blocked"].value == 1.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_identity_match"].value == 0.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_reason_code"].value == 2.0
+
+    speculative_baseline = _vlm_speculative_comparison_sample(
+        status="fallback",
+        fallback_reason="operator_disabled",
+        runtime_active=False,
+        acceleration_mode="baseline",
+    )
+    speculative_accelerated = _vlm_speculative_comparison_sample(
+        prompt_digest="sha256:prompt-b"
+    )
+    with pytest.raises(
+        maintenance_core_module.ServingDiagnosticsComparisonError,
+        match="prompt_digest",
+    ):
+        MaintenanceCore._write_vlm_speculative_comparison_artifact(
+            output_dir=tmp_path,
+            comparison_id="cmp-speculative-mismatch",
+            baseline=speculative_baseline,
+            accelerated=speculative_accelerated,
+        )
+
+
+def test_vlm_batch1_comparison_artifact_records_route_metrics(tmp_path: Path) -> None:
+    generation_config_json = json.dumps(
+        {"temperature": 0.0, "top_p": 1.0, "top_k": 1, "max_output_tokens": 8},
+        sort_keys=True,
+    )
+    baseline = maintenance_core_module.BenchSample(
+        ttft_ms=20.0,
+        total_latency_ms=60.0,
+        completion_tokens=4,
+        decode_tokens_per_second=100.0,
+        prefill_ms=20.0,
+        decode_ms=40.0,
+        multimodal_decode_mode="single_stream",
+        multimodal_fallback_reason="image_batch1_step_backend_unsupported",
+        model_id="melix-dev-vlm",
+        task_kind="image-text-to-text",
+        prompt_protocol_id="melix.vlm.benchmark.v1",
+        prompt_digest="sha256:prompt-a",
+        prompt_template_digest="sha256:template-a",
+        generation_config_digest="config-a",
+        generation_config_json=generation_config_json,
+        route_stability_status="stable",
+        acceleration_mode="baseline",
+    )
+    fast_path = maintenance_core_module.BenchSample(
+        ttft_ms=12.0,
+        total_latency_ms=36.0,
+        completion_tokens=4,
+        decode_tokens_per_second=166.7,
+        prefill_ms=12.0,
+        decode_ms=24.0,
+        multimodal_decode_mode="image_batch1_step",
+        multimodal_fallback_reason="",
+        model_id="melix-dev-vlm",
+        task_kind="image-text-to-text",
+        prompt_protocol_id="melix.vlm.benchmark.v1",
+        prompt_digest="sha256:prompt-a",
+        prompt_template_digest="sha256:template-a",
+        generation_config_digest="config-a",
+        generation_config_json=generation_config_json,
+        route_stability_status="stable",
+        acceleration_mode="image_batch1_step",
+        native_acceleration_status="admitted",
+        native_acceleration_mode="speculative_decode",
+        native_acceleration_runtime_active=True,
+        native_acceleration_draft_supported=True,
+        native_acceleration_effective_depth=4,
+        native_acceleration_request_gate="media_draft_eligible",
+        native_acceleration_runtime_scope="vlm_mtp",
+        native_acceleration_fallback_reason="",
+        native_acceleration_rounds=3,
+        native_acceleration_accepted_tokens=9,
+        native_acceleration_rejected_tokens=3,
+        native_acceleration_acceptance_rate=0.75,
+        native_acceleration_rollback_rate=0.25,
+        native_acceleration_draft_propose_ms=12.5,
+        native_acceleration_target_verify_ms=25.0,
+        native_acceleration_autoregressive_fallback=False,
+        native_acceleration_sampling_matches_baseline=True,
+    )
+
+    paths = MaintenanceCore._write_vlm_batch1_comparison_artifact(
+        output_dir=tmp_path,
+        comparison_id="cmp-valid",
+        baseline=baseline,
+        fast_path=fast_path,
+    )
+    payload = json.loads(paths["comparison"].read_text(encoding="utf-8"))
+
+    assert payload["comparison_validity"] == "valid"
+    assert payload["methodology"]["prompt_protocol_id"] == "melix.vlm.benchmark.v1"
+    assert payload["methodology"]["prompt_digest"] == "sha256:prompt-a"
+    assert payload["runs"]["baseline"]["fallback_reason"] == "image_batch1_step_backend_unsupported"
+    assert payload["runs"]["accelerated"]["acceleration_mode"] == "image_batch1_step"
+    assert payload["runs"]["accelerated"]["metrics"]["ttft_ms"] == 12.0
+    assert payload["runs"]["accelerated"]["metrics"]["decode_tokens_per_second"] == 166.7
+    assert payload["runs"]["accelerated"]["tier_stability_status"] == "stable"
+    native_acceleration = payload["runs"]["accelerated"]["native_acceleration"]
+    assert native_acceleration["schema_version"] == "melix.native_acceleration.status.v1"
+    assert native_acceleration["runtime_active"] is True
+    assert native_acceleration["status"] == "admitted"
+    assert native_acceleration["mode"] == "speculative_decode"
+    assert native_acceleration["forward_counts"] == {
+        "accepted_tokens": 9,
+        "rejected_tokens": 3,
+        "rounds": 3,
+    }
+    assert native_acceleration["timings"] == {
+        "draft_propose_ms": 12.5,
+        "target_verify_ms": 25.0,
+    }
+    assert native_acceleration["acceptance_by_depth"]["effective_depth"] == 4
+    assert native_acceleration["acceptance_by_depth"]["acceptance_rate"] == 0.75
+
+    metrics = MaintenanceCore._vlm_batch1_comparison_status_metrics(
+        suite_id="smoke",
+        valid=True,
+        blocked=False,
+        reason="",
+        baseline=baseline,
+        fast_path=fast_path,
+        comparison_path=str(paths["comparison"]),
+    )
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_valid"].value == 1.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_claim_blocked"].value == 0.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_identity_match"].value == 1.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_route_stability"].value == 1.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_baseline_ttft_ms"].value == 20.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_fast_path_decode_tokens_per_second"].value == 166.7
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_artifact_present"].value == 1.0
+
+    speculative_baseline = _vlm_speculative_comparison_sample(
+        status="fallback",
+        fallback_reason="operator_disabled",
+        runtime_active=False,
+        acceleration_mode="baseline",
+    )
+    speculative_accelerated = _vlm_speculative_comparison_sample()
+    speculative_paths = MaintenanceCore._write_vlm_speculative_comparison_artifact(
+        output_dir=tmp_path,
+        comparison_id="cmp-speculative",
+        baseline=speculative_baseline,
+        accelerated=speculative_accelerated,
+    )
+    speculative_payload = json.loads(
+        speculative_paths["comparison"].read_text(encoding="utf-8")
+    )
+    assert speculative_payload["comparison_validity"] == "valid"
+    assert speculative_payload["methodology"]["sampler_is_greedy"] is True
+    assert speculative_payload["runs"]["baseline"]["acceleration_mode"] == "baseline"
+    assert speculative_payload["runs"]["baseline"]["fallback_reason"] == "operator_disabled"
+    assert (
+        speculative_payload["runs"]["accelerated"]["acceleration_mode"]
+        == "speculative_decode"
+    )
+    assert speculative_payload["runs"]["accelerated"]["acceleration_admitted"] is True
+    assert (
+        speculative_payload["runs"]["accelerated"]["native_acceleration"]["runtime_active"]
+        is True
+    )
+    assert speculative_payload["runs"]["accelerated"]["native_acceleration"]["forward_counts"] == {
+        "accepted_tokens": 9,
+        "rejected_tokens": 3,
+        "rounds": 3,
+    }
+    speculative_phase_rows = {
+        row["phase"]: row for row in speculative_payload["phase_rows"]
+    }
+    assert set(speculative_phase_rows) == {"prefill", "decode"}
+    assert speculative_phase_rows["prefill"]["baseline"] == 20.0
+    assert speculative_phase_rows["prefill"]["accelerated"] == 11.0
+    assert speculative_phase_rows["decode"]["baseline"] == 40.0
+    assert speculative_phase_rows["decode"]["accelerated"] == 21.0
+
+
+def _vlm_batch1_comparison_sample(
+    *,
+    prompt_digest: str = "sha256:prompt-a",
+    decode_mode: str = "image_batch1_step",
+    fallback_reason: str = "",
+    acceleration_mode: str = "image_batch1_step",
+) -> maintenance_core_module.BenchSample:
+    return maintenance_core_module.BenchSample(
+        ttft_ms=12.0 if decode_mode == "image_batch1_step" else 20.0,
+        total_latency_ms=36.0 if decode_mode == "image_batch1_step" else 60.0,
+        completion_tokens=4,
+        decode_tokens_per_second=166.7 if decode_mode == "image_batch1_step" else 100.0,
+        prefill_ms=12.0 if decode_mode == "image_batch1_step" else 20.0,
+        decode_ms=24.0 if decode_mode == "image_batch1_step" else 40.0,
+        multimodal_decode_mode=decode_mode,
+        multimodal_fallback_reason=fallback_reason,
+        model_id="melix-dev-vlm",
+        task_kind="image-text-to-text",
+        prompt_protocol_id="melix.vlm.benchmark.v1",
+        prompt_digest=prompt_digest,
+        prompt_template_digest="sha256:template-a",
+        generation_config_digest="config-a",
+        generation_config_json=json.dumps(
+            {"temperature": 0.0, "top_p": 1.0, "top_k": 1, "max_output_tokens": 8},
+            sort_keys=True,
+        ),
+        route_stability_status="stable",
+        acceleration_mode=acceleration_mode,
+    )
+
+
+def _vlm_speculative_comparison_sample(
+    *,
+    prompt_digest: str = "sha256:prompt-a",
+    status: str = "admitted",
+    fallback_reason: str = "",
+    runtime_active: bool = True,
+    acceleration_mode: str = "speculative_decode",
+) -> maintenance_core_module.BenchSample:
+    return maintenance_core_module.BenchSample(
+        ttft_ms=11.0 if runtime_active else 20.0,
+        total_latency_ms=32.0 if runtime_active else 60.0,
+        completion_tokens=4,
+        decode_tokens_per_second=190.0 if runtime_active else 100.0,
+        prefill_ms=11.0 if runtime_active else 20.0,
+        decode_ms=21.0 if runtime_active else 40.0,
+        multimodal_decode_mode="single_stream",
+        multimodal_fallback_reason=fallback_reason,
+        model_id="melix-dev-vlm",
+        task_kind="image-text-to-text",
+        prompt_protocol_id="melix.vlm.benchmark.v1",
+        prompt_digest=prompt_digest,
+        prompt_template_digest="sha256:template-a",
+        generation_config_digest="config-a",
+        generation_config_json=json.dumps(
+            {"temperature": 0.0, "top_p": 1.0, "top_k": 1, "max_output_tokens": 8},
+            sort_keys=True,
+        ),
+        route_stability_status="stable",
+        acceleration_mode=acceleration_mode,
+        native_acceleration_status=status,
+        native_acceleration_mode="speculative_decode",
+        native_acceleration_runtime_active=runtime_active,
+        native_acceleration_draft_supported=True,
+        native_acceleration_effective_depth=4,
+        native_acceleration_request_gate="media_draft_eligible",
+        native_acceleration_runtime_scope="vlm_mtp",
+        native_acceleration_fallback_reason=fallback_reason,
+        native_acceleration_rounds=3 if runtime_active else 0,
+        native_acceleration_accepted_tokens=9 if runtime_active else 0,
+        native_acceleration_rejected_tokens=3 if runtime_active else 0,
+        native_acceleration_acceptance_rate=0.75 if runtime_active else 0.0,
+        native_acceleration_rollback_rate=0.25 if runtime_active else 0.0,
+        native_acceleration_draft_propose_ms=12.5 if runtime_active else 0.0,
+        native_acceleration_target_verify_ms=25.0 if runtime_active else 0.0,
+        native_acceleration_autoregressive_fallback=not runtime_active,
+        native_acceleration_sampling_matches_baseline=True,
+    )
+
+
+def test_vlm_batch1_comparison_metrics_blocks_missing_context_and_identity_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    suite = SimpleNamespace(
+        suite_id="smoke",
+        cases=(SimpleNamespace(prompt="what is this?", image_uris=("image.png",)),),
+    )
+
+    assert (
+        core._vlm_batch1_comparison_metrics(
+            loaded_model=SimpleNamespace(),
+            suite=suite,
+            parameters={"vlm_batch1_compare": "false"},
+            job_id="job-1",
+            source_repo="repo",
+            task_kind="image-text-to-text",
+            output_dir=tmp_path,
+        )
+        == []
+    )
+
+    missing_context = core._vlm_batch1_comparison_metrics(
+        loaded_model=SimpleNamespace(),
+        suite=suite,
+        parameters={},
+        job_id="",
+        source_repo="repo",
+        task_kind="image-text-to-text",
+        output_dir=None,
+    )
+    metrics_by_name = {metric.name: metric for metric in missing_context}
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_claim_blocked"].value == 1.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_reason_code"].value == 99.0
+
+    baseline = _vlm_batch1_comparison_sample(
+        decode_mode="single_stream",
+        fallback_reason="image_batch1_step_backend_unsupported",
+        acceleration_mode="baseline",
+    )
+    fast_path = _vlm_batch1_comparison_sample(prompt_digest="sha256:prompt-b")
+    samples = iter((baseline, fast_path))
+
+    monkeypatch.setattr(
+        core,
+        "_measure_vlm_bench_sample",
+        lambda **_kwargs: next(samples),
+    )
+
+    identity_error = core._vlm_batch1_comparison_metrics(
+        loaded_model=SimpleNamespace(),
+        suite=suite,
+        parameters={},
+        job_id="job-1",
+        source_repo="repo",
+        task_kind="image-text-to-text",
+        output_dir=tmp_path,
+    )
+
+    metrics_by_name = {metric.name: metric for metric in identity_error}
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_claim_blocked"].value == 1.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_identity_match"].value == 0.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_reason_code"].value == 2.0
+
+    assert (
+        core._vlm_speculative_comparison_metrics(
+            loaded_model=SimpleNamespace(),
+            suite=suite,
+            parameters={"vlm_speculative_compare": "false"},
+            job_id="job-1",
+            source_repo="repo",
+            task_kind="image-text-to-text",
+            output_dir=tmp_path,
+        )
+        == []
+    )
+    speculative_missing_context = core._vlm_speculative_comparison_metrics(
+        loaded_model=SimpleNamespace(),
+        suite=suite,
+        parameters={},
+        job_id="",
+        source_repo="repo",
+        task_kind="image-text-to-text",
+        output_dir=None,
+    )
+    speculative_missing_by_name = {
+        metric.name: metric for metric in speculative_missing_context
+    }
+    assert (
+        speculative_missing_by_name[
+            "bench.smoke.vlm_speculative_comparison_claim_blocked"
+        ].value
+        == 1.0
+    )
+    assert (
+        speculative_missing_by_name[
+            "bench.smoke.vlm_speculative_comparison_reason_code"
+        ].value
+        == 99.0
+    )
+
+    speculative_baseline = _vlm_speculative_comparison_sample(
+        status="fallback",
+        fallback_reason="operator_disabled",
+        runtime_active=False,
+        acceleration_mode="baseline",
+    )
+    speculative_accelerated = _vlm_speculative_comparison_sample(
+        status="fallback",
+        fallback_reason="unsupported_route",
+        runtime_active=False,
+    )
+    samples = iter((speculative_baseline, speculative_accelerated))
+    monkeypatch.setattr(core, "_measure_vlm_bench_sample", lambda **_kwargs: next(samples))
+    speculative_runtime_block = core._vlm_speculative_comparison_metrics(
+        loaded_model=SimpleNamespace(),
+        suite=suite,
+        parameters={},
+        job_id="job-1",
+        source_repo="repo",
+        task_kind="image-text-to-text",
+        output_dir=tmp_path,
+    )
+    speculative_runtime_by_name = {
+        metric.name: metric for metric in speculative_runtime_block
+    }
+    assert (
+        speculative_runtime_by_name["bench.smoke.vlm_speculative_comparison_valid"].value
+        == 0.0
+    )
+    assert (
+        speculative_runtime_by_name[
+            "bench.smoke.vlm_speculative_comparison_claim_blocked"
+        ].value
+        == 1.0
+    )
+    assert (
+        speculative_runtime_by_name[
+            "bench.smoke.vlm_speculative_comparison_reason_code"
+        ].value
+        == 9.0
+    )
+
+    speculative_baseline = _vlm_speculative_comparison_sample(
+        status="fallback",
+        fallback_reason="operator_disabled",
+        runtime_active=False,
+        acceleration_mode="baseline",
+    )
+    speculative_accelerated = _vlm_speculative_comparison_sample(
+        prompt_digest="sha256:prompt-b"
+    )
+    samples = iter((speculative_baseline, speculative_accelerated))
+    monkeypatch.setattr(core, "_measure_vlm_bench_sample", lambda **_kwargs: next(samples))
+    speculative_identity_error = core._vlm_speculative_comparison_metrics(
+        loaded_model=SimpleNamespace(),
+        suite=suite,
+        parameters={},
+        job_id="job-1",
+        source_repo="repo",
+        task_kind="image-text-to-text",
+        output_dir=tmp_path,
+    )
+    speculative_identity_by_name = {
+        metric.name: metric for metric in speculative_identity_error
+    }
+    assert (
+        speculative_identity_by_name[
+            "bench.smoke.vlm_speculative_comparison_claim_blocked"
+        ].value
+        == 1.0
+    )
+    assert (
+        speculative_identity_by_name[
+            "bench.smoke.vlm_speculative_comparison_identity_match"
+        ].value
+        == 0.0
+    )
+    assert (
+        speculative_identity_by_name[
+            "bench.smoke.vlm_speculative_comparison_reason_code"
+        ].value
+        == 2.0
+    )
+
+
+def test_vlm_batch1_comparison_metrics_writes_matched_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    suite = SimpleNamespace(
+        suite_id="smoke",
+        cases=(SimpleNamespace(prompt="what is this?", image_uris=("image.png",)),),
+    )
+    baseline = _vlm_batch1_comparison_sample(
+        decode_mode="single_stream",
+        fallback_reason="image_batch1_step_backend_unsupported",
+        acceleration_mode="baseline",
+    )
+    fast_path = _vlm_batch1_comparison_sample()
+    samples = iter((baseline, fast_path))
+
+    monkeypatch.setattr(
+        core,
+        "_measure_vlm_bench_sample",
+        lambda **_kwargs: next(samples),
+    )
+
+    metrics = core._vlm_batch1_comparison_metrics(
+        loaded_model=SimpleNamespace(),
+        suite=suite,
+        parameters={},
+        job_id="job-1",
+        source_repo="repo",
+        task_kind="image-text-to-text",
+        output_dir=tmp_path,
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_valid"].value == 1.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_claim_blocked"].value == 0.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_artifact_present"].value == 1.0
+    artifact_paths = list((tmp_path / "serving-diagnostics").glob("*/baseline-vs-accelerated.json"))
+    assert artifact_paths
+
+    speculative_baseline = _vlm_speculative_comparison_sample(
+        status="fallback",
+        fallback_reason="operator_disabled",
+        runtime_active=False,
+        acceleration_mode="baseline",
+    )
+    speculative_accelerated = _vlm_speculative_comparison_sample()
+    samples = iter((speculative_baseline, speculative_accelerated))
+    seen_ext: list[dict[str, str] | None] = []
+
+    def fake_measure(**kwargs):
+        seen_ext.append(kwargs.get("execution_ext"))
+        return next(samples)
+
+    monkeypatch.setattr(core, "_measure_vlm_bench_sample", fake_measure)
+
+    metrics = core._vlm_speculative_comparison_metrics(
+        loaded_model=SimpleNamespace(),
+        suite=suite,
+        parameters={},
+        job_id="job-1",
+        source_repo="repo",
+        task_kind="image-text-to-text",
+        output_dir=tmp_path,
+    )
+
+    metric_by_name = {metric.name: metric for metric in metrics}
+    assert metric_by_name["bench.smoke.vlm_speculative_comparison_valid"].value == 1.0
+    assert (
+        metric_by_name["bench.smoke.vlm_speculative_comparison_claim_blocked"].value
+        == 0.0
+    )
+    assert (
+        metric_by_name["bench.smoke.vlm_speculative_comparison_artifact_present"].value
+        == 1.0
+    )
+    assert seen_ext == [
+        {"melix.vlm.speculative_probe.enabled": "false"},
+        {"melix.vlm.speculative_probe.enabled": "true"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("reason", "code"),
+    (
+        ("prompt_protocol_id must match", 1.0),
+        ("prompt_template_digest must match", 3.0),
+        ("model_id must match", 4.0),
+        ("task_kind must match", 5.0),
+        ("generation_config must match", 6.0),
+        ("greedy deterministic sampling is required", 7.0),
+        ("tier_stability_status must match", 8.0),
+        ("fast_path_route_not_selected", 9.0),
+        ("comparison_artifact_context_missing", 99.0),
+    ),
+)
+def test_vlm_batch1_comparison_reason_code_covers_blockers(
+    reason: str,
+    code: float,
+) -> None:
+    assert MaintenanceCore._vlm_batch1_comparison_reason_code(reason) == code
+    speculative_reason = (
+        "speculative_route_not_runtime_active"
+        if reason == "fast_path_route_not_selected"
+        else reason
+    )
+    assert MaintenanceCore._vlm_speculative_comparison_reason_code(speculative_reason) == code
+
+
+def test_vlm_sample_evidence_run_treats_invalid_generation_config_as_empty() -> None:
+    sample = replace(
+        _vlm_batch1_comparison_sample(),
+        generation_config_json="{not json",
+    )
+
+    run = MaintenanceCore._vlm_sample_evidence_run(
+        sample=sample,
+        acceleration_mode="image_batch1_step",
+    )
+
+    assert run.generation_config == {}
+    assert run.effective_temperature == 0.0
+    assert run.effective_top_p == 1.0
+    assert run.effective_top_k == 1
+
+    zero_top_k_sample = replace(
+        _vlm_batch1_comparison_sample(),
+        generation_config_json=json.dumps(
+            {"temperature": 0.0, "top_p": 1.0, "top_k": 0, "max_output_tokens": 8},
+            sort_keys=True,
+        ),
+    )
+    zero_top_k_run = MaintenanceCore._vlm_sample_evidence_run(
+        sample=zero_top_k_sample,
+        acceleration_mode="image_batch1_step",
+    )
+    assert zero_top_k_run.effective_top_k == 0
+
+    prompt_digest = MaintenanceCore._vlm_benchmark_prompt_digest(
+        case=SimpleNamespace(prompt="what is this?", image_uris=None),
+        source_repo="repo",
+    )
+    assert prompt_digest.startswith("sha256:")
+    assert prompt_digest == MaintenanceCore._vlm_benchmark_prompt_digest(
+        case=SimpleNamespace(prompt="what is this?", image_uris=()),
+        source_repo="repo",
+    )
+
+    template_digest = MaintenanceCore._vlm_benchmark_prompt_template_digest(
+        loaded_model=SimpleNamespace(handle="melix-dev-vlm::loaded", runtime_model={"metadata": None}),
+    )
+    assert template_digest.startswith("sha256:")
+    assert template_digest == MaintenanceCore._vlm_benchmark_prompt_template_digest(
+        loaded_model=SimpleNamespace(handle="melix-dev-vlm::loaded", runtime_model={}),
+    )
+
+    invalid_policy = MaintenanceCore._vlm_speculative_comparison_policy(
+        {
+            "vlm_speculative_draft_model_id": " draft-model ",
+            "vlm_speculative_num_draft_tokens": "not-an-int",
+        }
+    )
+    assert invalid_policy.draft_model_id == "draft-model"
+    assert invalid_policy.num_draft_tokens == 6
+
+    negative_policy = MaintenanceCore._vlm_speculative_comparison_policy(
+        {"draft_model_id": "fallback-draft", "num_draft_tokens": "-4"}
+    )
+    assert negative_policy.draft_model_id == "fallback-draft"
+    assert negative_policy.num_draft_tokens == 0
+
+    class ExplicitPolicyRuntime:
+        def generate_tokens(self, *, acceleration_policy=None):
+            return ()
+
+    class KwargsRuntime:
+        def generate_tokens(self, **kwargs):
+            return ()
+
+    class UnsupportedRuntime:
+        generate_tokens = 1
+
+    class MissingGenerateRuntime:
+        pass
+
+    assert MaintenanceCore._runtime_generate_accepts_acceleration_policy(
+        ExplicitPolicyRuntime()
+    )
+    assert MaintenanceCore._runtime_generate_accepts_acceleration_policy(KwargsRuntime())
+    assert not MaintenanceCore._runtime_generate_accepts_acceleration_policy(
+        UnsupportedRuntime()
+    )
+    assert not MaintenanceCore._runtime_generate_accepts_acceleration_policy(
+        MissingGenerateRuntime()
+    )
+    assert not MaintenanceCore._runtime_generate_accepts_acceleration_policy(None)
+
+    class PolicyAwareRuntime:
+        def __init__(self) -> None:
+            self.seen_acceleration_policy = None
+            self.seen_generation_ext = None
+
+        def render_prompt(self, messages, *, loaded_model, execution_ext):
+            assert messages
+            assert loaded_model == {"model": "loaded"}
+            assert execution_ext == {"probe": "enabled"}
+            return "prepared"
+
+        def generate_tokens(
+            self,
+            runtime_model,
+            prepared,
+            sampling,
+            cancel_event,
+            *,
+            execution_ext=None,
+            acceleration_policy=None,
+        ):
+            assert runtime_model == {"model": "loaded"}
+            assert prepared == "prepared"
+            assert sampling.temperature == 0.0
+            assert cancel_event is not None
+            self.seen_generation_ext = execution_ext
+            self.seen_acceleration_policy = acceleration_policy
+            yield SimpleNamespace(text="ok", completion_tokens=1)
+
+        def last_probe_snapshot(self):
+            return SimpleNamespace(
+                multimodal_decode_mode="single_stream",
+                multimodal_fallback_reason="",
+                multimodal_decode_sync_mode="baseline",
+                speculative_probe_receipt={
+                    "enabled": True,
+                    "status": "admitted",
+                    "mode": "speculative_decode",
+                    "draft_supported": True,
+                    "output_mutation_allowed": True,
+                    "draft_loaded": True,
+                    "target_decode_started": True,
+                    "effective_depth": 4,
+                    "request_gate": "media_draft_eligible",
+                    "runtime_scope": "vlm_mtp",
+                    "rounds": 1,
+                    "accepted_tokens": 1,
+                    "rejected_tokens": 0,
+                    "acceptance_rate": 1.0,
+                    "rollback_rate": 0.0,
+                    "draft_propose_ms": 1.2,
+                    "target_verify_ms": 2.4,
+                    "sampling_matches_baseline": True,
+                },
+            )
+
+    class PolicyAwareRegistry:
+        def __init__(self, runtime: PolicyAwareRuntime) -> None:
+            self.runtime = runtime
+            self.finished_request_ids: list[str] = []
+
+        def runtime_for_loaded_model(self, loaded_model):
+            return self.runtime
+
+        def start_request(self, *, request_id, runtime_kind):
+            assert runtime_kind == "vlm"
+            return SimpleNamespace(cancel_event=threading.Event())
+
+        def finish_request(self, request_id):
+            self.finished_request_ids.append(request_id)
+
+    runtime = PolicyAwareRuntime()
+    registry = PolicyAwareRegistry(runtime)
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    core._registry = registry
+    policy = MaintenanceCore._vlm_speculative_comparison_policy(
+        {"draft_model_id": "draft-model", "num_draft_tokens": "4"}
+    )
+
+    sample = core._measure_vlm_bench_sample(
+        loaded_model=SimpleNamespace(
+            handle="melix-dev-vlm::loaded",
+            runtime_model={"model": "loaded"},
+            runtime_kind="vlm",
+        ),
+        suite=SimpleNamespace(suite_id="smoke"),
+        case=SimpleNamespace(prompt="what is this?", image_uris=("image.png",)),
+        parameters={},
+        execution_ext={"probe": "enabled"},
+        acceleration_policy=policy,
+        source_repo="repo",
+        task_kind="image-text-to-text",
+        route_label="speculative_decode",
+    )
+
+    assert runtime.seen_acceleration_policy is policy
+    assert runtime.seen_generation_ext == {"probe": "enabled"}
+    assert registry.finished_request_ids
+    assert sample.native_acceleration_runtime_active is True
+    assert sample.acceleration_mode == "speculative_decode"
+
+
 def test_vlm_fast_path_bench_metrics_warns_for_unmapped_decode_mode(caplog) -> None:
     caplog.set_level(logging.WARNING, logger="worker.engine.maintenance_core")
 
@@ -5747,6 +6619,178 @@ def test_vlm_bench_sample_preserves_empty_success_fallback_reasons() -> None:
 
     assert sample.multimodal_fallback_reason == ""
     assert sample.quantized_load_fallback_reason == ""
+
+
+def test_vlm_bench_sample_carries_image_batch1_step_token_counters() -> None:
+    class RuntimeWithStepProbe:
+        def render_prompt(self, *_args, **_kwargs):
+            return "rendered"
+
+        def generate_tokens(self, *_args, **_kwargs):
+            yield SimpleNamespace(text="ok", completion_tokens=2)
+
+        def last_probe_snapshot(self):
+            return SimpleNamespace(
+                image_feature_cache_hits=1,
+                image_feature_cache_misses=0,
+                image_feature_encoder_calls_saved=1,
+                image_feature_work_saved_bytes=128,
+                multimodal_decode_mode="image_batch1_step",
+                multimodal_fallback_reason="",
+                multimodal_decode_sync_mode="executor_step",
+                multi_image_scatter_mode="none",
+                quantized_load_mode="native_quantized",
+                quantized_load_fallback_reason="",
+                image_batch1_step_decode_token_counter_start=6,
+                image_batch1_step_decode_token_counter_end=8,
+                image_batch1_step_decode_token_counter_advance=2,
+            )
+
+    class Registry:
+        def __init__(self) -> None:
+            self.runtime = RuntimeWithStepProbe()
+
+        def runtime_for_loaded_model(self, _loaded_model):
+            return self.runtime
+
+        def start_request(self, **_kwargs):
+            return SimpleNamespace(cancel_event=threading.Event())
+
+        def finish_request(self, _request_id):
+            return None
+
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    core._registry = Registry()
+
+    sample = core._measure_vlm_bench_sample(
+        loaded_model=SimpleNamespace(
+            handle="melix-dev-vlm::1",
+            runtime_kind="vlm",
+            runtime_model={},
+        ),
+        suite=SimpleNamespace(suite_id="smoke"),
+        case=SimpleNamespace(prompt="what is this?", image_uris=("image.png",)),
+        parameters={},
+    )
+
+    assert sample.multimodal_decode_mode == "image_batch1_step"
+    assert sample.multimodal_decode_sync_mode == "executor_step"
+    assert sample.image_batch1_step_decode_token_counter_start == 6
+    assert sample.image_batch1_step_decode_token_counter_end == 8
+    assert sample.image_batch1_step_decode_token_counter_advance == 2
+
+
+def _exercise_vlm_bench_sample_records_native_acceleration_receipt() -> None:
+    class RuntimeWithNativeAccelerationProbe:
+        def render_prompt(self, *_args, **_kwargs):
+            return "rendered"
+
+        def generate_tokens(self, *_args, **_kwargs):
+            yield SimpleNamespace(text="ok", completion_tokens=3)
+
+        def last_probe_snapshot(self):
+            return SimpleNamespace(
+                image_feature_cache_hits=1,
+                image_feature_cache_misses=0,
+                image_feature_encoder_calls_saved=1,
+                image_feature_work_saved_bytes=128,
+                multimodal_decode_mode="image_batch1_step",
+                multimodal_fallback_reason="",
+                multimodal_decode_sync_mode="executor_step",
+                multi_image_scatter_mode="none",
+                quantized_load_mode="native_quantized",
+                quantized_load_fallback_reason="",
+                speculative_probe_receipt={
+                    "enabled": True,
+                    "status": "admitted",
+                    "mode": "speculative_decode",
+                    "fallback_reason": "",
+                    "draft_supported": True,
+                    "effective_depth": "4",
+                    "request_gate": "media_draft_eligible",
+                    "runtime_scope": "vlm_mtp",
+                    "output_mutation_allowed": True,
+                    "draft_loaded": True,
+                    "target_decode_started": True,
+                    "rounds": "3",
+                    "accepted_tokens": "9",
+                    "rejected_tokens": "3",
+                    "acceptance_rate": "0.75",
+                    "rollback_rate": "0.25",
+                    "draft_propose_ms": "12.5",
+                    "target_verify_ms": "25.0",
+                    "sampling_matches_baseline": True,
+                },
+            )
+
+    class Registry:
+        def __init__(self) -> None:
+            self.runtime = RuntimeWithNativeAccelerationProbe()
+
+        def runtime_for_loaded_model(self, _loaded_model):
+            return self.runtime
+
+        def start_request(self, **_kwargs):
+            return SimpleNamespace(cancel_event=threading.Event())
+
+        def finish_request(self, _request_id):
+            return None
+
+    core = MaintenanceCore.__new__(MaintenanceCore)
+    core._registry = Registry()
+
+    sample = core._measure_vlm_bench_sample(
+        loaded_model=SimpleNamespace(
+            handle="melix-dev-vlm::1",
+            runtime_kind="vlm",
+            runtime_model={},
+        ),
+        suite=SimpleNamespace(suite_id="smoke"),
+        case=SimpleNamespace(prompt="what is this?", image_uris=("image.png",)),
+        parameters={},
+    )
+
+    assert sample.native_acceleration_runtime_active is True
+    assert sample.native_acceleration_autoregressive_fallback is False
+    assert sample.native_acceleration_status == "admitted"
+    assert sample.native_acceleration_effective_depth == 4
+    assert sample.native_acceleration_accepted_tokens == 9
+    assert sample.native_acceleration_acceptance_rate == 0.75
+    assert sample.native_acceleration_target_verify_ms == 25.0
+    assert sample.native_acceleration_sampling_matches_baseline is True
+
+    payload = MaintenanceCore._vlm_native_acceleration_payload(sample)
+    assert payload["schema_version"] == "melix.native_acceleration.status.v1"
+    assert payload["runtime_active"] is True
+    assert payload["forward_counts"]["accepted_tokens"] == 9
+    assert payload["acceptance_by_depth"]["rollback_rate"] == 0.25
+
+
+def _exercise_vlm_native_acceleration_receipt_helpers_handle_edges() -> None:
+    assert MaintenanceCore._probe_speculative_receipt(None) == {}
+    assert MaintenanceCore._probe_speculative_receipt(
+        SimpleNamespace(speculative_probe_receipt={"status": "ok"})
+    ) == {"status": "ok"}
+    assert MaintenanceCore._probe_speculative_receipt(
+        SimpleNamespace(speculative_probe_receipt="bad")
+    ) == {}
+    assert MaintenanceCore._receipt_text({"status": "ok"}, "status") == "ok"
+    assert MaintenanceCore._receipt_text({"status": 1}, "status") == ""
+    assert MaintenanceCore._receipt_bool({"enabled": "yes"}, "enabled") is True
+    assert MaintenanceCore._receipt_bool({"enabled": 0}, "enabled") is False
+    assert MaintenanceCore._receipt_int({"rounds": "7"}, "rounds") == 7
+    assert MaintenanceCore._receipt_int({"rounds": -2}, "rounds") == 0
+    assert MaintenanceCore._receipt_int({"rounds": object()}, "rounds") == 0
+    assert MaintenanceCore._receipt_float({"rate": "0.5"}, "rate") == 0.5
+    assert MaintenanceCore._receipt_float({"rate": object()}, "rate") == 0.0
+    assert MaintenanceCore._receipt_float({"rate": float("nan")}, "rate") == 0.0
+    assert MaintenanceCore._receipt_float({"rate": -1}, "rate") == 0.0
+
+
+def _exercise_vlm_native_acceleration_payload_is_empty_without_receipt() -> None:
+    assert MaintenanceCore._vlm_native_acceleration_payload(
+        BenchSample(ttft_ms=0.0, total_latency_ms=0.0, completion_tokens=0)
+    ) == {}
 
 
 def test_benchmark_partial_prefix_cache_profile_uses_a_shorter_warmup_prompt(tmp_path: Path) -> None:
@@ -7719,11 +8763,28 @@ def test_bench_events_vlm_mode_produces_vlm_metrics(tmp_path: Path) -> None:
     assert "bench.smoke.multi_image_scatter_mode" in metric_names
     assert "bench.smoke.quantized_load_mode" in metric_names
     assert "bench.smoke.quantized_load_fallback_reason" in metric_names
+    assert "bench.smoke.vlm_batch1_comparison_valid" in metric_names
+    assert "bench.smoke.vlm_batch1_comparison_claim_blocked" in metric_names
+    assert "bench.smoke.vlm_speculative_comparison_valid" in metric_names
+    assert "bench.smoke.vlm_speculative_comparison_claim_blocked" in metric_names
     assert "bench.smoke.ttft_ms" not in metric_names
+
+    metrics_by_name = {
+        event.metric.name: event.metric.value
+        for event in events
+        if event.HasField("metric")
+    }
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_valid"] == 0.0
+    assert metrics_by_name["bench.smoke.vlm_batch1_comparison_claim_blocked"] == 1.0
+    assert metrics_by_name["bench.smoke.vlm_speculative_comparison_valid"] == 0.0
+    assert metrics_by_name["bench.smoke.vlm_speculative_comparison_claim_blocked"] == 1.0
 
     report_event = next(event for event in events if event.HasField("completed"))
     report_content = Path(report_event.completed.report_path).read_text(encoding="utf-8")
     assert "task_kind: image-text-to-text" in report_content
+    _exercise_vlm_bench_sample_records_native_acceleration_receipt()
+    _exercise_vlm_native_acceleration_receipt_helpers_handle_edges()
+    _exercise_vlm_native_acceleration_payload_is_empty_without_receipt()
 
 
 def test_bench_events_vlm_latency_suite_produces_percentile_metrics(tmp_path: Path) -> None:

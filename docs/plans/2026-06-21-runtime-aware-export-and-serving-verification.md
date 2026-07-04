@@ -117,32 +117,117 @@ include:
 - `source_provenance`
 - `redaction_class`
 
-Required `target_type` values are `melix_managed`, `ollama`, `gguf`, and
-`mlx_runtime`. Unknown target types are rejected until a governing plan extends
-the target matrix.
+Required `target_type` values use the protobuf JSON enum names
+`EXPORT_TARGET_TYPE_MELIX_MANAGED`, `EXPORT_TARGET_TYPE_OLLAMA`,
+`EXPORT_TARGET_TYPE_GGUF`, and `EXPORT_TARGET_TYPE_MLX_RUNTIME`. Unknown
+target types are rejected until a governing plan extends the target matrix.
 
 ### Target Policies
 
-`melix_managed` targets produce Melix-managed adapter or fused derived-model
-artifacts usable by Melix sessions. Their smoke policy requires manifest
-inspection, local catalog resolvability, load through the selected Melix
-runtime path, and one bounded generation when the target is generation-capable.
+`EXPORT_TARGET_TYPE_MELIX_MANAGED` targets produce Melix-managed adapter or
+fused derived-model artifacts usable by Melix sessions. Their smoke policy
+requires manifest inspection, local catalog resolvability, load through the
+selected Melix runtime path, and one bounded generation when the target is
+generation-capable.
 
-`ollama` targets produce an Ollama-compatible model directory or model
-registration bundle. Their smoke policy requires metadata inspection, runtime
-binary/path preflight, load or registration check, and one bounded generation
-with timeout.
+`EXPORT_TARGET_TYPE_OLLAMA` targets produce an Ollama-compatible model
+directory or model registration bundle. Their smoke policy requires metadata
+inspection, runtime binary/path preflight, load or registration check, and one
+bounded generation with timeout.
 
-`gguf` targets produce a GGUF file plus metadata and provenance for compatible
-local runtimes. Their smoke policy requires header/metadata inspection,
-file-size and digest verification, optional load smoke through a configured
-compatible runtime, and an explicit waiver when no compatible runtime is
-available.
+`EXPORT_TARGET_TYPE_GGUF` targets produce a GGUF file plus metadata and
+provenance for compatible local runtimes. Their smoke policy requires
+header/metadata inspection, file-size and digest verification, optional load
+smoke through a configured compatible runtime, and an explicit waiver when no
+compatible runtime is available.
 
-`mlx_runtime` targets produce an MLX-compatible local model or adapter bundle
-for `mlx-lm` or Melix MLX workers. Their smoke policy requires MLX metadata
-inspection, local path preflight, runtime load, and one bounded generation with
-timeout.
+`EXPORT_TARGET_TYPE_MLX_RUNTIME` targets produce an MLX-compatible local model
+or adapter bundle for `mlx-lm` or Melix MLX workers. Their smoke policy requires
+MLX metadata inspection, local path preflight, runtime load, and one bounded
+generation with timeout.
+
+### Target Matrix And Unit Boundaries
+
+P3.1 fixes the export target matrix before implementation starts. The first
+schema-backed implementation slice must support exactly these targets:
+
+`EXPORT_TARGET_TYPE_MELIX_MANAGED`
+
+- Produced artifact: Melix-managed adapter package or fused derived-model
+  artifact.
+- Runtime policy: resolvable by the Melix catalog and loadable through the
+  selected Melix runtime path.
+- #1506 responsibility: represent source adapter, derived model identity, base
+  model, quantization, required files, runtime requirements, and verification
+  policy without Melix-only side channels.
+- #1507 responsibility: store target files under
+  `targets/melix_managed/<target-id>/artifacts/`, retain manifests, evidence,
+  required runtime artifacts, and classify temporary fusion outputs as cleanable
+  after verification or waiver.
+
+`EXPORT_TARGET_TYPE_OLLAMA`
+
+- Produced artifact: Ollama-compatible model directory, blob set, or
+  registration bundle.
+- Runtime policy: prove runtime binary/path readiness and either load or
+  register the target before bounded generation.
+- #1506 responsibility: represent Modelfile or equivalent registration inputs,
+  generated blobs, base model linkage, runtime requirements, and verification
+  policy without reading Ollama state as the source of truth.
+- #1507 responsibility: store generated runtime files, logs, and registration
+  evidence under `targets/ollama/<target-id>/`; keep manifests and smoke
+  evidence while classifying transient import/cache files as cleanable.
+
+`EXPORT_TARGET_TYPE_GGUF`
+
+- Produced artifact: GGUF file plus metadata and provenance for compatible
+  local runtimes.
+- Runtime policy: verify header, digest, byte size, and metadata. Load or
+  generation smoke may be waived only when no compatible local runtime is
+  configured.
+- #1506 responsibility: represent GGUF metadata, quantization, source
+  provenance, required file digest, compatible runtime requirements, and the
+  explicit waiver policy for unavailable local runtimes.
+- #1507 responsibility: store the GGUF artifact under
+  `targets/gguf/<target-id>/artifacts/`; retain the GGUF file and evidence, and
+  classify conversion scratch files as cleanable.
+
+`EXPORT_TARGET_TYPE_MLX_RUNTIME`
+
+- Produced artifact: MLX-compatible local model or adapter bundle for `mlx-lm`
+  or Melix MLX workers.
+- Runtime policy: pass local path preflight, MLX metadata inspection, runtime
+  load, and bounded generation.
+- #1506 responsibility: represent MLX config, tokenizer, weight files, adapter
+  or fused mode, base model linkage, runtime requirements, and verification
+  policy.
+- #1507 responsibility: store MLX bundle files under
+  `targets/mlx_runtime/<target-id>/artifacts/`; retain runtime-required files and
+  evidence while marking conversion intermediates and temporary logs according to
+  the retention report.
+
+The #1506 unit owns the checked-in schema, fixtures, validator, and manifest
+metrics for this matrix. The #1507 unit owns materializing the directory layout,
+retention report, cleanup dry-run/apply behavior, and byte-accounting metrics.
+Neither unit may introduce a fifth target type or a target-specific side
+channel without updating this plan first.
+
+The manifest validator's safe relative path gate is on the per-file validation
+hot path. It must preserve the same rejection semantics while using direct
+string checks for absolute, Windows-drive, UNC, empty-component, and parent
+component shapes instead of allocating `PurePath` helper objects for every file
+row. The registered `runtime-export-manifest-validation` PR-scoped probe remains
+the evidence source for this Python slice and includes focused test, coverage,
+and `command_json` probe commands in `infra/perf/pr_scoped_probes.json`.
+The same validator should derive `manifest_byte_size` from the manifest bytes it
+already read for protobuf JSON parsing instead of issuing a second filesystem
+stat call on every validation. Its metrics pass should accumulate generated,
+required, and evidence byte totals while iterating each manifest file section
+once instead of materializing a combined file-row tuple solely to count evidence
+bytes. Repeated validation policy gates should also reuse module-level enum
+membership constants for derived-model activation modes, runtime-binary-required
+target types, load-check-required target types, and the GGUF runtime-unavailable
+waiver instead of constructing short-lived sets on every manifest validation.
 
 ### Export Plan Receipt
 
@@ -248,10 +333,68 @@ Required retention metrics:
 - `retention_decision_count`
 - `retention_scan_latency_ms`
 
+### P3.1 Acceptance Closure For #1505
+
+#1505 is the plan-level contract for P3.1. It is complete when this document is
+the governing plan for the multi-target export contract and the executable
+units can proceed without inventing schema, layout, retention, or metric
+semantics during implementation.
+
+Acceptance mapping:
+
+| #1505 acceptance criterion | Governing section in this plan |
+|---|---|
+| The plan defines an export target manifest schema and target-specific policy. | `Export Target Manifest`, `Target Policies`, and `Target Matrix And Unit Boundaries`. |
+| The plan defines artifact layout and retention behavior before implementation. | `Artifact Layout` and `Retention Policy`. |
+| The unit issues cover both manifest definition and artifact layout. | `Target Matrix And Unit Boundaries`, `Verification Plan`, and `Delivery Order` assign schema/fixtures to #1506 and layout/retention to #1507. |
+| The plan records export planning, artifact size, and retention metrics. | `Export Plan Receipt`, `Retention Policy`, and `Performance Probes And Metrics`. |
+
+This #1505 slice is documentation-only. It does not change protobuf schemas,
+fixtures, worker code, CLI commands, or Desktop surfaces. Runtime metrics for
+this slice are therefore `N/A`; the required measurement points are specified
+above and must become executable probes in #1506 and #1507 before code changes
+land.
+
 ## P3.2 Post-Export Smoke And Diagnostics
 
 P3.2 defines how export completion is proven for each target and how failures
 become typed operator diagnostics.
+
+### P3.2 Target Smoke Matrix
+
+P3.2 consumes the target directories and retention contract produced by #1507.
+Each target smoke runner reads the target manifest, writes evidence only under
+the target-local `smoke/` and `diagnostics/` directories, and updates the
+export report from those receipts. The runner must not infer success from
+runtime cache state, ad hoc stdout, or files outside the target directory.
+
+| Target type | Metadata check | Load check | Generation check | Waiver boundary |
+|---|---|---|---|---|
+| `EXPORT_TARGET_TYPE_MELIX_MANAGED` | Validate manifest, required file digests, activation mode, quantization, and catalog-resolvable target identity. | Load through the selected Melix runtime path or model catalog without mutating source adapter evidence. | Required when the target is generation-capable; use a synthetic prompt, fixed token cap, timeout, and preview byte cap. | `EXPORT_WAIVER_REASON_METADATA_ONLY_TARGET` only for metadata-only exports; runtime failures require diagnostics before waiver. |
+| `EXPORT_TARGET_TYPE_OLLAMA` | Validate generated model metadata, registration inputs, required blobs, runtime binary/path preflight, and target-local log path. | Prove load or registration through the configured local Ollama runtime with bounded timeout. | Required after load or registration succeeds. | `EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED`, `EXPORT_WAIVER_REASON_RUNTIME_INCOMPATIBLE_HOST`, `EXPORT_WAIVER_REASON_KNOWN_RUNTIME_BUG`, or `EXPORT_WAIVER_REASON_OPERATOR_MANUAL_VERIFICATION` with replacement evidence. |
+| `EXPORT_TARGET_TYPE_GGUF` | Validate GGUF header, declared metadata, byte size, digest, quantization, and compatible runtime requirements. | Required when a compatible local runtime is configured; otherwise the load check is recorded as waived. | Required only when the configured compatible runtime supports generation. | No-compatible-runtime cases may use `EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED` or `EXPORT_WAIVER_REASON_RUNTIME_INCOMPATIBLE_HOST`; digest, header, and metadata failures are never waivable. |
+| `EXPORT_TARGET_TYPE_MLX_RUNTIME` | Validate MLX config, tokenizer, weight inventory, adapter or fused mode, runtime path, and required file digests. | Load with `mlx-lm` or the selected Melix MLX worker path using a bounded timeout. | Required for generation-capable targets with the same fixed prompt, token cap, timeout, and preview byte cap as Melix-managed targets. | `EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED`, `EXPORT_WAIVER_REASON_RUNTIME_INCOMPATIBLE_HOST`, `EXPORT_WAIVER_REASON_KNOWN_RUNTIME_BUG`, or `EXPORT_WAIVER_REASON_OPERATOR_MANUAL_VERIFICATION` with replacement evidence. |
+
+The target type and waiver reason values in this matrix use the protobuf JSON
+enum names from `workspace/v1/export_target_manifest.proto`. Target directory
+slugs remain lower snake case, such as `targets/ollama/<target-id>/`.
+
+The first implementation slice for #1509 should use a policy id such as
+`bounded-local-v1`. The policy owns default timeout values, preview byte caps,
+token caps, and the synthetic prompt fixture. The plan intentionally does not
+standardize those numeric defaults in the planning slice; #1509 must pick
+conservative defaults, test them, and record them in the receipt.
+
+Smoke status is target-local:
+
+- `passed`: metadata, required file digest, required load, and required
+  generation checks passed.
+- `failed`: one required check ran and failed with a typed failure or linked
+  diagnostics receipt.
+- `blocked`: a required check could not start because an earlier materialization
+  or preflight requirement failed.
+- `waived`: an allowed waiver records the skipped checks, reason, operator
+  identity, replacement evidence, expiry, and follow-up issue when applicable.
 
 ### Smoke Receipt
 
@@ -273,15 +416,41 @@ Each target writes `smoke/smoke-receipt.json` with schema
 - `operator_failures`
 - `metrics`
 
+Each `metadata_check`, `load_check`, and `generation_check` entry must include
+`status`, `started_at`, `ended_at`, `duration_ms`, `timeout_ms`,
+`failure_code`, `failure_message`, `evidence_path`, and `diagnostics_receipt_path`
+when diagnostics are applicable. The receipt records target-relative paths only.
+
 The metadata check is required for every target. The load check is required for
-`melix_managed`, `ollama`, and `mlx_runtime` targets. The generation check is
-required for generation-capable `melix_managed`, `ollama`, and `mlx_runtime`
-targets. GGUF generation may be waived only when no compatible local runtime is
-configured, and the waiver must record the missing runtime capability.
+`EXPORT_TARGET_TYPE_MELIX_MANAGED`, `EXPORT_TARGET_TYPE_OLLAMA`, and
+`EXPORT_TARGET_TYPE_MLX_RUNTIME` targets. The generation check is required for
+generation-capable `EXPORT_TARGET_TYPE_MELIX_MANAGED`,
+`EXPORT_TARGET_TYPE_OLLAMA`, and `EXPORT_TARGET_TYPE_MLX_RUNTIME` targets.
+`EXPORT_TARGET_TYPE_GGUF` generation may be waived only when no compatible
+local runtime is configured, and the waiver must record the missing runtime
+capability.
+
+The metrics-report path may reuse the already validated target manifest object
+when materializing fixture digest files and executing the smoke receipt writer.
+It must preserve the public `run_export_target_smoke()` validation boundary for
+external callers while avoiding an extra manifest parse on each probe iteration.
+Smoke metadata and fixture digest loops stream generated and required manifest
+file rows instead of materializing a combined tuple, preserving manifest order
+while reducing per-target allocation in the registered probe. Smoke metrics
+report aggregation sums all receipt metrics in a single pass so the metrics
+report path avoids rebuilding an intermediate metrics list and rescanning it for
+each output field. The registered `runtime-export-smoke-policy` PR-scoped probe
+remains the evidence source for this Python slice and includes focused test,
+coverage, and `command_json` probe commands in
+`infra/perf/pr_scoped_probes.json`.
 
 Bounded generation checks must use a repository-owned prompt fixture or a
 synthetic non-private prompt, a fixed token limit, a timeout, and a preview byte
 limit. The preview is diagnostic evidence only; it is not an evaluation score.
+`output_preview` records byte count, content type, truncation status, digest,
+and the target-relative `smoke/generation-preview.txt` path; it must not contain
+full prompt text, full generated text, credentials, dataset rows, or private
+operator input.
 
 Required smoke metrics:
 
@@ -312,6 +481,20 @@ The report must not use `completed` for a target when smoke evidence is missing,
 when digest checks are absent, when a runtime log parser is still pending after
 a failure, or when a waiver has no reason and operator identity.
 
+Every export report target row must attach:
+
+- `target_manifest_path`
+- `retention_report_path`
+- `smoke_receipt_path`
+- `diagnostics_receipt_path` when present
+- `verification_terminal_state`
+- `verification_blocker_code`
+- `waiver_id` when a waiver is used
+
+The export report may summarize sensitive paths for operators, but the
+machine-readable evidence paths remain target-relative so workspace exports do
+not leak absolute host paths.
+
 ### Waiver Contract
 
 Waivers use schema `melix.export_verification_waiver.v1` and must include:
@@ -330,11 +513,11 @@ Waivers use schema `melix.export_verification_waiver.v1` and must include:
 
 Allowed first-slice waiver reasons are:
 
-- `runtime_not_installed`
-- `runtime_incompatible_host`
-- `metadata_only_target`
-- `known_runtime_bug`
-- `operator_manual_verification`
+- `EXPORT_WAIVER_REASON_RUNTIME_NOT_INSTALLED`
+- `EXPORT_WAIVER_REASON_RUNTIME_INCOMPATIBLE_HOST`
+- `EXPORT_WAIVER_REASON_METADATA_ONLY_TARGET`
+- `EXPORT_WAIVER_REASON_KNOWN_RUNTIME_BUG`
+- `EXPORT_WAIVER_REASON_OPERATOR_MANUAL_VERIFICATION`
 
 Waivers are not allowed for missing required files, digest mismatch, unsafe
 paths, unsupported target type, missing source provenance, or missing target
@@ -357,6 +540,12 @@ Failure diagnostics write `diagnostics/diagnostics-receipt.json` with schema
 - `operator_remedies`
 - `metrics`
 
+The diagnostics parser consumes target-local runtime logs, bounded subprocess
+stderr/stdout captures, and smoke failure messages. It writes one receipt per
+target and must finish before a failed smoke receipt can become a terminal
+export-report row. CLI and Desktop render remedies from this receipt; they do
+not parse raw logs independently.
+
 Required diagnosis codes for #1510:
 
 - `runtime_load_failed`
@@ -373,6 +562,27 @@ Required diagnosis codes for #1510:
 Each diagnosis row must include `code`, `severity`, `matched_pattern_id`,
 `operator_message`, `remediation`, and a redacted evidence pointer. Unknown
 failures preserve bounded redacted excerpts for later parser expansion.
+
+### Log Redaction And Evidence Bounds
+
+Runtime log diagnostics use the workspace redaction policy and the target
+manifest redaction classes. The parser must redact or omit:
+
+- absolute host paths, replacing them with target-relative evidence pointers
+  when the path is under the target directory;
+- credentials, bearer tokens, API keys, proxy secrets, certificate contents, and
+  shell environment values that can carry secrets;
+- full prompts, full generations, dataset rows, private prompt templates, and
+  operator-entered free text beyond bounded previews;
+- user identity strings when they are not required to explain the failure.
+
+Unknown failures preserve `diagnostics/redacted-log-excerpt.txt` with byte and
+line caps chosen by #1510. The receipt records `excerpt_byte_count`,
+`excerpt_line_count`, `truncated`, `redaction_count`,
+`redacted_absolute_path_count`, `redacted_secret_count`, and
+`redacted_prompt_or_response_count`. Raw logs can remain in the target-local
+`logs/` directory according to retention policy, but exported summaries and
+operator-facing evidence use only redacted excerpts.
 
 Required diagnostic metrics:
 
@@ -392,10 +602,10 @@ melix export plan \
   --workspace-manifest path/to/workspace-manifest.json \
   --adapter-manifest path/to/train_lora.adapter.json \
   --derived-model-manifest path/to/activate_adapter.derived_model.json \
-  --target melix_managed \
-  --target ollama \
-  --target gguf \
-  --target mlx_runtime \
+  --target EXPORT_TARGET_TYPE_MELIX_MANAGED \
+  --target EXPORT_TARGET_TYPE_OLLAMA \
+  --target EXPORT_TARGET_TYPE_GGUF \
+  --target EXPORT_TARGET_TYPE_MLX_RUNTIME \
   --output exports/support-chat-v1/export-plan-receipt.json \
   --json
 ```
@@ -445,15 +655,16 @@ IDs should be scoped to the changed unit:
 
 | Unit | Probe direction |
 |---|---|
+| #1505 | Documentation-only planning slice; runtime metrics are `N/A`, with measurement points specified for the executable units. |
 | #1506 | Manifest validation latency, fixture count, schema error count, manifest byte size. |
-| #1507 | Export duration, artifact byte size, cleanable bytes, retention decision count. |
+| #1507 | Layout materialization latency, retained bytes, cleanable bytes, deleted file count, retention decision count. |
 | #1509 | Load smoke latency, generation latency, preview bytes, timeout count, waiver count. |
 | #1510 | Diagnostic parser coverage, unknown failure count, redaction count, latency. |
 
 Candidate PR-scoped probe names:
 
 - `runtime-export-manifest-validation`
-- `runtime-export-retention-accounting`
+- `runtime-export-layout-retention`
 - `runtime-export-smoke-policy`
 - `runtime-export-diagnostic-parser`
 
@@ -473,6 +684,18 @@ documentation-only slice may record `N/A` metrics with the reason.
 - Coverage command must include the manifest validator, fixtures, and PR-scoped
   probe registration tests.
 
+#1506 implementation lands the manifest contract as a generated protobuf schema
+under `packages/protocol/schema/workspace/v1/`, with versioned Python and Swift
+outputs regenerated by `make proto`. The Python worker owns the first validator
+and fixture metrics report under `worker.productization` because export
+materialization is worker-owned; CLI and Desktop consumption remains follow-up
+work unless a later unit needs new operator surfaces. Checked-in fixtures must
+cover `EXPORT_TARGET_TYPE_MELIX_MANAGED`, `EXPORT_TARGET_TYPE_OLLAMA`,
+`EXPORT_TARGET_TYPE_GGUF`, and `EXPORT_TARGET_TYPE_MLX_RUNTIME` without `ext`
+fields or target-specific side-channel keys. The registered PR-scoped probe for
+this unit is `runtime-export-manifest-validation`, measuring validation latency,
+fixture count, schema error count, and manifest byte size.
+
 ### #1507 Layout And Retention Unit
 
 - Python export layout tests proving one directory per target and source
@@ -482,14 +705,38 @@ documentation-only slice may record `N/A` metrics with the reason.
 - Cleanup dry-run and apply tests proving required files and evidence survive.
 - Metrics tests for retained and cleanable byte counts.
 
+#1507 implementation lands the worker-owned layout and retention module
+described in
+[`2026-06-24-export-artifact-layout-retention.md`](2026-06-24-export-artifact-layout-retention.md).
+The registered PR-scoped probe for this unit is
+`runtime-export-layout-retention`, measuring layout materialization latency,
+target count, retained bytes, cleanable bytes, deleted file count, and retention
+decision count. This unit does not run real conversion or post-export smoke;
+it consumes valid target manifests and produces the layout, export report,
+retention report, cleanup dry-run, and cleanup apply behavior that later smoke
+and diagnostics units use.
+
 ### #1509 Smoke Unit
 
 - Smoke policy tests for Melix-managed, Ollama, GGUF, and MLX runtime targets.
+- Smoke receipt fixture tests for `passed`, `failed`, `blocked`, and `waived`
+  terminal states.
 - Timeout tests proving bounded generation cannot hang export completion.
 - Waiver tests proving allowed waivers are recorded and disallowed waivers are
   rejected.
+- Export-report gating tests proving targets cannot be marked verified without
+  manifest validation, digest checks, smoke receipt, retention report, and
+  diagnostics when a smoke failure occurs.
 - CLI/Desktop decoder tests proving smoke status and preview metadata render
   from the shared receipt.
+
+#1509 implementation lands the worker-owned smoke policy runner and receipt
+fixtures for the four target types. The registered PR-scoped probe for this
+unit is `runtime-export-smoke-policy`, measuring metadata check latency, load
+smoke latency, generation smoke latency, output preview byte count, timeout
+count, and waiver count. This unit may add CLI or Desktop decoding only when it
+is needed to prove that operator surfaces consume the shared receipt instead of
+raw logs or ad hoc status strings.
 
 ### #1510 Diagnostics Unit
 
@@ -497,8 +744,38 @@ documentation-only slice may record `N/A` metrics with the reason.
 - Redaction tests for absolute paths, tokens, credentials, and unbounded log
   excerpts.
 - Unknown failure tests proving bounded excerpts are preserved.
+- Export-report attachment tests proving diagnostics receipts are linked to
+  failed smoke receipts and target rows.
 - CLI/Desktop tests proving typed remedies and redacted evidence pointers are
   shown from the shared receipt.
+
+#1510 implementation lands the worker-owned diagnostic parser, redaction
+fixtures, and receipt writer. The registered PR-scoped probe for this unit is
+`runtime-export-diagnostic-parser`, measuring parser coverage, parsed failure
+count, unknown failure count, redaction count, and diagnostic latency. This unit
+does not add new export target types or change retention cleanup semantics.
+
+### P3.2 Acceptance Closure For #1508
+
+#1508 is complete when this document is the governing contract for post-export
+smoke and diagnostics and the executable units can proceed without inventing
+target-specific smoke, waiver, diagnostic, redaction, or probe semantics during
+implementation.
+
+Acceptance mapping:
+
+| #1508 acceptance criterion | Governing section in this plan |
+|---|---|
+| The plan defines target-specific load and generation smoke policies. | `P3.2 Target Smoke Matrix`, `Smoke Receipt`, and `#1509 Smoke Unit`. |
+| The plan defines runtime log diagnostics and redaction rules. | `Diagnostics Receipt`, `Log Redaction And Evidence Bounds`, and `#1510 Diagnostics Unit`. |
+| The unit issues cover both smoke checks and diagnostic parsers. | `P3.2 Target Smoke Matrix`, `Verification Plan`, and `Delivery Order` assign smoke checks to #1509 and diagnostics to #1510. |
+| The plan records smoke-test latency and diagnostic parser coverage metrics. | `Smoke Receipt`, `Diagnostics Receipt`, and `Performance Probes And Metrics`. |
+
+This #1508 slice is documentation-only. It does not change protobuf schemas,
+fixtures, worker code, CLI commands, or Desktop surfaces. Runtime metrics for
+this slice are therefore `N/A`; the required measurement points are specified
+above and must become executable probes in #1509 and #1510 before code changes
+land.
 
 ## Delivery Order
 

@@ -148,11 +148,30 @@ def test_dataset_catalog_builds_snapshot_inference_in_one_pass(
     }
 
 
+def test_dataset_catalog_snapshot_relative_paths_use_forward_slashes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    snapshot_dir = _write_hf_dataset_snapshot(home)
+
+    monkeypatch.setattr(catalog.os, "sep", "\\")
+
+    payload = DatasetCatalog(environment={"HOME": str(home)}).registry_snapshot_payload()
+
+    dataset = payload["datasets"][0]
+    assert {file["relative_path"] for file in dataset["files"]} == {
+        "README.md",
+        "data/train-00000-of-00001.jsonl",
+    }
+
+
 def test_dataset_catalog_inferred_split_and_config_preserves_legacy_helpers() -> None:
     assert catalog._inferred_split("custom/validation-00000.parquet") == "validation"
     assert catalog._inferred_config("custom/validation-00000.parquet") == "custom"
     assert catalog._inferred_split_and_config("data/train-00000-of-00001.jsonl") == ("train", "default")
     assert catalog._inferred_split_and_config("custom\\test.json") == ("test", "custom")
+    assert catalog._inferred_split_and_config("custom/train-00000-of-00001.jsonl") == ("train", "custom")
     assert catalog._inferred_split_and_config("validation/shard-00000.jsonl") == ("validation", "default")
     assert catalog._inferred_split_and_config("valid/shard-00000.jsonl") == ("validation", "default")
     assert catalog._inferred_split_and_config("dev/shard-00000.jsonl") == ("validation", "default")
@@ -167,11 +186,66 @@ def test_dataset_catalog_file_format_uses_supported_suffixes() -> None:
     assert catalog._dataset_file_format(Path("train.JSONL")) == "jsonl"
     assert catalog._dataset_file_format(Path("train.jsonl.")) == ""
     assert catalog._dataset_file_format(Path(".jsonl")) == ""
+    assert catalog._dataset_file_format_name("README.md") == "metadata"
+    assert catalog._dataset_file_format_name("train.JSONL") == "jsonl"
+    assert catalog._dataset_file_format_name("notes.txt") == ""
     assert catalog._is_supported_dataset_file_name("train.jsonl") is True
     assert catalog._is_supported_dataset_file_name("train.JSONL") is True
     assert catalog._is_supported_dataset_file_name("notes.txt") is False
     assert catalog._is_supported_dataset_file_name("README") is False
     assert catalog._is_supported_dataset_file_name(".jsonl") is False
+
+
+def test_dataset_catalog_skips_path_construction_for_unsupported_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "README.md").write_text("# Dataset\n", encoding="utf-8")
+    (snapshot_dir / "train.jsonl").write_text("{}\n", encoding="utf-8")
+    (snapshot_dir / "notes.txt").write_text("ignore\n", encoding="utf-8")
+    (snapshot_dir / ".jsonl").write_text("ignore\n", encoding="utf-8")
+
+    real_path = Path
+    constructor_calls = 0
+
+    class CountingPath:
+        def __new__(cls, *args: Any, **kwargs: Any):
+            nonlocal constructor_calls
+            constructor_calls += 1
+            return real_path(*args, **kwargs)
+
+    monkeypatch.setattr(catalog, "Path", CountingPath)
+
+    entries = tuple(catalog._iter_supported_dataset_file_entries(snapshot_dir))
+
+    assert [relative_path for _path, relative_path in entries] == ["README.md", "train.jsonl"]
+    assert constructor_calls == 2
+
+
+def test_dataset_catalog_dataset_files_reuse_scanned_file_format(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "README.md").write_text("# Dataset\n", encoding="utf-8")
+    (snapshot_dir / "train.jsonl").write_text("{}\n", encoding="utf-8")
+
+    def fail_path_format(_path: Path) -> str:
+        raise AssertionError(  # pragma: no cover - regression sentinel
+            "dataset files should reuse scan-time file format"
+        )
+
+    monkeypatch.setattr(catalog, "_dataset_file_format", fail_path_format)
+
+    files = tuple(catalog._dataset_files(snapshot_dir))
+
+    assert [(file.relative_path, file.file_format) for file in files] == [
+        ("README.md", "metadata"),
+        ("train.jsonl", "jsonl"),
+    ]
 
 
 def test_dataset_catalog_split_alias_prefix_scan_matches_legacy_delimiters() -> None:
@@ -341,6 +415,41 @@ def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
     assert rows == [{"prompt": "first", "answer": "a"}]
 
 
+def test_dataset_catalog_jsonl_row_reader_stops_after_limited_dict_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    jsonl_path = tmp_path / "sample.jsonl"
+    jsonl_path.write_text(
+        '\n'.join(
+            [
+                "",
+                json.dumps(["not", "a", "dict"]),
+                json.dumps({"prompt": "first"}),
+                json.dumps({"prompt": "second"}),
+                json.dumps({"prompt": "third"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    original_loads = catalog.json.loads
+    load_calls = 0
+
+    def counting_loads(payload: str) -> object:
+        nonlocal load_calls
+        load_calls += 1
+        return original_loads(payload)
+
+    monkeypatch.setattr(catalog.json, "loads", counting_loads)
+
+    assert catalog._read_rows_from_file(jsonl_path, limit=2) == [
+        {"prompt": "first"},
+        {"prompt": "second"},
+    ]
+    assert load_calls == 3
+
+
 def test_dataset_catalog_first_preview_scan_skips_readme_without_rescan(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshot"
     data_dir = snapshot_dir / "data"
@@ -403,6 +512,81 @@ def test_dataset_catalog_first_preview_scan_skips_unsupported_files_before_best(
     assert first_entry[0] == "data"
     assert first_entry[1] == data_dir
     assert catalog._first_supported_dataset_file(snapshot_dir) == winner
+
+
+def test_dataset_catalog_scan_records_skip_file_stat_for_unsupported_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeEntry:
+        def __init__(
+            self,
+            name: str,
+            *,
+            is_dir: bool = False,
+            is_file: bool = True,
+            file_error: bool = False,
+        ) -> None:
+            self.name = name
+            self.path = f"/tmp/{name}"
+            self._is_dir = is_dir
+            self._is_file = is_file
+            self._file_error = file_error
+            self.is_file_calls = 0
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
+            return self._is_dir
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
+            self.is_file_calls += 1
+            if self._file_error:
+                raise OSError("stat failed")
+            return self._is_file
+
+    class FakeScandir:
+        def __init__(self, entries: list[FakeEntry]) -> None:
+            self.entries = entries
+
+        def __enter__(self) -> list[FakeEntry]:
+            return self.entries
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    unsupported = FakeEntry("notes.txt")
+    readme = FakeEntry("README.md")
+    directory = FakeEntry("raw-data.txt", is_dir=True)
+    broken = FakeEntry("broken.jsonl", file_error=True)
+    non_file = FakeEntry("pipe.jsonl", is_file=False)
+    supported = FakeEntry("train.jsonl")
+
+    records = list(
+        catalog._supported_scan_entry_records(
+            [unsupported, readme, directory, broken, non_file, supported],  # type: ignore[arg-type]
+            after="",
+        )
+    )
+
+    assert records == [
+        ("raw-data.txt", "/tmp/raw-data.txt", True, False),
+        ("train.jsonl", "/tmp/train.jsonl", False, True),
+    ]
+    assert unsupported.is_file_calls == 0
+    assert readme.is_file_calls == 0
+    assert broken.is_file_calls == 1
+    assert non_file.is_file_calls == 1
+    assert supported.is_file_calls == 1
+
+    monkeypatch.setattr(
+        catalog.os,
+        "scandir",
+        lambda _path: FakeScandir([unsupported, readme, broken, non_file, supported]),
+    )
+
+    next_entry = catalog._next_supported_scan_entry(Path("/tmp"), after="")
+
+    assert next_entry == ("train.jsonl", Path("/tmp/train.jsonl"), False, True)
 
 
 def test_dataset_catalog_limited_preview_scan_streams_multiple_files_without_sorted_walk(
@@ -895,10 +1079,12 @@ def test_dataset_catalog_first_preview_file_preserves_sorted_depth_first_edges(
         name = "broken.jsonl"
         path = str(data_dir / "broken.jsonl")
 
-        def is_dir(self) -> bool:
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
             raise OSError("broken entry")
 
-        def is_file(self) -> bool:
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
             return True
 
     class FakeScandir:
@@ -910,6 +1096,18 @@ def test_dataset_catalog_first_preview_file_preserves_sorted_depth_first_edges(
 
     monkeypatch.setattr(catalog.os, "scandir", lambda _path: FakeScandir())
     assert catalog._next_supported_scan_entry(snapshot_dir, after="") is None
+
+
+def test_dataset_catalog_preview_scan_does_not_follow_directory_symlinks(tmp_path: Path) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    target_dir = tmp_path / "target"
+    snapshot_dir.mkdir()
+    target_dir.mkdir()
+    (target_dir / "part-00000.jsonl").write_text('{"prompt":"target"}\n', encoding="utf-8")
+    link_dir = snapshot_dir / "linked-data"
+    link_dir.symlink_to(target_dir, target_is_directory=True)
+
+    assert catalog._first_supported_dataset_file(snapshot_dir) is None
 
 
 def test_dataset_catalog_row_reader_keeps_split_filtering_eager_for_missing_split(

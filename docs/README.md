@@ -39,11 +39,13 @@ Step-by-step operating procedures for specific workflows. Use these when you nee
 | [Benchmark, Matrix & LoRA](runbooks/benchmark-matrix-evaluation-and-lora.md) | Full operator guide: benchmarking, matrix runs, evaluation, and LoRA fine-tuning |
 | [Workflow Recipes And URI Inspection](runbooks/workflow-recipes.md) | Built-in workflow recipes, URI inspection, planning, and pipeline-backed apply |
 | [LoRA Adapter Workflow](runbooks/phase-8-lora-adapter-workflow.md) | Training, activating, publishing, and removing LoRA adapters |
+| [Runtime Export Target Manifest](runbooks/runtime-export-target-manifest.md) | Schema-backed export target manifests for Melix, Ollama, GGUF, and MLX-compatible runtimes |
 | [Local Install](runbooks/phase-8-local-install.md) | Install Melix as a persistent local service via launch agent |
 | [Homebrew Install](runbooks/homebrew-install.md) | Install and manage Melix through Homebrew |
 | [Packaging Targets](runbooks/platform-packaging-targets.md) | Launch agent, Homebrew, Nix, and preview app-bundle delivery options |
 | [Release Gates](runbooks/phase-8-release-gates.md) | Automated release gate workflow and verification criteria |
 | [Product Acceptance](runbooks/phase-8-product-acceptance.md) | Acceptance evidence and product-level smoke procedures |
+| [Runtime Export Smoke Policy](runbooks/runtime-export-smoke-policy.md) | Bounded post-export load, generation, waiver, and receipt checks for runtime export targets |
 | [Structured Streaming](runbooks/structured-streaming-reasoning-continuity.md) | Streaming and reasoning continuity behavior |
 | [Serving Diagnostics Evidence](runbooks/serving-diagnostics-evidence.md) | Serving diagnostics bundles and baseline-vs-accelerated evidence artifacts |
 | [All Runbooks →](runbooks/README.md) | Full runbook index |
@@ -66,6 +68,16 @@ These are the authoritative interface and architecture definitions. Do not move 
 | [Unified Agentic Tool Runtime Contract](unified-agentic-tool-runtime-contract.md) | Shared tool registry, observation, replay, rollout, benchmark, and evaluation contracts for OpenSearch-VL alignment |
 | [Evidence, Telemetry & Report Contract](evidence-telemetry-report-contract.md) | Run evidence, probe timeline, Apple Silicon telemetry, report, and release-gate source-of-truth rules |
 | [Repository Skeleton](repo-skeleton.md) | Directory layout and conventions for the Melix repository |
+
+## Active Implementation Plans
+
+| Plan | What It Covers |
+|---|---|
+| [Runtime-Aware Export And Serving Verification Plan](plans/2026-06-21-runtime-aware-export-and-serving-verification.md) | M3 export target manifests, layout, retention, post-export smoke policy, diagnostics, waiver semantics, and serving evidence |
+| [Export Artifact Layout And Retention Policy](plans/2026-06-24-export-artifact-layout-retention.md) | Runtime export target layout, retention reports, cleanup dry-run/apply behavior, and byte-accounting metrics |
+| [Cross-Runtime Model Inventory Plan](plans/2026-06-24-cross-runtime-model-inventory.md) | M4 source descriptors, scan receipts, usability classification, browse-to-admit receipts, cancellable pulls, and inventory metrics |
+| [Desktop Environment Doctor And Storage Cleanup Plan](plans/2026-06-25-desktop-environment-doctor-storage-cleanup.md) | M4 Desktop/CLI diagnostic receipts, storage inventory, cleanup dry-run/apply receipts, redaction rules, active-job protection, and cleanup metrics |
+| [Issue 58 Packaged Python Import Isolation](plans/2026-06-25-issue-58-packaged-python-import-isolation.md) | App-bundle Python import isolation contract, launcher environment flags, and packaged-launch release-gate evidence |
 
 ---
 

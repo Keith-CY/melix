@@ -20,8 +20,10 @@ class CopyCountingConfig(Mapping[str, Any]):
     def __init__(self, payload: Mapping[str, Any]) -> None:
         self._payload = dict(payload)
         self.copy_attempts = 0
+        self.key_accesses = 0
 
     def __getitem__(self, key: str) -> Any:
+        self.key_accesses += 1
         return self._payload[key]
 
     def __iter__(self) -> Iterator[str]:
@@ -50,9 +52,14 @@ def _payload() -> dict[str, Any]:
     return payload
 
 
-def _run_sample(*, iterations: int) -> tuple[float, int, int]:
+def _run_sample(*, iterations: int) -> tuple[float, int, int, int]:
     config = CopyCountingConfig(_payload())
-    metadata = {"text_family_id": "qwen3moe"}
+    metadata = {
+        "text_family_id": "qwen3moe",
+        "melix.text.attention_profile": "gqa",
+        "melix.text.rope_profile": "yarn_interleaved",
+        "melix.text.moe.gate_dequant": "true",
+    }
     checksum = 0
     tracemalloc.start()
     started = time.perf_counter()
@@ -73,7 +80,7 @@ def _run_sample(*, iterations: int) -> tuple[float, int, int]:
     tracemalloc.stop()
     if checksum != iterations * 130:
         raise AssertionError(f"unexpected checksum: {checksum}")
-    return elapsed_ms, peak_bytes, config.copy_attempts
+    return elapsed_ms, peak_bytes, config.copy_attempts, config.key_accesses
 
 
 def main() -> None:
@@ -81,17 +88,20 @@ def main() -> None:
     elapsed: list[float] = []
     peak: list[int] = []
     copy_calls: list[int] = []
+    key_accesses: list[int] = []
     for _ in range(5):
-        elapsed_ms, peak_bytes, copies = _run_sample(iterations=iterations)
+        elapsed_ms, peak_bytes, copies, access_count = _run_sample(iterations=iterations)
         elapsed.append(elapsed_ms)
         peak.append(peak_bytes)
         copy_calls.append(copies)
+        key_accesses.append(access_count)
     print(
         json.dumps(
             {
                 "elapsed_ms_mean": statistics.fmean(elapsed),
                 "peak_bytes_mean": statistics.fmean(peak),
                 "config_copy_calls_mean": statistics.fmean(copy_calls),
+                "config_key_accesses_mean": statistics.fmean(key_accesses),
                 "iterations": iterations,
             },
             sort_keys=True,

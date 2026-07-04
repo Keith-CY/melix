@@ -5,7 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 from threading import Event
-from typing import Callable
+from types import MappingProxyType
+from typing import Callable, Mapping
 
 from packages.protocol.python.worker.v1 import cache_pb2, common_pb2
 
@@ -31,6 +32,9 @@ from worker.runtime.multimodal_preprocessing import (
     PreparedVisionRequest,
     prepare_vision_request,
 )
+from worker.runtime.multimodal_speculative_probe import (
+    empty_speculative_probe_receipt,
+)
 from worker.runtime.vlm_preprocessing_policy import (
     empty_preprocessing_policy_receipt,
     prepared_request_preprocessing_policy_receipt,
@@ -43,10 +47,18 @@ from worker.runtime.vision_family_adapters import (
 )
 
 _EMPTY_PROCESSOR_SHAPE_RECEIPT: dict[str, object] = {}
+_EMPTY_SPECULATIVE_PROBE_RECEIPT: Mapping[str, object] = MappingProxyType(
+    empty_speculative_probe_receipt()
+)
 _TEXT_ONLY_EMPTY_MODEL_FAST_PATH_SIGNATURE = (
     "(('model_id', ''), ('quant_profile_id', ''), "
     "('revision', ''), ('tokenizer_hash', ''))"
 )
+
+
+def probe_receipt_fallback_reason(reason: str) -> str:
+    normalized = str(reason or "")
+    return "" if normalized.startswith("image_batch1_step_") else normalized
 
 
 def _has_only_internal_fast_path_signature_metadata(loaded_model) -> bool:
@@ -54,6 +66,10 @@ def _has_only_internal_fast_path_signature_metadata(loaded_model) -> bool:
         not loaded_model
         or (len(loaded_model) == 1 and "_vision_family_config" in loaded_model)
     )
+
+
+def _empty_speculative_probe_receipt() -> Mapping[str, object]:
+    return _EMPTY_SPECULATIVE_PROBE_RECEIPT
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +99,10 @@ class VisionProbeSnapshot:
     multimodal_fallback_reason: str = "not_reported"
     multimodal_decode_sync_mode: str = "baseline"
     multi_image_scatter_mode: str = "none"
+    image_batch1_step_admission_reason: str = ""
+    image_batch1_step_decode_token_counter_start: int = 0
+    image_batch1_step_decode_token_counter_end: int = 0
+    image_batch1_step_decode_token_counter_advance: int = 0
     multimodal_position_slice_fallback_count: int = 0
     quantized_load_mode: str = "fallback"
     quantized_load_fallback_reason: str = "not_reported"
@@ -101,6 +121,9 @@ class VisionProbeSnapshot:
     )
     preprocessing_policy_receipt: dict[str, object] = field(
         default_factory=empty_preprocessing_policy_receipt
+    )
+    speculative_probe_receipt: Mapping[str, object] = field(
+        default_factory=_empty_speculative_probe_receipt
     )
     text_batch_generator_submitted_request_count: int = 0
     text_batch_generator_completed_request_count: int = 0
@@ -627,8 +650,38 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         signature: tuple[str, ...] | None = None,
         seq_len: int | None = None,
         attention_policy: AttentionPrefillPolicyDecision | None = None,
+        position_ids: object | None = None,
+        rope_deltas: object | None = None,
+        image_batch1_step_supported: bool | None = None,
+        image_batch1_step_greedy_sampling: bool | None = None,
     ) -> None:
-        fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
+        position_metadata_receipt = self._position_metadata_receipt(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            fallback_reason="",
+            seq_len=seq_len,
+            position_ids=position_ids,
+            rope_deltas=rope_deltas,
+        )
+        fast_path = self._fast_path_controller.plan(
+            loaded_model,
+            prepared_request,
+            image_batch1_step_position_receipt=position_metadata_receipt,
+            image_batch1_step_supported=image_batch1_step_supported,
+            image_batch1_step_greedy_sampling=image_batch1_step_greedy_sampling,
+        )
+        receipt_fallback_reason = probe_receipt_fallback_reason(
+            fast_path.multimodal_fallback_reason
+        )
+        if receipt_fallback_reason:
+            position_metadata_receipt = self._position_metadata_receipt(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                fallback_reason=receipt_fallback_reason,
+                seq_len=seq_len,
+                position_ids=position_ids,
+                rope_deltas=rope_deltas,
+            )
         attention_decision = attention_policy
         if attention_decision is None:
             (
@@ -646,12 +699,6 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                 execution_ext=None,
             )
         attention_budget_receipt = build_attention_budget_receipt(attention_decision)
-        position_metadata_receipt = self._position_metadata_receipt(
-            loaded_model=loaded_model,
-            prepared_request=prepared_request,
-            fallback_reason=fast_path.multimodal_fallback_reason,
-            seq_len=seq_len,
-        )
         hybrid_seq_len = int(position_metadata_receipt["seq_len"])
         if fast_path.hybrid_state_patch_mode == "not_applicable" and not (
             prepared_request.images or prepared_request.videos
@@ -662,7 +709,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                 loaded_model=loaded_model,
                 prepared_request=prepared_request,
                 patch_mode=fast_path.hybrid_state_patch_mode,
-                fallback_reason=fast_path.multimodal_fallback_reason,
+                fallback_reason=receipt_fallback_reason,
                 family_fast_path_override_count=fast_path.family_fast_path_override_count,
                 seq_len=hybrid_seq_len,
             )
@@ -702,6 +749,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
             multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
+            image_batch1_step_admission_reason=fast_path.image_batch1_step_admission_reason,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
             hybrid_state_patch_mode=fast_path.hybrid_state_patch_mode,
@@ -779,6 +827,8 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         prepared_request: PreparedVisionRequest,
         fallback_reason: str,
         seq_len: int | None = None,
+        position_ids: object | None = None,
+        rope_deltas: object | None = None,
     ) -> dict[str, object]:
         if seq_len is None:
             seq_len = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
@@ -786,6 +836,8 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             prepared_request=prepared_request,
             seq_len=seq_len,
             fallback_reason=fallback_reason,
+            position_ids=position_ids,
+            rope_deltas=rope_deltas,
         )
 
     def _hybrid_state_patch_receipt(

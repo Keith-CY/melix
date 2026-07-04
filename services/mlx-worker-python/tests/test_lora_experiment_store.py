@@ -19,6 +19,10 @@ def _write_run_record(
     loss_final: float | None = None,
     checkpoint_count: int = 0,
     latest_checkpoint_path: str = "",
+    checkpoint_step: int = 0,
+    checkpoint_sort_key: str = "",
+    selected_checkpoint_path: str = "",
+    selected_checkpoint_loss_source: str = "",
     resume_source_path: str = "",
     resume_ready: bool = False,
 ) -> None:
@@ -35,6 +39,10 @@ def _write_run_record(
         "manifest_path": manifest_path,
         "checkpoint_count": checkpoint_count,
         "latest_checkpoint_path": latest_checkpoint_path,
+        "checkpoint_step": checkpoint_step,
+        "checkpoint_sort_key": checkpoint_sort_key,
+        "selected_checkpoint_path": selected_checkpoint_path,
+        "selected_checkpoint_loss_source": selected_checkpoint_loss_source,
         "resume_source_path": resume_source_path,
         "resume_ready": resume_ready,
         "updated_at_unix_ms": updated_at_unix_ms,
@@ -80,6 +88,100 @@ def _write_manifest(
         encoding="utf-8",
     )
     return manifest_path
+
+
+def _write_provenance(
+    manifest_path: Path,
+    *,
+    run_id: str,
+    group_id: str = "nightly-qwen",
+    group_title: str = "Nightly Qwen",
+    adapter_name: str = "provenance-adapter",
+    source_model: str = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+    dataset_uri: str = "/datasets/provenance",
+    dataset_version: str = "dataset-v2",
+    train_sample_count: int = 24,
+    validation_sample_count: int = 6,
+    loss_best: float = 0.21,
+    loss_final: float = 0.25,
+    export_eligible: bool = True,
+    loss_series_row_count: int = 2,
+    note_count: int = 1,
+    checkpoint_step: int = 3,
+    checkpoint_sort_key: str = "0000000003",
+    selected_checkpoint_path: str = "",
+    selected_checkpoint_loss_source: str = "loss_best",
+) -> Path:
+    provenance_path = manifest_path.parent / "train_lora.adapter.provenance.json"
+    notes_path = manifest_path.parent / "train_lora.adapter.notes.json"
+    adapter_checkpoint_path = selected_checkpoint_path or str(
+        manifest_path.parent / "adapter" / "checkpoint-3" / "adapters.safetensors"
+    )
+    payload = {
+        "schema_version": "melix.lora_adapter_provenance.v1",
+        "adapter": {
+            "job_id": run_id,
+            "adapter_name": adapter_name,
+            "experiment_group_id": group_id,
+            "experiment_group_title": group_title,
+            "adapter_manifest_path": str(manifest_path),
+            "provenance_manifest_path": str(provenance_path),
+            "checkpoint_count": 3,
+            "latest_checkpoint_path": adapter_checkpoint_path,
+            "checkpoint_step": checkpoint_step,
+            "checkpoint_sort_key": checkpoint_sort_key,
+            "selected_checkpoint_path": adapter_checkpoint_path,
+            "selected_checkpoint_loss_source": selected_checkpoint_loss_source,
+            "resume_ready": True,
+        },
+        "base_model": {"model_id": source_model},
+        "dataset": {
+            "uri": dataset_uri,
+            "version": dataset_version,
+            "train_sample_count": train_sample_count,
+            "validation_sample_count": validation_sample_count,
+        },
+        "hyperparameters": {
+            "preset_id": "balanced",
+            "preset_title": "Balanced",
+            "training_mode": "lora",
+        },
+        "training": {
+            "backend": "native",
+            "status": "completed",
+            "tokens_per_second": 111.0,
+            "peak_memory_gb": 3.5,
+            "loss_series_row_count": loss_series_row_count,
+            "loss_series": [
+                {"event_type": "loss", "step": 1, "loss": 0.4},
+                {"event_type": "validation_loss", "step": 2, "validation_loss": loss_best},
+            ][:loss_series_row_count],
+        },
+        "final_metrics": {
+            "loss_best": loss_best,
+            "loss_final": loss_final,
+            "validation_loss_best": loss_best,
+        },
+        "operator_notes": {
+            "schema_version": "melix.lora_adapter_operator_notes.v1",
+            "path": str(notes_path),
+            "note_count": note_count,
+            "updated_at_unix_ms": 2_000,
+        },
+        "export_eligibility": {
+            "schema_version": "melix.lora_adapter_export_eligibility.v1",
+            "eligible": export_eligible,
+            "state": "eligible" if export_eligible else "blocked",
+            "blocking_reasons": [] if export_eligible else ["missing_adapter_weights_path"],
+        },
+        "created_at_unix_ms": 1_000,
+        "updated_at_unix_ms": 2_000,
+    }
+    provenance_path.write_text(
+        json.dumps(payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return provenance_path
 
 
 def test_iter_lora_run_dirs_sorts_names_without_reading_entry_paths(tmp_path: Path, monkeypatch) -> None:
@@ -230,6 +332,11 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
         manifest_path="/tmp/model-ops-0001/from-run-record.json",
         updated_at_unix_ms=1_000,
         checkpoint_count=2,
+        latest_checkpoint_path="/tmp/model-ops-0001/adapter/checkpoint-100/adapters.safetensors",
+        checkpoint_step=100,
+        checkpoint_sort_key="0000000100",
+        selected_checkpoint_path="/tmp/model-ops-0001/adapter/checkpoint-100/adapters.safetensors",
+        selected_checkpoint_loss_source="loss_best",
     )
 
     payload = LoraExperimentStore().rebuild_index(jobs_root)
@@ -237,7 +344,43 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
     assert len(payload["runs"]) == 1
     assert payload["runs"][0]["manifest_path"] == "/tmp/model-ops-0001/from-run-record.json"
     assert payload["runs"][0]["checkpoint_count"] == 2
+    assert payload["runs"][0]["checkpoint_step"] == 100
+    assert payload["runs"][0]["checkpoint_sort_key"] == "0000000100"
+    assert payload["runs"][0]["selected_checkpoint_path"].endswith(
+        "checkpoint-100/adapters.safetensors"
+    )
+    assert payload["runs"][0]["selected_checkpoint_loss_source"] == "loss_best"
+    assert payload["groups"][0]["latest_checkpoint_step"] == 100
+    assert payload["groups"][0]["latest_checkpoint_sort_key"] == "0000000100"
+    assert payload["groups"][0]["latest_selected_checkpoint_path"].endswith(
+        "checkpoint-100/adapters.safetensors"
+    )
+    assert payload["groups"][0]["latest_selected_checkpoint_loss_source"] == "loss_best"
+    assert payload["groups"][0]["checkpoint_lineage"][0]["checkpoint_step"] == 100
     assert payload["runs"][0]["adapter_name"] == "demo-adapter"
+
+    run_record_path = (
+        jobs_root / "train_lora" / "model-ops-0001" / "lora-experiment-run.json"
+    )
+    run_record_payload = json.loads(run_record_path.read_text(encoding="utf-8"))
+    run_record_payload["checkpoint_sort_key"] = None
+    run_record_payload["selected_checkpoint_path"] = None
+    run_record_payload["selected_checkpoint_loss_source"] = None
+    run_record_path.write_text(
+        json.dumps(run_record_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    payload = LoraExperimentStore().rebuild_index(jobs_root)
+    assert payload["groups"][0]["latest_checkpoint_sort_key"] == ""
+    assert payload["groups"][0]["latest_selected_checkpoint_path"] == ""
+    assert payload["groups"][0]["latest_selected_checkpoint_loss_source"] == ""
+    assert payload["groups"][0]["checkpoint_lineage"][0]["checkpoint_sort_key"] == ""
+    assert payload["groups"][0]["best_known_adapter"]["checkpoint_sort_key"] == ""
+    assert (
+        payload["groups"][0]["best_known_adapter"]["selected_checkpoint_loss_source"]
+        == ""
+    )
 
     _write_manifest(
         jobs_root,
@@ -249,6 +392,14 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
             "saved_eos_token": "<eos>",
             "merge_export_canary_result": "passed",
             "round_trip_passed": True,
+            "checkpoint_step": None,
+            "experiment.checkpoint_step": 101,
+            "checkpoint_sort_key": None,
+            "experiment.checkpoint_sort_key": "0000000101",
+            "selected_checkpoint_path": None,
+            "experiment.selected_checkpoint_path": "/tmp/model-ops-0002/adapter/checkpoint-101/adapters.safetensors",
+            "selected_checkpoint_loss_source": None,
+            "experiment.selected_checkpoint_loss_source": "loss_final",
         },
     )
 
@@ -260,6 +411,163 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
     assert manifest_only_run["saved_eos_token"] == "<eos>"
     assert manifest_only_run["merge_export_canary_result"] == "passed"
     assert manifest_only_run["round_trip_passed"] is True
+    assert manifest_only_run["checkpoint_step"] == 101
+    assert manifest_only_run["checkpoint_sort_key"] == "0000000101"
+    assert manifest_only_run["selected_checkpoint_path"].endswith(
+        "checkpoint-101/adapters.safetensors"
+    )
+    assert manifest_only_run["selected_checkpoint_loss_source"] == "loss_final"
+
+    provenance_manifest_path = _write_manifest(
+        jobs_root,
+        run_id="model-ops-0003",
+        adapter_name="package-adapter",
+        group_id="package-group",
+        updated_at_unix_ms=2_500,
+        extra={
+            "source_model": "package-model",
+            "dataset_uri": "/datasets/package",
+            "dataset_version": "package-v1",
+            "trainer_dataset_sample_count": 1,
+            "trainer_dataset_validation_sample_count": 0,
+            "loss_best": 9.9,
+            "loss_final": 9.8,
+            "tokens_per_second": 1.0,
+            "peak_memory_gb": 1.0,
+            "adapter_provenance_manifest_path": str(
+                jobs_root
+                / "train_lora"
+                / "model-ops-0003"
+                / "train_lora.adapter.provenance.json"
+            ),
+        },
+    )
+    provenance_path = _write_provenance(
+        provenance_manifest_path,
+        run_id="model-ops-0003",
+        checkpoint_step=102,
+        checkpoint_sort_key="0000000102",
+        selected_checkpoint_path="/tmp/model-ops-0003/adapter/checkpoint-102/adapters.safetensors",
+        selected_checkpoint_loss_source="loss_best",
+    )
+    assert lora_experiment_store_module._optional_finite_float("not-a-number", "0.5") == 0.5
+
+    payload = LoraExperimentStore().rebuild_index(jobs_root)
+    provenance_run = next(run for run in payload["runs"] if run["run_id"] == "model-ops-0003")
+    provenance_group = next(group for group in payload["groups"] if group["group_id"] == "nightly-qwen")
+
+    assert provenance_run["adapter_name"] == "provenance-adapter"
+    assert provenance_run["group_id"] == "nightly-qwen"
+    assert provenance_run["group_title"] == "Nightly Qwen"
+    assert provenance_run["source_model"] == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+    assert provenance_run["dataset_uri"] == "/datasets/provenance"
+    assert provenance_run["dataset_version"] == "dataset-v2"
+    assert provenance_run["train_sample_count"] == 24
+    assert provenance_run["validation_sample_count"] == 6
+    assert provenance_run["loss_best"] == 0.21
+    assert provenance_run["loss_final"] == 0.25
+    assert provenance_run["tokens_per_second"] == 111.0
+    assert provenance_run["peak_memory_gb"] == 3.5
+    assert provenance_run["loss_series_row_count"] == 2
+    assert provenance_run["operator_note_count"] == 1
+    assert provenance_run["checkpoint_step"] == 102
+    assert provenance_run["checkpoint_sort_key"] == "0000000102"
+    assert provenance_run["selected_checkpoint_path"].endswith(
+        "checkpoint-102/adapters.safetensors"
+    )
+    assert provenance_run["selected_checkpoint_loss_source"] == "loss_best"
+    assert provenance_run["export_eligible"] is True
+    assert provenance_run["adapter_provenance_manifest_path"] == str(provenance_path)
+    assert provenance_group["best_loss"] == 0.21
+    assert provenance_group["recommended_provenance_manifest_path"] == str(provenance_path)
+    assert provenance_group["latest_export_eligible"] is True
+    assert provenance_group["best_known_adapter"]["provenance_manifest_path"] == str(provenance_path)
+    assert provenance_group["best_known_adapter"]["checkpoint_step"] == 102
+    assert provenance_group["best_known_adapter"]["checkpoint_sort_key"] == "0000000102"
+    assert provenance_group["best_known_adapter"]["selected_checkpoint_path"].endswith(
+        "checkpoint-102/adapters.safetensors"
+    )
+    assert (
+        provenance_group["best_known_adapter"]["selected_checkpoint_loss_source"]
+        == "loss_best"
+    )
+
+    bad_manifest_path = _write_manifest(
+        jobs_root,
+        run_id="model-ops-0004",
+        adapter_name="bad-counts",
+        group_id="bad-counts",
+        updated_at_unix_ms=3_000,
+        extra={
+            "created_at_unix_ms": "not-an-int",
+            "trainer_dataset_sample_count": "not-an-int",
+            "trainer_dataset_validation_sample_count": {"bad": "count"},
+            "tokens_per_second": "not-a-float",
+            "peak_memory_gb": {"bad": "float"},
+            "checkpoint_count": "not-an-int",
+            "checkpoint_step": "not-an-int",
+            "checkpoint_sort_key": "0000000004",
+            "selected_checkpoint_path": "/tmp/model-ops-0004/adapter/checkpoint-4/adapters.safetensors",
+            "selected_checkpoint_loss_source": "loss_final",
+            "adapter_operator_note_count": "not-an-int",
+            "loss_best": "not-a-float",
+        },
+    )
+    bad_provenance_path = _write_provenance(
+        bad_manifest_path,
+        run_id="model-ops-0004",
+        group_id="bad-counts",
+        loss_best=0.7,
+        loss_final=0.8,
+    )
+    bad_payload = json.loads(bad_provenance_path.read_text(encoding="utf-8"))
+    bad_payload["dataset"]["train_sample_count"] = "not-an-int"
+    bad_payload["dataset"]["validation_sample_count"] = {"bad": "count"}
+    bad_payload["training"]["tokens_per_second"] = "not-a-float"
+    bad_payload["training"]["peak_memory_gb"] = {"bad": "float"}
+    bad_payload["training"]["loss_series_row_count"] = "not-an-int"
+    bad_payload["operator_notes"]["note_count"] = "not-an-int"
+    bad_payload["adapter"]["checkpoint_count"] = "not-an-int"
+    bad_payload["adapter"]["checkpoint_step"] = "not-an-int"
+    bad_payload["adapter"]["checkpoint_sort_key"] = None
+    bad_payload["adapter"]["selected_checkpoint_path"] = None
+    bad_payload["adapter"]["selected_checkpoint_loss_source"] = None
+    bad_provenance_path.write_text(
+        json.dumps(bad_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    payload = LoraExperimentStore().rebuild_index(jobs_root)
+    bad_run = next(run for run in payload["runs"] if run["run_id"] == "model-ops-0004")
+    bad_group = next(group for group in payload["groups"] if group["group_id"] == "bad-counts")
+
+    assert bad_run["created_at_unix_ms"] == 0
+    assert bad_run["updated_at_unix_ms"] == 3_000
+    assert bad_run["train_sample_count"] == 0
+    assert bad_run["validation_sample_count"] == 0
+    assert bad_run["tokens_per_second"] == 0.0
+    assert bad_run["peak_memory_gb"] == 0.0
+    assert bad_run["checkpoint_count"] == 0
+    assert bad_run["checkpoint_step"] == 0
+    assert bad_run["checkpoint_sort_key"] == "0000000004"
+    assert bad_run["selected_checkpoint_path"].endswith(
+        "checkpoint-4/adapters.safetensors"
+    )
+    assert bad_run["selected_checkpoint_loss_source"] == "loss_final"
+    assert bad_run["loss_series_row_count"] == 0
+    assert bad_run["operator_note_count"] == 0
+    assert bad_group["latest_checkpoint_count"] == 0
+    assert bad_group["latest_checkpoint_step"] == 0
+    assert bad_group["latest_checkpoint_sort_key"] == "0000000004"
+    assert bad_group["latest_selected_checkpoint_path"].endswith(
+        "checkpoint-4/adapters.safetensors"
+    )
+    assert bad_group["latest_selected_checkpoint_loss_source"] == "loss_final"
+    assert bad_group["checkpoint_lineage"][0]["checkpoint_sort_key"] == "0000000004"
+    assert bad_group["latest_loss_series_row_count"] == 0
+    assert bad_group["latest_operator_note_count"] == 0
+    assert bad_group["best_known_adapter"]["checkpoint_count"] == 0
+    assert bad_group["best_known_adapter"]["checkpoint_step"] == 0
 
 
 def test_rebuild_index_skips_manifest_parse_when_run_record_exists(tmp_path: Path, monkeypatch) -> None:

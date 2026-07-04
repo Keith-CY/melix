@@ -270,7 +270,8 @@ dry-run latency, and safe-delete count.
 #### Plan P4.1: Cross-Runtime Model Inventory
 
 Extend model discovery with explicit source descriptors for Melix-managed
-models and compatible local runtime caches.
+models and compatible local runtime caches. The detailed execution plan is
+[`2026-06-24-cross-runtime-model-inventory.md`](2026-06-24-cross-runtime-model-inventory.md).
 
 ##### Unit U4.1.1: Add External Runtime Source Descriptors
 
@@ -289,21 +290,24 @@ machine-readable scan receipt.
 #### Plan P4.2: Desktop Environment Doctor and Storage Cleanup
 
 Add operator-facing diagnostics and safe cleanup for the local environment,
-workspace roots, checkpoints, exports, and runtime caches.
+workspace roots, checkpoints, exports, and runtime caches. The detailed
+execution plan is
+[`2026-06-25-desktop-environment-doctor-storage-cleanup.md`](2026-06-25-desktop-environment-doctor-storage-cleanup.md).
 
 ##### Unit U4.2.1: Add GUI Shell PATH, Proxy, Certificate, and Runtime Diagnostics
 
 Diagnose packaged-app PATH, uv/Python/MLX versions, runtime binary paths,
 proxy variables, certificate variables, and local server health. The unit is
 complete when diagnostics can explain Finder-launched app failures without
-printing secrets.
+printing secrets and CLI plus Desktop read the same redacted diagnostic receipt.
 
 ##### Unit U4.2.2: Add Storage Inventory and Safe Cleanup Plan
 
 Inventory workspace raw files, cleaned segments, dataset versions, checkpoints,
 adapter outputs, export intermediates, runtime logs, and stale temp files.
 The unit is complete when dry-run and apply modes protect active jobs and
-write a cleanup receipt.
+write cleanup receipts whose retained, cleanable, protected, and deleted byte
+counts are shared by CLI and Desktop.
 
 ## Verification
 

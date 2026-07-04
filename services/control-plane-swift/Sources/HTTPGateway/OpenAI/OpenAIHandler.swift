@@ -1151,7 +1151,8 @@ button.primary:active {
                 response = rateLimitFailure
                 break
             }
-            switch (request.method, request.path) {
+            let routePath = sanitizedRequestRoutePath(request.path)
+            switch (request.method, routePath) {
             case (.get, "/.well-known/melix.json"):
                 response = try await handleDiscoveryWellKnown()
             case (.get, "/api/capabilities"):
@@ -1388,6 +1389,7 @@ button.primary:active {
         let startedAt = Date()
         let routes = await healthRoutes()
         let models = await modelCatalog.listModels()
+        let nativeAcceleration = await nativeAccelerationStatus()
         let readyCount = models.filter { $0.state == .modelWarm || $0.state == .modelPinned }.count
         let status = routes.values.allSatisfy { $0 } ? "ok" : "degraded"
         let response = HealthDiagnosticsResponse(
@@ -1398,7 +1400,8 @@ button.primary:active {
             models: models
                 .filter(ModelCatalogPresentation.isUserVisible)
                 .map(HealthDiagnosticsModelResponse.init(model:)),
-            localServerSecurity: localServerSecurityPolicy.receipt
+            localServerSecurity: localServerSecurityPolicy.receipt,
+            nativeAcceleration: nativeAcceleration
         )
         await metricsStore.set(
             Date().timeIntervalSince(startedAt) * 1000,
@@ -1442,6 +1445,7 @@ button.primary:active {
         async let queueSnapshotTask = companionQueueSnapshot()
         async let imageJobsSnapshotTask = companionImageJobsSnapshot()
         async let imageJobLogsTask = companionImageJobLogTail()
+        async let nativeAccelerationTask = nativeAccelerationStatus()
 
         let routes = await routesTask
         let models = await modelsTask
@@ -1451,13 +1455,15 @@ button.primary:active {
         let queueSnapshot = await queueSnapshotTask
         let imageJobsSnapshot = await imageJobsSnapshotTask
         let imageJobLogs = await imageJobLogsTask
+        let nativeAcceleration = await nativeAccelerationTask
         let status = routes.values.allSatisfy { $0 } ? "ok" : "degraded"
         let response = CompanionStatusResponse(
             readOnly: true,
             status: status,
             runtime: CompanionRuntimeStatusPayload(
                 status: status,
-                routes: routes
+                routes: routes,
+                nativeAcceleration: nativeAcceleration
             ),
             authorization: CompanionAuthorizationStatusPayload(authorization: authorization),
             models: CompanionModelStatusPayload(
@@ -1492,6 +1498,20 @@ button.primary:active {
 
     private func companionImageJobsSnapshot() async -> [Melix_Controlplane_V1_ImageJobSummary] {
         await imageJobReadModel?.snapshot() ?? []
+    }
+
+    private func nativeAccelerationStatus() async -> NativeAccelerationStatusPayload {
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonVLM),
+            let introspectingClient = workerClient as? any RuntimeIntrospectingWorkerClientProtocol,
+            let runtimeStats = try? await introspectingClient.runtimeStats()
+        else {
+            return .unavailable
+        }
+        return NativeAccelerationStatusPayload(
+            summary: Melix_Controlplane_V1_NativeAccelerationStatusSummary(runtimeStats: runtimeStats.stats)
+        )
     }
 
     private func companionImageJobLogTail() async -> (entries: [ImageJobLogEntry], total: Int) {
@@ -1660,14 +1680,25 @@ button.primary:active {
 
     private func handleChatCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = now()
+        if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+            return invalidGenerationBoundsResponse(boundsFailure)
+        }
+        if let unsupportedField = unsupportedChatCompletionsField(in: request.body) {
+            return unsupportedRequestFieldResponse(field: unsupportedField)
+        }
+        let chatRequest: OpenAIChatCompletionsRequest
         do {
-            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
-                return invalidGenerationBoundsResponse(boundsFailure)
-            }
-            if let unsupportedField = unsupportedChatCompletionsField(in: request.body) {
-                return unsupportedRequestFieldResponse(field: unsupportedField)
-            }
-            let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
+            chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed multimodal chat payload."
+            )
+        } catch let error as MultimodalRequestNormalizationError {
+            return mediaNormalizationErrorResponse(error)
+        }
+        do {
             if let resumeRequestID = chatRequest.resumeRequestID?.trimmingCharacters(in: .whitespacesAndNewlines),
                !resumeRequestID.isEmpty {
                 return try await resumeStreamResponse(
@@ -1702,11 +1733,6 @@ button.primary:active {
                 return invalidArgumentResponse(message: error.operatorMessage)
             }
             return mediaNormalizationErrorResponse(error)
-        } catch let error as DecodingError {
-            return invalidRequestSchemaResponse(
-                field: decodingErrorField(error),
-                message: "Malformed multimodal chat payload."
-            )
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
@@ -1720,11 +1746,20 @@ button.primary:active {
 
     private func handleCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
+        if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+            return invalidGenerationBoundsResponse(boundsFailure)
+        }
+        let completionsRequest: OpenAICompletionsRequest
         do {
-            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
-                return invalidGenerationBoundsResponse(boundsFailure)
-            }
-            let completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
+            completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed completions payload."
+            )
+        }
+        do {
             let normalized = try translator.normalize(completionsRequest)
             return try await streamNormalizedTextRequest(
                 normalized,
@@ -1744,11 +1779,20 @@ button.primary:active {
 
     private func handleResponses(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
+        if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+            return invalidGenerationBoundsResponse(boundsFailure)
+        }
+        let responsesRequest: OpenAIResponsesRequest
         do {
-            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
-                return invalidGenerationBoundsResponse(boundsFailure)
-            }
-            let responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
+            responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed responses payload."
+            )
+        }
+        do {
             let normalized = try translator.normalize(responsesRequest)
             return try await streamNormalizedTextRequest(
                 normalized,
@@ -1768,11 +1812,20 @@ button.primary:active {
 
     private func handleMessages(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
+        if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+            return invalidGenerationBoundsResponse(boundsFailure)
+        }
+        let messagesRequest: MelixMessagesRequest
         do {
-            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
-                return invalidGenerationBoundsResponse(boundsFailure)
-            }
-            let messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
+            messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed messages payload."
+            )
+        }
+        do {
             let normalized = try translator.normalize(messagesRequest)
             return try await streamNormalizedTextRequest(
                 normalized,
@@ -1860,7 +1913,16 @@ button.primary:active {
     }
 
     private func handleEmbeddings(_ request: HTTPRequest) async throws -> HTTPResponse {
-        let embeddingsRequest = try decoder.decode(OpenAIEmbeddingsRequest.self, from: request.body)
+        let embeddingsRequest: OpenAIEmbeddingsRequest
+        do {
+            embeddingsRequest = try decoder.decode(OpenAIEmbeddingsRequest.self, from: request.body)
+        } catch let error as DecodingError {
+            return invalidRequestSchemaResponse(
+                route: request.path,
+                field: decodingErrorField(error),
+                message: "Malformed embeddings payload."
+            )
+        }
         if let validationFailure = await endpointCompatibilityFailureResponse(
             modelID: embeddingsRequest.model,
             endpoint: .embedding
@@ -3964,6 +4026,13 @@ button.primary:active {
             if let workerError = aggregate.error {
                 return workerErrorResponse(workerError)
             }
+            if let violation = Self.toolChoiceViolation(
+                for: Self.toolChoiceContract(from: workerRequest),
+                observedToolNames: aggregate.toolCallNames,
+                finishReason: aggregate.finishReason
+            ) {
+                return toolChoiceFailureResponse(violation)
+            }
 
             await metricsStore.increment("http.chat_completions_non_stream_request_count")
             await metricsStore.set(
@@ -4015,6 +4084,7 @@ button.primary:active {
         var error: Melix_Worker_V1_ErrorStatus?
         var tokenLogprobs: [TokenLogprob] = []
         var hasIncompleteLogprobEvidence = false
+        var toolCallNames: [String] = []
     }
 
     private func aggregateChatCompletion(
@@ -4062,6 +4132,10 @@ button.primary:active {
             case .error(let error):
                 aggregate.error = error.error
                 return aggregate
+            case .toolCallDelta(let toolCall):
+                if !toolCall.toolName.isEmpty {
+                    aggregate.toolCallNames.append(toolCall.toolName)
+                }
             default:
                 continue
             }
@@ -4116,6 +4190,138 @@ button.primary:active {
         }
 
         return payload
+    }
+
+    private enum ToolChoiceContract: Equatable, Sendable {
+        case none
+        case required(String)
+        case named(String)
+    }
+
+    private struct ToolChoiceContractViolation: Sendable {
+        let requestedToolChoice: String
+        let observedToolNames: [String]
+        let finishReason: String
+
+        var details: [String: String] {
+            [
+                "field": "tool_choice",
+                "phase": "response_finalization",
+                "requested_tool_choice": requestedToolChoice,
+                "observed_tool_calls": observedToolNames.joined(separator: ","),
+                "finish_reason": finishReason,
+            ]
+        }
+    }
+
+    private static func toolChoiceContract(
+        from request: Melix_Worker_V1_GenerateRequest
+    ) -> ToolChoiceContract {
+        guard request.execution.hasToolConfig,
+              !request.execution.toolConfig.tools.isEmpty
+        else {
+            return .none
+        }
+
+        let raw = request.execution.toolConfig.toolChoice.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else {
+            return .none
+        }
+
+        switch raw.lowercased() {
+        case "required":
+            return .required(raw)
+        case "auto", "none":
+            return .none
+        default:
+            guard let name = namedToolChoiceName(from: raw) else {
+                return .none
+            }
+            return .named(name)
+        }
+    }
+
+    private static func namedToolChoiceName(from raw: String) -> String? {
+        guard let data = raw.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        if let function = object["function"] as? [String: Any],
+           let name = function["name"] as? String {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let name = object["name"] as? String {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return nil
+    }
+
+    private static func toolChoiceViolation(
+        for contract: ToolChoiceContract,
+        observedToolNames: [String],
+        finishReason: String
+    ) -> ToolChoiceContractViolation? {
+        switch contract {
+        case .none:
+            return nil
+        case .required(let requested):
+            guard observedToolNames.isEmpty else {
+                return nil
+            }
+            return ToolChoiceContractViolation(
+                requestedToolChoice: requested,
+                observedToolNames: observedToolNames,
+                finishReason: finishReason
+            )
+        case .named(let name):
+            guard !observedToolNames.isEmpty,
+                  observedToolNames.allSatisfy({ $0 == name })
+            else {
+                return ToolChoiceContractViolation(
+                    requestedToolChoice: name,
+                    observedToolNames: observedToolNames,
+                    finishReason: finishReason
+                )
+            }
+            return nil
+        }
+    }
+
+    private func toolChoiceFailureResponse(_ violation: ToolChoiceContractViolation) -> HTTPResponse {
+        jsonResponse(
+            statusCode: 502,
+            payload: [
+                "error": [
+                    "code": "tool_choice_not_satisfied",
+                    "field": "tool_choice",
+                    "phase": "response_finalization",
+                    "message": "Model response did not satisfy the requested tool_choice.",
+                    "requested_tool_choice": violation.requestedToolChoice,
+                    "observed_tool_calls": violation.observedToolNames,
+                    "finish_reason": violation.finishReason,
+                ],
+            ]
+        )
+    }
+
+    private static func toolChoiceErrorEvent(
+        requestID: String,
+        seq: UInt64,
+        violation: ToolChoiceContractViolation
+    ) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.seq = seq
+        event.error = Melix_Worker_V1_ErrorEvent()
+        event.error.error.code = "tool_choice_not_satisfied"
+        event.error.error.message = "Model response did not satisfy the requested tool_choice."
+        event.error.error.details = violation.details
+        return event
     }
 
     private static func chatUsagePayload(_ usage: NonStreamChatCompletionAggregate.Usage) -> [String: Any] {
@@ -4273,8 +4479,14 @@ button.primary:active {
             workerStream = execution.stream
         }
 
+        let outputStream = Self.toolChoiceValidatedStream(
+            workerStream,
+            request: translated.workerRequest,
+            requestID: execution.requestID,
+            shape: shape
+        )
         let stream = sseWriter.encode(
-            stream: workerStream,
+            stream: outputStream,
             requestID: execution.requestID,
             modelID: translated.responseModelID ?? execution.modelID,
             shape: shape,
@@ -4297,6 +4509,104 @@ button.primary:active {
             ],
             body: .stream(stream)
         )
+    }
+
+    private static func toolChoiceValidatedStream(
+        _ stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>,
+        request: Melix_Worker_V1_GenerateRequest,
+        requestID: String,
+        shape: SSEStreamWriter.StreamShape
+    ) -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        let contract = toolChoiceContract(from: request)
+        guard shape == .chatCompletions, contract != .none else {
+            return stream
+        }
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                var bufferedEvents: [Melix_Worker_V1_ExecuteEvent] = []
+                var observedToolNames: [String] = []
+                var finishReason = "stop"
+                var lastSeq: UInt64 = 0
+                var isSatisfied = false
+
+                do {
+                    for try await event in stream {
+                        lastSeq = max(lastSeq, event.seq)
+                        switch event.payload {
+                        case .toolCallDelta(let toolCall):
+                            if !toolCall.toolName.isEmpty {
+                                observedToolNames.append(toolCall.toolName)
+                            }
+                        case .completed(let completed):
+                            finishReason = completed.finishReason.isEmpty ? "stop" : completed.finishReason
+                        case .error:
+                            continuation.yield(event)
+                            continuation.finish()
+                            return
+                        default:
+                            break
+                        }
+
+                        if isSatisfied {
+                            continuation.yield(event)
+                            continue
+                        }
+
+                        bufferedEvents.append(event)
+                        isSatisfied = toolChoiceContractIsSatisfied(
+                            contract,
+                            observedToolNames: observedToolNames
+                        )
+                        if isSatisfied {
+                            for bufferedEvent in bufferedEvents {
+                                continuation.yield(bufferedEvent)
+                            }
+                            bufferedEvents.removeAll()
+                        }
+                    }
+
+                    if !isSatisfied, let violation = toolChoiceViolation(
+                        for: contract,
+                        observedToolNames: observedToolNames,
+                        finishReason: finishReason
+                    ) {
+                        continuation.yield(
+                            toolChoiceErrorEvent(
+                                requestID: requestID,
+                                seq: lastSeq + 1,
+                                violation: violation
+                            )
+                        )
+                    } else {
+                        for event in bufferedEvents {
+                            continuation.yield(event)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    private static func toolChoiceContractIsSatisfied(
+        _ contract: ToolChoiceContract,
+        observedToolNames: [String]
+    ) -> Bool {
+        switch contract {
+        case .none:
+            return true
+        case .required:
+            return !observedToolNames.isEmpty
+        case .named(let name):
+            return observedToolNames.contains(name)
+        }
     }
 
     private func shouldInspectFirstStreamEventForPreSSEAdmission(_ translated: TranslatedChatRequest) -> Bool {
@@ -4362,13 +4672,16 @@ button.primary:active {
 
     private func localServerSecurityRejectionResponse(
         reason: LocalServerSecurityPolicy.RejectionReason,
-        headerValue: String
+        headerValue _: String
     ) async -> HTTPResponse {
         await metricsStore.increment("local_server_security.rejected_request_count")
+        let rejectedHeaderName: String
         switch reason {
         case .hostNotAllowed:
+            rejectedHeaderName = "host"
             await metricsStore.increment("local_server_security.rejected_host_count")
         case .originNotAllowed:
+            rejectedHeaderName = "origin"
             await metricsStore.increment("local_server_security.rejected_origin_count")
         }
         return jsonResponse(
@@ -4377,13 +4690,36 @@ button.primary:active {
                 "error": [
                     "code": reason.errorCode,
                     "message": reason.message,
-                    "header_value": headerValue,
-                    "local_server_security": (
-                        try? localServerSecurityPolicy.receipt.jsonObject(encoder: encoder)
-                    ) ?? [:],
+                    "privacy_receipt": localServerSecurityPrivacyReceipt(
+                        rejectedHeaderName: rejectedHeaderName,
+                        rejectionReason: reason.errorCode
+                    ),
                 ],
             ]
         )
+    }
+
+    private func localServerSecurityPrivacyReceipt(
+        rejectedHeaderName: String,
+        rejectionReason: String
+    ) -> [String: Any] {
+        let policyReceipt = localServerSecurityPolicy.receipt
+        return [
+            "schema_version": "melix.privacy_envelope.v1",
+            "surface": "local_proxy_security_rejection",
+            "rejected_header": rejectedHeaderName,
+            "rejection_reason": rejectionReason,
+            "redacted": true,
+            "redaction_policy": "raw_header_value_omitted",
+            "local_server_security": [
+                "schema_version": policyReceipt.schemaVersion,
+                "bind_host": policyReceipt.bindHost,
+                "allowed_hosts": policyReceipt.allowedHosts,
+                "allowed_origins": policyReceipt.allowedOrigins,
+                "loopback_only_host_policy": policyReceipt.loopbackOnlyHostPolicy,
+                "browser_cors_policy": policyReceipt.browserCorsPolicy,
+            ],
+        ]
     }
 
     private func jsonData(_ payload: [String: Any]) -> Data {
@@ -4621,7 +4957,7 @@ button.primary:active {
         )
     }
 
-    private func invalidRequestSchemaResponse(field: String, message: String) -> HTTPResponse {
+    private func invalidRequestSchemaResponse(route: String, field: String, message: String) -> HTTPResponse {
         jsonResponse(
             statusCode: 400,
             payload: [
@@ -4630,9 +4966,42 @@ button.primary:active {
                     "field": field,
                     "phase": "decode",
                     "message": message,
+                    "privacy_receipt": ingressPrivacyReceipt(
+                        route: route,
+                        field: field,
+                        phase: "decode",
+                        action: "redacted",
+                        redactionPolicy: "raw_payload_omitted"
+                    ),
                 ],
             ]
         )
+    }
+
+    private func ingressPrivacyReceipt(
+        route: String,
+        field: String,
+        phase: String,
+        action: String,
+        redactionPolicy: String
+    ) -> [String: Any] {
+        [
+            "schema_version": "melix.ingress_privacy_receipt.v1",
+            "surface": "openai_request_ingress",
+            "route": sanitizedRequestRoutePath(route),
+            "field": field,
+            "phase": phase,
+            "action": action,
+            "redaction_policy": redactionPolicy,
+            "raw_payload_included": false,
+        ]
+    }
+
+    private func sanitizedRequestRoutePath(_ route: String) -> String {
+        guard let separatorIndex = route.firstIndex(where: { $0 == "?" || $0 == "#" }) else {
+            return route
+        }
+        return String(route[..<separatorIndex])
     }
 
     private func decodingErrorField(_ error: DecodingError) -> String {
@@ -5243,7 +5612,8 @@ button.primary:active {
     }
 
     private func authorizationRoute(for request: HTTPRequest) -> GatewayAuthorizationRoute {
-        switch (request.method, request.path) {
+        let routePath = sanitizedRequestRoutePath(request.path)
+        switch (request.method, routePath) {
         case (.get, "/v1/melix/companion"):
             return .publicAsset
         case (.get, "/health"):
@@ -5293,7 +5663,7 @@ button.primary:active {
                         ],
                         "route": [
                             "method": request.method.rawValue,
-                            "path": request.path,
+                            "path": sanitizedRequestRoutePath(request.path),
                         ],
                     ]
                 ]
@@ -6209,6 +6579,7 @@ private struct HealthDiagnosticsResponse: Codable {
     let modelsTotal: Int
     let models: [HealthDiagnosticsModelResponse]
     let localServerSecurity: LocalServerSecurityReceipt
+    let nativeAcceleration: NativeAccelerationStatusPayload
 
     enum CodingKeys: String, CodingKey {
         case status
@@ -6217,6 +6588,7 @@ private struct HealthDiagnosticsResponse: Codable {
         case modelsTotal = "models_total"
         case models
         case localServerSecurity = "local_server_security"
+        case nativeAcceleration = "native_acceleration"
     }
 }
 
@@ -6272,6 +6644,151 @@ private struct CompanionStatusResponse: Encodable {
 private struct CompanionRuntimeStatusPayload: Codable {
     let status: String
     let routes: [String: Bool]
+    let nativeAcceleration: NativeAccelerationStatusPayload
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case routes
+        case nativeAcceleration = "native_acceleration"
+    }
+}
+
+private struct NativeAccelerationStatusPayload: Codable {
+    static let unavailable = NativeAccelerationStatusPayload(summary: .unavailable)
+
+    let schemaVersion: String
+    let status: String
+    let mode: String
+    let runtimeActive: Bool
+    let draftSupported: Bool
+    let effectiveDepth: UInt32
+    let requestGate: String
+    let runtimeScope: String
+    let fallbackReason: String
+    let autoregressiveFallback: Bool
+    let samplingMatchesBaseline: Bool
+    let forwardCounts: NativeAccelerationForwardCountsPayload
+    let timings: NativeAccelerationTimingPayload
+    let acceptanceByDepth: NativeAccelerationAcceptanceByDepthPayload
+
+    init(summary: Melix_Controlplane_V1_NativeAccelerationStatusSummary) {
+        self.init(
+            schemaVersion: summary.schemaVersion,
+            status: summary.status,
+            mode: summary.mode,
+            runtimeActive: summary.runtimeActive,
+            draftSupported: summary.draftSupported,
+            effectiveDepth: summary.effectiveDepth,
+            requestGate: summary.requestGate,
+            runtimeScope: summary.runtimeScope,
+            fallbackReason: summary.fallbackReason,
+            autoregressiveFallback: summary.autoregressiveFallback,
+            samplingMatchesBaseline: summary.samplingMatchesBaseline,
+            forwardCounts: NativeAccelerationForwardCountsPayload(
+                rounds: summary.forwardCounts.rounds,
+                acceptedTokens: summary.forwardCounts.acceptedTokens,
+                rejectedTokens: summary.forwardCounts.rejectedTokens
+            ),
+            timings: NativeAccelerationTimingPayload(
+                draftProposeMs: summary.timings.draftProposeMs,
+                targetVerifyMs: summary.timings.targetVerifyMs
+            ),
+            acceptanceByDepth: NativeAccelerationAcceptanceByDepthPayload(
+                effectiveDepth: summary.acceptanceByDepth.effectiveDepth,
+                acceptedTokens: summary.acceptanceByDepth.acceptedTokens,
+                rejectedTokens: summary.acceptanceByDepth.rejectedTokens,
+                acceptanceRate: summary.acceptanceByDepth.acceptanceRate,
+                rollbackRate: summary.acceptanceByDepth.rollbackRate
+            )
+        )
+    }
+
+    init(
+        schemaVersion: String,
+        status: String,
+        mode: String,
+        runtimeActive: Bool,
+        draftSupported: Bool,
+        effectiveDepth: UInt32,
+        requestGate: String,
+        runtimeScope: String,
+        fallbackReason: String,
+        autoregressiveFallback: Bool,
+        samplingMatchesBaseline: Bool,
+        forwardCounts: NativeAccelerationForwardCountsPayload,
+        timings: NativeAccelerationTimingPayload,
+        acceptanceByDepth: NativeAccelerationAcceptanceByDepthPayload
+    ) {
+        self.schemaVersion = schemaVersion
+        self.status = status
+        self.mode = mode
+        self.runtimeActive = runtimeActive
+        self.draftSupported = draftSupported
+        self.effectiveDepth = effectiveDepth
+        self.requestGate = requestGate
+        self.runtimeScope = runtimeScope
+        self.fallbackReason = fallbackReason
+        self.autoregressiveFallback = autoregressiveFallback
+        self.samplingMatchesBaseline = samplingMatchesBaseline
+        self.forwardCounts = forwardCounts
+        self.timings = timings
+        self.acceptanceByDepth = acceptanceByDepth
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case status
+        case mode
+        case runtimeActive = "runtime_active"
+        case draftSupported = "draft_supported"
+        case effectiveDepth = "effective_depth"
+        case requestGate = "request_gate"
+        case runtimeScope = "runtime_scope"
+        case fallbackReason = "fallback_reason"
+        case autoregressiveFallback = "autoregressive_fallback"
+        case samplingMatchesBaseline = "sampling_matches_baseline"
+        case forwardCounts = "forward_counts"
+        case timings
+        case acceptanceByDepth = "acceptance_by_depth"
+    }
+}
+
+private struct NativeAccelerationForwardCountsPayload: Codable {
+    let rounds: UInt64
+    let acceptedTokens: UInt64
+    let rejectedTokens: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case rounds
+        case acceptedTokens = "accepted_tokens"
+        case rejectedTokens = "rejected_tokens"
+    }
+}
+
+private struct NativeAccelerationTimingPayload: Codable {
+    let draftProposeMs: Double
+    let targetVerifyMs: Double
+
+    enum CodingKeys: String, CodingKey {
+        case draftProposeMs = "draft_propose_ms"
+        case targetVerifyMs = "target_verify_ms"
+    }
+}
+
+private struct NativeAccelerationAcceptanceByDepthPayload: Codable {
+    let effectiveDepth: UInt32
+    let acceptedTokens: UInt64
+    let rejectedTokens: UInt64
+    let acceptanceRate: Double
+    let rollbackRate: Double
+
+    enum CodingKeys: String, CodingKey {
+        case effectiveDepth = "effective_depth"
+        case acceptedTokens = "accepted_tokens"
+        case rejectedTokens = "rejected_tokens"
+        case acceptanceRate = "acceptance_rate"
+        case rollbackRate = "rollback_rate"
+    }
 }
 
 private struct CompanionAuthorizationStatusPayload: Codable {

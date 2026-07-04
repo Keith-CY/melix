@@ -335,7 +335,7 @@ def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> N
 
 def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple() -> None:
     report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_clear()
-    rule = {"metric_prefixes": ("adapter.", "runtime.")}
+    rule: dict[str, object] = {"metric_prefixes": ("adapter.", "runtime.")}
 
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
@@ -353,8 +353,14 @@ def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple()
     )
 
     cache_info = report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_info()
-    assert cache_info.hits >= 1
+    assert cache_info.hits == 0
     assert cache_info.misses == 1
+    cached_state = rule["_melix_cached_metric_prefix_state"]
+    assert isinstance(cached_state, tuple)
+    assert cached_state[0] is rule["metric_prefixes"]
+    assert cached_state[1] == ("adapter.", "runtime.")
+    assert cached_state[2] == frozenset({"a", "r"})
+    assert cached_state[3] is False
 
 
 def test_report_evidence_gate_metric_prefix_fast_reject_preserves_empty_prefix() -> None:
@@ -370,6 +376,16 @@ def test_report_evidence_gate_metric_prefix_fast_reject_preserves_empty_prefix()
         runs=[],
         targets=[],
         metrics=[{"metric": "other.decode_ms"}, {"metric": 42}],
+        probe_phases=set(),
+    )
+
+
+def test_report_evidence_gate_metric_prefix_preserves_non_string_match() -> None:
+    assert report_evidence_gate_module._rule_matches_report(
+        rule={"metric_prefixes": ("42",)},
+        runs=[],
+        targets=[],
+        metrics=[{"metric": 42}],
         probe_phases=set(),
     )
 
@@ -415,8 +431,10 @@ def test_report_evidence_gate_target_field_tuple_rules_reuse_normalized_tuple() 
     )
 
     cache_info = report_evidence_gate_module._string_frozenset_from_tuple.cache_info()
-    assert cache_info.hits >= 1
+    assert cache_info.hits == 0
     assert cache_info.misses == 1
+    assert rule["_melix_cached_target_fields"] is rule["target_fields"]
+    assert rule["_melix_cached_target_field_set"] == {"adapter_id", "adapter_snapshot"}
 
 
 def test_report_evidence_gate_target_field_rules_skip_unrelated_target_items() -> None:
@@ -540,8 +558,12 @@ def test_report_evidence_gate_probe_phase_tuple_rules_reuse_normalized_set() -> 
     )
 
     cache_info = report_evidence_gate_module._string_frozenset_from_tuple.cache_info()
-    assert cache_info.hits >= 1
+    assert cache_info.hits == 0
     assert cache_info.misses == 1
+    assert rule["_melix_cached_probe_phases"] is rule["probe_phases"]
+    assert rule["_melix_cached_probe_phase_set"] == frozenset(
+        {"runtime_prepare", "model_load", "decode"}
+    )
 
 
 def test_report_evidence_gate_probe_phase_list_rules_reflect_mutation() -> None:
@@ -670,6 +692,42 @@ def test_report_matrix_roles_scans_probe_phases_once_for_phase_rules(
 
     assert roles == ["runtime", "decode"]
     assert calls == 1
+
+
+def test_report_evidence_gate_probe_phases_scans_buckets_without_dict_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_dict_list(value: object) -> list[dict[str, object]]:
+        raise AssertionError(  # pragma: no cover - exercised only on regression
+            "_probe_phases should scan list buckets directly"
+        )
+
+    monkeypatch.setattr(report_evidence_gate_module, "_dict_list", fail_dict_list)
+
+    phases = report_evidence_gate_module._probe_phases(
+        {
+            "probe_summary": {
+                "baseline": {
+                    "slowest_phases": [
+                        {"phase": " runtime_prepare "},
+                        object(),
+                        {"phase": ""},
+                    ],
+                    "failed_phases": [
+                        {"phase": "model_load"},
+                        {"duration_ms": 1.0},
+                    ],
+                    "skipped_phases": "not-a-list",
+                },
+                "candidate": {
+                    "slowest_phases": [{"phase": "decode"}],
+                    "fallback_phases": [{"phase": 42}],
+                },
+            }
+        }
+    )
+
+    assert phases == {"runtime_prepare", "model_load", "decode", "42"}
 
 
 def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:

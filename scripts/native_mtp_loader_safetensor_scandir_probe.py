@@ -48,6 +48,12 @@ def _populate_model_dir(model_dir: Path, *, model_files: int, distractor_files: 
         (model_dir / f"model-{index:05d}.bin").write_bytes(b"0")
         weight_map[f"language_model.mtp.layers.{index}.weight"] = mtp_name
         weight_map[f"language_model.mtp.layers.{index}.duplicate_weight"] = mtp_name
+        weight_map[f"language_model.mtp.layers.{index}.base_weight"] = (
+            f"model-{index % max(1, min(model_files, 32)):05d}-of-{model_files:05d}.safetensors"
+        )
+        weight_map[f"language_model.mtp.layers.{index}.base_weight_duplicate"] = (
+            f"model-{index % max(1, min(model_files, 32)):05d}-of-{model_files:05d}.safetensors"
+        )
         weight_map[f"language_model.mtp.layers.{index}.metadata"] = f"mtp-{index:05d}.json"
         weight_map[f"language_model.mtp.layers.{index}.metadata_duplicate"] = f"mtp-{index:05d}.json"
     (model_dir / "model-nested.safetensors").mkdir()
@@ -323,7 +329,8 @@ def run_probe() -> dict[str, float | int | str]:
         "model_files": model_files,
         "distractor_files": distractor_files,
         "duplicate_mtp_entries": distractor_files,
-        "irrelevant_mtp_entries": distractor_files * 2,
+        "irrelevant_mtp_entries": distractor_files * 4,
+        "duplicate_base_model_entries": distractor_files,
         "samples": samples,
         "key_iterations": key_iterations,
         "weight_load_iterations": weight_load_iterations,

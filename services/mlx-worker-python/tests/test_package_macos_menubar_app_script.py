@@ -60,6 +60,24 @@ def find_run_workflow_step(workflow: str, name: str, command: str) -> re.Match[s
     return match
 
 
+def workflow_step_uses(step: str) -> str:
+    match = re.search(
+        r"^[ \t]*uses:[ \t]+['\"]?(?P<uses>[^'\"\s]+)['\"]?[ \t]*$",
+        step,
+        flags=re.MULTILINE,
+    )
+    assert match is not None, "Workflow step missing uses:"
+    return match.group("uses")
+
+
+def checkout_action_ref(step: str) -> str:
+    action_ref = workflow_step_uses(step)
+    match = re.fullmatch(r"actions/checkout@v(?P<major>[0-9]+)(?:\.[0-9]+)*", action_ref)
+    assert match is not None, f"Workflow step should use actions/checkout, got: {action_ref}"
+    assert int(match.group("major")) >= 7
+    return action_ref
+
+
 def load_package_macos_app_module():
     assert MODULE_PATH.exists(), f"Expected package_macos_menubar_app entrypoint at {MODULE_PATH}"
     spec = importlib.util.spec_from_file_location("melix_package_macos_app", MODULE_PATH)
@@ -369,6 +387,21 @@ def test_resolve_built_product_uses_lex_debug_without_missing_release_file_probe
     assert module._resolve_built_product(build_root, "melix") == expected
 
 
+def test_resolve_built_product_keeps_remaining_release_priority_after_debug_candidate(
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    build_root = tmp_path / ".build"
+    (build_root / "arch-0000").mkdir(parents=True)
+    debug = build_root / "arch-0001/debug/melix"
+    release = build_root / "arch-0002/release/melix"
+    for binary in (debug, release):
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    assert module._resolve_built_product(build_root, "melix") == release
+
+
 def test_resolve_built_product_returns_debug_candidate_when_scandir_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -550,12 +583,12 @@ def test_package_workflow_manual_dispatch_defaults_to_main_checkout() -> None:
 
     manual_checkout = find_workflow_step(workflow, "Checkout manual package source")
     assert "if: github.event_name == 'workflow_dispatch'" in manual_checkout
-    assert "uses: actions/checkout@v6" in manual_checkout
+    manual_checkout_action = checkout_action_ref(manual_checkout)
     assert "ref: ${{ inputs.source_ref }}" in manual_checkout
 
     event_checkout = find_workflow_step(workflow, "Checkout event source")
     assert "if: github.event_name != 'workflow_dispatch'" in event_checkout
-    assert "uses: actions/checkout@v6" in event_checkout
+    assert checkout_action_ref(event_checkout) == manual_checkout_action
     assert "ref:" not in event_checkout
 
 
@@ -614,7 +647,10 @@ def test_package_workflow_detects_scheduled_main_updates_before_packaging() -> N
     assert "should_package: ${{ steps.detect-main-update.outputs.should_package }}" in workflow
     preflight_job = find_workflow_job(workflow, "detect-main-update")
     assert "if: github.event_name == 'schedule'" in preflight_job
-    assert "actions/checkout@v6" in preflight_job
+    preflight_checkout = find_workflow_step(preflight_job, "Checkout scheduled main source")
+    assert checkout_action_ref(preflight_checkout) == checkout_action_ref(
+        find_workflow_step(workflow, "Checkout manual package source")
+    )
     assert "ref: main" in preflight_job
     assert "github.rest.actions.listWorkflowRuns" in preflight_job
     assert "event: 'schedule'" in preflight_job

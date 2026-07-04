@@ -699,6 +699,126 @@ public nonisolated struct Melix_Worker_V1_RuntimeStats: @unchecked Sendable {
     set {_uniqueStorage()._lastImageFeatureWorkSavedBytes = newValue}
   }
 
+  public var nativeQuantizedLoadCount: UInt64 {
+    get {_storage._nativeQuantizedLoadCount}
+    set {_uniqueStorage()._nativeQuantizedLoadCount = newValue}
+  }
+
+  public var bridgeQuantizedFallbackCount: UInt64 {
+    get {_storage._bridgeQuantizedFallbackCount}
+    set {_uniqueStorage()._bridgeQuantizedFallbackCount = newValue}
+  }
+
+  public var crossShardMetadataFixupCount: UInt64 {
+    get {_storage._crossShardMetadataFixupCount}
+    set {_uniqueStorage()._crossShardMetadataFixupCount = newValue}
+  }
+
+  public var speculativeProbeEnabledCount: UInt64 {
+    get {_storage._speculativeProbeEnabledCount}
+    set {_uniqueStorage()._speculativeProbeEnabledCount = newValue}
+  }
+
+  public var speculativeProbeFallbackCount: UInt64 {
+    get {_storage._speculativeProbeFallbackCount}
+    set {_uniqueStorage()._speculativeProbeFallbackCount = newValue}
+  }
+
+  public var speculativeProbePositionAlignedCount: UInt64 {
+    get {_storage._speculativeProbePositionAlignedCount}
+    set {_uniqueStorage()._speculativeProbePositionAlignedCount = newValue}
+  }
+
+  public var speculativeProbeCacheAlignedCount: UInt64 {
+    get {_storage._speculativeProbeCacheAlignedCount}
+    set {_uniqueStorage()._speculativeProbeCacheAlignedCount = newValue}
+  }
+
+  public var speculativeProbeStatus: String {
+    get {_storage._speculativeProbeStatus}
+    set {_uniqueStorage()._speculativeProbeStatus = newValue}
+  }
+
+  public var speculativeProbeMode: String {
+    get {_storage._speculativeProbeMode}
+    set {_uniqueStorage()._speculativeProbeMode = newValue}
+  }
+
+  public var speculativeProbeFallbackReason: String {
+    get {_storage._speculativeProbeFallbackReason}
+    set {_uniqueStorage()._speculativeProbeFallbackReason = newValue}
+  }
+
+  public var speculativeProbeRequestGate: String {
+    get {_storage._speculativeProbeRequestGate}
+    set {_uniqueStorage()._speculativeProbeRequestGate = newValue}
+  }
+
+  public var speculativeProbeRuntimeScope: String {
+    get {_storage._speculativeProbeRuntimeScope}
+    set {_uniqueStorage()._speculativeProbeRuntimeScope = newValue}
+  }
+
+  public var speculativeProbeRuntimeActive: Bool {
+    get {_storage._speculativeProbeRuntimeActive}
+    set {_uniqueStorage()._speculativeProbeRuntimeActive = newValue}
+  }
+
+  public var speculativeProbeDraftSupported: Bool {
+    get {_storage._speculativeProbeDraftSupported}
+    set {_uniqueStorage()._speculativeProbeDraftSupported = newValue}
+  }
+
+  public var speculativeProbeEffectiveDepth: UInt32 {
+    get {_storage._speculativeProbeEffectiveDepth}
+    set {_uniqueStorage()._speculativeProbeEffectiveDepth = newValue}
+  }
+
+  public var speculativeProbeRounds: UInt64 {
+    get {_storage._speculativeProbeRounds}
+    set {_uniqueStorage()._speculativeProbeRounds = newValue}
+  }
+
+  public var speculativeProbeAcceptedTokens: UInt64 {
+    get {_storage._speculativeProbeAcceptedTokens}
+    set {_uniqueStorage()._speculativeProbeAcceptedTokens = newValue}
+  }
+
+  public var speculativeProbeRejectedTokens: UInt64 {
+    get {_storage._speculativeProbeRejectedTokens}
+    set {_uniqueStorage()._speculativeProbeRejectedTokens = newValue}
+  }
+
+  public var speculativeProbeAcceptanceRate: Double {
+    get {_storage._speculativeProbeAcceptanceRate}
+    set {_uniqueStorage()._speculativeProbeAcceptanceRate = newValue}
+  }
+
+  public var speculativeProbeRollbackRate: Double {
+    get {_storage._speculativeProbeRollbackRate}
+    set {_uniqueStorage()._speculativeProbeRollbackRate = newValue}
+  }
+
+  public var speculativeProbeDraftProposeMs: Double {
+    get {_storage._speculativeProbeDraftProposeMs}
+    set {_uniqueStorage()._speculativeProbeDraftProposeMs = newValue}
+  }
+
+  public var speculativeProbeTargetVerifyMs: Double {
+    get {_storage._speculativeProbeTargetVerifyMs}
+    set {_uniqueStorage()._speculativeProbeTargetVerifyMs = newValue}
+  }
+
+  public var speculativeProbeAutoregressiveFallback: Bool {
+    get {_storage._speculativeProbeAutoregressiveFallback}
+    set {_uniqueStorage()._speculativeProbeAutoregressiveFallback = newValue}
+  }
+
+  public var speculativeProbeSamplingMatchesBaseline: Bool {
+    get {_storage._speculativeProbeSamplingMatchesBaseline}
+    set {_uniqueStorage()._speculativeProbeSamplingMatchesBaseline = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1329,7 +1449,7 @@ nonisolated extension Melix_Worker_V1_WarmupModelResponse: SwiftProtobuf.Message
 
 nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RuntimeStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0\u{3}last_video_effective_frame_count\0\u{3}last_video_requested_frame_budget\0\u{3}last_video_window_ms\0\u{3}last_temp_media_artifact_count\0\u{3}last_temp_media_artifact_bytes\0\u{3}last_temp_media_cleanup_latency_ms\0\u{3}last_temp_media_cleanup_failure_count\0\u{3}generation_stream_owner_mode\0\u{3}worker_thread_init_latency_ms\0\u{3}stream_sync_fallback_count\0\u{3}last_speech_streaming_enabled\0\u{3}last_speech_streaming_interval_ms\0\u{3}last_speech_first_audio_latency_ms\0\u{3}last_multimodal_decode_mode\0\u{3}last_multimodal_fallback_reason\0\u{3}last_multimodal_decode_sync_mode\0\u{3}text_batch_generator_submitted_request_count\0\u{3}text_batch_generator_completed_request_count\0\u{3}text_batch_generator_step_count\0\u{3}text_batch_generator_generated_token_count\0\u{3}text_batch_generator_peak_active_batch_size\0\u{3}text_batch_generator_queue_wait_ms_total\0\u{3}text_batch_generator_insert_ms_total\0\u{3}text_batch_generator_executor_step_ms_total\0\u{3}text_batch_generator_next_ms_total\0\u{3}text_batch_generator_emit_ms_total\0\u{3}text_batch_generator_active_batch_size\0\u{3}text_batch_generator_generated_response_count\0\u{3}text_batch_generator_failed_request_count\0\u{3}text_batch_generator_prepare_ms_total\0\u{3}text_batch_generator_first_response_ms_total\0\u{3}text_batch_generator_first_visible_ms_total\0\u{3}text_batch_generator_first_visible_token_index_total\0\u{3}text_batch_generator_first_empty_segment_count\0\u{3}last_model_load_trust_policy_resolution_ms\0\u{3}model_load_trust_blocked_count\0\u{3}text_batch_generator_speculative_cycle_count_total\0\u{3}text_batch_generator_speculative_accepted_count_total\0\u{3}text_batch_generator_speculative_rejected_count_total\0\u{3}text_batch_generator_speculative_backbone_ms_total\0\u{3}text_batch_generator_speculative_mtp_head_ms_total\0\u{3}text_batch_generator_speculative_sample_ms_total\0\u{3}text_batch_generator_speculative_cache_ops_ms_total\0\u{3}last_hybrid_state_patch_mode\0\u{3}last_hybrid_state_advance_count\0\u{3}last_family_fast_path_override_count\0\u{3}last_cached_prompt_tokens\0\u{3}last_media_feature_cache_hits\0\u{3}last_media_feature_cache_misses\0\u{3}last_media_feature_encoder_calls_saved\0\u{3}last_media_feature_work_saved_bytes\0\u{3}last_image_feature_cache_hits\0\u{3}last_image_feature_cache_misses\0\u{3}last_image_feature_encoder_calls_saved\0\u{3}last_image_feature_work_saved_bytes\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0\u{3}last_video_effective_frame_count\0\u{3}last_video_requested_frame_budget\0\u{3}last_video_window_ms\0\u{3}last_temp_media_artifact_count\0\u{3}last_temp_media_artifact_bytes\0\u{3}last_temp_media_cleanup_latency_ms\0\u{3}last_temp_media_cleanup_failure_count\0\u{3}generation_stream_owner_mode\0\u{3}worker_thread_init_latency_ms\0\u{3}stream_sync_fallback_count\0\u{3}last_speech_streaming_enabled\0\u{3}last_speech_streaming_interval_ms\0\u{3}last_speech_first_audio_latency_ms\0\u{3}last_multimodal_decode_mode\0\u{3}last_multimodal_fallback_reason\0\u{3}last_multimodal_decode_sync_mode\0\u{3}text_batch_generator_submitted_request_count\0\u{3}text_batch_generator_completed_request_count\0\u{3}text_batch_generator_step_count\0\u{3}text_batch_generator_generated_token_count\0\u{3}text_batch_generator_peak_active_batch_size\0\u{3}text_batch_generator_queue_wait_ms_total\0\u{3}text_batch_generator_insert_ms_total\0\u{3}text_batch_generator_executor_step_ms_total\0\u{3}text_batch_generator_next_ms_total\0\u{3}text_batch_generator_emit_ms_total\0\u{3}text_batch_generator_active_batch_size\0\u{3}text_batch_generator_generated_response_count\0\u{3}text_batch_generator_failed_request_count\0\u{3}text_batch_generator_prepare_ms_total\0\u{3}text_batch_generator_first_response_ms_total\0\u{3}text_batch_generator_first_visible_ms_total\0\u{3}text_batch_generator_first_visible_token_index_total\0\u{3}text_batch_generator_first_empty_segment_count\0\u{3}last_model_load_trust_policy_resolution_ms\0\u{3}model_load_trust_blocked_count\0\u{3}text_batch_generator_speculative_cycle_count_total\0\u{3}text_batch_generator_speculative_accepted_count_total\0\u{3}text_batch_generator_speculative_rejected_count_total\0\u{3}text_batch_generator_speculative_backbone_ms_total\0\u{3}text_batch_generator_speculative_mtp_head_ms_total\0\u{3}text_batch_generator_speculative_sample_ms_total\0\u{3}text_batch_generator_speculative_cache_ops_ms_total\0\u{3}last_hybrid_state_patch_mode\0\u{3}last_hybrid_state_advance_count\0\u{3}last_family_fast_path_override_count\0\u{3}last_cached_prompt_tokens\0\u{3}last_media_feature_cache_hits\0\u{3}last_media_feature_cache_misses\0\u{3}last_media_feature_encoder_calls_saved\0\u{3}last_media_feature_work_saved_bytes\0\u{3}last_image_feature_cache_hits\0\u{3}last_image_feature_cache_misses\0\u{3}last_image_feature_encoder_calls_saved\0\u{3}last_image_feature_work_saved_bytes\0\u{3}native_quantized_load_count\0\u{3}bridge_quantized_fallback_count\0\u{3}cross_shard_metadata_fixup_count\0\u{3}speculative_probe_enabled_count\0\u{3}speculative_probe_fallback_count\0\u{3}speculative_probe_position_aligned_count\0\u{3}speculative_probe_cache_aligned_count\0\u{3}speculative_probe_status\0\u{3}speculative_probe_mode\0\u{3}speculative_probe_fallback_reason\0\u{3}speculative_probe_request_gate\0\u{3}speculative_probe_runtime_scope\0\u{3}speculative_probe_runtime_active\0\u{3}speculative_probe_draft_supported\0\u{3}speculative_probe_effective_depth\0\u{3}speculative_probe_rounds\0\u{3}speculative_probe_accepted_tokens\0\u{3}speculative_probe_rejected_tokens\0\u{3}speculative_probe_acceptance_rate\0\u{3}speculative_probe_rollback_rate\0\u{3}speculative_probe_draft_propose_ms\0\u{3}speculative_probe_target_verify_ms\0\u{3}speculative_probe_autoregressive_fallback\0\u{3}speculative_probe_sampling_matches_baseline\0")
 
   fileprivate class _StorageClass {
     var _workerState: String = String()
@@ -1420,6 +1540,30 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
     var _lastImageFeatureCacheMisses: UInt64 = 0
     var _lastImageFeatureEncoderCallsSaved: UInt64 = 0
     var _lastImageFeatureWorkSavedBytes: UInt64 = 0
+    var _nativeQuantizedLoadCount: UInt64 = 0
+    var _bridgeQuantizedFallbackCount: UInt64 = 0
+    var _crossShardMetadataFixupCount: UInt64 = 0
+    var _speculativeProbeEnabledCount: UInt64 = 0
+    var _speculativeProbeFallbackCount: UInt64 = 0
+    var _speculativeProbePositionAlignedCount: UInt64 = 0
+    var _speculativeProbeCacheAlignedCount: UInt64 = 0
+    var _speculativeProbeStatus: String = String()
+    var _speculativeProbeMode: String = String()
+    var _speculativeProbeFallbackReason: String = String()
+    var _speculativeProbeRequestGate: String = String()
+    var _speculativeProbeRuntimeScope: String = String()
+    var _speculativeProbeRuntimeActive: Bool = false
+    var _speculativeProbeDraftSupported: Bool = false
+    var _speculativeProbeEffectiveDepth: UInt32 = 0
+    var _speculativeProbeRounds: UInt64 = 0
+    var _speculativeProbeAcceptedTokens: UInt64 = 0
+    var _speculativeProbeRejectedTokens: UInt64 = 0
+    var _speculativeProbeAcceptanceRate: Double = 0
+    var _speculativeProbeRollbackRate: Double = 0
+    var _speculativeProbeDraftProposeMs: Double = 0
+    var _speculativeProbeTargetVerifyMs: Double = 0
+    var _speculativeProbeAutoregressiveFallback: Bool = false
+    var _speculativeProbeSamplingMatchesBaseline: Bool = false
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -1518,6 +1662,30 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
       _lastImageFeatureCacheMisses = source._lastImageFeatureCacheMisses
       _lastImageFeatureEncoderCallsSaved = source._lastImageFeatureEncoderCallsSaved
       _lastImageFeatureWorkSavedBytes = source._lastImageFeatureWorkSavedBytes
+      _nativeQuantizedLoadCount = source._nativeQuantizedLoadCount
+      _bridgeQuantizedFallbackCount = source._bridgeQuantizedFallbackCount
+      _crossShardMetadataFixupCount = source._crossShardMetadataFixupCount
+      _speculativeProbeEnabledCount = source._speculativeProbeEnabledCount
+      _speculativeProbeFallbackCount = source._speculativeProbeFallbackCount
+      _speculativeProbePositionAlignedCount = source._speculativeProbePositionAlignedCount
+      _speculativeProbeCacheAlignedCount = source._speculativeProbeCacheAlignedCount
+      _speculativeProbeStatus = source._speculativeProbeStatus
+      _speculativeProbeMode = source._speculativeProbeMode
+      _speculativeProbeFallbackReason = source._speculativeProbeFallbackReason
+      _speculativeProbeRequestGate = source._speculativeProbeRequestGate
+      _speculativeProbeRuntimeScope = source._speculativeProbeRuntimeScope
+      _speculativeProbeRuntimeActive = source._speculativeProbeRuntimeActive
+      _speculativeProbeDraftSupported = source._speculativeProbeDraftSupported
+      _speculativeProbeEffectiveDepth = source._speculativeProbeEffectiveDepth
+      _speculativeProbeRounds = source._speculativeProbeRounds
+      _speculativeProbeAcceptedTokens = source._speculativeProbeAcceptedTokens
+      _speculativeProbeRejectedTokens = source._speculativeProbeRejectedTokens
+      _speculativeProbeAcceptanceRate = source._speculativeProbeAcceptanceRate
+      _speculativeProbeRollbackRate = source._speculativeProbeRollbackRate
+      _speculativeProbeDraftProposeMs = source._speculativeProbeDraftProposeMs
+      _speculativeProbeTargetVerifyMs = source._speculativeProbeTargetVerifyMs
+      _speculativeProbeAutoregressiveFallback = source._speculativeProbeAutoregressiveFallback
+      _speculativeProbeSamplingMatchesBaseline = source._speculativeProbeSamplingMatchesBaseline
     }
   }
 
@@ -1624,6 +1792,30 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
         case 86: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastImageFeatureCacheMisses) }()
         case 87: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastImageFeatureEncoderCallsSaved) }()
         case 88: try { try decoder.decodeSingularUInt64Field(value: &_storage._lastImageFeatureWorkSavedBytes) }()
+        case 89: try { try decoder.decodeSingularUInt64Field(value: &_storage._nativeQuantizedLoadCount) }()
+        case 90: try { try decoder.decodeSingularUInt64Field(value: &_storage._bridgeQuantizedFallbackCount) }()
+        case 91: try { try decoder.decodeSingularUInt64Field(value: &_storage._crossShardMetadataFixupCount) }()
+        case 92: try { try decoder.decodeSingularUInt64Field(value: &_storage._speculativeProbeEnabledCount) }()
+        case 93: try { try decoder.decodeSingularUInt64Field(value: &_storage._speculativeProbeFallbackCount) }()
+        case 94: try { try decoder.decodeSingularUInt64Field(value: &_storage._speculativeProbePositionAlignedCount) }()
+        case 95: try { try decoder.decodeSingularUInt64Field(value: &_storage._speculativeProbeCacheAlignedCount) }()
+        case 96: try { try decoder.decodeSingularStringField(value: &_storage._speculativeProbeStatus) }()
+        case 97: try { try decoder.decodeSingularStringField(value: &_storage._speculativeProbeMode) }()
+        case 98: try { try decoder.decodeSingularStringField(value: &_storage._speculativeProbeFallbackReason) }()
+        case 99: try { try decoder.decodeSingularStringField(value: &_storage._speculativeProbeRequestGate) }()
+        case 100: try { try decoder.decodeSingularStringField(value: &_storage._speculativeProbeRuntimeScope) }()
+        case 101: try { try decoder.decodeSingularBoolField(value: &_storage._speculativeProbeRuntimeActive) }()
+        case 102: try { try decoder.decodeSingularBoolField(value: &_storage._speculativeProbeDraftSupported) }()
+        case 103: try { try decoder.decodeSingularUInt32Field(value: &_storage._speculativeProbeEffectiveDepth) }()
+        case 104: try { try decoder.decodeSingularUInt64Field(value: &_storage._speculativeProbeRounds) }()
+        case 105: try { try decoder.decodeSingularUInt64Field(value: &_storage._speculativeProbeAcceptedTokens) }()
+        case 106: try { try decoder.decodeSingularUInt64Field(value: &_storage._speculativeProbeRejectedTokens) }()
+        case 107: try { try decoder.decodeSingularDoubleField(value: &_storage._speculativeProbeAcceptanceRate) }()
+        case 108: try { try decoder.decodeSingularDoubleField(value: &_storage._speculativeProbeRollbackRate) }()
+        case 109: try { try decoder.decodeSingularDoubleField(value: &_storage._speculativeProbeDraftProposeMs) }()
+        case 110: try { try decoder.decodeSingularDoubleField(value: &_storage._speculativeProbeTargetVerifyMs) }()
+        case 111: try { try decoder.decodeSingularBoolField(value: &_storage._speculativeProbeAutoregressiveFallback) }()
+        case 112: try { try decoder.decodeSingularBoolField(value: &_storage._speculativeProbeSamplingMatchesBaseline) }()
         default: break
         }
       }
@@ -1896,6 +2088,78 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
       if _storage._lastImageFeatureWorkSavedBytes != 0 {
         try visitor.visitSingularUInt64Field(value: _storage._lastImageFeatureWorkSavedBytes, fieldNumber: 88)
       }
+      if _storage._nativeQuantizedLoadCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._nativeQuantizedLoadCount, fieldNumber: 89)
+      }
+      if _storage._bridgeQuantizedFallbackCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._bridgeQuantizedFallbackCount, fieldNumber: 90)
+      }
+      if _storage._crossShardMetadataFixupCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._crossShardMetadataFixupCount, fieldNumber: 91)
+      }
+      if _storage._speculativeProbeEnabledCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._speculativeProbeEnabledCount, fieldNumber: 92)
+      }
+      if _storage._speculativeProbeFallbackCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._speculativeProbeFallbackCount, fieldNumber: 93)
+      }
+      if _storage._speculativeProbePositionAlignedCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._speculativeProbePositionAlignedCount, fieldNumber: 94)
+      }
+      if _storage._speculativeProbeCacheAlignedCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._speculativeProbeCacheAlignedCount, fieldNumber: 95)
+      }
+      if !_storage._speculativeProbeStatus.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._speculativeProbeStatus, fieldNumber: 96)
+      }
+      if !_storage._speculativeProbeMode.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._speculativeProbeMode, fieldNumber: 97)
+      }
+      if !_storage._speculativeProbeFallbackReason.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._speculativeProbeFallbackReason, fieldNumber: 98)
+      }
+      if !_storage._speculativeProbeRequestGate.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._speculativeProbeRequestGate, fieldNumber: 99)
+      }
+      if !_storage._speculativeProbeRuntimeScope.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._speculativeProbeRuntimeScope, fieldNumber: 100)
+      }
+      if _storage._speculativeProbeRuntimeActive != false {
+        try visitor.visitSingularBoolField(value: _storage._speculativeProbeRuntimeActive, fieldNumber: 101)
+      }
+      if _storage._speculativeProbeDraftSupported != false {
+        try visitor.visitSingularBoolField(value: _storage._speculativeProbeDraftSupported, fieldNumber: 102)
+      }
+      if _storage._speculativeProbeEffectiveDepth != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._speculativeProbeEffectiveDepth, fieldNumber: 103)
+      }
+      if _storage._speculativeProbeRounds != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._speculativeProbeRounds, fieldNumber: 104)
+      }
+      if _storage._speculativeProbeAcceptedTokens != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._speculativeProbeAcceptedTokens, fieldNumber: 105)
+      }
+      if _storage._speculativeProbeRejectedTokens != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._speculativeProbeRejectedTokens, fieldNumber: 106)
+      }
+      if _storage._speculativeProbeAcceptanceRate.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._speculativeProbeAcceptanceRate, fieldNumber: 107)
+      }
+      if _storage._speculativeProbeRollbackRate.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._speculativeProbeRollbackRate, fieldNumber: 108)
+      }
+      if _storage._speculativeProbeDraftProposeMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._speculativeProbeDraftProposeMs, fieldNumber: 109)
+      }
+      if _storage._speculativeProbeTargetVerifyMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._speculativeProbeTargetVerifyMs, fieldNumber: 110)
+      }
+      if _storage._speculativeProbeAutoregressiveFallback != false {
+        try visitor.visitSingularBoolField(value: _storage._speculativeProbeAutoregressiveFallback, fieldNumber: 111)
+      }
+      if _storage._speculativeProbeSamplingMatchesBaseline != false {
+        try visitor.visitSingularBoolField(value: _storage._speculativeProbeSamplingMatchesBaseline, fieldNumber: 112)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1993,6 +2257,30 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
         if _storage._lastImageFeatureCacheMisses != rhs_storage._lastImageFeatureCacheMisses {return false}
         if _storage._lastImageFeatureEncoderCallsSaved != rhs_storage._lastImageFeatureEncoderCallsSaved {return false}
         if _storage._lastImageFeatureWorkSavedBytes != rhs_storage._lastImageFeatureWorkSavedBytes {return false}
+        if _storage._nativeQuantizedLoadCount != rhs_storage._nativeQuantizedLoadCount {return false}
+        if _storage._bridgeQuantizedFallbackCount != rhs_storage._bridgeQuantizedFallbackCount {return false}
+        if _storage._crossShardMetadataFixupCount != rhs_storage._crossShardMetadataFixupCount {return false}
+        if _storage._speculativeProbeEnabledCount != rhs_storage._speculativeProbeEnabledCount {return false}
+        if _storage._speculativeProbeFallbackCount != rhs_storage._speculativeProbeFallbackCount {return false}
+        if _storage._speculativeProbePositionAlignedCount != rhs_storage._speculativeProbePositionAlignedCount {return false}
+        if _storage._speculativeProbeCacheAlignedCount != rhs_storage._speculativeProbeCacheAlignedCount {return false}
+        if _storage._speculativeProbeStatus != rhs_storage._speculativeProbeStatus {return false}
+        if _storage._speculativeProbeMode != rhs_storage._speculativeProbeMode {return false}
+        if _storage._speculativeProbeFallbackReason != rhs_storage._speculativeProbeFallbackReason {return false}
+        if _storage._speculativeProbeRequestGate != rhs_storage._speculativeProbeRequestGate {return false}
+        if _storage._speculativeProbeRuntimeScope != rhs_storage._speculativeProbeRuntimeScope {return false}
+        if _storage._speculativeProbeRuntimeActive != rhs_storage._speculativeProbeRuntimeActive {return false}
+        if _storage._speculativeProbeDraftSupported != rhs_storage._speculativeProbeDraftSupported {return false}
+        if _storage._speculativeProbeEffectiveDepth != rhs_storage._speculativeProbeEffectiveDepth {return false}
+        if _storage._speculativeProbeRounds != rhs_storage._speculativeProbeRounds {return false}
+        if _storage._speculativeProbeAcceptedTokens != rhs_storage._speculativeProbeAcceptedTokens {return false}
+        if _storage._speculativeProbeRejectedTokens != rhs_storage._speculativeProbeRejectedTokens {return false}
+        if _storage._speculativeProbeAcceptanceRate != rhs_storage._speculativeProbeAcceptanceRate {return false}
+        if _storage._speculativeProbeRollbackRate != rhs_storage._speculativeProbeRollbackRate {return false}
+        if _storage._speculativeProbeDraftProposeMs != rhs_storage._speculativeProbeDraftProposeMs {return false}
+        if _storage._speculativeProbeTargetVerifyMs != rhs_storage._speculativeProbeTargetVerifyMs {return false}
+        if _storage._speculativeProbeAutoregressiveFallback != rhs_storage._speculativeProbeAutoregressiveFallback {return false}
+        if _storage._speculativeProbeSamplingMatchesBaseline != rhs_storage._speculativeProbeSamplingMatchesBaseline {return false}
         return true
       }
       if !storagesAreEqual {return false}

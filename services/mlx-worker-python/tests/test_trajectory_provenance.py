@@ -241,6 +241,103 @@ def test_load_trajectory_provenance_from_snapshot_manifest_reads_bytes(
     }
 
 
+def test_load_trajectory_provenance_from_snapshot_manifest_string_path_uses_direct_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+                "trajectory_split": "train",
+                "trajectory_trace_digest": "abc123",
+            }
+        ).encode("utf-8")
+    )
+
+    def fail_path_read_bytes(_self: Path) -> bytes:
+        raise AssertionError("string manifest paths should not allocate Path.read_bytes")
+
+    monkeypatch.setattr(trajectory_provenance_module, "_PATH_READ_BYTES", fail_path_read_bytes)
+
+    assert load_trajectory_provenance_from_snapshot_manifest(str(manifest_path)) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
+
+
+def test_load_trajectory_provenance_from_snapshot_manifest_path_uses_direct_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+                "trajectory_split": "train",
+                "trajectory_trace_digest": "abc123",
+            }
+        ).encode("utf-8")
+    )
+
+    def fail_path_read_bytes(_self: Path) -> bytes:
+        raise AssertionError("exact Path manifest paths should use direct open")
+
+    monkeypatch.setattr(trajectory_provenance_module, "_PATH_READ_BYTES", fail_path_read_bytes)
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
+
+
+def test_load_trajectory_provenance_from_snapshot_manifest_keeps_pathlike_support(
+    tmp_path: Path,
+) -> None:
+    class PathLikeManifest:
+        def __fspath__(self) -> str:
+            return str(manifest_path)
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+                "trajectory_split": "train",
+                "trajectory_trace_digest": "abc123",
+            }
+        ).encode("utf-8")
+    )
+
+    assert load_trajectory_provenance_from_snapshot_manifest(PathLikeManifest()) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
+
+
 def test_load_trajectory_provenance_from_snapshot_manifest_fast_paths_clean_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -603,6 +700,31 @@ def test_copy_json_list_copies_short_scalar_lists_without_recursive_calls(
 
     assert copied == source
     assert copied is not source
+
+
+def test_copy_json_list_uses_literal_copy_for_scalar_lists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = ["agentic", "trajectory", 3]
+
+    class CopyBlockedList(list[object]):
+        def copy(self) -> list[object]:
+            raise AssertionError("scalar-list fast path should avoid list.copy()")
+
+    def fail_recursive_copy(value: object) -> object:
+        raise AssertionError(f"unexpected recursive copy for scalar value {value!r}")
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        fail_recursive_copy,
+    )
+
+    copied = trajectory_provenance_module._copy_json_list(CopyBlockedList(source))
+
+    assert copied == source
+    assert copied is not source
+    assert type(copied) is list
 
 
 def test_copy_json_list_still_copies_nested_mutable_items() -> None:

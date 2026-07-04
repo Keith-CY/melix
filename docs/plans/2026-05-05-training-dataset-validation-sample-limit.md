@@ -18,6 +18,8 @@ This is a Python-only slice and is locally verifiable on Linux.
 
 Use a synthetic local dataset package with one training row and a large `valid.jsonl`, then call `load_training_dataset_package(..., sample_limit=1)` while measuring elapsed time and peak traced allocation. The expected improvement is O(total validation rows) to O(sample_limit) validation JSONL parsing for preview/smoke loads.
 
+The 2026-06-26 follow-up slice keeps the same registered probe and narrows the hot preview path by loading `manifest.json` as bytes before JSON decoding. This avoids the extra text decoding call on every preview/smoke package load while preserving the existing JSON validation errors.
+
 ## Success Metrics
 
 - Focused pytest passes for training dataset builder coverage.

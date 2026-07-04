@@ -449,6 +449,24 @@ def build_packaged_launch_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
     service_base_url = str(manifest.get("service_base_url", "")).strip()
     install_manifest_path = str(manifest.get("install_manifest_path", "")).strip()
     runtime_source = str(manifest.get("runtime_layout", "")).strip()
+    raw_python_import_isolation = manifest.get("python_import_isolation", {})
+    python_import_isolation = raw_python_import_isolation if isinstance(raw_python_import_isolation, dict) else {}
+    raw_isolation_env = python_import_isolation.get("env", {})
+    isolation_env = raw_isolation_env if isinstance(raw_isolation_env, dict) else {}
+    required_isolation_flags = {
+        "PYTHONSAFEPATH": "1",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    isolation_required_flags_present = float(
+        all(str(isolation_env.get(name, "")) == value for name, value in required_isolation_flags.items())
+    )
+    import_isolated = float(bool(python_import_isolation.get("import_isolated")))
+    runtime_layout_requires_isolation = float(runtime_source == "self_contained_bundle")
+    import_isolation_gate_satisfied = float(
+        runtime_layout_requires_isolation == 0.0
+        or (import_isolated == 1.0 and isolation_required_flags_present == 1.0)
+    )
 
     connect_host_loopback = float(
         bind_host in {"0.0.0.0", "::", "[::]"}
@@ -503,6 +521,13 @@ def build_packaged_launch_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
             "logical_product_identity": manifest.get("logical_product_identity", ""),
             "logical_product_identity_matches": float(product_identity_matches),
             "audit_passed": audit_passed,
+        },
+        "python_import_isolation": {
+            "import_isolated": import_isolated,
+            "required_flags_present": isolation_required_flags_present,
+            "runtime_layout_requires_isolation": runtime_layout_requires_isolation,
+            "gate_satisfied": import_isolation_gate_satisfied,
+            "pythonpath_policy": str(python_import_isolation.get("pythonpath_policy") or ""),
         },
     }
 
@@ -1396,6 +1421,7 @@ def _evaluate_packaged_launch_evidence(
         "connect_host_resolution",
         "health_probe_reuse",
         "installed_app_audit",
+        "python_import_isolation",
     )
     for section in required_sections:
         if not isinstance(report.get(section), dict):
@@ -1413,6 +1439,7 @@ def _evaluate_packaged_launch_evidence(
         "connect_host_resolution",
         "health_probe_reuse",
         "installed_app_audit",
+        "python_import_isolation",
     ):
         section_payload = report.get(section, {})
         if not isinstance(section_payload, dict):

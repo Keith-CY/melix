@@ -72,6 +72,66 @@ struct OpenAIHandlerTests {
         #expect(await metricsStore.value(forKey: "local_server_security.rejected_origin_count") == 1)
     }
 
+    @Test("local server security rejection envelopes do not echo private header values")
+    func localServerSecurityRejectionEnvelopesDoNotEchoPrivateHeaderValues() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 12_436)
+        )
+        let sentinelFragments = [
+            "operator@example.test",
+            "hf_secret_token",
+            "/Users/operator/private",
+            "token=abc123",
+            "frag-secret",
+        ]
+
+        let rejectedHost = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/health",
+                headers: [
+                    "host": "operator@example.test:12436?token=abc123#/Users/operator/private",
+                ],
+                body: Data()
+            )
+        )
+        let rejectedOrigin = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/health",
+                headers: [
+                    "host": "127.0.0.1:12436",
+                    "origin": "https://operator@example.test/workspace/hf_secret_token?token=abc123#frag-secret",
+                ],
+                body: Data()
+            )
+        )
+
+        for response in [rejectedHost, rejectedOrigin] {
+            let bodyData = try await collectBodyData(response.body)
+            let body = try #require(String(data: bodyData, encoding: .utf8))
+            let payload = try jsonPayload(from: bodyData)
+            let error = try #require(payload["error"] as? [String: Any])
+            let receipt = try #require(error["privacy_receipt"] as? [String: Any])
+            let policy = try #require(receipt["local_server_security"] as? [String: Any])
+
+            #expect(response.statusCode == 403)
+            #expect(error["header_value"] == nil)
+            #expect(receipt["schema_version"] as? String == "melix.privacy_envelope.v1")
+            #expect(receipt["surface"] as? String == "local_proxy_security_rejection")
+            #expect(receipt["redacted"] as? Bool == true)
+            #expect(policy["schema_version"] as? String == "melix.local_server_security.v1")
+            for fragment in sentinelFragments {
+                #expect(body.contains(fragment) == false, "privacy envelope leak: \(fragment)")
+            }
+        }
+    }
+
     @Test("local server security allows explicit browser origin with exact CORS echo")
     func localServerSecurityAllowsExplicitBrowserOriginWithExactCORSEcho() async throws {
         let metricsStore = MetricsStore()
@@ -205,12 +265,23 @@ struct OpenAIHandlerTests {
 
     @Test("health diagnostics includes local server security receipt")
     func healthDiagnosticsIncludesLocalServerSecurityReceipt() async throws {
+        let runtimeStats = nativeAccelerationRuntimeStats()
+        let textClient = ScriptedWorkerClient(events: [])
+        let vlmClient = ScriptedWorkerClient(
+            events: [],
+            runtimeStatsResponseOverride: runtimeStats
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: vlmClient
+        )
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
             requestCoordinator: RequestCoordinator(
-                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                workerRegistry: workerRegistry,
                 abortRegistry: AbortRegistry()
             ),
+            workerRegistry: workerRegistry,
             gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 12_436),
             environment: [
                 "MELIX_ALLOWED_ORIGINS": "http://localhost:5173",
@@ -227,12 +298,34 @@ struct OpenAIHandlerTests {
         )
         let payload = try await jsonPayload(from: response.body)
         let receipt = try #require(payload["local_server_security"] as? [String: Any])
+        let nativeAcceleration = try #require(payload["native_acceleration"] as? [String: Any])
+        let forwardCounts = try #require(nativeAcceleration["forward_counts"] as? [String: Any])
+        let timings = try #require(nativeAcceleration["timings"] as? [String: Any])
+        let acceptanceByDepth = try #require(nativeAcceleration["acceptance_by_depth"] as? [String: Any])
 
         #expect(response.statusCode == 200)
         #expect(receipt["schema_version"] as? String == "melix.local_server_security.v1")
         #expect(receipt["bind_host"] as? String == "127.0.0.1")
         #expect(receipt["browser_cors_policy"] as? String == "explicit_allowlist")
         #expect((receipt["allowed_origins"] as? [String]) == ["http://localhost:5173"])
+        #expect(nativeAcceleration["schema_version"] as? String == "melix.native_acceleration.status.v1")
+        #expect(nativeAcceleration["runtime_active"] as? Bool == true)
+        #expect(nativeAcceleration["status"] as? String == "admitted")
+        #expect(nativeAcceleration["mode"] as? String == "speculative_decode")
+        #expect(nativeAcceleration["draft_supported"] as? Bool == true)
+        #expect(nativeAcceleration["effective_depth"] as? Int == 4)
+        #expect(nativeAcceleration["request_gate"] as? String == "media_draft_eligible")
+        #expect(nativeAcceleration["runtime_scope"] as? String == "vlm_mtp")
+        #expect(nativeAcceleration["fallback_reason"] as? String == "")
+        #expect(nativeAcceleration["autoregressive_fallback"] as? Bool == false)
+        #expect(nativeAcceleration["sampling_matches_baseline"] as? Bool == true)
+        #expect(forwardCounts["rounds"] as? Int == 3)
+        #expect(forwardCounts["accepted_tokens"] as? Int == 9)
+        #expect(forwardCounts["rejected_tokens"] as? Int == 3)
+        #expect(timings["draft_propose_ms"] as? Double == 12.5)
+        #expect(timings["target_verify_ms"] as? Double == 25)
+        #expect(acceptanceByDepth["effective_depth"] as? Int == 4)
+        #expect(acceptanceByDepth["acceptance_rate"] as? Double == 0.75)
     }
 
     @Test("GET /v1/models accepts configured shared-access API keys and records metrics")
@@ -832,10 +925,12 @@ struct OpenAIHandlerTests {
         let inspectSession = try #require(inspectPayload["session"] as? [String: Any])
 
         let privatePrompt = "PRIVATE PROMPT: do not expose this companion secret"
+        let privateQuery = "token=abc123"
+        let privateFragment = "frag-secret"
         let mutationResponse = try await handler.handle(
             HTTPRequest(
                 method: .post,
-                path: "/v1/chat/completions",
+                path: "/v1/chat/completions?\(privateQuery)#\(privateFragment)",
                 headers: [
                     "content-type": "application/json",
                     "X-Melix-Session": sessionToken,
@@ -855,6 +950,7 @@ struct OpenAIHandlerTests {
             JSONSerialization.jsonObject(with: Data(mutationBody.utf8)) as? [String: Any]
         )
         let mutationError = try #require(mutationPayload["error"] as? [String: Any])
+        let mutationRoute = try #require(mutationError["route"] as? [String: Any])
 
         let signOutResponse = try await handler.handle(
             HTTPRequest(
@@ -883,7 +979,10 @@ struct OpenAIHandlerTests {
         #expect(inspectSession["scope"] as? String == "companion_read_only")
         #expect(mutationResponse.statusCode == 403)
         #expect(mutationError["code"] as? String == "companion_read_only_scope_violation")
+        #expect(mutationRoute["path"] as? String == "/v1/chat/completions")
         #expect(mutationBody.contains(privatePrompt) == false)
+        #expect(mutationBody.contains(privateQuery) == false)
+        #expect(mutationBody.contains(privateFragment) == false)
         #expect(signOutResponse.statusCode == 200)
         #expect(revokedModelsResponse.statusCode == 401)
         #expect(revokedError["code"] as? String == "revoked_session")
@@ -1184,16 +1283,22 @@ struct OpenAIHandlerTests {
             totalSteps: 4
         )
 
+        let vlmClient = ScriptedWorkerClient(
+            events: [],
+            runtimeStatsResponseOverride: nativeAccelerationRuntimeStats()
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: ScriptedWorkerClient(events: []),
+            pythonCompatibilityClient: vlmClient,
+            embeddingClient: ScriptedWorkerClient(events: [])
+        )
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [publicWarmModel(), publicWarmEmbeddingModel()]),
             requestCoordinator: RequestCoordinator(
-                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                workerRegistry: workerRegistry,
                 abortRegistry: AbortRegistry()
             ),
-            workerRegistry: WorkerRegistry(
-                defaultTextClient: ScriptedWorkerClient(events: []),
-                embeddingClient: ScriptedWorkerClient(events: [])
-            ),
+            workerRegistry: workerRegistry,
             metricsStore: metricsStore,
             schedulerReadModel: schedulerReadModel,
             imageJobReadModel: imageJobReadModel,
@@ -1244,6 +1349,8 @@ struct OpenAIHandlerTests {
         let payload = try #require(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
         let authorization = try #require(payload["authorization"] as? [String: Any])
         let runtime = try #require(payload["runtime"] as? [String: Any])
+        let nativeAcceleration = try #require(runtime["native_acceleration"] as? [String: Any])
+        let forwardCounts = try #require(nativeAcceleration["forward_counts"] as? [String: Any])
         let models = try #require(payload["models"] as? [String: Any])
         let cache = try #require(payload["cache"] as? [String: Any])
         let queue = try #require(payload["queue"] as? [String: Any])
@@ -1257,8 +1364,15 @@ struct OpenAIHandlerTests {
         #expect(payload["read_only"] as? Bool == true)
         #expect(authorization["scope"] as? String == "companion_read_only")
         #expect(authorization["state"] as? String == "active")
-        #expect(runtime["status"] as? String == "degraded")
+        #expect(runtime["status"] as? String == "ok")
         #expect((runtime["routes"] as? [String: Any])?["swift_text"] as? Bool == true)
+        #expect(nativeAcceleration["runtime_active"] as? Bool == true)
+        #expect(nativeAcceleration["status"] as? String == "admitted")
+        #expect(nativeAcceleration["mode"] as? String == "speculative_decode")
+        #expect(nativeAcceleration["fallback_reason"] as? String == "")
+        #expect(forwardCounts["rounds"] as? Int == 3)
+        #expect(forwardCounts["accepted_tokens"] as? Int == 9)
+        #expect(forwardCounts["rejected_tokens"] as? Int == 3)
         #expect(models["ready"] as? Int == 2)
         #expect(models["total"] as? Int == 2)
         #expect(cache["l1_bytes"] as? Int == 2048)
@@ -2280,6 +2394,147 @@ struct OpenAIHandlerTests {
         #expect(error["code"] as? String == "invalid_generation_bounds")
         #expect(error["bounds_rejection_reason"] as? String == expectedReason)
         #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test(
+        "OpenAI ingress validation errors include sanitized privacy receipts",
+        arguments: [
+            (
+                "/v1/chat/completions?token=abc123#frag-secret",
+                "/v1/chat/completions",
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stream": true,
+                  "messages": "operator@example.test hf_secret_token /Users/operator/private token=abc123 #frag-secret"
+                }
+                """,
+                "invalid_request_schema",
+                "messages"
+            ),
+            (
+                "/v1/completions",
+                "/v1/completions",
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stream": true,
+                  "prompt": ["operator@example.test", "hf_secret_token", "/Users/operator/private?token=abc123#frag-secret"]
+                }
+                """,
+                "invalid_request_schema",
+                "prompt"
+            ),
+            (
+                "/v1/responses",
+                "/v1/responses",
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stream": true,
+                  "input": { "content": "operator@example.test hf_secret_token /Users/operator/private?token=abc123#frag-secret" }
+                }
+                """,
+                "invalid_request_schema",
+                "input"
+            ),
+            (
+                "/v1/messages",
+                "/v1/messages",
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stream": true,
+                  "messages": "operator@example.test hf_secret_token /Users/operator/private?token=abc123#frag-secret"
+                }
+                """,
+                "invalid_request_schema",
+                "messages"
+            ),
+            (
+                "/v1/embeddings",
+                "/v1/embeddings",
+                """
+                {
+                  "model": "melix-dev-embedding",
+                  "input": { "content": "operator@example.test hf_secret_token /Users/operator/private?token=abc123#frag-secret" }
+                }
+                """,
+                "invalid_request_schema",
+                "input"
+            ),
+            (
+                "/v1/chat/completions?token=abc123#frag-secret",
+                "/v1/chat/completions",
+                """
+                {
+                  "model": "melix-dev-text",
+                  "stream": true,
+                  "messages": [
+                    { "role": "user", "content": "operator@example.test hf_secret_token /Users/operator/private?token=abc123#frag-secret" }
+                  ],
+                """,
+                "invalid_request_schema",
+                "body"
+            ),
+        ]
+    )
+    func openAIIngressValidationErrorsIncludeSanitizedPrivacyReceipts(
+        path: String,
+        expectedRoute: String,
+        bodyJSON: String,
+        expectedCode: String,
+        expectedField: String
+    ) async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: path,
+                headers: ["content-type": "application/json"],
+                body: Data(bodyJSON.utf8)
+            )
+        )
+        let bodyData = try await collectBodyData(response.body)
+        let body = try #require(String(data: bodyData, encoding: .utf8))
+        let payload = try jsonPayload(from: bodyData)
+        let error = try #require(payload["error"] as? [String: Any])
+        let receipt = try #require(error["privacy_receipt"] as? [String: Any])
+        let sentinelFragments = [
+            "operator@example.test",
+            "hf_secret_token",
+            "/Users/operator/private",
+            "token=abc123",
+            "frag-secret",
+            "DecodingError",
+            "OpenAIHandler",
+            "Swift.DecodingError",
+        ]
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == expectedCode)
+        #expect(error["field"] as? String == expectedField)
+        #expect(error["phase"] as? String == "decode")
+        #expect(receipt["schema_version"] as? String == "melix.ingress_privacy_receipt.v1")
+        #expect(receipt["surface"] as? String == "openai_request_ingress")
+        #expect(receipt["route"] as? String == expectedRoute)
+        #expect(receipt["phase"] as? String == "decode")
+        #expect(receipt["field"] as? String == expectedField)
+        #expect(receipt["action"] as? String == "redacted")
+        #expect(receipt["redaction_policy"] as? String == "raw_payload_omitted")
+        #expect(receipt["raw_payload_included"] as? Bool == false)
+        #expect(await workerClient.lastGenerateRequest == nil)
+        for fragment in sentinelFragments {
+            #expect(body.contains(fragment) == false, "ingress privacy envelope leak: \(fragment)")
+        }
     }
 
     @Test("generation bounds validation ignores field-like text inside JSON strings")
@@ -6734,6 +6989,13 @@ struct OpenAIHandlerTests {
             response.stats.lastImageFeatureCacheMisses = 1
             response.stats.lastImageFeatureEncoderCallsSaved = 3
             response.stats.lastImageFeatureWorkSavedBytes = 4096
+            response.stats.nativeQuantizedLoadCount = 1
+            response.stats.bridgeQuantizedFallbackCount = 0
+            response.stats.crossShardMetadataFixupCount = 2
+            response.stats.speculativeProbeEnabledCount = 1
+            response.stats.speculativeProbeFallbackCount = 1
+            response.stats.speculativeProbePositionAlignedCount = 1
+            response.stats.speculativeProbeCacheAlignedCount = 1
             return response
         }()
         let vlmClient = ScriptedWorkerClient(
@@ -6858,6 +7120,13 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["vision.image_feature_cache_misses", default: -1] == 1)
         #expect(metrics.values["vision.image_feature_encoder_calls_saved", default: -1] == 3)
         #expect(metrics.values["vision.image_feature_work_saved_bytes", default: -1] == 4096)
+        #expect(metrics.values["vision.native_quantized_load_count", default: -1] == 1)
+        #expect(metrics.values["vision.bridge_quantized_fallback_count", default: -1] == 0)
+        #expect(metrics.values["vision.cross_shard_metadata_fixup_count", default: -1] == 2)
+        #expect(metrics.values["vision.speculative_probe.enabled_count", default: -1] == 1)
+        #expect(metrics.values["vision.speculative_probe.fallback_count", default: -1] == 1)
+        #expect(metrics.values["vision.speculative_probe.position_aligned_count", default: -1] == 1)
+        #expect(metrics.values["vision.speculative_probe.cache_aligned_count", default: -1] == 1)
         #expect(metrics.values["vision.text_batch_generator.step_count", default: -1] == 0)
     }
 
@@ -12768,12 +13037,24 @@ struct OpenAIHandlerTests {
     @Test("chat stream and non-stream requests emit the same compatibility policy receipt shape")
     func chatStreamAndNonStreamRequestsEmitSameCompatibilityPolicyReceiptShape() async throws {
         let streamWorkerClient = ScriptedWorkerClient(events: [
-            makeTokenEvent(requestID: "req-compat-stream", seq: 1, text: "{}"),
-            makeCompletedEvent(requestID: "req-compat-stream", seq: 2, finishReason: "stop", assistantText: "{}"),
+            makeToolCallEvent(
+                requestID: "req-compat-stream",
+                seq: 1,
+                callID: "tool-1",
+                toolName: "search",
+                argumentsJSONFragment: #"{"query":"melix"}"#
+            ),
+            makeCompletedEvent(requestID: "req-compat-stream", seq: 2, finishReason: "tool_calls", assistantText: ""),
         ])
         let nonStreamWorkerClient = ScriptedWorkerClient(events: [
-            makeTokenEvent(requestID: "req-compat-non-stream", seq: 1, text: "{}"),
-            makeCompletedEvent(requestID: "req-compat-non-stream", seq: 2, finishReason: "stop", assistantText: "{}"),
+            makeToolCallEvent(
+                requestID: "req-compat-non-stream",
+                seq: 1,
+                callID: "tool-1",
+                toolName: "search",
+                argumentsJSONFragment: #"{"query":"melix"}"#
+            ),
+            makeCompletedEvent(requestID: "req-compat-non-stream", seq: 2, finishReason: "tool_calls", assistantText: ""),
         ])
         let streamHandler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
@@ -13549,6 +13830,28 @@ struct OpenAIHandlerTests {
         model.settings.alias = "Qwen 3.5 9B"
         model.settings.ext.removeValue(forKey: "melix.visibility")
         return model
+    }
+
+    private func nativeAccelerationRuntimeStats() -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+        response.stats.speculativeProbeStatus = "admitted"
+        response.stats.speculativeProbeMode = "speculative_decode"
+        response.stats.speculativeProbeFallbackReason = ""
+        response.stats.speculativeProbeRequestGate = "media_draft_eligible"
+        response.stats.speculativeProbeRuntimeScope = "vlm_mtp"
+        response.stats.speculativeProbeRuntimeActive = true
+        response.stats.speculativeProbeDraftSupported = true
+        response.stats.speculativeProbeEffectiveDepth = 4
+        response.stats.speculativeProbeRounds = 3
+        response.stats.speculativeProbeAcceptedTokens = 9
+        response.stats.speculativeProbeRejectedTokens = 3
+        response.stats.speculativeProbeAcceptanceRate = 0.75
+        response.stats.speculativeProbeRollbackRate = 0.25
+        response.stats.speculativeProbeDraftProposeMs = 12.5
+        response.stats.speculativeProbeTargetVerifyMs = 25
+        response.stats.speculativeProbeAutoregressiveFallback = false
+        response.stats.speculativeProbeSamplingMatchesBaseline = true
+        return response
     }
 
     private func publicWarmEmbeddingModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -14459,6 +14762,10 @@ private func jsonObject(from body: HTTPBody) async throws -> (errorCode: String,
 
 private func jsonPayload(from body: HTTPBody) async throws -> [String: Any] {
     let data = try await collectBodyData(body)
+    return try jsonPayload(from: data)
+}
+
+private func jsonPayload(from data: Data) throws -> [String: Any] {
     return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 }
 

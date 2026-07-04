@@ -29,6 +29,7 @@ def main() -> int:
     noise_count = 200
     sample_count = 9
     elapsed_samples: list[float] = []
+    configured_elapsed_samples: list[float] = []
     with tempfile.TemporaryDirectory(prefix="melix-pr-perf-metrics-snapshot-") as temp_dir:
         runtime_dir = Path(temp_dir) / "runtime"
         runtime_dir.mkdir()
@@ -59,6 +60,19 @@ def main() -> int:
             started = time.perf_counter()
             resolved = module.resolve_source_paths(runtime_dir=runtime_dir, environment={})
             elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        configured_environment = {
+            "MELIX_CONTROL_PLANE_METRICS_PATH": str(expected_control),
+            "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": str(expected_swift),
+            "MELIX_PYTHON_WORKER_METRICS_PATH": str(expected_python),
+        }
+        configured_resolved = {}
+        for _ in range(sample_count):
+            started = time.perf_counter()
+            configured_resolved = module.resolve_source_paths(
+                runtime_dir=runtime_dir,
+                environment=configured_environment,
+            )
+            configured_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
 
     expected_paths = {
         "control_plane": expected_control,
@@ -68,9 +82,20 @@ def main() -> int:
     resolved_paths = {name: source.path for name, source in resolved.items()}
     if resolved_paths != expected_paths:
         raise AssertionError(f"expected {expected_paths}, got {resolved_paths}")
+    configured_resolved_paths = {
+        name: source.path for name, source in configured_resolved.items()
+    }
+    if configured_resolved_paths != expected_paths:
+        raise AssertionError(
+            f"expected configured paths {expected_paths}, got {configured_resolved_paths}"
+        )
     print(
         json.dumps(
             {
+                "configured_elapsed_ms_mean": round(
+                    statistics.fmean(configured_elapsed_samples), 6
+                ),
+                "configured_elapsed_ms_min": round(min(configured_elapsed_samples), 6),
                 "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
                 "elapsed_ms_min": round(min(elapsed_samples), 6),
                 "sample_count": float(sample_count),

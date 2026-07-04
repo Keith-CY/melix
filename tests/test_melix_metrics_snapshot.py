@@ -255,6 +255,38 @@ def test_resolve_source_paths_discovers_runtime_sources_with_one_scandir(
     assert resolved["python_worker"].configured_by == "environment"
 
 
+def test_resolve_source_paths_skips_runtime_scan_when_all_sources_are_configured(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    control_plane_path = tmp_path / "control-plane-env.json"
+    swift_worker_arg_path = tmp_path / "swift-worker-arg.json"
+    python_worker_env_path = tmp_path / "python-worker-env.json"
+    for path in (control_plane_path, swift_worker_arg_path, python_worker_env_path):
+        write_metrics(path, updated_at_unix_ms=1_000, values={"configured": 1})
+
+    def fail_scandir(path: object):  # pragma: no cover - regression guard
+        raise AssertionError(f"runtime scan should be skipped when all sources are configured: {path!r}")
+
+    monkeypatch.setattr(snapshot_cli.os, "scandir", fail_scandir)
+
+    resolved = snapshot_cli.resolve_source_paths(
+        swift_text_worker_metrics=swift_worker_arg_path,
+        runtime_dir=tmp_path,
+        environment={
+            "MELIX_CONTROL_PLANE_METRICS_PATH": str(control_plane_path),
+            "MELIX_PYTHON_WORKER_METRICS_PATH": str(python_worker_env_path),
+        },
+    )
+
+    assert resolved["control_plane"].path == control_plane_path
+    assert resolved["control_plane"].configured_by == "environment"
+    assert resolved["swift_text_worker"].path == swift_worker_arg_path
+    assert resolved["swift_text_worker"].configured_by == "argument"
+    assert resolved["python_worker"].path == python_worker_env_path
+    assert resolved["python_worker"].configured_by == "environment"
+
+
 def test_runtime_dir_discovery_preserves_exact_and_multi_wildcard_patterns(
     tmp_path: Path,
     monkeypatch,
@@ -263,12 +295,17 @@ def test_runtime_dir_discovery_preserves_exact_and_multi_wildcard_patterns(
     exact_noise = tmp_path / "exact-metrics-old.json"
     multi_match = tmp_path / "multi-metrics-new-latest.json"
     multi_noise = tmp_path / "multi-metrics-old.tmp"
+    suffix_match = tmp_path / "suffix-metrics.json"
+    suffix_noise = tmp_path / "suffix-metrics.tmp"
     write_metrics(exact_match, updated_at_unix_ms=1_000, values={"exact": 1})
     write_metrics(exact_noise, updated_at_unix_ms=2_000, values={"noise": 2})
     write_metrics(multi_match, updated_at_unix_ms=3_000, values={"multi": 3})
     write_metrics(multi_noise, updated_at_unix_ms=4_000, values={"noise": 4})
+    write_metrics(suffix_match, updated_at_unix_ms=5_000, values={"suffix": 5})
+    write_metrics(suffix_noise, updated_at_unix_ms=6_000, values={"noise": 6})
     os.utime(exact_match, (1, 1))
     os.utime(multi_match, (2, 2))
+    os.utime(suffix_match, (3, 3))
 
     monkeypatch.setitem(
         snapshot_cli.SOURCE_DEFINITIONS,
@@ -280,9 +317,15 @@ def test_runtime_dir_discovery_preserves_exact_and_multi_wildcard_patterns(
         "multi_probe",
         {"runtime_pattern": "multi*latest*.json"},
     )
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "suffix_probe",
+        {"runtime_pattern": "*-metrics.json"},
+    )
 
     assert snapshot_cli.discover_latest_metrics_path(tmp_path, "exact_probe") == exact_match
     assert snapshot_cli.discover_latest_metrics_path(tmp_path, "multi_probe") == multi_match
+    assert snapshot_cli.discover_latest_metrics_path(tmp_path, "suffix_probe") == suffix_match
 
 
 def test_batched_runtime_discovery_preserves_overlapping_source_matches(
@@ -291,10 +334,19 @@ def test_batched_runtime_discovery_preserves_overlapping_source_matches(
 ) -> None:
     shared_prefix = tmp_path / "shared-metrics-latest.json"
     wildcard_match = tmp_path / "shared-metrics-extra-latest.json"
+    exact_match = tmp_path / "shared-metrics-exact.json"
+    exact_wildcard_match = tmp_path / "wild-exact-latest.json"
+    empty_overlap_match = tmp_path / "empty-only.json"
     write_metrics(shared_prefix, updated_at_unix_ms=1_000, values={"shared": 1})
     write_metrics(wildcard_match, updated_at_unix_ms=2_000, values={"wildcard": 2})
+    write_metrics(exact_match, updated_at_unix_ms=3_000, values={"exact": 3})
+    write_metrics(exact_wildcard_match, updated_at_unix_ms=4_000, values={"exact_wild": 4})
+    write_metrics(empty_overlap_match, updated_at_unix_ms=5_000, values={"empty": 5})
     os.utime(shared_prefix, (1, 1))
     os.utime(wildcard_match, (2, 2))
+    os.utime(exact_match, (3, 3))
+    os.utime(exact_wildcard_match, (4, 4))
+    os.utime(empty_overlap_match, (5, 5))
 
     monkeypatch.setitem(
         snapshot_cli.SOURCE_DEFINITIONS,
@@ -316,6 +368,36 @@ def test_batched_runtime_discovery_preserves_overlapping_source_matches(
         "shared_wildcard_b",
         {"runtime_pattern": "shared*latest*.json"},
     )
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "shared_exact",
+        {"runtime_pattern": "shared-metrics-exact.json"},
+    )
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "wild_exact",
+        {"runtime_pattern": "wild-exact-latest.json"},
+    )
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "wild_wildcard",
+        {"runtime_pattern": "wild*latest*.json"},
+    )
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "empty_exact",
+        {"runtime_pattern": "empty-only.json"},
+    )
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "empty_suffix_a",
+        {"runtime_pattern": "*only.json"},
+    )
+    monkeypatch.setitem(
+        snapshot_cli.SOURCE_DEFINITIONS,
+        "empty_suffix_b",
+        {"runtime_pattern": "*-only.json"},
+    )
 
     discovered = snapshot_cli.discover_latest_metrics_paths(
         tmp_path,
@@ -324,14 +406,26 @@ def test_batched_runtime_discovery_preserves_overlapping_source_matches(
             "shared_prefix_b",
             "shared_wildcard_a",
             "shared_wildcard_b",
+            "shared_exact",
+            "wild_exact",
+            "wild_wildcard",
+            "empty_exact",
+            "empty_suffix_a",
+            "empty_suffix_b",
         ),
     )
 
     assert discovered == {
-        "shared_prefix_a": wildcard_match,
-        "shared_prefix_b": wildcard_match,
+        "shared_prefix_a": exact_match,
+        "shared_prefix_b": exact_match,
         "shared_wildcard_a": wildcard_match,
         "shared_wildcard_b": wildcard_match,
+        "shared_exact": exact_match,
+        "wild_exact": exact_wildcard_match,
+        "wild_wildcard": exact_wildcard_match,
+        "empty_exact": empty_overlap_match,
+        "empty_suffix_a": empty_overlap_match,
+        "empty_suffix_b": empty_overlap_match,
     }
 
 

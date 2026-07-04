@@ -6,6 +6,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from worker.productization.lora_adapter_provenance import (
+    default_adapter_provenance_manifest_path,
+)
+
 
 _RUN_SCHEMA_VERSION = "melix.lora_experiment_run.v1"
 _INDEX_SCHEMA_VERSION = "melix.lora_experiment_index.v1"
@@ -21,6 +25,12 @@ _LORA_CANARY_RECEIPT_KEYS = (
     "completion_loss",
     "round_trip_passed",
     "grad_norm",
+)
+_CHECKPOINT_SELECTION_RECEIPT_KEYS = (
+    "checkpoint_step",
+    "checkpoint_sort_key",
+    "selected_checkpoint_path",
+    "selected_checkpoint_loss_source",
 )
 
 
@@ -109,7 +119,7 @@ class LoraExperimentStore:
 
         runs = sorted(
             runs_by_id.values(),
-            key=lambda item: (int(item.get("updated_at_unix_ms", 0)), str(item.get("run_id", ""))),
+            key=lambda item: (_int_value(item.get("updated_at_unix_ms")), str(item.get("run_id", ""))),
             reverse=True,
         )
         groups = self._build_group_payloads(runs)
@@ -136,7 +146,7 @@ class LoraExperimentStore:
         for group_id, group_runs in grouped_runs.items():
             latest_run = group_runs[0]
             latest_key = (
-                int(latest_run.get("updated_at_unix_ms", 0)),
+                _int_value(latest_run.get("updated_at_unix_ms")),
                 str(latest_run.get("run_id", "")),
             )
             best_run = latest_run
@@ -146,7 +156,7 @@ class LoraExperimentStore:
                 -latest_key[0],
             )
             for run in group_runs[1:]:
-                run_updated_at = int(run.get("updated_at_unix_ms", 0))
+                run_updated_at = _int_value(run.get("updated_at_unix_ms"))
                 run_key_latest = (run_updated_at, str(run.get("run_id", "")))
                 if run_key_latest > latest_key:
                     latest_run = run
@@ -174,8 +184,18 @@ class LoraExperimentStore:
                     "latest_preset_title": str(latest_run.get("preset_title", "")),
                     "latest_tokens_per_second": _optional_finite_float(latest_run.get("tokens_per_second")) or 0.0,
                     "latest_peak_memory_gb": _optional_finite_float(latest_run.get("peak_memory_gb")) or 0.0,
-                    "latest_checkpoint_count": int(latest_run.get("checkpoint_count", 0)),
-                    "latest_checkpoint_path": str(latest_run.get("latest_checkpoint_path", "")),
+                    "latest_checkpoint_count": _int_value(latest_run.get("checkpoint_count")),
+                    "latest_checkpoint_path": _str_value(latest_run.get("latest_checkpoint_path")),
+                    "latest_checkpoint_step": _int_value(latest_run.get("checkpoint_step")),
+                    "latest_checkpoint_sort_key": _str_value(
+                        latest_run.get("checkpoint_sort_key")
+                    ),
+                    "latest_selected_checkpoint_path": _str_value(
+                        latest_run.get("selected_checkpoint_path")
+                    ),
+                    "latest_selected_checkpoint_loss_source": _str_value(
+                        latest_run.get("selected_checkpoint_loss_source")
+                    ),
                     "latest_resume_source_path": str(latest_run.get("resume_source_path", "")),
                     "latest_resume_ready": bool(latest_run.get("resume_ready", False)),
                     "resume_ready_run_ids": [
@@ -187,71 +207,224 @@ class LoraExperimentStore:
                     "best_run_id": str(best_run.get("run_id", "")),
                     "best_loss": best_loss if best_loss is not None else 0.0,
                     "recommended_manifest_path": str(best_run.get("manifest_path", "")),
+                    "recommended_provenance_manifest_path": str(
+                        best_run.get("adapter_provenance_manifest_path", "")
+                    ),
+                    "latest_provenance_manifest_path": str(
+                        latest_run.get("adapter_provenance_manifest_path", "")
+                    ),
+                    "latest_export_eligible": bool(latest_run.get("export_eligible", False)),
+                    "best_export_eligible": bool(best_run.get("export_eligible", False)),
+                    "latest_loss_series_row_count": _int_value(latest_run.get("loss_series_row_count")),
+                    "latest_operator_note_count": _int_value(latest_run.get("operator_note_count")),
                     "best_known_adapter": {
                         "run_id": str(best_run.get("run_id", "")),
                         "manifest_path": str(best_run.get("manifest_path", "")),
+                        "provenance_manifest_path": str(
+                            best_run.get("adapter_provenance_manifest_path", "")
+                        ),
                         "adapter_name": str(best_run.get("adapter_name", "")),
-                        "checkpoint_count": int(best_run.get("checkpoint_count", 0)),
-                        "latest_checkpoint_path": str(best_run.get("latest_checkpoint_path", "")),
+                        "checkpoint_count": _int_value(best_run.get("checkpoint_count")),
+                        "latest_checkpoint_path": _str_value(
+                            best_run.get("latest_checkpoint_path")
+                        ),
+                        "checkpoint_step": _int_value(best_run.get("checkpoint_step")),
+                        "checkpoint_sort_key": _str_value(best_run.get("checkpoint_sort_key")),
+                        "selected_checkpoint_path": _str_value(
+                            best_run.get("selected_checkpoint_path")
+                        ),
+                        "selected_checkpoint_loss_source": _str_value(
+                            best_run.get("selected_checkpoint_loss_source")
+                        ),
                         "resume_ready": bool(best_run.get("resume_ready", False)),
                         "loss_best": best_loss if best_loss is not None else 0.0,
+                        "export_eligible": bool(best_run.get("export_eligible", False)),
                     },
-                    "updated_at_unix_ms": int(latest_run.get("updated_at_unix_ms", 0)),
+                    "updated_at_unix_ms": _int_value(latest_run.get("updated_at_unix_ms")),
                 }
             )
 
         groups.sort(
-            key=lambda item: (int(item.get("updated_at_unix_ms", 0)), str(item.get("group_id", ""))),
+            key=lambda item: (_int_value(item.get("updated_at_unix_ms")), str(item.get("group_id", ""))),
             reverse=True,
         )
         return groups
 
     def _build_run_payload(self, *, manifest: dict[str, Any], manifest_path: Path) -> dict[str, Any]:
-        manifest_job_id = str(manifest.get("job_id", "")).strip() or manifest_path.parent.name
-        adapter_name = str(manifest.get("adapter_name", "")).strip() or "melix-adapter"
-        source_model = str(manifest.get("source_model", "")).strip()
-        group_id = str(manifest.get("experiment_group_id", "")).strip() or f"{source_model}:{adapter_name}"
+        provenance = self._load_adapter_provenance(
+            manifest=manifest,
+            manifest_path=manifest_path,
+        )
+        adapter = _dict_value(provenance.get("adapter"))
+        base_model = _dict_value(provenance.get("base_model"))
+        dataset = _dict_value(provenance.get("dataset"))
+        hyperparameters = _dict_value(provenance.get("hyperparameters"))
+        training = _dict_value(provenance.get("training"))
+        final_metrics = _dict_value(provenance.get("final_metrics"))
+        operator_notes = _dict_value(provenance.get("operator_notes"))
+        export_eligibility = _dict_value(provenance.get("export_eligibility"))
+
+        manifest_job_id = (
+            str(adapter.get("job_id", "")).strip()
+            or str(manifest.get("job_id", "")).strip()
+            or manifest_path.parent.name
+        )
+        adapter_name = (
+            str(adapter.get("adapter_name", "")).strip()
+            or str(manifest.get("adapter_name", "")).strip()
+            or "melix-adapter"
+        )
+        source_model = (
+            str(base_model.get("model_id", "")).strip()
+            or str(manifest.get("source_model", "")).strip()
+        )
+        group_id = (
+            str(adapter.get("experiment_group_id", "")).strip()
+            or str(manifest.get("experiment_group_id", "")).strip()
+            or f"{source_model}:{adapter_name}"
+        )
         if "created_at_unix_ms" in manifest:
-            created_at_unix_ms = int(manifest.get("created_at_unix_ms", 0))
+            created_at_unix_ms = _int_value(manifest.get("created_at_unix_ms"))
         else:
             created_at_unix_ms = int(manifest_path.stat().st_mtime * 1000)
-        updated_at_unix_ms = int(manifest.get("updated_at_unix_ms", created_at_unix_ms))
+        updated_at_unix_ms = _int_value(manifest.get("updated_at_unix_ms"), default=created_at_unix_ms)
         payload = {
             "schema_version": _RUN_SCHEMA_VERSION,
             "run_id": manifest_job_id,
             "group_id": group_id,
             "group_title": str(
-                manifest.get(
+                adapter.get("experiment_group_title")
+                or manifest.get(
                     "experiment_group_title",
-                    group_id if str(manifest.get("experiment_group_id", "")).strip() else adapter_name,
+                    group_id
+                    if str(adapter.get("experiment_group_id") or manifest.get("experiment_group_id", "")).strip()
+                    else adapter_name,
                 )
             ),
             "adapter_name": adapter_name,
             "source_model": source_model,
-            "dataset_uri": str(manifest.get("dataset_uri", "")),
-            "preset_id": str(manifest.get("preset_id", "")),
-            "preset_title": str(manifest.get("preset_title", "")),
-            "training_mode": str(manifest.get("training_mode", "")),
-            "training_backend": str(manifest.get("training_backend", "")),
-            "status": str(manifest.get("status", "completed")),
-            "checkpoint_count": int(manifest.get("checkpoint_count", manifest.get("experiment.checkpoint_count", 0))),
-            "latest_checkpoint_path": str(
-                manifest.get("latest_checkpoint_path", manifest.get("experiment.latest_checkpoint_path", ""))
+            "dataset_uri": str(dataset.get("uri") or manifest.get("dataset_uri", "")),
+            "dataset_version": str(dataset.get("version") or manifest.get("dataset_version", "")),
+            "train_sample_count": _int_value(
+                dataset.get("train_sample_count"),
+                manifest.get("trainer_dataset_sample_count"),
+            ),
+            "validation_sample_count": _int_value(
+                dataset.get(
+                    "validation_sample_count",
+                    manifest.get("trainer_dataset_validation_sample_count", manifest.get("validation_sample_count", 0)),
+                ),
+            ),
+            "preset_id": str(hyperparameters.get("preset_id") or manifest.get("preset_id", "")),
+            "preset_title": str(hyperparameters.get("preset_title") or manifest.get("preset_title", "")),
+            "training_mode": str(hyperparameters.get("training_mode") or manifest.get("training_mode", "")),
+            "training_backend": str(training.get("backend") or manifest.get("training_backend", "")),
+            "status": str(training.get("status") or manifest.get("status", "completed")),
+            "checkpoint_count": _int_value(
+                _first_present_value(
+                    adapter,
+                    manifest,
+                    "checkpoint_count",
+                    "experiment.checkpoint_count",
+                    default=0,
+                )
+            ),
+            "latest_checkpoint_path": _str_value(
+                _first_present_value(
+                    adapter,
+                    manifest,
+                    "latest_checkpoint_path",
+                    "experiment.latest_checkpoint_path",
+                )
+            ),
+            "checkpoint_step": _int_value(
+                _first_present_value(
+                    adapter,
+                    manifest,
+                    "checkpoint_step",
+                    "experiment.checkpoint_step",
+                    default=0,
+                )
+            ),
+            "checkpoint_sort_key": _str_value(
+                _first_present_value(
+                    adapter,
+                    manifest,
+                    "checkpoint_sort_key",
+                    "experiment.checkpoint_sort_key",
+                )
+            ),
+            "selected_checkpoint_path": _str_value(
+                _first_present_value(
+                    adapter,
+                    manifest,
+                    "selected_checkpoint_path",
+                    "experiment.selected_checkpoint_path",
+                )
+            ),
+            "selected_checkpoint_loss_source": _str_value(
+                _first_present_value(
+                    adapter,
+                    manifest,
+                    "selected_checkpoint_loss_source",
+                    "experiment.selected_checkpoint_loss_source",
+                )
             ),
             "resume_source_path": str(
-                manifest.get("resume_source_path", manifest.get("experiment.resume_source_path", ""))
+                adapter.get(
+                    "resume_source_path",
+                    manifest.get("resume_source_path", manifest.get("experiment.resume_source_path", "")),
+                )
             ),
-            "resume_source_job_id": str(manifest.get("resume_source_job_id", "")),
-            "resume_source_manifest_path": str(manifest.get("resume_source_manifest_path", "")),
-            "resume_ready": bool(manifest.get("resume_ready", manifest.get("experiment.resume_ready", False))),
-            "tokens_per_second": float(
-                manifest.get("tokens_per_second", manifest.get("training.tokens_per_second", 0.0))
+            "resume_source_job_id": str(adapter.get("resume_source_job_id") or manifest.get("resume_source_job_id", "")),
+            "resume_source_manifest_path": str(
+                adapter.get("resume_source_manifest_path") or manifest.get("resume_source_manifest_path", "")
             ),
-            "peak_memory_gb": float(
-                manifest.get("peak_memory_gb", manifest.get("training.peak_memory_gb", 0.0))
+            "resume_ready": bool(adapter.get("resume_ready", manifest.get("resume_ready", manifest.get("experiment.resume_ready", False)))),
+            "tokens_per_second": _optional_finite_float(
+                training.get(
+                    "tokens_per_second",
+                    manifest.get("tokens_per_second", manifest.get("training.tokens_per_second", 0.0)),
+                )
+            )
+            or 0.0,
+            "peak_memory_gb": _optional_finite_float(
+                training.get(
+                    "peak_memory_gb",
+                    manifest.get("peak_memory_gb", manifest.get("training.peak_memory_gb", 0.0)),
+                )
+            )
+            or 0.0,
+            "loss_final": _optional_finite_float(
+                final_metrics.get("loss_final"),
+                _manifest_optional_float(manifest, "loss_final", "training.loss_final"),
             ),
-            "loss_final": _manifest_optional_float(manifest, "loss_final", "training.loss_final"),
-            "loss_best": _manifest_optional_float(manifest, "loss_best", "training.loss_best"),
+            "loss_best": _optional_finite_float(
+                final_metrics.get("loss_best"),
+                _manifest_optional_float(manifest, "loss_best", "training.loss_best"),
+            ),
+            "validation_loss_best": _optional_finite_float(final_metrics.get("validation_loss_best")),
+            "loss_series_row_count": _int_value(training.get("loss_series_row_count")),
+            "loss_series": _list_value(training.get("loss_series")),
+            "base_model": base_model,
+            "dataset_provenance": dataset,
+            "hyperparameters": hyperparameters,
+            "export_eligibility": export_eligibility,
+            "export_eligible": bool(export_eligibility.get("eligible", False)),
+            "export_blocking_reasons": _list_value(export_eligibility.get("blocking_reasons")),
+            "adapter_provenance_manifest_path": str(
+                provenance.get("adapter_provenance_manifest_path")
+                or manifest.get("adapter_provenance_manifest_path", "")
+                or (default_adapter_provenance_manifest_path(manifest_path) if provenance else "")
+            ),
+            "adapter_operator_notes_path": str(
+                operator_notes.get("path")
+                or manifest.get("adapter_operator_notes_path", "")
+            ),
+            "operator_note_count": _int_value(
+                operator_notes.get("note_count"),
+                manifest.get("adapter_operator_note_count"),
+            ),
             "manifest_path": str(manifest_path),
             "output_dir": str(manifest_path.parent),
             "created_at_unix_ms": created_at_unix_ms,
@@ -260,14 +433,39 @@ class LoraExperimentStore:
         for key in _LORA_CANARY_RECEIPT_KEYS:
             if key in manifest:
                 payload[key] = manifest[key]
+        if manifest.get("checkpoint_step") not in (None, ""):
+            payload["checkpoint_step"] = _int_value(manifest.get("checkpoint_step"))
+        for key in _CHECKPOINT_SELECTION_RECEIPT_KEYS[1:]:
+            if manifest.get(key) not in (None, ""):
+                payload[key] = _str_value(manifest.get(key))
+        return payload
+
+    def _load_adapter_provenance(
+        self,
+        *,
+        manifest: dict[str, Any],
+        manifest_path: Path,
+    ) -> dict[str, Any]:
+        provenance_path = str(manifest.get("adapter_provenance_manifest_path", "")).strip()
+        candidate_path = Path(provenance_path) if provenance_path else default_adapter_provenance_manifest_path(manifest_path)
+        payload = self._load_payload(candidate_path)
+        if payload.get("schema_version") != "melix.lora_adapter_provenance.v1":
+            return {}
+        payload["adapter_provenance_manifest_path"] = str(candidate_path)
         return payload
 
     @staticmethod
     def _checkpoint_lineage_entry(run: dict[str, Any]) -> dict[str, Any]:
         return {
             "run_id": str(run.get("run_id", "")),
-            "checkpoint_count": int(run.get("checkpoint_count", 0)),
-            "latest_checkpoint_path": str(run.get("latest_checkpoint_path", "")),
+            "checkpoint_count": _int_value(run.get("checkpoint_count")),
+            "latest_checkpoint_path": _str_value(run.get("latest_checkpoint_path")),
+            "checkpoint_step": _int_value(run.get("checkpoint_step")),
+            "checkpoint_sort_key": _str_value(run.get("checkpoint_sort_key")),
+            "selected_checkpoint_path": _str_value(run.get("selected_checkpoint_path")),
+            "selected_checkpoint_loss_source": _str_value(
+                run.get("selected_checkpoint_loss_source")
+            ),
             "resume_source_path": str(run.get("resume_source_path", "")),
             "resume_source_job_id": str(run.get("resume_source_job_id", "")),
             "resume_source_manifest_path": str(run.get("resume_source_manifest_path", "")),
@@ -322,6 +520,38 @@ class LoraExperimentStore:
         self._cached_payloads[path] = (signature, payload)
 
 
+def _int_value(*values: Any, default: int = 0) -> int:
+    for candidate in values:
+        if candidate is None or candidate == "":
+            continue
+        try:
+            return int(candidate)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _str_value(raw_value: Any) -> str:
+    return "" if raw_value is None else str(raw_value)
+
+
+def _first_present_value(
+    primary: dict[str, Any],
+    fallback: dict[str, Any],
+    *keys: str,
+    default: Any = "",
+) -> Any:
+    if not keys:
+        return default
+    primary_value = primary.get(keys[0])
+    if primary_value is not None and primary_value != "":
+        return primary_value
+    for key in keys:
+        fallback_value = fallback.get(key)
+        if fallback_value is not None and fallback_value != "":
+            return fallback_value
+    return default
+
 
 def _manifest_optional_float(manifest: dict[str, Any], *keys: str) -> float | None:
     for key in keys:
@@ -338,16 +568,25 @@ def _best_loss_value(item: dict[str, Any]) -> float | None:
     return None
 
 
-def _optional_finite_float(value: Any) -> float | None:
-    if value is None or value == "":
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(parsed):
-        return None
-    return parsed
+def _optional_finite_float(*values: Any) -> float | None:
+    for candidate in values:
+        if candidate is None or candidate == "":
+            continue
+        try:
+            parsed = float(candidate)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(parsed):
+            return parsed
+    return None
+
+
+def _dict_value(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _list_value(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
 
 
 def _json_safe(value: Any) -> Any:

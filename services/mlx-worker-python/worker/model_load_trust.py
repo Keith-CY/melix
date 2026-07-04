@@ -22,6 +22,7 @@ BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST = "custom_loader_requires_trust_remote
 CONFIG_JSON_DETECTION = (False, CONFIG_JSON_SOURCE)
 CONFIG_JSON_ABSENT_DETECTION = (False, CONFIG_JSON_ABSENT_SOURCE)
 CONFIG_JSON_AUTO_MAP_DETECTION = (True, CONFIG_JSON_AUTO_MAP_SOURCE)
+_JSON_LOADS = json.loads
 EXECUTABLE_MODEL_FILE_PREFIXES = (
     "configuration",
     "feature_extraction",
@@ -30,6 +31,12 @@ EXECUTABLE_MODEL_FILE_PREFIXES = (
     "modeling",
     "processing",
     "tokenization",
+)
+VALID_REQUESTED_TRUST_MODES = frozenset(
+    {
+        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
+        common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
+    }
 )
 TRUST_APPLICABLE_TEXT_LOADERS = frozenset({"mlx_lm", "mlx_lm_unavailable"})
 TRUST_APPLICABLE_TEXT_LOADERS_COMMON = frozenset({"mlx-lm", "mlx_lm", "mlx_lm_unavailable"})
@@ -152,15 +159,13 @@ def _requested_mode(
     model_spec: common_pb2.ModelSpec,
     request_policy: common_pb2.ModelLoadTrustPolicy | None,
 ) -> tuple[int, str]:
-    if request_policy is not None and request_policy.requested_mode in {
-        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
-        common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
-    }:
+    valid_requested_modes = VALID_REQUESTED_TRUST_MODES
+    if request_policy is not None and request_policy.requested_mode in valid_requested_modes:
         return request_policy.requested_mode, REQUEST_SOURCE
-    if model_spec.HasField("settings") and model_spec.settings.load_trust_mode in {
-        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
-        common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
-    }:
+    if (
+        model_spec.HasField("settings")
+        and model_spec.settings.load_trust_mode in valid_requested_modes
+    ):
         return model_spec.settings.load_trust_mode, MODEL_SETTINGS_SOURCE
     return common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE, DEFAULT_SAFE_SOURCE
 
@@ -237,7 +242,14 @@ def _is_trust_applicable(
 
 
 def _runtime_name(runtime: Any) -> str:
-    return str(getattr(runtime, "runtime_name", "") or "") if runtime is not None else ""
+    if runtime is None:
+        return ""
+    runtime_name = getattr(runtime, "runtime_name", "")
+    if type(runtime_name) is str:
+        return runtime_name
+    if not runtime_name:
+        return ""
+    return str(runtime_name)
 
 
 def _detect_custom_loader_requirement(model_spec: common_pb2.ModelSpec) -> tuple[bool, str]:
@@ -271,13 +283,14 @@ def _detect_executable_model_files(model_spec: common_pb2.ModelSpec) -> tuple[st
         scan_path: str | os.PathLike[str] = Path(model_path).expanduser()
     else:
         scan_path = model_path
+    is_executable_model_file_entry = _is_executable_model_file_entry
     try:
         with os.scandir(scan_path) as entries:
             return tuple(
                 sorted(
                     entry.name
                     for entry in entries
-                    if _is_executable_model_file_entry(entry)
+                    if is_executable_model_file_entry(entry)
                 )
             )
     except OSError:
@@ -303,7 +316,9 @@ def _model_files_detection_source(file_names: tuple[str, ...]) -> str:
 def _auto_map_has_custom_loader(auto_map: dict[Any, Any]) -> bool:
     for value in auto_map.values():
         if isinstance(value, str):
-            if value and not value.isspace():
+            if not value:
+                continue
+            if not value[0].isspace() or not value.isspace():
                 return True
         elif value is not None and str(value).strip():
             return True
@@ -311,17 +326,10 @@ def _auto_map_has_custom_loader(auto_map: dict[Any, Any]) -> bool:
 
 
 def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | None:
-    model_path = str(model_spec.model_path or "").strip()
-    if not model_path:
+    config_path = _model_config_path(model_spec)
+    if config_path is None:
         return None
-    if model_path[0] == "~":
-        config_path = Path(model_path).expanduser() / "config.json"
-        config_path_text = str(config_path)
-        stat_path: str | os.PathLike[str] = config_path
-    else:
-        separator = "" if model_path[-1] == os.sep else os.sep
-        config_path_text = f"{model_path}{separator}config.json"
-        stat_path = config_path_text
+    config_path_text, stat_path = config_path
     try:
         config_stat = os.stat(stat_path)
         if not stat.S_ISREG(config_stat.st_mode):
@@ -337,9 +345,20 @@ def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | Non
 
 
 def _model_config_path(model_spec: common_pb2.ModelSpec) -> tuple[str, str | os.PathLike[str]] | None:
-    model_path = str(model_spec.model_path or "").strip()
+    model_path_value = model_spec.model_path
+    if type(model_path_value) is str:
+        if not model_path_value:
+            return None
+        if not model_path_value[0].isspace() and not model_path_value[-1].isspace():
+            return _model_config_path_for_model_path(model_path_value)
+    model_path = str(model_path_value or "").strip()
     if not model_path:
         return None
+    return _model_config_path_for_model_path(model_path)
+
+
+@lru_cache(maxsize=128)
+def _model_config_path_for_model_path(model_path: str) -> tuple[str, str | os.PathLike[str]]:
     if model_path[0] == "~":
         config_path = Path(model_path).expanduser() / "config.json"
         return str(config_path), config_path
@@ -370,9 +389,10 @@ def _read_model_config_for_stat(
     size: int,
 ) -> dict[str, Any] | None:
     _ = (mtime_ns, size)
+    loads = _JSON_LOADS
     try:
         with open(config_path, "rb") as handle:
-            payload = json.loads(handle.read())
+            payload = loads(handle.read())
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
@@ -387,4 +407,8 @@ def _route_name(route_class: int) -> str:
 
 
 def _non_empty(value: str, fallback: str) -> str:
-    return value if value and not value.isspace() else fallback
+    if not value:
+        return fallback
+    if not value[0].isspace():
+        return value
+    return fallback if value.isspace() else value

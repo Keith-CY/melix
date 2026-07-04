@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from dataclasses import dataclass
 from functools import lru_cache
@@ -12,6 +13,7 @@ import resource
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from threading import Event
 import time
 from typing import Any, Iterator, NoReturn
@@ -40,6 +42,11 @@ from worker.model_ops.training_dataset import build_training_dataset_artifact
 from worker.model_ops.upload_receipt_pipeline import UploadReceiptPipeline
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog, ResolvedBenchmarkSuite
+from worker.productization.serving_diagnostics import (
+    ServingDiagnosticsComparisonError,
+    ServingEvidenceRun,
+    write_baseline_accelerated_evidence,
+)
 from worker.productization.synthetic_dataset_generation import (
     SourceConstructionMetadata,
     SyntheticColumnSpec,
@@ -56,6 +63,11 @@ from worker.runtime.multimodal_preprocessing import PreparedVisionRequest
 _CAPABILITY_SUPPORTED_MODALITIES_KEY = "melix.capability.supported_modalities"
 _CAPABILITY_SUPPORTED_TASKS_KEY = "melix.capability.supported_tasks"
 _CAPABILITY_SUPPORTED_PARSERS_KEY = "melix.capability.supported_parsers"
+_VLM_BATCH1_COMPARISON_PROMPT_PROTOCOL = "melix.vlm.benchmark.v1"
+_VLM_BATCH1_BASELINE_EXT = {"melix.vlm.image_batch1_step.enabled": "false"}
+_VLM_BATCH1_FAST_PATH_EXT = {"melix.vlm.image_batch1_step.enabled": "true"}
+_VLM_SPECULATIVE_BASELINE_EXT = {"melix.vlm.speculative_probe.enabled": "false"}
+_VLM_SPECULATIVE_ACCELERATED_EXT = {"melix.vlm.speculative_probe.enabled": "true"}
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +159,9 @@ class BenchSample:
     multimodal_decode_mode: str = "baseline"
     multimodal_fallback_reason: str = "not_reported"
     multimodal_decode_sync_mode: str = "baseline"
+    image_batch1_step_decode_token_counter_start: int = 0
+    image_batch1_step_decode_token_counter_end: int = 0
+    image_batch1_step_decode_token_counter_advance: int = 0
     multi_image_scatter_mode: str = "none"
     quantized_load_mode: str = "fallback"
     quantized_load_fallback_reason: str = "not_reported"
@@ -168,10 +183,36 @@ class BenchSample:
     speculative_draft_model_configured: bool = False
     speculative_draft_propose_ms: float = 0.0
     speculative_target_verify_ms: float = 0.0
+    native_acceleration_status: str = ""
+    native_acceleration_mode: str = ""
+    native_acceleration_runtime_active: bool = False
+    native_acceleration_draft_supported: bool = False
+    native_acceleration_effective_depth: int = 0
+    native_acceleration_request_gate: str = ""
+    native_acceleration_runtime_scope: str = ""
+    native_acceleration_fallback_reason: str = ""
+    native_acceleration_rounds: int = 0
+    native_acceleration_accepted_tokens: int = 0
+    native_acceleration_rejected_tokens: int = 0
+    native_acceleration_acceptance_rate: float = 0.0
+    native_acceleration_rollback_rate: float = 0.0
+    native_acceleration_draft_propose_ms: float = 0.0
+    native_acceleration_target_verify_ms: float = 0.0
+    native_acceleration_autoregressive_fallback: bool = False
+    native_acceleration_sampling_matches_baseline: bool = False
     dflash_enabled: bool = False
     dflash_block_size: int = 0
     dflash_rollback_count: int = 0
     dflash_target_hidden_layers: int = 0
+    model_id: str = ""
+    task_kind: str = ""
+    prompt_protocol_id: str = ""
+    prompt_digest: str = ""
+    prompt_template_digest: str = ""
+    generation_config_digest: str = ""
+    generation_config_json: str = ""
+    route_stability_status: str = ""
+    acceleration_mode: str = ""
 
     @property
     def cached_prompt_tokens(self) -> int:
@@ -277,11 +318,16 @@ def _split_capability_values(raw_value: str) -> list[str]:
     if "," not in raw_value:
         stripped = raw_value.strip()
         return [stripped] if stripped else []
-    return [
+    return list(_split_capability_value_tuple(raw_value))
+
+
+@lru_cache(maxsize=128)
+def _split_capability_value_tuple(raw_value: str) -> tuple[str, ...]:
+    return tuple(
         stripped
         for part in raw_value.split(",")
         if (stripped := part.strip())
-    ]
+    )
 
 
 def _default_capability_lists(model_kind: str) -> tuple[list[str], list[str]]:
@@ -1910,6 +1956,10 @@ class MaintenanceCore:
                         loaded_model=loaded_model,
                         suite=resolved_suite,
                         parameters=parameters,
+                        job_id=job.job_id,
+                        source_repo=request.source_repo,
+                        task_kind=task_kind,
+                        output_dir=output_dir,
                     )
                 elif task_kind == "text-to-image":
                     suite_metrics = self._measure_image_generation_bench_metrics(
@@ -3021,6 +3071,11 @@ class MaintenanceCore:
         return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
+    def _falsey_parameter(parameters: dict[str, str], key: str) -> bool:
+        raw_value = parameters.get(key, parameters.get(f"melix.{key}", ""))
+        return str(raw_value).strip().lower() in {"0", "false", "no", "off", "disabled"}
+
+    @staticmethod
     def _runtime_evidence_for_loaded_model(loaded_model) -> dict[str, str]:
         if loaded_model is None:
             return {
@@ -3793,6 +3848,42 @@ class MaintenanceCore:
             return default
 
     @staticmethod
+    def _probe_speculative_receipt(probe: object | None) -> Mapping[str, object]:
+        if probe is None:  # pragma: no cover - defensive probe bridge
+            return {}
+        receipt = getattr(probe, "speculative_probe_receipt", {})
+        if isinstance(receipt, Mapping):
+            return receipt
+        return {}
+
+    @staticmethod
+    def _receipt_text(receipt: Mapping[str, object], field_name: str) -> str:
+        value = receipt.get(field_name, "")
+        return value if isinstance(value, str) else ""
+
+    @staticmethod
+    def _receipt_bool(receipt: Mapping[str, object], field_name: str) -> bool:
+        value = receipt.get(field_name, False)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    @staticmethod
+    def _receipt_int(receipt: Mapping[str, object], field_name: str) -> int:
+        try:
+            return max(int(receipt.get(field_name, 0) or 0), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _receipt_float(receipt: Mapping[str, object], field_name: str) -> float:
+        try:
+            value = float(receipt.get(field_name, 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        return value if math.isfinite(value) and value >= 0.0 else 0.0
+
+    @staticmethod
     def _annotated_text_benchmark_input(
         rendered_prompt: str | PreparedVisionRequest,
         *,
@@ -3820,6 +3911,10 @@ class MaintenanceCore:
         loaded_model,
         suite: ResolvedBenchmarkSuite,
         parameters: dict[str, str],
+        job_id: str = "",
+        source_repo: str = "",
+        task_kind: str = "image-text-to-text",
+        output_dir: Path | None = None,
     ) -> list[BenchMetricSpec]:
         samples = [
             self._measure_vlm_bench_sample(
@@ -3827,12 +3922,31 @@ class MaintenanceCore:
                 suite=suite,
                 case=case,
                 parameters=parameters,
+                source_repo=source_repo,
+                task_kind=task_kind,
             )
             for case in suite.cases
         ]
         fast_path_metrics = self._vlm_fast_path_bench_metrics(
             suite_id=suite.suite_id,
             samples=samples,
+        )
+        comparison_metrics = self._vlm_batch1_comparison_metrics(
+            loaded_model=loaded_model,
+            suite=suite,
+            parameters=parameters,
+            job_id=job_id,
+            source_repo=source_repo,
+            task_kind=task_kind,
+            output_dir=output_dir,
+        ) + self._vlm_speculative_comparison_metrics(
+            loaded_model=loaded_model,
+            suite=suite,
+            parameters=parameters,
+            job_id=job_id,
+            source_repo=source_repo,
+            task_kind=task_kind,
+            output_dir=output_dir,
         )
         if suite.suite_id == "latency":
             total_latencies = [sample.total_latency_ms for sample in samples]
@@ -3850,7 +3964,7 @@ class MaintenanceCore:
                     value=image_p95_ms,
                     unit="ms",
                 ),
-            ] + fast_path_metrics
+            ] + fast_path_metrics + comparison_metrics
 
         ttft_avg = sum(sample.ttft_ms for sample in samples) / max(len(samples), 1)
         throughput_values = [
@@ -3872,7 +3986,7 @@ class MaintenanceCore:
                 value=tokens_per_second,
                 unit="tok/s",
             ),
-        ] + fast_path_metrics
+        ] + fast_path_metrics + comparison_metrics
 
     def _measure_vlm_bench_sample(
         self,
@@ -3881,6 +3995,11 @@ class MaintenanceCore:
         suite: ResolvedBenchmarkSuite,
         case,
         parameters: dict[str, str],
+        execution_ext: dict[str, str] | None = None,
+        acceleration_policy: common_pb2.AccelerationPolicy | None = None,
+        source_repo: str = "",
+        task_kind: str = "image-text-to-text",
+        route_label: str = "",
     ) -> BenchSample:
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         parts = [
@@ -3903,7 +4022,7 @@ class MaintenanceCore:
             prepared = runtime.render_prompt(
                 messages,
                 loaded_model=loaded_model.runtime_model,
-                execution_ext={},
+                execution_ext=execution_ext or {},
             )
         except Exception as exc:
             self._raise_benchmark_error_with_stage(exc, "prompt_render")
@@ -3925,12 +4044,19 @@ class MaintenanceCore:
                 top_k=1,
                 max_output_tokens=self._benchmark_max_output_tokens(parameters),
             )
+            generation_config = self._vlm_benchmark_generation_config(sampling)
+            generate_kwargs: dict[str, object] = {"execution_ext": execution_ext or {}}
+            if (
+                acceleration_policy is not None
+                and self._runtime_generate_accepts_acceleration_policy(runtime)
+            ):
+                generate_kwargs["acceleration_policy"] = acceleration_policy
             for runtime_event in runtime.generate_tokens(
                 loaded_model.runtime_model,
                 prepared,
                 sampling,
                 cancel_event,
-                execution_ext={},
+                **generate_kwargs,
             ):
                 text = getattr(runtime_event, "text", "")
                 if not text:
@@ -3977,6 +4103,20 @@ class MaintenanceCore:
             "image_feature_work_saved_bytes",
             -1,
         )
+        speculative_receipt = self._probe_speculative_receipt(probe)
+        native_runtime_active = (
+            self._receipt_bool(speculative_receipt, "enabled")
+            and self._receipt_text(speculative_receipt, "status") == "admitted"
+            and self._receipt_text(speculative_receipt, "mode") == "speculative_decode"
+            and self._receipt_bool(speculative_receipt, "draft_supported")
+            and self._receipt_bool(speculative_receipt, "output_mutation_allowed")
+            and self._receipt_bool(speculative_receipt, "draft_loaded")
+            and self._receipt_bool(speculative_receipt, "target_decode_started")
+        )
+        native_autoregressive_fallback = (
+            self._receipt_bool(speculative_receipt, "enabled")
+            and not native_runtime_active
+        )
         return _bench_sample_with_cache_counters(  # pragma: no cover - VLM work-saved bridge
             WorkSavedCacheCounters(
                 media_feature_cache_hits=image_feature_cache_hits,
@@ -4014,6 +4154,21 @@ class MaintenanceCore:
                 if probe is not None
                 else "not_reported"
             ),
+            image_batch1_step_decode_token_counter_start=self._probe_counter(
+                probe,
+                "image_batch1_step_decode_token_counter_start",
+                0,
+            ),
+            image_batch1_step_decode_token_counter_end=self._probe_counter(
+                probe,
+                "image_batch1_step_decode_token_counter_end",
+                0,
+            ),
+            image_batch1_step_decode_token_counter_advance=self._probe_counter(
+                probe,
+                "image_batch1_step_decode_token_counter_advance",
+                0,
+            ),
             multi_image_scatter_mode=str(
                 getattr(probe, "multi_image_scatter_mode", "none")
                 if probe is not None
@@ -4031,7 +4186,753 @@ class MaintenanceCore:
                     else "not_reported"
                 )
             ),
+            native_acceleration_status=self._receipt_text(speculative_receipt, "status"),
+            native_acceleration_mode=self._receipt_text(speculative_receipt, "mode"),
+            native_acceleration_runtime_active=native_runtime_active,
+            native_acceleration_draft_supported=self._receipt_bool(
+                speculative_receipt,
+                "draft_supported",
+            ),
+            native_acceleration_effective_depth=self._receipt_int(
+                speculative_receipt,
+                "effective_depth",
+            ),
+            native_acceleration_request_gate=self._receipt_text(
+                speculative_receipt,
+                "request_gate",
+            ),
+            native_acceleration_runtime_scope=self._receipt_text(
+                speculative_receipt,
+                "runtime_scope",
+            ),
+            native_acceleration_fallback_reason=self._receipt_text(
+                speculative_receipt,
+                "fallback_reason",
+            ),
+            native_acceleration_rounds=self._receipt_int(speculative_receipt, "rounds"),
+            native_acceleration_accepted_tokens=self._receipt_int(
+                speculative_receipt,
+                "accepted_tokens",
+            ),
+            native_acceleration_rejected_tokens=self._receipt_int(
+                speculative_receipt,
+                "rejected_tokens",
+            ),
+            native_acceleration_acceptance_rate=self._receipt_float(
+                speculative_receipt,
+                "acceptance_rate",
+            ),
+            native_acceleration_rollback_rate=self._receipt_float(
+                speculative_receipt,
+                "rollback_rate",
+            ),
+            native_acceleration_draft_propose_ms=self._receipt_float(
+                speculative_receipt,
+                "draft_propose_ms",
+            ),
+            native_acceleration_target_verify_ms=self._receipt_float(
+                speculative_receipt,
+                "target_verify_ms",
+            ),
+            native_acceleration_autoregressive_fallback=native_autoregressive_fallback,
+            native_acceleration_sampling_matches_baseline=self._receipt_bool(
+                speculative_receipt,
+                "sampling_matches_baseline",
+            ),
+            model_id=(getattr(loaded_model, "handle", "") or "").split("::", 1)[0],
+            task_kind=task_kind,
+            prompt_protocol_id=_VLM_BATCH1_COMPARISON_PROMPT_PROTOCOL,
+            prompt_digest=self._vlm_benchmark_prompt_digest(
+                case=case,
+                source_repo=source_repo,
+            ),
+            prompt_template_digest=self._vlm_benchmark_prompt_template_digest(
+                loaded_model=loaded_model,
+            ),
+            generation_config_digest=self._stable_json_digest(generation_config),
+            generation_config_json=json.dumps(generation_config, sort_keys=True),
+            route_stability_status=self._vlm_route_stability_status(
+                getattr(probe, "multimodal_decode_mode", "") if probe is not None else ""
+            ),
+            acceleration_mode=(
+                route_label
+                or str(
+                    getattr(probe, "multimodal_decode_mode", "baseline")
+                    if probe is not None
+                    else "not_reported"
+                )
+            ),
         )
+
+    def _vlm_batch1_comparison_metrics(
+        self,
+        *,
+        loaded_model,
+        suite: ResolvedBenchmarkSuite,
+        parameters: dict[str, str],
+        job_id: str,
+        source_repo: str,
+        task_kind: str,
+        output_dir: Path | None,
+    ) -> list[BenchMetricSpec]:
+        if self._falsey_parameter(parameters, "vlm_batch1_compare"):
+            return []
+        if output_dir is None or not job_id or not suite.cases:
+            return self._vlm_batch1_comparison_status_metrics(
+                suite_id=suite.suite_id,
+                valid=False,
+                blocked=True,
+                reason="comparison_artifact_context_missing",
+            )
+        case = suite.cases[0]
+        baseline = self._measure_vlm_bench_sample(
+            loaded_model=loaded_model,
+            suite=suite,
+            case=case,
+            parameters=parameters,
+            execution_ext=_VLM_BATCH1_BASELINE_EXT,
+            source_repo=source_repo,
+            task_kind=task_kind,
+            route_label="baseline",
+        )
+        fast_path = self._measure_vlm_bench_sample(
+            loaded_model=loaded_model,
+            suite=suite,
+            case=case,
+            parameters=parameters,
+            execution_ext=_VLM_BATCH1_FAST_PATH_EXT,
+            source_repo=source_repo,
+            task_kind=task_kind,
+            route_label="image_batch1_step",
+        )
+        if fast_path.multimodal_decode_mode != "image_batch1_step":
+            return self._vlm_batch1_comparison_status_metrics(
+                suite_id=suite.suite_id,
+                valid=False,
+                blocked=True,
+                reason="fast_path_route_not_selected",
+                baseline=baseline,
+                fast_path=fast_path,
+            )
+        try:
+            paths = self._write_vlm_batch1_comparison_artifact(
+                output_dir=output_dir,
+                comparison_id=f"{job_id}-{suite.suite_id}-vlm-batch1-step",
+                baseline=baseline,
+                fast_path=fast_path,
+            )
+        except ServingDiagnosticsComparisonError as exc:
+            return self._vlm_batch1_comparison_status_metrics(
+                suite_id=suite.suite_id,
+                valid=False,
+                blocked=True,
+                reason=str(exc),
+                baseline=baseline,
+                fast_path=fast_path,
+            )
+        return self._vlm_batch1_comparison_status_metrics(
+            suite_id=suite.suite_id,
+            valid=True,
+            blocked=False,
+            reason="",
+            baseline=baseline,
+            fast_path=fast_path,
+            comparison_path=str(paths["comparison"]),
+        )
+
+    def _vlm_speculative_comparison_metrics(
+        self,
+        *,
+        loaded_model,
+        suite: ResolvedBenchmarkSuite,
+        parameters: dict[str, str],
+        job_id: str,
+        source_repo: str,
+        task_kind: str,
+        output_dir: Path | None,
+    ) -> list[BenchMetricSpec]:
+        if self._falsey_parameter(parameters, "vlm_speculative_compare"):
+            return []
+        if output_dir is None or not job_id or not suite.cases:
+            return self._vlm_speculative_comparison_status_metrics(
+                suite_id=suite.suite_id,
+                valid=False,
+                blocked=True,
+                reason="comparison_artifact_context_missing",
+            )
+        case = suite.cases[0]
+        baseline = self._measure_vlm_bench_sample(
+            loaded_model=loaded_model,
+            suite=suite,
+            case=case,
+            parameters=parameters,
+            execution_ext=_VLM_SPECULATIVE_BASELINE_EXT,
+            source_repo=source_repo,
+            task_kind=task_kind,
+            route_label="baseline",
+        )
+        accelerated = self._measure_vlm_bench_sample(
+            loaded_model=loaded_model,
+            suite=suite,
+            case=case,
+            parameters=parameters,
+            execution_ext=_VLM_SPECULATIVE_ACCELERATED_EXT,
+            acceleration_policy=self._vlm_speculative_comparison_policy(parameters),
+            source_repo=source_repo,
+            task_kind=task_kind,
+            route_label="speculative_decode",
+        )
+        if not accelerated.native_acceleration_runtime_active:
+            return self._vlm_speculative_comparison_status_metrics(
+                suite_id=suite.suite_id,
+                valid=False,
+                blocked=True,
+                reason="speculative_route_not_runtime_active",
+                baseline=baseline,
+                accelerated=accelerated,
+            )
+        try:
+            paths = self._write_vlm_speculative_comparison_artifact(
+                output_dir=output_dir,
+                comparison_id=f"{job_id}-{suite.suite_id}-vlm-speculative-decode",
+                baseline=baseline,
+                accelerated=accelerated,
+            )
+        except ServingDiagnosticsComparisonError as exc:
+            return self._vlm_speculative_comparison_status_metrics(
+                suite_id=suite.suite_id,
+                valid=False,
+                blocked=True,
+                reason=str(exc),
+                baseline=baseline,
+                accelerated=accelerated,
+            )
+        return self._vlm_speculative_comparison_status_metrics(
+            suite_id=suite.suite_id,
+            valid=True,
+            blocked=False,
+            reason="",
+            baseline=baseline,
+            accelerated=accelerated,
+            comparison_path=str(paths["comparison"]),
+        )
+
+    @staticmethod
+    def _vlm_speculative_comparison_policy(
+        parameters: Mapping[str, str],
+    ) -> common_pb2.AccelerationPolicy:
+        draft_model_id = str(
+            parameters.get("vlm_speculative_draft_model_id")
+            or parameters.get("draft_model_id")
+            or ""
+        ).strip()
+        try:
+            num_draft_tokens = int(
+                parameters.get("vlm_speculative_num_draft_tokens")
+                or parameters.get("num_draft_tokens")
+                or 6
+            )
+        except (TypeError, ValueError):
+            num_draft_tokens = 6
+        return common_pb2.AccelerationPolicy(
+            mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+            draft_model_id=draft_model_id,
+            num_draft_tokens=max(num_draft_tokens, 0),
+            allow_baseline_fallback=True,
+        )
+
+    @staticmethod
+    def _runtime_generate_accepts_acceleration_policy(runtime) -> bool:
+        try:
+            parameters = inspect.signature(runtime.generate_tokens).parameters
+        except (TypeError, ValueError, AttributeError):
+            return False
+        return "acceleration_policy" in parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+
+    @staticmethod
+    def _write_vlm_batch1_comparison_artifact(
+        *,
+        output_dir: Path,
+        comparison_id: str,
+        baseline: BenchSample,
+        fast_path: BenchSample,
+    ) -> dict[str, Path]:
+        return write_baseline_accelerated_evidence(
+            output_root=output_dir,
+            comparison_id=comparison_id,
+            baseline=MaintenanceCore._vlm_sample_evidence_run(
+                sample=baseline,
+                acceleration_mode="baseline",
+            ),
+            accelerated=MaintenanceCore._vlm_sample_evidence_run(
+                sample=fast_path,
+                acceleration_mode=fast_path.acceleration_mode or "image_batch1_step",
+            ),
+        )
+
+    @staticmethod
+    def _write_vlm_speculative_comparison_artifact(
+        *,
+        output_dir: Path,
+        comparison_id: str,
+        baseline: BenchSample,
+        accelerated: BenchSample,
+    ) -> dict[str, Path]:
+        return write_baseline_accelerated_evidence(
+            output_root=output_dir,
+            comparison_id=comparison_id,
+            baseline=MaintenanceCore._vlm_sample_evidence_run(
+                sample=baseline,
+                acceleration_mode="baseline",
+            ),
+            accelerated=MaintenanceCore._vlm_sample_evidence_run(
+                sample=accelerated,
+                acceleration_mode=accelerated.acceleration_mode or "speculative_decode",
+            ),
+        )
+
+    @staticmethod
+    def _vlm_sample_evidence_run(
+        *,
+        sample: BenchSample,
+        acceleration_mode: str,
+    ) -> ServingEvidenceRun:
+        generation_config = MaintenanceCore._json_object(sample.generation_config_json)
+        return ServingEvidenceRun(
+            run_id=f"{sample.model_id}:{sample.prompt_digest}:{acceleration_mode}",
+            model_id=sample.model_id,
+            task_kind=sample.task_kind,
+            prompt_protocol_id=sample.prompt_protocol_id,
+            prompt_digest=sample.prompt_digest,
+            prompt_template_digest=sample.prompt_template_digest,
+            generation_config=generation_config,
+            acceleration_mode=acceleration_mode,
+            acceleration_admitted=sample.multimodal_fallback_reason in {"", "not_reported"},
+            fallback_reason=sample.multimodal_fallback_reason,
+            effective_temperature=float(
+                generation_config["temperature"]
+                if generation_config.get("temperature") is not None
+                else 0.0
+            ),
+            effective_top_p=float(
+                generation_config["top_p"] if generation_config.get("top_p") is not None else 1.0
+            ),
+            effective_top_k=int(
+                generation_config["top_k"] if generation_config.get("top_k") is not None else 1
+            ),
+            tier_stability_status=sample.route_stability_status or "stable",
+            metrics={
+                "ttft_ms": sample.ttft_ms,
+                "decode_tokens_per_second": sample.decode_tokens_per_second
+                or round(
+                    sample.completion_tokens
+                    / max((sample.total_latency_ms - sample.ttft_ms) / 1_000.0, 0.001),
+                    4,
+                ),
+                "prefill_ms": sample.prefill_ms or sample.ttft_ms,
+                "decode_ms": sample.decode_ms or max(sample.total_latency_ms - sample.ttft_ms, 0.0),
+                "completion_tokens": float(sample.completion_tokens),
+            },
+            native_acceleration=MaintenanceCore._vlm_native_acceleration_payload(sample),
+        )
+
+    @staticmethod
+    def _vlm_native_acceleration_payload(sample: BenchSample) -> dict[str, object]:
+        has_receipt = any(
+            (
+                sample.native_acceleration_status,
+                sample.native_acceleration_mode,
+                sample.native_acceleration_request_gate,
+                sample.native_acceleration_runtime_scope,
+                sample.native_acceleration_fallback_reason,
+                sample.native_acceleration_runtime_active,
+                sample.native_acceleration_draft_supported,
+                sample.native_acceleration_effective_depth,
+                sample.native_acceleration_rounds,
+                sample.native_acceleration_accepted_tokens,
+                sample.native_acceleration_rejected_tokens,
+                sample.native_acceleration_acceptance_rate,
+                sample.native_acceleration_rollback_rate,
+                sample.native_acceleration_draft_propose_ms,
+                sample.native_acceleration_target_verify_ms,
+                sample.native_acceleration_autoregressive_fallback,
+                sample.native_acceleration_sampling_matches_baseline,
+            )
+        )
+        if not has_receipt:
+            return {}
+        return {
+            "schema_version": "melix.native_acceleration.status.v1",
+            "runtime_active": bool(sample.native_acceleration_runtime_active),
+            "status": sample.native_acceleration_status,
+            "mode": sample.native_acceleration_mode,
+            "draft_supported": bool(sample.native_acceleration_draft_supported),
+            "effective_depth": int(sample.native_acceleration_effective_depth),
+            "request_gate": sample.native_acceleration_request_gate,
+            "runtime_scope": sample.native_acceleration_runtime_scope,
+            "fallback_reason": sample.native_acceleration_fallback_reason,
+            "autoregressive_fallback": bool(sample.native_acceleration_autoregressive_fallback),
+            "sampling_matches_baseline": bool(sample.native_acceleration_sampling_matches_baseline),
+            "forward_counts": {
+                "rounds": int(sample.native_acceleration_rounds),
+                "accepted_tokens": int(sample.native_acceleration_accepted_tokens),
+                "rejected_tokens": int(sample.native_acceleration_rejected_tokens),
+            },
+            "timings": {
+                "draft_propose_ms": float(sample.native_acceleration_draft_propose_ms),
+                "target_verify_ms": float(sample.native_acceleration_target_verify_ms),
+            },
+            "acceptance_by_depth": {
+                "effective_depth": int(sample.native_acceleration_effective_depth),
+                "accepted_tokens": int(sample.native_acceleration_accepted_tokens),
+                "rejected_tokens": int(sample.native_acceleration_rejected_tokens),
+                "acceptance_rate": float(sample.native_acceleration_acceptance_rate),
+                "rollback_rate": float(sample.native_acceleration_rollback_rate),
+            },
+        }
+
+    @staticmethod
+    def _vlm_batch1_comparison_status_metrics(
+        *,
+        suite_id: str,
+        valid: bool,
+        blocked: bool,
+        reason: str,
+        baseline: BenchSample | None = None,
+        fast_path: BenchSample | None = None,
+        comparison_path: str = "",
+    ) -> list[BenchMetricSpec]:
+        metrics = [
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_batch1_comparison_valid",
+                value=1.0 if valid else 0.0,
+                unit="bool",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_batch1_comparison_claim_blocked",
+                value=1.0 if blocked else 0.0,
+                unit="bool",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_batch1_comparison_identity_match",
+                value=1.0
+                if baseline is not None
+                and fast_path is not None
+                and MaintenanceCore._vlm_sample_identity(baseline)
+                == MaintenanceCore._vlm_sample_identity(fast_path)
+                else 0.0,
+                unit="bool",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_batch1_route_stability",
+                value=1.0
+                if baseline is not None
+                and fast_path is not None
+                and baseline.route_stability_status == fast_path.route_stability_status == "stable"
+                else 0.0,
+                unit="bool",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_batch1_comparison_reason_code",
+                value=MaintenanceCore._vlm_batch1_comparison_reason_code(reason),
+                unit="code",
+            ),
+        ]
+        if baseline is not None:
+            metrics.extend(
+                [
+                    BenchMetricSpec(
+                        suite=suite_id,
+                        name=f"bench.{suite_id}.vlm_batch1_baseline_ttft_ms",
+                        value=baseline.ttft_ms,
+                        unit="ms",
+                    ),
+                    BenchMetricSpec(
+                        suite=suite_id,
+                        name=f"bench.{suite_id}.vlm_batch1_baseline_decode_tokens_per_second",
+                        value=baseline.decode_tokens_per_second
+                        or round(
+                            baseline.completion_tokens
+                            / max((baseline.total_latency_ms - baseline.ttft_ms) / 1_000.0, 0.001),
+                            4,
+                        ),
+                        unit="tok/s",
+                    ),
+                ]
+            )
+        if fast_path is not None:
+            metrics.extend(
+                [
+                    BenchMetricSpec(
+                        suite=suite_id,
+                        name=f"bench.{suite_id}.vlm_batch1_fast_path_ttft_ms",
+                        value=fast_path.ttft_ms,
+                        unit="ms",
+                    ),
+                    BenchMetricSpec(
+                        suite=suite_id,
+                        name=f"bench.{suite_id}.vlm_batch1_fast_path_decode_tokens_per_second",
+                        value=fast_path.decode_tokens_per_second
+                        or round(
+                            fast_path.completion_tokens
+                            / max((fast_path.total_latency_ms - fast_path.ttft_ms) / 1_000.0, 0.001),
+                            4,
+                        ),
+                        unit="tok/s",
+                    ),
+                ]
+            )
+        if comparison_path:
+            metrics.append(
+                BenchMetricSpec(
+                    suite=suite_id,
+                    name=f"bench.{suite_id}.vlm_batch1_comparison_artifact_present",
+                    value=1.0,
+                    unit="bool",
+                )
+            )
+        return metrics
+
+    @staticmethod
+    def _vlm_sample_identity(sample: BenchSample) -> tuple[str, str, str, str, str, str]:
+        return (
+            sample.model_id,
+            sample.prompt_protocol_id,
+            sample.prompt_digest,
+            sample.prompt_template_digest,
+            sample.task_kind,
+            sample.generation_config_digest,
+        )
+
+    @staticmethod
+    def _vlm_batch1_comparison_reason_code(reason: str) -> float:
+        if not reason:
+            return 0.0
+        if "prompt_protocol_id" in reason:
+            return 1.0
+        if "prompt_digest" in reason:
+            return 2.0
+        if "prompt_template_digest" in reason:
+            return 3.0
+        if "model_id" in reason:
+            return 4.0
+        if "task_kind" in reason:
+            return 5.0
+        if "generation_config" in reason:
+            return 6.0
+        if "greedy deterministic sampling" in reason:
+            return 7.0
+        if "tier_stability_status" in reason:
+            return 8.0
+        if reason == "fast_path_route_not_selected":
+            return 9.0
+        return 99.0
+
+    @staticmethod
+    def _vlm_speculative_comparison_status_metrics(
+        *,
+        suite_id: str,
+        valid: bool,
+        blocked: bool,
+        reason: str,
+        baseline: BenchSample | None = None,
+        accelerated: BenchSample | None = None,
+        comparison_path: str = "",
+    ) -> list[BenchMetricSpec]:
+        metrics = [
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_speculative_comparison_valid",
+                value=1.0 if valid else 0.0,
+                unit="bool",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_speculative_comparison_claim_blocked",
+                value=1.0 if blocked else 0.0,
+                unit="bool",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_speculative_comparison_identity_match",
+                value=1.0
+                if baseline is not None
+                and accelerated is not None
+                and MaintenanceCore._vlm_sample_identity(baseline)
+                == MaintenanceCore._vlm_sample_identity(accelerated)
+                else 0.0,
+                unit="bool",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_speculative_route_stability",
+                value=1.0
+                if baseline is not None
+                and accelerated is not None
+                and baseline.route_stability_status == accelerated.route_stability_status == "stable"
+                else 0.0,
+                unit="bool",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.vlm_speculative_comparison_reason_code",
+                value=MaintenanceCore._vlm_speculative_comparison_reason_code(reason),
+                unit="code",
+            ),
+        ]
+        if baseline is not None:
+            metrics.extend(
+                [
+                    BenchMetricSpec(
+                        suite=suite_id,
+                        name=f"bench.{suite_id}.vlm_speculative_baseline_ttft_ms",
+                        value=baseline.ttft_ms,
+                        unit="ms",
+                    ),
+                    BenchMetricSpec(
+                        suite=suite_id,
+                        name=(
+                            f"bench.{suite_id}."
+                            "vlm_speculative_baseline_decode_tokens_per_second"
+                        ),
+                        value=baseline.decode_tokens_per_second
+                        or round(
+                            baseline.completion_tokens
+                            / max((baseline.total_latency_ms - baseline.ttft_ms) / 1_000.0, 0.001),
+                            4,
+                        ),
+                        unit="tok/s",
+                    ),
+                ]
+            )
+        if accelerated is not None:
+            metrics.extend(
+                [
+                    BenchMetricSpec(
+                        suite=suite_id,
+                        name=f"bench.{suite_id}.vlm_speculative_accelerated_ttft_ms",
+                        value=accelerated.ttft_ms,
+                        unit="ms",
+                    ),
+                    BenchMetricSpec(
+                        suite=suite_id,
+                        name=(
+                            f"bench.{suite_id}."
+                            "vlm_speculative_accelerated_decode_tokens_per_second"
+                        ),
+                        value=accelerated.decode_tokens_per_second
+                        or round(
+                            accelerated.completion_tokens
+                            / max(
+                                (accelerated.total_latency_ms - accelerated.ttft_ms) / 1_000.0,
+                                0.001,
+                            ),
+                            4,
+                        ),
+                        unit="tok/s",
+                    ),
+                ]
+            )
+        if comparison_path:
+            metrics.append(
+                BenchMetricSpec(
+                    suite=suite_id,
+                    name=f"bench.{suite_id}.vlm_speculative_comparison_artifact_present",
+                    value=1.0,
+                    unit="bool",
+                )
+            )
+        return metrics
+
+    @staticmethod
+    def _vlm_speculative_comparison_reason_code(reason: str) -> float:
+        if not reason:
+            return 0.0
+        if "prompt_protocol_id" in reason:
+            return 1.0
+        if "prompt_digest" in reason:
+            return 2.0
+        if "prompt_template_digest" in reason:
+            return 3.0
+        if "model_id" in reason:
+            return 4.0
+        if "task_kind" in reason:
+            return 5.0
+        if "generation_config" in reason:
+            return 6.0
+        if "greedy deterministic sampling" in reason:
+            return 7.0
+        if "tier_stability_status" in reason:
+            return 8.0
+        if reason == "speculative_route_not_runtime_active":
+            return 9.0
+        return 99.0
+
+    @staticmethod
+    def _vlm_benchmark_generation_config(sampling: common_pb2.SamplingConfig) -> dict[str, object]:
+        return {
+            "temperature": float(getattr(sampling, "temperature", 0.0) or 0.0),
+            "top_p": float(getattr(sampling, "top_p", 1.0) or 1.0),
+            "top_k": int(getattr(sampling, "top_k", 0) or 0),
+            "max_output_tokens": int(getattr(sampling, "max_output_tokens", 0) or 0),
+        }
+
+    @staticmethod
+    def _vlm_benchmark_prompt_digest(*, case, source_repo: str) -> str:
+        payload = {
+            "source_repo": source_repo,
+            "prompt": str(getattr(case, "prompt", "") or ""),
+            "image_uris": [
+                str(image_uri)
+                for image_uri in (getattr(case, "image_uris", ()) or ())
+            ],
+        }
+        return "sha256:" + MaintenanceCore._stable_json_digest(payload)
+
+    @staticmethod
+    def _vlm_benchmark_prompt_template_digest(*, loaded_model) -> str:
+        runtime_model = getattr(loaded_model, "runtime_model", None)
+        raw_metadata = runtime_model.get("metadata") if isinstance(runtime_model, dict) else None
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+        payload = {
+            "prompt_protocol_id": _VLM_BATCH1_COMPARISON_PROMPT_PROTOCOL,
+            "model_id": (getattr(loaded_model, "handle", "") or "").split("::", 1)[0],
+            "vision_prompt_format": str(metadata.get("vision_prompt_format", "") or ""),
+            "vision_prompt_profile_id": str(metadata.get("vision_prompt_profile_id", "") or ""),
+            "vision_tokenization_mode": str(metadata.get("vision_tokenization_mode", "") or ""),
+        }
+        return "sha256:" + MaintenanceCore._stable_json_digest(payload)
+
+    @staticmethod
+    def _vlm_route_stability_status(mode: str) -> str:
+        return (
+            "stable"
+            if str(mode or "").strip()
+            in {"baseline", "single_stream", "image_cache_reuse", "native_quantized", "image_batch1_step"}
+            else "unstable"
+        )
+
+    @staticmethod
+    def _stable_json_digest(payload: dict[str, object]) -> str:
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+    @staticmethod
+    def _json_object(payload_json: str) -> dict[str, object]:
+        try:
+            payload = json.loads(payload_json)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
     @staticmethod
     def _vlm_fast_path_bench_metrics(
@@ -4164,6 +5065,8 @@ class MaintenanceCore:
                         "mixed": 5.0,
                         "text_only_step": 6.0,
                         "text_only_batch_generator": 7.0,
+                        "image_batch1_step_admission": 8.0,
+                        "image_batch1_step": 9.0,
                     },
                 ),
                 unit="code",
@@ -4186,6 +5089,12 @@ class MaintenanceCore:
                         "media_inputs_present": 7.0,
                         "isolated_detokenizer_unavailable": 8.0,
                         "non_greedy_sampling": 9.0,
+                        "image_batch1_step_non_greedy_sampling": 10.0,
+                        "image_batch1_step_position_receipt_unaligned": 11.0,
+                        "image_batch1_step_cache_receipt_missing": 12.0,
+                        "image_batch1_step_media_route_ineligible": 13.0,
+                        "image_batch1_step_backend_unsupported": 14.0,
+                        "image_batch1_step_position_receipt_missing": 15.0,
                     },
                 ),
                 unit="code",
@@ -4202,9 +5111,49 @@ class MaintenanceCore:
                         "mixed": 2.0,
                         "executor_step": 3.0,
                         "executor_batch_generator": 4.0,
+                        "executor_step_admission": 5.0,
                     },
                 ),
                 unit="code",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.image_batch1_step_decode_token_counter_start",
+                value=float(
+                    max(
+                        (
+                            sample.image_batch1_step_decode_token_counter_start
+                            for sample in samples
+                        ),
+                        default=0,
+                    )
+                ),
+                unit="tok",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.image_batch1_step_decode_token_counter_end",
+                value=float(
+                    max(
+                        (
+                            sample.image_batch1_step_decode_token_counter_end
+                            for sample in samples
+                        ),
+                        default=0,
+                    )
+                ),
+                unit="tok",
+            ),
+            BenchMetricSpec(
+                suite=suite_id,
+                name=f"bench.{suite_id}.image_batch1_step_decode_token_counter_advance",
+                value=float(
+                    sum(
+                        sample.image_batch1_step_decode_token_counter_advance
+                        for sample in samples
+                    )
+                ),
+                unit="tok",
             ),
             BenchMetricSpec(
                 suite=suite_id,

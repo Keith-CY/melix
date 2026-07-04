@@ -18,6 +18,24 @@ The sanitizer is intentionally narrow:
 
 It does not mutate worker truth, benchmark export bundle schemas, or chat context passed back to models.
 
+## Sink Escaping
+
+`RichOutputSanitizer` decides which rich-output fragments are allowed to reach an
+operator surface. `UISinkEscaper` is the lower-level helper for code that has
+already selected text and must interpolate it into a concrete UI syntax.
+
+Use `UISinkEscaper` for:
+
+- HTML text content
+- quoted HTML attribute values
+- quoted CSS string values
+- complete CSS `url("...")` tokens
+- URL path or query component values
+
+The CSS URL helper blocks non-HTTP(S) absolute schemes by returning
+`url("about:blank")`. Relative paths and HTTP(S) URLs are quoted and escaped as
+CSS strings inside the returned token.
+
 ## Blocked Patterns
 
 The current rules strip or neutralize:
@@ -77,7 +95,7 @@ Focused verification:
 
 ```bash
 HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" \
-swift test --package-path services/control-plane-swift --filter 'RichOutputSanitizerTests|OpenAIHandlerTests'
+swift test --package-path services/control-plane-swift --filter 'UISinkEscaperTests|RichOutputSanitizerTests|OpenAIHandlerTests'
 
 HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" \
 swift test --package-path apps/macos-menubar --scratch-path "$(pwd)/.build/menubar-scratch" \
@@ -89,7 +107,7 @@ Coverage verification:
 ```bash
 HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" \
 swift test --package-path services/control-plane-swift --enable-code-coverage \
-  --filter 'RichOutputSanitizerTests|OpenAIHandlerTests'
+  --filter 'UISinkEscaperTests|RichOutputSanitizerTests|OpenAIHandlerTests'
 
 HOME="$(pwd)/.swift-home" CLANG_MODULE_CACHE_PATH="$(pwd)/.build/ModuleCache.noindex" \
 swift test --package-path apps/macos-menubar --enable-code-coverage \

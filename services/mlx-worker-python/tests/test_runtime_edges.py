@@ -649,6 +649,9 @@ def test_worker_registry_reuses_sorted_handles_across_listing_calls(monkeypatch:
     assert sorted_calls == 2
 
 def test_registry_capabilities_and_request_lifecycle() -> None:
+    assert registry_module._non_negative_float(object()) == 0.0
+    assert registry_module._non_negative_float(float("nan")) == 0.0
+
     registry = build_registry()
 
     capabilities = registry.capabilities()
@@ -909,6 +912,32 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
             image_feature_cache_misses=2,
             image_feature_encoder_calls_saved=5,
             image_feature_work_saved_bytes=8192,
+            native_quantized_load_count=1,
+            bridge_quantized_fallback_count=0,
+            cross_shard_metadata_fixup_count=2,
+            speculative_probe_receipt={
+                "enabled": True,
+                "status": "admitted",
+                "mode": "speculative_decode",
+                "fallback_reason": "",
+                "draft_supported": True,
+                "effective_depth": 4,
+                "request_gate": "media_draft_eligible",
+                "runtime_scope": "vlm_mtp",
+                "position_aligned": True,
+                "cache_aligned": True,
+                "output_mutation_allowed": True,
+                "draft_loaded": True,
+                "target_decode_started": True,
+                "rounds": 3,
+                "accepted_tokens": 9,
+                "rejected_tokens": 3,
+                "acceptance_rate": 0.75,
+                "rollback_rate": 0.25,
+                "draft_propose_ms": 12.5,
+                "target_verify_ms": 25.0,
+                "sampling_matches_baseline": True,
+            },
             hybrid_state_patch_mode="family_scoped",
             hybrid_state_advance_count=42,
             family_fast_path_override_count=1,
@@ -965,6 +994,56 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert vision_stats.last_image_feature_cache_misses == 2
     assert vision_stats.last_image_feature_encoder_calls_saved == 5
     assert vision_stats.last_image_feature_work_saved_bytes == 8192
+    assert vision_stats.native_quantized_load_count == 1
+    assert vision_stats.bridge_quantized_fallback_count == 0
+    assert vision_stats.cross_shard_metadata_fixup_count == 2
+    assert vision_stats.speculative_probe_enabled_count == 1
+    assert vision_stats.speculative_probe_fallback_count == 0
+    assert vision_stats.speculative_probe_position_aligned_count == 1
+    assert vision_stats.speculative_probe_cache_aligned_count == 1
+    assert vision_stats.speculative_probe_status == "admitted"
+    assert vision_stats.speculative_probe_mode == "speculative_decode"
+    assert vision_stats.speculative_probe_fallback_reason == ""
+    assert vision_stats.speculative_probe_request_gate == "media_draft_eligible"
+    assert vision_stats.speculative_probe_runtime_scope == "vlm_mtp"
+    assert vision_stats.speculative_probe_runtime_active is True
+    assert vision_stats.speculative_probe_draft_supported is True
+    assert vision_stats.speculative_probe_effective_depth == 4
+    assert vision_stats.speculative_probe_rounds == 3
+    assert vision_stats.speculative_probe_accepted_tokens == 9
+    assert vision_stats.speculative_probe_rejected_tokens == 3
+    assert vision_stats.speculative_probe_acceptance_rate == 0.75
+    assert vision_stats.speculative_probe_rollback_rate == 0.25
+    assert vision_stats.speculative_probe_draft_propose_ms == 12.5
+    assert vision_stats.speculative_probe_target_verify_ms == 25.0
+    assert vision_stats.speculative_probe_autoregressive_fallback is False
+    assert vision_stats.speculative_probe_sampling_matches_baseline is True
+
+    registry.record_vision_probe(
+        "ocr",
+        SimpleNamespace(
+            speculative_probe_receipt={
+                "enabled": "true",
+                "status": "admitted",
+                "mode": "speculative_decode",
+                "draft_supported": "1",
+                "position_aligned": "yes",
+                "cache_aligned": "0",
+                "output_mutation_allowed": "on",
+                "draft_loaded": "0",
+                "target_decode_started": "False",
+                "sampling_matches_baseline": "no",
+            },
+        ),
+    )
+    string_bool_stats = registry.runtime_stats()
+    assert string_bool_stats.speculative_probe_enabled_count == 1
+    assert string_bool_stats.speculative_probe_position_aligned_count == 1
+    assert string_bool_stats.speculative_probe_cache_aligned_count == 0
+    assert string_bool_stats.speculative_probe_runtime_active is False
+    assert string_bool_stats.speculative_probe_draft_supported is True
+    assert string_bool_stats.speculative_probe_autoregressive_fallback is True
+    assert string_bool_stats.speculative_probe_sampling_matches_baseline is False
 
     registry.record_vision_probe(
         "ocr",
@@ -1000,6 +1079,10 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
             image_feature_cache_misses=-1,
             image_feature_encoder_calls_saved=-1,
             image_feature_work_saved_bytes=-1,
+            native_quantized_load_count=-1,
+            bridge_quantized_fallback_count=3,
+            cross_shard_metadata_fixup_count=4,
+            speculative_probe_receipt="not-a-dict",
         ),
     )
     media_stats = registry.runtime_stats()
@@ -1011,6 +1094,30 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert media_stats.last_image_feature_encoder_calls_saved == 8
     assert media_stats.last_media_feature_work_saved_bytes == 32768
     assert media_stats.last_image_feature_work_saved_bytes == 32768
+    assert media_stats.native_quantized_load_count == 0
+    assert media_stats.bridge_quantized_fallback_count == 3
+    assert media_stats.cross_shard_metadata_fixup_count == 4
+    assert media_stats.speculative_probe_enabled_count == 0
+    assert media_stats.speculative_probe_fallback_count == 0
+    assert media_stats.speculative_probe_position_aligned_count == 0
+    assert media_stats.speculative_probe_cache_aligned_count == 0
+    assert media_stats.speculative_probe_status == ""
+    assert media_stats.speculative_probe_mode == ""
+    assert media_stats.speculative_probe_fallback_reason == ""
+    assert media_stats.speculative_probe_request_gate == ""
+    assert media_stats.speculative_probe_runtime_scope == ""
+    assert media_stats.speculative_probe_runtime_active is False
+    assert media_stats.speculative_probe_draft_supported is False
+    assert media_stats.speculative_probe_effective_depth == 0
+    assert media_stats.speculative_probe_rounds == 0
+    assert media_stats.speculative_probe_accepted_tokens == 0
+    assert media_stats.speculative_probe_rejected_tokens == 0
+    assert media_stats.speculative_probe_acceptance_rate == 0.0
+    assert media_stats.speculative_probe_rollback_rate == 0.0
+    assert media_stats.speculative_probe_draft_propose_ms == 0.0
+    assert media_stats.speculative_probe_target_verify_ms == 0.0
+    assert media_stats.speculative_probe_autoregressive_fallback is False
+    assert media_stats.speculative_probe_sampling_matches_baseline is False
     assert vision_stats.last_hybrid_state_patch_mode == "family_scoped"
     assert vision_stats.last_hybrid_state_advance_count == 42
     assert vision_stats.last_family_fast_path_override_count == 1

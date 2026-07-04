@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import argparse
 import os
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 import json
 import logging
 from pathlib import Path
-import re
 import subprocess
 import sys
 import time
 from typing import Any, Iterable
 
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.lora_checkpoint_selection import checkpoint_step_from_path
 from worker.model_ops.multimodal_lora_contracts import (
     audit_manifest_fields,
     audit_trainable_module_tree,
@@ -28,9 +28,11 @@ from worker.model_ops.training_dataset_chunker import (
     ChunkStats,
     chunk_long_samples,
 )
+from worker.model_ops.training_log_events import parse_training_log_events
 
 _RESULT_PREFIX = "__MELIX_MLX_RESULT__="
-_NUMERIC_TOKEN_RE = re.compile(r"\d+")
+_RESULT_PREFIX_LENGTH = len(_RESULT_PREFIX)
+_RESULT_PAYLOAD_DECODER = json.JSONDecoder()
 # Sentinel tied to mlx-lm's internal error wording. Keep the mlx-lm pin in
 # pyproject.toml tight: any upstream wording change would silently disable the
 # no-strict retry for QLoRA loads. Update both the sentinel and tests together
@@ -122,6 +124,9 @@ class TrainingMetrics:
     completion_loss: float | None = None
     round_trip_passed: bool = False
     grad_norm: float = 0.0
+    training_log_events: dict[str, Any] = field(default_factory=dict)
+    training_log_event_preview_limit: int = 0
+    training_log_event_preview: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -261,6 +266,7 @@ class MLXLMRunner:
                 self.losses: list[float] = []
                 self.learning_rates: list[float] = []
                 self.tokens_seen = 0
+                self.training_log_lines: list[str] = []
 
             def on_train_loss_report(self, train_info: dict) -> None:
                 if "train_loss" in train_info:
@@ -269,10 +275,16 @@ class MLXLMRunner:
                     self.learning_rates.append(float(train_info["learning_rate"]))
                 if "trained_tokens" in train_info:
                     self.tokens_seen = int(train_info["trained_tokens"])
+                log_line = _training_info_log_line(train_info, loss_key="train_loss")
+                if log_line:
+                    self.training_log_lines.append(log_line)
 
             def on_val_loss_report(self, val_info: dict) -> None:
                 if "val_loss" in val_info:
                     self.losses.append(float(val_info["val_loss"]))
+                log_line = _training_info_log_line(val_info, loss_key="val_loss")
+                if log_line:
+                    self.training_log_lines.append(log_line)
 
         collector = MetricsCollector()
         started_at = time.perf_counter()
@@ -324,6 +336,10 @@ class MLXLMRunner:
             source_model_ext=request.source_model_ext or {},
         )
         live_audit_fields = audit_manifest_fields(live_audit)
+        training_log_fields = parse_training_log_events(
+            collector.training_log_lines,
+            source="mlx_lm_callback",
+        ).manifest_fields(preview_limit=50)
         return TrainingResult(
             weights_path=weights_path,
             adapter_config_path=request.adapter_output_dir / "adapter_config.json",
@@ -359,6 +375,11 @@ class MLXLMRunner:
                 unexpected_frozen_param_count=int(live_audit_fields["unexpected_frozen_param_count"]),
                 adapter_checkpoint_bytes=weights_path.stat().st_size if weights_path.is_file() else 0,
                 adapter_freeze_audit=live_audit_fields["adapter_freeze_audit"],
+                training_log_events=dict(training_log_fields["training_log_events"]),
+                training_log_event_preview_limit=int(
+                    training_log_fields["training_log_event_preview_limit"]
+                ),
+                training_log_event_preview=list(training_log_fields["training_log_event_preview"]),
             ),
             execution_backend="native",
         )
@@ -460,27 +481,54 @@ class MLXLMRunner:
 
 
 def _extract_structured_result_payload(stdout: str) -> dict[str, object] | None:
-    search_end = len(stdout)
-    prefix = _RESULT_PREFIX
-    prefix_length = len(prefix)
-    while True:
-        prefix_index = stdout.rfind(prefix, 0, search_end)
-        if prefix_index < 0:
-            return None
-        if prefix_index > 0:
-            previous_character = stdout[prefix_index - 1]
-            if previous_character != "\n" and previous_character != "\r":
-                search_end = prefix_index
-                continue
-        newline_index = stdout.find("\n", prefix_index)
-        if newline_index >= 0:
-            line_end = newline_index
-        else:
-            line_end = len(stdout)
-            carriage_index = stdout.find("\r", prefix_index)
-            if carriage_index >= 0:
-                line_end = carriage_index
-        return json.loads(stdout[prefix_index + prefix_length:line_end])
+    prefix_index = stdout.rfind("\n" + _RESULT_PREFIX)
+    carriage_prefix_index = stdout.rfind(
+        "\r" + _RESULT_PREFIX,
+        prefix_index + 1 if prefix_index >= 0 else 0,
+    )
+    if carriage_prefix_index > prefix_index:
+        prefix_index = carriage_prefix_index
+    if prefix_index >= 0:
+        prefix_index += 1
+    elif stdout.startswith(_RESULT_PREFIX):
+        prefix_index = 0
+    else:
+        return None
+
+    payload_start = prefix_index + _RESULT_PREFIX_LENGTH
+    payload, _ = _RESULT_PAYLOAD_DECODER.raw_decode(stdout, payload_start)
+    return payload
+
+
+def _training_info_log_line(info: dict[str, Any], *, loss_key: str) -> str:
+    parts: list[str] = []
+    step = _first_present(info, "iteration", "iterations", "step", "steps", "iter")
+    total_steps = _first_present(info, "total_iterations", "total_steps", "iters")
+    if step is not None:
+        step_text = str(step)
+        if total_steps is not None:
+            step_text = f"{step_text}/{total_steps}"
+        parts.append(f"step {step_text}")
+    if loss_key in info:
+        label = "validation_loss" if loss_key == "val_loss" else "loss"
+        parts.append(f"{label}={info[loss_key]}")
+    learning_rate = _first_present(info, "learning_rate", "lr")
+    if learning_rate is not None:
+        parts.append(f"lr={learning_rate}")
+    tokens_seen = _first_present(info, "trained_tokens", "tokens_seen")
+    if tokens_seen is not None:
+        parts.append(f"trained_tokens={tokens_seen}")
+    examples_seen = _first_present(info, "trained_examples", "examples_seen")
+    if examples_seen is not None:
+        parts.append(f"examples_seen={examples_seen}")
+    return " ".join(parts)
+
+
+def _first_present(payload: dict[str, Any], *keys: str) -> Any | None:
+    for key in keys:
+        if key in payload:
+            return payload[key]
+    return None
 
 
 def _mlx_lora_namespace(request: TrainingRequest):
@@ -1030,8 +1078,7 @@ def _checkpoint_summary(adapter_output_dir: Path) -> tuple[int, str]:
 
 def _checkpoint_order_key(path: Path) -> tuple[int, str]:
     path_text = str(path)
-    numeric_tokens = _NUMERIC_TOKEN_RE.findall(path_text)
-    return (int(numeric_tokens[-1]) if numeric_tokens else -1, path_text)
+    return (checkpoint_step_from_path(path_text), path_text)
 
 
 def _serialize_activation_request(request: ActivationRequest) -> dict:

@@ -3016,8 +3016,32 @@ func makeDiagnosticsDebugBundleJSON(
     bundlePath: String = "/tmp/melix-debug/bench-1",
     servingDiagnosticsEventCount: Int? = nil,
     servingDiagnosticsDroppedEventCount: Int? = nil,
-    servingDiagnosticsMode: String = "debug"
+    servingDiagnosticsMode: String = "debug",
+    environmentDiagnosticJSON: String = """
+      "environment_diagnostic": {
+        "schema_version": "melix.desktop_environment_diagnostic_receipt.v1",
+        "summary": {
+          "status": "warn",
+          "check_count": 10,
+          "failed_check_count": 0,
+          "warning_check_count": 2,
+          "passed_check_count": 8
+        },
+        "redaction_summary": {
+          "schema_version": "melix.diagnostics.redaction.v1",
+          "redacted_field_count": 4
+        },
+        "metrics": {
+          "diagnostic_latency_ms": 12,
+          "path_candidate_count": 3,
+          "diagnostic_failure_count": 0,
+          "redaction_count": 4
+        }
+      }
+    """
 ) -> String {
+    let environmentDiagnosticEntry = environmentDiagnosticJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+    let environmentDiagnosticField = environmentDiagnosticEntry.isEmpty ? "" : ",\n      \(environmentDiagnosticEntry)"
     let servingDiagnosticsJSON: String
     if let servingDiagnosticsEventCount, let servingDiagnosticsDroppedEventCount {
         servingDiagnosticsJSON = """
@@ -3043,7 +3067,7 @@ func makeDiagnosticsDebugBundleJSON(
       "debug_jsonl_event_limit": 256,
       "redaction_schema_version": "melix.diagnostics.redaction.v1",
       "redacted_field_count": 3,
-      "source_run_record_path": "/tmp/melix/jobs/\(bundleID)/run-record.json",
+      "source_run_record_path": "/tmp/melix/jobs/\(bundleID)/run-record.json"\(environmentDiagnosticField),
       "media_route_receipt": {
         "media_route": "swift_text",
         "media_parts_count": 0,

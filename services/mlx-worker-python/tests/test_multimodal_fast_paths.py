@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 import pytest
 
+from worker.engine import maintenance_core as maintenance_core_module
+from worker.engine.maintenance_core import MaintenanceCore
+from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
+from worker.runtime.deterministic_vlm_runtime import probe_receipt_fallback_reason
+from worker.runtime.mlx_vlm_runtime import MLXVLMRuntime
 from worker.runtime.multimodal_fast_paths import (
     ImageFeatureCacheEntry,
     ImageFeatureCacheKey,
@@ -12,6 +18,7 @@ from worker.runtime.multimodal_fast_paths import (
     MULTIMODAL_DECODE_BASELINE,
     MULTIMODAL_DECODE_FALLBACK,
     MULTIMODAL_DECODE_IMAGE_CACHE_REUSE,
+    MULTIMODAL_DECODE_IMAGE_BATCH1_STEP_ADMISSION,
     MULTIMODAL_DECODE_SINGLE_STREAM,
     MULTIMODAL_LOAD_FALLBACK,
     MULTIMODAL_LOAD_NATIVE_QUANTIZED,
@@ -24,10 +31,17 @@ from worker.runtime.multimodal_fast_paths import (
     media_feature_reuse_unsupported_reason,
 )
 from worker.runtime.multimodal_position_receipts import build_mixed_batch_geometry_receipt
+from worker.runtime.multimodal_position_receipts import build_position_metadata_receipt
 from worker.runtime.multimodal_preprocessing import (
     PreparedImageInput,
     PreparedVideoFramePolicy,
     PreparedVisionRequest,
+)
+from worker.runtime.quantized_load_acceptance import quantized_load_acceptance_receipt
+from worker.runtime.quantized_tensor_metadata import (
+    EMPTY_QUANTIZED_TENSOR_METADATA,
+    QuantizedTensorMetadata,
+    cross_shard_quantized_metadata_fixup_count,
 )
 from worker.runtime.video_preprocessing import PreparedVideoInput
 from worker.runtime.vlm_preprocessing_policy import request_preprocessing_policy_signature
@@ -446,6 +460,63 @@ def test_fast_path_admits_native_quantized_supported_multimodal_family() -> None
     assert unsupported.quantized_load_fallback_reason == "unsupported_family"
 
 
+def test_quantized_load_acceptance_receipt_counts_native_and_bridge_fallbacks() -> None:
+    native = quantized_load_acceptance_receipt(
+        quantized_load_mode="native_quantized",
+        quantized_load_fallback_reason="",
+        quant_profile_id="q8",
+        cross_shard_metadata_fixup_count=2,
+    )
+    unsupported = quantized_load_acceptance_receipt(
+        quantized_load_mode="fallback",
+        quantized_load_fallback_reason="unsupported_family",
+        quant_profile_id="q8",
+    )
+    unquantized = quantized_load_acceptance_receipt(
+        quantized_load_mode="fallback",
+        quantized_load_fallback_reason="not_quantized",
+        quant_profile_id="none",
+    )
+    unquantized_unsupported_family = quantized_load_acceptance_receipt(
+        quantized_load_mode="fallback",
+        quantized_load_fallback_reason="unsupported_family",
+        quant_profile_id="none",
+    )
+    unquantized_bfloat16 = quantized_load_acceptance_receipt(
+        quantized_load_mode="fallback",
+        quantized_load_fallback_reason="unsupported_family",
+        quant_profile_id="bf16",
+    )
+
+    assert native.native_quantized_load_count == 1
+    assert native.bridge_quantized_fallback_count == 0
+    assert native.cross_shard_metadata_fixup_count == 2
+    assert unsupported.native_quantized_load_count == 0
+    assert unsupported.bridge_quantized_fallback_count == 1
+    assert unsupported.cross_shard_metadata_fixup_count == 0
+    assert unquantized.native_quantized_load_count == 0
+    assert unquantized.bridge_quantized_fallback_count == 0
+    assert unquantized_unsupported_family.native_quantized_load_count == 0
+    assert unquantized_unsupported_family.bridge_quantized_fallback_count == 0
+    assert unquantized_bfloat16.native_quantized_load_count == 0
+    assert unquantized_bfloat16.bridge_quantized_fallback_count == 0
+
+
+def test_cross_shard_quantized_metadata_fixup_count_counts_weight_scale_pairs() -> None:
+    metadata = QuantizedTensorMetadata(
+        {
+            "language_model.layers.0.q_proj.weight": "model-00001.safetensors",
+            "language_model.layers.0.q_proj.scales": "model-00002.safetensors",
+            "language_model.layers.1.q_proj.weight": "model-00003.safetensors",
+            "language_model.layers.1.q_proj.scales": "model-00003.safetensors",
+            "language_model.layers.2.q_proj.scales": "model-00004.safetensors",
+        }
+    )
+
+    assert cross_shard_quantized_metadata_fixup_count(metadata) == 1
+    assert cross_shard_quantized_metadata_fixup_count(EMPTY_QUANTIZED_TENSOR_METADATA) == 0
+
+
 def test_fast_path_fails_closed_without_extracting_features_for_unsupported_family() -> None:
     extractor_calls = 0
 
@@ -498,6 +569,220 @@ def test_fast_path_records_not_applicable_hybrid_state_for_supported_family_with
     assert decision.hybrid_state_patch_mode == "not_applicable"
     assert decision.hybrid_state_media_count == 0
     assert decision.family_fast_path_override_count == 0
+
+
+def test_fast_path_admits_image_batch1_step_when_receipts_and_sampling_are_eligible() -> None:
+    controller = MultimodalFastPathController()
+    prepared_request = _request([_image(b"image")])
+    decision = controller.plan(
+        _loaded_model(family_id="gemma4-v1"),
+        prepared_request,
+        image_batch1_step_position_receipt=build_position_metadata_receipt(
+            prepared_request=prepared_request,
+            seq_len=8,
+            position_ids=SimpleNamespace(shape=(1, 8)),
+            rope_deltas=SimpleNamespace(shape=(1, 3)),
+        ),
+        image_batch1_step_supported=True,
+        image_batch1_step_greedy_sampling=True,
+    )
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_IMAGE_BATCH1_STEP_ADMISSION
+    assert decision.multimodal_fallback_reason == ""
+    assert decision.multimodal_decode_sync_mode == "executor_step_admission"
+    assert decision.image_batch1_step_admission_reason == ""
+
+
+def test_fast_path_probe_receipt_fallback_reason_strips_decode_admission_reasons() -> None:
+    assert probe_receipt_fallback_reason("image_batch1_step_non_greedy_sampling") == ""
+    assert probe_receipt_fallback_reason("cache_missing") == "cache_missing"
+
+
+def test_fast_path_bench_metrics_encode_image_batch1_step_admission_receipts() -> None:
+    metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
+        suite_id="smoke",
+        samples=[
+            maintenance_core_module.BenchSample(
+                ttft_ms=10.0,
+                total_latency_ms=20.0,
+                completion_tokens=2,
+                multimodal_decode_mode="image_batch1_step_admission",
+                multimodal_decode_sync_mode="executor_step_admission",
+                multimodal_fallback_reason="image_batch1_step_non_greedy_sampling",
+            ),
+        ],
+    )
+
+    metrics_by_name = {metric.name: metric for metric in metrics}
+    assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == 8.0
+    assert metrics_by_name["bench.smoke.multimodal_decode_sync_mode"].value == 5.0
+    assert metrics_by_name["bench.smoke.multimodal_fallback_reason"].value == 10.0
+
+
+def test_deterministic_vlm_runtime_records_image_batch1_step_admission_receipt() -> None:
+    runtime = DeterministicVLMRuntime()
+    prepared_request = _request([_image(b"deterministic-image-batch1")])
+
+    runtime._record_fast_path_probe(
+        _loaded_model(family_id="gemma4-v1"),
+        prepared_request,
+        seq_len=8,
+        position_ids=SimpleNamespace(shape=(1, 8)),
+        rope_deltas=SimpleNamespace(shape=(1, 1)),
+        image_batch1_step_supported=True,
+        image_batch1_step_greedy_sampling=True,
+    )
+
+    probe = runtime.last_probe_snapshot()
+    assert probe.multimodal_decode_mode == MULTIMODAL_DECODE_IMAGE_BATCH1_STEP_ADMISSION
+    assert probe.multimodal_decode_sync_mode == "executor_step_admission"
+    assert probe.multimodal_fallback_reason == ""
+    assert probe.image_batch1_step_admission_reason == ""
+    assert probe.position_metadata_receipt["vision_metadata_guard"] == "aligned"
+    assert probe.position_metadata_receipt["vision_metadata_reuse_allowed"] is True
+
+
+def test_deterministic_vlm_runtime_preserves_non_admission_fallback_in_position_receipt() -> None:
+    runtime = DeterministicVLMRuntime()
+    prepared_request = _request([_image(b"deterministic-unsupported-family")])
+
+    runtime._record_fast_path_probe(
+        _loaded_model(family_id="unsupported-vlm"),
+        prepared_request,
+        seq_len=8,
+        position_ids=SimpleNamespace(shape=(1, 8)),
+        rope_deltas=SimpleNamespace(shape=(1, 1)),
+        image_batch1_step_supported=True,
+        image_batch1_step_greedy_sampling=True,
+    )
+
+    probe = runtime.last_probe_snapshot()
+    assert probe.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
+    assert probe.multimodal_fallback_reason == "unsupported_family"
+    assert probe.position_metadata_receipt["fallback_reason"] == "unsupported_family"
+    assert probe.hybrid_state_patch_receipt["fallback_reason"] == "unsupported_family"
+
+
+def test_mlx_vlm_runtime_preserves_non_admission_fallback_in_position_receipt() -> None:
+    runtime = MLXVLMRuntime()
+    prepared_request = _request([_image(b"mlx-unsupported-family")])
+
+    runtime._record_fast_path_probe(
+        _loaded_model(family_id="unsupported-vlm"),
+        prepared_request,
+        seq_len=8,
+        family_config=SimpleNamespace(family_id="unsupported-vlm"),
+        position_ids=SimpleNamespace(shape=(1, 8)),
+        rope_deltas=SimpleNamespace(shape=(1, 1)),
+        image_batch1_step_supported=True,
+        image_batch1_step_greedy_sampling=True,
+    )
+
+    probe = runtime.last_probe_snapshot()
+    assert probe.multimodal_decode_mode == MULTIMODAL_DECODE_FALLBACK
+    assert probe.multimodal_fallback_reason == "unsupported_family"
+    assert probe.position_metadata_receipt["fallback_reason"] == "unsupported_family"
+    assert probe.hybrid_state_patch_receipt["fallback_reason"] == "unsupported_family"
+
+
+def test_fast_path_keeps_image_batch1_non_greedy_requests_on_baseline_with_reason() -> None:
+    controller = MultimodalFastPathController()
+    prepared_request = _request([_image(b"image")])
+    decision = controller.plan(
+        _loaded_model(family_id="gemma4-v1"),
+        prepared_request,
+        image_batch1_step_position_receipt=build_position_metadata_receipt(
+            prepared_request=prepared_request,
+            seq_len=8,
+            position_ids=SimpleNamespace(shape=(1, 8)),
+            rope_deltas=SimpleNamespace(shape=(1, 3)),
+        ),
+        image_batch1_step_supported=True,
+        image_batch1_step_greedy_sampling=False,
+    )
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
+    assert decision.multimodal_fallback_reason == "image_batch1_step_non_greedy_sampling"
+    assert decision.multimodal_decode_sync_mode == "executor_stream"
+    assert decision.image_batch1_step_admission_reason == "image_batch1_step_non_greedy_sampling"
+
+
+def test_fast_path_keeps_image_batch1_missing_cache_receipt_on_baseline_with_reason() -> None:
+    controller = MultimodalFastPathController()
+    prepared_request = _request([_image(b"image", sha256_hex="")])
+    decision = controller.plan(
+        _loaded_model(family_id="gemma4-v1"),
+        prepared_request,
+        image_batch1_step_position_receipt=build_position_metadata_receipt(
+            prepared_request=prepared_request,
+            seq_len=8,
+            position_ids=SimpleNamespace(shape=(1, 8)),
+            rope_deltas=SimpleNamespace(shape=(1, 3)),
+        ),
+        image_batch1_step_supported=True,
+        image_batch1_step_greedy_sampling=True,
+    )
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
+    assert decision.multimodal_fallback_reason == "image_batch1_step_cache_receipt_missing"
+    assert decision.image_batch1_step_admission_reason == "image_batch1_step_cache_receipt_missing"
+
+
+def test_fast_path_keeps_image_batch1_missing_position_receipt_on_baseline_with_reason() -> None:
+    controller = MultimodalFastPathController()
+    prepared_request = _request([_image(b"image")])
+    decision = controller.plan(
+        _loaded_model(family_id="gemma4-v1"),
+        prepared_request,
+        image_batch1_step_supported=True,
+        image_batch1_step_greedy_sampling=True,
+    )
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
+    assert decision.multimodal_fallback_reason == "image_batch1_step_position_receipt_missing"
+    assert decision.image_batch1_step_admission_reason == "image_batch1_step_position_receipt_missing"
+
+
+def test_fast_path_keeps_non_batch1_media_routes_on_baseline_with_reason() -> None:
+    controller = MultimodalFastPathController()
+    prepared_request = _request([_image(b"first"), _image(b"second")])
+    decision = controller.plan(
+        _loaded_model(family_id="gemma4-v1"),
+        prepared_request,
+        image_batch1_step_position_receipt=build_position_metadata_receipt(
+            prepared_request=prepared_request,
+            seq_len=8,
+            position_ids=SimpleNamespace(shape=(1, 8)),
+            rope_deltas=SimpleNamespace(shape=(1, 3)),
+        ),
+        image_batch1_step_supported=True,
+        image_batch1_step_greedy_sampling=True,
+    )
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
+    assert decision.multimodal_fallback_reason == "image_batch1_step_media_route_ineligible"
+    assert decision.image_batch1_step_admission_reason == "image_batch1_step_media_route_ineligible"
+
+
+def test_fast_path_keeps_image_batch1_unsupported_backend_on_baseline_with_reason() -> None:
+    controller = MultimodalFastPathController()
+    prepared_request = _request([_image(b"image")])
+    decision = controller.plan(
+        _loaded_model(family_id="gemma4-v1"),
+        prepared_request,
+        image_batch1_step_position_receipt=build_position_metadata_receipt(
+            prepared_request=prepared_request,
+            seq_len=8,
+            position_ids=SimpleNamespace(shape=(1, 8)),
+            rope_deltas=SimpleNamespace(shape=(1, 3)),
+        ),
+        image_batch1_step_supported=False,
+        image_batch1_step_greedy_sampling=True,
+    )
+
+    assert decision.multimodal_decode_mode == MULTIMODAL_DECODE_SINGLE_STREAM
+    assert decision.multimodal_fallback_reason == "image_batch1_step_backend_unsupported"
+    assert decision.image_batch1_step_admission_reason == "image_batch1_step_backend_unsupported"
 
 
 def test_fast_path_warns_and_falls_back_when_family_metadata_is_missing(caplog) -> None:

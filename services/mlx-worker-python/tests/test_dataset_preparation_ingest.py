@@ -7,13 +7,18 @@ import sys
 
 import pytest
 
+from dataset_ingest_limit_contract import exercise_dataset_ingest_limit_contract
 import worker.productization.dataset_preparation as dataset_preparation_module
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     _SOURCE_KIND_BY_NAME,
     _SOURCE_KIND_NAME_CACHE_MAX,
     _iter_source_file_paths,
+    _normalize_line_endings,
+    _record,
+    _read_source_text,
     _source_kind,
+    _source_kind_for_name,
     prepare_dataset_ingest,
 )
 
@@ -51,6 +56,42 @@ def test_dataset_ingest_source_file_paths_use_scandir_without_rglob(
     ]
 
 
+def test_dataset_ingest_unbounded_source_reader_uses_single_binary_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "notes.txt"
+    source_path.write_text("hello\nworld\n", encoding="utf-8")
+
+    class CountingBinaryFile:
+        read_calls = 0
+
+        def __enter__(self) -> "CountingBinaryFile":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            self.read_calls += 1
+            assert size == -1
+            return b"hello\nworld\n"
+
+    counting_file = CountingBinaryFile()
+
+    def counted_open(path: Path, mode: str = "r", *args: object, **kwargs: object) -> CountingBinaryFile:
+        assert path == source_path
+        assert mode == "rb"
+        assert args == ()
+        assert kwargs == {}
+        return counting_file
+
+    monkeypatch.setattr(Path, "open", counted_open)
+
+    assert _read_source_text(source_path) == "hello\nworld\n"
+    assert counting_file.read_calls == 1
+
+
 def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
     _SOURCE_KIND_BY_NAME.clear()
 
@@ -63,23 +104,32 @@ def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
     assert _source_kind(Path("Brief.TXT")) == "text"
     assert _source_kind(Path("notes.text")) == "text"
     assert _source_kind(Path("NOTES.TEXT")) == "text"
+    assert _source_kind(Path("README.md")) == "markdown"
+    assert _source_kind(Path("script.py")) == "code"
+    assert _source_kind(Path("records.jsonl")) == "structured_data"
+    assert _source_kind(Path("records.json")) == "structured_data"
+    assert _source_kind(Path("records.csv")) == "structured_data"
+    assert _source_kind(Path("records.tsv")) == "structured_data"
     assert _source_kind(Path("script.PY")) == "code"
     assert _source_kind(Path("records.JSONL")) == "structured_data"
+    assert _source_kind(Path("records.JSON")) == "structured_data"
+    assert _source_kind(Path("records.CSV")) == "structured_data"
+    assert _source_kind(Path("records.TSV")) == "structured_data"
     assert _source_kind(Path("README")) is None
     assert _source_kind(Path("archive.tar.gz")) is None
 
 
-def test_dataset_ingest_source_kind_reuses_cached_basename_classification() -> None:
+def test_dataset_ingest_source_kind_name_helper_reuses_cached_basename_classification() -> None:
     _SOURCE_KIND_BY_NAME.clear()
 
-    assert _source_kind(Path("source/sample-0001.txt")) == "text"
+    assert _source_kind_for_name("sample-0001.txt") == "text"
     assert len(_SOURCE_KIND_BY_NAME) == 1
-    assert _source_kind(Path("other/sample-0001.txt")) == "text"
+    assert _source_kind_for_name("sample-0001.txt") == "text"
 
     assert len(_SOURCE_KIND_BY_NAME) == 1
 
 
-def test_dataset_ingest_source_kind_returns_cached_none_without_reclassifying(
+def test_dataset_ingest_source_kind_name_helper_returns_cached_none_without_reclassifying(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _SOURCE_KIND_BY_NAME.clear()
@@ -90,16 +140,62 @@ def test_dataset_ingest_source_kind_returns_cached_none_without_reclassifying(
 
     monkeypatch.setattr(dataset_preparation_module, "_classify_source_kind_name", fail_classify)
 
-    assert _source_kind(Path("nested/README")) is None
+    assert _source_kind_for_name("README") is None
 
 
-def test_dataset_ingest_source_kind_name_cache_clears_at_bound() -> None:
+def test_dataset_ingest_source_kind_directly_classifies_path_names_without_cache() -> None:
     _SOURCE_KIND_BY_NAME.clear()
-    _SOURCE_KIND_BY_NAME.update({f"cached-{index}.txt": "text" for index in range(_SOURCE_KIND_NAME_CACHE_MAX)})
 
-    assert _source_kind(Path("next.txt")) == "text"
+    assert _source_kind(Path("source/sample-0001.txt")) == "text"
+    assert _source_kind(Path("other/sample-0001.txt")) == "text"
 
-    assert _SOURCE_KIND_BY_NAME == {"next.txt": "text"}
+    assert _SOURCE_KIND_BY_NAME == {}
+
+
+def test_dataset_ingest_source_kind_name_cache_bypasses_insert_at_bound() -> None:
+    _SOURCE_KIND_BY_NAME.clear()
+    cached_entries = {f"cached-{index}.txt": "text" for index in range(_SOURCE_KIND_NAME_CACHE_MAX)}
+    _SOURCE_KIND_BY_NAME.update(cached_entries)
+
+    assert _source_kind_for_name("next.txt") == "text"
+
+    assert _SOURCE_KIND_BY_NAME == cached_entries
+
+
+def test_dataset_ingest_record_copies_nonempty_metadata_and_fast_paths_empty_metadata() -> None:
+    empty_metadata: dict[str, object] = {}
+    empty_record = _record(Path("sample.txt"), "text", "hello\r\n", empty_metadata)
+
+    assert empty_record["text"] == "hello\n"
+    assert empty_record["metadata"] == {}
+    assert empty_record["metadata"] is not empty_metadata
+
+    metadata = {"language": "python"}
+    record = _record(Path("script.py"), "code", "print('hello')", metadata)
+    metadata["language"] = "swift"
+
+    assert record["metadata"] == {"language": "python"}
+
+
+def test_dataset_ingest_record_accepts_pre_normalized_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_normalize(text: str) -> str:  # pragma: no cover - failure path only
+        raise AssertionError(f"pre-normalized record text should not be normalized again: {text!r}")
+
+    monkeypatch.setattr(dataset_preparation_module, "_normalize_line_endings", fail_normalize)
+
+    record = _record(Path("sample.txt"), "text", "hello\n", {}, normalized=True)
+
+    assert record["text"] == "hello\n"
+    assert record["byte_size"] == len(b"hello\n")
+
+
+def test_dataset_ingest_normalize_line_endings_fast_paths_lf_only_text() -> None:
+    text = "hello\nMelix\n"
+
+    assert _normalize_line_endings(text) == text
+    assert _normalize_line_endings("hello\r\nMelix\r") == "hello\nMelix\n"
 
 
 def test_dataset_ingest_source_file_paths_skips_scandir_errors(
@@ -175,6 +271,7 @@ def test_dataset_ingest_receipt_reports_independent_cleaning_controls(
     )
     (input_root / "rows.jsonl").write_text(
         '{"id":"row-1","text":"Alpha structured row"}\n'
+        "   \n"
         '{"id":"row-2","text":"Alpha structured row"}\n'
         '{"id":"row-3","text":"Alpha structured row."}\n',
         encoding="utf-8",
@@ -268,6 +365,7 @@ def test_dataset_ingest_receipt_reports_independent_cleaning_controls(
     assert all("sk-test-secret" not in row["text"] for row in segment_rows)
     assert any(row["source_kind"] == "code" and row["metadata"]["language"] == "python" for row in segment_rows)
     assert any(row["text"] == "JSON array row one" for row in segment_rows)
+    assert not any(row["text"].isspace() for row in segment_rows)
     assert any(row["text"] == "CSV structured row" for row in segment_rows)
     assert any(row["text"] == "TSV structured row" for row in segment_rows)
     assert json.loads(receipt_path.read_text(encoding="utf-8")) == receipt
@@ -306,7 +404,10 @@ def test_dataset_ingest_controls_can_be_inspected_independently(tmp_path: Path) 
     assert "jane@example.com" in segment_text
 
 
-def test_dataset_ingest_emits_typed_operator_failures(tmp_path: Path) -> None:
+def test_dataset_ingest_emits_typed_operator_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     input_root = tmp_path / "raw-inputs"
     output_root = tmp_path / "prepared"
     input_root.mkdir()
@@ -338,6 +439,8 @@ def test_dataset_ingest_emits_typed_operator_failures(tmp_path: Path) -> None:
     assert all(failure["recovery_hint"] for failure in receipt["operator_failures"])
     assert receipt["metrics"]["source_record_count"] == 0
     assert receipt["metrics"]["segment_count"] == 0
+
+    exercise_dataset_ingest_limit_contract(tmp_path / "ingest-limit-contract", monkeypatch)
 
 
 def test_dataset_ingest_blocks_on_workspace_preflight_before_segmenting_sources(
@@ -402,6 +505,10 @@ def test_dataset_ingest_cli_writes_stable_json_receipt(tmp_path: Path) -> None:
             "false",
             "--segmentation",
             "true",
+            "--upload-cap-bytes",
+            "1024",
+            "--source-cap-bytes",
+            "512",
         ]
     )
 
@@ -409,6 +516,10 @@ def test_dataset_ingest_cli_writes_stable_json_receipt(tmp_path: Path) -> None:
     assert exit_code == 0
     assert payload["schema_version"] == "melix.dataset_ingest_receipt.v1"
     assert payload["dataset_preparation_id"] == "prep-cli"
+    assert payload["upload_cap_bytes"] == 1024
+    assert payload["observed_payload_bytes"] > 0
+    assert payload["source_cap_bytes"] == 512
+    assert payload["partial_artifact_cleanup"]["status"] == "not_needed"
     assert payload["cleaning_controls"]["pii_mask"]["enabled"] is True
     assert payload["cleaning_controls"]["exact_dedup"]["enabled"] is False
     assert payload["metrics"]["pii_mask_count"] == 1

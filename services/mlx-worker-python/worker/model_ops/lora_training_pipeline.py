@@ -15,6 +15,9 @@ from worker.model_ops.alignment_rollout_manifest import (
     build_alignment_rollout_manifest_fields_from_training_metrics,
 )
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.lora_checkpoint_selection import (
+    build_checkpoint_selection_receipt_fields,
+)
 from worker.model_ops.lora_runtime_metadata import (
     build_lora_canary_receipt_fields,
     build_quantized_lora_manifest_fields,
@@ -49,6 +52,10 @@ from worker.model_ops.training_preflight import (
     require_trainability_preflight_ready,
     write_trainability_preflight_receipt,
 )
+from worker.productization.lora_adapter_provenance import (
+    ADAPTER_PROVENANCE_SCHEMA_VERSION,
+    write_adapter_provenance_artifacts,
+)
 from worker.productization.lora_experiment_store import LoraExperimentStore
 from worker.trajectory_provenance import (
     adapter_manifest_trajectory_provenance,
@@ -59,7 +66,7 @@ from worker.trajectory_provenance import (
 )
 
 
-_NUMERIC_TOKEN_RE = re.compile(r"\d+")
+_NUMERIC_TOKEN_RE = re.compile(r"(?<=checkpoint-)\d+")
 _ROLLOUT_ALIGNMENT_ALGORITHMS = frozenset({"grpo", "rlhf"})
 _ROLLOUT_MANIFEST_FIELD_KEYS = (
     "rollout_manifest_schema_version",
@@ -242,6 +249,11 @@ class LoRATrainingPipeline:
             weights_path=training_result.weights_path,
             training_metrics=training_result.metrics,
         )
+        checkpoint_selection_fields = build_checkpoint_selection_receipt_fields(
+            latest_checkpoint_path=latest_checkpoint_path,
+            loss_best=training_result.metrics.loss_best,
+            loss_final=training_result.metrics.loss_final,
+        )
 
         emit("write_manifest", 0.97)
         manifest = {
@@ -313,6 +325,7 @@ class LoRATrainingPipeline:
             "base_quantization_method": config.base_quantization_method,
             **quantized_lora_fields,
             **lora_canary_receipt_fields,
+            **checkpoint_selection_fields,
             "training_backend": training_result.execution_backend,
             "adapter_set_hash": adapter_set_hash,
             "weights_path": str(training_result.weights_path),
@@ -349,10 +362,21 @@ class LoRATrainingPipeline:
             "training.learning_rate_final": training_result.metrics.learning_rate_final,
             "training.tokens_per_second": tokens_per_second,
             "training.peak_memory_gb": peak_memory_gb,
+            "training.log_events": dict(training_result.metrics.training_log_events),
+            "training.log_event_preview_limit": training_result.metrics.training_log_event_preview_limit,
+            "training.log_event_preview": list(training_result.metrics.training_log_event_preview),
             "training.gradient_checkpointing_enabled": config.gradient_checkpointing,
             "training.response_only_enabled": config.response_only,
             "experiment.checkpoint_count": checkpoint_count,
             "experiment.latest_checkpoint_path": latest_checkpoint_path,
+            "experiment.checkpoint_step": checkpoint_selection_fields["checkpoint_step"],
+            "experiment.checkpoint_sort_key": checkpoint_selection_fields["checkpoint_sort_key"],
+            "experiment.selected_checkpoint_path": checkpoint_selection_fields[
+                "selected_checkpoint_path"
+            ],
+            "experiment.selected_checkpoint_loss_source": checkpoint_selection_fields[
+                "selected_checkpoint_loss_source"
+            ],
             "experiment.resume_source_path": resume_source_path,
             "experiment.resume_ready": resume_ready,
             "validation_strategy": config.validation_strategy,
@@ -368,6 +392,9 @@ class LoRATrainingPipeline:
             "resume_ready": resume_ready,
             "tokens_per_second": tokens_per_second,
             "peak_memory_gb": peak_memory_gb,
+            "training_log_events": dict(training_result.metrics.training_log_events),
+            "training_log_event_preview_limit": training_result.metrics.training_log_event_preview_limit,
+            "training_log_event_preview": list(training_result.metrics.training_log_event_preview),
             "adapter_artifact_bytes": adapter_artifact_bytes,
             "target_repo": config.target_repo,
             "release_compare_bundle_policy": config.release_compare_bundle_policy.as_manifest(),
@@ -473,6 +500,26 @@ class LoRATrainingPipeline:
                 json.dumps(alignment_manifest, indent=2) + "\n",
                 encoding="utf-8",
             )
+        provenance_result = write_adapter_provenance_artifacts(
+            adapter_manifest=manifest,
+            adapter_manifest_path=manifest_path,
+            now_unix_ms=persisted_at_unix_ms,
+        )
+        provenance = provenance_result["provenance"]
+        manifest.update(
+            {
+                "adapter_provenance_schema_version": ADAPTER_PROVENANCE_SCHEMA_VERSION,
+                "adapter_provenance_manifest_path": str(provenance_result["provenance_path"]),
+                "adapter_operator_notes_path": str(provenance_result["notes_path"]),
+                "adapter_operator_notes_schema_version": provenance["operator_notes"][
+                    "schema_version"
+                ],
+                "adapter_operator_note_count": provenance["operator_notes"]["note_count"],
+                "adapter_export_eligibility": dict(provenance["export_eligibility"]),
+                "adapter_export_eligible": bool(provenance["export_eligibility"]["eligible"]),
+                **dict(provenance_result["metrics"]),
+            }
+        )
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         self._experiment_store.persist_training_run(
             jobs_root=jobs_root,
@@ -856,16 +903,16 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
 
 
 def _percentile_value(ordered_values: list[float], percentile: float) -> float:
-    if len(ordered_values) == 1:
+    last_index = len(ordered_values) - 1
+    if last_index == 0:
         return ordered_values[0]
-    position = min(
-        len(ordered_values) - 1,
-        max(0.0, (len(ordered_values) - 1) * percentile),
-    )
+    position = last_index * percentile
+    if position <= 0.0:
+        return ordered_values[0]
+    if position >= last_index:
+        return ordered_values[last_index]
     lower_index = int(position)
-    upper_index = min(len(ordered_values) - 1, lower_index + 1)
-    if lower_index == upper_index:
-        return ordered_values[lower_index]
+    upper_index = lower_index + 1
     weight = position - lower_index
     return ordered_values[lower_index] + (
         ordered_values[upper_index] - ordered_values[lower_index]
@@ -873,7 +920,6 @@ def _percentile_value(ordered_values: list[float], percentile: float) -> float:
 
 
 _CONTENT_HASH_CHUNK_SIZE = 1024 * 1024
-
 
 
 def _content_hash(*paths: Path) -> str:
@@ -950,7 +996,7 @@ def _load_manifest_payload(path: Path) -> dict[str, Any]:
 
 
 def _resolve_resume_path_from_manifest(path: Path, manifest: dict[str, Any]) -> Path:
-    for key in ("latest_checkpoint_path", "weights_path"):
+    for key in ("selected_checkpoint_path", "latest_checkpoint_path", "weights_path"):
         raw_value = str(manifest.get(key, "")).strip()
         if raw_value:
             return _validated_resume_path(Path(raw_value).expanduser(), source_label=str(path))

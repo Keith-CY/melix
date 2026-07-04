@@ -1702,6 +1702,7 @@ public actor ControlPlaneService {
         let sessions = await sessionGraphStore.sessionSummaries()
         let imageJobs = await imageJobReadModel.snapshot()
         let imageDefaultsSummary = await imageDefaultsStore.summary(models: models)
+        let nativeAcceleration = await nativeAccelerationSnapshotSummary()
         let toolingSettingsSummary = toolingSettingsSnapshotSource.summary(
             models: models,
             mcpToolCatalog: mcpToolCatalog,
@@ -1724,8 +1725,21 @@ public actor ControlPlaneService {
             servingDefaults: servingDefaultsSummary,
             toolingSettings: toolingSettingsSummary,
             apiOnboarding: apiOnboardingSummary,
-            imageDefaults: imageDefaultsSummary
+            imageDefaults: imageDefaultsSummary,
+            nativeAcceleration: nativeAcceleration
         )
+    }
+
+    private func nativeAccelerationSnapshotSummary() async -> Melix_Controlplane_V1_NativeAccelerationStatusSummary {
+        guard
+            let workerRegistry,
+            let workerClient = await workerRegistry.client(for: .pythonVLM),
+            let introspectingClient = workerClient as? any RuntimeIntrospectingWorkerClientProtocol,
+            let runtimeStats = try? await introspectingClient.runtimeStats()
+        else {
+            return .unavailable
+        }
+        return Melix_Controlplane_V1_NativeAccelerationStatusSummary(runtimeStats: runtimeStats.stats)
     }
 
     private func defaultServedModelID(

@@ -29,8 +29,10 @@ def run_probe(
 ) -> dict[str, float]:
     module = _load_changed_scope_coverage(repo_root)
     elapsed_samples: list[float] = []
+    dense_elapsed_samples: list[float] = []
     allowlist_elapsed_samples: list[float] = []
     read_samples: list[float] = []
+    dense_read_samples: list[float] = []
     allowlist_value = json.dumps("pkg/module_0.py")
 
     with tempfile.TemporaryDirectory(prefix="melix-changed-scope-measured-probe-") as tmp:
@@ -39,7 +41,10 @@ def run_probe(
         for rel_path in rel_paths:
             source_path = root / rel_path
             source_path.parent.mkdir(parents=True, exist_ok=True)
-            source_path.write_text("covered = 1\nmissed = 2\n", encoding="utf-8")
+            source_path.write_text(
+                "\n".join(f"line_{line_no}" for line_no in range(1, measured_lines_per_path + 1)),
+                encoding="utf-8",
+            )
 
         coverage_payload = {
             "files": {
@@ -51,6 +56,7 @@ def run_probe(
             }
         }
         changed_lines = {measured_lines_per_path + 1, measured_lines_per_path + 2}
+        dense_changed_lines = set(range(1, measured_lines_per_path + 1))
 
         original_read_text = module.Path.read_text
         try:
@@ -76,6 +82,24 @@ def run_probe(
                 elapsed_samples.append((time.perf_counter() - start) * 1000.0)
                 read_samples.append(float(read_calls))
 
+                read_calls = 0
+                start = time.perf_counter()
+                for rel_path in rel_paths:
+                    measurable, covered, missed = module._measurable_changed_lines(
+                        root,
+                        coverage_payload,
+                        rel_path,
+                        dense_changed_lines,
+                    )
+                    if not (measurable or covered or missed):
+                        continue
+                    if len(measurable) != measured_lines_per_path:
+                        raise RuntimeError("dense changed set should measure all fixture lines")
+                    if len(covered) + len(missed) != measured_lines_per_path:
+                        raise RuntimeError("dense changed set should partition all fixture lines")
+                dense_elapsed_samples.append((time.perf_counter() - start) * 1000.0)
+                dense_read_samples.append(float(read_calls))
+
                 start = time.perf_counter()
                 for _ in range(allowlist_parse_count):
                     allowlist = module._coverage_path_allowlist(
@@ -89,9 +113,11 @@ def run_probe(
 
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
+        "dense_elapsed_ms_mean": statistics.fmean(dense_elapsed_samples),
         "allowlist_parse_elapsed_ms_mean": statistics.fmean(allowlist_elapsed_samples),
         "allowlist_parse_count": float(allowlist_parse_count),
         "source_read_calls_mean": statistics.fmean(read_samples),
+        "dense_source_read_calls_mean": statistics.fmean(dense_read_samples),
         "path_count": float(path_count),
         "measured_lines_per_path": float(measured_lines_per_path),
         "sample_count": float(samples),

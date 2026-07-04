@@ -7,6 +7,12 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Type
 
+from worker.runtime.quantized_tensor_metadata import (
+    native_multimodal_quantization_preserves_precision,
+    quantized_scales_present,
+    quantized_tensor_metadata_from_model_dir,
+)
+
 logger = logging.getLogger(__name__)
 
 _PATCHED = False
@@ -68,29 +74,36 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
     append_extra_file = extra_files.append
     seen: set[str] = set()
     seen_add = seen.add
+    seen_contains = seen.__contains__
     model_path_text = os.fspath(model_path)
     path_join = os.path.join
     path_exists = os.path.exists
     path_sep = os.sep
     key_prefixes = _MTP_WEIGHT_KEY_PREFIXES
     to_text = str
+    str_startswith = str.startswith
+    str_endswith = str.endswith
+    str_rfind = str.rfind
+    safetensors_suffix = ".safetensors"
+    model_prefix = "model"
     for key, file_name in weight_map.items():
         if type(key) is str:
-            if not key.startswith(key_prefixes):
+            if not str_startswith(key, key_prefixes):
                 continue
-        elif not to_text(key).startswith(key_prefixes):
+        elif not str_startswith(to_text(key), key_prefixes):
             continue
         if type(file_name) is str:
             file_name_text = file_name
         else:
             file_name_text = to_text(file_name)
-        if not file_name_text.endswith(".safetensors"):
+        if not str_endswith(file_name_text, safetensors_suffix):
             continue
-        if file_name_text in seen:
+        if seen_contains(file_name_text):
             continue
-        separator_index = file_name_text.rfind(path_sep)
+        separator_index = str_rfind(file_name_text, path_sep)
         file_basename = file_name_text if separator_index < 0 else file_name_text[separator_index + 1 :]
-        if file_basename.startswith("model"):
+        if str_startswith(file_basename, model_prefix):
+            seen_add(file_name_text)
             continue
         seen_add(file_name_text)
         path_text = path_join(model_path_text, file_name_text)
@@ -152,6 +165,11 @@ def apply() -> bool:
         if not weight_files and strict:
             raise FileNotFoundError(f"No safetensors found in {model_path}")
 
+        quantized_metadata = quantized_tensor_metadata_from_model_dir(
+            model_path,
+            weight_files=weight_files,
+            extra_files=extra_files,
+        )
         weights = _load_weight_shards(mx.load, weight_files, extra_files)
 
         if (model_file := config.get("model_file")) is not None:
@@ -182,7 +200,17 @@ def apply() -> bool:
                     return config["quantization"][p]
                 if not hasattr(m, "to_quantized"):
                     return False
-                return f"{p}.scales" in weights
+                if native_multimodal_quantization_preserves_precision(
+                    p,
+                    metadata=quantized_metadata,
+                    weights=weights,
+                ):
+                    return False
+                return quantized_scales_present(
+                    p,
+                    metadata=quantized_metadata,
+                    weights=weights,
+                )
 
             nn.quantize(
                 model,

@@ -45,6 +45,13 @@ def _passing_packaged_launch_evidence() -> dict[str, object]:
             "logical_product_identity_matches": 1.0,
             "audit_passed": 1.0,
         },
+        "python_import_isolation": {
+            "import_isolated": 1.0,
+            "required_flags_present": 1.0,
+            "runtime_layout_requires_isolation": 1.0,
+            "gate_satisfied": 1.0,
+            "pythonpath_policy": "bundled_site_packages_then_bundled_repo",
+        },
     }
 
 
@@ -61,6 +68,8 @@ def test_collect_install_evidence_records_packaged_launch_audit(tmp_path) -> Non
     assert packaged_launch["health_probe_reuse"]["reused_client_count"] == 1.0
     assert packaged_launch["health_probe_reuse"]["time_wait_socket_count"] == 0.0
     assert packaged_launch["installed_app_audit"]["audit_passed"] == 1.0
+    assert packaged_launch["python_import_isolation"]["runtime_layout_requires_isolation"] == 0.0
+    assert packaged_launch["python_import_isolation"]["gate_satisfied"] == 1.0
 
 
 def test_build_packaged_launch_evidence_records_loopback_health_and_installed_audit() -> None:
@@ -76,6 +85,15 @@ def test_build_packaged_launch_evidence_records_loopback_health_and_installed_au
             "health_probe_url": "http://127.0.0.1:12436/health",
             "service_base_url": "http://127.0.0.1:12436/v1",
             "install_manifest_path": "/tmp/melix/install-manifest.json",
+            "python_import_isolation": {
+                "import_isolated": True,
+                "env": {
+                    "PYTHONSAFEPATH": "1",
+                    "PYTHONNOUSERSITE": "1",
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                },
+                "pythonpath_policy": "bundled_site_packages_then_bundled_repo",
+            },
         }
     )
 
@@ -85,6 +103,83 @@ def test_build_packaged_launch_evidence_records_loopback_health_and_installed_au
     assert evidence["health_probe_reuse"]["reused_client_count"] == 1.0
     assert evidence["health_probe_reuse"]["time_wait_socket_count"] == 0.0
     assert evidence["installed_app_audit"]["audit_passed"] == 1.0
+    assert evidence["python_import_isolation"]["import_isolated"] == 1.0
+    assert evidence["python_import_isolation"]["required_flags_present"] == 1.0
+    assert evidence["python_import_isolation"]["gate_satisfied"] == 1.0
+
+
+def test_packaged_launch_evidence_requires_import_isolation_for_self_contained_bundle() -> None:
+    evidence = build_packaged_launch_evidence(
+        {
+            "packaging_target_id": "macos_app_bundle_preview",
+            "packaging_kind": "app_bundle",
+            "logical_product_identity": "io.melix",
+            "runtime_layout": "self_contained_bundle",
+            "http_bind_host": "127.0.0.1",
+            "http_connect_host": "127.0.0.1",
+            "http_port": 12436,
+            "health_probe_url": "http://127.0.0.1:12436/health",
+            "service_base_url": "http://127.0.0.1:12436/v1",
+            "install_manifest_path": "/tmp/Melix.app/Contents/Resources/packaging-target-manifest.json",
+        }
+    )
+
+    assert evidence["python_import_isolation"]["runtime_layout_requires_isolation"] == 1.0
+    assert evidence["python_import_isolation"]["gate_satisfied"] == 0.0
+
+    failures = evaluate_release_gate(
+        {"packaged_launch": evidence},
+        {"packaged_launch": _packaged_launch_policy()},
+    )
+
+    assert "python_import_isolation.gate_satisfied=0.00 fell below minimum 1.00" in failures
+
+
+def test_packaged_launch_evidence_treats_malformed_import_isolation_as_missing() -> None:
+    evidence = build_packaged_launch_evidence(
+        {
+            "packaging_target_id": "macos_app_bundle_preview",
+            "packaging_kind": "app_bundle",
+            "logical_product_identity": "io.melix",
+            "runtime_layout": "self_contained_bundle",
+            "http_bind_host": "127.0.0.1",
+            "http_connect_host": "127.0.0.1",
+            "http_port": 12436,
+            "health_probe_url": "http://127.0.0.1:12436/health",
+            "service_base_url": "http://127.0.0.1:12436/v1",
+            "install_manifest_path": "/tmp/Melix.app/Contents/Resources/packaging-target-manifest.json",
+            "python_import_isolation": ["not", "a", "dict"],
+        }
+    )
+
+    assert evidence["python_import_isolation"]["import_isolated"] == 0.0
+    assert evidence["python_import_isolation"]["required_flags_present"] == 0.0
+    assert evidence["python_import_isolation"]["gate_satisfied"] == 0.0
+
+    evidence = build_packaged_launch_evidence(
+        {
+            "packaging_target_id": "macos_app_bundle_preview",
+            "packaging_kind": "app_bundle",
+            "logical_product_identity": "io.melix",
+            "runtime_layout": "self_contained_bundle",
+            "http_bind_host": "127.0.0.1",
+            "http_connect_host": "127.0.0.1",
+            "http_port": 12436,
+            "health_probe_url": "http://127.0.0.1:12436/health",
+            "service_base_url": "http://127.0.0.1:12436/v1",
+            "install_manifest_path": "/tmp/Melix.app/Contents/Resources/packaging-target-manifest.json",
+            "python_import_isolation": {
+                "import_isolated": True,
+                "env": "not-a-dict",
+                "pythonpath_policy": None,
+            },
+        }
+    )
+
+    assert evidence["python_import_isolation"]["import_isolated"] == 1.0
+    assert evidence["python_import_isolation"]["required_flags_present"] == 0.0
+    assert evidence["python_import_isolation"]["gate_satisfied"] == 0.0
+    assert evidence["python_import_isolation"]["pythonpath_policy"] == ""
 
 
 def test_build_packaged_launch_evidence_accepts_ipv6_loopback_urls() -> None:
@@ -167,6 +262,7 @@ def test_evaluate_release_gate_reports_malformed_packaged_launch_sections() -> N
 
     assert "packaged_launch.connect_host_resolution is missing" in failures
     assert "packaged_launch.installed_app_audit is missing" in failures
+    assert "packaged_launch.python_import_isolation is missing" in failures
     assert "packaged_launch.runtime_source.packaging_target_id is missing" in failures
     assert "packaged_launch.runtime_source.runtime_layout is missing" in failures
     assert "connect_host_resolution.connect_host_loopback is missing" in failures
@@ -191,6 +287,10 @@ def test_evaluate_release_gate_reports_packaged_launch_metric_regressions() -> N
                     **_passing_packaged_launch_evidence()["installed_app_audit"],
                     "audit_passed": 0.0,
                 },
+                "python_import_isolation": {
+                    **_passing_packaged_launch_evidence()["python_import_isolation"],
+                    "gate_satisfied": 0.0,
+                },
             }
         }
     }
@@ -204,3 +304,4 @@ def test_evaluate_release_gate_reports_packaged_launch_metric_regressions() -> N
     assert "health_probe_reuse.reused_client_count=0.00 fell below minimum 1.00" in failures
     assert "health_probe_reuse.time_wait_socket_count=6.00 exceeded maximum 4.00" in failures
     assert "installed_app_audit.audit_passed=0.00 fell below minimum 1.00" in failures
+    assert "python_import_isolation.gate_satisfied=0.00 fell below minimum 1.00" in failures

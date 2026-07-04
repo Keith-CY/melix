@@ -37,6 +37,8 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     full_config_template_elapsed_samples: list[float] = []
     full_config_template_samples: list[float] = []
     raw_single_config_elapsed_samples: list[float] = []
+    empty_selection_elapsed_samples: list[float] = []
+    empty_selection_tool_count_samples: list[float] = []
     missing_selection_elapsed_samples: list[float] = []
     missing_selection_error_samples: list[float] = []
     selector_planning_elapsed_samples: list[float] = []
@@ -82,6 +84,16 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         raw_single_config_elapsed_samples.append(
             (time.perf_counter() - raw_single_config_started) * 1000.0
         )
+
+        empty_selection_tool_count = 0
+        empty_selection_started = time.perf_counter()
+        for _index in range(full_config_iterations):
+            selected = registry.select([])
+            empty_selection_tool_count += len(selected.tools)
+        empty_selection_elapsed_samples.append(
+            (time.perf_counter() - empty_selection_started) * 1000.0
+        )
+        empty_selection_tool_count_samples.append(float(empty_selection_tool_count))
 
         missing_selection_started = time.perf_counter()
         missing_selection_count = 0
@@ -207,6 +219,12 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         "full_config_template_hits_mean": statistics.fmean(full_config_template_samples),
         "raw_single_config_elapsed_ms_mean": statistics.fmean(
             raw_single_config_elapsed_samples
+        ),
+        "empty_selection_elapsed_ms_mean": statistics.fmean(
+            empty_selection_elapsed_samples
+        ),
+        "empty_selection_tool_count_mean": statistics.fmean(
+            empty_selection_tool_count_samples
         ),
         "missing_selection_elapsed_ms_mean": statistics.fmean(
             missing_selection_elapsed_samples

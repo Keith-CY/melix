@@ -430,7 +430,8 @@ public struct SSEStreamWriter: Sendable {
             return errorFrame(
                 requestID: requestID,
                 code: error.error.code,
-                message: error.error.message
+                message: error.error.message,
+                details: error.error.details
             )
         default:
             return nil
@@ -569,16 +570,14 @@ public struct SSEStreamWriter: Sendable {
                             "finish_reason": completed.finishReason,
                         ],
                     ],
-                    "melix": [
-                        "assistant_text": completed.assistantText,
-                    ],
                 ]
             )
         case .error(let error):
             return errorFrame(
                 requestID: requestID,
                 code: error.error.code,
-                message: error.error.message
+                message: error.error.message,
+                details: error.error.details
             )
         case .prefillStarted, .prefillProgress:
             return prefillProgressFrame(event: event, requestID: requestID, options: options)
@@ -692,7 +691,8 @@ public struct SSEStreamWriter: Sendable {
             return errorFrame(
                 requestID: requestID,
                 code: error.error.code,
-                message: error.error.message
+                message: error.error.message,
+                details: error.error.details
             )
         default:
             return frame(
@@ -830,7 +830,8 @@ public struct SSEStreamWriter: Sendable {
             return errorFrame(
                 requestID: requestID,
                 code: error.error.code,
-                message: error.error.message
+                message: error.error.message,
+                details: error.error.details
             )
         default:
             return frame(
@@ -847,15 +848,42 @@ public struct SSEStreamWriter: Sendable {
     private func errorFrame(
         requestID: String,
         code: String,
-        message: String
+        message: String,
+        details: [String: String] = [:]
     ) -> Data {
-        frame(
+        var json: [String: Any] = [
+            "request_id": requestID,
+            "code": code,
+            "message": message,
+        ]
+        let exposedDetails = Self.openAIStreamErrorDetails(code: code, details: details)
+        if !exposedDetails.isEmpty {
+            json["details"] = exposedDetails
+        }
+        return frame(
             event: "error",
-            json: [
-                "request_id": requestID,
-                "code": code,
-                "message": message,
-            ]
+            json: json
+        )
+    }
+
+    private static func openAIStreamErrorDetails(
+        code: String,
+        details: [String: String]
+    ) -> [String: String] {
+        guard code == "tool_choice_not_satisfied" else {
+            return [:]
+        }
+        let allowedKeys = [
+            "field",
+            "phase",
+            "requested_tool_choice",
+            "observed_tool_calls",
+            "finish_reason",
+        ]
+        return Dictionary(
+            uniqueKeysWithValues: allowedKeys.compactMap { key in
+                details[key].map { (key, $0) }
+            }
         )
     }
 

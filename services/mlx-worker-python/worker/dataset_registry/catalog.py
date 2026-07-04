@@ -51,7 +51,11 @@ def _is_supported_dataset_file_name(name: str) -> bool:
     if dot_index <= 0 or dot_index == len(name) - 1:
         return False
     suffix = name[dot_index:]
-    return suffix in _SUPPORTED_DATASET_SUFFIXES or suffix.lower() in _SUPPORTED_DATASET_SUFFIXES
+    if suffix in _SUPPORTED_DATASET_SUFFIXES:
+        return True
+    if suffix.islower():
+        return False
+    return suffix.lower() in _SUPPORTED_DATASET_SUFFIXES
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,13 +457,16 @@ def read_hf_dataset_snapshot_rows(
         selected_files = _iter_limited_preview_dataset_files(resolved_snapshot_path, limit=limit)
     else:
         selected_files = _iter_selected_dataset_files(resolved_snapshot_path, split=normalized_split)
+    remaining = limit
     for path in selected_files:
-        remaining = None if limit is None else max(limit - len(rows), 0)
-        if remaining == 0:
+        if remaining is not None and remaining <= 0:
             return rows
-        rows.extend(_read_rows_from_file(path, limit=remaining))
-        if limit is not None and len(rows) >= limit:
-            return rows
+        file_rows = _read_rows_from_file(path, limit=remaining)
+        rows.extend(file_rows)
+        if remaining is not None:
+            remaining -= len(file_rows)
+            if remaining <= 0:
+                return rows
     return rows
 
 
@@ -539,18 +546,22 @@ def _supported_scan_entry_records(
         name = entry.name
         if name <= after:
             continue
+        if name not in _README_NAMES and _is_supported_dataset_file_name(name):
+            try:
+                if entry.is_file(follow_symlinks=False):
+                    yield name, entry.path, False, True
+                    continue
+            except OSError:
+                pass
         try:
-            is_dir = entry.is_dir()
-            is_file = False if is_dir else entry.is_file()
+            is_dir = entry.is_dir(follow_symlinks=False)
+            if is_dir:
+                yield name, entry.path, True, False
+                continue
         except OSError:
             continue
-        if not is_dir and not is_file:
+        if name in _README_NAMES or not _is_supported_dataset_file_name(name):
             continue
-        if is_file and name in _README_NAMES:
-            continue
-        if is_file and not _is_supported_dataset_file_name(name):
-            continue
-        yield name, entry.path, is_dir, is_file
 
 
 def _first_supported_dataset_file(directory: Path) -> Path | None:
@@ -582,16 +593,20 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
                 if name <= after or (best_name and name >= best_name):
                     continue
                 try:
-                    is_dir = entry.is_dir()
-                    is_file = False if is_dir else entry.is_file()
+                    is_dir = entry.is_dir(follow_symlinks=False)
                 except OSError:
                     continue
-                if not is_dir and not is_file:
+                if is_dir:
+                    is_file = False
+                elif name in _README_NAMES or not _is_supported_dataset_file_name(name):
                     continue
-                if is_file and name in _README_NAMES:
-                    continue
-                if is_file and not _is_supported_dataset_file_name(name):
-                    continue
+                else:
+                    try:
+                        is_file = entry.is_file(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if not is_file:
+                        continue
                 best_name = name
                 best_path_raw = entry.path
                 best_is_dir = is_dir
@@ -631,14 +646,16 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
     suffix = path.suffix.lower()
     if suffix == ".jsonl":
         rows: list[dict[str, Any]] = []
+        append_row = rows.append
+        loads = json.loads
         with path.open("r", encoding="utf-8") as handle:
             for raw_line in handle:
                 line = raw_line.strip()
                 if not line:
                     continue
-                payload = json.loads(line)
+                payload = loads(line)
                 if isinstance(payload, dict):
-                    rows.append(payload)
+                    append_row(payload)
                     if limit is not None and len(rows) >= limit:
                         break
         return rows
@@ -953,46 +970,76 @@ def _build_dataset_snapshot(
 
 
 def _dataset_files(snapshot_dir: Path) -> Iterator[DatasetFile]:
-    for path in _iter_supported_dataset_files(snapshot_dir):
+    for path, relative_path, file_format in _iter_supported_dataset_file_records(snapshot_dir):
         try:
             stat_result = path.stat()
         except OSError:
             continue
         yield DatasetFile(
-            relative_path=os.fspath(path.relative_to(snapshot_dir)),
+            relative_path=relative_path,
             size_bytes=stat_result.st_size,
-            file_format=_dataset_file_format(path),
+            file_format=file_format,
         )
 
 
 def _iter_supported_dataset_files(snapshot_dir: Path) -> Iterator[Path]:
+    for path, _relative_path in _iter_supported_dataset_file_entries(snapshot_dir):
+        yield path
+
+
+def _iter_supported_dataset_file_entries(
+    snapshot_dir: Path, relative_prefix: str = ""
+) -> Iterator[tuple[Path, str]]:
+    for path, relative_path, _file_format in _iter_supported_dataset_file_records(
+        snapshot_dir,
+        relative_prefix=relative_prefix,
+    ):
+        yield path, relative_path
+
+
+def _iter_supported_dataset_file_records(
+    snapshot_dir: Path, relative_prefix: str = ""
+) -> Iterator[tuple[Path, str, str]]:
     try:
         with os.scandir(os.fspath(snapshot_dir)) as entries:
             child_entries = sorted(entries, key=lambda entry: entry.name)
     except OSError:
         return
     for entry in child_entries:
+        name = entry.name
+        relative_path = f"{relative_prefix}{name}"
         try:
             if entry.is_dir():
-                yield from _iter_supported_dataset_files(Path(entry.path))
+                yield from _iter_supported_dataset_file_records(
+                    Path(entry.path), f"{relative_path}/"
+                )
                 continue
             if not entry.is_file():
                 continue
         except OSError:
             continue
-        child_path = Path(entry.path)
-        if _dataset_file_format(child_path):
-            yield child_path
+        file_format = _dataset_file_format_name(name)
+        if file_format:
+            yield Path(entry.path), relative_path, file_format
 
 
 def _dataset_file_format(path: Path) -> str:
-    name = path.name
+    return _dataset_file_format_name(path.name)
+
+
+def _dataset_file_format_name(name: str) -> str:
     if name in _README_NAMES:
         return "metadata"
     dot_index = name.rfind(".")
     if dot_index <= 0 or dot_index == len(name) - 1:
         return ""
-    return _SUPPORTED_DATASET_SUFFIXES.get(name[dot_index:].lower(), "")
+    suffix = name[dot_index:]
+    file_format = _SUPPORTED_DATASET_SUFFIXES.get(suffix)
+    if file_format is not None:
+        return file_format
+    if suffix.islower():
+        return ""
+    return _SUPPORTED_DATASET_SUFFIXES.get(suffix.lower(), "")
 
 
 def _inferred_split(relative_path: str) -> str:
@@ -1004,6 +1051,19 @@ def _inferred_config(relative_path: str) -> str:
 
 
 def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
+    slash_index = relative_path.find("/")
+    if slash_index > 0 and "\\" not in relative_path:
+        next_slash_index = relative_path.find("/", slash_index + 1)
+        if next_slash_index < 0 and slash_index < len(relative_path) - 1:
+            first = relative_path[:slash_index]
+            filename = relative_path[slash_index + 1 :]
+            stem = filename.rsplit(".", 1)[0]
+            split = _split_alias_from_candidate(stem)
+            if not split and first not in _DEFAULT_CONFIG_PARTS:
+                split = _split_alias_from_candidate(first)
+            if first in _DEFAULT_CONFIG_FIRST_PARTS:
+                return split, "default"
+            return split, first
     parts = [part for part in relative_path.replace("\\", "/").split("/") if part]
     if not parts:
         return "", "default"

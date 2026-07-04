@@ -29,3 +29,15 @@ PR-scoped performance report after push.
 The existing multi-segment metrics should remain neutral to improved. The new
 single-value metrics should show lower elapsed time versus the baseline helper
 that always calls `split(",")`.
+
+## 2026-06-28 cached tuple follow-up
+
+This follow-up keeps the same `maintenance-capability-split-single-strip`
+registered probe and narrows the optimization to repeated comma-separated
+capability metadata strings. `_split_capability_values()` keeps the no-comma
+single-value fast path direct, while comma-separated values cache the normalized
+immutable tuple through a bounded `lru_cache` and return a fresh list per public
+call so caller mutation remains isolated. The split/trim/drop-empty semantics are
+unchanged, repeated model-info capability lookups can skip the comma split and
+per-segment strip work, and the single-value probe remains protected from cache
+conversion overhead.

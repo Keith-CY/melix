@@ -82,6 +82,83 @@ func visionHybridStatePatchModeMetricValue(_ mode: String) -> Double {
     }
 }
 
+func visionSpeculativeProbeStatusMetricValue(_ status: String) -> Double {
+    switch status {
+    case "", "not_requested":
+        return 0
+    case "admitted":
+        return 1
+    case "fallback":
+        return 2
+    default:
+        return -1
+    }
+}
+
+func visionSpeculativeProbeModeMetricValue(_ mode: String) -> Double {
+    switch mode {
+    case "", "disabled":
+        return 0
+    case "verification_only":
+        return 1
+    case "speculative_decode":
+        return 2
+    default:
+        return -1
+    }
+}
+
+func visionSpeculativeProbeFallbackReasonMetricValue(_ reason: String) -> Double {
+    switch reason {
+    case "":
+        return 0
+    case "non_greedy_sampling":
+        return 1
+    case "unsupported_route":
+        return 2
+    case "operator_disabled":
+        return 3
+    case "missing_draft_model":
+        return 4
+    default:
+        return -1
+    }
+}
+
+func visionSpeculativeProbeRequestGateMetricValue(_ gate: String) -> Double {
+    switch gate {
+    case "", "not_requested":
+        return 0
+    case "media_draft_eligible":
+        return 1
+    case "normal_multimodal_path":
+        return 2
+    case "text_speculative_path":
+        return 3
+    case "text_baseline_path":
+        return 4
+    default:
+        return -1
+    }
+}
+
+func visionSpeculativeProbeRuntimeScopeMetricValue(_ scope: String) -> Double {
+    switch scope {
+    case "", "none":
+        return 0
+    case "vlm_mtp":
+        return 1
+    case "vlm_multimodal":
+        return 2
+    case "text_mtp":
+        return 3
+    case "text_baseline":
+        return 4
+    default:
+        return -1
+    }
+}
+
 func recordPythonVLMRuntimeProbeMetrics(
     from stats: Melix_Worker_V1_RuntimeStats,
     metricsStore: MetricsStore
@@ -148,6 +225,102 @@ func recordPythonVLMRuntimeProbeMetrics(
     await metricsStore.set(
         Double(stats.lastImageFeatureWorkSavedBytes),
         forKey: "vision.image_feature_work_saved_bytes"
+    )
+    await metricsStore.set(
+        Double(stats.nativeQuantizedLoadCount),
+        forKey: "vision.native_quantized_load_count"
+    )
+    await metricsStore.set(
+        Double(stats.bridgeQuantizedFallbackCount),
+        forKey: "vision.bridge_quantized_fallback_count"
+    )
+    await metricsStore.set(
+        Double(stats.crossShardMetadataFixupCount),
+        forKey: "vision.cross_shard_metadata_fixup_count"
+    )
+    await metricsStore.set(
+        Double(stats.speculativeProbeEnabledCount),
+        forKey: "vision.speculative_probe.enabled_count"
+    )
+    await metricsStore.set(
+        Double(stats.speculativeProbeFallbackCount),
+        forKey: "vision.speculative_probe.fallback_count"
+    )
+    await metricsStore.set(
+        Double(stats.speculativeProbePositionAlignedCount),
+        forKey: "vision.speculative_probe.position_aligned_count"
+    )
+    await metricsStore.set(
+        Double(stats.speculativeProbeCacheAlignedCount),
+        forKey: "vision.speculative_probe.cache_aligned_count"
+    )
+    await metricsStore.set(
+        visionSpeculativeProbeStatusMetricValue(stats.speculativeProbeStatus),
+        forKey: "vision.speculative_probe.status_code"
+    )
+    await metricsStore.set(
+        visionSpeculativeProbeModeMetricValue(stats.speculativeProbeMode),
+        forKey: "vision.speculative_probe.mode_code"
+    )
+    await metricsStore.set(
+        visionSpeculativeProbeFallbackReasonMetricValue(stats.speculativeProbeFallbackReason),
+        forKey: "vision.speculative_probe.fallback_reason_code"
+    )
+    await metricsStore.set(
+        visionSpeculativeProbeRequestGateMetricValue(stats.speculativeProbeRequestGate),
+        forKey: "vision.speculative_probe.request_gate_code"
+    )
+    await metricsStore.set(
+        visionSpeculativeProbeRuntimeScopeMetricValue(stats.speculativeProbeRuntimeScope),
+        forKey: "vision.speculative_probe.runtime_scope_code"
+    )
+    await metricsStore.set(
+        stats.speculativeProbeRuntimeActive ? 1 : 0,
+        forKey: "vision.speculative_probe.runtime_active"
+    )
+    await metricsStore.set(
+        stats.speculativeProbeDraftSupported ? 1 : 0,
+        forKey: "vision.speculative_probe.draft_supported"
+    )
+    await metricsStore.set(
+        Double(stats.speculativeProbeEffectiveDepth),
+        forKey: "vision.speculative_probe.effective_depth"
+    )
+    await metricsStore.set(
+        Double(stats.speculativeProbeRounds),
+        forKey: "vision.speculative_probe.rounds"
+    )
+    await metricsStore.set(
+        Double(stats.speculativeProbeAcceptedTokens),
+        forKey: "vision.speculative_probe.accepted_tokens"
+    )
+    await metricsStore.set(
+        Double(stats.speculativeProbeRejectedTokens),
+        forKey: "vision.speculative_probe.rejected_tokens"
+    )
+    await metricsStore.set(
+        stats.speculativeProbeAcceptanceRate,
+        forKey: "vision.speculative_probe.acceptance_rate"
+    )
+    await metricsStore.set(
+        stats.speculativeProbeRollbackRate,
+        forKey: "vision.speculative_probe.rollback_rate"
+    )
+    await metricsStore.set(
+        stats.speculativeProbeDraftProposeMs,
+        forKey: "vision.speculative_probe.draft_propose_ms"
+    )
+    await metricsStore.set(
+        stats.speculativeProbeTargetVerifyMs,
+        forKey: "vision.speculative_probe.target_verify_ms"
+    )
+    await metricsStore.set(
+        stats.speculativeProbeAutoregressiveFallback ? 1 : 0,
+        forKey: "vision.speculative_probe.autoregressive_fallback"
+    )
+    await metricsStore.set(
+        stats.speculativeProbeSamplingMatchesBaseline ? 1 : 0,
+        forKey: "vision.speculative_probe.sampling_matches_baseline"
     )
     await metricsStore.set(
         Double(stats.textBatchGeneratorSubmittedRequestCount),

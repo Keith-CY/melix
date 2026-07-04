@@ -28,7 +28,11 @@ _SIZE_HINT_MULTIPLIERS = {
 
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
+_BARE_SIZE_HINT_SEARCH = _BARE_SIZE_HINT_RE.search
+_EXPLICIT_SIZE_HINT_SEARCH = _EXPLICIT_SIZE_HINT_RE.search
 _NEXT_LINK_REL_MARKER = 'rel="next"'
+_CURSOR_QUERY_KEY = "cursor="
+_CURSOR_QUERY_KEY_LEN = len(_CURSOR_QUERY_KEY)
 _URL_HEX_DIGITS = {
     "0": 0,
     "1": 1,
@@ -54,6 +58,26 @@ _URL_HEX_DIGITS = {
     "F": 15,
 }
 _LOWERCASE_WEIGHT_OR_CONFIG_SUFFIXES = (".safetensors", ".npz", ".gguf", "config.json", "tokenizer.json")
+_COMMON_4BIT_OPTIQ_TAGS = {"4-bit", "4bit"}
+_COMMON_4BIT_OPTIQ_EXCLUDED_TAGS = {
+    "2bit",
+    "2-bit",
+    "3bit",
+    "3-bit",
+    "8bit",
+    "8-bit",
+    "mixed-precision",
+    "mixed_precision",
+    "fp32",
+    "float32",
+    "f32",
+    "bf16",
+    "fp16",
+    "float16",
+    "qat",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class HubModelSummaryRecord:
     repo_id: str
@@ -342,24 +366,21 @@ def _next_cursor_from_link(link_header: str) -> str:
         if url_start < 0:
             search_start = relation_start + marker_len
             continue
-        query_start = link_header.rfind("?", url_start + 1, url_end)
-        if query_start < 0:
-            return ""
-        query_end = link_header.find("#", query_start + 1, url_end)
+        url_content_start = url_start + 1
+        query_end = link_header.find("#", url_content_start, url_end)
         if query_end < 0:
             query_end = url_end
-        value_start = query_start + 1
-        if link_header.startswith("cursor=", value_start, query_end):
-            value_start += len("cursor=")
-        else:
-            cursor_start = link_header.find("&cursor=", value_start, query_end)
-            if cursor_start < 0:
-                return ""
-            value_start = cursor_start + len("&cursor=")
-        value_end = link_header.find("&", value_start, query_end)
-        if value_end < 0:
-            value_end = query_end
-        return _unquote_plus_ascii_cursor(link_header[value_start:value_end])
+        cursor_start = link_header.find(_CURSOR_QUERY_KEY, url_content_start, query_end)
+        while cursor_start >= 0:
+            previous_char = link_header[cursor_start - 1] if cursor_start > url_content_start else ""
+            if previous_char == "?" or previous_char == "&":
+                value_start = cursor_start + _CURSOR_QUERY_KEY_LEN
+                value_end = link_header.find("&", value_start, query_end)
+                if value_end < 0:
+                    value_end = query_end
+                return _unquote_plus_ascii_cursor(link_header[value_start:value_end])
+            cursor_start = link_header.find(_CURSOR_QUERY_KEY, cursor_start + _CURSOR_QUERY_KEY_LEN, query_end)
+        return ""
 
 
 def _cursor_query_value(url: str, start: int, end: int) -> str:
@@ -456,10 +477,26 @@ def _lowered_tag_set(tags: list[str]) -> set[str]:
 
 
 def _is_mlx_atom(value: str) -> bool:
-    return len(value) == 3 and value[0] in "mM" and value[1] in "lL" and value[2] in "xX"
+    if len(value) != 3:
+        return False
+    first = ord(value[0])
+    second = ord(value[1])
+    third = ord(value[2])
+    return (
+        (first == 77 or first == 109)
+        and (second == 76 or second == 108)
+        and (third == 88 or third == 120)
+    )
 
 
 def _tag_payload_contains_mlx(value: Any) -> bool:
+    if type(value) is list:
+        for item in value:
+            if type(item) is str and (
+                item == "MLX" or item == "mlx" or (len(item) == 3 and _is_mlx_atom(item))
+            ):
+                return True
+        return False
     if isinstance(value, list):
         for item in value:
             if isinstance(item, str) and (
@@ -532,11 +569,11 @@ def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     library_name = raw_library_name if isinstance(raw_library_name, str) else ""
     if library_name and _is_mlx_atom(library_name):
         return True
-    if _tag_payload_contains_mlx(payload.get("tags")):
-        return True
     raw_repo_id = payload.get("id") or payload.get("modelId")
     repo_id = raw_repo_id if isinstance(raw_repo_id, str) else ""
-    if _repo_id_contains_mlx(repo_id):
+    if repo_id and _repo_id_contains_mlx(repo_id):
+        return True
+    if _tag_payload_contains_mlx(payload.get("tags")):
         return True
     card_data = payload.get("cardData")
     if not isinstance(card_data, dict):
@@ -881,10 +918,30 @@ def _direct_card_size_hint_from_text(text: str) -> int:
     return _direct_size_hint_from_text(text)
 
 
+def _direct_size_hint_from_line(text: str, value_start: int) -> int:
+    newline_index = text.find("\n", value_start)
+    if newline_index >= 0:
+        return _direct_size_hint_from_text(text[value_start:newline_index])
+    value_end = value_start
+    text_length = len(text)
+    while (
+        value_end < text_length
+        and text[value_end] not in "\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+    ):
+        value_end += 1
+    return _direct_size_hint_from_text(text[value_start:value_end])
+
+
 def _direct_explicit_size_hint_from_text(text: str) -> int:
-    marker_index = text.find("Model size")
+    marker_index = text.find("MODEL SIZE | ")
+    if marker_index >= 0:
+        return _direct_size_hint_from_line(text, marker_index + 13)
+    marker_index = text.find("Model size: ")
+    if marker_index >= 0:
+        return _direct_size_hint_from_line(text, marker_index + 12)
+    marker_index = text.find("MODEL SIZE")
     if marker_index < 0:
-        marker_index = text.find("MODEL SIZE")
+        marker_index = text.find("Model size")
     if marker_index < 0:
         marker_index = text.find("model size")
     if marker_index < 0:
@@ -899,24 +956,14 @@ def _direct_explicit_size_hint_from_text(text: str) -> int:
     while value_start < text_length and text[value_start].isspace():
         value_start += 1
 
-    newline_index = text.find("\n", value_start)
-    if newline_index >= 0:
-        return _direct_size_hint_from_text(text[value_start:newline_index])
-
-    value_end = value_start
-    while (
-        value_end < text_length
-        and text[value_end] not in "\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
-    ):
-        value_end += 1
-    return _direct_size_hint_from_text(text[value_start:value_end])
+    return _direct_size_hint_from_line(text, value_start)
 
 
 def _strip_model_size_label(text: str) -> str:
-    if text.startswith("Model size: "):
-        return text[12:]
     if text.startswith("MODEL SIZE:") or text.startswith("MODEL SIZE|"):
         return text[11:]
+    if text.startswith("Model size: "):
+        return text[12:]
     if not _starts_with_model_size_label(text):
         return ""
     cursor = 10
@@ -949,8 +996,8 @@ def _starts_with_model_size_label(text: str) -> bool:
 def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
     if not text:
         return 0
-    pattern = _BARE_SIZE_HINT_RE if allow_bare else _EXPLICIT_SIZE_HINT_RE
-    match = pattern.search(text)
+    search_size_hint = _BARE_SIZE_HINT_SEARCH if allow_bare else _EXPLICIT_SIZE_HINT_SEARCH
+    match = search_size_hint(text)
     if not match:
         return 0
     value_text = match.group(1)
@@ -1107,6 +1154,12 @@ def _bytes_per_parameter_from_tag_substrings(lowered: set[str]) -> float:
 
 def _quantization_summary(tags: list[str], *, lowered_tags: set[str] | None = None) -> str:
     lowered = _normalized_lowered_tags(tags, lowered_tags)
+    if (
+        "optiq" in lowered
+        and not lowered.isdisjoint(_COMMON_4BIT_OPTIQ_TAGS)
+        and lowered.isdisjoint(_COMMON_4BIT_OPTIQ_EXCLUDED_TAGS)
+    ):
+        return "4-bit, optiq"
     values: list[str] = []
     if "2bit" in lowered or "2-bit" in lowered:
         values.append("2-bit")

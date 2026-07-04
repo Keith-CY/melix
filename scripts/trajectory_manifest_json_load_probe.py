@@ -62,7 +62,7 @@ def _manifest_payload(component_count: int) -> dict[str, Any]:
     }
 
 
-def _baseline_load(manifest_path: Path) -> dict[str, Any]:
+def _baseline_load(manifest_path: Path | str) -> dict[str, Any]:
     payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         return {}
@@ -76,7 +76,9 @@ def _baseline_load(manifest_path: Path) -> dict[str, Any]:
     )
 
 
-def _measure(func: Callable[[Path], dict[str, Any]], manifest_path: Path, iterations: int) -> tuple[float, int]:
+def _measure(
+    func: Callable[[Path | str], dict[str, Any]], manifest_path: Path | str, iterations: int
+) -> tuple[float, int]:
     tracemalloc.start()
     start = time.perf_counter()
     checksum = 0

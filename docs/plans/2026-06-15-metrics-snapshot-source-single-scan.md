@@ -39,8 +39,61 @@ The registry entry includes focused `test_command`, `coverage_command`, and
 6. Update the registered probe workload to measure the multi-source resolution
    path instead of only the single-source helper.
 
+## Follow-up slice: lazy overlapping match materialization
+
+The next focused Python slice keeps the same registered probe and runtime
+metrics discovery boundary. It avoids creating a per-entry list for the common
+case where a runtime file matches only one exact or prefix/suffix source pattern,
+while still preserving overlapping exact, prefix, and multi-wildcard matches.
+The behavior contract remains unchanged: a single runtime directory scan chooses
+the newest matching file for each unresolved source.
+
 ## Verification plan
 
 Run the registered focused tests, changed-scope coverage command, and registered
 probe locally on Linux before opening the PR. GitHub Actions PR-scoped
 performance remains the merge gate for the registered probe report.
+
+## 2026-06-30 follow-up slice: skip configured-source runtime scan
+
+This Python-only follow-up keeps the same registered
+`melix-metrics-snapshot-runtime-scandir` probe and narrows to
+`discover_latest_metrics_paths(...)`. When `resolve_source_paths(...)` has already
+resolved every source from explicit arguments or environment variables, the
+batched runtime discovery call receives an empty source tuple. The helper now
+returns that empty result immediately instead of scanning the runtime directory
+and testing entries that cannot match any unresolved source.
+
+The behavior contract remains unchanged: argument and environment precedence are
+preserved, partially unresolved calls still perform one runtime scan, and missing
+runtime directories still return unresolved source paths without raising.
+
+## 2026-07-02 follow-up slice: bind latest mtime lookup
+
+This Python-only follow-up keeps the same registered
+`melix-metrics-snapshot-runtime-scandir` probe and narrows to the hot per-entry
+update path in `discover_latest_metrics_paths(...)`. The implementation binds the
+latest-mtime dictionary lookup once before the scan loop, matching the existing
+bound setter pattern and reducing repeated method resolution while preserving the
+single-scan runtime discovery behavior.
+
+The behavior contract remains unchanged: exact, prefix/suffix, empty-prefix, and
+multi-wildcard runtime pattern matches still select the newest regular file per
+source, and configured sources still bypass runtime scanning.
+
+## 2026-07-03 probe calibration slice: configured-path noise floor
+
+The rejected 2026-07-03 index-backed latest tracking slice showed that the
+registered `melix-metrics-snapshot-runtime-scandir` probe's configured-source
+metrics are too small to gate by percentage alone. The configured path bypasses
+runtime discovery entirely and normally runs in roughly 0.02 ms, so sub-0.01 ms
+host jitter can appear as a large percentage regression while the measured
+runtime directory scan remains neutral or improved.
+
+This Python/probe-only calibration keeps the existing probe, test command,
+coverage command, and runtime discovery metrics. It adds a 0.01 ms absolute
+warning floor to `configured_elapsed_ms_mean` and `configured_elapsed_ms_min` so
+future behavior slices are gated on meaningful configured-path regressions rather
+than measurement noise. The behavior contract remains unchanged: configured
+sources still bypass runtime scanning, and runtime-scan `elapsed_ms_*` metrics
+remain percentage-gated.

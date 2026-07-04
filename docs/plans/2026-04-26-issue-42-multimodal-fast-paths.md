@@ -447,6 +447,214 @@ Executable unit issues:
   required for this slice because `MediaMetadata.preprocessing_hints` is already
   the request-side extension point.
 
+- Unit 3.2.1 adds image-bearing batch-1 step-decode admission as a receipt-only
+  gate before the executor-owned decode loop exists. Admission requires an
+  eligible VLM load route, exactly one image and no video, aligned reusable
+  position metadata, a cache-identifiable image receipt, greedy sampling, and a
+  backend step function. Eligible requests report
+  `multimodal_decode_mode=image_batch1_step_admission` and
+  `multimodal_decode_sync_mode=executor_step_admission`; ineligible requests
+  remain on their existing baseline, cache-reuse, or native-quantized path with a
+  typed `multimodal_fallback_reason`. Runtime probes and benchmark metrics expose
+  the admitted mode and fallback reason, while Unit 3.2.2 owns threading the
+  actual executor stream and integer token counters through decode.
+
+- Unit 3.2.2 promotes admitted image-bearing batch-1 requests onto the real
+  `generate_step` decode path. The worker materializes the single image,
+  prepares media-aware MLX inputs, and records the aligned position metadata
+  receipt on the executor-owned stream before admission. Admitted greedy requests
+  then use cooperative executor iteration around `generate_step`, bypass
+  `stream_generate`, keep per-sample image inputs and auxiliary position kwargs
+  together, and maintain Melix decode progress from an integer prompt-token plus
+  completion-token counter. Runtime probes report
+  `multimodal_decode_mode=image_batch1_step`,
+  `multimodal_decode_sync_mode=executor_step`, and the counter start/end/advance
+  values. Non-greedy or otherwise ineligible batch-1 image requests keep their
+  existing stream path with the typed admission fallback reason.
+
+- Unit 3.2.3 adds matched baseline-vs-fast-path benchmark evidence for the
+  image batch-1 decode route. VLM benchmarks can run the same prompt/model tuple
+  twice with an internal request-local `melix.vlm.image_batch1_step.enabled`
+  override: `false` records the baseline stream route and `true` admits the
+  accelerated `image_batch1_step` route when all receipts pass. The comparison
+  artifact reuses the serving-diagnostics baseline-vs-accelerated evidence
+  contract, so public speed claims are blocked unless the model id, prompt
+  protocol, prompt digest, prompt template digest, task kind, generation config,
+  greedy sampler, and route-stability status match. The artifact records TTFT,
+  decode tokens/sec, fallback reason, and route stability for both legs; if the
+  fast path is not actually selected or identity differs, benchmark metrics mark
+  `vlm_batch1_comparison_claim_blocked=1` instead of emitting an eligible claim.
+
+- Unit 3.3.1 adds a shared quantized-tensor metadata prepass for native MTP and
+  Gemma4 text-backed VLM loads. Loaders read `model.safetensors.index.json`
+  before tensor materialization and fall back to safetensors headers only when no
+  index map is available. The resulting tensor-to-shard map is built before
+  model-specific sanitize steps, so `.weight` and `.scales` tensors split across
+  shards still drive quantization admission. Native MTP and Gemma4 loaders use
+  the shared metadata predicate when deciding bits/group-size quantization
+  before loading sanitized weights; materialized weight dictionaries remain a
+  fallback for legacy unindexed artifacts. The PR-scoped
+  `quantized-tensor-metadata-prepass` probe reports index/header prepass cost
+  and gates metadata-vs-materialized quantization decisions, while focused
+  fixtures cover cross-shard index and header metadata, native MTP
+  sanitize-before-load, Gemma4 text-only exports, and text-backed fallback
+  loads.
+- Unit 3.3.2 keeps native quantized multimodal loads conservative around
+  precision-sensitive non-language tensors. The native MTP and Gemma4 loader
+  predicates share the same preservation policy: vision towers, projectors, and
+  decode/output heads stay high precision unless the artifact explicitly marks
+  the module as quantized. Image batch-1 step decode casts prepared
+  `pixel_values` to the vision patch-embed dtype when that dtype is available,
+  avoiding accidental coupling to quantized language embedding dtype. Focused
+  fixtures pin projector/output skip behavior, explicit quantized metadata
+  override behavior, optional-head weight preservation after sanitize, and the
+  pixel dtype selection contract.
+- Unit 3.3.3 promotes the existing native-versus-fallback quantized admission
+  decision into acceptance metrics. Supported quantized VLM artifacts report
+  `quantized_load_mode=native_quantized`, increment
+  `native_quantized_load_count`, keep `bridge_quantized_fallback_count=0`, and
+  carry any cross-shard quantized metadata fixup count into runtime stats and
+  phase-6 evidence. Unsupported family or signature combinations keep the
+  fail-closed fallback reason such as `unsupported_family`, increment
+  `bridge_quantized_fallback_count`, and surface the same counts through the
+  worker `RuntimeStats`, control-plane `vision.*` metrics, phase-6 acceptance
+  report, benchmark samples, and focused supported/unsupported fixtures.
+- Unit 4.1.1 adds a verification-only speculative probe receipt for
+  media-bearing VLM requests behind `melix.vlm.speculative_probe.enabled` (or
+  `melix.multimodal.speculative_probe.enabled`). The probe runs before any
+  drafter load or target speculative decode when `ACCELERATION_MODE_SPECULATIVE_DECODE`
+  is requested, records the requested draft model, media counts, position/cache
+  alignment, and typed fallback reason, and then leaves generation on the
+  existing baseline path. If baseline fallback is disabled, the receipt is still
+  recorded before the typed runtime refusal. The feature gate intentionally
+  accepts the existing truthy operator spellings (`1`, `true`, `yes`, `on`, and
+  `enabled`), cache alignment accepts both the current `cache_scope_id` and
+  legacy `scope_id` metadata spellings, and position alignment treats aggregate
+  media-position counts plus image/video counts as independent positive signals
+  because not every fast-path receipt reports all three counters. The entry
+  receipt is restored after baseline probe refreshes and cleanup paths so a
+  generation exception cannot erase the verification-only receipt. Default
+  disabled receipts reuse a read-only sentinel so text-only baseline generation
+  does not allocate a speculative receipt dictionary on the hot path. The
+  `multimodal-speculative-probe-receipt` performance probe is a static schema
+  sentinel: focused pytest coverage validates behavior, while the probe command
+  emits informational metrics only and is not a latency gate.
+- Unit 4.1.2 upgrades admitted text-backed VLM MTP speculative decode paths to
+  restore an admitted `speculative_probe_receipt` after generation with
+  `mode=speculative_decode`, per-sequence rounds, accepted/rejected token
+  counts, acceptance and rollback rates, draft propose and target verify timing
+  fields, draft/target start markers, and greedy sampling parity. Batch-native
+  MTP receipts accept the existing native timing spellings from the response
+  (`speculative_mtp_head_ms` and `speculative_backbone_ms`) as aliases for draft
+  propose and target verify timing. Generate-step receipts derive counters from
+  drafter acceptance stats and keep unavailable timing fields null.
+  Verification-only fallback/refusal receipts keep zero counters, null timings,
+  and the baseline parity flag so media-bearing speculative requests remain
+  baseline-only until later parity units. Unit 4.1.3 owns full single-request
+  and concurrent parity fixtures.
+- Unit 4.1.3 adds focused speculative parity fixtures for the Unit 4.1
+  verification scope. The single-request fixture compares a media-bearing
+  baseline run with a feature-gated speculative request and asserts the final
+  token stream, raw text, token metadata, media routing, and prompt formatting
+  remain identical while the speculative receipt records verification-only
+  fallback. The concurrent fixture runs four media-bearing speculative requests
+  against shared backend state, proves they all enter baseline stream generation
+  concurrently, and asserts no drafter load is shared or serialized for the
+  media fallback path. Prompt-only gate fixtures compare baseline and
+  speculative-fallback outputs for unsupported target family, missing draft
+  model, and non-greedy sampling requests while preserving the typed fallback
+  reason and sampling-parity receipt field.
+- Plan 4.1 is closed out by Unit 4.1.1 (#1465, PR #2333), Unit 4.1.2
+  (#1466, PR #2530), and Unit 4.1.3 (#1467, PR #2535). Together those units
+  satisfy the Plan 4.1 acceptance gate: feature-gated media-bearing speculative
+  probes run without changing visible output, receipts record accepted/rejected
+  tokens, rounds, sampling parity, rollback, timing, and fallback reason, and
+  single-request plus concurrent VLM parity fixtures pass before any rollout path
+  is enabled. Plan 4.2 continues native draft admission and operator override
+  surfaces; Plan 4.3 owns promotion evidence and default-on release gates.
+- Unit 4.2.1 extends the speculative probe receipt with native draft admission
+  evidence before changing default routing. Receipts must record
+  `draft_supported`, `effective_depth`, `depth_source`, `adaptive_block_policy`,
+  `request_gate`, `runtime_scope`, and `fallback_reason` for verification-only
+  fallback, refusal, and admitted speculative decode. Media-bearing requests with
+  a configured draft remain baseline-routed until VLM draft tensors are
+  supported, media-bearing requests without draft tensors stay on the normal
+  multimodal path, and text-only requests with draft tensors use the existing
+  text MTP speculative path rather than the VLM media path.
+- Unit 4.2.2 makes the route-policy override contract deterministic for native
+  multimodal speculative admission. `auto` and `force` may preserve
+  worker-facing speculative launch flags only when the selected VLM model
+  advertises native draft support through native MTP or speculative-head
+  metadata; otherwise they fail closed to baseline with
+  `unsupported_route`. `off` always suppresses speculative launch flags before
+  dispatch, clears draft/profile fields, and emits `operator_disabled` with the
+  stale `speculative_decode` override listed in the gateway receipt. Summary
+  receipts and launch-bound execution metadata must agree on the effective
+  route, effective speculative mode, suppressed override names, and disabled
+  reason. Success is measured with focused Swift translation/coordinator/store
+  tests for `auto`, `off`, `force`, and stale saved overrides; request-path
+  performance is covered by the existing gateway/request-coordinator scoped
+  probes and should report no in-scope regression.
+- Unit 4.2.3 renders the native speculative acceleration receipt across the
+  operator-visible status surfaces that already consume worker runtime stats.
+  Worker `RuntimeStats` must expose the last VLM speculative receipt's status,
+  mode, runtime-active gate, draft support, effective depth, request gate,
+  runtime scope, fallback reason, accepted/rejected token counts, acceptance and
+  rollback rates, draft propose and target verify timings, and explicit
+  autoregressive fallback state. A speculative route is `runtime_active` only
+  after receipt gates prove an admitted speculative decode with draft support,
+  draft load, target decode start, and output mutation enabled; verification-only
+  probes, non-greedy requests, unsupported media routes, and operator-disabled
+  routes remain visible as autoregressive fallback with a typed fallback reason.
+  Control-plane health diagnostics, companion/operator status JSON, metrics,
+  diagnostics bundle summaries, and benchmark artifacts must project the same
+  receipt fields without emitting an optimistic success state before the worker
+  receipt gates pass. Success is measured with focused Python worker stats,
+  diagnostics, and benchmark tests; focused Swift health/metrics tests for the
+  same runtime stats fields; changed-line coverage at or above 95%; and the
+  existing request-coordinator/OpenAI scoped performance probes reporting no
+  in-scope regression.
+- Plan 4.2 is closed out by Unit 4.2.1 (#1468, PR #2541), Unit 4.2.2
+  (#1469, PR #2548), and Unit 4.2.3 (#1470, PR #2551). Together those units
+  satisfy the Plan 4.2 acceptance gate: receipts cover native draft heads,
+  target/draft compatibility, adaptive block policy, request gates, runtime
+  scope, and fallback reasons; operator overrides support `auto`, `off`, and
+  `force` while suppressing stale saved settings with visible receipts; and
+  native acceleration receipts render across health, CLI status, diagnostics,
+  and benchmark artifacts without emitting an optimistic success state before
+  receipt gates pass. Plan 4.3 continues promotion evidence, comparison
+  artifacts, Apple Silicon smoke probes, and default-on release gates.
+- Unit 4.3.1 adds matched baseline-vs-accelerated benchmark evidence for the
+  multimodal speculative decode route. VLM benchmarks run a baseline leg with
+  `melix.vlm.speculative_probe.enabled=false` and an accelerated leg with the
+  probe enabled plus the requested speculative acceleration policy. The
+  comparison artifact reuses the serving-diagnostics
+  `baseline-vs-accelerated.json` contract, including prefill and decode phase
+  rows for both legs, greedy sampler status, admission/fallback reason, and the
+  native acceleration receipt payload. The shared verifier blocks claim-eligible
+  artifacts when prompt protocol, prompt digest, prompt template digest, model
+  id, task kind, generation config, greedy sampler, or route stability differ.
+  Benchmark metrics expose speculative comparison validity, claim-blocked,
+  identity-match, route-stability, reason-code, baseline/accelerated TTFT and
+  decode throughput, and artifact-present status. A public speculative speed
+  claim remains blocked unless the accelerated receipt proves
+  `native_acceleration_runtime_active=true`; media-bearing verification-only
+  fallbacks therefore stay visible as blocked evidence until later Plan 4.3
+  smoke and release gates admit them.
+- Unit 4.3.2 adds the repository-owned speculative VLM smoke probe contract for
+  Apple Silicon promotion evidence. The PR-scoped probe
+  `vlm-speculative-smoke-probe` runs `scripts/vlm_speculative_smoke_probe.py`
+  against deterministic baseline and accelerated VLM samples that reuse the
+  same baseline-vs-accelerated artifact writer as Unit 4.3.1. The smoke metrics
+  report baseline and accelerated TTFT, decode throughput, native speculative
+  acceptance rate, fallback count, fallback-stability pass count,
+  repeated-media correctness pass count, speed-target pass count, and overall
+  smoke-pass count. The deterministic CI leg proves the artifact and metric
+  contract without downloading model weights; a live Apple Silicon operator run
+  can populate the same fields before default-on promotion. Promotion remains
+  blocked unless the supported target/draft pair reports stable fallback state,
+  no repeated-media correctness regression, and the current gated speed target.
+
 ## Verification Policy
 
 Per milestone:

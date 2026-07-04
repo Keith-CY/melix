@@ -45,6 +45,7 @@ def _drain_chunk_to_bytes(chunk: array.array) -> bytes:
 
 def audio_to_pcm_chunks(audio, *, chunk_sample_limit: int):
     chunk = array.array("h")
+    chunk_append = chunk.append
     limit = max(1, int(chunk_sample_limit))
 
     for value in iter_samples(audio):
@@ -52,7 +53,7 @@ def audio_to_pcm_chunks(audio, *, chunk_sample_limit: int):
             value = 1.0
         elif value < -1.0:
             value = -1.0
-        chunk.append(int(value * 32767.0))
+        chunk_append(int(value * 32767.0))
         if len(chunk) >= limit:
             pcm_bytes = _drain_chunk_to_bytes(chunk)
             del chunk[:]

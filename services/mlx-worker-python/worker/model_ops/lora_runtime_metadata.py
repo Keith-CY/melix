@@ -33,9 +33,6 @@ _AUXILIARY_MODULE_PATTERNS = (
 _AUXILIARY_MODULE_PREFIXES = tuple(
     pattern.removesuffix("*.py") for pattern in _AUXILIARY_MODULE_PATTERNS
 )
-_AUXILIARY_MODULE_PREFIX_CHARS = frozenset(
-    prefix[0] for prefix in _AUXILIARY_MODULE_PREFIXES
-)
 _PROCESSOR_RESUME_FILENAMES = (
     ("processor_config.json", "processor_config"),
     ("preprocessor_config.json", "preprocessor_config"),
@@ -340,14 +337,19 @@ def _processor_resume_mode(base_model_dir: Path) -> str:
 
 def _aux_modules_restored(base_model_dir: Path) -> bool:
     auxiliary_prefixes = _AUXILIARY_MODULE_PREFIXES
-    auxiliary_prefix_chars = _AUXILIARY_MODULE_PREFIX_CHARS
     scandir = os.scandir
     try:
         with scandir(base_model_dir) as entries:
             for entry in entries:
                 name = entry.name
+                first_char = name[0]
                 if (
-                    name[0] in auxiliary_prefix_chars
+                    (
+                        first_char == "m"
+                        or first_char == "c"
+                        or first_char == "t"
+                        or first_char == "p"
+                    )
                     and name.endswith(".py")
                     and name.startswith(auxiliary_prefixes)
                 ):
@@ -363,7 +365,7 @@ def _canary_result(failures: list[str]) -> str:
 
 def _load_json_mapping(path: Path) -> Mapping[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_bytes())
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, Mapping) else {}
@@ -422,8 +424,14 @@ def _str_value(raw_value: Any) -> str:
 def _quantized_kind_from_text(raw_value: str) -> str:
     # The boundary regex already treats leading/trailing whitespace as a
     # non-alphanumeric delimiter, so avoid an extra full-string strip in this
-    # hot parser loop.
+    # hot parser loop. Check already-lowercase tokens before allocating a lower
+    # copy; model/profile identifiers in this path are commonly lowercase.
+    for kind, pattern in _QUANTIZED_KIND_PATTERNS:
+        if kind in raw_value and pattern.search(raw_value):
+            return kind
     normalized = raw_value.lower()
+    if normalized == raw_value:
+        return "unknown"
     for kind, pattern in _QUANTIZED_KIND_PATTERNS:
         if kind in normalized and pattern.search(normalized):
             return kind

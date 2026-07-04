@@ -23,6 +23,19 @@ The affected path is covered by the registered PR-scoped probe
 and `scripts/event_extraction_actor_alias_probe.py` metrics for the actor alias
 semantic scoring path.
 
+## Follow-up Slice: semantic value-group matching mask precompute
+
+The 2026-07-01 follow-up slice keeps the same registered event-extraction
+semantic probe coverage and narrows the hot path in
+`_maximum_weight_semantic_value_group_matching()`. The registered
+`event-extraction-semantic-value-group-cache` probe now also emits
+`matching_elapsed_ms_mean` for the maximum-weight value-group matcher, in
+addition to cached value-group construction metrics. Candidate gold/pred index
+masks, valid-consumption counts, and numeric scores are now computed once after
+candidate ordering instead of being rebuilt on every recursive dynamic-programming
+state. Invalid or out-of-range candidates are still ignored, tie-breaking remains
+stable, and semantic action split/merge scoring semantics are unchanged.
+
 ## Success Metrics
 
 - Focused behavior tests pass.

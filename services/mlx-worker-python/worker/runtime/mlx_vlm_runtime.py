@@ -18,9 +18,13 @@ from threading import Thread
 from typing import Any, Callable, Iterable
 
 from packages.protocol.python.worker.v1 import common_pb2
-from worker.runtime.deterministic_vlm_runtime import VisionProbeSnapshot
+from worker.runtime.deterministic_vlm_runtime import (
+    VisionProbeSnapshot,
+    probe_receipt_fallback_reason,
+)
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import (
+    NativeMTPBatchTimings,
     RuntimeTokenEvent,
     _bytes_value,
     _first_present,
@@ -48,11 +52,25 @@ from worker.runtime.multimodal_preprocessing import (
     prepare_vision_request,
     rebuild_multimodal_hash,
 )
+from worker.runtime.multimodal_speculative_probe import (
+    build_speculative_runtime_receipt,
+    speculative_probe_admission,
+    speculative_probe_enabled,
+)
 from worker.runtime.runtime_utils import (
     callable_accepts_kwarg as _callable_accepts_kwarg,
     callable_declares_kwarg as _callable_declares_kwarg,
     installed_package_version as _installed_package_version,
 )
+from worker.runtime.quantized_tensor_metadata import (
+    EMPTY_QUANTIZED_TENSOR_METADATA,
+    QuantizedTensorMetadata,
+    cross_shard_quantized_metadata_fixup_count,
+    native_multimodal_quantization_preserves_precision,
+    quantized_scales_present,
+    quantized_tensor_metadata_from_model_dir,
+)
+from worker.runtime.quantized_load_acceptance import quantized_load_acceptance_counts
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.vision_family_adapters import (
     resolve_vision_family_config,
@@ -62,6 +80,18 @@ from worker.runtime.vlm_preprocessing_policy import (
     apply_resize_shape_to_stream_kwargs,
     prepared_request_preprocessing_policy_receipt,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _MLXVLMProbeSnapshotView:
+    snapshot: VisionProbeSnapshot
+    native_quantized_load_count: int = 0
+    bridge_quantized_fallback_count: int = 0
+    cross_shard_metadata_fixup_count: int = 0
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.snapshot, name)
+
 
 logger = logging.getLogger(__name__)
 _GEMMA4_PRESENCE_NONE = (False, False)
@@ -74,6 +104,7 @@ _GEMMA_CHAT_TEMPLATE_MODEL_TYPES = frozenset(("gemma3", "gemma3n", "gemma4"))
 
 _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY = "melix.vlm.text_only_batch_generator"
 _TEXT_ONLY_STEP_COOPERATIVE_EXT_KEY = "melix.vlm.text_only_step_cooperative"
+_IMAGE_BATCH1_STEP_EXT_KEY = "melix.vlm.image_batch1_step.enabled"
 _NATIVE_MTP_ENABLED_EXT_KEY = "melix.native_mtp.enabled"
 _TEXT_ONLY_BATCH_PREFILL_STEP_SIZE_ENV = "MELIX_VLM_TEXT_BATCH_PREFILL_STEP_SIZE"
 _TEXT_ONLY_BATCH_DEFAULT_PREFILL_STEP_SIZE = 512
@@ -299,6 +330,15 @@ def _truthy_string(value: str | None) -> bool:
 class MaterializedMediaPaths:
     image_paths: tuple[str, ...]
     video_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _ImageBatch1StepInputs:
+    media_paths: MaterializedMediaPaths
+    inputs: dict[str, Any]
+    prompt_tokens: int
+    position_metadata_receipt: dict[str, object]
+    started_at: float
 
 
 class _Gemma4TextBackedModelShim:
@@ -1318,6 +1358,65 @@ def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[boo
     return _GEMMA4_PRESENCE_NONE
 
 
+def _vision_patch_embed_dtype(model: Any) -> Any | None:
+    for candidate in _vision_patch_embed_candidates(model):
+        dtype = _module_weight_dtype(candidate)
+        if dtype is not None:
+            return dtype
+    return None
+
+
+def _vision_patch_embed_candidates(model: Any) -> tuple[Any, ...]:
+    vision_roots = (
+        getattr(model, "vision_tower", None),
+        getattr(model, "vision_model", None),
+        getattr(model, "visual", None),
+    )
+    candidates: list[Any] = []
+    for root in vision_roots:
+        if root is None:
+            continue
+        for attr in ("patch_embed", "patch_embedding", "embeddings", "conv1", "proj"):
+            candidate = getattr(root, attr, None)
+            if candidate is not None:
+                candidates.append(candidate)
+        candidates.append(root)
+    return tuple(candidates)
+
+
+def _module_weight_dtype(module: Any) -> Any | None:
+    weight = getattr(module, "weight", None)
+    dtype = getattr(weight, "dtype", None)
+    if dtype is not None:
+        return dtype
+    return getattr(module, "dtype", None)
+
+
+def _cast_pixel_values_to_vision_dtype(model: Any, pixel_values: Any) -> Any:
+    if pixel_values is None:
+        return pixel_values
+    dtype = _vision_patch_embed_dtype(model)
+    if dtype is None:
+        return pixel_values
+
+    def cast_array(array: Any) -> Any:
+        if getattr(array, "dtype", None) == dtype:
+            return array
+        astype = getattr(array, "astype", None)
+        if not callable(astype):
+            return array
+        try:
+            return astype(dtype)
+        except (TypeError, ValueError, RuntimeError):
+            return array
+
+    if isinstance(pixel_values, list):
+        return [cast_array(array) for array in pixel_values]
+    if isinstance(pixel_values, tuple):
+        return tuple(cast_array(array) for array in pixel_values)
+    return cast_array(pixel_values)
+
+
 def _mlx_peak_memory_gb(mx_module: Any) -> float:
     get_peak_memory = getattr(mx_module, "get_peak_memory", None)
     if callable(get_peak_memory):
@@ -1782,6 +1881,13 @@ class AutoMLXVLMBackend:
         metadata["mlx_lm_version"] = _installed_package_version("mlx-lm")
         metadata["mlx_vlm_version"] = _installed_package_version("mlx-vlm")
         execution_mode = metadata.get("melix.vlm.execution_mode", "").strip() or "multimodal"
+        model_path = Path(model_spec.model_path)
+        cross_shard_metadata_fixup_count = 0
+        if model_path.is_dir():
+            quantized_metadata = quantized_tensor_metadata_from_model_dir(model_path)
+            cross_shard_metadata_fixup_count = cross_shard_quantized_metadata_fixup_count(
+                quantized_metadata
+            )
         native_mtp_metadata = maybe_apply_native_mtp_preload_patches(
             model_spec.model_path,
             metadata=metadata,
@@ -1837,6 +1943,7 @@ class AutoMLXVLMBackend:
             "revision": model_spec.revision,
             "tokenizer_hash": model_spec.tokenizer_hash,
             "quant_profile_id": model_spec.quant_profile_id,
+            "cross_shard_metadata_fixup_count": cross_shard_metadata_fixup_count,
             "parser_mode": model_spec.parser_mode,
             "reasoning_mode": model_spec.reasoning_mode,
             "model": model,
@@ -1876,13 +1983,19 @@ class AutoMLXVLMBackend:
         model_path = get_model_path(model_spec.model_path, revision=model_spec.revision or "main")
         config = load_config(model_path)
         weights: dict[str, Any] = {}
+        weight_files: list[str] = []
         for entry in os.scandir(model_path):
             try:
                 if not entry.is_file() or not entry.name.endswith(".safetensors"):
                     continue
             except OSError:
                 continue
+            weight_files.append(entry.path)
             weights.update(mx.load(entry.path))
+        quantized_metadata = quantized_tensor_metadata_from_model_dir(
+            model_path,
+            weight_files=weight_files,
+        )
 
         has_vision_weights, has_audio_weights = _gemma4_multimodal_weight_presence(weights.keys())
         if has_vision_weights:
@@ -1894,6 +2007,7 @@ class AutoMLXVLMBackend:
             model = AutoMLXVLMBackend._load_gemma4_text_only_language_model(
                 config=config,
                 weights=weights,
+                quantized_metadata=quantized_metadata,
             )
             processor = _CallableTokenizerProcessor(
                 _load_tokenizer_with_supported_hints(load_tokenizer, model_path)
@@ -1933,9 +2047,19 @@ class AutoMLXVLMBackend:
                     return quantization[path]
                 if not hasattr(module, "to_quantized"):
                     return False
+                if native_multimodal_quantization_preserves_precision(
+                    path,
+                    metadata=quantized_metadata,
+                    weights=weights,
+                ):
+                    return False
                 if hasattr(module, "weight") and module.weight.size % 64 != 0:
                     return False
-                return f"{path}.scales" in weights
+                return quantized_scales_present(
+                    path,
+                    metadata=quantized_metadata,
+                    weights=weights,
+                )
 
             nn.quantize(
                 model,
@@ -1962,7 +2086,12 @@ class AutoMLXVLMBackend:
         return model, processor, execution_mode
 
     @staticmethod
-    def _load_gemma4_text_only_language_model(*, config: dict[str, Any], weights: dict[str, Any]):
+    def _load_gemma4_text_only_language_model(
+        *,
+        config: dict[str, Any],
+        weights: dict[str, Any],
+        quantized_metadata: QuantizedTensorMetadata = EMPTY_QUANTIZED_TENSOR_METADATA,
+    ):
         import mlx.core as mx
         import mlx.nn as nn
         from mlx_vlm.models.gemma4.language import LanguageModel, TextConfig
@@ -1977,9 +2106,19 @@ class AutoMLXVLMBackend:
                     return quantization[path]
                 if not hasattr(module, "to_quantized"):
                     return False
+                if native_multimodal_quantization_preserves_precision(
+                    path,
+                    metadata=quantized_metadata,
+                    weights=weights,
+                ):
+                    return False
                 if hasattr(module, "weight") and module.weight.size % 64 != 0:
                     return False
-                return f"{path}.scales" in weights
+                return quantized_scales_present(
+                    path,
+                    metadata=quantized_metadata,
+                    weights=weights,
+                )
 
             nn.quantize(
                 model,
@@ -2012,6 +2151,7 @@ class MLXVLMRuntime:
         self._fast_path_controller = fast_path_controller or MultimodalFastPathController()
         self._executor = executor
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
+        self._last_quantized_load_acceptance_probe = (0, 0, 0)
         self._last_fast_path_signature: tuple[str, ...] | None = None
         self._last_fast_path_media_position_count = 0
         self._loaded_models_with_schedulers: list[dict[str, Any]] = []
@@ -2148,6 +2288,8 @@ class MLXVLMRuntime:
         metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
         execution_mode = str(metadata.get("melix.vlm.execution_mode", "") or "").strip() or "multimodal"
         speculative_fallback_reason = ""
+        speculative_probe_enabled_for_request = False
+        speculative_probe = None
         if self._mtp_speculative_requested(acceleration_policy):
             speculative_fallback_reason = self._mtp_speculative_unsupported_reason(
                 loaded_model=loaded_model,
@@ -2166,6 +2308,22 @@ class MLXVLMRuntime:
                     execution_ext=execution_ext,
                 )
                 return
+            speculative_probe_enabled_for_request = speculative_probe_enabled(execution_ext)
+            if speculative_probe_enabled_for_request:
+                self._ensure_fast_path_probe(loaded_model, prepared_request)
+                speculative_probe = speculative_probe_admission(
+                    enabled=True,
+                    fallback_reason=speculative_fallback_reason,
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    acceleration_policy=acceleration_policy,
+                    position_metadata_receipt=self._last_probe.position_metadata_receipt,
+                    sampling_matches_baseline=self._sampling_is_greedy(sampling),
+                )
+                self._last_probe = replace(
+                    self._last_probe,
+                    speculative_probe_receipt=speculative_probe.receipt,
+                )
             if not bool(getattr(acceleration_policy, "allow_baseline_fallback", False)):
                 raise RuntimeError(
                     f"MTP speculative decode is unavailable for this request: {speculative_fallback_reason}."
@@ -2175,20 +2333,21 @@ class MLXVLMRuntime:
             raise RuntimeError(
                 "The loaded Gemma 4 MLX package does not include vision weights, so image inputs are unavailable."
             )
+
+        def restore_speculative_probe_receipt() -> None:
+            # Restore any entry-captured verification receipt, independent of
+            # whether the receipt classified the request as fallback or admitted.
+            if speculative_probe is not None:
+                self._last_probe = replace(
+                    self._last_probe,
+                    speculative_probe_receipt=speculative_probe.receipt,
+                )
+
         attention_policy = self._attention_prefill_policy(
             loaded_model=loaded_model,
             prepared_request=prepared_request,
             execution_ext=execution_ext,
         )
-        self._ensure_fast_path_probe(
-            loaded_model,
-            prepared_request,
-            attention_policy=attention_policy,
-        )
-        enforce_attention_prefill_policy(attention_policy)
-        if cancel_event.is_set():
-            return
-
         prompt_tokens = (
             attention_policy.prompt_tokens
             if attention_policy is not None
@@ -2199,62 +2358,174 @@ class MLXVLMRuntime:
             if attention_policy is not None and attention_policy.prefill_chunk_mode == "auto_chunk"
             else None
         )
-        text_only_batch_generator_unsupported_reason = (
-            self._text_only_batch_generator_unsupported_reason(
+        image_batch1_temp_media_session: TempMediaSession | None = None
+        image_batch1_step_inputs: _ImageBatch1StepInputs | None = None
+
+        def cleanup_image_batch1_temp_media_session(session: TempMediaSession) -> None:
+            cleanup_report = session.cleanup()
+            self._last_probe = replace(
+                self._last_probe,
+                temp_media_artifact_count=cleanup_report.artifact_count,
+                temp_media_artifact_bytes=cleanup_report.artifact_bytes,
+                temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
+                temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
+            )
+
+        image_batch1_step_enabled = self._image_batch1_step_enabled(execution_ext)
+        if image_batch1_step_enabled and self._should_prepare_image_batch1_step_inputs(
+            prepared_request=prepared_request,
+            sampling=sampling,
+        ):
+            image_batch1_temp_media_session = self._temp_media_session_factory(
+                temp_root=self._temp_root,
+                prefix="melix-vlm-",
+            )
+            try:
+                image_batch1_step_inputs = self._prepare_image_batch1_step_inputs(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    temp_media_session=image_batch1_temp_media_session,
+                    prompt_tokens=prompt_tokens,
+                )
+                prompt_tokens = image_batch1_step_inputs.prompt_tokens
+            except Exception:
+                cleanup_image_batch1_temp_media_session(image_batch1_temp_media_session)
+                image_batch1_temp_media_session = None
+        try:
+            self._ensure_fast_path_probe(
+                loaded_model,
+                prepared_request,
+                attention_policy=attention_policy,
+                seq_len=(
+                    image_batch1_step_inputs.prompt_tokens
+                    if image_batch1_step_inputs is not None
+                    else None
+                ),
+                position_ids=(
+                    image_batch1_step_inputs.inputs.get("position_ids")
+                    if image_batch1_step_inputs is not None
+                    else None
+                ),
+                rope_deltas=(
+                    image_batch1_step_inputs.inputs.get("rope_deltas")
+                    if image_batch1_step_inputs is not None
+                    else None
+                ),
+                image_batch1_step_supported=(
+                    self._backend.generate_step_fn is not None
+                    if image_batch1_step_enabled
+                    else False
+                ),
+                image_batch1_step_greedy_sampling=self._sampling_is_greedy(sampling),
+            )
+            # The baseline probe refresh replaces _last_probe; restore the
+            # entry-captured speculative receipt so it is not recomputed from
+            # post-generation position metadata.
+            restore_speculative_probe_receipt()
+        except Exception:
+            if image_batch1_temp_media_session is not None:
+                cleanup_image_batch1_temp_media_session(image_batch1_temp_media_session)
+                image_batch1_temp_media_session = None
+            restore_speculative_probe_receipt()
+            raise
+        enforce_attention_prefill_policy(attention_policy)
+        try:
+            if cancel_event.is_set():
+                return
+
+            text_only_batch_generator_unsupported_reason = (
+                self._text_only_batch_generator_unsupported_reason(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    sampling=sampling,
+                    execution_ext=execution_ext,
+                )
+            )
+            if self._can_use_text_only_batch_generator(
                 loaded_model=loaded_model,
                 prepared_request=prepared_request,
                 sampling=sampling,
                 execution_ext=execution_ext,
-            )
-        )
-        if self._can_use_text_only_batch_generator(
-            loaded_model=loaded_model,
-            prepared_request=prepared_request,
-            sampling=sampling,
-            execution_ext=execution_ext,
-        ):
-            yield from self._generate_text_only_batch_generator_events(
-                loaded_model=loaded_model,
-                prepared_request=prepared_request,
-                sampling=sampling,
-                cancel_event=cancel_event,
-                prompt_tokens=prompt_tokens,
-                prefill_step_size=selected_prefill_step_size,
-            )
-            return
-        if self._can_use_text_only_step_fast_path(
-            loaded_model=loaded_model,
-            prepared_request=prepared_request,
-        ):
-
-            def text_only_backend_events():
-                # Must run on the executor-owned thread so the MLX runtime is
-                # initialized inside the same stream ownership context used for
-                # the subsequent token generation work.
-                self._backend._ensure_runtime()
-                if cancel_event.is_set():
-                    return
-                yield from self._generate_text_only_step_events(
+            ):
+                yield from self._generate_text_only_batch_generator_events(
                     loaded_model=loaded_model,
                     prepared_request=prepared_request,
                     sampling=sampling,
                     cancel_event=cancel_event,
                     prompt_tokens=prompt_tokens,
                     prefill_step_size=selected_prefill_step_size,
-                    speculative_fallback_reason=speculative_fallback_reason,
-                    text_only_batch_generator_unsupported_reason=(
-                        text_only_batch_generator_unsupported_reason
-                    ),
                 )
+                return
+            if self._can_use_text_only_step_fast_path(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+            ):
 
-            event_iterable = (
-                text_only_backend_events()
-                if self._executor is None
-                else self._executor.iterate_cooperatively(text_only_backend_events)
-            )
-            for event in event_iterable:
-                yield event
-            return
+                def text_only_backend_events():
+                    # Must run on the executor-owned thread so the MLX runtime is
+                    # initialized inside the same stream ownership context used for
+                    # the subsequent token generation work.
+                    self._backend._ensure_runtime()
+                    if cancel_event.is_set():
+                        return
+                    yield from self._generate_text_only_step_events(
+                        loaded_model=loaded_model,
+                        prepared_request=prepared_request,
+                        sampling=sampling,
+                        cancel_event=cancel_event,
+                        prompt_tokens=prompt_tokens,
+                        prefill_step_size=selected_prefill_step_size,
+                        speculative_fallback_reason=speculative_fallback_reason,
+                        text_only_batch_generator_unsupported_reason=(
+                            text_only_batch_generator_unsupported_reason
+                        ),
+                    )
+
+                event_iterable = (
+                    text_only_backend_events()
+                    if self._executor is None
+                    else self._executor.iterate_cooperatively(text_only_backend_events)
+                )
+                for event in event_iterable:
+                    yield event
+                return
+
+            if self._can_use_image_batch1_step_fast_path(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                step_inputs=image_batch1_step_inputs,
+            ):
+                assert image_batch1_step_inputs is not None
+
+                def image_batch1_backend_events():
+                    # Must run on the executor-owned thread so the MLX runtime,
+                    # VLM input preparation, and token loop share the same stream.
+                    self._backend._ensure_runtime()
+                    if cancel_event.is_set():
+                        return
+                    yield from self._generate_image_batch1_step_events(
+                        loaded_model=loaded_model,
+                        prepared_request=prepared_request,
+                        step_inputs=image_batch1_step_inputs,
+                        sampling=sampling,
+                        cancel_event=cancel_event,
+                        prompt_tokens=prompt_tokens,
+                        prefill_step_size=selected_prefill_step_size,
+                        speculative_fallback_reason=speculative_fallback_reason,
+                    )
+
+                event_iterable = (
+                    image_batch1_backend_events()
+                    if self._executor is None
+                    else self._executor.iterate_cooperatively(image_batch1_backend_events)
+                )
+                for event in event_iterable:
+                    yield event
+                return
+        finally:
+            if image_batch1_temp_media_session is not None:
+                cleanup_image_batch1_temp_media_session(image_batch1_temp_media_session)
+            restore_speculative_probe_receipt()
 
         temp_media_session = self._temp_media_session_factory(
             temp_root=self._temp_root,
@@ -2429,6 +2700,7 @@ class MLXVLMRuntime:
                 temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
                 temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
             )
+            restore_speculative_probe_receipt()
 
     def _generate_mtp_speculative_tokens(
         self,
@@ -2478,6 +2750,7 @@ class MLXVLMRuntime:
                     draft_block_size=draft_block_size,
                     prompt_tokens=prompt_tokens,
                     prefill_step_size=selected_prefill_step_size,
+                    acceleration_policy=acceleration_policy,
                 )
                 return
 
@@ -2507,6 +2780,48 @@ class MLXVLMRuntime:
             if not text:
                 return
             first_token_at = time.perf_counter()
+            speculative_target_verify_ms = self._optional_response_float(
+                response,
+                "speculative_target_verify_ms",
+            )
+            if speculative_target_verify_ms is None:
+                speculative_target_verify_ms = self._optional_response_float(
+                    response,
+                    "speculative_backbone_ms",
+                )
+            speculative_draft_propose_ms = self._optional_response_float(
+                response,
+                "speculative_draft_propose_ms",
+            )
+            if speculative_draft_propose_ms is None:
+                speculative_draft_propose_ms = self._optional_response_float(
+                    response,
+                    "speculative_mtp_head_ms",
+                )
+            speculative_cycle_count = self._optional_response_int(
+                response,
+                "speculative_cycle_count",
+            )
+            speculative_accepted_tokens = self._optional_response_int(
+                response,
+                "speculative_accepted_tokens",
+            )
+            speculative_rejected_tokens = self._optional_response_int(
+                response,
+                "speculative_rejected_tokens",
+            )
+            speculative_acceptance_rate = self._optional_response_float(
+                response,
+                "speculative_acceptance_rate",
+            )
+            speculative_rollback_rate = self._optional_response_float(
+                response,
+                "speculative_rollback_rate",
+            )
+            native_mtp_timings = self._native_mtp_batch_timings_from_response(
+                response,
+                cycle_count=speculative_cycle_count,
+            )
             self._last_probe = replace(
                 self._last_probe,
                 preprocess_latency_ms=prepared_request.preprocess_latency_ms,
@@ -2519,6 +2834,20 @@ class MLXVLMRuntime:
                 cache_identity="",
                 cache_scope_id="",
                 cache_hit=False,
+                speculative_probe_receipt=build_speculative_runtime_receipt(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    acceleration_policy=acceleration_policy,
+                    position_metadata_receipt=self._last_probe.position_metadata_receipt,
+                    sampling_matches_baseline=self._sampling_is_greedy(sampling),
+                    rounds=speculative_cycle_count,
+                    accepted_tokens=speculative_accepted_tokens,
+                    rejected_tokens=speculative_rejected_tokens,
+                    acceptance_rate=speculative_acceptance_rate,
+                    rollback_rate=speculative_rollback_rate,
+                    draft_propose_ms=speculative_draft_propose_ms,
+                    target_verify_ms=speculative_target_verify_ms,
+                ),
             )
             completion_tokens = int(
                 self._response_number(response, "generation_tokens", "completion_tokens", default=1)
@@ -2532,17 +2861,18 @@ class MLXVLMRuntime:
                 generation_tps=float(self._response_number(response, "generation_tps", default=0.0) or 0.0),
                 peak_memory=float(self._response_number(response, "peak_memory", default=0.0) or 0.0),
                 finish_reason=str(getattr(response, "finish_reason", "") or "stop"),
-                speculative_acceptance_rate=self._optional_response_float(response, "speculative_acceptance_rate"),
-                speculative_rollback_rate=self._optional_response_float(response, "speculative_rollback_rate"),
-                speculative_accepted_tokens=self._optional_response_int(response, "speculative_accepted_tokens"),
-                speculative_rejected_tokens=self._optional_response_int(response, "speculative_rejected_tokens"),
+                speculative_acceptance_rate=speculative_acceptance_rate,
+                speculative_rollback_rate=speculative_rollback_rate,
+                speculative_accepted_tokens=speculative_accepted_tokens,
+                speculative_rejected_tokens=speculative_rejected_tokens,
                 speculative_fallback_count=int(
                     self._response_number(response, "speculative_fallback_count", default=0) or 0
                 ),
                 speculative_num_draft_tokens=draft_block_size,
                 speculative_draft_model_configured=True,
-                speculative_draft_propose_ms=self._optional_response_float(response, "speculative_draft_propose_ms"),
-                speculative_target_verify_ms=self._optional_response_float(response, "speculative_target_verify_ms"),
+                speculative_draft_propose_ms=speculative_draft_propose_ms,
+                speculative_target_verify_ms=speculative_target_verify_ms,
+                native_mtp_timings=native_mtp_timings,
             )
 
         event_iterable = backend_events() if self._executor is None else self._executor.iterate(backend_events)
@@ -2560,6 +2890,7 @@ class MLXVLMRuntime:
         draft_block_size: int,
         prompt_tokens: int,
         prefill_step_size: int | None,
+        acceleration_policy: common_pb2.AccelerationPolicy | None,
     ):
         import mlx.core as mx
         from mlx_vlm.utils import prepare_inputs
@@ -2639,6 +2970,28 @@ class MLXVLMRuntime:
         )
         generation_time = max(0.0, finished_at - (first_token_at or finished_at))
         acceptance_stats = self._mtp_drafter_acceptance_stats(drafter, draft_block_size) or {}
+        rounds = self._optional_stats_int(acceptance_stats, "rounds")
+        accepted_tokens = self._optional_stats_int(acceptance_stats, "accepted_tokens")
+        rejected_tokens = self._optional_stats_int(acceptance_stats, "rejected_tokens")
+        acceptance_rate = self._optional_stats_float(acceptance_stats, "acceptance_rate")
+        rollback_rate = self._optional_stats_float(acceptance_stats, "rollback_rate")
+        self._last_probe = replace(
+            self._last_probe,
+            speculative_probe_receipt=build_speculative_runtime_receipt(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                acceleration_policy=acceleration_policy,
+                position_metadata_receipt=self._last_probe.position_metadata_receipt,
+                sampling_matches_baseline=self._sampling_is_greedy(sampling),
+                rounds=rounds,
+                accepted_tokens=accepted_tokens,
+                rejected_tokens=rejected_tokens,
+                acceptance_rate=acceptance_rate,
+                rollback_rate=rollback_rate,
+                draft_propose_ms=None,
+                target_verify_ms=None,
+            ),
+        )
         yield RuntimeTokenEvent(
             text=text,
             prompt_tokens=prompt_tokens,
@@ -2647,13 +3000,26 @@ class MLXVLMRuntime:
             generation_tps=(completion_tokens / generation_time) if generation_time > 0 else 0.0,
             peak_memory=_mlx_peak_memory_gb(mx),
             finish_reason="stop",
-            speculative_acceptance_rate=acceptance_stats.get("acceptance_rate"),
-            speculative_rollback_rate=acceptance_stats.get("rollback_rate"),
-            speculative_accepted_tokens=acceptance_stats.get("accepted_tokens"),
-            speculative_rejected_tokens=acceptance_stats.get("rejected_tokens"),
+            speculative_acceptance_rate=acceptance_rate,
+            speculative_rollback_rate=rollback_rate,
+            speculative_accepted_tokens=accepted_tokens,
+            speculative_rejected_tokens=rejected_tokens,
             speculative_fallback_count=0,
             speculative_num_draft_tokens=draft_block_size,
             speculative_draft_model_configured=True,
+            native_mtp_timings=NativeMTPBatchTimings(
+                cycle_count=rounds,
+                mtp_head_ms=None,
+                sample_ms=None,
+                cache_ops_ms=None,
+                insert_ms=None,
+                prepare_ms=None,
+                prompt_encode_ms=None,
+                prefill_ms=None,
+                batch_insert_ms=None,
+                first_response_ms=None,
+                first_visible_ms=None,
+            ),
         )
 
     def _generate_text_only_step_events(
@@ -2815,6 +3181,229 @@ class MLXVLMRuntime:
         if event is not None:
             yield event
 
+    def _generate_image_batch1_step_events(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        step_inputs: _ImageBatch1StepInputs,
+        sampling,
+        cancel_event: Event,
+        prompt_tokens: int,
+        prefill_step_size: int | None,
+        speculative_fallback_reason: str,
+    ):
+        import mlx.core as mx
+
+        started_at = step_inputs.started_at
+        inputs = step_inputs.inputs
+        input_ids = inputs["input_ids"]
+        mask = inputs.get("attention_mask")
+        pixel_values = inputs.get("pixel_values")
+        prompt_tokens = step_inputs.prompt_tokens or int(
+            getattr(input_ids, "shape", [0, prompt_tokens])[-1] or prompt_tokens
+        )
+        position_receipt = step_inputs.position_metadata_receipt
+
+        detokenizer = _isolated_streaming_detokenizer(loaded_model["processor"])
+        if detokenizer is None:
+            raise RuntimeError("The VLM processor does not expose an isolated streaming detokenizer.")
+        tokenizer = (
+            loaded_model["processor"].tokenizer
+            if hasattr(loaded_model["processor"], "tokenizer")
+            else loaded_model["processor"]
+        )
+        stopping_criteria = getattr(tokenizer, "stopping_criteria", None)
+        first_token_at: float | None = None
+        completion_tokens = 0
+        cumulative_raw_text = ""
+        peak_memory_gb: float | None = None
+
+        def cached_peak_memory_gb() -> float:
+            nonlocal peak_memory_gb
+            if peak_memory_gb is None:
+                peak_memory_gb = _mlx_peak_memory_gb(mx)
+            return peak_memory_gb
+
+        def finalized_text_event():
+            nonlocal cumulative_raw_text
+            detokenizer.finalize()
+            text = str(getattr(detokenizer, "last_segment", "") or "")
+            if not text:
+                return None
+            cumulative_raw_text += text
+            finished_at = time.perf_counter()
+            generation_elapsed = max(0.0, finished_at - (first_token_at or finished_at))
+            return RuntimeTokenEvent(
+                text=text,
+                raw_text=cumulative_raw_text,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                prompt_tps=0.0,
+                generation_tps=(completion_tokens / generation_elapsed) if generation_elapsed > 0 else 0.0,
+                peak_memory=cached_peak_memory_gb(),
+                finish_reason="stop",
+                speculative_fallback_count=1 if speculative_fallback_reason else None,
+                speculative_num_draft_tokens=0 if speculative_fallback_reason else None,
+                speculative_draft_model_configured=False if speculative_fallback_reason else None,
+            )
+
+        step_kwargs: dict[str, Any] = {
+            "max_tokens": int(getattr(sampling, "max_output_tokens", 0) or 64),
+            "temperature": float(getattr(sampling, "temperature", 0.0)),
+            "top_p": float(getattr(sampling, "top_p", 1.0)),
+            "top_k": int(getattr(sampling, "top_k", 0)),
+        }
+        if _callable_accepts_kwarg(
+            self._backend.generate_step_fn,
+            "prefill_step_size",
+        ):
+            step_kwargs["prefill_step_size"] = prefill_step_size
+        step_kwargs.update(
+            {
+                key: value
+                for key, value in inputs.items()
+                if key not in {"input_ids", "pixel_values", "attention_mask"}
+            }
+        )
+
+        for token, logprobs in self._backend.generate_step_fn(
+            input_ids,
+            loaded_model["model"],
+            pixel_values,
+            mask,
+            **step_kwargs,
+        ):
+            if cancel_event.is_set():
+                return
+            if first_token_at is None:
+                first_token_at = time.perf_counter()
+                self._last_probe = replace(
+                    self._last_probe,
+                    preprocess_latency_ms=prepared_request.preprocess_latency_ms,
+                    preprocess_input_bytes=prepared_request.preprocess_input_bytes,
+                    preprocess_peak_memory_bytes=prepared_request.preprocess_peak_memory_bytes,
+                    first_token_latency_ms=max(0.0, (first_token_at - started_at) * 1000.0),
+                    video_effective_frame_count=prepared_request.effective_video_frame_count,
+                    video_requested_frame_budget=prepared_request.requested_video_frame_budget,
+                    video_window_ms=prepared_request.effective_video_window_ms,
+                    cache_identity="",
+                    cache_scope_id="",
+                    cache_hit=False,
+                    multimodal_decode_mode="image_batch1_step",
+                    multimodal_fallback_reason="",
+                    multimodal_decode_sync_mode="executor_step",
+                    position_metadata_receipt=position_receipt,
+                    image_batch1_step_decode_token_counter_start=prompt_tokens,
+                    image_batch1_step_decode_token_counter_end=prompt_tokens,
+                    image_batch1_step_decode_token_counter_advance=0,
+                )
+
+            token_values = token if isinstance(token, list) else [token]
+            for token_value in token_values:
+                try:
+                    token_id = int(token_value)
+                except (TypeError, ValueError):
+                    continue
+                if callable(stopping_criteria) and stopping_criteria(token_id):
+                    event = finalized_text_event()
+                    if event is not None:
+                        yield event
+                    return
+                decode_position = prompt_tokens + completion_tokens
+                completion_tokens += 1
+                detokenizer.add_token(token_id)
+                self._last_probe = replace(
+                    self._last_probe,
+                    image_batch1_step_decode_token_counter_end=decode_position + 1,
+                    image_batch1_step_decode_token_counter_advance=completion_tokens,
+                )
+                text = str(getattr(detokenizer, "last_segment", "") or "")
+                if not text:
+                    continue
+                cumulative_raw_text += text
+                now = time.perf_counter()
+                generation_elapsed = max(0.0, now - (first_token_at or now))
+                yield RuntimeTokenEvent(
+                    text=text,
+                    raw_text=cumulative_raw_text,
+                    token_ids=(token_id,),
+                    token_logprobs=_float_tuple(logprobs),
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    prompt_tps=0.0,
+                    generation_tps=(completion_tokens / generation_elapsed) if generation_elapsed > 0 else 0.0,
+                    peak_memory=cached_peak_memory_gb(),
+                    finish_reason="stop",
+                    speculative_fallback_count=1 if speculative_fallback_reason else None,
+                    speculative_num_draft_tokens=0 if speculative_fallback_reason else None,
+                    speculative_draft_model_configured=False if speculative_fallback_reason else None,
+                )
+
+        event = finalized_text_event()
+        if event is not None:
+            yield event
+
+    def _prepare_image_batch1_step_inputs(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        temp_media_session: TempMediaSession,
+        prompt_tokens: int,
+    ) -> _ImageBatch1StepInputs:
+        from mlx_vlm.utils import prepare_inputs
+
+        started_at = time.perf_counter()
+        media_paths = self._materialize_media(prepared_request, temp_media_session)
+        formatted_prompt = self._backend.apply_chat_template_fn(
+            loaded_model["processor"],
+            loaded_model["model"].config,
+            prepared_request.prompt_text,
+            num_images=len(media_paths.image_paths),
+        )
+        add_special_tokens = (
+            getattr(loaded_model["processor"], "chat_template", None) is None
+            if getattr(loaded_model["model"].config, "model_type", "") in _GEMMA_CHAT_TEMPLATE_MODEL_TYPES
+            else True
+        )
+        input_kwargs: dict[str, Any] = {
+            "images": list(media_paths.image_paths),
+            "prompts": [formatted_prompt],
+            "image_token_index": getattr(loaded_model["model"].config, "image_token_index", None),
+            "add_special_tokens": add_special_tokens,
+            "return_tensors": "mlx",
+        }
+        apply_resize_shape_to_stream_kwargs(input_kwargs, prepared_request)
+
+        def prepare_on_executor() -> dict[str, Any]:
+            self._backend._ensure_runtime()
+            return prepare_inputs(loaded_model["processor"], **input_kwargs)
+
+        inputs = self._run_on_executor(prepare_on_executor)
+        if "pixel_values" in inputs:
+            inputs = dict(inputs)
+            inputs["pixel_values"] = _cast_pixel_values_to_vision_dtype(
+                loaded_model["model"],
+                inputs.get("pixel_values"),
+            )
+        prompt_tokens = int(getattr(inputs["input_ids"], "shape", [0, prompt_tokens])[-1] or prompt_tokens)
+        position_receipt = self._position_metadata_receipt(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            fallback_reason="",
+            seq_len=prompt_tokens,
+            position_ids=inputs.get("position_ids"),
+            rope_deltas=inputs.get("rope_deltas"),
+        )
+        return _ImageBatch1StepInputs(
+            media_paths=media_paths,
+            inputs=inputs,
+            prompt_tokens=prompt_tokens,
+            position_metadata_receipt=position_receipt,
+            started_at=started_at,
+        )
+
     def _can_use_text_only_step_fast_path(
         self,
         *,
@@ -2827,6 +3416,48 @@ class MLXVLMRuntime:
             and not prepared_request.videos
             and _supports_isolated_streaming_detokenizer(loaded_model["processor"])
         )
+
+    def _can_use_image_batch1_step_fast_path(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        step_inputs: _ImageBatch1StepInputs | None,
+    ) -> bool:
+        _ = loaded_model
+        probe = self._last_probe
+        return (
+            step_inputs is not None
+            and self._backend.generate_step_fn is not None
+            and len(prepared_request.images) == 1
+            and not prepared_request.videos
+            and probe.multimodal_decode_mode == "image_batch1_step_admission"
+            and probe.image_batch1_step_admission_reason == ""
+        )
+
+    @staticmethod
+    def _is_image_batch1_step_candidate(prepared_request: PreparedVisionRequest) -> bool:
+        return len(prepared_request.images) == 1 and not prepared_request.videos
+
+    def _should_prepare_image_batch1_step_inputs(
+        self,
+        *,
+        prepared_request: PreparedVisionRequest,
+        sampling,
+    ) -> bool:
+        return (
+            self._is_image_batch1_step_candidate(prepared_request)
+            and self._backend.generate_step_fn is not None
+            and self._sampling_is_greedy(sampling)
+            and all(str(getattr(image, "sha256_hex", "") or "") for image in prepared_request.images)
+        )
+
+    @staticmethod
+    def _image_batch1_step_enabled(execution_ext: dict[str, str] | None) -> bool:
+        if not execution_ext:
+            return True
+        value = str(execution_ext.get(_IMAGE_BATCH1_STEP_EXT_KEY, "") or "").strip().lower()
+        return value not in {"0", "false", "no", "off", "disabled"}
 
     def _can_use_text_only_batch_generator(
         self,
@@ -3131,6 +3762,51 @@ class MLXVLMRuntime:
         return int(value)
 
     @staticmethod
+    def _optional_stats_float(stats: dict[str, float | int] | None, key: str) -> float | None:
+        if stats is None:
+            return None
+        value = stats.get(key)
+        if value is None:
+            return None
+        return float(value)
+
+    @staticmethod
+    def _optional_stats_int(stats: dict[str, float | int] | None, key: str) -> int | None:
+        if stats is None:
+            return None
+        value = stats.get(key)
+        if value is None:
+            return None
+        return int(value)
+
+    def _native_mtp_batch_timings_from_response(
+        self,
+        response: Any,
+        *,
+        cycle_count: int | None,
+    ) -> NativeMTPBatchTimings | None:
+        if response is None:
+            return None
+        mtp_head_ms = self._optional_response_float(response, "speculative_mtp_head_ms")
+        sample_ms = self._optional_response_float(response, "speculative_sample_ms")
+        cache_ops_ms = self._optional_response_float(response, "speculative_cache_ops_ms")
+        if cycle_count is None and mtp_head_ms is None and sample_ms is None and cache_ops_ms is None:
+            return None
+        return NativeMTPBatchTimings(
+            cycle_count=cycle_count,
+            mtp_head_ms=mtp_head_ms,
+            sample_ms=sample_ms,
+            cache_ops_ms=cache_ops_ms,
+            insert_ms=None,
+            prepare_ms=None,
+            prompt_encode_ms=None,
+            prefill_ms=None,
+            batch_insert_ms=None,
+            first_response_ms=None,
+            first_visible_ms=None,
+        )
+
+    @staticmethod
     def _mtp_drafter_acceptance_stats(drafter: Any, draft_block_size: int) -> dict[str, float | int] | None:
         accept_lens = getattr(drafter, "accept_lens", None)
         if accept_lens is None:
@@ -3159,9 +3835,10 @@ class MLXVLMRuntime:
             "rollback_rate": rejected_tokens / attempted_tokens,
             "accepted_tokens": accepted_tokens,
             "rejected_tokens": rejected_tokens,
+            "rounds": rounds,
         }
 
-    def last_probe_snapshot(self) -> VisionProbeSnapshot:
+    def last_probe_snapshot(self) -> VisionProbeSnapshot | _MLXVLMProbeSnapshotView:
         probe = self._last_probe
         stats_kwargs: dict[str, float | int] = {}
         for loaded_model in self._loaded_models_with_schedulers:
@@ -3172,7 +3849,25 @@ class MLXVLMRuntime:
                 stats_kwargs = _text_batch_generator_probe_kwargs(
                     _text_batch_generator_stats_snapshot(scheduler)
                 )
-        return replace(probe, **stats_kwargs) if stats_kwargs else probe
+        if stats_kwargs:
+            probe = replace(probe, **stats_kwargs)
+        (
+            native_quantized_load_count,
+            bridge_quantized_fallback_count,
+            cross_shard_metadata_fixup_count,
+        ) = self._last_quantized_load_acceptance_probe
+        if (
+            native_quantized_load_count
+            or bridge_quantized_fallback_count
+            or cross_shard_metadata_fixup_count
+        ):
+            return _MLXVLMProbeSnapshotView(
+                probe,
+                native_quantized_load_count=native_quantized_load_count,
+                bridge_quantized_fallback_count=bridge_quantized_fallback_count,
+                cross_shard_metadata_fixup_count=cross_shard_metadata_fixup_count,
+            )
+        return probe
 
     def _wrap_chunked_prompt_model(self, model: Any) -> Any:
         if isinstance(model, _ChunkedPromptModelProxy):
@@ -3197,6 +3892,11 @@ class MLXVLMRuntime:
         prepared_request: PreparedVisionRequest,
         *,
         attention_policy: AttentionPrefillPolicyDecision | None = None,
+        seq_len: int | None = None,
+        position_ids: object | None = None,
+        rope_deltas: object | None = None,
+        image_batch1_step_supported: bool | None = None,
+        image_batch1_step_greedy_sampling: bool | None = None,
     ) -> None:
         """Call plan() when generate_tokens() did not follow render_prompt().
 
@@ -3208,7 +3908,11 @@ class MLXVLMRuntime:
         metrics-only and does not affect generated data.
         """
         signature = fast_path_probe_signature(loaded_model, prepared_request)
-        if self._last_fast_path_signature == signature:
+        force_admission_refresh = (
+            image_batch1_step_supported is not None
+            or image_batch1_step_greedy_sampling is not None
+        )
+        if self._last_fast_path_signature == signature and not force_admission_refresh:
             if attention_policy is not None:
                 self._last_probe = replace(
                     self._last_probe,
@@ -3219,7 +3923,12 @@ class MLXVLMRuntime:
             loaded_model,
             prepared_request,
             signature=signature,
+            seq_len=seq_len,
             attention_policy=attention_policy,
+            position_ids=position_ids,
+            rope_deltas=rope_deltas,
+            image_batch1_step_supported=image_batch1_step_supported,
+            image_batch1_step_greedy_sampling=image_batch1_step_greedy_sampling,
         )
 
     def _record_fast_path_probe(
@@ -3231,6 +3940,10 @@ class MLXVLMRuntime:
         seq_len: int | None = None,
         attention_policy: AttentionPrefillPolicyDecision | None = None,
         family_config: Any | None = None,
+        position_ids: object | None = None,
+        rope_deltas: object | None = None,
+        image_batch1_step_supported: bool | None = None,
+        image_batch1_step_greedy_sampling: bool | None = None,
     ) -> None:
         has_media = bool(prepared_request.images or prepared_request.videos)
         signature = signature or fast_path_probe_signature(
@@ -3240,14 +3953,61 @@ class MLXVLMRuntime:
         if self._last_fast_path_signature == signature and not has_media:
             if self._last_fast_path_media_position_count == 0:
                 return
-        fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
         position_metadata_receipt = self._position_metadata_receipt(
             loaded_model=loaded_model,
             prepared_request=prepared_request,
-            fallback_reason=fast_path.multimodal_fallback_reason,
+            fallback_reason="",
             seq_len=seq_len,
             family_config=family_config,
+            position_ids=position_ids,
+            rope_deltas=rope_deltas,
         )
+        fast_path = self._fast_path_controller.plan(
+            loaded_model,
+            prepared_request,
+            image_batch1_step_position_receipt=position_metadata_receipt,
+            image_batch1_step_supported=image_batch1_step_supported,
+            image_batch1_step_greedy_sampling=image_batch1_step_greedy_sampling,
+        )
+        if (
+            fast_path.quantized_load_mode == "fallback"
+            and fast_path.quantized_load_fallback_reason == "not_quantized"
+        ):
+            native_quantized_load_count = 0
+            bridge_quantized_fallback_count = 0
+            cross_shard_metadata_fixup_count = 0
+        else:
+            (
+                native_quantized_load_count,
+                bridge_quantized_fallback_count,
+                cross_shard_metadata_fixup_count,
+            ) = quantized_load_acceptance_counts(
+                quantized_load_mode=fast_path.quantized_load_mode,
+                quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+                quant_profile_id=str(
+                    getattr(loaded_model, "quant_profile_id", "")
+                    if not isinstance(loaded_model, dict)
+                    else loaded_model.get("quant_profile_id", "")
+                ),
+                cross_shard_metadata_fixup_count=int(
+                    getattr(loaded_model, "cross_shard_metadata_fixup_count", 0)
+                    if not isinstance(loaded_model, dict)
+                    else loaded_model.get("cross_shard_metadata_fixup_count", 0)
+                ),
+            )
+        receipt_fallback_reason = probe_receipt_fallback_reason(
+            fast_path.multimodal_fallback_reason
+        )
+        if receipt_fallback_reason:
+            position_metadata_receipt = self._position_metadata_receipt(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                fallback_reason=receipt_fallback_reason,
+                seq_len=seq_len,
+                family_config=family_config,
+                position_ids=position_ids,
+                rope_deltas=rope_deltas,
+            )
         if fast_path.hybrid_state_patch_mode == "not_applicable" and not has_media:
             hybrid_state_patch_receipt = NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT
             hybrid_state_advance_count = 0
@@ -3256,7 +4016,7 @@ class MLXVLMRuntime:
                 loaded_model=loaded_model,
                 prepared_request=prepared_request,
                 patch_mode=fast_path.hybrid_state_patch_mode,
-                fallback_reason=fast_path.multimodal_fallback_reason,
+                fallback_reason=receipt_fallback_reason,
                 family_fast_path_override_count=fast_path.family_fast_path_override_count,
                 seq_len=int(position_metadata_receipt["seq_len"]),
                 family_config=family_config,
@@ -3265,6 +4025,11 @@ class MLXVLMRuntime:
         media_position_count = int(position_metadata_receipt.get("media_position_count", 0) or 0)
         self._last_fast_path_signature = signature
         self._last_fast_path_media_position_count = media_position_count
+        self._last_quantized_load_acceptance_probe = (
+            native_quantized_load_count,
+            bridge_quantized_fallback_count,
+            cross_shard_metadata_fixup_count,
+        )
         self._last_probe = VisionProbeSnapshot(
             preprocess_latency_ms=prepared_request.preprocess_latency_ms,
             preprocess_input_bytes=prepared_request.preprocess_input_bytes,
@@ -3287,6 +4052,7 @@ class MLXVLMRuntime:
             multimodal_fallback_reason=fast_path.multimodal_fallback_reason,
             multimodal_decode_sync_mode=fast_path.multimodal_decode_sync_mode,
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
+            image_batch1_step_admission_reason=fast_path.image_batch1_step_admission_reason,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
             hybrid_state_patch_mode=fast_path.hybrid_state_patch_mode,
@@ -3315,6 +4081,8 @@ class MLXVLMRuntime:
         fallback_reason: str,
         seq_len: int | None = None,
         family_config: Any | None = None,
+        position_ids: object | None = None,
+        rope_deltas: object | None = None,
     ) -> dict[str, object]:
         if seq_len is None:
             if family_config is None:
@@ -3325,6 +4093,8 @@ class MLXVLMRuntime:
             prepared_request=prepared_request,
             seq_len=seq_len,
             fallback_reason=fallback_reason,
+            position_ids=position_ids,
+            rope_deltas=rope_deltas,
         )
 
     def _hybrid_state_patch_receipt(

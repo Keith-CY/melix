@@ -227,8 +227,8 @@ class BenchmarkQueueStore:
     @staticmethod
     def _metadata_key_from_stat(stat_result: os.stat_result) -> tuple[int, int, int, int]:
         return (
-            int(stat_result.st_mtime_ns),
-            int(stat_result.st_size),
-            int(stat_result.st_ino),
-            int(stat_result.st_dev),
+            stat_result.st_mtime_ns,
+            stat_result.st_size,
+            stat_result.st_ino,
+            stat_result.st_dev,
         )

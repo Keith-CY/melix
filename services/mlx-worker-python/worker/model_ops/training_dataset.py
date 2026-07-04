@@ -284,7 +284,7 @@ def load_training_dataset_package(
         )
 
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_bytes())
     except json.JSONDecodeError as exc:
         raise ModelOperationError(
             code="invalid_dataset_package",

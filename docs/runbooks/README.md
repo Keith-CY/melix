@@ -27,6 +27,8 @@ Current runbooks:
 - `model-family-support-matrix.md`
 - `persistent-sessions.md`
 - `rich-output-sanitization.md`
+- `runtime-export-smoke-policy.md`
+- `runtime-export-target-manifest.md`
 - `service-first-reuse.md`
 - `serving-diagnostics-evidence.md`
 - `structured-streaming-reasoning-continuity.md`

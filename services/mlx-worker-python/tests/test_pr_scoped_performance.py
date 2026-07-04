@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
+import statistics
 import time
 import runpy
 import sys
@@ -39,6 +41,7 @@ from worker.productization.pr_scoped_performance import (
     _match_probe_indexes,
     _parse_coverage_percent,
     _probe_id_to_index,
+    _probe_watch_glob_matchers,
     _probe_benchmark_evaluation_report,
     _probe_benchmark_export_run_scan,
     _probe_benchmark_queue_cache,
@@ -365,6 +368,7 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["target_field_elapsed_ms_mean"] >= 0.0
     assert metrics["matrix_roles_elapsed_ms_mean"] >= 0.0
     assert metrics["dict_list_elapsed_ms_mean"] >= 0.0
+    assert metrics["probe_phases_elapsed_ms_mean"] >= 0.0
     assert metrics["load_report_payload_elapsed_ms_mean"] >= 0.0
     assert metrics["load_report_payload_checksum"] == (
         96.0 * max(1.0, metrics["iterations"] / 500.0) * metrics["sample_count"]
@@ -372,6 +376,10 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["dict_list_identity_hits"] == (
         max(1.0, metrics["iterations"] / 50.0) * metrics["sample_count"]
     )
+    assert metrics["probe_phases_checksum"] == (
+        256.0 * max(1.0, metrics["iterations"] / 200.0) * metrics["sample_count"]
+    )
+    assert metrics["probe_phases_rows_per_call"] == 2048.0
     assert metrics["run_kind_count"] == 65.0
     assert metrics["metric_prefix_count"] == 65.0
     assert metrics["target_field_count"] == 65.0
@@ -402,6 +410,15 @@ def test_scope_report_selects_lora_aux_modules_probe() -> None:
     assert _selected_probe_ids(scope) == ["lora-aux-modules-scandir"]
 
 
+def test_lora_aux_modules_sidecar_delta_metrics_are_informational() -> None:
+    probes = load_probe_registry(REGISTRY_PATH)
+    probe = next(probe for probe in probes if probe.probe_id == "lora-aux-modules-scandir")
+    directions = {metric.key: metric.direction for metric in probe.metrics}
+
+    assert directions["processor_resume_delta_ms"] == "informational"
+    assert directions["quantized_kind_delta_ms"] == "informational"
+
+
 def test_scope_report_selects_trajectory_provenance_copy_elision_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -419,7 +436,18 @@ def test_scope_report_selects_native_mtp_loader_probe() -> None:
         registry_path=REGISTRY_PATH,
         changed_files=["services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py"],
     )
-    assert _selected_probe_ids(scope) == ["native-mtp-loader-safetensor-scandir"]
+    assert _selected_probe_ids(scope) == [
+        "native-mtp-loader-safetensor-scandir",
+        "quantized-tensor-metadata-prepass",
+    ]
+
+
+def test_scope_report_selects_quantized_tensor_metadata_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/quantized_tensor_metadata.py"],
+    )
+    assert _selected_probe_ids(scope) == ["quantized-tensor-metadata-prepass"]
 
 
 def test_scope_report_selects_local_job_followup_scan_probe() -> None:
@@ -613,7 +641,7 @@ def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
 
     assert metrics["old_mean_ms"] >= 0.0
     assert metrics["new_mean_ms"] >= 0.0
-    assert metrics["result_count"] == 40
+    assert metrics["result_count"] == 56
     assert metrics["model_listing_old_mean_ms"] >= 0.0
     assert metrics["model_listing_new_mean_ms"] >= 0.0
     assert metrics["model_listing_result_count"] == 10
@@ -621,9 +649,10 @@ def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
     assert metrics["model_files"] == 8
     assert metrics["distractor_files"] == 8
     assert metrics["duplicate_mtp_entries"] == 8
-    assert metrics["irrelevant_mtp_entries"] == 16
-    assert metrics["key_count"] == 42
-    assert metrics["key_true_count"] == 33
+    assert metrics["irrelevant_mtp_entries"] == 32
+    assert metrics["duplicate_base_model_entries"] == 8
+    assert metrics["key_count"] == 58
+    assert metrics["key_true_count"] == 49
     assert metrics["key_iterations"] == 2
     assert metrics["weight_load_iterations"] == 2
     assert metrics["weight_load_result_count"] == 18
@@ -631,6 +660,75 @@ def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
     assert metrics["weight_load_new_mean_ms"] >= 0.0
     assert metrics["key_old_mean_ms"] >= 0.0
     assert metrics["key_new_mean_ms"] >= 0.0
+
+
+def test_quantized_tensor_metadata_prepass_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_PAIR_COUNT", "6")
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_SHARD_COUNT", "3")
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_DECISION_ITERATIONS", "2")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/quantized_tensor_metadata_prepass_probe.py"))
+
+    metrics = probe_script["run_probe"]()
+
+    assert metrics["index_elapsed_ms_mean"] >= 0.0
+    assert metrics["header_elapsed_ms_mean"] >= 0.0
+    assert metrics["metadata_decision_elapsed_ms_mean"] >= 0.0
+    assert metrics["materialized_decision_elapsed_ms_mean"] >= 0.0
+    assert metrics["high_precision_decision_elapsed_ms_mean"] >= 0.0
+    assert metrics["high_precision_decision_count"] == 6.0
+    assert metrics["metadata_tensor_count"] == 18.0
+    assert metrics["tensor_names_access_count"] == 216.0
+    assert metrics["tensor_names_access_elapsed_ms_mean"] >= 0.0
+    assert metrics["tensor_names_access_peak_bytes_mean"] >= 0.0
+    assert metrics["header_tensor_count"] == 18.0
+    assert metrics["cross_shard_pair_count"] == 6.0
+    assert metrics["matched_decision_count"] == 12.0
+    assert metrics["pair_count"] == 6.0
+    assert metrics["shard_count"] == 3.0
+    assert probe_script["main"]() == 0
+    assert json.loads(capsys.readouterr().out)["matched_decision_count"] == 12.0
+
+
+def test_quantized_tensor_metadata_prepass_probe_base_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "services" / "mlx-worker-python").mkdir(parents=True)
+    monkeypatch.setenv("MELIX_QUANTIZED_TENSOR_METADATA_REPO_ROOT", str(tmp_path))
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_PAIR_COUNT", "4")
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_SHARD_COUNT", "2")
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_QUANTIZED_METADATA_DECISION_ITERATIONS", "2")
+    module_name = "worker.runtime.quantized_tensor_metadata"
+    original_module = sys.modules.pop(module_name, None)
+    original_import = __import__
+
+    def block_quantized_metadata_import(name, *args, **kwargs):
+        if name == module_name:
+            raise ImportError(name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", block_quantized_metadata_import)
+    try:
+        probe_script = runpy.run_path(str(REPO_ROOT / "scripts/quantized_tensor_metadata_prepass_probe.py"))
+    finally:
+        if original_module is not None:
+            sys.modules[module_name] = original_module
+
+    metrics = probe_script["run_probe"]()
+
+    assert metrics["metadata_tensor_count"] == 12.0
+    assert metrics["header_tensor_count"] == 12.0
+    assert metrics["cross_shard_pair_count"] == 4.0
+    assert metrics["matched_decision_count"] == 8.0
+    assert metrics["high_precision_decision_count"] == 6.0
+    assert probe_script["main"]() == 0
+    assert json.loads(capsys.readouterr().out)["matched_decision_count"] == 8.0
 
 
 def test_dataset_version_listing_probe_script_emits_metrics(
@@ -657,6 +755,8 @@ def test_dataset_quality_lengths_probe_script_emits_metrics(
     monkeypatch.setenv("MELIX_DATASET_QUALITY_LENGTHS_TRAIN_ROWS", "5")
     monkeypatch.setenv("MELIX_DATASET_QUALITY_LENGTHS_VALIDATION_ROWS", "2")
     monkeypatch.setenv("MELIX_DATASET_QUALITY_LENGTHS_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_DATASET_FAILED_PARTITION_SEGMENTS", "10")
+    monkeypatch.setenv("MELIX_DATASET_FAILED_PARTITION_MODULUS", "4")
     probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_quality_lengths_probe.py"))
 
     assert probe_script["main"]() == 0
@@ -670,6 +770,10 @@ def test_dataset_quality_lengths_probe_script_emits_metrics(
     assert metrics["row_count"] == 7.0
     assert metrics["mean_output_length"] > 0.0
     assert metrics["p95_output_length"] > 0.0
+    assert metrics["failed_partition_elapsed_ms_mean"] >= 0.0
+    assert metrics["failed_partition_elapsed_ms_p95"] >= 0.0
+    assert metrics["failed_partition_segment_count"] == 10.0
+    assert metrics["failed_partition_failed_count"] == 3.0
 
 
 def test_dataset_source_records_probe_script_emits_metrics(
@@ -677,7 +781,7 @@ def test_dataset_source_records_probe_script_emits_metrics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_DIRS", "3")
-    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_FILES_PER_DIR", "4")
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_FILES_PER_DIR", "7")
     monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_SAMPLES", "1")
     probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
 
@@ -688,10 +792,13 @@ def test_dataset_source_records_probe_script_emits_metrics(
     assert metrics["elapsed_ms_p95"] >= 0.0
     assert metrics["source_kind_elapsed_ms_mean"] >= 0.0
     assert metrics["source_kind_elapsed_ms_p95"] >= 0.0
+    assert metrics["record_elapsed_ms_mean"] >= 0.0
+    assert metrics["record_elapsed_ms_p95"] >= 0.0
     assert metrics["sample_count"] == 1.0
     assert metrics["directory_count"] == 3.0
-    assert metrics["files_per_directory"] == 4.0
-    assert metrics["file_count_mean"] == 12.0
+    assert metrics["files_per_directory"] == 7.0
+    assert metrics["file_count_mean"] == 21.0
+    assert metrics["source_kind_variant_count"] == 7.0
 
 
 def test_dataset_source_records_probe_rejects_changed_source_kind(
@@ -701,6 +808,23 @@ def test_dataset_source_records_probe_rejects_changed_source_kind(
     monkeypatch.setattr(probe_script["dataset_preparation"], "_source_kind", lambda path: None)
 
     with pytest.raises(RuntimeError, match="source kind classification changed"):
+        probe_script["measure"](directory_count=1, files_per_directory=1, samples=1)
+
+
+def test_dataset_source_records_probe_rejects_changed_record_byte_accounting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+    original_record = probe_script["dataset_preparation"]._record
+
+    def wrong_byte_record(*args: object, **kwargs: object) -> dict[str, object]:
+        record = dict(original_record(*args, **kwargs))
+        record["byte_size"] = -1
+        return record
+
+    monkeypatch.setattr(probe_script["dataset_preparation"], "_record", wrong_byte_record)
+
+    with pytest.raises(RuntimeError, match="source record byte accounting changed"):
         probe_script["measure"](directory_count=1, files_per_directory=1, samples=1)
 
 
@@ -1072,6 +1196,60 @@ def test_scope_report_selects_lora_experiment_run_dir_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "lora-experiment-run-dir-name-scan"
 
 
+def test_scope_report_selects_runtime_export_manifest_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/productization/export_target_manifest.py"
+        ],
+    )
+
+    assert scope["selected_count"] == 2
+    assert {
+        probe["id"]
+        for probe in scope["selected_probes"]
+    } == {
+        "runtime-export-manifest-validation",
+        "runtime-export-layout-retention",
+    }
+
+
+def test_scope_report_selects_runtime_export_layout_retention_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/productization/export_target_layout.py"
+        ],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "runtime-export-layout-retention"
+
+
+def test_scope_report_selects_runtime_export_smoke_policy_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/productization/export_target_smoke.py"
+        ],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "runtime-export-smoke-policy"
+
+
+def test_scope_report_selects_runtime_export_diagnostic_parser_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/productization/export_target_diagnostics.py"
+        ],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "runtime-export-diagnostic-parser"
+
+
 def test_lora_experiment_run_dir_scan_probe_script_smoke(capsys: pytest.CaptureFixture[str]) -> None:
     runpy.run_path(
         str(REPO_ROOT / "scripts/lora_experiment_run_dir_scan_probe.py"),
@@ -1348,6 +1526,30 @@ def test_evaluation_answer_normalization_probe_command_emits_metrics() -> None:
     )
 
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["numeric_extract_calls_mean"] == 0.0
+    assert metrics["option_extract_calls_mean"] == 0.0
+    assert metrics["answer_count"] == 3000.0
+    assert metrics["free_text_answer_count"] == 2400.0
+    assert metrics["normalization_checksum"] > 0
+
+
+def test_evaluation_answer_normalization_probe_fallback_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "evaluation-answer-normalization-fast-path"
+    )
+    fallback_command = probe.probe_command.replace(
+        "[ -f scripts/evaluation_answer_normalization_probe.py ]",
+        "false",
+    )
+
+    metrics = _probe_command_json(
+        probe=replace(probe, probe_command=fallback_command),
+        repo_root=REPO_ROOT,
+    )
 
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["numeric_extract_calls_mean"] == 0.0
@@ -1646,11 +1848,12 @@ def test_scope_report_selects_changed_scope_coverage_probe() -> None:
     )
 
     selected_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 3
+    assert scope["selected_count"] == 4
     assert scope["force_all"] is False
     assert selected_ids == {
         "changed-scope-coverage-empty-path-short-circuit",
         "changed-scope-coverage-measured-set-filter",
+        "changed-scope-coverage-singleton-range-fastpath",
         "changed-scope-coverage-diff-parser",
     }
 
@@ -1773,14 +1976,277 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py"],
     )
 
-    assert scope["selected_count"] == 2
-    assert [probe["id"] for probe in scope["selected_probes"]] == [
+    assert scope["selected_count"] == 6
+    selected_probe_ids = [probe["id"] for probe in scope["selected_probes"]]
+    assert selected_probe_ids == [
+        "multimodal-speculative-probe-receipt",
+        "vlm-batch1-comparison-artifact",
+        "vlm-speculative-smoke-probe",
         "mlx-vlm-family-config-cache",
         "mlx-vlm-gemma4-weight-presence-single-pass",
+        "quantized-tensor-metadata-prepass",
     ]
+    required_parity_tests = (
+        "test_mlx_vlm_runtime_records_verification_only_speculative_probe_for_media_fallback",
+        "test_mlx_vlm_runtime_media_speculative_probe_preserves_single_request_outputs",
+        "test_mlx_vlm_runtime_concurrent_media_speculative_fallbacks_do_not_share_drafter_state",
+        "test_mlx_vlm_runtime_speculative_gate_fallbacks_preserve_prompt_only_baseline_outputs",
+    )
+    test_commands = " ".join(str(probe["test_command"]) for probe in scope["selected_probes"])
     coverage_commands = " ".join(str(probe["coverage_command"]) for probe in scope["selected_probes"])
+    for test_name in required_parity_tests:
+        assert test_name in test_commands
+        assert test_name in coverage_commands
+
+    assert "test_mlx_vlm_runtime_image_batch1_step_keeps_ineligible_requests_on_stream" in coverage_commands
     assert "test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available" in coverage_commands
+    assert (
+        "test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_generation"
+        in coverage_commands
+    )
+    assert "test_mlx_vlm_runtime_mtp_response_helpers_handle_alternate_shapes" in coverage_commands
     assert "test_mtp_drafter_acceptance_stats_ignore_unusable_accept_lens" in coverage_commands
+
+
+def test_mlx_vlm_family_config_probe_tolerates_timer_noise_without_weakening_resolve_gate() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-vlm-family-config-cache"
+    )
+    metrics = {metric.key: metric for metric in probe.metrics}
+
+    assert metrics["elapsed_ms_mean"].warn_abs == 0.2
+    assert metrics["resolve_calls_mean"].warn_abs == 0.0
+    assert metrics["resolve_calls_mean"].warn_pct == 0.0
+
+    scope = {
+        "changed_files": ["services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py"],
+        "force_all": False,
+        "matched_probe_ids": [probe.probe_id],
+        "selected_count": 1,
+        "selected_probes": [probe.to_scope_dict()],
+    }
+    result = {
+        "probe": scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 100.0},
+        },
+        "base_probe": {
+            "ok": True,
+            "metrics": {"elapsed_ms_mean": 1.264657, "resolve_calls_mean": 1.0},
+        },
+        "head_probe": {
+            "ok": True,
+            "metrics": {"elapsed_ms_mean": 1.39495, "resolve_calls_mean": 1.0},
+        },
+    }
+
+    timer_noise_report = build_performance_report(scope=scope, probe_results=[result])
+    timer_noise_metrics = {
+        metric["key"]: metric
+        for metric in timer_noise_report["rows"][0]["metrics"]
+    }
+
+    assert timer_noise_report["summary"]["status"] == "ok"
+    assert timer_noise_metrics["elapsed_ms_mean"]["status"] == "neutral"
+
+    result["head_probe"]["metrics"]["resolve_calls_mean"] = 2.0
+    resolve_regression_report = build_performance_report(scope=scope, probe_results=[result])
+    resolve_regression_metrics = {
+        metric["key"]: metric
+        for metric in resolve_regression_report["rows"][0]["metrics"]
+    }
+
+    assert resolve_regression_report["summary"]["status"] == "regression"
+    assert resolve_regression_metrics["resolve_calls_mean"]["status"] == "regression"
+
+
+def test_native_mtp_weight_load_probe_tolerates_loader_timer_noise_without_weakening_counts() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "native-mtp-loader-safetensor-scandir"
+    )
+    metrics = {metric.key: metric for metric in probe.metrics}
+
+    assert metrics["weight_load_new_mean_ms"].warn_abs == 15.0
+    assert metrics["weight_load_result_count"].warn_abs == 0.0
+    assert metrics["weight_load_result_count"].warn_pct == 0.0
+
+    scope = {
+        "changed_files": ["services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py"],
+        "force_all": False,
+        "matched_probe_ids": [probe.probe_id],
+        "selected_count": 1,
+        "selected_probes": [probe.to_scope_dict()],
+    }
+    result = {
+        "probe": scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 100.0},
+        },
+        "base_probe": {
+            "ok": True,
+            "metrics": {"weight_load_new_mean_ms": 138.492933, "weight_load_result_count": 3002.0},
+        },
+        "head_probe": {
+            "ok": True,
+            "metrics": {"weight_load_new_mean_ms": 149.378175, "weight_load_result_count": 3002.0},
+        },
+    }
+
+    timer_noise_report = build_performance_report(scope=scope, probe_results=[result])
+    timer_noise_metrics = {
+        metric["key"]: metric
+        for metric in timer_noise_report["rows"][0]["metrics"]
+    }
+
+    assert timer_noise_report["summary"]["status"] == "ok"
+    assert timer_noise_metrics["weight_load_new_mean_ms"]["status"] == "neutral"
+
+    result["head_probe"]["metrics"]["weight_load_result_count"] = 3001.0
+    count_regression_report = build_performance_report(scope=scope, probe_results=[result])
+    count_regression_metrics = {
+        metric["key"]: metric
+        for metric in count_regression_report["rows"][0]["metrics"]
+    }
+
+    assert count_regression_report["summary"]["status"] == "regression"
+    assert count_regression_metrics["weight_load_result_count"]["status"] == "regression"
+
+
+def test_native_mtp_model_listing_probe_tolerates_loader_timer_noise_without_weakening_counts() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "native-mtp-loader-safetensor-scandir"
+    )
+    metrics = {metric.key: metric for metric in probe.metrics}
+
+    assert metrics["model_listing_new_mean_ms"].warn_abs == 1.0
+    assert metrics["model_listing_result_count"].warn_abs == 0.0
+    assert metrics["model_listing_result_count"].warn_pct == 0.0
+
+    scope = {
+        "changed_files": ["services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py"],
+        "force_all": False,
+        "matched_probe_ids": [probe.probe_id],
+        "selected_count": 1,
+        "selected_probes": [probe.to_scope_dict()],
+    }
+    result = {
+        "probe": scope["selected_probes"][0],
+        "head_verification": {
+            "test": {"ok": True, "coverage_pct": None},
+            "coverage": {"ok": True, "coverage_pct": 100.0},
+        },
+        "base_probe": {
+            "ok": True,
+            "metrics": {
+                "model_listing_new_mean_ms": 5.453525006305426,
+                "model_listing_result_count": 1502.0,
+            },
+        },
+        "head_probe": {
+            "ok": True,
+            "metrics": {
+                "model_listing_new_mean_ms": 6.065241596661508,
+                "model_listing_result_count": 1502.0,
+            },
+        },
+    }
+
+    timer_noise_report = build_performance_report(scope=scope, probe_results=[result])
+    timer_noise_metrics = {
+        metric["key"]: metric
+        for metric in timer_noise_report["rows"][0]["metrics"]
+    }
+
+    assert timer_noise_report["summary"]["status"] == "ok"
+    assert timer_noise_metrics["model_listing_new_mean_ms"]["status"] == "neutral"
+
+    result["head_probe"]["metrics"]["model_listing_result_count"] = 1501.0
+    count_regression_report = build_performance_report(scope=scope, probe_results=[result])
+    count_regression_metrics = {
+        metric["key"]: metric
+        for metric in count_regression_report["rows"][0]["metrics"]
+    }
+
+    assert count_regression_report["summary"]["status"] == "regression"
+    assert count_regression_metrics["model_listing_result_count"]["status"] == "regression"
+
+
+def test_scope_report_selects_multimodal_speculative_probe_receipt() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/multimodal_speculative_probe.py"],
+    )
+
+    assert scope["selected_count"] == 2
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "multimodal-speculative-probe-receipt",
+        "vlm-speculative-smoke-probe",
+    ]
+    probe = next(
+        probe
+        for probe in scope["selected_probes"]
+        if probe["id"] == "multimodal-speculative-probe-receipt"
+    )
+    assert probe["coverage_paths"] == [
+        "services/mlx-worker-python/worker/runtime/multimodal_speculative_probe.py"
+    ]
+    assert "test_mlx_vlm_runtime_records_verification_only_probe_before_speculative_refusal" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_media_speculative_probe_preserves_single_request_outputs" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_concurrent_media_speculative_fallbacks_do_not_share_drafter_state" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_speculative_gate_fallbacks_preserve_prompt_only_baseline_outputs" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_restores_verification_only_probe_after_generation_exception" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_restores_verification_only_probe_after_probe_exception" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_generation" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available" in str(
+        probe["coverage_command"]
+    )
+    assert "test_mlx_vlm_runtime_mtp_response_helpers_handle_alternate_shapes" in str(
+        probe["coverage_command"]
+    )
+
+
+def test_multimodal_speculative_probe_receipt_probe_is_schema_sentinel() -> None:
+    registry_payload = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    raw_probe = next(
+        raw_probe
+        for raw_probe in registry_payload
+        if raw_probe["id"] == "multimodal-speculative-probe-receipt"
+    )
+    parsed_probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "multimodal-speculative-probe-receipt"
+    )
+
+    assert "schema sentinel" in str(raw_probe.get("description", "")).lower()
+    assert raw_probe["probe_command"].startswith("python3 -c 'import json;")
+    assert {metric.direction for metric in parsed_probe.metrics} == {"informational"}
+    assert {metric.key for metric in parsed_probe.metrics} == {
+        "receipt_schema_version_count",
+        "sample_count",
+    }
 
 
 def test_scope_report_selects_deterministic_vlm_completion_probe() -> None:
@@ -1789,8 +2255,9 @@ def test_scope_report_selects_deterministic_vlm_completion_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/deterministic_vlm_runtime.py"],
     )
 
-    assert scope["selected_count"] == 1
+    assert scope["selected_count"] == 2
     assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "multimodal-speculative-probe-receipt",
         "deterministic-vlm-completion-token-scan"
     ]
 
@@ -2213,8 +2680,13 @@ def test_scope_report_selects_melix_metrics_snapshot_probe() -> None:
         changed_files=["scripts/melix_metrics_snapshot.py"],
     )
 
-    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert "melix-metrics-snapshot-runtime-scandir" in probe_ids
+    selected_probes = {probe["id"]: probe for probe in scope["selected_probes"]}
+    assert "melix-metrics-snapshot-runtime-scandir" in selected_probes
+    selected_metrics = selected_probes["melix-metrics-snapshot-runtime-scandir"]["metrics"]
+    assert isinstance(selected_metrics, list)
+    metrics = {metric["key"]: metric for metric in selected_metrics}
+    assert metrics["configured_elapsed_ms_mean"]["warn_abs"] == 0.01
+    assert metrics["configured_elapsed_ms_min"]["warn_abs"] == 0.01
 
 
 def test_scope_report_selects_dev_up_mlx_metal_dist_info_probe() -> None:
@@ -2377,13 +2849,13 @@ def test_matches_any_glob_uses_explicit_short_circuit(monkeypatch: pytest.Monkey
     assert glob_calls == ["services/*.py"]
 
 
-def test_coverage_paths_for_probe_uses_explicit_glob_matcher(monkeypatch: pytest.MonkeyPatch) -> None:
-    glob_calls: list[str] = []
+def test_coverage_paths_for_probe_uses_cached_watch_glob_matchers(monkeypatch: pytest.MonkeyPatch) -> None:
+    matcher_calls: list[tuple[str, tuple[str, ...]]] = []
     probe = ProbeDefinition(
         probe_id="alpha",
         name="Alpha",
         runner="ubuntu-latest",
-        watch_globs=("services/*.py", "docs/*.md"),
+        watch_globs=("README.md", "services/*.py", "docs/*.md"),
         test_command="true",
         coverage_command="true",
         probe_impl="benchmark_evaluation_report",
@@ -2391,14 +2863,42 @@ def test_coverage_paths_for_probe_uses_explicit_glob_matcher(monkeypatch: pytest
         metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
     )
 
-    def tracked_match(path: str, globs: tuple[str, ...]) -> bool:
-        glob_calls.extend(globs)
+    def fail_legacy_match(path: str, globs: tuple[str, ...]) -> bool:
+        raise AssertionError(f"coverage_paths_for_probe should not rescan raw globs: {path} {globs}")
+
+    def tracked_match(path: str, matchers: tuple[tuple[str, re.Pattern[str]], ...]) -> bool:
+        matcher_calls.append((path, tuple(prefix for prefix, _pattern in matchers)))
         return path.startswith("services/")
 
-    monkeypatch.setattr(pr_scoped_performance_module, "_matches_any_glob", tracked_match)
+    monkeypatch.setattr(pr_scoped_performance_module, "_matches_any_glob", fail_legacy_match)
+    monkeypatch.setattr(pr_scoped_performance_module, "_matches_any_compiled_glob", tracked_match)
 
-    assert coverage_paths_for_probe(probe=probe, changed_files=["services/a.py"]) == ("services/a.py",)
-    assert glob_calls == ["services/*.py", "docs/*.md"]
+    assert coverage_paths_for_probe(
+        probe=probe,
+        changed_files=["README.md", "services/a.py"],
+    ) == ("README.md", "services/a.py")
+    assert matcher_calls == [("services/a.py", ("services/", "docs/"))]
+
+
+def test_probe_watch_glob_matchers_reuses_cached_matchers(monkeypatch: pytest.MonkeyPatch) -> None:
+    compile_calls: list[str] = []
+    original_compile = pr_scoped_performance_module._compiled_glob_pattern
+
+    def tracked_compile(glob: str) -> re.Pattern[str]:
+        compile_calls.append(glob)
+        return original_compile(glob)
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_compiled_glob_pattern", tracked_compile)
+    _probe_watch_glob_matchers.cache_clear()
+    try:
+        first = _probe_watch_glob_matchers(("README.md", "services/*.py"))
+        second = _probe_watch_glob_matchers(("README.md", "services/*.py"))
+    finally:
+        _probe_watch_glob_matchers.cache_clear()
+
+    assert first is second
+    assert first[0] == frozenset({"README.md"})
+    assert compile_calls == ["services/*.py"]
 
 
 def test_scope_report_empty_direct_paths_skips_probe_matching(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2644,6 +3144,7 @@ def test_event_extraction_semantic_value_group_probe_script_emits_metrics(
     monkeypatch.setenv("MELIX_EVENT_SEMANTIC_GROUP_PROBE_COUNTS", "4,5")
     monkeypatch.setenv("MELIX_EVENT_SEMANTIC_GROUP_PROBE_ITERATIONS", "3")
     monkeypatch.setenv("MELIX_EVENT_SEMANTIC_GROUP_PROBE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_EVENT_SEMANTIC_MATCHING_PROBE_ITERATIONS", "3")
 
     with pytest.raises(SystemExit) as exc_info:
         runpy.run_path(str(REPO_ROOT / "scripts/event_extraction_semantic_value_group_probe.py"), run_name="__main__")
@@ -2652,10 +3153,15 @@ def test_event_extraction_semantic_value_group_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["value_count_max"] == 5.0
     assert metrics["iterations_per_sample"] == 3.0
+    assert metrics["matching_iterations_per_sample"] == 3.0
     assert metrics["sample_count"] == 1.0
     assert metrics["group_count_per_sample"] > 0
+    assert metrics["matching_candidate_count_per_sample"] > 0
+    assert metrics["matching_result_count_per_sample"] > 0
+    assert metrics["matching_checksum"] > 0
     assert metrics["combination_build_calls_mean"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["matching_elapsed_ms_mean"] >= 0
 
 
 def test_event_extraction_actor_alias_probe_script_emits_metrics(
@@ -3038,6 +3544,103 @@ def test_runtime_utils_package_version_probe_script_emits_metrics(
     assert metrics["iterations_per_sample"] == 60000.0
     assert metrics["package_count"] == 3.0
     assert metrics["metadata_version_calls_mean"] == 3.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_runtime_export_manifest_validation_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_MANIFEST_PROBE_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_MANIFEST_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/runtime_export_manifest_validation_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["fixture_count"] == 4.0
+    assert metrics["schema_error_count"] == 0.0
+    assert metrics["manifest_byte_size"] > 0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_runtime_export_layout_retention_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_LAYOUT_PROBE_ITERATIONS", "1")
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_LAYOUT_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/runtime_export_layout_retention_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["target_count"] == 4.0
+    assert metrics["retention_decision_count"] == 15.0
+    assert metrics["retained_byte_size"] == 12141056.0
+    assert metrics["cleanable_byte_size"] == 0.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_runtime_export_smoke_policy_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_SMOKE_PROBE_ITERATIONS", "1")
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_SMOKE_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/runtime_export_smoke_policy_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["target_count"] == 4.0
+    assert metrics["metadata_check_latency_ms"] >= 0
+    assert metrics["load_smoke_latency_ms"] >= 0
+    assert metrics["generation_smoke_latency_ms"] >= 0
+    assert metrics["output_preview_byte_count"] > 0
+    assert metrics["timeout_count"] == 0.0
+    assert metrics["waiver_count"] == 0.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_runtime_export_diagnostic_parser_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_DIAGNOSTIC_PROBE_ITERATIONS", "1")
+    monkeypatch.setenv("MELIX_RUNTIME_EXPORT_DIAGNOSTIC_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/runtime_export_diagnostic_parser_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["target_count"] == 4.0
+    assert metrics["diagnostic_parser_coverage"] == 1.0
+    assert metrics["diagnosis_code_count"] == 9.0
+    assert metrics["parsed_failure_count"] >= 9.0
+    assert metrics["unknown_failure_count"] == 1.0
+    assert metrics["redaction_count"] >= 2.0
+    assert metrics["diagnostic_latency_ms"] >= 0
+    assert metrics["path_redaction_elapsed_ms_mean"] >= 0
+    assert metrics["path_redaction_count"] >= 1.0
+    assert metrics["diagnosis_matching_elapsed_ms_mean"] >= 0
+    assert metrics["diagnosis_matching_line_count"] >= 4.0
     assert metrics["elapsed_ms_mean"] >= 0
 
 
@@ -3483,6 +4086,7 @@ def test_text_family_config_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["config_copy_calls_mean"] == 0.0
+    assert metrics["config_key_accesses_mean"] > 0.0
     assert metrics["iterations"] == 10_000
 
 
@@ -3506,6 +4110,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "benchmark-store-matrix-streaming",
         "changed-scope-coverage-empty-path-short-circuit",
         "changed-scope-coverage-measured-set-filter",
+        "changed-scope-coverage-singleton-range-fastpath",
         "changed-scope-coverage-diff-parser",
         "closure-audit-probe-source-short-circuit",
         "code-eval-code-block-last-match-streaming",
@@ -3523,6 +4128,10 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
         "retrieval-context-projection-fastpath",
+        "runtime-export-manifest-validation",
+        "runtime-export-layout-retention",
+        "runtime-export-smoke-policy",
+        "runtime-export-diagnostic-parser",
         "same-cohort-batching-probe-evidence",
         "runtime-utils-kwarg-signature-cache",
         "runtime-utils-package-version-cache",
@@ -3562,6 +4171,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
         "native-mtp-loader-safetensor-scandir",
+        "quantized-tensor-metadata-prepass",
         "mlx-audio-local-uri-zero-copy-preprocess",
         "mlx-audio-generate-signature-cache",
         "mlx-audio-speech-signature-cache",
@@ -3569,6 +4179,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "mlx-vlm-gemma4-weight-presence-single-pass",
         "model-registry-plain-local-manifest-stat-elision",
         "model-registry-readme-source-fastpath",
+        "multimodal-speculative-probe-receipt",
         "multimodal-fast-path-signature-top-level-key-cache",
         "multimodal-preprocessing-local-uri-parse-elision",
         "multimodal-preprocessing-image-uri-single-parse",
@@ -3602,6 +4213,8 @@ def test_registered_probes_expose_focused_commands() -> None:
         "maintenance-prompt-shape-vector-repeat",
         "maintenance-benchmark-parameter-normalization-single-convert",
         "maintenance-capability-split-single-strip",
+        "vlm-batch1-comparison-artifact",
+        "vlm-speculative-smoke-probe",
         "phase8-metrics-closure-audit-reuse",
         "pr-scoped-performance-registry-cache",
         "real-model-support-hf-cache-latest-snapshot",
@@ -3664,6 +4277,11 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_load_model_returns_handle_and_lists_model" in worker_registry_probe.test_command
     assert "test_worker_registry_reuses_sorted_handles_across_listing_calls" in worker_registry_probe.coverage_command
     assert "test_load_model_returns_handle_and_lists_model" in worker_registry_probe.coverage_command
+    worker_registry_metrics = {
+        metric.key: metric for metric in worker_registry_probe.metrics
+    }
+    assert worker_registry_metrics["elapsed_ms_mean"].warn_abs == 0.001
+    assert worker_registry_metrics["request_stats_elapsed_ms_mean"].warn_abs == 0.001
 
     assert registry_probe is not None
     assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.test_command
@@ -3671,6 +4289,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.test_command
     assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.test_command
     assert "test_metadata_payload_has_mlx_signal_does_not_request_sorted_json" in registry_probe.test_command
+    assert "test_metadata_payload_has_mlx_signal_skips_json_for_direct_metadata" in registry_probe.test_command
     assert "test_has_mlx_signal_config_payload_fast_path_avoids_json_dump" in registry_probe.test_command
     assert "test_registry_snapshot_keeps_gemma4_qat_target_when_readme_mentions_assistant" in registry_probe.test_command
     assert "scripts/changed_scope_coverage.py" not in registry_probe.watch_globs
@@ -3679,6 +4298,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.coverage_command
     assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.coverage_command
     assert "test_metadata_payload_has_mlx_signal_does_not_request_sorted_json" in registry_probe.coverage_command
+    assert "test_metadata_payload_has_mlx_signal_skips_json_for_direct_metadata" in registry_probe.coverage_command
     assert "test_has_mlx_signal_config_payload_fast_path_avoids_json_dump" in registry_probe.coverage_command
     assert "test_registry_snapshot_keeps_gemma4_qat_target_when_readme_mentions_assistant" in registry_probe.coverage_command
     assert "scripts/changed_scope_coverage.py" in registry_probe.coverage_command
@@ -3722,6 +4342,10 @@ def test_registered_probes_expose_focused_commands() -> None:
     gemma4_weight_presence_metrics = {
         metric.key: metric for metric in gemma4_weight_presence_probe.metrics
     }
+    assert gemma4_weight_presence_metrics["elapsed_ms_mean"].direction == "informational"
+    assert gemma4_weight_presence_metrics["elapsed_ms_min"].direction == "informational"
+    assert gemma4_weight_presence_metrics["visited_names_mean"].direction == "lower_is_better"
+    assert gemma4_weight_presence_metrics["visited_names_mean"].warn_pct == 0.0
     assert gemma4_weight_presence_metrics["peak_bytes_mean"].warn_pct == 5.0
     assert gemma4_weight_presence_metrics["peak_bytes_mean"].warn_abs == 64.0
 
@@ -3791,6 +4415,41 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         assert "../head/$SCRIPT" in probe_command
         assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in probe_command
 
+    runtime_export_probe_command = by_id["runtime-export-manifest-validation"]["probe_command"]
+    assert "../head/$SCRIPT" in runtime_export_probe_command
+    assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in runtime_export_probe_command
+    runtime_export_layout_probe_command = by_id["runtime-export-layout-retention"]["probe_command"]
+    assert "../head/$SCRIPT" in runtime_export_layout_probe_command
+    assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in runtime_export_layout_probe_command
+    runtime_export_smoke_probe_command = by_id["runtime-export-smoke-policy"]["probe_command"]
+    assert "../head/$SCRIPT" in runtime_export_smoke_probe_command
+    assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in runtime_export_smoke_probe_command
+    runtime_export_diagnostics_probe_command = by_id["runtime-export-diagnostic-parser"]["probe_command"]
+    assert "../head/$SCRIPT" in runtime_export_diagnostics_probe_command
+    assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in runtime_export_diagnostics_probe_command
+    runtime_export_smoke_metrics = {
+        metric["key"]: metric
+        for metric in by_id["runtime-export-smoke-policy"]["metrics"]
+    }
+    assert runtime_export_smoke_metrics["elapsed_ms_mean"]["direction"] == "lower_is_better"
+    assert runtime_export_smoke_metrics["metadata_check_latency_ms"]["direction"] == "informational"
+    assert runtime_export_smoke_metrics["load_smoke_latency_ms"]["direction"] == "informational"
+    assert runtime_export_smoke_metrics["generation_smoke_latency_ms"]["direction"] == "informational"
+    assert runtime_export_smoke_metrics["timeout_count"]["warn_abs"] == 0.0
+    runtime_export_diagnostics_metrics = {
+        metric["key"]: metric
+        for metric in by_id["runtime-export-diagnostic-parser"]["metrics"]
+    }
+    assert runtime_export_diagnostics_metrics["elapsed_ms_mean"]["direction"] == "lower_is_better"
+    assert runtime_export_diagnostics_metrics["diagnostic_parser_coverage"]["direction"] == "higher_is_better"
+    assert runtime_export_diagnostics_metrics["diagnostic_parser_coverage"]["warn_abs"] == 0.0
+    assert runtime_export_diagnostics_metrics["parsed_failure_count"]["direction"] == "informational"
+    assert runtime_export_diagnostics_metrics["unknown_failure_count"]["direction"] == "informational"
+    assert runtime_export_diagnostics_metrics["redaction_count"]["direction"] == "informational"
+    assert runtime_export_diagnostics_metrics["diagnostic_latency_ms"]["direction"] == "lower_is_better"
+    assert runtime_export_diagnostics_metrics["diagnosis_matching_elapsed_ms_mean"]["direction"] == "lower_is_better"
+    assert runtime_export_diagnostics_metrics["diagnosis_matching_line_count"]["direction"] == "informational"
+
     probe_policy_metrics = {
         metric["key"]: metric for metric in by_id["probe-policy-noop-overhead"]["metrics"]
     }
@@ -3828,8 +4487,10 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         "speedup",
         "old_peak_bytes_mean",
         "extra_old_mean_ms",
+        "extra_delta_ms",
         "extra_old_peak_bytes_mean",
         "model_listing_old_mean_ms",
+        "model_listing_delta_ms",
         "model_listing_old_peak_bytes_mean",
         "key_old_mean_ms",
         "key_delta_ms",
@@ -3839,9 +4500,25 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         assert native_mtp_metrics[metric_key]["direction"] == "informational"
         assert "warn_pct" not in native_mtp_metrics[metric_key]
     assert native_mtp_metrics["model_listing_new_mean_ms"]["direction"] == "lower_is_better"
-    assert native_mtp_metrics["model_listing_delta_ms"]["direction"] == "lower_is_better"
     assert native_mtp_metrics["model_listing_speedup"]["direction"] == "higher_is_better"
+    assert native_mtp_metrics["new_mean_ms"]["warn_abs"] == 0.5
+    assert native_mtp_metrics["model_listing_new_mean_ms"]["warn_abs"] == 1.0
+    assert native_mtp_metrics["model_listing_speedup"]["warn_abs"] == 0.5
+    assert native_mtp_metrics["extra_new_mean_ms"]["warn_abs"] == 10.0
+    assert native_mtp_metrics["extra_speedup"]["warn_abs"] == 0.5
     assert native_mtp_metrics["key_new_mean_ms"]["direction"] == "lower_is_better"
+
+    quantized_metadata_metrics = {
+        metric["key"]: metric
+        for metric in by_id["quantized-tensor-metadata-prepass"]["metrics"]
+    }
+    assert quantized_metadata_metrics["index_elapsed_ms_mean"]["direction"] == "informational"
+    assert quantized_metadata_metrics["index_peak_bytes_mean"]["direction"] == "informational"
+    assert quantized_metadata_metrics["header_elapsed_ms_mean"]["direction"] == "informational"
+    assert quantized_metadata_metrics["header_peak_bytes_mean"]["direction"] == "informational"
+    assert quantized_metadata_metrics["metadata_decision_elapsed_ms_mean"]["direction"] == "lower_is_better"
+    assert quantized_metadata_metrics["materialized_decision_elapsed_ms_mean"]["direction"] == "informational"
+    assert quantized_metadata_metrics["cross_shard_pair_count"]["warn_pct"] == 0.0
 
     changed_scope_metrics = {
         metric["key"]: metric
@@ -3885,6 +4562,58 @@ def test_scope_report_selects_serving_diagnostics_queue_probe() -> None:
     assert "serving-diagnostics-debug-queue-bounds" in {
         probe["id"] for probe in scope["selected_probes"]
     }
+
+
+def test_scope_report_selects_vlm_batch1_comparison_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/engine/maintenance_core.py",
+            "scripts/vlm_batch1_comparison_probe.py",
+        ],
+    )
+
+    assert "vlm-batch1-comparison-artifact" in {
+        probe["id"] for probe in scope["selected_probes"]
+    }
+
+
+def test_scope_report_selects_vlm_speculative_smoke_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/engine/maintenance_core.py",
+            "scripts/vlm_speculative_smoke_probe.py",
+        ],
+    )
+
+    assert "vlm-speculative-smoke-probe" in {
+        probe["id"] for probe in scope["selected_probes"]
+    }
+
+
+def test_vlm_batch1_comparison_probe_command_has_base_fallback() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "vlm-batch1-comparison-artifact"
+    )
+
+    assert "if [ -f scripts/vlm_batch1_comparison_probe.py ]" in probe.probe_command
+    assert "valid_status_count" in probe.probe_command
+    assert "blocked_status_count" in probe.probe_command
+
+
+def test_vlm_speculative_smoke_probe_command_has_base_fallback() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "vlm-speculative-smoke-probe"
+    )
+
+    assert "if [ -f scripts/vlm_speculative_smoke_probe.py ]" in probe.probe_command
+    assert "smoke_pass_count" in probe.probe_command
+    assert "speed_target_met_count" in probe.probe_command
 
 
 def test_probe_policy_noop_overhead_probe_script_emits_metrics(
@@ -3933,6 +4662,168 @@ def test_serving_diagnostics_queue_probe_script_emits_metrics(
     assert metrics["dropped_count"] == 6.0
     assert "serialization_elapsed_ms_mean" in metrics
     assert metrics["serialization_checksum"] == 30.0
+
+
+def test_vlm_batch1_comparison_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["vlm_batch1_comparison_probe.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/vlm_batch1_comparison_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["valid_status_count"] == 5.0
+    assert metrics["blocked_status_count"] == 5.0
+    assert metrics["identity_match_count"] == 0.0
+    assert metrics["route_stability_count"] == 5.0
+    assert metrics["valid_payload_bytes"] > 0.0
+    assert metrics["baseline_ttft_ms"] == 20.0
+    assert metrics["fast_path_decode_tokens_per_second"] == 166.7
+
+
+def test_vlm_speculative_smoke_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["vlm_speculative_smoke_probe.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/vlm_speculative_smoke_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["smoke_pass_count"] == 5.0
+    assert metrics["speed_target_met_count"] == 5.0
+    assert metrics["fallback_stability_count"] == 5.0
+    assert metrics["repeated_media_correctness_count"] == 5.0
+    assert metrics["comparison_artifact_present_count"] == 5.0
+    assert metrics["baseline_ttft_ms"] == 20.0
+    assert metrics["accelerated_ttft_ms"] == 12.0
+    assert metrics["accelerated_decode_tokens_per_second"] == 166.7
+    assert metrics["acceptance_rate"] == 0.75
+    assert metrics["fallback_count"] == 0.0
+    assert metrics["speed_target_ratio"] == pytest.approx(1.667)
+
+
+def test_vlm_speculative_smoke_probe_handles_missing_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from worker.engine.maintenance_core import MaintenanceCore
+
+    def fake_writer(**_: object) -> dict[str, Path]:
+        return {"comparison": tmp_path / "missing-comparison.json"}
+
+    monkeypatch.setattr(MaintenanceCore, "_write_vlm_speculative_comparison_artifact", fake_writer)
+    monkeypatch.setattr(sys, "argv", ["vlm_speculative_smoke_probe.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/vlm_speculative_smoke_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["comparison_artifact_present_count"] == 0.0
+    assert metrics["smoke_pass_count"] == 0.0
+    assert metrics["valid_payload_bytes"] == 0.0
+    assert metrics["speed_target_met_count"] == 5.0
+    assert metrics["fallback_stability_count"] == 5.0
+    assert metrics["repeated_media_correctness_count"] == 5.0
+
+
+def test_vlm_speculative_smoke_probe_handles_malformed_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from worker.engine.maintenance_core import MaintenanceCore
+
+    comparison_path = tmp_path / "malformed-comparison.json"
+
+    def fake_writer(**_: object) -> dict[str, Path]:
+        comparison_path.write_text("{", encoding="utf-8")
+        return {"comparison": comparison_path}
+
+    monkeypatch.setattr(MaintenanceCore, "_write_vlm_speculative_comparison_artifact", fake_writer)
+    monkeypatch.setattr(sys, "argv", ["vlm_speculative_smoke_probe.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/vlm_speculative_smoke_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["comparison_artifact_present_count"] == 0.0
+    assert metrics["smoke_pass_count"] == 0.0
+    assert metrics["valid_payload_bytes"] == 0.0
+
+
+def test_vlm_speculative_smoke_probe_handles_non_object_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from worker.engine.maintenance_core import MaintenanceCore
+
+    comparison_path = tmp_path / "non-object-comparison.json"
+
+    def fake_writer(**_: object) -> dict[str, Path]:
+        comparison_path.write_text("[]", encoding="utf-8")
+        return {"comparison": comparison_path}
+
+    monkeypatch.setattr(MaintenanceCore, "_write_vlm_speculative_comparison_artifact", fake_writer)
+    monkeypatch.setattr(sys, "argv", ["vlm_speculative_smoke_probe.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/vlm_speculative_smoke_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["comparison_artifact_present_count"] == 0.0
+    assert metrics["smoke_pass_count"] == 0.0
+    assert metrics["valid_payload_bytes"] > 0.0
+
+
+def test_vlm_speculative_smoke_probe_reports_mean_payload_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from worker.engine.maintenance_core import MaintenanceCore
+
+    payload_sizes: list[float] = []
+    call_count = 0
+
+    def fake_writer(**_: object) -> dict[str, Path]:
+        nonlocal call_count
+        comparison_path = tmp_path / f"comparison-{call_count}.json"
+        comparison_path.write_text(
+            json.dumps(
+                {
+                    "comparison_validity": "valid",
+                    "padding": "x" * call_count,
+                }
+            ),
+            encoding="utf-8",
+        )
+        payload_sizes.append(float(comparison_path.stat().st_size))
+        call_count += 1
+        return {"comparison": comparison_path}
+
+    monkeypatch.setattr(MaintenanceCore, "_write_vlm_speculative_comparison_artifact", fake_writer)
+    monkeypatch.setattr(sys, "argv", ["vlm_speculative_smoke_probe.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/vlm_speculative_smoke_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["comparison_artifact_present_count"] == 5.0
+    assert metrics["valid_payload_bytes"] == pytest.approx(statistics.fmean(payload_sizes))
 
 
 def test_load_probe_registry_uses_absolute_cache_key_without_resolving(
@@ -4379,7 +5270,7 @@ def test_code_eval_runner_script_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
 
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["dedent_calls_mean"] == 1.0
+    assert metrics["dedent_calls_mean"] == 0.0
     assert metrics["identity_reuse_mean"] == 1.0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["result_alloc_elapsed_ms_mean"] > 0
@@ -5225,9 +6116,19 @@ def test_metric_and_probe_helpers_cover_error_branches() -> None:
         base_metrics={"count": 0.0},
         head_metrics={"count": 1.0},
     )
+    higher_is_better_with_abs_tolerance = _build_metric_row(
+        key="speedup",
+        unit="x",
+        direction="higher_is_better",
+        warn_pct=5.0,
+        warn_abs=0.5,
+        base_metrics={"speedup": 2.3},
+        head_metrics={"speedup": 2.16},
+    )
 
     assert missing["status"] == "missing"
     assert higher_is_better["status"] == "regression"
+    assert higher_is_better_with_abs_tolerance["status"] == "neutral"
     assert informational_faster["delta"] == -2.0
     assert informational_faster["status"] == "neutral"
     assert informational_slower["delta"] == 20.0
@@ -5602,6 +6503,7 @@ def test_mlx_vlm_gemma4_weight_presence_probe_script_emits_metrics() -> None:
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["elapsed_ms_mean"] > 0
+    assert 0 < metrics["elapsed_ms_min"] <= metrics["elapsed_ms_mean"]
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["visited_names_mean"] > 0
     assert metrics["has_vision"] == 1.0
@@ -6013,6 +6915,7 @@ def test_melix_metrics_snapshot_discovery_probe_script_emits_metrics(
     assert metrics["noise_count"] == 200.0
     assert metrics["source_count"] == 3.0
     assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["configured_elapsed_ms_mean"] >= 0.0
 
 
 def test_package_macos_resolve_probe_rejects_unexpected_resolution(monkeypatch: pytest.MonkeyPatch) -> None:

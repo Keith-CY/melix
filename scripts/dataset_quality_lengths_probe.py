@@ -13,7 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "services/mlx-worker-python"))
 
-from worker.productization.dataset_preparation import DatasetVersionRequest, _quality_summary  # noqa: E402
+from worker.productization.dataset_preparation import (  # noqa: E402
+    DatasetVersionRequest,
+    _partition_failed_segments,
+    _quality_summary,
+)
 
 
 def _row(index: int, *, messages: bool) -> dict[str, Any]:
@@ -91,11 +95,69 @@ def measure(*, train_count: int, validation_count: int, samples: int) -> dict[st
     }
 
 
+def measure_failed_partition(*, segment_count: int, failed_modulus: int, samples: int) -> dict[str, float]:
+    segments = [
+        {
+            "segment_id": f"segment-{index:05d}",
+            "text": "x" * (32 + (index % 19)),
+        }
+        for index in range(segment_count)
+    ]
+    fail_segment_ids = tuple(
+        segment["segment_id"]
+        for index, segment in enumerate(segments)
+        if index % failed_modulus == 0
+    )
+
+    elapsed_samples: list[float] = []
+    successful_segments: list[dict[str, Any]] | None = None
+    failed_segments: list[dict[str, Any]] | None = None
+    for _ in range(samples):
+        started = time.perf_counter()
+        successful_segments, failed_segments = _partition_failed_segments(
+            segments,
+            fail_segment_ids,
+        )
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
+    if successful_segments is None or failed_segments is None:  # pragma: no cover - samples>=1 by default
+        raise AssertionError("failed segment partition was not measured")
+    expected_failed = len(fail_segment_ids)
+    if len(failed_segments) != expected_failed:  # pragma: no cover - regression guard
+        raise AssertionError(f"expected {expected_failed} failed segments, got {len(failed_segments)}")
+    expected_successful = segment_count - expected_failed
+    if len(successful_segments) != expected_successful:  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"expected {expected_successful} successful segments, got {len(successful_segments)}"
+        )
+
+    return {
+        "failed_partition_elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
+        "failed_partition_elapsed_ms_min": round(min(elapsed_samples), 6),
+        "failed_partition_elapsed_ms_p95": round(
+            sorted(elapsed_samples)[int(0.95 * (len(elapsed_samples) - 1))],
+            6,
+        ),
+        "failed_partition_segment_count": float(segment_count),
+        "failed_partition_failed_count": float(expected_failed),
+    }
+
+
 def main() -> int:
     train_count = int(os.environ.get("MELIX_DATASET_QUALITY_LENGTHS_TRAIN_ROWS", "12000"))
     validation_count = int(os.environ.get("MELIX_DATASET_QUALITY_LENGTHS_VALIDATION_ROWS", "3000"))
     samples = int(os.environ.get("MELIX_DATASET_QUALITY_LENGTHS_SAMPLES", "7"))
-    print(json.dumps(measure(train_count=train_count, validation_count=validation_count, samples=samples), sort_keys=True))
+    segment_count = int(os.environ.get("MELIX_DATASET_FAILED_PARTITION_SEGMENTS", "15000"))
+    failed_modulus = int(os.environ.get("MELIX_DATASET_FAILED_PARTITION_MODULUS", "5"))
+    metrics = measure(train_count=train_count, validation_count=validation_count, samples=samples)
+    metrics.update(
+        measure_failed_partition(
+            segment_count=segment_count,
+            failed_modulus=failed_modulus,
+            samples=samples,
+        )
+    )
+    print(json.dumps(metrics, sort_keys=True))
     return 0
 
 

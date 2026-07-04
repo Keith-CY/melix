@@ -6,6 +6,8 @@
 
 **Architecture:** The Python worker remains the authority for download materialization and ordered model-root scanning. Hugging Face Hub downloads call `snapshot_download(cache_dir=~/.cache/huggingface/hub)` explicitly, ignoring `HUGGINGFACE_HUB_CACHE` and `HF_HOME` for Melix-managed downloads. Downloads return the real snapshot path and no longer create a Melix descriptor. Registry discovery scans user-configured model roots first and appends the default Hugging Face cache as an implicit root; it recognizes Hugging Face cache snapshots and plain local MLX directories, but only publishes models with explicit MLX compatibility signals. The Swift CLI and Desktop App cache an optional Hugging Face token in Melix's local secrets store and pass it as a transient request value without protocol changes.
 
+**Superseded behavior note:** Issue #1258 cache-root fidelity supersedes the original fixed-cache download and implicit-scan rule. New managed Hub downloads now honor request-level cache metadata first, then process-level `HUGGINGFACE_HUB_CACHE` / `HF_HOME` roots, while preserving the default `~/.cache/huggingface/hub` fallback. Registry discovery also uses that effective cache root as the implicit Hugging Face source and reports missing configured roots as inaccessible. See `docs/plans/2026-06-23-issue-1258-hf-cache-root-fidelity.md`.
+
 **Tech Stack:** Python 3.12, `huggingface_hub`, pytest, Swift 6, Swift Testing, Melix worker/control-plane protobufs.
 
 ---

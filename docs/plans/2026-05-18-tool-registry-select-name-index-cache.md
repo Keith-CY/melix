@@ -72,6 +72,50 @@ builder is kept as a module-level helper so the existing vector/keyword paths do
 not pay a per-call nested-function allocation cost. The probe records a separate
 `always_only_planning_elapsed_ms_mean` metric for this bounded-cap routing path.
 
+## Slice update: exact missing single-name error fast path
+
+This incremental slice keeps the same `tool-registry-select-name-index-cache`
+registered probe and narrows the optimization to exact single-name selection
+misses such as `("missing_tool",)`. Once the first cached name-index lookup
+proves the exact non-blank name is absent and there is no selected-registry cache
+hit, `ToolRegistry.select()` now raises the existing unknown-tool error directly
+instead of performing a second equivalent dictionary lookup. Whitespace-trimmed
+single-name requests, cache hits, valid selections, and error messages remain
+unchanged.
+
+## Slice update: whitespace-only turn fallback fast path
+
+This incremental slice keeps the same `tool-registry-select-name-index-cache`
+registered probe and narrows the optimization to agentic tool routing requests
+that have no vector-selected tool ids, no recent context turns, and an empty or
+whitespace-only current turn. These requests can only return the always-available
+`local_compute` fallback, so `select_agentic_tools_for_turn()` now returns that
+fallback before allocating the selected-name/source containers or invoking the
+keyword matcher. The receipt shape, `vector_available` flag, fallback reason,
+and selected tool list remain unchanged.
+
+## Slice update: empty selection cache fast path
+
+This incremental slice keeps the same `tool-registry-select-name-index-cache`
+registered probe and narrows the optimization to explicit empty selection
+requests such as `select([])` and `select(())`. The empty selected registry is
+now served from the selection cache before allocating normalization containers,
+while preserving the empty registry metrics snapshot and immutable selection
+semantics. The probe records `empty_selection_elapsed_ms_mean` and
+`empty_selection_tool_count_mean` so CI and local Linux runs validate the hot
+path directly.
+
+## Slice update: canonical selected-name append fast path
+
+This incremental slice keeps the same `tool-registry-select-name-index-cache`
+registered probe and narrows the optimization to `select_agentic_tools_for_turn()`
+append operations where selected tool ids are already canonical registry names.
+The append helper now avoids an unconditional `str.strip()` call for non-empty
+names with no leading or trailing whitespace, while preserving whitespace
+normalization, blank rejection, deduplication, max-selection limits, and unknown
+tool filtering. The probe's `selector_planning_elapsed_ms_mean` and
+`current_capacity_planning_elapsed_ms_mean` metrics exercise this path directly.
+
 ## Acceptance Criteria
 
 - Focused behavior tests pass locally on Linux.

@@ -33,3 +33,12 @@ The probe repeatedly calls `_size_hint_from_text(...)` across direct card-data h
 - Changed executable line coverage is at least 95% for the touched Python scope.
 - Local base-vs-head probe shows lower `elapsed_ms_mean` with identical structural guard rails.
 - `git diff --check` passes.
+
+## 2026-07-03 Bound Search Slice
+
+This follow-up slice keeps the regex precompile behavior and additionally binds
+precompiled `Pattern.search` methods at module import time. The hot parser now
+selects the already-bound search callable for bare vs explicit size-hint modes,
+avoiding a repeated `Pattern.search` attribute lookup inside
+`_size_hint_from_text(...)` while preserving the accepted regex grammar and
+fallback behavior.
