@@ -896,13 +896,51 @@ def _direct_size_hint_from_text(text: str) -> int:
                 except ValueError:
                     return 0
 
-    parts = text.split(maxsplit=2)
-    if len(parts) != 2:
+    text_length = len(text)
+    value_start = 0
+    while value_start < text_length and text[value_start].isspace():
+        value_start += 1
+    if value_start >= text_length:
         return 0
-    value_text, unit_text = parts
-    multiplier = _SIZE_HINT_MULTIPLIERS.get(unit_text.lower())
-    if multiplier is None:
+
+    value_end = value_start
+    while value_end < text_length and not text[value_end].isspace():
+        value_end += 1
+    if value_end >= text_length:
         return 0
+
+    unit_start = value_end + 1
+    while unit_start < text_length and text[unit_start].isspace():
+        unit_start += 1
+    if unit_start >= text_length:
+        return 0
+
+    unit_end = unit_start
+    while unit_end < text_length and not text[unit_end].isspace():
+        unit_end += 1
+    tail_cursor = unit_end
+    while tail_cursor < text_length:
+        if not text[tail_cursor].isspace():
+            return 0
+        tail_cursor += 1
+
+    unit_length = unit_end - unit_start
+    if unit_length != 2:
+        return 0
+    unit_initial = ord(text[unit_start])
+    unit_suffix = ord(text[unit_start + 1])
+    if unit_suffix != 66 and unit_suffix != 98:  # B or b
+        return 0
+    if unit_initial == 77 or unit_initial == 109:  # M or m
+        multiplier = _SIZE_HINT_MB
+    elif unit_initial == 71 or unit_initial == 103:  # G or g
+        multiplier = _SIZE_HINT_GB
+    elif unit_initial == 75 or unit_initial == 107:  # K or k
+        multiplier = _SIZE_HINT_KB
+    else:
+        return 0
+
+    value_text = text[value_start:value_end]
     if value_text.isdecimal():
         return int(value_text) * multiplier
     try:
