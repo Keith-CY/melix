@@ -491,19 +491,24 @@ def _read_dist_info_metadata_version(metadata_path: Path) -> str | None:
 
 
 def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
+    dist_info_prefix = "mlx_metal-"
+    dist_info_suffix = ".dist-info"
+    dist_info_prefix_length = len(dist_info_prefix)
+    dist_info_suffix_length = len(dist_info_suffix)
     for ancestor in metallib_path.resolve().parents:
         fallback_version: str | None = None
         try:
             with os.scandir(ancestor) as entries:
                 for entry in entries:
+                    entry_name = entry.name
                     if not (
-                        entry.name.startswith("mlx_metal-")
-                        and entry.name.endswith(".dist-info")
+                        entry_name.startswith(dist_info_prefix)
+                        and entry_name.endswith(dist_info_suffix)
                         and entry.is_dir(follow_symlinks=False)
                     ):
                         continue
 
-                    metadata_path = ancestor / entry.name / "METADATA"
+                    metadata_path = ancestor / entry_name / "METADATA"
                     try:
                         version = _read_dist_info_metadata_version(metadata_path)
                     except OSError:
@@ -512,7 +517,9 @@ def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
                         return version
 
                     if fallback_version is None:
-                        fallback_candidate = entry.name[len("mlx_metal-") : -len(".dist-info")]
+                        fallback_candidate = entry_name[
+                            dist_info_prefix_length:-dist_info_suffix_length
+                        ]
                         if fallback_candidate:
                             fallback_version = fallback_candidate
         except OSError:
