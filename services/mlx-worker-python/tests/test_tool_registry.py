@@ -120,8 +120,8 @@ def test_workspace_file_integration_intent_routes_schema_without_greeting_bleed(
     ("kwargs", "message"),
     [
         (
-            {"tool_id": "bad-name", "retrieval_description": "Bad metadata."},
-            "Invalid tool index metadata id",
+            {"tool_id": " bad-name ", "retrieval_description": "Bad metadata."},
+            "Invalid tool index metadata id: bad-name",
         ),
         (
             {"tool_id": "valid_tool", "retrieval_description": " "},

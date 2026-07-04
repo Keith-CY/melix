@@ -2357,6 +2357,13 @@ def test_agentic_tool_runtime_workspace_file_failures_are_typed(
     assert missing_root_run.observations[0]["payload"]["reason"] == "workspace_file_unavailable"
     assert bad_operation_run.observations[0]["status"] == "failed"
     assert "Unsupported workspace_file operation" in bad_operation_run.observations[0]["payload"]["error"]
+    assert (
+        bad_operation_run.observations[0]["payload"]["reason"]
+        == "unsupported_workspace_file_operation"
+    )
+    assert bad_operation_run.observations[0]["payload"]["source_type"] == "tool_argument"
+    assert bad_operation_run.observations[0]["payload"]["source_id"] == "workspace-file-bad-operation"
+    assert bad_operation_run.observations[0]["payload"]["field"] == "arguments.operation"
     assert refused_run.observations[0]["status"] == "failed"
     assert refused_run.observations[0]["payload"]["reason"] == "workspace_path_refused"
     assert refused_run.observations[0]["payload"]["workspace_path_receipt"]["allowed"] is False

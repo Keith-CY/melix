@@ -239,7 +239,7 @@ class ToolIndexMetadata:
             hint.strip() for hint in self.routing_hints if hint.strip()
         )
         if not _TOOL_NAME_RE.fullmatch(tool_id):
-            raise ToolRegistryError(f"Invalid tool index metadata id: {self.tool_id}")
+            raise ToolRegistryError(f"Invalid tool index metadata id: {tool_id}")
         if not retrieval_description:
             raise ToolRegistryError(
                 f"Tool index metadata {tool_id} must include a retrieval description."

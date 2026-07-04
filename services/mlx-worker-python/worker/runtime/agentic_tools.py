@@ -751,7 +751,14 @@ def _workspace_file_payload(
         )
     else:
         raise AgenticToolRuntimeError(
-            f"Unsupported workspace_file operation: {operation or '<empty>'}."
+            f"Unsupported workspace_file operation: {operation or '<empty>'}.",
+            details={
+                "reason": "unsupported_workspace_file_operation",
+                "source_type": "tool_argument",
+                "source_id": tool_call_id,
+                "field": "arguments.operation",
+                "corrective_action": "Use one of the supported workspace_file operations: read, write, or edit.",
+            },
         )
     if not result.resolution.allowed:
         raise _workspace_path_refused(source_id=tool_call_id, resolution=result.resolution)
