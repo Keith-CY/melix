@@ -1727,11 +1727,13 @@ def _maximum_weight_semantic_value_group_matching(
                 return candidate[2] < current[2]
         return False
 
+    entry_count = len(ordered_entries)
+
     def solve(candidate_index: int, used_gold_mask: int, used_pred_mask: int) -> tuple[float, int, tuple[int, ...]]:
         key = (candidate_index, used_gold_mask, used_pred_mask)
         if key in memo:
             return memo[key]
-        if candidate_index >= len(ordered_entries):
+        if candidate_index >= entry_count:
             return (0.0, 0, ())
 
         best = solve(candidate_index + 1, used_gold_mask, used_pred_mask)

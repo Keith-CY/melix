@@ -54,3 +54,16 @@ path skips the `lru_cache` wrapper lookup.
 Validation remains the registered `event-extraction-semantic-value-group-cache` probe,
 focused event-extraction tests, changed-scope coverage, and GitHub PR-scoped
 performance CI before merge.
+
+## 2026-07-04 Follow-up Slice: Matching Entry Count Binding
+
+The semantic value-group probe also exercises `_maximum_weight_semantic_value_group_matching(...)`,
+where the recursive solver repeatedly checks whether the current candidate index reached
+the ordered-entry boundary. This follow-up keeps the same dynamic-programming state,
+tie-break ordering, and returned match payloads, but binds `len(ordered_entries)` once
+before recursion so the terminal check uses a local integer instead of recomputing the
+list length at every recursive visit.
+
+The affected code path remains covered by the registered
+`event-extraction-semantic-value-group-cache` probe, its focused pytest coverage, and the
+PR-scoped performance workflow. This is Python-only and locally verifiable on Linux.
