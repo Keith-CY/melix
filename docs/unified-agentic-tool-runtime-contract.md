@@ -101,6 +101,7 @@ default no-selection tool schema:
 | --- | --- | --- | --- |
 | `skill_lookup` | `skill.lookup` | `skill_lookup_results` | look up fixture-backed agent skill evidence |
 | `memory_lookup` | `memory.lookup` | `memory_lookup_results` | look up fixture-backed memory evidence |
+| `workspace_file` | `workspace_file.operation` | `workspace_file_result` | read, write, or edit active-workspace files after path-policy checks |
 
 Additional tools may be added only by extending the registry contract, catalog
 tests, and evidence fields in the same change. Ad hoc per-surface tool names
@@ -124,6 +125,14 @@ The worker-facing default registry must be serializable to a deterministic
 `ToolConfig` receipt. Explicit selections are resolved against the selectable
 catalog, must preserve request order, deduplicate repeated names, and fail
 before execution on unknown names.
+
+Every selectable tool schema must also have matching index metadata with the
+same tool ID and retrieval description as the schema description. Non-always
+tools must publish deterministic routing hints so prompt-visible affordances,
+retrieval/index descriptions, and model-visible schemas cannot drift apart.
+Parity fixtures must fail when a selectable schema lacks index metadata, when
+index metadata references an unavailable schema, or when a non-always tool has
+no routing hints.
 
 ## Tool Selection Receipt Contract
 
@@ -1100,6 +1109,18 @@ failures after resolver admission must also stay inside this boundary as
 Receipt byte counters describe completed tool effects only; failed receipts keep
 byte counters at zero even if a preflight read occurred before the operation was
 rejected.
+
+The deterministic `workspace_file` adapter must expose the complete
+`WorkspaceFileToolResult.receipt` as `workspace_file_receipt` in the observation
+payload while preserving the path-only `workspace_path_receipt` compatibility
+field. Read results must include `content` whenever the file was read
+successfully, including empty files. Write and edit results omit `content`.
+`edit` calls that provide `expected_replacements` must parse it as a positive
+integer; non-integer, boolean, zero, or negative values fail closed with
+`reason = invalid_expected_replacements` instead of disabling the exact-count
+guard. Refused paths must use the same `workspace_path_refused` failed adapter
+path as local `visit` refusals so the observation carries a source-specific
+refusal receipt with `source_type = workspace_file`.
 
 The deterministic `visit` adapter must reuse that same boundary for local
 workspace reads. When a caller provides an explicit workspace root and asks
