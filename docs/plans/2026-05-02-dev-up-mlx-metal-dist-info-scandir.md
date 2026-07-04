@@ -35,6 +35,10 @@ This slice is Python-only and is locally verifiable on Linux with focused pytest
 - Local registered probe improves versus the pre-change baseline.
 - PR-scoped performance CI selects and completes the registered probe for this path.
 
+## Incremental Slice: Name-bound Reuse
+
+This follow-up keeps the same registered `dev-up-mlx-metal-dist-info-scandir` probe and narrows the change to `read_mlx_metal_dist_info_version()`. The scan loop binds the `mlx_metal-` prefix, `.dist-info` suffix, their lengths, and each `entry.name` once before the match/fallback checks. This reduces repeated attribute lookups and literal-length work while preserving metadata-first version resolution and directory-name fallback behavior.
+
 ## Verification Commands
 
 ```text
