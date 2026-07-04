@@ -752,6 +752,10 @@ def _redact_absolute_path(
         summary.redacted_absolute_path_count += 1
         summary.redaction_count += 1
         return f"<target>/{relative_text}" + suffix
+    if "/../" not in trimmed_path and not trimmed_path.endswith("/.."):
+        summary.redacted_absolute_path_count += 1
+        summary.redaction_count += 1
+        return replacement + suffix
     try:
         path = Path(trimmed_path)
         if ".." not in path.parts:

@@ -194,6 +194,14 @@ inlines the per-pattern marker/expression loops inside the excerpt scan so the
 hot path avoids repeated global, method, and helper lookups in the registered
 diagnostic parser probe.
 
+A follow-up 2026-07-04 external-path redaction slice keeps target-relative
+labels unchanged while short-circuiting clean external absolute paths after the
+lexical target-root check. Paths that do not contain parent-directory segments
+cannot become target-relative through the slower fallback, so the redactor emits
+the existing `<absolute-path>` label without constructing fallback `Path` objects
+or calling `relative_to()`. Paths with `..` segments continue through the
+normalization fallback to preserve safe target-root labeling.
+
 Focused verification:
 
 ```bash
