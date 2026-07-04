@@ -291,6 +291,24 @@ Detector receipt derivation is rejected when `raw_text_included` is true or
 `raw_sensitive_span_count` is greater than zero. Exported receipts must include
 only category/count evidence, never raw sensitive spans or matched snippets.
 
+Local proxy text privacy detection is explicitly opt-in. Set
+`MELIX_PRIVACY_DETECTOR_MODE=redact` to scan local proxy text request message
+parts before worker dispatch, replace matched spans with stable placeholders,
+and attach the detector receipt plus a `melix.privacy_audit_counter.v1` counter
+to worker request metadata. Set `MELIX_PRIVACY_DETECTOR_MODE=block` to reject
+matched local proxy text requests before worker dispatch with a sanitized
+`privacy_policy_blocked` error envelope. When the setting is unset, empty,
+`off`, `disabled`, or any unsupported value, the detector is not run and local
+proxy text request behavior is unchanged.
+
+The local proxy detector uses `surface = local_proxy_text_request` and route
+scopes such as `chat_completions`, `completions`, `responses`, and `messages`.
+The redacted placeholders are category-level values such as
+`[REDACTED_EMAIL]` and `[REDACTED_SECRET]`; detector metadata must still omit
+raw matched values and raw prompt snippets. This opt-in slice covers text
+message parts only. It does not scan diagnostics bundle content, mutate user
+files, inspect workspace documents, or run model-backed entity detection.
+
 `request-summary.json` records stable request-level fields:
 
 - request id

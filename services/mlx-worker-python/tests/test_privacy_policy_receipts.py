@@ -369,3 +369,39 @@ def test_privacy_detector_receipt_metadata_derivation_rejects_raw_text_receipts(
     impossible_redaction_metadata = dict(metadata)
     impossible_redaction_metadata["melix.privacy.detector.redacted_span_count"] = "4"
     assert privacy_detector_receipt_from_metadata(impossible_redaction_metadata) == {}
+
+
+def test_privacy_detector_receipt_metadata_derivation_accepts_clean_local_proxy_pass() -> None:
+    metadata = {
+        "melix.privacy.detector.schema_version": "melix.privacy_detector_receipt.v1",
+        "melix.privacy.detector.surface": "local_proxy_text_request",
+        "melix.privacy.detector.route_scope": "chat_completions",
+        "melix.privacy.detector.detector_id": "melix.pattern_detector.v1",
+        "melix.privacy.detector.policy_id": "melix.default_privacy_policy.v1",
+        "melix.privacy.detector.policy_mode": "redact",
+        "melix.privacy.detector.action": "passed",
+        "melix.privacy.detector.categories": "",
+        "melix.privacy.detector.match_count": "0",
+        "melix.privacy.detector.redacted_span_count": "0",
+        "melix.privacy.detector.blocked_reason": "",
+        "melix.privacy.detector.confidence_source": "deterministic_pattern",
+        "melix.privacy.detector.raw_sensitive_span_count": "0",
+        "melix.privacy.detector.raw_text_included": "false",
+    }
+
+    assert privacy_detector_receipt_from_metadata(metadata) == {
+        "schema_version": "melix.privacy_detector_receipt.v1",
+        "surface": "local_proxy_text_request",
+        "route_scope": "chat_completions",
+        "detector_id": "melix.pattern_detector.v1",
+        "policy_id": "melix.default_privacy_policy.v1",
+        "policy_mode": "redact",
+        "action": "passed",
+        "categories": [],
+        "match_count": 0,
+        "redacted_span_count": 0,
+        "blocked_reason": "",
+        "confidence_source": "deterministic_pattern",
+        "raw_sensitive_span_count": 0,
+        "raw_text_included": False,
+    }
