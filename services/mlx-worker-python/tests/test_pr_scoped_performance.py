@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import statistics
 import time
 import runpy
 import sys
@@ -4706,6 +4707,7 @@ def test_vlm_speculative_smoke_probe_script_emits_metrics(
     assert metrics["accelerated_decode_tokens_per_second"] == 166.7
     assert metrics["acceptance_rate"] == 0.75
     assert metrics["fallback_count"] == 0.0
+    assert metrics["speed_target_ratio"] == pytest.approx(1.667)
 
 
 def test_vlm_speculative_smoke_probe_handles_missing_artifact(
@@ -4758,6 +4760,70 @@ def test_vlm_speculative_smoke_probe_handles_malformed_artifact(
     assert metrics["comparison_artifact_present_count"] == 0.0
     assert metrics["smoke_pass_count"] == 0.0
     assert metrics["valid_payload_bytes"] == 0.0
+
+
+def test_vlm_speculative_smoke_probe_handles_non_object_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from worker.engine.maintenance_core import MaintenanceCore
+
+    comparison_path = tmp_path / "non-object-comparison.json"
+
+    def fake_writer(**_: object) -> dict[str, Path]:
+        comparison_path.write_text("[]", encoding="utf-8")
+        return {"comparison": comparison_path}
+
+    monkeypatch.setattr(MaintenanceCore, "_write_vlm_speculative_comparison_artifact", fake_writer)
+    monkeypatch.setattr(sys, "argv", ["vlm_speculative_smoke_probe.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/vlm_speculative_smoke_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["comparison_artifact_present_count"] == 0.0
+    assert metrics["smoke_pass_count"] == 0.0
+    assert metrics["valid_payload_bytes"] > 0.0
+
+
+def test_vlm_speculative_smoke_probe_reports_mean_payload_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from worker.engine.maintenance_core import MaintenanceCore
+
+    payload_sizes: list[float] = []
+    call_count = 0
+
+    def fake_writer(**_: object) -> dict[str, Path]:
+        nonlocal call_count
+        comparison_path = tmp_path / f"comparison-{call_count}.json"
+        comparison_path.write_text(
+            json.dumps(
+                {
+                    "comparison_validity": "valid",
+                    "padding": "x" * call_count,
+                }
+            ),
+            encoding="utf-8",
+        )
+        payload_sizes.append(float(comparison_path.stat().st_size))
+        call_count += 1
+        return {"comparison": comparison_path}
+
+    monkeypatch.setattr(MaintenanceCore, "_write_vlm_speculative_comparison_artifact", fake_writer)
+    monkeypatch.setattr(sys, "argv", ["vlm_speculative_smoke_probe.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/vlm_speculative_smoke_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["comparison_artifact_present_count"] == 5.0
+    assert metrics["valid_payload_bytes"] == pytest.approx(statistics.fmean(payload_sizes))
 
 
 def test_load_probe_registry_uses_absolute_cache_key_without_resolving(

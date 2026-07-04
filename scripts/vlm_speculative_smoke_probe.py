@@ -90,13 +90,15 @@ def _sample(
 
 
 def _speed_target_met(*, baseline: BenchSample, accelerated: BenchSample) -> bool:
-    baseline_tps = baseline.decode_tokens_per_second
-    accelerated_tps = accelerated.decode_tokens_per_second
     return (
-        baseline_tps > 0.0
-        and accelerated_tps / baseline_tps >= SPEED_TARGET_RATIO
+        _speed_target_ratio(baseline=baseline, accelerated=accelerated) >= SPEED_TARGET_RATIO
         and accelerated.ttft_ms <= baseline.ttft_ms
     )
+
+
+def _speed_target_ratio(*, baseline: BenchSample, accelerated: BenchSample) -> float:
+    baseline_tps = baseline.decode_tokens_per_second
+    return accelerated.decode_tokens_per_second / baseline_tps if baseline_tps > 0.0 else 0.0
 
 
 def _fallback_stable(sample: BenchSample) -> bool:
@@ -125,17 +127,19 @@ def _comparison_artifact_status(comparison_path: Path) -> tuple[bool, float]:
         payload_bytes = float(comparison_path.stat().st_size)
     except (json.JSONDecodeError, OSError):
         return False, 0.0
+    if not isinstance(payload, dict):
+        return False, payload_bytes
     return payload.get("comparison_validity") == "valid", payload_bytes
 
 
 def main() -> int:
     artifact_elapsed_ms: list[float] = []
+    payload_bytes_samples: list[float] = []
     smoke_pass_count = 0.0
     speed_target_met_count = 0.0
     fallback_stability_count = 0.0
     repeated_media_correctness_count = 0.0
     comparison_artifact_present_count = 0.0
-    payload_bytes = 0.0
 
     baseline = _sample(
         route="baseline",
@@ -164,6 +168,7 @@ def main() -> int:
             artifact_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
             comparison_path = paths["comparison"]
             artifact_present, payload_bytes = _comparison_artifact_status(comparison_path)
+            payload_bytes_samples.append(payload_bytes)
             speed_target_met = _speed_target_met(baseline=baseline, accelerated=accelerated)
             fallback_stable = _fallback_stable(accelerated)
             repeated_media_correct = _repeated_media_correct(baseline, accelerated)
@@ -192,8 +197,11 @@ def main() -> int:
                 "sample_count": float(SAMPLE_COUNT),
                 "smoke_pass_count": smoke_pass_count,
                 "speed_target_met_count": speed_target_met_count,
-                "speed_target_ratio": SPEED_TARGET_RATIO,
-                "valid_payload_bytes": payload_bytes,
+                "speed_target_ratio": round(
+                    _speed_target_ratio(baseline=baseline, accelerated=accelerated),
+                    6,
+                ),
+                "valid_payload_bytes": round(statistics.fmean(payload_bytes_samples), 6),
             },
             sort_keys=True,
         )
