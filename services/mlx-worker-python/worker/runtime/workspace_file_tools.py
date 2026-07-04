@@ -14,7 +14,7 @@ class WorkspaceFileToolResult:
     tool_name: str
     status: str
     resolution: WorkspacePathResolution
-    content: str = ""
+    content: str | None = None
     bytes_read: int = 0
     bytes_written: int = 0
     replacement_count: int = 0
