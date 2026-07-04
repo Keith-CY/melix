@@ -747,12 +747,12 @@ def _redact_absolute_path(
 ) -> str:
     trimmed_path = raw_path.rstrip(".,)")
     suffix = raw_path[len(trimmed_path):]
-    replacement = "<absolute-path>"
     relative_text = _target_relative_text(trimmed_path, resolved_target_root_text)
     if relative_text is not None:
         summary.redacted_absolute_path_count += 1
         summary.redaction_count += 1
         return f"<target>/{relative_text}" + suffix
+    replacement = "<absolute-path>"
     if "/../" not in trimmed_path and not trimmed_path.endswith("/.."):
         summary.redacted_absolute_path_count += 1
         summary.redaction_count += 1
@@ -780,9 +780,12 @@ def _target_relative_text(raw_path: str, resolved_target_root_text: str) -> str 
     if raw_path[boundary_index] != "/":
         return None
     relative_text = raw_path[boundary_index + 1 :]
+    if not relative_text:
+        return None
+    if ".." not in relative_text:
+        return relative_text
     if (
-        not relative_text
-        or relative_text == ".."
+        relative_text == ".."
         or relative_text.startswith("../")
         or "/../" in relative_text
         or relative_text.endswith("/..")
