@@ -744,30 +744,35 @@ def _workspace_file_payload(
             requested_path,
             old_text=old_text,
             new_text=new_text,
-            expected_replacements=_optional_positive_int(arguments.get("expected_replacements")),
+            expected_replacements=_optional_expected_replacements(
+                arguments.get("expected_replacements"),
+                tool_call_id=tool_call_id,
+            ),
         )
     else:
         raise AgenticToolRuntimeError(
             f"Unsupported workspace_file operation: {operation or '<empty>'}."
         )
+    if not result.resolution.allowed:
+        raise _workspace_path_refused(source_id=tool_call_id, resolution=result.resolution)
 
     payload: dict[str, Any] = {
         "operation": operation,
         "path": requested_path,
+        "workspace_file_receipt": result.receipt,
         "workspace_path_receipt": result.resolution.receipt_fields(),
         "bytes_read": result.bytes_read,
         "bytes_written": result.bytes_written,
         "replacement_count": result.replacement_count,
     }
-    if result.content:
+    if result.content is not None:
         payload["content"] = result.content
     if result.error:
         payload["error"] = result.error
-    if not result.resolution.allowed:
-        payload["reason"] = "workspace_path_refused"
     if result.status != "completed":
         payload["_status"] = "failed"
     return payload
+
 
 def _local_visit_requested_path(url: str) -> str | None:
     parsed = urlparse(url)
@@ -1516,13 +1521,40 @@ def _positive_int(value: object, *, default: int) -> int:
     return max(parsed, 1)
 
 
-def _optional_positive_int(value: object) -> int | None:
+def _optional_expected_replacements(
+    value: object,
+    *,
+    tool_call_id: str,
+) -> int | None:
     if value in (None, ""):
         return None
+    if isinstance(value, bool):
+        raise _invalid_expected_replacements(value, tool_call_id=tool_call_id)
     try:
-        return max(int(value), 1)
+        parsed = int(value)
     except (TypeError, ValueError):
-        return None
+        raise _invalid_expected_replacements(value, tool_call_id=tool_call_id) from None
+    if parsed < 1:
+        raise _invalid_expected_replacements(value, tool_call_id=tool_call_id)
+    return parsed
+
+
+def _invalid_expected_replacements(
+    value: object,
+    *,
+    tool_call_id: str,
+) -> AgenticToolRuntimeError:
+    return AgenticToolRuntimeError(
+        "workspace_file expected_replacements must be a positive integer.",
+        details={
+            "reason": "invalid_expected_replacements",
+            "source_type": "tool_argument",
+            "source_id": tool_call_id,
+            "field": "arguments.expected_replacements",
+            "actual_type": type(value).__name__,
+            "corrective_action": "Pass expected_replacements as a positive integer or omit it.",
+        },
+    )
 
 
 __all__ = [

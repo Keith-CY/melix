@@ -59,7 +59,7 @@ def test_workspace_file_tools_rejects_symlink_escapes_before_reading_or_mutating
     assert (outside / "secret.txt").read_text(encoding="utf-8") == "secret\n"
     for result in (read_result, write_result, edit_result):
         assert result.status == "failed"
-        assert result.content == ""
+        assert result.content is None
         assert result.bytes_read == 0
         assert result.bytes_written == 0
         assert result.replacement_count == 0
@@ -141,7 +141,7 @@ def test_workspace_file_tools_read_missing_file_returns_failed_receipt(tmp_path:
     result = tools.read_text("missing.txt")
 
     assert result.status == "failed"
-    assert result.content == ""
+    assert result.content is None
     assert result.bytes_read == 0
     assert result.receipt["allowed"] is True
     assert "No such file or directory" in result.receipt["error"]

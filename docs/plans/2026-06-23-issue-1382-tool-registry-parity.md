@@ -69,7 +69,8 @@ The local metrics report for this slice is:
 - unrelated greeting precision: a greeting only includes always-available
   `local_compute`;
 - changed-scope coverage for `tool_registry.py`, `agentic_tools.py`, and
-  their focused tests.
+  their focused tests, plus `workspace_file_tools.py` when review fixes touch
+  workspace-file result semantics.
 
 ## TDD Plan
 

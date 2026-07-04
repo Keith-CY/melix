@@ -1110,6 +1110,18 @@ Receipt byte counters describe completed tool effects only; failed receipts keep
 byte counters at zero even if a preflight read occurred before the operation was
 rejected.
 
+The deterministic `workspace_file` adapter must expose the complete
+`WorkspaceFileToolResult.receipt` as `workspace_file_receipt` in the observation
+payload while preserving the path-only `workspace_path_receipt` compatibility
+field. Read results must include `content` whenever the file was read
+successfully, including empty files. Write and edit results omit `content`.
+`edit` calls that provide `expected_replacements` must parse it as a positive
+integer; non-integer, boolean, zero, or negative values fail closed with
+`reason = invalid_expected_replacements` instead of disabling the exact-count
+guard. Refused paths must use the same `workspace_path_refused` failed adapter
+path as local `visit` refusals so the observation carries a source-specific
+refusal receipt with `source_type = workspace_file`.
+
 The deterministic `visit` adapter must reuse that same boundary for local
 workspace reads. When a caller provides an explicit workspace root and asks
 `visit` to read a relative path, absolute path, or local `file://` URI, the

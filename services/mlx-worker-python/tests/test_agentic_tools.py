@@ -2145,6 +2145,42 @@ def test_agentic_tool_runtime_workspace_file_read_uses_resolver_receipt(tmp_path
         "allowed": True,
         "refusal_reason": "",
     }
+    assert observation["payload"]["workspace_file_receipt"] == {
+        "schema_version": "melix.workspace_file_tool_receipt.v1",
+        "tool_name": "workspace_file.read",
+        "status": "completed",
+        "operation": "read",
+        "workspace_root": str(workspace.resolve()),
+        "requested_path": "notes.md",
+        "resolved_path": str(note_path.resolve()),
+        "allowed": True,
+        "refusal_reason": "",
+        "bytes_read": len("# Melix\n\nWorkspace note.\n".encode("utf-8")),
+        "bytes_written": 0,
+        "replacement_count": 0,
+    }
+
+
+def test_agentic_tool_runtime_workspace_file_read_preserves_empty_content(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "empty.md").write_text("", encoding="utf-8")
+
+    run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "workspace-file-empty-read",
+                "name": "workspace_file",
+                "arguments": {"operation": "read", "path": "empty.md"},
+            }
+        ],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+
+    observation = run.observations[0]
+    assert observation["status"] == "completed"
+    assert observation["payload"]["content"] == ""
+    assert observation["payload"]["bytes_read"] == 0
 
 
 def test_agentic_tool_runtime_workspace_file_write_and_edit_use_resolver(
@@ -2253,6 +2289,38 @@ def test_agentic_tool_runtime_workspace_file_failures_are_typed(
         ],
         fixture_context={"workspace_root": str(workspace)},
     )
+    non_positive_count_run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "workspace-file-non-positive-count",
+                "name": "workspace_file",
+                "arguments": {
+                    "operation": "edit",
+                    "path": "no-expected-count.md",
+                    "old_text": "alpha",
+                    "new_text": "beta",
+                    "expected_replacements": 0,
+                },
+            }
+        ],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+    bool_count_run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "workspace-file-bool-count",
+                "name": "workspace_file",
+                "arguments": {
+                    "operation": "edit",
+                    "path": "no-expected-count.md",
+                    "old_text": "alpha",
+                    "new_text": "beta",
+                    "expected_replacements": True,
+                },
+            }
+        ],
+        fixture_context={"workspace_root": str(workspace)},
+    )
     exact_mismatch_run = execute_agentic_tool_calls(
         [
             {
@@ -2292,8 +2360,40 @@ def test_agentic_tool_runtime_workspace_file_failures_are_typed(
     assert refused_run.observations[0]["status"] == "failed"
     assert refused_run.observations[0]["payload"]["reason"] == "workspace_path_refused"
     assert refused_run.observations[0]["payload"]["workspace_path_receipt"]["allowed"] is False
-    assert mismatch_run.observations[0]["status"] == "completed"
-    assert mismatch_run.observations[0]["payload"]["replacement_count"] == 2
+    assert _source_refusal_receipts(refused_run.observations[0]) == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": _expected_source_segment_id(
+                "workspace-file-refused",
+                "workspace-path-refusal",
+            ),
+            "source_type": "workspace_file",
+            "source_field": "workspace_path",
+            "source_id": "workspace-file-refused",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "workspace_path_refused",
+            "corrective_action": "Use a path accepted by the Workspace path resolver before reading local files.",
+        }
+    ]
+    assert "config/.env" not in json.dumps(
+        _source_refusal_receipts(refused_run.observations[0]),
+        ensure_ascii=False,
+    )
+    assert mismatch_run.observations[0]["status"] == "failed"
+    assert mismatch_run.observations[0]["payload"]["reason"] == "invalid_expected_replacements"
+    assert "expected_replacements" in mismatch_run.observations[0]["payload"]["error"]
+    assert non_positive_count_run.observations[0]["status"] == "failed"
+    assert (
+        non_positive_count_run.observations[0]["payload"]["reason"]
+        == "invalid_expected_replacements"
+    )
+    assert bool_count_run.observations[0]["status"] == "failed"
+    assert bool_count_run.observations[0]["payload"]["reason"] == "invalid_expected_replacements"
     assert exact_mismatch_run.observations[0]["status"] == "failed"
     assert "replacement count mismatch" in exact_mismatch_run.observations[0]["payload"]["error"]
     assert no_expected_count_run.observations[0]["status"] == "completed"
