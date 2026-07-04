@@ -209,6 +209,15 @@ failed and blocked smoke checks, but avoid constructing the two-item set inside
 each checked failure row while aggregating registered diagnostic parser probe
 fixtures.
 
+A follow-up 2026-07-04 target-path relative-text slice keeps target-relative
+and external path redaction labels unchanged while making the lexical
+`_target_relative_text()` fast path return immediately for clean target-local
+relative paths that contain no parent-directory marker. The slice also defers the
+`<absolute-path>` fallback string setup until after the target-local lexical match
+fails. Paths with empty relative text or `..` segments continue through the same
+safe fallback behavior, but ordinary bounded runtime excerpts skip the unused
+fallback assignment and the extra parent-segment boundary checks.
+
 Focused verification:
 
 ```bash
