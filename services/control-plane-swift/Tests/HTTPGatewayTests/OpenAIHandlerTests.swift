@@ -11859,6 +11859,21 @@ struct OpenAIHandlerTests {
         #expect(urlResponse.statusCode == 200)
         #expect(urlRequest.image.isEmpty)
         #expect(urlRequest.imageUri == "file:///tmp/source.png")
+        #expect(urlRequest.ext["melix.network_fetch.policy.schema_version"] == "melix.network_fetch_policy_receipt.v1")
+        #expect(urlRequest.ext["melix.network_fetch.policy.surface"] == "local_proxy_external_media")
+        #expect(urlRequest.ext["melix.network_fetch.policy.route_scope"] == "image_edit")
+        #expect(urlRequest.ext["melix.network_fetch.policy.action"] == "passed")
+        #expect(urlRequest.ext["melix.network_fetch.policy.url_class"] == "local")
+        #expect(urlRequest.ext["melix.network_fetch.policy.redacted_url"] == "[LOCAL_PATH]")
+        #expect(urlRequest.ext["melix.network_fetch.policy.raw_url_included"] == "false")
+        #expect(urlRequest.ext["melix.network_fetch.policy.fetch_attempted"] == "false")
+        #expect(urlRequest.ext["melix.privacy.audit.schema_version"] == "melix.privacy_audit_counter.v1")
+        #expect(urlRequest.ext["melix.privacy.audit.surface"] == "local_proxy_external_media")
+        #expect(urlRequest.ext["melix.privacy.audit.route_scope"] == "image_edit")
+        #expect(urlRequest.ext["melix.privacy.audit.blocked_count"] == "0")
+        #expect(urlRequest.ext["melix.privacy.audit.redacted_count"] == "0")
+        #expect(urlRequest.ext["melix.privacy.audit.passed_count"] == "1")
+        #expect(urlRequest.ext["melix.privacy.audit.raw_sensitive_span_count"] == "0")
         #expect(urlPayload.contains("\"state\":\"failed\""))
         #expect(urlPayload.contains("\"role\":\"unspecified\""))
         #expect(urlJob.state == .imageJobFailed)
@@ -11925,7 +11940,7 @@ struct OpenAIHandlerTests {
               "id": "image-edit-private-url",
               "model": "melix-dev-image",
               "prompt": "use remote",
-              "image_url": "https://127.0.0.1/source.png"
+              "image_url": "https://user:pass@127.0.0.1/source.png?api_key=sk-local#frag"
             }
             """.data(using: .utf8)
         )
@@ -11939,9 +11954,39 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 400)
         #expect(error["code"] as? String == "invalid_argument")
         #expect(error["message"] as? String == "External media URL host is not allowed: 127.0.0.1.")
+        let privacyReceipt = try #require(error["privacy_receipt"] as? [String: Any])
+        #expect(privacyReceipt["schema_version"] as? String == "melix.network_fetch_policy_receipt.v1")
+        #expect(privacyReceipt["surface"] as? String == "local_proxy_external_media")
+        #expect(privacyReceipt["route_scope"] as? String == "image_edit")
+        #expect(privacyReceipt["action"] as? String == "blocked")
+        #expect(privacyReceipt["url_class"] as? String == "loopback")
+        #expect(privacyReceipt["url_scheme"] as? String == "https")
+        #expect(privacyReceipt["host_class"] as? String == "loopback")
+        #expect(privacyReceipt["blocked_reason"] as? String == "private_or_loopback_host")
+        #expect(privacyReceipt["redacted_url"] as? String == "https://[REDACTED_PRIVATE_HOST]/[redacted]")
+        #expect(privacyReceipt["raw_url_included"] as? Bool == false)
+        #expect(privacyReceipt["fetch_attempted"] as? Bool == false)
+        let counters = try #require(error["privacy_audit_counters"] as? [[String: Any]])
+        let counter = try #require(counters.first)
+        #expect(counter["schema_version"] as? String == "melix.privacy_audit_counter.v1")
+        #expect(counter["surface"] as? String == "local_proxy_external_media")
+        #expect(counter["route_scope"] as? String == "image_edit")
+        #expect(counter["blocked_count"] as? Int == 1)
+        #expect(counter["redacted_count"] as? Int == 1)
+        #expect(counter["passed_count"] as? Int == 0)
+        #expect(counter["raw_sensitive_span_count"] as? Int == 0)
+        let encodedPayload = String(
+            decoding: try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+            as: UTF8.self
+        )
+        for leakedFragment in ["user:pass", "api_key", "sk-local", "source.png", "#frag", "?api_key"] {
+            #expect(encodedPayload.contains(leakedFragment) == false)
+        }
         #expect(await imageClient.lastImageEditRequest == nil)
         #expect(await metricsStore.value(forKey: "external_media.url_refusal_count") == 1)
         #expect(await metricsStore.value(forKey: "external_media.refusal.private_or_loopback_host") == 1)
+        #expect(await metricsStore.value(forKey: "privacy_audit.blocked_count") == 1)
+        #expect(await metricsStore.value(forKey: "privacy_audit.redacted_count") == 1)
     }
 
     @Test("image edit responses map failed and completed states into payloads and job summaries")

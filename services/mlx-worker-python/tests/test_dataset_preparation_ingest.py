@@ -348,6 +348,9 @@ def test_dataset_ingest_receipt_reports_independent_cleaning_controls(
     assert receipt["metrics"]["ingest_throughput_bytes_per_second"] > 0
     assert receipt["metrics"]["segmentation_latency_ms"] >= 0
     assert receipt["metrics"]["workspace_preflight_status"] == "ready"
+    assert receipt["workspace_preflight_receipt"]["network_fetch_policy"]["surface"] == "workspace_ingest"
+    assert receipt["workspace_preflight_receipt"]["network_fetch_policy"]["action"] == "passed"
+    assert receipt["workspace_preflight_receipt"]["privacy_audit_counters"][0]["passed_count"] == 1
 
     segments_path = output_root / "segments.jsonl"
     receipt_path = output_root / "dataset-ingest-receipt.json"

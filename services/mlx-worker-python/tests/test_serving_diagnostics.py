@@ -450,6 +450,103 @@ def test_serving_diagnostics_effective_config_skips_incomplete_readiness_metadat
     assert "serving_readiness" not in effective_config
 
 
+def test_serving_diagnostics_effective_config_derives_privacy_policy_receipts_from_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-network-fetch-policy",
+        invocation={},
+        effective_config={
+            "execution_ext": {
+                "melix.network_fetch.policy.schema_version": "melix.network_fetch_policy_receipt.v1",
+                "melix.network_fetch.policy.surface": "local_proxy_external_media",
+                "melix.network_fetch.policy.route_scope": "image_edit",
+                "melix.network_fetch.policy.action": "blocked",
+                "melix.network_fetch.policy.url_class": "private",
+                "melix.network_fetch.policy.url_scheme": "https",
+                "melix.network_fetch.policy.host_class": "public",
+                "melix.network_fetch.policy.resolved_ip": "[REDACTED_PRIVATE_IP]",
+                "melix.network_fetch.policy.resolved_ip_class": "private",
+                "melix.network_fetch.policy.redirect_hops_checked": "1",
+                "melix.network_fetch.policy.blocked_reason": "resolved_private_or_loopback_ip",
+                "melix.network_fetch.policy.redacted_url": "https://example.test/[redacted]",
+                "melix.network_fetch.policy.raw_url_included": "false",
+                "melix.network_fetch.policy.fetch_attempted": "false",
+                "melix.privacy.audit.schema_version": "melix.privacy_audit_counter.v1",
+                "melix.privacy.audit.surface": "local_proxy_external_media",
+                "melix.privacy.audit.route_scope": "image_edit",
+                "melix.privacy.audit.blocked_count": "1",
+                "melix.privacy.audit.redacted_count": "1",
+                "melix.privacy.audit.passed_count": "0",
+                "melix.privacy.audit.raw_sensitive_span_count": "0",
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config["network_fetch_policy"] == {
+        "schema_version": "melix.network_fetch_policy_receipt.v1",
+        "surface": "local_proxy_external_media",
+        "route_scope": "image_edit",
+        "action": "blocked",
+        "url_class": "private",
+        "url_scheme": "https",
+        "host_class": "public",
+        "resolved_ip": "[REDACTED_PRIVATE_IP]",
+        "resolved_ip_class": "private",
+        "redirect_hops_checked": 1,
+        "blocked_reason": "resolved_private_or_loopback_ip",
+        "redacted_url": "https://example.test/[redacted]",
+        "raw_url_included": False,
+        "fetch_attempted": False,
+    }
+    assert effective_config["privacy_audit_counters"] == [
+        {
+            "schema_version": "melix.privacy_audit_counter.v1",
+            "surface": "local_proxy_external_media",
+            "route_scope": "image_edit",
+            "blocked_count": 1,
+            "redacted_count": 1,
+            "passed_count": 0,
+            "raw_sensitive_span_count": 0,
+        }
+    ]
+    payload = json.dumps(effective_config, sort_keys=True)
+    assert "api_key" not in payload
+    assert "sk-secret" not in payload
+
+
+def test_serving_diagnostics_effective_config_skips_incomplete_privacy_policy_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-network-fetch-policy-incomplete",
+        invocation={},
+        effective_config={
+            "request_metadata": {
+                "melix.network_fetch.policy.surface": "local_proxy_external_media",
+                "melix.network_fetch.policy.action": "blocked",
+                "melix.privacy.audit.surface": "local_proxy_external_media",
+                "melix.privacy.audit.blocked_count": "1",
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert "network_fetch_policy" not in effective_config
+    assert "privacy_audit_counters" not in effective_config
+
+
 def test_serving_diagnostics_empty_effective_config_skips_profile_receipt_scan(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

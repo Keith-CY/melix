@@ -5282,16 +5282,17 @@ button.primary:active {
             return .accepted(receipt)
         } catch let error as ExternalMediaURLAdmissionError {
             await recordExternalMediaURLRefusal(error)
-            return .rejected(invalidArgumentResponse(message: error.operatorMessage))
+            return .rejected(externalMediaURLAdmissionErrorResponse(error, rawURL: rawURL))
         } catch {
             let admissionError = ExternalMediaURLAdmissionError.malformedURL(mediaKind)
             await recordExternalMediaURLRefusal(admissionError)
-            return .rejected(invalidArgumentResponse(message: admissionError.operatorMessage))
+            return .rejected(externalMediaURLAdmissionErrorResponse(admissionError, rawURL: rawURL))
         }
     }
 
     private func recordExternalMediaURLAdmission(_ receipt: ExternalMediaURLAdmissionReceipt) async {
         await metricsStore.increment("external_media.url_admission_count")
+        await metricsStore.increment("privacy_audit.passed_count")
         if receipt.sourceKind == "remote" {
             await metricsStore.increment("external_media.remote_url_admission_count")
         } else {
@@ -5302,6 +5303,36 @@ button.primary:active {
     private func recordExternalMediaURLRefusal(_ error: ExternalMediaURLAdmissionError) async {
         await metricsStore.increment("external_media.url_refusal_count")
         await metricsStore.increment("external_media.refusal.\(error.refusalReason)")
+        await metricsStore.increment("privacy_audit.blocked_count")
+        await metricsStore.increment("privacy_audit.redacted_count")
+    }
+
+    private func externalMediaURLAdmissionErrorResponse(
+        _ error: ExternalMediaURLAdmissionError,
+        rawURL: String
+    ) -> HTTPResponse {
+        let receipt = error.networkFetchPolicyReceipt(
+            rawURL: rawURL,
+            surface: "local_proxy_external_media",
+            routeScope: "image_edit"
+        )
+        let counter = PrivacyAuditCounter(
+            surface: "local_proxy_external_media",
+            routeScope: "image_edit",
+            blockedCount: 1,
+            redactedCount: 1
+        )
+        return jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "invalid_argument",
+                    "message": error.operatorMessage,
+                    "privacy_receipt": receipt.jsonObject,
+                    "privacy_audit_counters": [counter.jsonObject],
+                ],
+            ]
+        )
     }
 
     private func applyExternalMediaURLReceipt(
@@ -5315,6 +5346,21 @@ button.primary:active {
         request.ext["\(prefix).reason"] = receipt.reason
         if !receipt.host.isEmpty {
             request.ext["\(prefix).host"] = receipt.host
+        }
+        let networkReceipt = receipt.networkFetchPolicyReceipt(
+            surface: "local_proxy_external_media",
+            routeScope: "image_edit"
+        )
+        for (key, value) in networkReceipt.metadataFields(prefix: "melix.network_fetch.policy") {
+            request.ext[key] = value
+        }
+        let counter = PrivacyAuditCounter(
+            surface: "local_proxy_external_media",
+            routeScope: "image_edit",
+            passedCount: 1
+        )
+        for (key, value) in counter.metadataFields(prefix: "melix.privacy.audit") {
+            request.ext[key] = value
         }
     }
 

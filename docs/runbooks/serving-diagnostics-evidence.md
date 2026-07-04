@@ -166,6 +166,83 @@ If any required readiness metadata key is missing, the writer leaves the
 original metadata in place and does not synthesize a partial top-level
 `serving_readiness` receipt.
 
+When a proxy, workspace-ingest, or worker path has already evaluated network
+fetch safety, `effective-config.json` may include a `network_fetch_policy`
+receipt and `privacy_audit_counters`. These receipts are diagnostics-only:
+bundle writing must not resolve hostnames, follow redirects, open sockets,
+probe URLs, inspect source content, or rerun privacy detectors.
+
+`network_fetch_policy` uses schema version
+`melix.network_fetch_policy_receipt.v1` and records:
+
+- `surface` - emitting surface, such as `local_proxy_external_media` or
+  `workspace_ingest`.
+- `route_scope` - route or operation scope for the decision.
+- `action` - `passed` or `blocked`.
+- `url_class` - classified target, such as `public`, `loopback`,
+  `link_local`, `private`, `local`, or `invalid`.
+- `url_scheme` - normalized URL scheme or `path` for local path inputs.
+- `host_class` - classified host before any caller-provided resolved IP.
+- `resolved_ip` - public resolved IP when safe to expose, or a redaction marker
+  for private-network targets.
+- `resolved_ip_class` - classified caller-provided resolved IP.
+- `redirect_hops_checked` - number of redirect hops already evaluated by the
+  caller.
+- `blocked_reason` - typed refusal reason, or an empty string for passed
+  decisions.
+- `redacted_url` - URL summary with userinfo, path detail, query, and fragment
+  removed.
+- `raw_url_included` - always false for exported Melix diagnostics.
+- `fetch_attempted` - whether the emitting path attempted a network fetch.
+
+Diagnostics writers may derive `network_fetch_policy` from namespaced metadata
+when all of these keys are present:
+
+- `melix.network_fetch.policy.surface`
+- `melix.network_fetch.policy.route_scope`
+- `melix.network_fetch.policy.action`
+- `melix.network_fetch.policy.url_class`
+- `melix.network_fetch.policy.url_scheme`
+- `melix.network_fetch.policy.host_class`
+- `melix.network_fetch.policy.redirect_hops_checked`
+- `melix.network_fetch.policy.blocked_reason`
+- `melix.network_fetch.policy.redacted_url`
+- `melix.network_fetch.policy.raw_url_included`
+- `melix.network_fetch.policy.fetch_attempted`
+
+Optional metadata keys:
+
+- `melix.network_fetch.policy.schema_version`
+- `melix.network_fetch.policy.resolved_ip`
+- `melix.network_fetch.policy.resolved_ip_class`
+
+If any required network-fetch metadata key is missing, the writer leaves the
+original metadata in place and does not synthesize a partial top-level receipt.
+
+`privacy_audit_counters` is a list of `melix.privacy_audit_counter.v1`
+objects. Each counter records:
+
+- `surface`
+- `route_scope`
+- `blocked_count`
+- `redacted_count`
+- `passed_count`
+- `raw_sensitive_span_count`
+
+Diagnostics writers may derive one counter from namespaced metadata when all of
+these keys are present:
+
+- `melix.privacy.audit.surface`
+- `melix.privacy.audit.route_scope`
+- `melix.privacy.audit.blocked_count`
+- `melix.privacy.audit.redacted_count`
+- `melix.privacy.audit.passed_count`
+- `melix.privacy.audit.raw_sensitive_span_count`
+
+Optional metadata key:
+
+- `melix.privacy.audit.schema_version`
+
 `request-summary.json` records stable request-level fields:
 
 - request id
