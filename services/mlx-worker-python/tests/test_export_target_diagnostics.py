@@ -410,6 +410,42 @@ def test_export_target_diagnostics_uses_lexical_target_path_fast_path(
     ) is None
 
 
+def test_export_target_diagnostics_external_clean_paths_skip_fallback_path_objects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "ollama/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    def fail_path_construction(*_args: object, **_kwargs: object) -> Path:  # pragma: no cover
+        raise AssertionError("clean external paths should not allocate fallback Path objects")
+
+    monkeypatch.setattr(export_target_diagnostics_module, "Path", fail_path_construction)
+
+    excerpt = _build_redacted_excerpt(
+        layout,
+        [
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text="runtime load failed at /tmp/melix/private/export/model.gguf.",
+            ),
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text="missing blob under /var/folders/melix-cache/blob)",
+            ),
+        ],
+        bounded_bytes=4096,
+        bounded_lines=20,
+    )
+
+    assert "<absolute-path>." in excerpt.text
+    assert "<absolute-path>)" in excerpt.text
+    assert excerpt.summary.redacted_absolute_path_count == 2
+
+
 def test_export_target_diagnostics_ascii_excerpt_fast_path_preserves_byte_budget(
     tmp_path: Path,
 ) -> None:
