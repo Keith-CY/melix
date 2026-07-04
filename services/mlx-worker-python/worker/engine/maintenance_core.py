@@ -4445,7 +4445,7 @@ class MaintenanceCore:
     def _runtime_generate_accepts_acceleration_policy(runtime) -> bool:
         try:
             parameters = inspect.signature(runtime.generate_tokens).parameters
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, AttributeError):
             return False
         return "acceleration_policy" in parameters or any(
             parameter.kind is inspect.Parameter.VAR_KEYWORD

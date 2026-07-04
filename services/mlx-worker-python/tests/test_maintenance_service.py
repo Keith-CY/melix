@@ -6364,6 +6364,9 @@ def test_vlm_sample_evidence_run_treats_invalid_generation_config_as_empty() -> 
     class UnsupportedRuntime:
         generate_tokens = 1
 
+    class MissingGenerateRuntime:
+        pass
+
     assert MaintenanceCore._runtime_generate_accepts_acceleration_policy(
         ExplicitPolicyRuntime()
     )
@@ -6371,6 +6374,10 @@ def test_vlm_sample_evidence_run_treats_invalid_generation_config_as_empty() -> 
     assert not MaintenanceCore._runtime_generate_accepts_acceleration_policy(
         UnsupportedRuntime()
     )
+    assert not MaintenanceCore._runtime_generate_accepts_acceleration_policy(
+        MissingGenerateRuntime()
+    )
+    assert not MaintenanceCore._runtime_generate_accepts_acceleration_policy(None)
 
     class PolicyAwareRuntime:
         def __init__(self) -> None:
