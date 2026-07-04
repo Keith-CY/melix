@@ -1162,6 +1162,20 @@ def test_evaluate_section_metrics_counts_failure_types_without_suffix_scan() -> 
     ) == ["m9.mcp.above_max=2.00 exceeded maximum 1.00"]
 
 
+def test_evaluate_section_metrics_preserves_non_string_rule_key_lookup() -> None:
+    failures, missing_count, failed_threshold_count = (
+        release_gates_module._evaluate_section_metrics_with_counts(
+            {"123": 0.0},
+            {123: {"min": 1.0}},  # type: ignore[arg-type]
+            prefix="m9.mcp.",
+        )
+    )
+
+    assert failures == ["m9.mcp.123=0.00 fell below minimum 1.00"]
+    assert missing_count == 0
+    assert failed_threshold_count == 1
+
+
 def test_metric_value_prefers_flat_keys_and_preserves_nested_lookup() -> None:
     missing = release_gates_module._MISSING
 
