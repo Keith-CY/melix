@@ -1340,6 +1340,30 @@ def test_stop_sequence_filter_reuses_unmodified_token_events() -> None:
     assert events[0] is event
 
 
+def test_stop_sequence_filter_reuses_text_when_no_prefix_is_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = MLXTextRuntime(backend=object())
+    event = RuntimeTokenEvent(text="chunk", prompt_tokens=1, completion_tokens=1)
+    observed_text_ids: list[int] = []
+
+    def observed_first_stop_sequence_index(text: str, stop_sequences: tuple[str, ...]) -> int | None:
+        assert stop_sequences == ("<stop>", "</turn>")
+        observed_text_ids.append(id(text))
+        return None
+
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_first_stop_sequence_index",
+        observed_first_stop_sequence_index,
+    )
+
+    events = list(runtime._apply_stop_sequences([event], ("<stop>", "</turn>")))
+
+    assert events == [event]
+    assert observed_text_ids == [id(event.text)]
+
+
 def test_stop_sequence_filter_preserves_cumulative_raw_text_when_visible_is_unmodified() -> None:
     runtime = MLXTextRuntime(backend=object())
     first = RuntimeTokenEvent(text="Hel", raw_text="Hel", prompt_tokens=1, completion_tokens=1)
