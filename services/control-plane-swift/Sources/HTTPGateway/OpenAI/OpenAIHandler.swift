@@ -3047,6 +3047,7 @@ button.primary:active {
             )
             await recordMediaAdmissionFailure(mediaAdmissionFailure)
         }
+        finalTranslated = try await translatedRequestApplyingLocalProxyPrivacyDetector(finalTranslated)
         await recordShapingMetrics(for: finalTranslated, startedAt: shapingStartedAt)
         return ResolvedOpenAITextRequest(
             translated: finalTranslated,
@@ -3343,6 +3344,132 @@ button.primary:active {
             workerRequest: workerRequest,
             stream: translated.stream
         )
+    }
+
+    private func translatedRequestApplyingLocalProxyPrivacyDetector(
+        _ translated: TranslatedChatRequest
+    ) async throws -> TranslatedChatRequest {
+        guard let policyMode = localProxyPrivacyDetectorMode() else {
+            return translated
+        }
+
+        let routeScope = localProxyPrivacyRouteScope(from: translated.workerRequest.execution.ext)
+        let textSegments = localProxyTextSegments(from: translated.workerRequest)
+        let result = await Task.detached(priority: .userInitiated) {
+            PatternPrivacyDetector.detect(
+                textSegments: textSegments,
+                surface: "local_proxy_text_request",
+                routeScope: routeScope,
+                policyMode: policyMode
+            )
+        }.value
+        await recordLocalProxyPrivacyDetectorMetrics(result)
+
+        guard result.receipt.action != "blocked" else {
+            throw HTTPRequestHandlingError.gatewayResponse(localProxyPrivacyDetectorBlockedResponse(result))
+        }
+
+        var workerRequest = translated.workerRequest
+        if result.receipt.action == "redacted" {
+            applyRedactedLocalProxyTextSegments(result.redactedTexts, to: &workerRequest)
+        }
+        for (key, value) in result.receipt.metadataFields(prefix: "melix.privacy.detector") {
+            workerRequest.execution.ext[key] = value
+        }
+        for (key, value) in result.auditCounter.metadataFields(prefix: "melix.privacy.audit") {
+            workerRequest.execution.ext[key] = value
+        }
+
+        return TranslatedChatRequest(
+            requestID: translated.requestID,
+            modelID: translated.modelID,
+            responseModelID: translated.responseModelID,
+            workerRequest: workerRequest,
+            stream: translated.stream
+        )
+    }
+
+    private func localProxyPrivacyDetectorMode() -> String? {
+        let rawValue = environment["MELIX_PRIVACY_DETECTOR_MODE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        switch rawValue {
+        case "redact", "block":
+            return rawValue
+        default:
+            return nil
+        }
+    }
+
+    private func localProxyPrivacyRouteScope(from executionExt: [String: String]) -> String {
+        let endpoint = executionExt["melix.endpoint"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !endpoint.isEmpty else {
+            return "text_generation"
+        }
+        return endpoint.replacingOccurrences(of: ".", with: "_")
+    }
+
+    private func localProxyTextSegments(from request: Melix_Worker_V1_GenerateRequest) -> [String] {
+        var textSegments: [String] = []
+        for message in request.messages {
+            for part in message.parts where !part.text.isEmpty {
+                textSegments.append(part.text)
+            }
+        }
+        return textSegments
+    }
+
+    private func applyRedactedLocalProxyTextSegments(
+        _ redactedTexts: [String],
+        to request: inout Melix_Worker_V1_GenerateRequest
+    ) {
+        var textIndex = 0
+        for messageIndex in request.messages.indices {
+            for partIndex in request.messages[messageIndex].parts.indices {
+                guard !request.messages[messageIndex].parts[partIndex].text.isEmpty,
+                      textIndex < redactedTexts.count
+                else {
+                    continue
+                }
+                request.messages[messageIndex].parts[partIndex].text = redactedTexts[textIndex]
+                textIndex += 1
+            }
+        }
+    }
+
+    private func localProxyPrivacyDetectorBlockedResponse(
+        _ result: PatternPrivacyDetectionResult
+    ) -> HTTPResponse {
+        jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "privacy_policy_blocked",
+                    "message": "Local proxy privacy policy blocked this request.",
+                    "privacy_receipt": result.receipt.jsonObject,
+                    "privacy_audit_counters": [result.auditCounter.jsonObject],
+                ],
+            ]
+        )
+    }
+
+    private func recordLocalProxyPrivacyDetectorMetrics(
+        _ result: PatternPrivacyDetectionResult
+    ) async {
+        await metricsStore.increment("privacy_detector.local_proxy_text_request.\(result.receipt.action)_count")
+        await metricsStore.increment(
+            "privacy_detector.local_proxy_text_request.match_count",
+            by: Double(result.receipt.matchCount)
+        )
+        switch result.receipt.action {
+        case "blocked":
+            await metricsStore.increment("privacy_audit.blocked_count")
+        case "redacted":
+            await metricsStore.increment("privacy_audit.redacted_count")
+        default:
+            await metricsStore.increment("privacy_audit.passed_count")
+        }
     }
 
     private func recordMediaAdmissionFailure(_ failure: MediaAdmissionFailure) async {
