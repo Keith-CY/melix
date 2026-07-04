@@ -477,6 +477,8 @@ def _lowered_tag_set(tags: list[str]) -> set[str]:
 
 
 def _is_mlx_atom(value: str) -> bool:
+    if value == "mlx" or value == "MLX":
+        return True
     if len(value) != 3:
         return False
     first = ord(value[0])
