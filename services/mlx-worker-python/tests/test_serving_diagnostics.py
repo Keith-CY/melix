@@ -359,6 +359,97 @@ def test_serving_diagnostics_effective_config_keeps_explicit_serving_profile(
     }
 
 
+def test_serving_diagnostics_effective_config_preserves_serving_readiness_receipt(
+    tmp_path: Path,
+) -> None:
+    readiness_receipt = {
+        "requested_model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+        "effective_model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+        "identity_source": "explicit_request",
+        "budget_source": "explicit_request",
+        "health_ready_at": "2026-07-04T11:00:00Z",
+        "progress_source": "backend_health",
+        "dependency_policy_status": "allowed",
+    }
+
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-readiness-explicit",
+        invocation={},
+        effective_config={
+            "serving_readiness": readiness_receipt,
+            "runtime": {"mode": "baseline"},
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config["serving_readiness"] == readiness_receipt
+
+
+def test_serving_diagnostics_effective_config_derives_readiness_receipt_from_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-readiness-derived",
+        invocation={},
+        effective_config={
+            "request_metadata": {
+                "melix.serving.readiness.requested_model_id": "configured-alias",
+                "melix.serving.readiness.effective_model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+                "melix.serving.readiness.identity_source": "cached_catalog",
+                "melix.serving.readiness.budget_source": "profile_default",
+                "melix.serving.readiness.health_ready_at": "2026-07-04T11:01:00Z",
+                "melix.serving.readiness.progress_source": "backend_health",
+                "melix.serving.readiness.dependency_policy_status": "allowed",
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config["serving_readiness"] == {
+        "requested_model_id": "configured-alias",
+        "effective_model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+        "identity_source": "cached_catalog",
+        "budget_source": "profile_default",
+        "health_ready_at": "2026-07-04T11:01:00Z",
+        "progress_source": "backend_health",
+        "dependency_policy_status": "allowed",
+    }
+
+
+def test_serving_diagnostics_effective_config_skips_incomplete_readiness_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-readiness-incomplete",
+        invocation={},
+        effective_config={
+            "execution_ext": {
+                "melix.serving.readiness.requested_model_id": "configured-alias",
+                "melix.serving.readiness.effective_model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+                "melix.serving.readiness.dependency_policy_status": "allowed",
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert "serving_readiness" not in effective_config
+
+
 def test_serving_diagnostics_empty_effective_config_skips_profile_receipt_scan(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -516,6 +607,34 @@ def test_serving_diagnostics_event_instances_use_slots_for_debug_queue() -> None
     assert event.to_dict()["attributes"] == {"token": "***"}
     with pytest.raises(AttributeError):
         event.status = "mutated"  # type: ignore[misc]
+
+
+def test_serving_diagnostics_event_preserves_dataclass_style_equality() -> None:
+    first = ServingDiagnosticsEvent(
+        request_id="req-eq",
+        phase="decode",
+        event_index=1,
+        status="completed",
+        duration_ms=0.25,
+    )
+    matching = ServingDiagnosticsEvent(
+        request_id="req-eq",
+        phase="decode",
+        event_index=1,
+        status="completed",
+        duration_ms=0.25,
+    )
+    different = ServingDiagnosticsEvent(
+        request_id="req-eq",
+        phase="decode",
+        event_index=2,
+        status="completed",
+        duration_ms=0.25,
+    )
+
+    assert first == matching
+    assert first != different
+    assert first != object()
 
 
 def test_serving_diagnostics_queue_snapshot_uses_slots_for_debug_queue() -> None:
