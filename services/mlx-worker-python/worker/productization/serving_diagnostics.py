@@ -15,6 +15,7 @@ from typing import Any
 from worker.productization.privacy_policy_receipts import (
     network_fetch_policy_receipt_from_metadata,
     privacy_audit_counter_from_metadata,
+    privacy_detector_receipt_from_metadata,
 )
 
 
@@ -608,6 +609,12 @@ def _effective_config_with_profile_receipt(
             counter = privacy_audit_counter_from_metadata(metadata)
             if counter:
                 enriched_config["privacy_audit_counters"] = [counter]
+                break
+    if "privacy_detector_receipts" not in enriched_config:
+        for metadata in metadata_sources:
+            receipt = privacy_detector_receipt_from_metadata(metadata)
+            if receipt:
+                enriched_config["privacy_detector_receipts"] = [receipt]
                 break
     if enriched_config == stable_config:
         return stable_config

@@ -243,6 +243,54 @@ Optional metadata key:
 
 - `melix.privacy.audit.schema_version`
 
+When a caller has already evaluated local privacy detection policy, diagnostics
+may also include `privacy_detector_receipts`. Bundle writing must not scan
+prompts, completions, documents, artifacts, or trace payloads to create these
+receipts. The caller must attach a complete redacted receipt before diagnostics
+serialization.
+
+`privacy_detector_receipts` is a list of
+`melix.privacy_detector_receipt.v1` objects. Each receipt records:
+
+- `surface`
+- `route_scope`
+- `detector_id`
+- `policy_id`
+- `policy_mode`
+- `action` - `passed`, `redacted`, or `blocked`
+- `categories` - detected category names, not matched values
+- `match_count`
+- `redacted_span_count`
+- `blocked_reason`
+- `confidence_source`
+- `raw_sensitive_span_count`
+- `raw_text_included`
+
+Diagnostics writers may derive one detector receipt from namespaced metadata
+when all of these keys are present:
+
+- `melix.privacy.detector.surface`
+- `melix.privacy.detector.route_scope`
+- `melix.privacy.detector.detector_id`
+- `melix.privacy.detector.policy_id`
+- `melix.privacy.detector.policy_mode`
+- `melix.privacy.detector.action`
+- `melix.privacy.detector.categories`
+- `melix.privacy.detector.match_count`
+- `melix.privacy.detector.redacted_span_count`
+- `melix.privacy.detector.blocked_reason`
+- `melix.privacy.detector.confidence_source`
+- `melix.privacy.detector.raw_sensitive_span_count`
+- `melix.privacy.detector.raw_text_included`
+
+Optional metadata key:
+
+- `melix.privacy.detector.schema_version`
+
+Detector receipt derivation is rejected when `raw_text_included` is true or
+`raw_sensitive_span_count` is greater than zero. Exported receipts must include
+only category/count evidence, never raw sensitive spans or matched snippets.
+
 `request-summary.json` records stable request-level fields:
 
 - request id
