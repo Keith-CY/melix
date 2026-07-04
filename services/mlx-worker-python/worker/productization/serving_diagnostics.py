@@ -30,12 +30,23 @@ _PROFILE_AUDIT_TO_RECEIPT_FIELDS = {
 _PROFILE_RECEIPT_REQUIRED_FIELDS = frozenset(
     ("requested_profile", "effective_profile", "profile_admission_status")
 )
+_READINESS_AUDIT_TO_RECEIPT_FIELDS = {
+    "melix.serving.readiness.requested_model_id": "requested_model_id",
+    "melix.serving.readiness.effective_model_id": "effective_model_id",
+    "melix.serving.readiness.identity_source": "identity_source",
+    "melix.serving.readiness.budget_source": "budget_source",
+    "melix.serving.readiness.health_ready_at": "health_ready_at",
+    "melix.serving.readiness.progress_source": "progress_source",
+    "melix.serving.readiness.dependency_policy_status": "dependency_policy_status",
+}
+_READINESS_RECEIPT_REQUIRED_FIELDS = frozenset(
+    _READINESS_AUDIT_TO_RECEIPT_FIELDS.values()
+)
 _EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
 _JSON_COMPACT_SEPARATORS = (",", ":")
 _JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
 _JSON_STRING_ENCODER = json.encoder.encode_basestring_ascii
 _IS_FINITE = math.isfinite
-_SET_FROZEN_ATTR = object.__setattr__
 _EMPTY_EVENT_JSON_DECODE_COMPLETED_PREFIX = b'{"attributes":{},"duration_ms":'
 _EMPTY_EVENT_JSON_DECODE_COMPLETED_MID = b',"event_index":'
 _EMPTY_EVENT_JSON_DECODE_COMPLETED_REQUEST_PREFIX = (
@@ -195,14 +206,15 @@ class ServingDiagnosticsRequestSummary:
         }
 
 
-@dataclass(frozen=True, slots=True, init=False)
 class ServingDiagnosticsEvent:
-    request_id: str
-    phase: str
-    event_index: int
-    status: str
-    duration_ms: float = 0.0
-    attributes: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES
+    __slots__ = (
+        "_attributes",
+        "_duration_ms",
+        "_event_index",
+        "_phase",
+        "_request_id",
+        "_status",
+    )
 
     def __init__(
         self,
@@ -212,27 +224,71 @@ class ServingDiagnosticsEvent:
         status: str,
         duration_ms: float = 0.0,
         attributes: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES,
-        _set_attr: Any = _SET_FROZEN_ATTR,
     ) -> None:
-        _set_attr(self, "request_id", request_id)
-        _set_attr(self, "phase", phase)
-        _set_attr(self, "event_index", event_index)
-        _set_attr(self, "status", status)
-        _set_attr(self, "duration_ms", duration_ms)
-        _set_attr(self, "attributes", attributes)
+        self._request_id = request_id
+        self._phase = phase
+        self._event_index = event_index
+        self._status = status
+        self._duration_ms = duration_ms
+        self._attributes = attributes
+
+    @property
+    def request_id(self) -> str:
+        return self._request_id
+
+    @property
+    def phase(self) -> str:
+        return self._phase
+
+    @property
+    def event_index(self) -> int:
+        return self._event_index
+
+    @property
+    def status(self) -> str:
+        return self._status
+
+    @property
+    def duration_ms(self) -> float:
+        return self._duration_ms
+
+    @property
+    def attributes(self) -> Mapping[str, object]:
+        return self._attributes
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ServingDiagnosticsEvent):
+            return NotImplemented
+        return (
+            self._request_id,
+            self._phase,
+            self._event_index,
+            self._status,
+            self._duration_ms,
+            self._attributes,
+        ) == (
+            other._request_id,
+            other._phase,
+            other._event_index,
+            other._status,
+            other._duration_ms,
+            other._attributes,
+        )
+
+    __hash__ = None  # type: ignore[assignment]
 
     def to_dict(self) -> dict[str, object]:
-        attributes = self.attributes
-        event_index = self.event_index
-        duration_ms = self.duration_ms
+        attributes = self._attributes
+        event_index = self._event_index
+        duration_ms = self._duration_ms
         return {
             "schema_version": SERVING_DIAGNOSTICS_EVENT_SCHEMA_VERSION,
-            "request_id": self.request_id,
-            "phase": self.phase,
+            "request_id": self._request_id,
+            "phase": self._phase,
             "event_index": event_index
             if type(event_index) is int
             else int(event_index),
-            "status": self.status,
+            "status": self._status,
             "duration_ms": duration_ms
             if type(duration_ms) is float
             else float(duration_ms),
@@ -323,8 +379,10 @@ def write_serving_diagnostics_bundle(
     if diagnostics_mode not in {"debug", "claim_evidence"}:
         raise ValueError("diagnostics_mode must be debug or claim_evidence")
 
-    bundle_root = output_root / "serving-diagnostics" / _safe_artifact_id(bundle_id)
-    bundle_root.mkdir(parents=True, exist_ok=True)
+    diagnostics_root = output_root / "serving-diagnostics"
+    diagnostics_root.mkdir(parents=True, exist_ok=True)
+    bundle_root = diagnostics_root / _safe_artifact_id(bundle_id)
+    bundle_root.mkdir(exist_ok=True)
     manifest_path = bundle_root / "manifest.json"
     effective_config_path = bundle_root / "effective-config.json"
     request_summary_path = bundle_root / "request-summary.json"
@@ -520,15 +578,26 @@ def _effective_config_with_profile_receipt(
     if not effective_config:
         return {}
     stable_config = _stable_json_object(effective_config)
-    if "serving_profile" in stable_config:
+    enriched_config = dict(stable_config)
+    metadata_sources = _effective_config_metadata_sources(stable_config)
+    if "serving_profile" not in enriched_config:
+        for metadata in metadata_sources:
+            receipt = _serving_profile_receipt_from_audit_metadata(metadata)
+            if receipt:
+                enriched_config["serving_profile"] = receipt
+                break
+    if "serving_readiness" not in enriched_config:
+        for metadata in metadata_sources:
+            receipt = _serving_readiness_receipt_from_audit_metadata(metadata)
+            if receipt:
+                enriched_config["serving_readiness"] = receipt
+                break
+    if enriched_config == stable_config:
         return stable_config
-    for metadata in _effective_config_metadata_sources(stable_config):
-        receipt = _serving_profile_receipt_from_audit_metadata(metadata)
-        if receipt:
-            enriched_config = dict(stable_config)
-            enriched_config["serving_profile"] = receipt
-            return _stable_json_object(enriched_config)
-    return stable_config
+    return {
+        str(key): value
+        for key, value in sorted(enriched_config.items(), key=lambda item: str(item[0]))
+    }
 
 
 def _effective_config_metadata_sources(
@@ -569,6 +638,19 @@ def _serving_profile_receipt_from_audit_metadata(
     return {}
 
 
+def _serving_readiness_receipt_from_audit_metadata(
+    metadata: Mapping[str, object],
+) -> dict[str, object]:
+    receipt = {
+        receipt_key: str(value)
+        for audit_key, receipt_key in _READINESS_AUDIT_TO_RECEIPT_FIELDS.items()
+        if (value := metadata.get(audit_key)) is not None
+    }
+    if _READINESS_RECEIPT_REQUIRED_FIELDS.issubset(receipt):
+        return receipt
+    return {}
+
+
 def _stable_json_value(value: object) -> object:
     if isinstance(value, dict):
         return _stable_json_object(value)  # type: ignore[arg-type]
@@ -589,10 +671,10 @@ def _stable_json_sort_key(value: object) -> str:
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
-    path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    if not payload:
+        path.write_bytes(b"{}\n")
+        return
+    path.write_bytes((_JSONL_ENCODER.encode(payload) + "\n").encode("utf-8"))
 
 
 def _write_jsonl(path: Path, rows: Any) -> None:
@@ -630,17 +712,17 @@ def _extend_empty_attribute_event_json_line_bytes(
     event: ServingDiagnosticsEvent,
     request_id_literals: dict[str, bytes],
 ) -> bool:
-    if event.attributes is not _EMPTY_EVENT_ATTRIBUTES:
+    if event._attributes is not _EMPTY_EVENT_ATTRIBUTES:
         return False
-    event_index = event.event_index
-    duration_ms = event.duration_ms
+    event_index = event._event_index
+    duration_ms = event._duration_ms
     if type(event_index) is not int or type(duration_ms) is not float:
         return False
     if not _IS_FINITE(duration_ms):
         return False
-    phase = event.phase
-    request_id = event.request_id
-    status = event.status
+    phase = event._phase
+    request_id = event._request_id
+    status = event._status
     encoded_request_id = request_id_literals.get(request_id)
     if encoded_request_id is None:
         encoded_request_id = _json_string_literal_bytes(request_id)
@@ -674,17 +756,17 @@ def _empty_attribute_event_json_line_bytes(
     event: ServingDiagnosticsEvent,
     request_id_literals: dict[str, bytes] | None = None,
 ) -> bytes | None:
-    if event.attributes is not _EMPTY_EVENT_ATTRIBUTES:
+    if event._attributes is not _EMPTY_EVENT_ATTRIBUTES:
         return None
-    event_index = event.event_index
-    duration_ms = event.duration_ms
+    event_index = event._event_index
+    duration_ms = event._duration_ms
     if type(event_index) is not int or type(duration_ms) is not float:
         return None
     if not _IS_FINITE(duration_ms):
         return None
-    phase = event.phase
-    request_id = event.request_id
-    status = event.status
+    phase = event._phase
+    request_id = event._request_id
+    status = event._status
     if request_id_literals is None:
         encoded_request_id = _json_string_literal_bytes(request_id)
     else:

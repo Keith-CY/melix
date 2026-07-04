@@ -130,6 +130,42 @@ serving-diagnostics/<bundle_id>/
 `effective-config.json` records the effective runtime and request config after
 defaults, admission, and runtime-specific resolution.
 
+When upstream serving code has evaluated readiness or dependency policy,
+`effective-config.json` should also include a `serving_readiness` receipt. This
+receipt is diagnostics-only: it records facts already known to the serving path
+and must not trigger model discovery, health polling, package imports, or
+dependency checks during bundle writing.
+
+`serving_readiness` fields:
+
+- `requested_model_id` — operator-requested model identity, alias, or handle.
+- `effective_model_id` — backend/runtime identity selected for serving.
+- `identity_source` — where the effective identity came from, such as
+  `explicit_request`, `cached_catalog`, `backend_health`, or `fallback`.
+- `budget_source` — where the serving token or profile budget came from, such
+  as `explicit_request`, `profile_default`, or `runtime_default`.
+- `health_ready_at` — ISO-8601 timestamp for the first ready health state, or an
+  empty string when the session was not ready when the bundle was written.
+- `progress_source` — source of readiness/progress truth, such as
+  `backend_health`, `cached_status`, or `not_ready`.
+- `dependency_policy_status` — dependency policy classification, such as
+  `allowed`, `blocked`, or `unknown`.
+
+Diagnostics writers may derive `serving_readiness` from namespaced metadata
+when all of these keys are present:
+
+- `melix.serving.readiness.requested_model_id`
+- `melix.serving.readiness.effective_model_id`
+- `melix.serving.readiness.identity_source`
+- `melix.serving.readiness.budget_source`
+- `melix.serving.readiness.health_ready_at`
+- `melix.serving.readiness.progress_source`
+- `melix.serving.readiness.dependency_policy_status`
+
+If any required readiness metadata key is missing, the writer leaves the
+original metadata in place and does not synthesize a partial top-level
+`serving_readiness` receipt.
+
 `request-summary.json` records stable request-level fields:
 
 - request id
