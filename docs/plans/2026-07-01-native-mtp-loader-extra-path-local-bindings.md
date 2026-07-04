@@ -24,9 +24,13 @@ JSON-emitting performance probe script.
 2. Narrow the implementation to local bindings for repeated string helper calls
    in `_extra_mtp_safetensor_file_paths(...)` so the hot loop avoids repeated
    attribute lookup while scanning large native-MTP index maps.
-3. Reuse the existing native-MTP regression tests and changed-scope coverage
+3. Cache ignored duplicate base `model*.safetensors` file names in the existing
+   sidecar duplicate set. This keeps the sidecar result unchanged, but avoids
+   repeating basename checks when large native-MTP indexes contain repeated
+   MTP-prefixed references to ordinary base shards.
+4. Reuse the existing native-MTP regression tests and changed-scope coverage
    command from the registered probe.
-4. Run the registered probe locally on Linux before opening the PR. GitHub
+5. Run the registered probe locally on Linux before opening the PR. GitHub
    Actions PR-scoped performance remains the merge gate for the registered probe
    report.
 

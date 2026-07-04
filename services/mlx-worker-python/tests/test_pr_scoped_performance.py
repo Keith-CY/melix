@@ -640,7 +640,7 @@ def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
 
     assert metrics["old_mean_ms"] >= 0.0
     assert metrics["new_mean_ms"] >= 0.0
-    assert metrics["result_count"] == 40
+    assert metrics["result_count"] == 56
     assert metrics["model_listing_old_mean_ms"] >= 0.0
     assert metrics["model_listing_new_mean_ms"] >= 0.0
     assert metrics["model_listing_result_count"] == 10
@@ -648,9 +648,10 @@ def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
     assert metrics["model_files"] == 8
     assert metrics["distractor_files"] == 8
     assert metrics["duplicate_mtp_entries"] == 8
-    assert metrics["irrelevant_mtp_entries"] == 16
-    assert metrics["key_count"] == 42
-    assert metrics["key_true_count"] == 33
+    assert metrics["irrelevant_mtp_entries"] == 32
+    assert metrics["duplicate_base_model_entries"] == 8
+    assert metrics["key_count"] == 58
+    assert metrics["key_true_count"] == 49
     assert metrics["key_iterations"] == 2
     assert metrics["weight_load_iterations"] == 2
     assert metrics["weight_load_result_count"] == 18

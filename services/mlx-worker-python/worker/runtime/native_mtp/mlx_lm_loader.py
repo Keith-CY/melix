@@ -74,6 +74,7 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
     append_extra_file = extra_files.append
     seen: set[str] = set()
     seen_add = seen.add
+    seen_contains = seen.__contains__
     model_path_text = os.fspath(model_path)
     path_join = os.path.join
     path_exists = os.path.exists
@@ -97,11 +98,12 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
             file_name_text = to_text(file_name)
         if not str_endswith(file_name_text, safetensors_suffix):
             continue
-        if file_name_text in seen:
+        if seen_contains(file_name_text):
             continue
         separator_index = str_rfind(file_name_text, path_sep)
         file_basename = file_name_text if separator_index < 0 else file_name_text[separator_index + 1 :]
         if str_startswith(file_basename, model_prefix):
+            seen_add(file_name_text)
             continue
         seen_add(file_name_text)
         path_text = path_join(model_path_text, file_name_text)
