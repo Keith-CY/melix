@@ -477,10 +477,10 @@ def _lowered_tag_set(tags: list[str]) -> set[str]:
 
 
 def _is_mlx_atom(value: str) -> bool:
-    if value == "mlx" or value == "MLX":
-        return True
     if len(value) != 3:
         return False
+    if value == "mlx" or value == "MLX":
+        return True
     first = ord(value[0])
     second = ord(value[1])
     third = ord(value[2])
