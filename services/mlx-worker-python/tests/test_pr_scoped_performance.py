@@ -1974,11 +1974,12 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_vlm_runtime.py"],
     )
 
-    assert scope["selected_count"] == 5
+    assert scope["selected_count"] == 6
     selected_probe_ids = [probe["id"] for probe in scope["selected_probes"]]
     assert selected_probe_ids == [
         "multimodal-speculative-probe-receipt",
         "vlm-batch1-comparison-artifact",
+        "vlm-speculative-smoke-probe",
         "mlx-vlm-family-config-cache",
         "mlx-vlm-gemma4-weight-presence-single-pass",
         "quantized-tensor-metadata-prepass",
@@ -2182,11 +2183,16 @@ def test_scope_report_selects_multimodal_speculative_probe_receipt() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/multimodal_speculative_probe.py"],
     )
 
-    assert scope["selected_count"] == 1
+    assert scope["selected_count"] == 2
     assert [probe["id"] for probe in scope["selected_probes"]] == [
-        "multimodal-speculative-probe-receipt"
+        "multimodal-speculative-probe-receipt",
+        "vlm-speculative-smoke-probe",
     ]
-    probe = scope["selected_probes"][0]
+    probe = next(
+        probe
+        for probe in scope["selected_probes"]
+        if probe["id"] == "multimodal-speculative-probe-receipt"
+    )
     assert probe["coverage_paths"] == [
         "services/mlx-worker-python/worker/runtime/multimodal_speculative_probe.py"
     ]
@@ -4206,6 +4212,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "maintenance-benchmark-parameter-normalization-single-convert",
         "maintenance-capability-split-single-strip",
         "vlm-batch1-comparison-artifact",
+        "vlm-speculative-smoke-probe",
         "phase8-metrics-closure-audit-reuse",
         "pr-scoped-performance-registry-cache",
         "real-model-support-hf-cache-latest-snapshot",
@@ -4569,6 +4576,20 @@ def test_scope_report_selects_vlm_batch1_comparison_probe() -> None:
     }
 
 
+def test_scope_report_selects_vlm_speculative_smoke_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/engine/maintenance_core.py",
+            "scripts/vlm_speculative_smoke_probe.py",
+        ],
+    )
+
+    assert "vlm-speculative-smoke-probe" in {
+        probe["id"] for probe in scope["selected_probes"]
+    }
+
+
 def test_vlm_batch1_comparison_probe_command_has_base_fallback() -> None:
     probe = next(
         probe
@@ -4579,6 +4600,18 @@ def test_vlm_batch1_comparison_probe_command_has_base_fallback() -> None:
     assert "if [ -f scripts/vlm_batch1_comparison_probe.py ]" in probe.probe_command
     assert "valid_status_count" in probe.probe_command
     assert "blocked_status_count" in probe.probe_command
+
+
+def test_vlm_speculative_smoke_probe_command_has_base_fallback() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "vlm-speculative-smoke-probe"
+    )
+
+    assert "if [ -f scripts/vlm_speculative_smoke_probe.py ]" in probe.probe_command
+    assert "smoke_pass_count" in probe.probe_command
+    assert "speed_target_met_count" in probe.probe_command
 
 
 def test_probe_policy_noop_overhead_probe_script_emits_metrics(
@@ -4648,6 +4681,30 @@ def test_vlm_batch1_comparison_probe_script_emits_metrics(
     assert metrics["valid_payload_bytes"] > 0.0
     assert metrics["baseline_ttft_ms"] == 20.0
     assert metrics["fast_path_decode_tokens_per_second"] == 166.7
+
+
+def test_vlm_speculative_smoke_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["vlm_speculative_smoke_probe.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(REPO_ROOT / "scripts/vlm_speculative_smoke_probe.py"), run_name="__main__")
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 5.0
+    assert metrics["smoke_pass_count"] == 5.0
+    assert metrics["speed_target_met_count"] == 5.0
+    assert metrics["fallback_stability_count"] == 5.0
+    assert metrics["repeated_media_correctness_count"] == 5.0
+    assert metrics["comparison_artifact_present_count"] == 5.0
+    assert metrics["baseline_ttft_ms"] == 20.0
+    assert metrics["accelerated_ttft_ms"] == 12.0
+    assert metrics["accelerated_decode_tokens_per_second"] == 166.7
+    assert metrics["acceptance_rate"] == 0.75
+    assert metrics["fallback_count"] == 0.0
 
 
 def test_load_probe_registry_uses_absolute_cache_key_without_resolving(

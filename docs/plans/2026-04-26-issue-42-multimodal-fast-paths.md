@@ -641,6 +641,19 @@ Executable unit issues:
   `native_acceleration_runtime_active=true`; media-bearing verification-only
   fallbacks therefore stay visible as blocked evidence until later Plan 4.3
   smoke and release gates admit them.
+- Unit 4.3.2 adds the repository-owned speculative VLM smoke probe contract for
+  Apple Silicon promotion evidence. The PR-scoped probe
+  `vlm-speculative-smoke-probe` runs `scripts/vlm_speculative_smoke_probe.py`
+  against deterministic baseline and accelerated VLM samples that reuse the
+  same baseline-vs-accelerated artifact writer as Unit 4.3.1. The smoke metrics
+  report baseline and accelerated TTFT, decode throughput, native speculative
+  acceptance rate, fallback count, fallback-stability pass count,
+  repeated-media correctness pass count, speed-target pass count, and overall
+  smoke-pass count. The deterministic CI leg proves the artifact and metric
+  contract without downloading model weights; a live Apple Silicon operator run
+  can populate the same fields before default-on promotion. Promotion remains
+  blocked unless the supported target/draft pair reports stable fallback state,
+  no repeated-media correctness regression, and the current gated speed target.
 
 ## Verification Policy
 
