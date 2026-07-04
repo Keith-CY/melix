@@ -11,6 +11,10 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
+from worker.productization.privacy_policy_receipts import (
+    aggregate_privacy_detection_results,
+    detect_privacy_patterns,
+)
 from worker.productization.workspace_manifest import preflight_workspace
 
 
@@ -51,6 +55,7 @@ class DatasetIngestRequest:
     segmentation_strategy: str = "paragraph"
     upload_cap_bytes: int = 0
     source_cap_bytes: int = 0
+    privacy_detector_mode: str = "off"
 
 
 @dataclass(frozen=True)
@@ -77,6 +82,14 @@ class DatasetRetryFailedRequest:
     version_id: str = ""
     created_at: str = ""
     generator_model: str = ""
+
+
+@dataclass(frozen=True)
+class _WorkspacePrivacyDetectionEvidence:
+    records: list[dict[str, Any]]
+    receipt: dict[str, object]
+    audit_counter: dict[str, object]
+    latency_ms: float
 
 
 def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
@@ -197,6 +210,38 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         _write_json(receipt_path, receipt)
         return receipt
     source_inventory = _source_inventory(records)
+    privacy_evidence = _workspace_privacy_detection_evidence(records, request)
+    records = privacy_evidence.records
+    privacy_detector_receipts = [privacy_evidence.receipt]
+    privacy_audit_counters = [privacy_evidence.audit_counter]
+    privacy_detector_metrics = _privacy_detector_metrics(privacy_evidence)
+    if privacy_evidence.receipt.get("action") == "blocked":
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        receipt = _blocked_ingest_receipt(
+            request=request,
+            segments_path=segments_path,
+            receipt_path=receipt_path,
+            workspace_preflight_receipt_path=workspace_preflight_receipt_path,
+            workspace_preflight_receipt=workspace_preflight_receipt,
+            operator_failures=[
+                *operator_failures,
+                _privacy_detector_blocked_failure(privacy_evidence.receipt),
+            ],
+            elapsed_ms=elapsed_ms,
+            source_inventory=source_inventory,
+            source_file_count=len(source_inventory),
+            observed_payload_bytes=observed_payload_bytes,
+            upload_cap_bytes=upload_cap_bytes,
+            source_cap_bytes=source_cap_bytes,
+            rejection_reason="privacy_detector_blocked",
+            partial_artifact_cleanup=_cleanup_partial_artifact(segments_path),
+            source_record_count=len(records),
+            privacy_detector_receipts=privacy_detector_receipts,
+            privacy_audit_counters=privacy_audit_counters,
+            privacy_detector_metrics=privacy_detector_metrics,
+        )
+        _write_json(receipt_path, receipt)
+        return receipt
     total_bytes = observed_payload_bytes
 
     pii_mask_count = 0
@@ -252,6 +297,10 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
             source_cap_bytes=source_cap_bytes,
             rejection_reason="segment_artifact_write_failed",
             partial_artifact_cleanup=_cleanup_partial_artifact(segments_path),
+            source_record_count=len(records),
+            privacy_detector_receipts=privacy_detector_receipts,
+            privacy_audit_counters=privacy_audit_counters,
+            privacy_detector_metrics=privacy_detector_metrics,
         )
         _write_json(receipt_path, receipt)
         return receipt
@@ -282,6 +331,7 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         "upload_cap_bytes": upload_cap_bytes,
         "observed_payload_bytes": observed_payload_bytes,
         "source_cap_bytes": source_cap_bytes,
+        **privacy_detector_metrics,
     }
     receipt = {
         "schema_version": DATASET_INGEST_RECEIPT_SCHEMA_VERSION,
@@ -290,6 +340,8 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         "workspace_manifest_path": str(Path(request.workspace_manifest_path)),
         "workspace_preflight_receipt_path": str(workspace_preflight_receipt_path),
         "workspace_preflight_receipt": workspace_preflight_receipt,
+        "privacy_detector_receipts": privacy_detector_receipts,
+        "privacy_audit_counters": privacy_audit_counters,
         "dataset_preparation_id": request.dataset_preparation_id,
         "source_inventory": source_inventory,
         "cleaning_controls": _cleaning_controls(request),
@@ -415,6 +467,104 @@ def _raise_if_ingest_receipt_blocked(ingest_receipt: dict[str, Any]) -> None:
     raise ValueError(f"DATASET_VERSION_SOURCE_RECEIPT_BLOCKED: {code_suffix}")
 
 
+def _workspace_privacy_detection_evidence(
+    records: list[dict[str, Any]],
+    request: DatasetIngestRequest,
+) -> _WorkspacePrivacyDetectionEvidence:
+    started = time.perf_counter()
+    mode = _privacy_detector_mode(request.privacy_detector_mode)
+    if mode == "off":
+        aggregate = aggregate_privacy_detection_results(
+            (),
+            surface="workspace_ingest",
+            route_scope="source_import",
+            policy_mode=mode,
+        )
+        return _WorkspacePrivacyDetectionEvidence(
+            records=records,
+            receipt=aggregate.receipt,
+            audit_counter=aggregate.audit_counter,
+            latency_ms=(time.perf_counter() - started) * 1000.0,
+        )
+
+    detection_results = []
+    detected_records: list[dict[str, Any]] = []
+    for record in records:
+        text = str(record.get("text", ""))
+        result = detect_privacy_patterns(
+            text,
+            surface="workspace_ingest",
+            route_scope="source_import",
+            policy_mode=mode,
+        )
+        detection_results.append(result)
+        if mode == "redact" and result.redacted_text != text:
+            updated_record = dict(record)
+            updated_record["text"] = result.redacted_text
+            detected_records.append(updated_record)
+        else:
+            detected_records.append(record)
+
+    aggregate = aggregate_privacy_detection_results(
+        detection_results,
+        surface="workspace_ingest",
+        route_scope="source_import",
+        policy_mode=mode,
+    )
+    return _WorkspacePrivacyDetectionEvidence(
+        records=detected_records,
+        receipt=aggregate.receipt,
+        audit_counter=aggregate.audit_counter,
+        latency_ms=(time.perf_counter() - started) * 1000.0,
+    )
+
+
+def _privacy_detector_mode(value: object) -> str:
+    normalized = str(value or "off").strip().lower()
+    return normalized if normalized in {"off", "redact", "block"} else "off"
+
+
+def _privacy_detector_metrics(
+    evidence: _WorkspacePrivacyDetectionEvidence,
+) -> dict[str, float | int]:
+    return {
+        "privacy_detector_latency_ms": evidence.latency_ms,
+        "privacy_detector_match_count": int(evidence.receipt.get("match_count", 0) or 0),
+        "privacy_detector_redacted_span_count": int(
+            evidence.receipt.get("redacted_span_count", 0) or 0
+        ),
+    }
+
+
+def _privacy_detector_blocked_failure(
+    receipt: dict[str, object],
+) -> dict[str, Any]:
+    categories = [
+        str(category)
+        for category in receipt.get("categories", [])
+        if str(category)
+    ]
+    category_summary = ", ".join(categories) if categories else "unknown"
+    match_count = int(receipt.get("match_count", 0) or 0)
+    plural = "match" if match_count == 1 else "matches"
+    return {
+        "id": "dataset-ingest-privacy-detector-blocked",
+        "code": "DATASET_INGEST_PRIVACY_DETECTOR_BLOCKED",
+        "path": "",
+        "detail": (
+            f"Workspace privacy detector blocked {match_count} sensitive pattern "
+            f"{plural} across categories: {category_summary}."
+        ),
+        "recovery_hint": (
+            "Remove secrets from workspace sources or rerun ingest with privacy "
+            "detector redact mode."
+        ),
+        "reason": "privacy_detector_blocked",
+        "categories": categories,
+        "match_count": match_count,
+    }
+
+
 def _blocked_ingest_receipt(
     *,
     request: DatasetIngestRequest,
@@ -431,10 +581,23 @@ def _blocked_ingest_receipt(
     source_cap_bytes: int,
     rejection_reason: str,
     partial_artifact_cleanup: dict[str, Any],
+    source_record_count: int = 0,
+    privacy_detector_receipts: list[dict[str, object]] | None = None,
+    privacy_audit_counters: list[dict[str, object]] | None = None,
+    privacy_detector_metrics: dict[str, float | int] | None = None,
 ) -> dict[str, Any]:
+    if (
+        privacy_detector_receipts is None
+        or privacy_audit_counters is None
+        or privacy_detector_metrics is None
+    ):
+        evidence = _workspace_privacy_detection_evidence([], request)
+        privacy_detector_receipts = [evidence.receipt]
+        privacy_audit_counters = [evidence.audit_counter]
+        privacy_detector_metrics = _privacy_detector_metrics(evidence)
     summary = {
         "source_file_count": source_file_count,
-        "source_record_count": 0,
+        "source_record_count": source_record_count,
         "segment_count": 0,
         "pii_mask_count": 0,
         "exact_dedup_count": 0,
@@ -448,6 +611,8 @@ def _blocked_ingest_receipt(
         "workspace_manifest_path": str(Path(request.workspace_manifest_path)),
         "workspace_preflight_receipt_path": str(workspace_preflight_receipt_path),
         "workspace_preflight_receipt": workspace_preflight_receipt,
+        "privacy_detector_receipts": privacy_detector_receipts,
+        "privacy_audit_counters": privacy_audit_counters,
         "dataset_preparation_id": request.dataset_preparation_id,
         "source_inventory": source_inventory,
         "cleaning_controls": _cleaning_controls(request),
@@ -467,7 +632,7 @@ def _blocked_ingest_receipt(
             "ingest_latency_ms": elapsed_ms,
             "ingest_throughput_bytes_per_second": 0.0,
             "source_file_count": source_file_count,
-            "source_record_count": 0,
+            "source_record_count": source_record_count,
             "segment_count": 0,
             "pii_mask_count": 0,
             "exact_dedup_count": 0,
@@ -478,6 +643,7 @@ def _blocked_ingest_receipt(
             "upload_cap_bytes": upload_cap_bytes,
             "observed_payload_bytes": observed_payload_bytes,
             "source_cap_bytes": source_cap_bytes,
+            **privacy_detector_metrics,
         },
     }
 

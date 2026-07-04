@@ -401,6 +401,35 @@ def test_scope_report_selects_dataset_version_listing_probe() -> None:
     assert "dataset-source-records-scandir" in selected_ids
 
 
+def test_dataset_preparation_probes_cover_privacy_detector_ingest_tests() -> None:
+    registry_payload = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    by_id = {probe["id"]: probe for probe in registry_payload}
+    probe_ids = (
+        "dataset-version-listing-scandir",
+        "dataset-quality-lengths-chain",
+        "dataset-source-records-scandir",
+    )
+    privacy_test_file = "services/mlx-worker-python/tests/test_dataset_preparation_ingest.py"
+    required_tests = (
+        f"{privacy_test_file}::test_dataset_ingest_privacy_detector_redacts_source_records_before_segments",
+        f"{privacy_test_file}::test_dataset_ingest_privacy_detector_block_mode_stops_before_segments",
+        f"{privacy_test_file}::test_dataset_ingest_cli_writes_stable_json_receipt",
+        f"{privacy_test_file}::test_dataset_ingest_cli_accepts_privacy_detector_mode",
+    )
+
+    for probe_id in probe_ids:
+        probe = by_id[probe_id]
+        assert privacy_test_file in probe["watch_globs"]
+        for command_name in ("test_command", "coverage_command"):
+            command = probe[command_name]
+            for required_test in required_tests:
+                assert required_test in command
+        assert privacy_test_file in probe["coverage_command"].split(
+            "python3 scripts/changed_scope_coverage.py --coverage-json coverage.json ",
+            1,
+        )[1]
+
+
 def test_scope_report_selects_lora_aux_modules_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,

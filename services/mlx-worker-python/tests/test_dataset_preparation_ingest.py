@@ -407,6 +407,126 @@ def test_dataset_ingest_controls_can_be_inspected_independently(tmp_path: Path) 
     assert "jane@example.com" in segment_text
 
 
+def test_dataset_ingest_privacy_detector_redacts_source_records_before_segments(
+    tmp_path: Path,
+) -> None:
+    input_root = tmp_path / "raw-inputs"
+    output_root = tmp_path / "prepared"
+    input_root.mkdir()
+    (input_root / "notes.txt").write_text(
+        'Workspace note with OPENAI_API_KEY = "sk-workspace-secret" and HF_ABCDEF123456.\n',
+        encoding="utf-8",
+    )
+
+    receipt = prepare_dataset_ingest(
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=_write_ready_workspace_manifest(tmp_path),
+            input_path=input_root,
+            output_dir=output_root,
+            dataset_preparation_id="prep-detector-redact",
+            pii_mask=False,
+            exact_dedup=False,
+            fuzzy_dedup=False,
+            segmentation=True,
+            privacy_detector_mode="redact",
+        )
+    )
+
+    assert receipt["status"] == "ready"
+    assert receipt["privacy_detector_receipts"] == [
+        {
+            "schema_version": "melix.privacy_detector_receipt.v1",
+            "surface": "workspace_ingest",
+            "route_scope": "source_import",
+            "detector_id": "melix.pattern_detector.v1",
+            "policy_id": "melix.default_privacy_policy.v1",
+            "policy_mode": "redact",
+            "action": "redacted",
+            "categories": ["secret"],
+            "match_count": 2,
+            "redacted_span_count": 2,
+            "blocked_reason": "",
+            "confidence_source": "deterministic_pattern",
+            "raw_sensitive_span_count": 0,
+            "raw_text_included": False,
+        }
+    ]
+    assert receipt["privacy_audit_counters"] == [
+        {
+            "schema_version": "melix.privacy_audit_counter.v1",
+            "surface": "workspace_ingest",
+            "route_scope": "source_import",
+            "blocked_count": 0,
+            "redacted_count": 1,
+            "passed_count": 0,
+            "raw_sensitive_span_count": 0,
+        }
+    ]
+    assert receipt["metrics"]["privacy_detector_match_count"] == 2
+    assert receipt["metrics"]["privacy_detector_redacted_span_count"] == 2
+    assert receipt["metrics"]["privacy_detector_latency_ms"] >= 0
+
+    segment_text = (output_root / "segments.jsonl").read_text(encoding="utf-8")
+    assert "[REDACTED_SECRET]" in segment_text
+    payload = json.dumps(receipt, sort_keys=True) + segment_text
+    for raw_fragment in ("OPENAI_API_KEY", "sk-workspace-secret", "HF_ABCDEF123456"):
+        assert raw_fragment not in payload
+
+
+def test_dataset_ingest_privacy_detector_block_mode_stops_before_segments(
+    tmp_path: Path,
+) -> None:
+    input_root = tmp_path / "raw-inputs"
+    output_root = tmp_path / "prepared"
+    input_root.mkdir()
+    (input_root / "notes.txt").write_text(
+        "Workspace source with HF_TOKEN=sk-secret,with,commas.\n",
+        encoding="utf-8",
+    )
+
+    receipt = prepare_dataset_ingest(
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=_write_ready_workspace_manifest(tmp_path),
+            input_path=input_root,
+            output_dir=output_root,
+            dataset_preparation_id="prep-detector-block",
+            privacy_detector_mode="block",
+        )
+    )
+
+    assert receipt["status"] == "blocked"
+    assert receipt["rejection_reason"] == "privacy_detector_blocked"
+    assert receipt["operator_failures"] == [
+        {
+            "id": "dataset-ingest-privacy-detector-blocked",
+            "code": "DATASET_INGEST_PRIVACY_DETECTOR_BLOCKED",
+            "path": "",
+            "detail": (
+                "Workspace privacy detector blocked 1 sensitive pattern match "
+                "across categories: secret."
+            ),
+            "recovery_hint": (
+                "Remove secrets from workspace sources or rerun ingest with "
+                "privacy detector redact mode."
+            ),
+            "reason": "privacy_detector_blocked",
+            "categories": ["secret"],
+            "match_count": 1,
+        }
+    ]
+    assert receipt["privacy_detector_receipts"][0]["action"] == "blocked"
+    assert receipt["privacy_detector_receipts"][0]["blocked_reason"] == "pattern_match_blocked"
+    assert receipt["privacy_detector_receipts"][0]["match_count"] == 1
+    assert receipt["privacy_audit_counters"][0]["blocked_count"] == 1
+    assert receipt["source_inventory"]
+    assert not (output_root / "segments.jsonl").exists()
+    payload = json.dumps(receipt, sort_keys=True)
+    for raw_fragment in ("HF_TOKEN", "sk-secret", "with,commas"):
+        assert raw_fragment not in payload
+
+
 def test_dataset_ingest_emits_typed_operator_failures(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -526,6 +646,56 @@ def test_dataset_ingest_cli_writes_stable_json_receipt(tmp_path: Path) -> None:
     assert payload["cleaning_controls"]["pii_mask"]["enabled"] is True
     assert payload["cleaning_controls"]["exact_dedup"]["enabled"] is False
     assert payload["metrics"]["pii_mask_count"] == 1
+    assert payload["privacy_detector_receipts"][0]["policy_mode"] == "off"
+
+
+def test_dataset_ingest_cli_accepts_privacy_detector_mode(tmp_path: Path) -> None:
+    import dataset_preparation_ingest
+
+    input_root = tmp_path / "raw-inputs"
+    output_root = tmp_path / "prepared"
+    receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
+    input_root.mkdir()
+    (input_root / "notes.txt").write_text(
+        "Secret HF_TOKEN=sk-secret,with,commas.\n",
+        encoding="utf-8",
+    )
+
+    exit_code = dataset_preparation_ingest.main(
+        [
+            "--workspace-project-id",
+            "m-courtyard-demo",
+            "--workspace-manifest",
+            str(manifest_path),
+            "--input",
+            str(input_root),
+            "--output-dir",
+            str(output_root),
+            "--dataset-preparation-id",
+            "prep-cli-detector",
+            "--output",
+            str(receipt_path),
+            "--pii-mask",
+            "false",
+            "--exact-dedup",
+            "false",
+            "--fuzzy-dedup",
+            "false",
+            "--segmentation",
+            "true",
+            "--privacy-detector-mode",
+            "redact",
+        ]
+    )
+
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["privacy_detector_receipts"][0]["policy_mode"] == "redact"
+    assert payload["privacy_detector_receipts"][0]["action"] == "redacted"
+    output_payload = json.dumps(payload, sort_keys=True)
+    assert "sk-secret" not in output_payload
+    assert "with,commas" not in output_payload
 
 
 def _write_ready_workspace_manifest(

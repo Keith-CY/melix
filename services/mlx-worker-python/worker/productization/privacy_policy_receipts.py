@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from ipaddress import ip_address
 from urllib.parse import urlsplit
@@ -23,14 +23,17 @@ _EMAIL_PATTERN = re.compile(
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+\b"
 )
-_HF_TOKEN_PATTERN = re.compile(r"\bhf_[A-Za-z0-9][A-Za-z0-9_\-=]{5,}")
+_HF_TOKEN_PATTERN = re.compile(
+    r"\bhf_[A-Za-z0-9][A-Za-z0-9_\-=]{5,}",
+    flags=re.IGNORECASE,
+)
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"\b[A-Za-z0-9_]*(?:"
     r"HF_TOKEN|HUGGINGFACE_HUB_TOKEN|MELIX_HF_TOKEN|MELIX_HUGGINGFACE_TOKEN|"
     r"MELIX_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|"
     r"API_KEY|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN|SECRET_KEY|CLIENT_SECRET|"
     r"PASSWORD"
-    r")=([^\s,;]+)",
+    r")\s*=\s*(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|\S+)",
     flags=re.IGNORECASE,
 )
 _BEARER_TOKEN_PATTERN = re.compile(
@@ -309,6 +312,64 @@ def detect_privacy_patterns(
             surface=surface,
             route_scope=route_scope,
             decisions=(action,),
+            raw_sensitive_span_count=0,
+        ),
+    )
+
+
+def aggregate_privacy_detection_results(
+    results: Iterable[PrivacyDetectionResult],
+    *,
+    surface: str,
+    route_scope: str,
+    policy_mode: str,
+    policy_id: str = DEFAULT_PRIVACY_POLICY_ID,
+    detector_id: str = PATTERN_PRIVACY_DETECTOR_ID,
+) -> PrivacyDetectionResult:
+    result_tuple = tuple(results)
+    actions = tuple(result.receipt_object.action for result in result_tuple) or ("passed",)
+    action = "passed"
+    blocked_reason = ""
+    if any(decision == "blocked" for decision in actions):
+        action = "blocked"
+        blocked_reason = "pattern_match_blocked"
+    elif any(decision == "redacted" for decision in actions):
+        action = "redacted"
+
+    categories = tuple(sorted({
+        category
+        for result in result_tuple
+        for category in result.receipt_object.categories
+    }))
+    match_count = sum(result.receipt_object.match_count for result in result_tuple)
+    redacted_span_count = sum(
+        result.receipt_object.redacted_span_count for result in result_tuple
+    )
+    normalized_mode = str(policy_mode).strip().lower() or "off"
+    if normalized_mode not in {"off", "redact", "block"}:
+        normalized_mode = "off"
+    receipt = PrivacyDetectorReceipt(
+        surface=surface,
+        route_scope=route_scope,
+        detector_id=detector_id,
+        policy_id=policy_id,
+        policy_mode=normalized_mode,
+        action=action,
+        categories=categories,
+        match_count=match_count,
+        redacted_span_count=redacted_span_count,
+        blocked_reason=blocked_reason,
+        confidence_source=_DETERMINISTIC_PATTERN_CONFIDENCE_SOURCE,
+        raw_sensitive_span_count=0,
+        raw_text_included=False,
+    )
+    return PrivacyDetectionResult(
+        redacted_text="",
+        receipt_object=receipt,
+        audit_counter_object=privacy_audit_counter(
+            surface=surface,
+            route_scope=route_scope,
+            decisions=actions,
             raw_sensitive_span_count=0,
         ),
     )
