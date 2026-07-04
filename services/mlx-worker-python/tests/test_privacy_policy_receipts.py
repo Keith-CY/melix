@@ -4,9 +4,12 @@ import json
 
 from worker.productization.privacy_policy_receipts import (
     PrivacyAuditCounter,
+    PrivacyDetectorReceipt,
+    detect_privacy_patterns,
     network_fetch_policy_receipt_from_metadata,
     network_fetch_policy_receipt_for_url,
     privacy_audit_counter,
+    privacy_detector_receipt_from_metadata,
 )
 
 
@@ -195,3 +198,174 @@ def test_privacy_audit_counter_counts_blocked_redacted_and_passed_decisions() ->
         "passed_count": 1,
         "raw_sensitive_span_count": 0,
     }
+
+
+def test_pattern_privacy_detector_redacts_contacts_and_secrets_without_raw_spans() -> None:
+    result = detect_privacy_patterns(
+        (
+            "Contact alice@example.com with "
+            "OPENAI_API_KEY=sk-testsecret and hf_abcdef123456."
+        ),
+        surface="workspace_ingest",
+        route_scope="source_import",
+    )
+
+    assert "[REDACTED_EMAIL]" in result.redacted_text
+    assert result.redacted_text.count("[REDACTED_SECRET]") == 2
+    assert "alice@example.com" not in result.redacted_text
+    assert "sk-testsecret" not in result.redacted_text
+    assert "hf_abcdef123456" not in result.redacted_text
+    assert isinstance(result.receipt_object, PrivacyDetectorReceipt)
+    assert result.receipt == {
+        "schema_version": "melix.privacy_detector_receipt.v1",
+        "surface": "workspace_ingest",
+        "route_scope": "source_import",
+        "detector_id": "melix.pattern_detector.v1",
+        "policy_id": "melix.default_privacy_policy.v1",
+        "policy_mode": "redact",
+        "action": "redacted",
+        "categories": ["email", "secret"],
+        "match_count": 3,
+        "redacted_span_count": 3,
+        "blocked_reason": "",
+        "confidence_source": "deterministic_pattern",
+        "raw_sensitive_span_count": 0,
+        "raw_text_included": False,
+    }
+    assert result.audit_counter == {
+        "schema_version": "melix.privacy_audit_counter.v1",
+        "surface": "workspace_ingest",
+        "route_scope": "source_import",
+        "blocked_count": 0,
+        "redacted_count": 1,
+        "passed_count": 0,
+        "raw_sensitive_span_count": 0,
+    }
+    payload = json.dumps(
+        {
+            "redacted_text": result.redacted_text,
+            "receipt": result.receipt,
+            "audit_counter": result.audit_counter,
+        },
+        sort_keys=True,
+    )
+    for raw_fragment in ("alice@example.com", "sk-testsecret", "hf_abcdef123456"):
+        assert raw_fragment not in payload
+
+
+def test_pattern_privacy_detector_blocks_sensitive_text_without_returning_content() -> None:
+    result = detect_privacy_patterns(
+        "Send the report to bob@example.com",
+        surface="local_proxy_prompt",
+        route_scope="chat_completions",
+        policy_mode="block",
+    )
+
+    assert result.redacted_text == ""
+    assert result.receipt["action"] == "blocked"
+    assert result.receipt["blocked_reason"] == "pattern_match_blocked"
+    assert result.receipt["categories"] == ["email"]
+    assert result.receipt["match_count"] == 1
+    assert result.receipt["redacted_span_count"] == 0
+    assert result.audit_counter["blocked_count"] == 1
+    assert "bob@example.com" not in json.dumps(result.receipt, sort_keys=True)
+
+
+def test_pattern_privacy_detector_passes_clean_text() -> None:
+    clean_text = "Summarize the workspace manifest contract."
+
+    result = detect_privacy_patterns(
+        clean_text,
+        surface="workspace_ingest",
+        route_scope="source_import",
+    )
+
+    assert result.redacted_text == clean_text
+    assert result.receipt["action"] == "passed"
+    assert result.receipt["categories"] == []
+    assert result.receipt["match_count"] == 0
+    assert result.audit_counter["passed_count"] == 1
+
+
+def test_pattern_privacy_detector_defaults_unknown_mode_and_deduplicates_overlapping_secrets() -> None:
+    result = detect_privacy_patterns(
+        "OPENAI_API_KEY=hf_abcdef123456",
+        surface="workspace_ingest",
+        route_scope="source_import",
+        policy_mode="audit-only",
+    )
+
+    assert result.redacted_text == "[REDACTED_SECRET]"
+    assert result.receipt["policy_mode"] == "redact"
+    assert result.receipt["action"] == "redacted"
+    assert result.receipt["categories"] == ["secret"]
+    assert result.receipt["match_count"] == 1
+    assert "hf_abcdef123456" not in json.dumps(result.receipt, sort_keys=True)
+
+
+def test_privacy_detector_receipt_metadata_derivation_rejects_raw_text_receipts() -> None:
+    metadata = {
+        "melix.privacy.detector.schema_version": "melix.privacy_detector_receipt.v1",
+        "melix.privacy.detector.surface": "workspace_ingest",
+        "melix.privacy.detector.route_scope": "source_import",
+        "melix.privacy.detector.detector_id": "melix.pattern_detector.v1",
+        "melix.privacy.detector.policy_id": "melix.default_privacy_policy.v1",
+        "melix.privacy.detector.policy_mode": "redact",
+        "melix.privacy.detector.action": "redacted",
+        "melix.privacy.detector.categories": "secret,email",
+        "melix.privacy.detector.match_count": "3",
+        "melix.privacy.detector.redacted_span_count": "3",
+        "melix.privacy.detector.blocked_reason": "",
+        "melix.privacy.detector.confidence_source": "deterministic_pattern",
+        "melix.privacy.detector.raw_sensitive_span_count": "0",
+        "melix.privacy.detector.raw_text_included": "false",
+    }
+
+    assert privacy_detector_receipt_from_metadata(metadata) == {
+        "schema_version": "melix.privacy_detector_receipt.v1",
+        "surface": "workspace_ingest",
+        "route_scope": "source_import",
+        "detector_id": "melix.pattern_detector.v1",
+        "policy_id": "melix.default_privacy_policy.v1",
+        "policy_mode": "redact",
+        "action": "redacted",
+        "categories": ["email", "secret"],
+        "match_count": 3,
+        "redacted_span_count": 3,
+        "blocked_reason": "",
+        "confidence_source": "deterministic_pattern",
+        "raw_sensitive_span_count": 0,
+        "raw_text_included": False,
+    }
+
+    raw_text_metadata = dict(metadata)
+    raw_text_metadata["melix.privacy.detector.raw_text_included"] = "true"
+    assert privacy_detector_receipt_from_metadata(raw_text_metadata) == {}
+
+    incomplete_metadata = dict(metadata)
+    incomplete_metadata.pop("melix.privacy.detector.match_count")
+    assert privacy_detector_receipt_from_metadata(incomplete_metadata) == {}
+
+    wrong_schema_metadata = dict(metadata)
+    wrong_schema_metadata["melix.privacy.detector.schema_version"] = "melix.privacy_detector_receipt.v0"
+    assert privacy_detector_receipt_from_metadata(wrong_schema_metadata) == {}
+
+    wrong_action_metadata = dict(metadata)
+    wrong_action_metadata["melix.privacy.detector.action"] = "audit"
+    assert privacy_detector_receipt_from_metadata(wrong_action_metadata) == {}
+
+    wrong_category_metadata = dict(metadata)
+    wrong_category_metadata["melix.privacy.detector.categories"] = {"secret": True}
+    assert privacy_detector_receipt_from_metadata(wrong_category_metadata) == {}
+
+    wrong_count_metadata = dict(metadata)
+    wrong_count_metadata["melix.privacy.detector.match_count"] = "many"
+    assert privacy_detector_receipt_from_metadata(wrong_count_metadata) == {}
+
+    raw_span_metadata = dict(metadata)
+    raw_span_metadata["melix.privacy.detector.raw_sensitive_span_count"] = "1"
+    assert privacy_detector_receipt_from_metadata(raw_span_metadata) == {}
+
+    impossible_redaction_metadata = dict(metadata)
+    impossible_redaction_metadata["melix.privacy.detector.redacted_span_count"] = "4"
+    assert privacy_detector_receipt_from_metadata(impossible_redaction_metadata) == {}

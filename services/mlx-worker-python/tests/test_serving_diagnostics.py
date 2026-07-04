@@ -521,6 +521,61 @@ def test_serving_diagnostics_effective_config_derives_privacy_policy_receipts_fr
     assert "sk-secret" not in payload
 
 
+def test_serving_diagnostics_effective_config_derives_privacy_detector_receipts_from_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-privacy-detector",
+        invocation={},
+        effective_config={
+            "execution_ext": {
+                "melix.privacy.detector.schema_version": "melix.privacy_detector_receipt.v1",
+                "melix.privacy.detector.surface": "workspace_ingest",
+                "melix.privacy.detector.route_scope": "source_import",
+                "melix.privacy.detector.detector_id": "melix.pattern_detector.v1",
+                "melix.privacy.detector.policy_id": "melix.default_privacy_policy.v1",
+                "melix.privacy.detector.policy_mode": "redact",
+                "melix.privacy.detector.action": "redacted",
+                "melix.privacy.detector.categories": ["secret", "email"],
+                "melix.privacy.detector.match_count": "3",
+                "melix.privacy.detector.redacted_span_count": "3",
+                "melix.privacy.detector.blocked_reason": "",
+                "melix.privacy.detector.confidence_source": "deterministic_pattern",
+                "melix.privacy.detector.raw_sensitive_span_count": "0",
+                "melix.privacy.detector.raw_text_included": "false",
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config["privacy_detector_receipts"] == [
+        {
+            "schema_version": "melix.privacy_detector_receipt.v1",
+            "surface": "workspace_ingest",
+            "route_scope": "source_import",
+            "detector_id": "melix.pattern_detector.v1",
+            "policy_id": "melix.default_privacy_policy.v1",
+            "policy_mode": "redact",
+            "action": "redacted",
+            "categories": ["email", "secret"],
+            "match_count": 3,
+            "redacted_span_count": 3,
+            "blocked_reason": "",
+            "confidence_source": "deterministic_pattern",
+            "raw_sensitive_span_count": 0,
+            "raw_text_included": False,
+        }
+    ]
+    payload = json.dumps(effective_config, sort_keys=True)
+    assert "alice@example.com" not in payload
+    assert "sk-secret" not in payload
+
+
 def test_serving_diagnostics_effective_config_skips_incomplete_privacy_policy_metadata(
     tmp_path: Path,
 ) -> None:
@@ -534,6 +589,9 @@ def test_serving_diagnostics_effective_config_skips_incomplete_privacy_policy_me
                 "melix.network_fetch.policy.action": "blocked",
                 "melix.privacy.audit.surface": "local_proxy_external_media",
                 "melix.privacy.audit.blocked_count": "1",
+                "melix.privacy.detector.surface": "workspace_ingest",
+                "melix.privacy.detector.action": "redacted",
+                "melix.privacy.detector.raw_text_included": "true",
             }
         },
         model_refs={"model_id": "melix-dev-text"},
@@ -545,6 +603,7 @@ def test_serving_diagnostics_effective_config_skips_incomplete_privacy_policy_me
     effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
     assert "network_fetch_policy" not in effective_config
     assert "privacy_audit_counters" not in effective_config
+    assert "privacy_detector_receipts" not in effective_config
 
 
 def test_serving_diagnostics_empty_effective_config_skips_profile_receipt_scan(
