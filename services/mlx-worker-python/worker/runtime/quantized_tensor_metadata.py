@@ -85,7 +85,22 @@ _NATIVE_MULTIMODAL_HIGH_PRECISION_SEGMENTS = frozenset(_NATIVE_MULTIMODAL_HIGH_P
 _NATIVE_MULTIMODAL_HIGH_PRECISION_OUTPUT_SEGMENTS = frozenset(
     suffix[1:] for suffix in _NATIVE_MULTIMODAL_HIGH_PRECISION_SUFFIXES
 )
+_NATIVE_MULTIMODAL_HIGH_PRECISION_DIRECT_SEGMENTS = (
+    _NATIVE_MULTIMODAL_HIGH_PRECISION_SEGMENTS
+    | _NATIVE_MULTIMODAL_HIGH_PRECISION_OUTPUT_SEGMENTS
+)
+_NATIVE_MULTIMODAL_HIGH_PRECISION_DIRECT_PREFIXES = tuple(
+    f"{segment}." for segment in _NATIVE_MULTIMODAL_HIGH_PRECISION_DIRECT_SEGMENTS
+)
 _NATIVE_MULTIMODAL_CONTAINER_SEGMENTS = frozenset(("model", "language_model"))
+_NATIVE_MULTIMODAL_CONTAINER_HIGH_PRECISION_EXACT_PREFIXES = frozenset(
+    f"{container}.{segment}"
+    for container in _NATIVE_MULTIMODAL_CONTAINER_SEGMENTS
+    for segment in _NATIVE_MULTIMODAL_HIGH_PRECISION_DIRECT_SEGMENTS
+)
+_NATIVE_MULTIMODAL_CONTAINER_HIGH_PRECISION_DIRECT_PREFIXES = tuple(
+    f"{prefix}." for prefix in _NATIVE_MULTIMODAL_CONTAINER_HIGH_PRECISION_EXACT_PREFIXES
+)
 
 
 def _load_json_payload(path: Path) -> dict[str, Any]:
@@ -220,6 +235,16 @@ def _native_multimodal_high_precision_module(prefix: str) -> bool:
         and "score" not in prefix
     ):
         return False
+    direct_segments = _NATIVE_MULTIMODAL_HIGH_PRECISION_DIRECT_SEGMENTS
+    if prefix in direct_segments or prefix.startswith(
+        _NATIVE_MULTIMODAL_HIGH_PRECISION_DIRECT_PREFIXES
+    ):
+        return True
+    container_prefixes = _NATIVE_MULTIMODAL_CONTAINER_HIGH_PRECISION_EXACT_PREFIXES
+    if prefix in container_prefixes or prefix.startswith(
+        _NATIVE_MULTIMODAL_CONTAINER_HIGH_PRECISION_DIRECT_PREFIXES
+    ):
+        return True
     start = 0
     prefix_length = len(prefix)
     previous_segment = ""

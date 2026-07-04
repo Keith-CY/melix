@@ -27,11 +27,14 @@ with the rest of the registered quantized metadata metrics as regression guards.
    `test_native_multimodal_high_precision_module_segment_scan_preserves_boundaries`.
 2. Add a cheap substring prefilter before the segment scanner so common language
    model prefixes without any high-precision marker can return immediately.
-3. Keep the segment scanner as the source of truth for positive and near-miss
-   strings so boundary behavior does not drift.
-4. Run the registered focused test command, changed-scope coverage command, and
+3. Add direct exact/prefix shortcuts for common top-level and one-level container
+   high-precision module names while preserving the segment scanner fallback for
+   deeper or malformed positive strings.
+4. Keep the segment scanner as the source of truth for near-miss strings so
+   boundary behavior does not drift.
+5. Run the registered focused test command, changed-scope coverage command, and
    registered probe locally on Linux before opening the PR.
-5. Use GitHub Actions PR-scoped performance as the merge gate.
+6. Use GitHub Actions PR-scoped performance as the merge gate.
 
 ## Success criteria
 
