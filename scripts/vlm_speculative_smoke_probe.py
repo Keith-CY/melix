@@ -117,6 +117,17 @@ def _repeated_media_correct(baseline: BenchSample, accelerated: BenchSample) -> 
     )
 
 
+def _comparison_artifact_status(comparison_path: Path) -> tuple[bool, float]:
+    if not comparison_path.exists():
+        return False, 0.0
+    try:
+        payload = json.loads(comparison_path.read_text(encoding="utf-8"))
+        payload_bytes = float(comparison_path.stat().st_size)
+    except (json.JSONDecodeError, OSError):
+        return False, 0.0
+    return payload.get("comparison_validity") == "valid", payload_bytes
+
+
 def main() -> int:
     artifact_elapsed_ms: list[float] = []
     smoke_pass_count = 0.0
@@ -152,8 +163,7 @@ def main() -> int:
             )
             artifact_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
             comparison_path = paths["comparison"]
-            payload = json.loads(comparison_path.read_text(encoding="utf-8"))
-            artifact_present = comparison_path.exists() and payload.get("comparison_validity") == "valid"
+            artifact_present, payload_bytes = _comparison_artifact_status(comparison_path)
             speed_target_met = _speed_target_met(baseline=baseline, accelerated=accelerated)
             fallback_stable = _fallback_stable(accelerated)
             repeated_media_correct = _repeated_media_correct(baseline, accelerated)
@@ -165,7 +175,6 @@ def main() -> int:
             smoke_pass_count += float(
                 artifact_present and speed_target_met and fallback_stable and repeated_media_correct
             )
-            payload_bytes = float(comparison_path.stat().st_size)
 
     print(
         json.dumps(
