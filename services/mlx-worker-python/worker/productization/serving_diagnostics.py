@@ -12,6 +12,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from worker.productization.privacy_policy_receipts import (
+    network_fetch_policy_receipt_from_metadata,
+    privacy_audit_counter_from_metadata,
+)
+
 
 SERVING_DIAGNOSTICS_MANIFEST_SCHEMA_VERSION = "melix.serving_diagnostics.manifest.v1"
 SERVING_DIAGNOSTICS_REQUEST_SCHEMA_VERSION = "melix.serving_diagnostics.request_summary.v1"
@@ -591,6 +596,18 @@ def _effective_config_with_profile_receipt(
             receipt = _serving_readiness_receipt_from_audit_metadata(metadata)
             if receipt:
                 enriched_config["serving_readiness"] = receipt
+                break
+    if "network_fetch_policy" not in enriched_config:
+        for metadata in metadata_sources:
+            receipt = network_fetch_policy_receipt_from_metadata(metadata)
+            if receipt:
+                enriched_config["network_fetch_policy"] = receipt
+                break
+    if "privacy_audit_counters" not in enriched_config:
+        for metadata in metadata_sources:
+            counter = privacy_audit_counter_from_metadata(metadata)
+            if counter:
+                enriched_config["privacy_audit_counters"] = [counter]
                 break
     if enriched_config == stable_config:
         return stable_config

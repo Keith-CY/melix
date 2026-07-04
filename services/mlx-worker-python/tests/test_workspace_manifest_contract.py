@@ -248,6 +248,33 @@ def test_workspace_preflight_ready_receipt_is_machine_readable(tmp_path: Path) -
     assert receipt["metrics"]["unmanaged_artifact_count"] == 0
     assert receipt["metrics"]["preflight_latency_ms"] >= 0
     assert receipt["metrics"]["migration_validation_latency_ms"] >= 0
+    assert receipt["network_fetch_policy"] == {
+        "schema_version": "melix.network_fetch_policy_receipt.v1",
+        "surface": "workspace_ingest",
+        "route_scope": "workspace_preflight",
+        "action": "passed",
+        "url_class": "local",
+        "url_scheme": "path",
+        "host_class": "local",
+        "resolved_ip": "",
+        "resolved_ip_class": "",
+        "redirect_hops_checked": 0,
+        "blocked_reason": "",
+        "redacted_url": "[LOCAL_PATH]",
+        "raw_url_included": False,
+        "fetch_attempted": False,
+    }
+    assert receipt["privacy_audit_counters"] == [
+        {
+            "schema_version": "melix.privacy_audit_counter.v1",
+            "surface": "workspace_ingest",
+            "route_scope": "workspace_preflight",
+            "blocked_count": 0,
+            "redacted_count": 0,
+            "passed_count": 1,
+            "raw_sensitive_span_count": 0,
+        }
+    ]
 
 
 def test_workspace_preflight_receipt_contract_has_stable_json_shape(
@@ -263,6 +290,8 @@ def test_workspace_preflight_receipt_contract_has_stable_json_shape(
         "workspace_manifest_schema_version",
         "project_id",
         "manifest_path",
+        "network_fetch_policy",
+        "privacy_audit_counters",
         "checks",
         "metrics",
     }

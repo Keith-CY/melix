@@ -252,6 +252,20 @@ struct MultimodalContractTests {
         #expect(publicURL.scheme == "https")
         #expect(publicURL.host == "example.com")
         #expect(publicURL.reason == "accepted_https_public_host_without_fetch")
+        let networkPolicyReceipt = publicURL.networkFetchPolicyReceipt(
+            surface: "local_proxy_external_media",
+            routeScope: "chat_image"
+        )
+        #expect(networkPolicyReceipt.schemaVersion == "melix.network_fetch_policy_receipt.v1")
+        #expect(networkPolicyReceipt.surface == "local_proxy_external_media")
+        #expect(networkPolicyReceipt.routeScope == "chat_image")
+        #expect(networkPolicyReceipt.action == "passed")
+        #expect(networkPolicyReceipt.urlClass == "public")
+        #expect(networkPolicyReceipt.urlScheme == "https")
+        #expect(networkPolicyReceipt.hostClass == "public")
+        #expect(networkPolicyReceipt.redactedURL == "https://example.com/[redacted]")
+        #expect(networkPolicyReceipt.rawURLIncluded == false)
+        #expect(networkPolicyReceipt.fetchAttempted == false)
 
         let refusals: [(String, ExternalMediaURLAdmissionError)] = [
             ("", .malformedURL("image")),

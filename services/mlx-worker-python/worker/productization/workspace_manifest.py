@@ -8,6 +8,10 @@ from typing import Any, overload
 from google.protobuf import json_format
 
 from packages.protocol.python.workspace.v1 import workspace_manifest_pb2
+from worker.productization.privacy_policy_receipts import (
+    workspace_ingest_network_fetch_policy_receipt,
+    workspace_ingest_privacy_audit_counters,
+)
 
 
 WORKSPACE_MANIFEST_SCHEMA_VERSION = "melix.workspace_manifest.v1"
@@ -273,6 +277,8 @@ def preflight_workspace(
         "workspace_manifest_schema_version": manifest.schema_version,
         "project_id": manifest.project.project_id,
         "manifest_path": manifest_path.name,
+        "network_fetch_policy": workspace_ingest_network_fetch_policy_receipt(),
+        "privacy_audit_counters": workspace_ingest_privacy_audit_counters(),
         "checks": checks,
         "metrics": metrics,
     }
