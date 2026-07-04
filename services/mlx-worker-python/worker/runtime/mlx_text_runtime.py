@@ -1805,7 +1805,7 @@ class MLXTextRuntime:
                 continue
 
             last_token_event = event
-            candidate = f"{pending}{event.text}"
+            candidate = event.text if not pending else f"{pending}{event.text}"
             stop_index = _first_stop_sequence_index(candidate, stop_sequences)
             if stop_index is not None:
                 visible = candidate[:stop_index]
