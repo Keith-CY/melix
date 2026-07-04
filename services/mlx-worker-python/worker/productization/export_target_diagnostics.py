@@ -23,6 +23,7 @@ DEFAULT_PARSER_POLICY_ID = "runtime-export-log-v1"
 DEFAULT_BOUNDED_LOG_BYTES = 8192
 DEFAULT_BOUNDED_LOG_LINES = 120
 _SOURCE_READ_MULTIPLIER = 2
+_FAILING_CHECK_STATUSES = frozenset(("failed", "blocked"))
 
 DIAGNOSTIC_STATUS_MATCHED = "matched"
 DIAGNOSTIC_STATUS_UNKNOWN = "unknown"
@@ -492,7 +493,7 @@ def _collect_source_lines(
         status = _check_value(check, "status")
         if not failure_message and not failure_code:
             continue
-        if status and status not in {"failed", "blocked"}:
+        if status and status not in _FAILING_CHECK_STATUSES:
             continue
         check_name = _check_value(check, "check") or _check_value(check, "name") or "smoke_failure"
         evidence_path = _check_value(check, "evidence_path") or manifest.evidence.smoke_receipt_path
