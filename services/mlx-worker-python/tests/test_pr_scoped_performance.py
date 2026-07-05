@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import gc
 import importlib.util
 import json
 import os
@@ -832,6 +833,50 @@ def test_dataset_source_records_probe_script_emits_metrics(
     assert metrics["files_per_directory"] == 7.0
     assert metrics["file_count_mean"] == 21.0
     assert metrics["source_kind_variant_count"] == 7.0
+
+
+def test_dataset_source_records_probe_restores_gc_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_DIRS", "1")
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_FILES_PER_DIR", "1")
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+
+    gc.enable()
+
+    try:
+        probe_script["measure"](directory_count=1, files_per_directory=1, samples=1)
+        assert gc.isenabled()
+    finally:
+        gc.enable()
+
+
+def test_dataset_source_records_probe_rejects_changed_file_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+    monkeypatch.setitem(probe_script["measure"].__globals__, "_iter_source_file_paths", lambda _root: [])
+
+    with pytest.raises(RuntimeError, match="unexpected source file count"):
+        probe_script["measure"](directory_count=1, files_per_directory=1, samples=1)
+
+
+def test_dataset_source_records_probe_rejects_changed_file_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+
+    def reversed_paths(root: Path) -> list[Path]:
+        return [
+            root / "group-0000" / "sample-0000-0001.md",
+            root / "group-0000" / "sample-0000-0000.txt",
+        ]
+
+    monkeypatch.setitem(probe_script["measure"].__globals__, "_iter_source_file_paths", reversed_paths)
+
+    with pytest.raises(RuntimeError, match="source file ordering changed"):
+        probe_script["measure"](directory_count=1, files_per_directory=2, samples=1)
 
 
 def test_dataset_source_records_probe_rejects_changed_source_kind(
