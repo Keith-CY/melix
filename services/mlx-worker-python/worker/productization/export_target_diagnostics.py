@@ -806,9 +806,9 @@ def _diagnoses_from_excerpt(
     patterns = _DIAGNOSIS_PATTERNS
     source_lines_local = source_lines
     has_diagnosis_marker = _has_diagnosis_marker
-    known_code_count = len(_KNOWN_DIAGNOSIS_CODE_SET)
+    remaining_known_code_count = len(_KNOWN_DIAGNOSIS_CODE_SET)
     for index, line_number in line_numbers.items():
-        if len(seen_codes) == known_code_count:
+        if remaining_known_code_count == 0:
             break
         text = source_lines_local[index].text
         lowered_text = text.lower()
@@ -833,6 +833,7 @@ def _diagnoses_from_excerpt(
             if not expression_matched:
                 continue
             seen_codes_add(pattern_code)
+            remaining_known_code_count -= 1
             diagnoses_append(
                 {
                     "code": pattern_code,
