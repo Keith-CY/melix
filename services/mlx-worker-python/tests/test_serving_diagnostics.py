@@ -512,6 +512,7 @@ def test_serving_diagnostics_capability_receipt_normalizes_sequence_metadata() -
                     "melix.serving_capability_receipt.v1"
                 ),
                 "melix.serving.capability.capabilities": (
+                    None,
                     "generate_multimodal",
                     "generate_text",
                 ),
@@ -522,7 +523,7 @@ def test_serving_diagnostics_capability_receipt_normalizes_sequence_metadata() -
                 "melix.serving.capability.resolved_mode": "baseline",
                 "melix.serving.capability.optional_dependency_source": "not_required",
                 "melix.serving.capability.unsupported_reason": "none",
-                "melix.serving.capability.ignored_flags": ["", "unknown_flag"],
+                "melix.serving.capability.ignored_flags": [None, "", "unknown_flag"],
                 "melix.serving.capability.fallback_policy": "fail_closed",
             }
         )

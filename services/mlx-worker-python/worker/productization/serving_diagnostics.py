@@ -727,7 +727,7 @@ def _metadata_list(value: object) -> list[str]:
     return [
         item_text
         for item in raw_items
-        if (item_text := str(item).strip())
+        if item is not None and (item_text := str(item).strip())
     ]
 
 
