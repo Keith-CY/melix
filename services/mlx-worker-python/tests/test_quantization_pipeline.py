@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 import os
 from pathlib import Path
@@ -1285,7 +1286,9 @@ def test_mlx_lm_index_weight_files_reads_index_as_bytes(
     )
 
     read_text = Mock(side_effect=AssertionError("index loading should stay on the bytes path"))
+    read_bytes = Mock(side_effect=AssertionError("index loading should avoid Path.read_bytes wrapper overhead"))
     monkeypatch.setattr(Path, "read_text", read_text)
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
 
     assert _smoke_required_files_for_backend(
         bundle,
@@ -1297,6 +1300,7 @@ def test_mlx_lm_index_weight_files_reads_index_as_bytes(
         "model-00001-of-00001.safetensors",
     )
     read_text.assert_not_called()
+    read_bytes.assert_not_called()
 
 
 def test_mlx_lm_index_weight_files_reuses_cached_index_payload(
@@ -1312,16 +1316,16 @@ def test_mlx_lm_index_weight_files_reuses_cached_index_payload(
     )
     quantization_pipeline_module._mlx_lm_index_weight_files_cached.cache_clear()
 
-    real_read_bytes = Path.read_bytes
+    real_open = builtins.open
     read_calls = 0
 
-    def tracked_read_bytes(self: Path) -> bytes:
+    def tracked_open(file, *args, **kwargs):
         nonlocal read_calls
-        if self == index_path:
+        if file == os.fspath(index_path):
             read_calls += 1
-        return real_read_bytes(self)
+        return real_open(file, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_bytes", tracked_read_bytes)
+    monkeypatch.setattr(builtins, "open", tracked_open)
 
     expected = (
         "config.json",

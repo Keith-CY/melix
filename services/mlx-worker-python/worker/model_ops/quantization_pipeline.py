@@ -943,7 +943,8 @@ def _mlx_lm_index_weight_files_cached(
     _ = size_bytes
     index_file = "model.safetensors.index.json"
     try:
-        payload = json.loads(Path(index_path).read_bytes())
+        with open(index_path, "rb") as index_stream:
+            payload = json.loads(index_stream.read())
     except (OSError, json.JSONDecodeError):
         return (index_file, "model.safetensors")
     weight_map = payload.get("weight_map")
