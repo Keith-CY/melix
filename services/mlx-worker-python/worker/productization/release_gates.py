@@ -2173,9 +2173,17 @@ def _evaluate_section_metrics_with_counts(
     failures_append = failures.append
     numeric_types = _NUMERIC_METRIC_TYPES
     missing = _MISSING
+    values_get = values.get
     metric_value = _metric_value
     for name, rule in rules.items():
-        value = metric_value(values, str(name))
+        if type(name) is str:
+            value = values_get(name, missing)
+            if value is missing:
+                first_dot = name.find(".")
+                if first_dot != -1 and name[:first_dot] in values:
+                    value = metric_value(values, name)
+        else:
+            value = metric_value(values, str(name))
         if value is missing:
             failures_append(f"{prefix}{name} is missing")
             missing_count += 1
