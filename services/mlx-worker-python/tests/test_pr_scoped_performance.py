@@ -551,6 +551,18 @@ def test_retrieval_context_projection_probe_script_emits_metrics(
     assert metrics["lookup_copy_speedup"] >= 0.0
 
 
+def test_retrieval_context_projection_probe_prefers_head_script_for_comparable_inputs() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "retrieval-context-projection-fastpath"
+    )
+
+    head_index = probe.probe_command.index('"../head/$SCRIPT"')
+    local_index = probe.probe_command.index('"$SCRIPT"')
+    assert head_index < local_index
+
+
 def test_retrieval_context_projection_probe_covers_lookup_wrapper_metadata() -> None:
     probe = next(
         probe
