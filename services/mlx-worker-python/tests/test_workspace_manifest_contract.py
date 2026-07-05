@@ -521,6 +521,38 @@ def test_workspace_path_policy_denies_invalid_manifest_without_absolute_candidat
     assert str(tmp_path) not in serialized
 
 
+def test_workspace_path_policy_does_not_resolve_roots_for_invalid_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = _write_manifest(
+        tmp_path,
+        lambda manifest: manifest.__setitem__(
+            "schema_version",
+            "melix.workspace_manifest.v0",
+        ),
+    )
+    candidate_path = tmp_path / "raw" / "dialogues.jsonl"
+
+    def fail_unsafe_path_items(_manifest: workspace_manifest_pb2.WorkspaceManifest) -> list[dict[str, str]]:
+        raise AssertionError("invalid manifests must not enter path root resolution")  # pragma: no cover
+
+    monkeypatch.setattr(
+        workspace_manifest_module,
+        "_unsafe_path_items",
+        fail_unsafe_path_items,
+    )
+
+    receipt = workspace_manifest_module.workspace_path_policy_receipt(
+        manifest_path,
+        candidate_path,
+    )
+
+    assert receipt["decision"] == "denied"
+    assert receipt["reason"] == "manifest_invalid"
+    assert receipt["checks"][0]["code"] == "WORKSPACE_PATH_POLICY_MANIFEST_INVALID"
+
+
 def test_workspace_path_policy_manifest_root_path_unknown_root_returns_empty() -> None:
     manifest = workspace_manifest_pb2.WorkspaceManifest()
 

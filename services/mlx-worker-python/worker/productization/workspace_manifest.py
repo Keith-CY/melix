@@ -299,8 +299,6 @@ def workspace_path_policy_receipt(
         manifest_path,
         return_manifest=True,
     )
-    unsafe_path_items = _unsafe_path_items(manifest)
-    resolved_roots = _resolved_safe_roots(workspace_root, manifest, unsafe_path_items)
 
     if not validation_report.ok:
         return {
@@ -325,6 +323,9 @@ def workspace_path_policy_receipt(
                 )
             ],
         }
+
+    unsafe_path_items = _unsafe_path_items(manifest)
+    resolved_roots = _resolved_safe_roots(workspace_root, manifest, unsafe_path_items)
 
     for root_id, root_path in _roots_by_specificity(resolved_roots):
         if not _path_contains(root_path, resolved_candidate):
