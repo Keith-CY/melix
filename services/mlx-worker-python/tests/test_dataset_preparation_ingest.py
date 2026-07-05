@@ -957,6 +957,159 @@ def test_dataset_ingest_cli_accepts_privacy_detector_mode(tmp_path: Path) -> Non
     assert "with,commas" not in output_payload
 
 
+def test_dataset_ingest_cli_accepts_privacy_detector_mode_from_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dataset_preparation_ingest
+
+    monkeypatch.setenv("MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE", "redact")
+    input_root = tmp_path / "raw-inputs"
+    output_root = tmp_path / "prepared"
+    receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
+    input_root.mkdir()
+    (input_root / "notes.txt").write_text(
+        "Secret HF_TOKEN=sk-env-secret,with,commas.\n",
+        encoding="utf-8",
+    )
+
+    exit_code = dataset_preparation_ingest.main(
+        [
+            "--workspace-project-id",
+            "m-courtyard-demo",
+            "--workspace-manifest",
+            str(manifest_path),
+            "--input",
+            str(input_root),
+            "--output-dir",
+            str(output_root),
+            "--dataset-preparation-id",
+            "prep-cli-env-detector",
+            "--output",
+            str(receipt_path),
+            "--pii-mask",
+            "false",
+            "--exact-dedup",
+            "false",
+            "--fuzzy-dedup",
+            "false",
+            "--segmentation",
+            "true",
+        ]
+    )
+
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["privacy_detector_receipts"][0]["policy_mode"] == "redact"
+    assert payload["privacy_detector_receipts"][0]["action"] == "redacted"
+    output_payload = json.dumps(payload, sort_keys=True)
+    assert "sk-env-secret" not in output_payload
+    assert "with,commas" not in output_payload
+
+
+def test_dataset_ingest_cli_privacy_detector_flag_overrides_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dataset_preparation_ingest
+
+    monkeypatch.setenv("MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE", "block")
+    input_root = tmp_path / "raw-inputs"
+    output_root = tmp_path / "prepared"
+    receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
+    input_root.mkdir()
+    (input_root / "notes.txt").write_text(
+        "Secret HF_TOKEN=sk-cli-override-secret.\n",
+        encoding="utf-8",
+    )
+
+    exit_code = dataset_preparation_ingest.main(
+        [
+            "--workspace-project-id",
+            "m-courtyard-demo",
+            "--workspace-manifest",
+            str(manifest_path),
+            "--input",
+            str(input_root),
+            "--output-dir",
+            str(output_root),
+            "--dataset-preparation-id",
+            "prep-cli-override-detector",
+            "--output",
+            str(receipt_path),
+            "--pii-mask",
+            "false",
+            "--exact-dedup",
+            "false",
+            "--fuzzy-dedup",
+            "false",
+            "--segmentation",
+            "true",
+            "--privacy-detector-mode",
+            "off",
+        ]
+    )
+
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    segment_text = (output_root / "segments.jsonl").read_text(encoding="utf-8")
+    assert exit_code == 0
+    assert payload["privacy_detector_receipts"][0]["policy_mode"] == "off"
+    assert payload["privacy_detector_receipts"][0]["action"] == "passed"
+    assert payload["metrics"]["privacy_detector_latency_ms"] == 0.0
+    assert "sk-cli-override-secret" in segment_text
+
+
+def test_dataset_ingest_cli_ignores_unsupported_privacy_detector_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dataset_preparation_ingest
+
+    monkeypatch.setenv("MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE", "detect")
+    input_root = tmp_path / "raw-inputs"
+    output_root = tmp_path / "prepared"
+    receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
+    input_root.mkdir()
+    (input_root / "notes.txt").write_text(
+        "Secret HF_TOKEN=sk-unsupported-env-secret.\n",
+        encoding="utf-8",
+    )
+
+    exit_code = dataset_preparation_ingest.main(
+        [
+            "--workspace-project-id",
+            "m-courtyard-demo",
+            "--workspace-manifest",
+            str(manifest_path),
+            "--input",
+            str(input_root),
+            "--output-dir",
+            str(output_root),
+            "--dataset-preparation-id",
+            "prep-cli-unsupported-env",
+            "--output",
+            str(receipt_path),
+            "--pii-mask",
+            "false",
+            "--exact-dedup",
+            "false",
+            "--fuzzy-dedup",
+            "false",
+            "--segmentation",
+            "true",
+        ]
+    )
+
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["privacy_detector_receipts"][0]["policy_mode"] == "off"
+    assert payload["privacy_detector_receipts"][0]["action"] == "passed"
+    assert payload["metrics"]["privacy_detector_latency_ms"] == 0.0
+
+
 def _write_ready_workspace_manifest(
     tmp_path: Path,
     *,

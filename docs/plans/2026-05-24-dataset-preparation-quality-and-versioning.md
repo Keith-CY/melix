@@ -80,7 +80,10 @@ Cleaning controls must be independently enableable and reportable:
   `off`, `redact`, or `block` mode after source records are read and before
   PII masking, deduplication, and segmentation. `off` mode keeps the receipt
   contract stable with a passed zero-match receipt, but must not scan source
-  records or enter detector aggregation.
+  records or enter detector aggregation. The dataset ingest CLI resolves the
+  mode from `--privacy-detector-mode`, then
+  `MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE`, then `off`. Unsupported or empty
+  environment values normalize to `off`.
 - `pii_mask`: mask email addresses, phone-like numbers, API-token-like
   strings, and configured literal denylist values before downstream samples are
   written.
