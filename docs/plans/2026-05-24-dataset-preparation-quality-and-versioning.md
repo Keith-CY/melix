@@ -101,6 +101,7 @@ The ingest receipt schema is `melix.dataset_ingest_receipt.v1` and must include:
 - `workspace_manifest_path`
 - `workspace_preflight_receipt_path`
 - `workspace_preflight_receipt`
+- `workspace_path_policy_receipts`
 - `privacy_detector_receipts`
 - `privacy_audit_counters`
 - `dataset_preparation_id`
@@ -136,6 +137,7 @@ Operator failures must be typed and explainable without raw logs. Required
 failure codes are:
 
 - `DATASET_INGEST_PRIVACY_DETECTOR_BLOCKED`
+- `DATASET_INGEST_WORKSPACE_PATH_DENIED`
 - `DATASET_INGEST_UNSUPPORTED_SOURCE`
 - `DATASET_INGEST_UNSUPPORTED_TEXT_VALUE`
 - `DATASET_INGEST_PARSE_FAILED`
@@ -162,6 +164,16 @@ If preflight returns `blocked`, ingest writes the workspace preflight receipt
 next to the ingest receipt, returns `status: blocked`, leaves
 `source_inventory` empty, preserves the requested cleaning and segmentation
 policy in the receipt, and does not write `segments.jsonl`.
+
+After workspace preflight returns `ready`, ingest must evaluate the requested
+`--input` path with `melix.workspace_path_policy_receipt.v1` before source
+discovery. The input is accepted only when its resolved path is contained by a
+manifest-declared path-backed artifact root. Parent traversal escapes, symlink
+escapes, and paths outside the manifest roots return
+`DATASET_INGEST_WORKSPACE_PATH_DENIED`, attach a sanitized
+`workspace_path_policy_receipts` entry, leave `source_inventory` empty, and do
+not write `segments.jsonl`. Denied receipts must not expose absolute host paths
+or sensitive source file names.
 
 ## U1.2.2 Dataset Versions, Retry, And Quality
 

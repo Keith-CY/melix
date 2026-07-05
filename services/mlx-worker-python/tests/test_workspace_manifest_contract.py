@@ -416,6 +416,117 @@ def test_workspace_preflight_classifies_unsafe_paths_and_unknown_root_refs(
     ]
 
 
+def test_workspace_path_policy_allows_manifest_root_children(tmp_path: Path) -> None:
+    manifest_path = _write_materialized_workspace(tmp_path)
+    candidate_path = manifest_path.parent / "raw" / "dialogues.jsonl"
+
+    receipt = workspace_manifest_module.workspace_path_policy_receipt(
+        manifest_path,
+        candidate_path,
+    )
+
+    assert receipt["schema_version"] == "melix.workspace_path_policy_receipt.v1"
+    assert receipt["decision"] == "allowed"
+    assert receipt["reason"] == "inside_workspace_root"
+    assert receipt["root_id"] == "workspace"
+    assert receipt["candidate_path"] == "raw/dialogues.jsonl"
+    assert receipt["root_path"] == "."
+    assert str(tmp_path) not in json.dumps(receipt, sort_keys=True)
+
+
+def test_workspace_path_policy_denies_paths_outside_manifest_roots(tmp_path: Path) -> None:
+    manifest_path = _write_materialized_workspace(tmp_path)
+    outside_path = tmp_path.parent / f"{tmp_path.name}-outside" / "customer-token-notes.txt"
+    outside_path.parent.mkdir()
+    outside_path.write_text("do not read", encoding="utf-8")
+
+    receipt = workspace_manifest_module.workspace_path_policy_receipt(
+        manifest_path,
+        outside_path,
+    )
+
+    serialized = json.dumps(receipt, sort_keys=True)
+    assert receipt["decision"] == "denied"
+    assert receipt["reason"] == "outside_workspace_roots"
+    assert receipt["candidate_path"] == "<outside-workspace>"
+    assert receipt["root_id"] == ""
+    assert str(tmp_path) not in serialized
+    assert "customer-token-notes.txt" not in serialized
+
+
+def test_workspace_path_policy_denies_parent_traversal_escape(tmp_path: Path) -> None:
+    manifest_path = _write_materialized_workspace(tmp_path)
+    outside_path = tmp_path.parent / "outside" / "customer-token-notes.txt"
+    outside_path.parent.mkdir()
+    outside_path.write_text("do not read", encoding="utf-8")
+    traversal_path = manifest_path.parent / "raw" / ".." / ".." / "outside" / "customer-token-notes.txt"
+
+    receipt = workspace_manifest_module.workspace_path_policy_receipt(
+        manifest_path,
+        traversal_path,
+    )
+
+    serialized = json.dumps(receipt, sort_keys=True)
+    assert receipt["decision"] == "denied"
+    assert receipt["reason"] == "outside_workspace_roots"
+    assert receipt["candidate_path"] == "<outside-workspace>"
+    assert str(tmp_path) not in serialized
+    assert "customer-token-notes.txt" not in serialized
+
+
+def test_workspace_path_policy_denies_symlink_escape(tmp_path: Path) -> None:
+    manifest_path = _write_materialized_workspace(tmp_path)
+    outside_path = tmp_path.parent / f"{tmp_path.name}-outside" / "customer-token-notes.txt"
+    outside_path.parent.mkdir()
+    outside_path.write_text("do not read", encoding="utf-8")
+    link_path = manifest_path.parent / "raw" / "linked-secret.txt"
+    link_path.symlink_to(outside_path)
+
+    receipt = workspace_manifest_module.workspace_path_policy_receipt(
+        manifest_path,
+        link_path,
+    )
+
+    serialized = json.dumps(receipt, sort_keys=True)
+    assert receipt["decision"] == "denied"
+    assert receipt["reason"] == "outside_workspace_roots"
+    assert receipt["candidate_path"] == "<outside-workspace>"
+    assert str(tmp_path) not in serialized
+    assert "customer-token-notes.txt" not in serialized
+    assert "linked-secret.txt" not in serialized
+
+
+def test_workspace_path_policy_denies_invalid_manifest_without_absolute_candidate(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_manifest(
+        tmp_path,
+        lambda manifest: manifest.__setitem__(
+            "schema_version",
+            "melix.workspace_manifest.v0",
+        ),
+    )
+    candidate_path = tmp_path / "raw" / "dialogues.jsonl"
+
+    receipt = workspace_manifest_module.workspace_path_policy_receipt(
+        manifest_path,
+        candidate_path,
+    )
+
+    serialized = json.dumps(receipt, sort_keys=True)
+    assert receipt["decision"] == "denied"
+    assert receipt["reason"] == "manifest_invalid"
+    assert receipt["candidate_path"] == "raw/dialogues.jsonl"
+    assert receipt["checks"][0]["code"] == "WORKSPACE_PATH_POLICY_MANIFEST_INVALID"
+    assert str(tmp_path) not in serialized
+
+
+def test_workspace_path_policy_manifest_root_path_unknown_root_returns_empty() -> None:
+    manifest = workspace_manifest_pb2.WorkspaceManifest()
+
+    assert workspace_manifest_module._manifest_root_path(manifest, "missing-root") == ""
+
+
 def test_workspace_preflight_cli_writes_stable_json_receipt(tmp_path: Path) -> None:
     manifest_path = _write_materialized_workspace(tmp_path, skip_roots={"jobs"})
     output_path = tmp_path / "reports/workspace-preflight-receipt.json"

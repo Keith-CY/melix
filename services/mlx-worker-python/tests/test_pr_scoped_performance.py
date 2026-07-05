@@ -402,7 +402,7 @@ def test_scope_report_selects_dataset_version_listing_probe() -> None:
     assert "dataset-source-records-scandir" in selected_ids
 
 
-def test_dataset_preparation_probes_cover_privacy_detector_ingest_tests() -> None:
+def test_dataset_preparation_probes_cover_privacy_and_workspace_path_ingest_tests() -> None:
     registry_payload = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
     by_id = {probe["id"]: probe for probe in registry_payload}
     probe_ids = (
@@ -411,6 +411,7 @@ def test_dataset_preparation_probes_cover_privacy_detector_ingest_tests() -> Non
         "dataset-source-records-scandir",
     )
     privacy_test_file = "services/mlx-worker-python/tests/test_dataset_preparation_ingest.py"
+    versioning_test_file = "services/mlx-worker-python/tests/test_dataset_preparation_versioning.py"
     required_tests = (
         f"{privacy_test_file}::test_dataset_ingest_privacy_detector_redacts_source_records_before_segments",
         f"{privacy_test_file}::test_dataset_ingest_privacy_detector_detect_mode_audits_without_mutating_segments",
@@ -426,7 +427,20 @@ def test_dataset_preparation_probes_cover_privacy_detector_ingest_tests() -> Non
         f"{privacy_test_file}::test_dataset_ingest_cli_accepts_detect_privacy_detector_mode_from_environment",
         f"{privacy_test_file}::test_dataset_ingest_cli_privacy_detector_flag_overrides_environment",
         f"{privacy_test_file}::test_dataset_ingest_cli_ignores_unsupported_privacy_detector_environment",
+        f"{privacy_test_file}::test_dataset_ingest_blocks_input_outside_workspace_roots_before_discovery",
+        f"{privacy_test_file}::test_dataset_ingest_allows_input_under_manifest_root",
+        f"{privacy_test_file}::test_dataset_ingest_blocks_symlink_escape_under_manifest_root",
     )
+    required_versioning_tests = (
+        (
+            f"{versioning_test_file}::"
+            "test_dataset_version_workspace_manifest_helper_tolerates_path_stat_errors"
+        ),
+    )
+
+    def command_covers(command: str, required_test: str) -> bool:
+        test_file = required_test.split("::", 1)[0]
+        return required_test in command or f" {test_file} " in f" {command} "
 
     for probe_id in probe_ids:
         probe = by_id[probe_id]
@@ -434,11 +448,19 @@ def test_dataset_preparation_probes_cover_privacy_detector_ingest_tests() -> Non
         for command_name in ("test_command", "coverage_command"):
             command = probe[command_name]
             for required_test in required_tests:
-                assert required_test in command
+                assert command_covers(command, required_test)
+            if probe_id != "dataset-source-records-scandir":
+                for required_test in required_versioning_tests:
+                    assert command_covers(command, required_test)
         assert privacy_test_file in probe["coverage_command"].split(
             "python3 scripts/changed_scope_coverage.py --coverage-json coverage.json ",
             1,
         )[1]
+        if probe_id != "dataset-source-records-scandir":
+            assert versioning_test_file in probe["coverage_command"].split(
+                "python3 scripts/changed_scope_coverage.py --coverage-json coverage.json ",
+                1,
+            )[1]
 
 
 def test_scope_report_selects_lora_aux_modules_probe() -> None:

@@ -50,7 +50,7 @@ def _assert_rejects_over_upload_cap_before_reading_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     input_root.mkdir(parents=True)
     oversized_source = input_root / "big.txt"
@@ -95,7 +95,7 @@ def _assert_rejects_over_upload_cap_before_reading_sources(
 
 
 def _assert_rejects_over_source_cap_before_expensive_processing(tmp_path: Path) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     input_root.mkdir(parents=True)
     (input_root / "small.txt").write_text("ok", encoding="utf-8")
@@ -127,7 +127,7 @@ def _assert_rejects_over_limit_settings_before_reading_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     input_root.mkdir(parents=True)
     source_path = input_root / "notes.txt"
@@ -171,7 +171,7 @@ def _assert_rejects_non_integer_limit_settings_with_structured_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     input_root.mkdir(parents=True)
     source_path = input_root / "notes.txt"
@@ -212,7 +212,7 @@ def _assert_rejects_non_integer_limit_settings_with_structured_receipt(
 
 
 def _assert_rejects_negative_limit_settings_before_source_scan(tmp_path: Path) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text("ok", encoding="utf-8")
@@ -239,7 +239,7 @@ def _assert_accepted_upload_uses_bounded_source_reader(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     input_root.mkdir(parents=True)
     source_path = input_root / "notes.txt"
@@ -280,7 +280,7 @@ def _assert_records_zero_observed_bytes_when_source_stat_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     input_root.mkdir(parents=True)
     source_path = input_root / "notes.txt"
@@ -311,7 +311,7 @@ def _assert_records_zero_observed_bytes_when_source_stat_fails(
 
 
 def _assert_blocks_unreadable_source_and_reports_cleanup(tmp_path: Path) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     input_root.mkdir(parents=True)
     (input_root / "bad.txt").write_bytes(b"\xff")
@@ -400,7 +400,7 @@ def _assert_removes_partial_segments_artifact_on_write_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text("Partial artifacts should be cleaned.\n", encoding="utf-8")
@@ -435,7 +435,7 @@ def _assert_removes_partial_segments_artifact_on_write_failure(
 
 
 def _assert_dataset_version_persists_ingest_limit_and_cleanup_evidence(tmp_path: Path) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text("Alpha support answer.\n\nBeta support answer.\n", encoding="utf-8")
@@ -481,8 +481,6 @@ def _write_ready_workspace_manifest(
     workspace_root = tmp_path / "workspace"
     manifest = json.loads(WORKSPACE_FIXTURE.read_text(encoding="utf-8"))
     workspace_root.mkdir(parents=True, exist_ok=True)
-    manifest_path = workspace_root / "workspace-manifest.json"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     skip_roots = skip_roots or set()
     root_paths = {
@@ -499,4 +497,55 @@ def _write_ready_workspace_manifest(
         artifact_path = workspace_root / root_path / artifact["relative_path"]
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         artifact_path.write_text(artifact["artifact_id"], encoding="utf-8")
+    _append_existing_workspace_test_artifacts(manifest, workspace_root)
+    manifest_path = workspace_root / "workspace-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
+
+
+def _append_existing_workspace_test_artifacts(
+    manifest: dict[str, object],
+    workspace_root: Path,
+) -> None:
+    artifacts = manifest["artifacts"]
+    assert isinstance(artifacts, list)
+    managed_paths = {
+        str(artifact["relative_path"])
+        for artifact in artifacts
+        if isinstance(artifact, dict) and artifact.get("root_id") == "workspace"
+    }
+    for path in sorted(workspace_root.rglob("*")):
+        try:
+            is_symlink = path.is_symlink()
+        except OSError:
+            is_symlink = False
+        if path.name == "workspace-manifest.json" or is_symlink:
+            continue
+        try:
+            is_file = path.is_file()
+        except OSError:
+            is_file = True
+        if not is_file:
+            continue
+        relative_path = path.relative_to(workspace_root).as_posix()
+        if relative_path in managed_paths:
+            continue
+        artifacts.append(
+            {
+                "artifact_id": f"test-raw-{_safe_test_artifact_id(relative_path)}",
+                "artifact_type": "WORKSPACE_ARTIFACT_TYPE_RAW_INPUTS",
+                "root_id": "workspace",
+                "relative_path": relative_path,
+                "media_type": "text/plain",
+                "provenance_ref_ids": ["operator-import"],
+            }
+        )
+        managed_paths.add(relative_path)
+
+
+def _safe_test_artifact_id(relative_path: str) -> str:
+    normalized = "".join(
+        character if character.isalnum() else "-"
+        for character in relative_path.lower()
+    ).strip("-")
+    return normalized or "source"
