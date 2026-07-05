@@ -420,6 +420,9 @@ def test_dataset_preparation_probes_cover_privacy_detector_ingest_tests() -> Non
         f"{privacy_test_file}::test_blocked_ingest_receipt_preserves_passed_privacy_fields_when_only_metrics_default",
         f"{privacy_test_file}::test_dataset_ingest_cli_writes_stable_json_receipt",
         f"{privacy_test_file}::test_dataset_ingest_cli_accepts_privacy_detector_mode",
+        f"{privacy_test_file}::test_dataset_ingest_cli_accepts_privacy_detector_mode_from_environment",
+        f"{privacy_test_file}::test_dataset_ingest_cli_privacy_detector_flag_overrides_environment",
+        f"{privacy_test_file}::test_dataset_ingest_cli_ignores_unsupported_privacy_detector_environment",
     )
 
     for probe_id in probe_ids:
