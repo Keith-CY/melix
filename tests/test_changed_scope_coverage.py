@@ -607,6 +607,43 @@ def test_measurable_changed_lines_handles_large_measured_sets_without_union(tmp_
     assert missed == [2]
 
 
+def test_measurable_changed_lines_dense_filter_keeps_generic_set_fallback(tmp_path: Path) -> None:
+    class GenericChangedSet:
+        def __init__(self, values: set[int]) -> None:
+            self.values = values
+
+        def __contains__(self, value: object) -> bool:
+            return value in self.values
+
+        def __iter__(self):
+            return iter(self.values)
+
+        def __len__(self) -> int:
+            return len(self.values)
+
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 81)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 80, 2)),
+                "missing_lines": list(range(2, 81, 2)),
+            }
+        }
+    }
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        GenericChangedSet(set(range(1, 81))),
+    )
+
+    assert measurable == list(range(1, 81))
+    assert covered == list(range(1, 80, 2))
+    assert missed == list(range(2, 81, 2))
+
+
 def test_measurable_changed_lines_uses_dense_membership_scan(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
