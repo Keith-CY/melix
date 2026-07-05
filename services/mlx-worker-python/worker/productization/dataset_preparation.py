@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import csv
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 import os
 import re
@@ -1102,7 +1103,7 @@ def _iter_source_records(
             )
             continue
         if source_kind == "structured_data":
-            yield from _structured_records(path, text)
+            yield from _structured_records(path, text, operator_failures)
         else:
             normalized_text = _normalize_line_endings(text)
             yield _record(
@@ -1284,17 +1285,24 @@ def _segmentation_policy(request: DatasetIngestRequest) -> dict[str, Any]:
     }
 
 
-def _structured_records(path: Path, text: str) -> Iterable[dict[str, Any]]:
+def _structured_records(
+    path: Path,
+    text: str,
+    operator_failures: list[dict[str, Any]],
+) -> Iterable[dict[str, Any]]:
     suffix = path.suffix.lower()
     if suffix == ".jsonl":
         for index, line in enumerate(text.splitlines(), start=1):
             if not line or line.isspace():
                 continue
             payload = json.loads(line)
+            row_text = _structured_text_or_failure(path, payload, index, operator_failures)
+            if row_text is None:
+                continue
             yield _record(
                 path=path,
                 source_kind="structured_data",
-                text=_structured_text(payload),
+                text=row_text,
                 metadata={"row_index": index},
             )
         return
@@ -1302,22 +1310,74 @@ def _structured_records(path: Path, text: str) -> Iterable[dict[str, Any]]:
         payload = json.loads(text)
         rows = payload if isinstance(payload, list) else [payload]
         for index, row in enumerate(rows, start=1):
+            row_text = _structured_text_or_failure(path, row, index, operator_failures)
+            if row_text is None:
+                continue
             yield _record(
                 path=path,
                 source_kind="structured_data",
-                text=_structured_text(row),
+                text=row_text,
                 metadata={"row_index": index},
             )
         return
     dialect = "excel-tab" if suffix == ".tsv" else "excel"
-    reader = csv.DictReader(text.splitlines(), dialect=dialect)
+    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
     for index, row in enumerate(reader, start=1):
+        row_text = _structured_text_or_failure(path, row, index, operator_failures)
+        if row_text is None:
+            continue
         yield _record(
             path=path,
             source_kind="structured_data",
-            text=_structured_text(row),
+            text=row_text,
             metadata={"row_index": index},
         )
+
+
+def _structured_text_or_failure(
+    path: Path,
+    payload: Any,
+    row_index: int,
+    operator_failures: list[dict[str, Any]],
+) -> str | None:
+    if isinstance(payload, dict) and "text" in payload and not isinstance(payload["text"], str):
+        operator_failures.append(
+            _unsupported_structured_text_failure(
+                path=path,
+                row_index=row_index,
+                value=payload["text"],
+            )
+        )
+        return None
+    return _structured_text(payload)
+
+
+def _unsupported_structured_text_failure(
+    *,
+    path: Path,
+    row_index: int,
+    value: Any,
+) -> dict[str, Any]:
+    value_type = type(value).__name__
+    return {
+        "id": _failure_id("unsupported-text-value", f"{path.name}-{row_index}"),
+        "code": "DATASET_INGEST_UNSUPPORTED_TEXT_VALUE",
+        "path": path.name,
+        "detail": (
+            "Structured source rows with an explicit text field must provide a string "
+            f"value; row {row_index} provided {value_type}."
+        ),
+        "recovery_hint": (
+            "Convert the row text field to a string or remove it so Melix can derive "
+            "structured fallback text from non-sensitive fields."
+        ),
+        "reason": "unsupported_text_value",
+        "metadata": {
+            "source_uri": path.name,
+            "row_index": row_index,
+            "value_type": value_type,
+        },
+    }
 
 
 def _structured_text(payload: Any) -> str:
