@@ -424,6 +424,44 @@ def test_size_hint_single_readme_falls_back_to_regex_when_direct_parse_misses(
     parser.assert_called_once_with("Model size:", allow_bare=False)
 
 
+def test_size_hint_empty_card_data_skips_card_description_lookup() -> None:
+    class EmptyCardData(dict):
+        def get(self, key: str, default: object = None) -> object:
+            if key == "description":  # pragma: no cover - regression sentinel
+                raise AssertionError("empty cardData should not probe description")
+            return super().get(key, default)
+
+    assert hub_catalog_module._size_hint_bytes({"cardData": EmptyCardData()}) == 0
+
+
+def test_size_hint_empty_card_data_scans_description_and_readme_without_card_lookup() -> None:
+    class EmptyCardData(dict):
+        def get(self, key: str, default: object = None) -> object:
+            if key == "description":  # pragma: no cover - regression sentinel
+                raise AssertionError("empty cardData should not probe description")
+            return super().get(key, default)
+
+    assert (
+        hub_catalog_module._size_hint_bytes(
+            {
+                "cardData": EmptyCardData(),
+                "description": "metadata without size",
+                "readme": "README\nModel size: 9 MB",
+            }
+        )
+        == 9 * MB
+    )
+
+
+def test_size_hint_nonempty_card_data_uses_single_readme_fast_path() -> None:
+    assert (
+        hub_catalog_module._size_hint_bytes(
+            {"cardData": {"license": "mit"}, "readme": "README\nModel size: 4 MB"}
+        )
+        == 4 * MB
+    )
+
+
 def test_direct_size_hint_rejects_extra_tokens_without_full_split() -> None:
     assert _direct_size_hint_from_text("12 GB extra") == 0
     assert _direct_size_hint_from_text("12") == 0
