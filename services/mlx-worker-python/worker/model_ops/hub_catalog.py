@@ -837,14 +837,21 @@ def _size_hint_bytes(payload: dict[str, Any], *, card_data: dict[str, Any] | Non
     description_text = raw_description_text if isinstance(raw_description_text, str) else ""
     raw_readme_text = payload.get("readme")
     readme_text = raw_readme_text if isinstance(raw_readme_text, str) else ""
-    raw_card_description_text = card_data.get("description")
-    card_description_text = raw_card_description_text if isinstance(raw_card_description_text, str) else ""
-    if not readme_text and not card_description_text:
-        return _size_hint_from_marked_text(description_text) if description_text else 0
-    if not description_text and not card_description_text:
-        return _size_hint_from_marked_text(readme_text) if readme_text else 0
-    if not description_text and not readme_text:
-        return _size_hint_from_marked_text(card_description_text) if card_description_text else 0
+    if not card_data:
+        if not readme_text:
+            return _size_hint_from_marked_text(description_text) if description_text else 0
+        if not description_text:
+            return _size_hint_from_marked_text(readme_text) if readme_text else 0
+        card_description_text = ""
+    else:
+        raw_card_description_text = card_data.get("description")
+        card_description_text = raw_card_description_text if isinstance(raw_card_description_text, str) else ""
+        if not readme_text and not card_description_text:
+            return _size_hint_from_marked_text(description_text) if description_text else 0
+        if not description_text and not card_description_text:
+            return _size_hint_from_marked_text(readme_text) if readme_text else 0
+        if not description_text and not readme_text:
+            return _size_hint_from_marked_text(card_description_text) if card_description_text else 0
 
     found_model_marker = False
     for text in (description_text, readme_text, card_description_text):
