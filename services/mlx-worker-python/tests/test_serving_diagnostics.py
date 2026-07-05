@@ -450,6 +450,116 @@ def test_serving_diagnostics_effective_config_skips_incomplete_readiness_metadat
     assert "serving_readiness" not in effective_config
 
 
+def test_serving_diagnostics_effective_config_derives_capability_receipt_from_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-serving-capability",
+        invocation={},
+        effective_config={
+            "worker_request": {
+                "execution": {
+                    "ext": {
+                        "melix.serving.capability.schema_version": (
+                            "melix.serving_capability_receipt.v1"
+                        ),
+                        "melix.serving.capability.capabilities": (
+                            "generate_text, generate_multimodal"
+                        ),
+                        "melix.serving.capability.input_modalities": "text, image",
+                        "melix.serving.capability.output_modalities": "text",
+                        "melix.serving.capability.acceleration_profile": "balanced",
+                        "melix.serving.capability.requested_mode": "baseline",
+                        "melix.serving.capability.resolved_mode": "baseline",
+                        "melix.serving.capability.optional_dependency_source": (
+                            "not_required"
+                        ),
+                        "melix.serving.capability.unsupported_reason": "none",
+                        "melix.serving.capability.ignored_flags": "",
+                        "melix.serving.capability.fallback_policy": "fail_closed",
+                    }
+                }
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config["serving_capability"] == {
+        "schema_version": "melix.serving_capability_receipt.v1",
+        "capabilities": ["generate_text", "generate_multimodal"],
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "acceleration_profile": "balanced",
+        "requested_mode": "baseline",
+        "resolved_mode": "baseline",
+        "optional_dependency_source": "not_required",
+        "unsupported_reason": "none",
+        "ignored_flags": [],
+        "fallback_policy": "fail_closed",
+    }
+
+
+def test_serving_diagnostics_capability_receipt_normalizes_sequence_metadata() -> None:
+    receipt = (
+        serving_diagnostics_module._serving_capability_receipt_from_audit_metadata(
+            {
+                "melix.serving.capability.schema_version": (
+                    "melix.serving_capability_receipt.v1"
+                ),
+                "melix.serving.capability.capabilities": (
+                    "generate_multimodal",
+                    "generate_text",
+                ),
+                "melix.serving.capability.input_modalities": {"image", "text"},
+                "melix.serving.capability.output_modalities": frozenset({"text"}),
+                "melix.serving.capability.acceleration_profile": "balanced",
+                "melix.serving.capability.requested_mode": "baseline",
+                "melix.serving.capability.resolved_mode": "baseline",
+                "melix.serving.capability.optional_dependency_source": "not_required",
+                "melix.serving.capability.unsupported_reason": "none",
+                "melix.serving.capability.ignored_flags": ["", "unknown_flag"],
+                "melix.serving.capability.fallback_policy": "fail_closed",
+            }
+        )
+    )
+
+    assert receipt["capabilities"] == ["generate_multimodal", "generate_text"]
+    assert receipt["input_modalities"] == ["image", "text"]
+    assert receipt["output_modalities"] == ["text"]
+    assert receipt["ignored_flags"] == ["unknown_flag"]
+
+
+def test_serving_diagnostics_effective_config_skips_incomplete_capability_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-serving-capability-incomplete",
+        invocation={},
+        effective_config={
+            "execution_ext": {
+                "melix.serving.capability.schema_version": (
+                    "melix.serving_capability_receipt.v1"
+                ),
+                "melix.serving.capability.capabilities": "generate_text",
+                "melix.serving.capability.input_modalities": "text",
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert "serving_capability" not in effective_config
+
+
 def test_serving_diagnostics_effective_config_derives_privacy_policy_receipts_from_metadata(
     tmp_path: Path,
 ) -> None:

@@ -166,6 +166,54 @@ If any required readiness metadata key is missing, the writer leaves the
 original metadata in place and does not synthesize a partial top-level
 `serving_readiness` receipt.
 
+When upstream serving code has evaluated the model capability and acceleration
+admission contract, `effective-config.json` should also include a
+`serving_capability` receipt. This receipt is diagnostics-only: it records
+already-resolved admission facts and must not trigger model discovery, optional
+dependency imports, health polling, model prefetch, or media route probing
+during bundle writing.
+
+`serving_capability` fields:
+
+- `schema_version` - `melix.serving_capability_receipt.v1`.
+- `capabilities` - supported serving capabilities, such as `generate_text` or
+  `generate_multimodal`.
+- `input_modalities` - request input modalities admitted by the current
+  resolved contract.
+- `output_modalities` - output modalities exposed by the current resolved
+  contract.
+- `acceleration_profile` - selected serving acceleration profile.
+- `requested_mode` - operator-requested acceleration mode.
+- `resolved_mode` - effective acceleration mode after capability admission.
+- `optional_dependency_source` - whether optional runtime dependencies were not
+  required, already available, or refused before dispatch.
+- `unsupported_reason` - typed refusal reason, or `none`.
+- `ignored_flags` - unsupported or intentionally ignored flags surfaced to the
+  operator.
+- `fallback_policy` - fallback behavior such as `fail_closed` or
+  `observable_fallback`.
+
+Diagnostics writers may derive `serving_capability` from namespaced metadata
+when all of these keys are present:
+
+- `melix.serving.capability.schema_version`
+- `melix.serving.capability.capabilities`
+- `melix.serving.capability.input_modalities`
+- `melix.serving.capability.output_modalities`
+- `melix.serving.capability.acceleration_profile`
+- `melix.serving.capability.requested_mode`
+- `melix.serving.capability.resolved_mode`
+- `melix.serving.capability.optional_dependency_source`
+- `melix.serving.capability.unsupported_reason`
+- `melix.serving.capability.ignored_flags`
+- `melix.serving.capability.fallback_policy`
+
+The `capabilities`, `input_modalities`, `output_modalities`, and
+`ignored_flags` metadata values are comma-separated lists. Empty list items are
+ignored; an empty `ignored_flags` value records an empty list. If any required
+capability metadata key is missing, the writer leaves the original metadata in
+place and does not synthesize a partial top-level `serving_capability` receipt.
+
 When a proxy, workspace-ingest, or worker path has already evaluated network
 fetch safety, `effective-config.json` may include a `network_fetch_policy`
 receipt and `privacy_audit_counters`. These receipts are diagnostics-only:

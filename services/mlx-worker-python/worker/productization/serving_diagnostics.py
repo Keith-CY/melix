@@ -48,6 +48,25 @@ _READINESS_AUDIT_TO_RECEIPT_FIELDS = {
 _READINESS_RECEIPT_REQUIRED_FIELDS = frozenset(
     _READINESS_AUDIT_TO_RECEIPT_FIELDS.values()
 )
+_CAPABILITY_AUDIT_TO_RECEIPT_FIELDS = {
+    "melix.serving.capability.schema_version": "schema_version",
+    "melix.serving.capability.capabilities": "capabilities",
+    "melix.serving.capability.input_modalities": "input_modalities",
+    "melix.serving.capability.output_modalities": "output_modalities",
+    "melix.serving.capability.acceleration_profile": "acceleration_profile",
+    "melix.serving.capability.requested_mode": "requested_mode",
+    "melix.serving.capability.resolved_mode": "resolved_mode",
+    "melix.serving.capability.optional_dependency_source": "optional_dependency_source",
+    "melix.serving.capability.unsupported_reason": "unsupported_reason",
+    "melix.serving.capability.ignored_flags": "ignored_flags",
+    "melix.serving.capability.fallback_policy": "fallback_policy",
+}
+_CAPABILITY_RECEIPT_REQUIRED_FIELDS = frozenset(
+    _CAPABILITY_AUDIT_TO_RECEIPT_FIELDS.values()
+)
+_CAPABILITY_RECEIPT_LIST_FIELDS = frozenset(
+    ("capabilities", "input_modalities", "output_modalities", "ignored_flags")
+)
 _EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
 _JSON_COMPACT_SEPARATORS = (",", ":")
 _JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
@@ -598,6 +617,12 @@ def _effective_config_with_profile_receipt(
             if receipt:
                 enriched_config["serving_readiness"] = receipt
                 break
+    if "serving_capability" not in enriched_config:
+        for metadata in metadata_sources:
+            receipt = _serving_capability_receipt_from_audit_metadata(metadata)
+            if receipt:
+                enriched_config["serving_capability"] = receipt
+                break
     if "network_fetch_policy" not in enriched_config:
         for metadata in metadata_sources:
             receipt = network_fetch_policy_receipt_from_metadata(metadata)
@@ -675,6 +700,37 @@ def _serving_readiness_receipt_from_audit_metadata(
     return {}
 
 
+def _serving_capability_receipt_from_audit_metadata(
+    metadata: Mapping[str, object],
+) -> dict[str, object]:
+    receipt: dict[str, object] = {}
+    for audit_key, receipt_key in _CAPABILITY_AUDIT_TO_RECEIPT_FIELDS.items():
+        value = metadata.get(audit_key)
+        if value is None:
+            continue
+        if receipt_key in _CAPABILITY_RECEIPT_LIST_FIELDS:
+            receipt[receipt_key] = _metadata_list(value)
+        else:
+            receipt[receipt_key] = str(value)
+    if _CAPABILITY_RECEIPT_REQUIRED_FIELDS.issubset(receipt):
+        return receipt
+    return {}
+
+
+def _metadata_list(value: object) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        raw_items = value
+    elif isinstance(value, (set, frozenset)):
+        raw_items = sorted(value, key=lambda item: str(item))
+    else:
+        raw_items = str(value).split(",")
+    return [
+        item_text
+        for item in raw_items
+        if (item_text := str(item).strip())
+    ]
+
+
 def _stable_json_value(value: object) -> object:
     if isinstance(value, dict):
         return _stable_json_object(value)  # type: ignore[arg-type]
@@ -703,13 +759,15 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 def _write_jsonl(path: Path, rows: Any) -> None:
     encode = _JSONL_ENCODER.encode
+    event_type = ServingDiagnosticsEvent
+    extend_empty_attribute_event = _extend_empty_attribute_event_json_line_bytes
     payload = bytearray()
     append_line = payload.extend
     newline = b"\n"
     request_id_literals: dict[str, bytes] = {}
     for row in rows:
-        if isinstance(row, ServingDiagnosticsEvent):
-            if _extend_empty_attribute_event_json_line_bytes(
+        if isinstance(row, event_type):
+            if extend_empty_attribute_event(
                 append_line,
                 row,
                 request_id_literals,
