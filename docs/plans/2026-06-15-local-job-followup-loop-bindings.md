@@ -33,6 +33,18 @@ This Python-only follow-up keeps the same registered `local-job-followup-scan-sc
 
 The focused regression guard monkeypatches the module-level `deepcopy` symbol to reject generic deep copies, then mutates copied completion-summary and receipt data to prove projection changes do not leak back into the claim/prompt-context state. No record schema, reconciliation, claim, prompt-context admission, scan ordering, or receipt payload fields change.
 
+## 2026-07-05 follow-up: projection JSON scalar fast path
+
+This Python-only follow-up keeps the same registered `local-job-followup-scan-scandir` probe and narrows `_copy_json_like_value(...)`, the helper used by local-job follow-up projection copies. The helper now returns exact JSON scalar values (`str`, `int`, `float`, `bool`, and `None`) before checking container types, avoiding repeated `dict`/`list`/`tuple` guards for immutable scalar leaves in completion summaries and untrusted-context receipts.
+
+The registered probe entry now includes the focused scalar-copy regression test in both `test_command` and `coverage_command`, and `scripts/local_job_followup_scan_probe.py` now reports scalar-copy baseline/optimized/delta metrics alongside the existing scan and projection metrics. Changed-scope coverage covers the new fast path before local and CI probe comparisons, while the scalar-copy probe isolates the JSON-scalar leaf-copy hot path from scan I/O noise. No record schema, reconciliation, claim, prompt-context admission, scan ordering, or receipt payload fields change.
+
+## 2026-07-05 follow-up: exact container copy fast path
+
+This Python-only follow-up keeps the same registered `local-job-followup-scan-scandir` probe and further narrows `_copy_json_like_value(...)`. After the scalar leaf fast path, the helper now handles exact `dict`, `list`, and `tuple` containers before falling back to `isinstance(...)` checks for subclasses. The common projection payload shape is built from exact JSON containers, so the helper avoids redundant subclass-aware type checks while retaining the previous subclass behavior through the fallback branch.
+
+The focused regression guard covers dict/list/tuple subclasses to prove the fallback branch still deep-copies nested mutable payloads. The registered scalar-copy probe remains the local and CI metric source for the copy helper slice. No record schema, reconciliation, claim, prompt-context admission, scan ordering, or receipt payload fields change.
+
 ## Linux validation boundary
 
 This is a Python-only slice and is locally verifiable on Linux. No Swift runtime behavior changes are included.
