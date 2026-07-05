@@ -257,7 +257,7 @@ serialization.
 - `detector_id`
 - `policy_id`
 - `policy_mode`
-- `action` - `passed`, `redacted`, or `blocked`
+- `action` - `passed`, `detected`, `redacted`, or `blocked`
 - `categories` - detected category names, not matched values
 - `match_count`
 - `redacted_span_count`

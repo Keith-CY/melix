@@ -7,6 +7,10 @@ the shared deterministic privacy detector to dataset source records before
 deduplication and segmentation, while emitting machine-readable privacy detector
 evidence without scanning content inside diagnostics bundle writers.
 
+Follow-up: `2026-07-05-issue-2188-workspace-detect-mode.md` extends this
+workspace ingest contract with explicit audit-only `detect` mode. This original
+slice introduced `off`, `redact`, and `block`.
+
 ## Scope
 
 - Add an explicit workspace ingest detector mode with `off`, `redact`, and
@@ -64,8 +68,10 @@ ran.
 ## Operator Controls
 
 The Python request object adds `privacy_detector_mode`, defaulting to `off`.
-The CLI adds `--privacy-detector-mode off|redact|block`. Unknown programmatic
-values normalize to `off`; the CLI rejects unknown values through argparse.
+This original slice added `--privacy-detector-mode off|redact|block`.
+`2026-07-05-issue-2188-workspace-detect-mode.md` extends the current CLI and
+request contract to `off|detect|redact|block`. Unknown programmatic values
+normalize to `off`; the CLI rejects unknown values through argparse.
 
 ## Failure Behavior
 
