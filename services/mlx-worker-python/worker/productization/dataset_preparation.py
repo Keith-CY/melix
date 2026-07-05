@@ -4,14 +4,13 @@ from dataclasses import dataclass
 import csv
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 import os
 import re
 import time
 from pathlib import Path
 from typing import Any, Iterable
-
-from worker.productization.workspace_manifest import preflight_workspace
 
 
 DATASET_INGEST_RECEIPT_SCHEMA_VERSION = "melix.dataset_ingest_receipt.v1"
@@ -22,6 +21,10 @@ DATASET_VERSION_SCHEMA_VERSION = "melix.dataset_version.v1"
 DATASET_QUALITY_SUMMARY_SCHEMA_VERSION = "melix.dataset_quality_summary.v1"
 DATASET_RETRY_RECEIPT_SCHEMA_VERSION = "melix.dataset_retry_receipt.v1"
 DATASET_VERSION_LIST_SCHEMA_VERSION = "melix.dataset_version_list.v1"
+PRIVACY_AUDIT_COUNTER_SCHEMA_VERSION = "melix.privacy_audit_counter.v1"
+PRIVACY_DETECTOR_RECEIPT_SCHEMA_VERSION = "melix.privacy_detector_receipt.v1"
+DEFAULT_PRIVACY_POLICY_ID = "melix.default_privacy_policy.v1"
+PATTERN_PRIVACY_DETECTOR_ID = "melix.pattern_detector.v1"
 
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b")
@@ -35,6 +38,27 @@ _STRUCTURED_DATA_SOURCE_SUFFIXES = frozenset((".jsonl", ".json", ".csv", ".tsv")
 _SOURCE_KIND_NAME_CACHE_MAX = 4096
 _SOURCE_KIND_BY_NAME: dict[str, str | None] = {}
 _MISSING = object()
+
+
+def preflight_workspace(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    from worker.productization.workspace_manifest import preflight_workspace as preflight
+
+    return preflight(*args, **kwargs)
+
+
+def detect_privacy_patterns(text: str, **kwargs: Any) -> Any:
+    # Keep privacy regex compilation out of default/off dataset ingest and listing paths.
+    from worker.productization.privacy_policy_receipts import detect_privacy_patterns as detect
+
+    return detect(text, **kwargs)
+
+
+def aggregate_privacy_detection_results(results: Iterable[Any], **kwargs: Any) -> Any:
+    from worker.productization.privacy_policy_receipts import (
+        aggregate_privacy_detection_results as aggregate,
+    )
+
+    return aggregate(results, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -51,6 +75,7 @@ class DatasetIngestRequest:
     segmentation_strategy: str = "paragraph"
     upload_cap_bytes: int = 0
     source_cap_bytes: int = 0
+    privacy_detector_mode: str = "off"
 
 
 @dataclass(frozen=True)
@@ -77,6 +102,14 @@ class DatasetRetryFailedRequest:
     version_id: str = ""
     created_at: str = ""
     generator_model: str = ""
+
+
+@dataclass(frozen=True)
+class _WorkspacePrivacyDetectionEvidence:
+    records: list[dict[str, Any]]
+    receipt: dict[str, object]
+    audit_counter: dict[str, object]
+    latency_ms: float
 
 
 def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
@@ -197,6 +230,38 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         _write_json(receipt_path, receipt)
         return receipt
     source_inventory = _source_inventory(records)
+    privacy_evidence = _workspace_privacy_detection_evidence(records, request)
+    records = privacy_evidence.records
+    privacy_detector_receipts = [privacy_evidence.receipt]
+    privacy_audit_counters = [privacy_evidence.audit_counter]
+    privacy_detector_metrics = _privacy_detector_metrics(privacy_evidence)
+    if privacy_evidence.receipt.get("action") == "blocked":
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        receipt = _blocked_ingest_receipt(
+            request=request,
+            segments_path=segments_path,
+            receipt_path=receipt_path,
+            workspace_preflight_receipt_path=workspace_preflight_receipt_path,
+            workspace_preflight_receipt=workspace_preflight_receipt,
+            operator_failures=[
+                *operator_failures,
+                _privacy_detector_blocked_failure(privacy_evidence.receipt),
+            ],
+            elapsed_ms=elapsed_ms,
+            source_inventory=source_inventory,
+            source_file_count=len(source_inventory),
+            observed_payload_bytes=observed_payload_bytes,
+            upload_cap_bytes=upload_cap_bytes,
+            source_cap_bytes=source_cap_bytes,
+            rejection_reason="privacy_detector_blocked",
+            partial_artifact_cleanup=_cleanup_partial_artifact(segments_path),
+            source_record_count=len(records),
+            privacy_detector_receipts=privacy_detector_receipts,
+            privacy_audit_counters=privacy_audit_counters,
+            privacy_detector_metrics=privacy_detector_metrics,
+        )
+        _write_json(receipt_path, receipt)
+        return receipt
     total_bytes = observed_payload_bytes
 
     pii_mask_count = 0
@@ -252,6 +317,10 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
             source_cap_bytes=source_cap_bytes,
             rejection_reason="segment_artifact_write_failed",
             partial_artifact_cleanup=_cleanup_partial_artifact(segments_path),
+            source_record_count=len(records),
+            privacy_detector_receipts=privacy_detector_receipts,
+            privacy_audit_counters=privacy_audit_counters,
+            privacy_detector_metrics=privacy_detector_metrics,
         )
         _write_json(receipt_path, receipt)
         return receipt
@@ -282,6 +351,7 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         "upload_cap_bytes": upload_cap_bytes,
         "observed_payload_bytes": observed_payload_bytes,
         "source_cap_bytes": source_cap_bytes,
+        **privacy_detector_metrics,
     }
     receipt = {
         "schema_version": DATASET_INGEST_RECEIPT_SCHEMA_VERSION,
@@ -290,6 +360,8 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         "workspace_manifest_path": str(Path(request.workspace_manifest_path)),
         "workspace_preflight_receipt_path": str(workspace_preflight_receipt_path),
         "workspace_preflight_receipt": workspace_preflight_receipt,
+        "privacy_detector_receipts": privacy_detector_receipts,
+        "privacy_audit_counters": privacy_audit_counters,
         "dataset_preparation_id": request.dataset_preparation_id,
         "source_inventory": source_inventory,
         "cleaning_controls": _cleaning_controls(request),
@@ -415,6 +487,122 @@ def _raise_if_ingest_receipt_blocked(ingest_receipt: dict[str, Any]) -> None:
     raise ValueError(f"DATASET_VERSION_SOURCE_RECEIPT_BLOCKED: {code_suffix}")
 
 
+def _workspace_privacy_detection_evidence(
+    records: list[dict[str, Any]],
+    request: DatasetIngestRequest,
+) -> _WorkspacePrivacyDetectionEvidence:
+    mode = _privacy_detector_mode(request.privacy_detector_mode)
+    if mode == "off":
+        return _WorkspacePrivacyDetectionEvidence(
+            records=records,
+            receipt={
+                "schema_version": PRIVACY_DETECTOR_RECEIPT_SCHEMA_VERSION,
+                "surface": "workspace_ingest",
+                "route_scope": "source_import",
+                "detector_id": PATTERN_PRIVACY_DETECTOR_ID,
+                "policy_id": DEFAULT_PRIVACY_POLICY_ID,
+                "policy_mode": "off",
+                "action": "passed",
+                "categories": [],
+                "match_count": 0,
+                "redacted_span_count": 0,
+                "blocked_reason": "",
+                "confidence_source": "deterministic_pattern",
+                "raw_sensitive_span_count": 0,
+                "raw_text_included": False,
+            },
+            audit_counter={
+                "schema_version": PRIVACY_AUDIT_COUNTER_SCHEMA_VERSION,
+                "surface": "workspace_ingest",
+                "route_scope": "source_import",
+                "blocked_count": 0,
+                "redacted_count": 0,
+                "passed_count": 1,
+                "raw_sensitive_span_count": 0,
+            },
+            latency_ms=0.0,
+        )
+
+    started = time.perf_counter()
+    detection_results = []
+    detected_records: list[dict[str, Any]] = []
+    for record in records:
+        value = record.get("text")
+        text = str(value) if value is not None else ""
+        result = detect_privacy_patterns(
+            text,
+            surface="workspace_ingest",
+            route_scope="source_import",
+            policy_mode=mode,
+        )
+        detection_results.append(result)
+        if mode == "redact" and result.redacted_text != text:
+            updated_record = dict(record)
+            updated_record["text"] = result.redacted_text
+            detected_records.append(updated_record)
+        else:
+            detected_records.append(record)
+
+    aggregate = aggregate_privacy_detection_results(
+        detection_results,
+        surface="workspace_ingest",
+        route_scope="source_import",
+        policy_mode=mode,
+    )
+    return _WorkspacePrivacyDetectionEvidence(
+        records=detected_records,
+        receipt=aggregate.receipt,
+        audit_counter=aggregate.audit_counter,
+        latency_ms=(time.perf_counter() - started) * 1000.0,
+    )
+
+
+def _privacy_detector_mode(value: object) -> str:
+    normalized = str(value or "off").strip().lower()
+    return normalized if normalized in {"off", "redact", "block"} else "off"
+
+
+def _privacy_detector_metrics(
+    evidence: _WorkspacePrivacyDetectionEvidence,
+) -> dict[str, float | int]:
+    return {
+        "privacy_detector_latency_ms": evidence.latency_ms,
+        "privacy_detector_match_count": int(evidence.receipt.get("match_count", 0) or 0),
+        "privacy_detector_redacted_span_count": int(
+            evidence.receipt.get("redacted_span_count", 0) or 0
+        ),
+    }
+
+
+def _privacy_detector_blocked_failure(
+    receipt: dict[str, object],
+) -> dict[str, Any]:
+    categories = [
+        str(category)
+        for category in receipt.get("categories", [])
+        if str(category)
+    ]
+    category_summary = ", ".join(categories) if categories else "unknown"
+    match_count = int(receipt.get("match_count", 0) or 0)
+    plural = "match" if match_count == 1 else "matches"
+    return {
+        "id": "dataset-ingest-privacy-detector-blocked",
+        "code": "DATASET_INGEST_PRIVACY_DETECTOR_BLOCKED",
+        "path": "",
+        "detail": (
+            f"Workspace privacy detector blocked {match_count} sensitive pattern "
+            f"{plural} across categories: {category_summary}."
+        ),
+        "recovery_hint": (
+            "Remove secrets from workspace sources or rerun ingest with privacy "
+            "detector redact mode."
+        ),
+        "reason": "privacy_detector_blocked",
+        "categories": categories,
+        "match_count": match_count,
+    }
+
+
 def _blocked_ingest_receipt(
     *,
     request: DatasetIngestRequest,
@@ -431,10 +619,26 @@ def _blocked_ingest_receipt(
     source_cap_bytes: int,
     rejection_reason: str,
     partial_artifact_cleanup: dict[str, Any],
+    source_record_count: int = 0,
+    privacy_detector_receipts: list[dict[str, object]] | None = None,
+    privacy_audit_counters: list[dict[str, object]] | None = None,
+    privacy_detector_metrics: dict[str, float | int] | None = None,
 ) -> dict[str, Any]:
+    if (
+        privacy_detector_receipts is None
+        or privacy_audit_counters is None
+        or privacy_detector_metrics is None
+    ):
+        evidence = _workspace_privacy_detection_evidence([], request)
+        if privacy_detector_receipts is None:
+            privacy_detector_receipts = [evidence.receipt]
+        if privacy_audit_counters is None:
+            privacy_audit_counters = [evidence.audit_counter]
+        if privacy_detector_metrics is None:
+            privacy_detector_metrics = _privacy_detector_metrics(evidence)
     summary = {
         "source_file_count": source_file_count,
-        "source_record_count": 0,
+        "source_record_count": source_record_count,
         "segment_count": 0,
         "pii_mask_count": 0,
         "exact_dedup_count": 0,
@@ -448,6 +652,8 @@ def _blocked_ingest_receipt(
         "workspace_manifest_path": str(Path(request.workspace_manifest_path)),
         "workspace_preflight_receipt_path": str(workspace_preflight_receipt_path),
         "workspace_preflight_receipt": workspace_preflight_receipt,
+        "privacy_detector_receipts": privacy_detector_receipts,
+        "privacy_audit_counters": privacy_audit_counters,
         "dataset_preparation_id": request.dataset_preparation_id,
         "source_inventory": source_inventory,
         "cleaning_controls": _cleaning_controls(request),
@@ -467,7 +673,7 @@ def _blocked_ingest_receipt(
             "ingest_latency_ms": elapsed_ms,
             "ingest_throughput_bytes_per_second": 0.0,
             "source_file_count": source_file_count,
-            "source_record_count": 0,
+            "source_record_count": source_record_count,
             "segment_count": 0,
             "pii_mask_count": 0,
             "exact_dedup_count": 0,
@@ -478,6 +684,7 @@ def _blocked_ingest_receipt(
             "upload_cap_bytes": upload_cap_bytes,
             "observed_payload_bytes": observed_payload_bytes,
             "source_cap_bytes": source_cap_bytes,
+            **privacy_detector_metrics,
         },
     }
 
@@ -896,7 +1103,7 @@ def _iter_source_records(
             )
             continue
         if source_kind == "structured_data":
-            yield from _structured_records(path, text)
+            yield from _structured_records(path, text, operator_failures)
         else:
             normalized_text = _normalize_line_endings(text)
             yield _record(
@@ -1078,17 +1285,24 @@ def _segmentation_policy(request: DatasetIngestRequest) -> dict[str, Any]:
     }
 
 
-def _structured_records(path: Path, text: str) -> Iterable[dict[str, Any]]:
+def _structured_records(
+    path: Path,
+    text: str,
+    operator_failures: list[dict[str, Any]],
+) -> Iterable[dict[str, Any]]:
     suffix = path.suffix.lower()
     if suffix == ".jsonl":
         for index, line in enumerate(text.splitlines(), start=1):
             if not line or line.isspace():
                 continue
             payload = json.loads(line)
+            row_text = _structured_text_or_failure(path, payload, index, operator_failures)
+            if row_text is None:
+                continue
             yield _record(
                 path=path,
                 source_kind="structured_data",
-                text=_structured_text(payload),
+                text=row_text,
                 metadata={"row_index": index},
             )
         return
@@ -1096,22 +1310,74 @@ def _structured_records(path: Path, text: str) -> Iterable[dict[str, Any]]:
         payload = json.loads(text)
         rows = payload if isinstance(payload, list) else [payload]
         for index, row in enumerate(rows, start=1):
+            row_text = _structured_text_or_failure(path, row, index, operator_failures)
+            if row_text is None:
+                continue
             yield _record(
                 path=path,
                 source_kind="structured_data",
-                text=_structured_text(row),
+                text=row_text,
                 metadata={"row_index": index},
             )
         return
     dialect = "excel-tab" if suffix == ".tsv" else "excel"
-    reader = csv.DictReader(text.splitlines(), dialect=dialect)
+    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
     for index, row in enumerate(reader, start=1):
+        row_text = _structured_text_or_failure(path, row, index, operator_failures)
+        if row_text is None:
+            continue
         yield _record(
             path=path,
             source_kind="structured_data",
-            text=_structured_text(row),
+            text=row_text,
             metadata={"row_index": index},
         )
+
+
+def _structured_text_or_failure(
+    path: Path,
+    payload: Any,
+    row_index: int,
+    operator_failures: list[dict[str, Any]],
+) -> str | None:
+    if isinstance(payload, dict) and "text" in payload and not isinstance(payload["text"], str):
+        operator_failures.append(
+            _unsupported_structured_text_failure(
+                path=path,
+                row_index=row_index,
+                value=payload["text"],
+            )
+        )
+        return None
+    return _structured_text(payload)
+
+
+def _unsupported_structured_text_failure(
+    *,
+    path: Path,
+    row_index: int,
+    value: Any,
+) -> dict[str, Any]:
+    value_type = type(value).__name__
+    return {
+        "id": _failure_id("unsupported-text-value", f"{path.name}-{row_index}"),
+        "code": "DATASET_INGEST_UNSUPPORTED_TEXT_VALUE",
+        "path": path.name,
+        "detail": (
+            "Structured source rows with an explicit text field must provide a string "
+            f"value; row {row_index} provided {value_type}."
+        ),
+        "recovery_hint": (
+            "Convert the row text field to a string or remove it so Melix can derive "
+            "structured fallback text from non-sensitive fields."
+        ),
+        "reason": "unsupported_text_value",
+        "metadata": {
+            "source_uri": path.name,
+            "row_index": row_index,
+            "value_type": value_type,
+        },
+    }
 
 
 def _structured_text(payload: Any) -> str:

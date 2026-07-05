@@ -63,12 +63,27 @@ The supported first-slice source kinds are:
 | `pdf` | Accept extracted text fixtures and a parser adapter boundary for optional real binary extraction. |
 | `docx` | Accept extracted text fixtures and a parser adapter boundary for optional real binary extraction. |
 
+Structured JSONL, JSON, CSV, and TSV rows with an explicit `text` field must
+provide a string value. Non-string explicit `text` values are rejected at the
+workspace ingest boundary with a typed operator failure before privacy
+detection, PII masking, deduplication, segmentation, or dataset versioning can
+stringify raw objects, arrays, numbers, booleans, or nulls into downstream
+artifacts.
+
 Every source record receives a stable `source_id`, `source_uri`, `source_kind`,
 `content_sha256`, `byte_size`, and optional `page`, `row_index`, `language`, or
 `section_path` metadata.
 
 Cleaning controls must be independently enableable and reportable:
 
+- `privacy_detector`: optionally run the deterministic local privacy detector in
+  `off`, `redact`, or `block` mode after source records are read and before
+  PII masking, deduplication, and segmentation. `off` mode keeps the receipt
+  contract stable with a passed zero-match receipt, but must not scan source
+  records or enter detector aggregation. The dataset ingest CLI resolves the
+  mode from `--privacy-detector-mode`, then
+  `MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE`, then `off`. Unsupported or empty
+  environment values normalize to `off`.
 - `pii_mask`: mask email addresses, phone-like numbers, API-token-like
   strings, and configured literal denylist values before downstream samples are
   written.
@@ -84,6 +99,8 @@ The ingest receipt schema is `melix.dataset_ingest_receipt.v1` and must include:
 - `workspace_manifest_path`
 - `workspace_preflight_receipt_path`
 - `workspace_preflight_receipt`
+- `privacy_detector_receipts`
+- `privacy_audit_counters`
 - `dataset_preparation_id`
 - `source_inventory`
 - `cleaning_controls`
@@ -106,11 +123,19 @@ The receipt metrics are:
 - `fuzzy_dedup_ratio`
 - `segmentation_latency_ms`
 - `workspace_preflight_status`
+- `privacy_detector_latency_ms`
+- `privacy_detector_match_count`
+- `privacy_detector_redacted_span_count`
+
+When `privacy_detector` is `off`, `privacy_detector_latency_ms` is `0.0`
+because no detector pass ran.
 
 Operator failures must be typed and explainable without raw logs. Required
 failure codes are:
 
+- `DATASET_INGEST_PRIVACY_DETECTOR_BLOCKED`
 - `DATASET_INGEST_UNSUPPORTED_SOURCE`
+- `DATASET_INGEST_UNSUPPORTED_TEXT_VALUE`
 - `DATASET_INGEST_PARSE_FAILED`
 - `DATASET_INGEST_EMPTY_SOURCE`
 - `DATASET_INGEST_PII_POLICY_INVALID`
@@ -119,7 +144,14 @@ failure codes are:
 - `DATASET_INGEST_UNSAFE_PATH`
 - workspace preflight blocker codes forwarded from
   `melix.workspace_preflight_receipt.v1`, such as `WORKSPACE_ROOT_MISSING`,
-  when the manifest is not ready.
+when the manifest is not ready.
+
+`privacy_detector_receipts` contains aggregate
+`melix.privacy_detector_receipt.v1` entries for the workspace source import
+surface. `privacy_audit_counters` contains the matching
+`melix.privacy_audit_counter.v1` counters. Both shapes must omit raw source
+text and raw sensitive spans. In `block` mode, any detector match blocks before
+`segments.jsonl` is written and records only category and count evidence.
 
 Ingest must call workspace preflight before reading or segmenting source files.
 If preflight returns `blocked`, ingest writes the workspace preflight receipt

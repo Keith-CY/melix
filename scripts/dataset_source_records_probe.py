@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import gc
 import os
 import statistics
 import sys
@@ -78,37 +79,55 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
             directory_count=directory_count,
             files_per_directory=files_per_directory,
         )
-        for _ in range(samples):
-            started = time.perf_counter()
-            paths = _iter_source_file_paths(root)
-            elapsed_ms.append((time.perf_counter() - started) * 1000.0)
-            file_counts.append(float(len(paths)))
-            if len(paths) != expected_count:
-                raise RuntimeError(f"unexpected source file count: {len(paths)} != {expected_count}")
-            if paths[0] != expected_first or paths[-1] != expected_last:
-                raise RuntimeError("source file ordering changed")
-            cache = getattr(dataset_preparation, "_SOURCE_KIND_BY_NAME", None)
-            clear_cache = getattr(cache, "clear", None)
-            if clear_cache is not None:
-                clear_cache()
-            started = time.perf_counter()
-            source_kinds = [dataset_preparation._source_kind(path) for path in paths]
-            source_kind_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
-            if source_kinds != expected_kinds:
-                raise RuntimeError("source kind classification changed")
-            started = time.perf_counter()
-            records = [
-                dataset_preparation._record(
-                    path=path,
-                    source_kind=source_kind,
-                    text="Melix source row\n",
-                    metadata={},
-                )
-                for path, source_kind in zip(paths, source_kinds)
-            ]
-            record_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
-            if records[0]["byte_size"] != len("Melix source row\n".encode("utf-8")):
-                raise RuntimeError("source record byte accounting changed")
+        gc_was_enabled = gc.isenabled()
+        gc.collect()
+        if gc_was_enabled:
+            gc.disable()
+        paths: list[Path] = []
+        source_kinds: list[str] = []
+        records: list[dict[str, object]] = []
+        try:
+            for _ in range(samples):
+                paths.clear()
+                source_kinds.clear()
+                records.clear()
+                started = time.perf_counter()
+                paths = _iter_source_file_paths(root)
+                elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+                file_counts.append(float(len(paths)))
+                if len(paths) != expected_count:
+                    raise RuntimeError(f"unexpected source file count: {len(paths)} != {expected_count}")
+                if paths[0] != expected_first or paths[-1] != expected_last:
+                    raise RuntimeError("source file ordering changed")
+                cache = getattr(dataset_preparation, "_SOURCE_KIND_BY_NAME", None)
+                clear_cache = getattr(cache, "clear", None)
+                if clear_cache is not None:
+                    clear_cache()
+                started = time.perf_counter()
+                source_kinds = [dataset_preparation._source_kind(path) for path in paths]
+                source_kind_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+                if source_kinds != expected_kinds:
+                    raise RuntimeError("source kind classification changed")
+                started = time.perf_counter()
+                records = [
+                    dataset_preparation._record(
+                        path=path,
+                        source_kind=source_kind,
+                        text="Melix source row\n",
+                        metadata={},
+                        normalized=True,
+                    )
+                    for path, source_kind in zip(paths, source_kinds)
+                ]
+                record_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+                if records[0]["byte_size"] != len("Melix source row\n".encode("utf-8")):
+                    raise RuntimeError("source record byte accounting changed")
+        finally:
+            paths.clear()
+            source_kinds.clear()
+            records.clear()
+            if gc_was_enabled:
+                gc.enable()
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_ms),
         "elapsed_ms_min": min(elapsed_ms),

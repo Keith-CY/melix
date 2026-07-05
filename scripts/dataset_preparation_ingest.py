@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -12,6 +13,7 @@ WORKER_ROOT = ROOT / "services/mlx-worker-python"
 for candidate in (ROOT, WORKER_ROOT):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
+
 
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
@@ -33,6 +35,7 @@ def build_receipt(
     segmentation_strategy: str,
     upload_cap_bytes: int = 0,
     source_cap_bytes: int = 0,
+    privacy_detector_mode: str = "off",
     output_path: Path | None = None,
 ) -> dict[str, object]:
     receipt = prepare_dataset_ingest(
@@ -49,6 +52,7 @@ def build_receipt(
             segmentation_strategy=segmentation_strategy,
             upload_cap_bytes=upload_cap_bytes,
             source_cap_bytes=source_cap_bytes,
+            privacy_detector_mode=privacy_detector_mode,
         )
     )
     if output_path:
@@ -72,7 +76,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--segmentation-strategy", default="paragraph")
     parser.add_argument("--upload-cap-bytes", type=int, default=0)
     parser.add_argument("--source-cap-bytes", type=int, default=0)
+    parser.add_argument(
+        "--privacy-detector-mode",
+        choices=("off", "redact", "block"),
+        default=None,
+    )
     args = parser.parse_args(argv)
+    privacy_detector_mode = args.privacy_detector_mode or _privacy_detector_mode_from_env()
 
     receipt = build_receipt(
         workspace_project_id=args.workspace_project_id,
@@ -87,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         segmentation_strategy=args.segmentation_strategy,
         upload_cap_bytes=args.upload_cap_bytes,
         source_cap_bytes=args.source_cap_bytes,
+        privacy_detector_mode=privacy_detector_mode,
         output_path=args.output,
     )
     print(json.dumps(receipt, indent=2, sort_keys=True))
@@ -100,6 +111,14 @@ def _parse_bool(value: str) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise argparse.ArgumentTypeError(f"expected boolean value, got {value!r}")
+
+
+WORKSPACE_PRIVACY_DETECTOR_MODE_ENV = "MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE"
+
+
+def _privacy_detector_mode_from_env() -> str:
+    normalized = os.environ.get(WORKSPACE_PRIVACY_DETECTOR_MODE_ENV, "").strip().lower()
+    return normalized if normalized in {"redact", "block"} else "off"
 
 
 if __name__ == "__main__":

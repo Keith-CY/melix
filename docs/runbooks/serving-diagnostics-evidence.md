@@ -130,6 +130,185 @@ serving-diagnostics/<bundle_id>/
 `effective-config.json` records the effective runtime and request config after
 defaults, admission, and runtime-specific resolution.
 
+When upstream serving code has evaluated readiness or dependency policy,
+`effective-config.json` should also include a `serving_readiness` receipt. This
+receipt is diagnostics-only: it records facts already known to the serving path
+and must not trigger model discovery, health polling, package imports, or
+dependency checks during bundle writing.
+
+`serving_readiness` fields:
+
+- `requested_model_id` — operator-requested model identity, alias, or handle.
+- `effective_model_id` — backend/runtime identity selected for serving.
+- `identity_source` — where the effective identity came from, such as
+  `explicit_request`, `cached_catalog`, `backend_health`, or `fallback`.
+- `budget_source` — where the serving token or profile budget came from, such
+  as `explicit_request`, `profile_default`, or `runtime_default`.
+- `health_ready_at` — ISO-8601 timestamp for the first ready health state, or an
+  empty string when the session was not ready when the bundle was written.
+- `progress_source` — source of readiness/progress truth, such as
+  `backend_health`, `cached_status`, or `not_ready`.
+- `dependency_policy_status` — dependency policy classification, such as
+  `allowed`, `blocked`, or `unknown`.
+
+Diagnostics writers may derive `serving_readiness` from namespaced metadata
+when all of these keys are present:
+
+- `melix.serving.readiness.requested_model_id`
+- `melix.serving.readiness.effective_model_id`
+- `melix.serving.readiness.identity_source`
+- `melix.serving.readiness.budget_source`
+- `melix.serving.readiness.health_ready_at`
+- `melix.serving.readiness.progress_source`
+- `melix.serving.readiness.dependency_policy_status`
+
+If any required readiness metadata key is missing, the writer leaves the
+original metadata in place and does not synthesize a partial top-level
+`serving_readiness` receipt.
+
+When a proxy, workspace-ingest, or worker path has already evaluated network
+fetch safety, `effective-config.json` may include a `network_fetch_policy`
+receipt and `privacy_audit_counters`. These receipts are diagnostics-only:
+bundle writing must not resolve hostnames, follow redirects, open sockets,
+probe URLs, inspect source content, or rerun privacy detectors.
+
+`network_fetch_policy` uses schema version
+`melix.network_fetch_policy_receipt.v1` and records:
+
+- `surface` - emitting surface, such as `local_proxy_external_media` or
+  `workspace_ingest`.
+- `route_scope` - route or operation scope for the decision.
+- `action` - `passed` or `blocked`.
+- `url_class` - classified target, such as `public`, `loopback`,
+  `link_local`, `private`, `local`, or `invalid`.
+- `url_scheme` - normalized URL scheme or `path` for local path inputs.
+- `host_class` - classified host before any caller-provided resolved IP.
+- `resolved_ip` - public resolved IP when safe to expose, or a redaction marker
+  for private-network targets.
+- `resolved_ip_class` - classified caller-provided resolved IP.
+- `redirect_hops_checked` - number of redirect hops already evaluated by the
+  caller.
+- `blocked_reason` - typed refusal reason, or an empty string for passed
+  decisions.
+- `redacted_url` - URL summary with userinfo, path detail, query, and fragment
+  removed.
+- `raw_url_included` - always false for exported Melix diagnostics.
+- `fetch_attempted` - whether the emitting path attempted a network fetch.
+
+Diagnostics writers may derive `network_fetch_policy` from namespaced metadata
+when all of these keys are present:
+
+- `melix.network_fetch.policy.surface`
+- `melix.network_fetch.policy.route_scope`
+- `melix.network_fetch.policy.action`
+- `melix.network_fetch.policy.url_class`
+- `melix.network_fetch.policy.url_scheme`
+- `melix.network_fetch.policy.host_class`
+- `melix.network_fetch.policy.redirect_hops_checked`
+- `melix.network_fetch.policy.blocked_reason`
+- `melix.network_fetch.policy.redacted_url`
+- `melix.network_fetch.policy.raw_url_included`
+- `melix.network_fetch.policy.fetch_attempted`
+
+Optional metadata keys:
+
+- `melix.network_fetch.policy.schema_version`
+- `melix.network_fetch.policy.resolved_ip`
+- `melix.network_fetch.policy.resolved_ip_class`
+
+If any required network-fetch metadata key is missing, the writer leaves the
+original metadata in place and does not synthesize a partial top-level receipt.
+
+`privacy_audit_counters` is a list of `melix.privacy_audit_counter.v1`
+objects. Each counter records:
+
+- `surface`
+- `route_scope`
+- `blocked_count`
+- `redacted_count`
+- `passed_count`
+- `raw_sensitive_span_count`
+
+Diagnostics writers may derive one counter from namespaced metadata when all of
+these keys are present:
+
+- `melix.privacy.audit.surface`
+- `melix.privacy.audit.route_scope`
+- `melix.privacy.audit.blocked_count`
+- `melix.privacy.audit.redacted_count`
+- `melix.privacy.audit.passed_count`
+- `melix.privacy.audit.raw_sensitive_span_count`
+
+Optional metadata key:
+
+- `melix.privacy.audit.schema_version`
+
+When a caller has already evaluated local privacy detection policy, diagnostics
+may also include `privacy_detector_receipts`. Bundle writing must not scan
+prompts, completions, documents, artifacts, or trace payloads to create these
+receipts. The caller must attach a complete redacted receipt before diagnostics
+serialization.
+
+`privacy_detector_receipts` is a list of
+`melix.privacy_detector_receipt.v1` objects. Each receipt records:
+
+- `surface`
+- `route_scope`
+- `detector_id`
+- `policy_id`
+- `policy_mode`
+- `action` - `passed`, `redacted`, or `blocked`
+- `categories` - detected category names, not matched values
+- `match_count`
+- `redacted_span_count`
+- `blocked_reason`
+- `confidence_source`
+- `raw_sensitive_span_count`
+- `raw_text_included`
+
+Diagnostics writers may derive one detector receipt from namespaced metadata
+when all of these keys are present:
+
+- `melix.privacy.detector.surface`
+- `melix.privacy.detector.route_scope`
+- `melix.privacy.detector.detector_id`
+- `melix.privacy.detector.policy_id`
+- `melix.privacy.detector.policy_mode`
+- `melix.privacy.detector.action`
+- `melix.privacy.detector.categories`
+- `melix.privacy.detector.match_count`
+- `melix.privacy.detector.redacted_span_count`
+- `melix.privacy.detector.blocked_reason`
+- `melix.privacy.detector.confidence_source`
+- `melix.privacy.detector.raw_sensitive_span_count`
+- `melix.privacy.detector.raw_text_included`
+
+Optional metadata key:
+
+- `melix.privacy.detector.schema_version`
+
+Detector receipt derivation is rejected when `raw_text_included` is true or
+`raw_sensitive_span_count` is greater than zero. Exported receipts must include
+only category/count evidence, never raw sensitive spans or matched snippets.
+
+Local proxy text privacy detection is explicitly opt-in. Set
+`MELIX_PRIVACY_DETECTOR_MODE=redact` to scan local proxy text request message
+parts before worker dispatch, replace matched spans with stable placeholders,
+and attach the detector receipt plus a `melix.privacy_audit_counter.v1` counter
+to worker request metadata. Set `MELIX_PRIVACY_DETECTOR_MODE=block` to reject
+matched local proxy text requests before worker dispatch with a sanitized
+`privacy_policy_blocked` error envelope. When the setting is unset, empty,
+`off`, `disabled`, or any unsupported value, the detector is not run and local
+proxy text request behavior is unchanged.
+
+The local proxy detector uses `surface = local_proxy_text_request` and route
+scopes such as `chat_completions`, `completions`, `responses`, and `messages`.
+The redacted placeholders are category-level values such as
+`[REDACTED_EMAIL]` and `[REDACTED_SECRET]`; detector metadata must still omit
+raw matched values and raw prompt snippets. This opt-in slice covers text
+message parts only. It does not scan diagnostics bundle content, mutate user
+files, inspect workspace documents, or run model-backed entity detection.
+
 `request-summary.json` records stable request-level fields:
 
 - request id
@@ -198,6 +377,47 @@ metadata into execution ext fields:
 - `melix.acceleration.profile.profile_admission_status`
 - `melix.acceleration.profile.fallback_reason`
 - `melix.acceleration.profile.recovery_hint`
+
+## Research Fetch Budget Receipts
+
+Deep-research and web-enabled source tools should emit
+`melix.research_fetch_budget_receipt.v1` receipts before any fetched source
+content becomes model-visible. These receipts are a byte-budget and cache-key
+contract only; they do not perform DNS, redirect, SSRF, or private-network
+admission. Real URL dereferencing must still pass through the network fetch
+policy layer described by #2188 before bytes are streamed into a research
+fetch-budget helper.
+
+Receipts use these status values:
+
+| Status | Meaning |
+| --- | --- |
+| `ok` | The source fit inside the effective byte budget and can be used as complete fetched evidence. |
+| `truncated` | Text content was soft-truncated at the effective byte budget and includes a model-visible partial-content notice. |
+| `blocked` | The helper returned no model-visible source content because the declared body exceeded the hard ceiling or a binary/PDF source would have been truncated. |
+
+Expected receipt fields include:
+
+- `source_id`
+- `source_url_hash`
+- `requested_max_bytes`
+- `default_max_bytes`
+- `effective_max_bytes`
+- `hard_max_bytes`
+- `fetched_bytes`
+- `declared_total_bytes`
+- `truncated`
+- `status`
+- `blocked_reason`
+- `content_type`
+- `partial_content_notice`
+- `refetch_hint`
+- `cache_key`
+- `raw_url_included`
+
+`cache_key` must include the effective byte budget and truncation state so a
+partial source cannot masquerade as a complete source. Receipts and diagnostics
+must not include raw URLs, query strings, credentials, or raw fetched content.
 
 ## Lightweight Status Diagnostics
 

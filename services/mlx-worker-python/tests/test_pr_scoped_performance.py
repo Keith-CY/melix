@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import gc
 import importlib.util
 import json
 import os
@@ -401,6 +402,42 @@ def test_scope_report_selects_dataset_version_listing_probe() -> None:
     assert "dataset-source-records-scandir" in selected_ids
 
 
+def test_dataset_preparation_probes_cover_privacy_detector_ingest_tests() -> None:
+    registry_payload = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    by_id = {probe["id"]: probe for probe in registry_payload}
+    probe_ids = (
+        "dataset-version-listing-scandir",
+        "dataset-quality-lengths-chain",
+        "dataset-source-records-scandir",
+    )
+    privacy_test_file = "services/mlx-worker-python/tests/test_dataset_preparation_ingest.py"
+    required_tests = (
+        f"{privacy_test_file}::test_dataset_ingest_privacy_detector_redacts_source_records_before_segments",
+        f"{privacy_test_file}::test_dataset_ingest_privacy_detector_block_mode_stops_before_segments",
+        f"{privacy_test_file}::test_dataset_ingest_privacy_detector_off_does_not_enter_detection_helpers",
+        f"{privacy_test_file}::test_dataset_preparation_import_does_not_eagerly_load_privacy_patterns",
+        f"{privacy_test_file}::test_dataset_ingest_privacy_detector_treats_none_text_as_empty",
+        f"{privacy_test_file}::test_blocked_ingest_receipt_preserves_passed_privacy_fields_when_only_metrics_default",
+        f"{privacy_test_file}::test_dataset_ingest_cli_writes_stable_json_receipt",
+        f"{privacy_test_file}::test_dataset_ingest_cli_accepts_privacy_detector_mode",
+        f"{privacy_test_file}::test_dataset_ingest_cli_accepts_privacy_detector_mode_from_environment",
+        f"{privacy_test_file}::test_dataset_ingest_cli_privacy_detector_flag_overrides_environment",
+        f"{privacy_test_file}::test_dataset_ingest_cli_ignores_unsupported_privacy_detector_environment",
+    )
+
+    for probe_id in probe_ids:
+        probe = by_id[probe_id]
+        assert privacy_test_file in probe["watch_globs"]
+        for command_name in ("test_command", "coverage_command"):
+            command = probe[command_name]
+            for required_test in required_tests:
+                assert required_test in command
+        assert privacy_test_file in probe["coverage_command"].split(
+            "python3 scripts/changed_scope_coverage.py --coverage-json coverage.json ",
+            1,
+        )[1]
+
+
 def test_scope_report_selects_lora_aux_modules_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -799,6 +836,65 @@ def test_dataset_source_records_probe_script_emits_metrics(
     assert metrics["files_per_directory"] == 7.0
     assert metrics["file_count_mean"] == 21.0
     assert metrics["source_kind_variant_count"] == 7.0
+
+
+def test_dataset_source_records_probe_restores_gc_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_DIRS", "1")
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_FILES_PER_DIR", "1")
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+
+    gc.enable()
+
+    try:
+        probe_script["measure"](directory_count=1, files_per_directory=1, samples=1)
+        assert gc.isenabled()
+    finally:
+        gc.enable()
+
+
+def test_dataset_source_records_probe_supports_multiple_timed_samples(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_DIRS", "2")
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_FILES_PER_DIR", "3")
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_SAMPLES", "2")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+
+    metrics = probe_script["measure"](directory_count=2, files_per_directory=3, samples=2)
+
+    assert metrics["sample_count"] == 2.0
+    assert metrics["file_count_mean"] == 6.0
+    assert metrics["record_elapsed_ms_p95"] >= 0.0
+
+
+def test_dataset_source_records_probe_rejects_changed_file_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+    monkeypatch.setitem(probe_script["measure"].__globals__, "_iter_source_file_paths", lambda _root: [])
+
+    with pytest.raises(RuntimeError, match="unexpected source file count"):
+        probe_script["measure"](directory_count=1, files_per_directory=1, samples=1)
+
+
+def test_dataset_source_records_probe_rejects_changed_file_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+
+    def reversed_paths(root: Path) -> list[Path]:
+        return [
+            root / "group-0000" / "sample-0000-0001.md",
+            root / "group-0000" / "sample-0000-0000.txt",
+        ]
+
+    monkeypatch.setitem(probe_script["measure"].__globals__, "_iter_source_file_paths", reversed_paths)
+
+    with pytest.raises(RuntimeError, match="source file ordering changed"):
+        probe_script["measure"](directory_count=1, files_per_directory=2, samples=1)
 
 
 def test_dataset_source_records_probe_rejects_changed_source_kind(

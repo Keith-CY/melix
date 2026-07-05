@@ -110,8 +110,23 @@ Preflight returns stable JSON with:
 - `workspace_manifest_schema_version`
 - `project_id`
 - `manifest_path`
+- `network_fetch_policy`
+- `privacy_audit_counters`
 - `checks`
 - `metrics`
+
+`network_fetch_policy` uses schema version
+`melix.network_fetch_policy_receipt.v1`. During workspace preflight the receipt
+records `surface: workspace_ingest`, `route_scope: workspace_preflight`,
+`action: passed`, `url_class: local`, `raw_url_included: false`, and
+`fetch_attempted: false`. This receipt is a local-only policy statement; it does
+not perform DNS resolution, HTTP requests, redirect following, or source-file
+reads.
+
+`privacy_audit_counters` is a list of `melix.privacy_audit_counter.v1`
+objects. Workspace preflight emits a single counter for the
+`workspace_ingest` / `workspace_preflight` surface with one passed decision and
+zero blocked, redacted, or raw-sensitive-span counts.
 
 Each check is designed for CLI, Desktop, and report consumers to explain the
 failure without reading raw logs. A check contains:

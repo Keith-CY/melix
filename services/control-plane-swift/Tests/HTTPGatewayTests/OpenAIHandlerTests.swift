@@ -2137,6 +2137,239 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("local proxy privacy detector redacts text requests when explicitly enabled")
+    func localProxyPrivacyDetectorRedactsTextRequestsWhenExplicitlyEnabled() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeTokenEvent(requestID: "req-privacy", seq: 1, text: "ok"),
+            makeCompletedEvent(requestID: "req-privacy", seq: 2, finishReason: "stop", assistantText: "ok"),
+        ])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-privacy" })
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: coordinator,
+            translator: translator,
+            environment: ["MELIX_PRIVACY_DETECTOR_MODE": "redact"]
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Email alice@example.test and use token hf_ABC12345 and PASSWORD = \\\"my secret password\\\"" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let redactedText = try #require(request.messages.first?.parts.first?.text)
+        let metadata = request.execution.ext
+        let metadataText = metadata.values.joined(separator: " ")
+
+        #expect(response.statusCode == 200)
+        #expect(redactedText == "Email [REDACTED_EMAIL] and use token [REDACTED_SECRET] and [REDACTED_SECRET]")
+        #expect(redactedText.contains("alice@example.test") == false)
+        #expect(redactedText.contains("hf_ABC12345") == false)
+        #expect(redactedText.contains("my secret password") == false)
+        #expect(metadata["melix.privacy.detector.schema_version"] == "melix.privacy_detector_receipt.v1")
+        #expect(metadata["melix.privacy.detector.surface"] == "local_proxy_text_request")
+        #expect(metadata["melix.privacy.detector.route_scope"] == "chat_completions")
+        #expect(metadata["melix.privacy.detector.detector_id"] == "melix.pattern_detector.v1")
+        #expect(metadata["melix.privacy.detector.policy_id"] == "melix.default_privacy_policy.v1")
+        #expect(metadata["melix.privacy.detector.policy_mode"] == "redact")
+        #expect(metadata["melix.privacy.detector.action"] == "redacted")
+        #expect(metadata["melix.privacy.detector.categories"] == "email,secret")
+        #expect(metadata["melix.privacy.detector.match_count"] == "3")
+        #expect(metadata["melix.privacy.detector.redacted_span_count"] == "3")
+        #expect(metadata["melix.privacy.detector.raw_sensitive_span_count"] == "0")
+        #expect(metadata["melix.privacy.detector.raw_text_included"] == "false")
+        #expect(metadata["melix.privacy.audit.schema_version"] == "melix.privacy_audit_counter.v1")
+        #expect(metadata["melix.privacy.audit.surface"] == "local_proxy_text_request")
+        #expect(metadata["melix.privacy.audit.route_scope"] == "chat_completions")
+        #expect(metadata["melix.privacy.audit.blocked_count"] == "0")
+        #expect(metadata["melix.privacy.audit.redacted_count"] == "1")
+        #expect(metadata["melix.privacy.audit.passed_count"] == "0")
+        #expect(metadata["melix.privacy.audit.raw_sensitive_span_count"] == "0")
+        #expect(metadataText.contains("alice@example.test") == false)
+        #expect(metadataText.contains("hf_ABC12345") == false)
+        #expect(metadataText.contains("my secret password") == false)
+    }
+
+    @Test("local proxy privacy detector is disabled by default")
+    func localProxyPrivacyDetectorIsDisabledByDefault() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeTokenEvent(requestID: "req-privacy-off", seq: 1, text: "ok"),
+            makeCompletedEvent(requestID: "req-privacy-off", seq: 2, finishReason: "stop", assistantText: "ok"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-privacy-off" }),
+            environment: [:]
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Email alice@example.test and use token hf_ABC12345" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let request = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(request.messages.first?.parts.first?.text == "Email alice@example.test and use token hf_ABC12345")
+        #expect(request.execution.ext["melix.privacy.detector.schema_version"] == nil)
+        #expect(request.execution.ext["melix.privacy.audit.schema_version"] == nil)
+    }
+
+    @Test("local proxy privacy detector blocks text requests before worker dispatch")
+    func localProxyPrivacyDetectorBlocksTextRequestsBeforeWorkerDispatch() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeTokenEvent(requestID: "req-privacy-block", seq: 1, text: "never"),
+        ])
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-privacy-block" }),
+            environment: ["MELIX_PRIVACY_DETECTOR_MODE": "block"]
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Use bearer Bearer abcdefgh12345678 for alice@example.test" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let bodyData = try await collectBodyData(response.body)
+        let bodyText = try #require(String(data: bodyData, encoding: .utf8))
+        let payload = try jsonPayload(from: bodyData)
+        let error = try #require(payload["error"] as? [String: Any])
+        let receipt = try #require(error["privacy_receipt"] as? [String: Any])
+        let counters = try #require(error["privacy_audit_counters"] as? [[String: Any]])
+        let counter = try #require(counters.first)
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "privacy_policy_blocked")
+        #expect(receipt["schema_version"] as? String == "melix.privacy_detector_receipt.v1")
+        #expect(receipt["surface"] as? String == "local_proxy_text_request")
+        #expect(receipt["route_scope"] as? String == "chat_completions")
+        #expect(receipt["policy_mode"] as? String == "block")
+        #expect(receipt["action"] as? String == "blocked")
+        #expect(receipt["blocked_reason"] as? String == "pattern_match_blocked")
+        #expect(receipt["match_count"] as? Int == 2)
+        #expect(receipt["redacted_span_count"] as? Int == 0)
+        #expect(receipt["raw_sensitive_span_count"] as? Int == 0)
+        #expect(receipt["raw_text_included"] as? Bool == false)
+        #expect(counter["blocked_count"] as? Int == 1)
+        #expect(counter["redacted_count"] as? Int == 0)
+        #expect(counter["passed_count"] as? Int == 0)
+        #expect(bodyText.contains("Bearer abcdefgh12345678") == false)
+        #expect(bodyText.contains("alice@example.test") == false)
+        #expect(await workerClient.lastGenerateRequest == nil)
+        #expect(await metricsStore.value(forKey: "privacy_detector.local_proxy_text_request.blocked_count") == 1)
+        #expect(await metricsStore.value(forKey: "privacy_audit.blocked_count") == 1)
+    }
+
+    @Test("local proxy privacy detector records passed metadata for clean opt-in text")
+    func localProxyPrivacyDetectorRecordsPassedMetadataForCleanOptInText() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeTokenEvent(requestID: "req-privacy-clean", seq: 1, text: "ok"),
+            makeCompletedEvent(requestID: "req-privacy-clean", seq: 2, finishReason: "stop", assistantText: "ok"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-privacy-clean" }),
+            environment: ["MELIX_PRIVACY_DETECTOR_MODE": "redact"]
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Summarize the release checklist." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let metadata = request.execution.ext
+
+        #expect(response.statusCode == 200)
+        #expect(request.messages.first?.parts.first?.text == "Summarize the release checklist.")
+        #expect(metadata["melix.privacy.detector.action"] == "passed")
+        #expect(metadata["melix.privacy.detector.categories"] == "")
+        #expect(metadata["melix.privacy.detector.match_count"] == "0")
+        #expect(metadata["melix.privacy.detector.redacted_span_count"] == "0")
+        #expect(metadata["melix.privacy.audit.blocked_count"] == "0")
+        #expect(metadata["melix.privacy.audit.redacted_count"] == "0")
+        #expect(metadata["melix.privacy.audit.passed_count"] == "1")
+        #expect(metadata["melix.privacy.audit.raw_sensitive_span_count"] == "0")
+    }
+
     @Test("POST /v1/chat/completions normalizes generation bounds stop and passthrough receipts")
     func postChatCompletionsNormalizesGenerationBoundsStopAndPassthroughReceipts() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
@@ -11859,6 +12092,21 @@ struct OpenAIHandlerTests {
         #expect(urlResponse.statusCode == 200)
         #expect(urlRequest.image.isEmpty)
         #expect(urlRequest.imageUri == "file:///tmp/source.png")
+        #expect(urlRequest.ext["melix.network_fetch.policy.schema_version"] == "melix.network_fetch_policy_receipt.v1")
+        #expect(urlRequest.ext["melix.network_fetch.policy.surface"] == "local_proxy_external_media")
+        #expect(urlRequest.ext["melix.network_fetch.policy.route_scope"] == "image_edit")
+        #expect(urlRequest.ext["melix.network_fetch.policy.action"] == "passed")
+        #expect(urlRequest.ext["melix.network_fetch.policy.url_class"] == "local")
+        #expect(urlRequest.ext["melix.network_fetch.policy.redacted_url"] == "[LOCAL_PATH]")
+        #expect(urlRequest.ext["melix.network_fetch.policy.raw_url_included"] == "false")
+        #expect(urlRequest.ext["melix.network_fetch.policy.fetch_attempted"] == "false")
+        #expect(urlRequest.ext["melix.privacy.audit.schema_version"] == "melix.privacy_audit_counter.v1")
+        #expect(urlRequest.ext["melix.privacy.audit.surface"] == "local_proxy_external_media")
+        #expect(urlRequest.ext["melix.privacy.audit.route_scope"] == "image_edit")
+        #expect(urlRequest.ext["melix.privacy.audit.blocked_count"] == "0")
+        #expect(urlRequest.ext["melix.privacy.audit.redacted_count"] == "0")
+        #expect(urlRequest.ext["melix.privacy.audit.passed_count"] == "1")
+        #expect(urlRequest.ext["melix.privacy.audit.raw_sensitive_span_count"] == "0")
         #expect(urlPayload.contains("\"state\":\"failed\""))
         #expect(urlPayload.contains("\"role\":\"unspecified\""))
         #expect(urlJob.state == .imageJobFailed)
@@ -11925,7 +12173,7 @@ struct OpenAIHandlerTests {
               "id": "image-edit-private-url",
               "model": "melix-dev-image",
               "prompt": "use remote",
-              "image_url": "https://127.0.0.1/source.png"
+              "image_url": "https://user:pass@127.0.0.1/source.png?api_key=sk-local#frag"
             }
             """.data(using: .utf8)
         )
@@ -11939,9 +12187,39 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 400)
         #expect(error["code"] as? String == "invalid_argument")
         #expect(error["message"] as? String == "External media URL host is not allowed: 127.0.0.1.")
+        let privacyReceipt = try #require(error["privacy_receipt"] as? [String: Any])
+        #expect(privacyReceipt["schema_version"] as? String == "melix.network_fetch_policy_receipt.v1")
+        #expect(privacyReceipt["surface"] as? String == "local_proxy_external_media")
+        #expect(privacyReceipt["route_scope"] as? String == "image_edit")
+        #expect(privacyReceipt["action"] as? String == "blocked")
+        #expect(privacyReceipt["url_class"] as? String == "loopback")
+        #expect(privacyReceipt["url_scheme"] as? String == "https")
+        #expect(privacyReceipt["host_class"] as? String == "loopback")
+        #expect(privacyReceipt["blocked_reason"] as? String == "private_or_loopback_host")
+        #expect(privacyReceipt["redacted_url"] as? String == "https://[REDACTED_PRIVATE_HOST]/[redacted]")
+        #expect(privacyReceipt["raw_url_included"] as? Bool == false)
+        #expect(privacyReceipt["fetch_attempted"] as? Bool == false)
+        let counters = try #require(error["privacy_audit_counters"] as? [[String: Any]])
+        let counter = try #require(counters.first)
+        #expect(counter["schema_version"] as? String == "melix.privacy_audit_counter.v1")
+        #expect(counter["surface"] as? String == "local_proxy_external_media")
+        #expect(counter["route_scope"] as? String == "image_edit")
+        #expect(counter["blocked_count"] as? Int == 1)
+        #expect(counter["redacted_count"] as? Int == 1)
+        #expect(counter["passed_count"] as? Int == 0)
+        #expect(counter["raw_sensitive_span_count"] as? Int == 0)
+        let encodedPayload = String(
+            decoding: try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+            as: UTF8.self
+        )
+        for leakedFragment in ["user:pass", "api_key", "sk-local", "source.png", "#frag", "?api_key"] {
+            #expect(encodedPayload.contains(leakedFragment) == false)
+        }
         #expect(await imageClient.lastImageEditRequest == nil)
         #expect(await metricsStore.value(forKey: "external_media.url_refusal_count") == 1)
         #expect(await metricsStore.value(forKey: "external_media.refusal.private_or_loopback_host") == 1)
+        #expect(await metricsStore.value(forKey: "privacy_audit.blocked_count") == 1)
+        #expect(await metricsStore.value(forKey: "privacy_audit.redacted_count") == 1)
     }
 
     @Test("image edit responses map failed and completed states into payloads and job summaries")
