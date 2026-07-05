@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -56,6 +57,27 @@ def test_dataset_ingest_source_file_paths_use_scandir_without_rglob(
         "b/b.txt",
         "z.txt",
     ]
+
+
+def test_dataset_preparation_import_does_not_eagerly_load_privacy_patterns() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "import worker.productization.dataset_preparation; "
+                "print('worker.productization.privacy_policy_receipts' in sys.modules)"
+            ),
+        ],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    assert completed.stdout.strip() == "False"
 
 
 def test_dataset_ingest_unbounded_source_reader_uses_single_binary_read(

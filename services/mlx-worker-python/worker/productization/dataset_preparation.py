@@ -11,16 +11,6 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-from worker.productization.privacy_policy_receipts import (
-    DEFAULT_PRIVACY_POLICY_ID,
-    PATTERN_PRIVACY_DETECTOR_ID,
-    PRIVACY_AUDIT_COUNTER_SCHEMA_VERSION,
-    PRIVACY_DETECTOR_RECEIPT_SCHEMA_VERSION,
-    aggregate_privacy_detection_results,
-    detect_privacy_patterns,
-)
-from worker.productization.workspace_manifest import preflight_workspace
-
 
 DATASET_INGEST_RECEIPT_SCHEMA_VERSION = "melix.dataset_ingest_receipt.v1"
 DATASET_INGEST_RECEIPT_FILENAME = "dataset-ingest-receipt.json"
@@ -30,6 +20,10 @@ DATASET_VERSION_SCHEMA_VERSION = "melix.dataset_version.v1"
 DATASET_QUALITY_SUMMARY_SCHEMA_VERSION = "melix.dataset_quality_summary.v1"
 DATASET_RETRY_RECEIPT_SCHEMA_VERSION = "melix.dataset_retry_receipt.v1"
 DATASET_VERSION_LIST_SCHEMA_VERSION = "melix.dataset_version_list.v1"
+PRIVACY_AUDIT_COUNTER_SCHEMA_VERSION = "melix.privacy_audit_counter.v1"
+PRIVACY_DETECTOR_RECEIPT_SCHEMA_VERSION = "melix.privacy_detector_receipt.v1"
+DEFAULT_PRIVACY_POLICY_ID = "melix.default_privacy_policy.v1"
+PATTERN_PRIVACY_DETECTOR_ID = "melix.pattern_detector.v1"
 
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b")
@@ -43,6 +37,27 @@ _STRUCTURED_DATA_SOURCE_SUFFIXES = frozenset((".jsonl", ".json", ".csv", ".tsv")
 _SOURCE_KIND_NAME_CACHE_MAX = 4096
 _SOURCE_KIND_BY_NAME: dict[str, str | None] = {}
 _MISSING = object()
+
+
+def preflight_workspace(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    from worker.productization.workspace_manifest import preflight_workspace as preflight
+
+    return preflight(*args, **kwargs)
+
+
+def detect_privacy_patterns(text: str, **kwargs: Any) -> Any:
+    # Keep privacy regex compilation out of default/off dataset ingest and listing paths.
+    from worker.productization.privacy_policy_receipts import detect_privacy_patterns as detect
+
+    return detect(text, **kwargs)
+
+
+def aggregate_privacy_detection_results(results: Iterable[Any], **kwargs: Any) -> Any:
+    from worker.productization.privacy_policy_receipts import (
+        aggregate_privacy_detection_results as aggregate,
+    )
+
+    return aggregate(results, **kwargs)
 
 
 @dataclass(frozen=True)

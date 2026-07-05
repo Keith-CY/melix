@@ -414,6 +414,7 @@ def test_dataset_preparation_probes_cover_privacy_detector_ingest_tests() -> Non
         f"{privacy_test_file}::test_dataset_ingest_privacy_detector_redacts_source_records_before_segments",
         f"{privacy_test_file}::test_dataset_ingest_privacy_detector_block_mode_stops_before_segments",
         f"{privacy_test_file}::test_dataset_ingest_privacy_detector_off_does_not_enter_detection_helpers",
+        f"{privacy_test_file}::test_dataset_preparation_import_does_not_eagerly_load_privacy_patterns",
         f"{privacy_test_file}::test_dataset_ingest_privacy_detector_treats_none_text_as_empty",
         f"{privacy_test_file}::test_blocked_ingest_receipt_preserves_passed_privacy_fields_when_only_metrics_default",
         f"{privacy_test_file}::test_dataset_ingest_cli_writes_stable_json_receipt",

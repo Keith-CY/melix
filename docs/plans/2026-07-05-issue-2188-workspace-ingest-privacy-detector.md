@@ -85,7 +85,10 @@ Measurement points:
 
 - source record detector pass latency inside ingest;
 - aggregate match and category counts;
-- existing ingest throughput and segmentation latency metrics.
+- existing ingest throughput and segmentation latency metrics;
+- import overhead on default/off and unrelated dataset listing/source scan
+  paths, which must not eager-load privacy detector regex or workspace preflight
+  modules before they are needed.
 
 Success metrics:
 
@@ -102,6 +105,8 @@ Success metrics:
   behavior and Hugging Face token casing.
 - Focused Python tests for dataset ingest redact mode, block mode, off mode,
   stable receipt fields, and CLI mode propagation.
+- Focused Python import test proving `dataset_preparation` does not eager-load
+  the privacy detector module for default/off and unrelated listing paths.
 - Focused diagnostics tests remain unchanged because bundle writers must not
   scan content.
 - Full pre-commit gate before opening the PR.
