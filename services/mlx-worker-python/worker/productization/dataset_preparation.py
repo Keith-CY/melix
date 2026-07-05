@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import csv
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 import os
 import re
@@ -1320,7 +1321,7 @@ def _structured_records(
             )
         return
     dialect = "excel-tab" if suffix == ".tsv" else "excel"
-    reader = csv.DictReader(text.splitlines(), dialect=dialect)
+    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
     for index, row in enumerate(reader, start=1):
         row_text = _structured_text_or_failure(path, row, index, operator_failures)
         if row_text is None:

@@ -17,6 +17,9 @@
 - Reject non-string explicit `text` values with `DATASET_INGEST_UNSUPPORTED_TEXT_VALUE`.
 - Keep raw row values, raw structured payloads, object reprs, and raw sensitive fragments out of operator failures, receipts, CLI JSON, and diagnostics-ready metadata.
 - Preserve the existing fallback behavior for structured rows without a `text` field: build text from sorted key/value summaries, because those rows are already non-explicit text records.
+- Preserve RFC-style quoted newlines in CSV and TSV fields by passing the full
+  source text into `csv.DictReader` instead of splitting physical lines before
+  parsing.
 - Preserve existing privacy detector `off`, `redact`, and `block` behavior for accepted records.
 
 ## Non-Goals
@@ -356,3 +359,7 @@ Append the exact local verification results and scoped performance report path t
   - Scoped performance report: `/Users/chenyu/Documents/github/melix/.runtime/worktrees/issue-2188-workspace-input-guard-20260705/.runtime/pre-commit-performance/20260705-063848-0df2921f/report/report.md`.
   - Performance status: `Status: ok`, `Changed files: 4`, `Selected probes: 3`, `Direct/gated probes: 3`, `Regressions: 0`, `Context regressions: 0`, `Verification failures: 0`.
   - Probe coverage: `dataset-version-listing-scandir`, `dataset-quality-lengths-chain`, and `dataset-source-records-scandir` all had targeted tests pass and coverage pass at `100.0%`.
+- Review follow-up for CSV/TSV quoted newlines:
+  - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --project services/mlx-worker-python --extra mlx pytest -q services/mlx-worker-python/tests/test_dataset_preparation_ingest.py::test_dataset_ingest_privacy_detector_redacts_source_records_before_segments`: `1 passed in 0.08s`.
+  - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --project services/mlx-worker-python --extra mlx python -m py_compile services/mlx-worker-python/worker/productization/dataset_preparation.py services/mlx-worker-python/tests/test_dataset_preparation_ingest.py`: passed.
+  - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --project services/mlx-worker-python --extra mlx pytest -q services/mlx-worker-python/tests/test_dataset_preparation_ingest.py`: `23 passed in 0.13s`.

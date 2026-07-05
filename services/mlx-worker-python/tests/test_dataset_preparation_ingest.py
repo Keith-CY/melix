@@ -592,7 +592,8 @@ def test_dataset_ingest_privacy_detector_redacts_source_records_before_segments(
     csv_root.mkdir()
     (csv_root / "rows.csv").write_text(
         "id,text\n"
-        "row-1,first csv row\n"
+        'row-1,"first csv row\n'
+        'second csv line"\n'
         "row-2\n",
         encoding="utf-8",
     )
@@ -626,7 +627,7 @@ def test_dataset_ingest_privacy_detector_redacts_source_records_before_segments(
             encoding="utf-8"
         ).splitlines()
     ]
-    assert [segment["text"] for segment in csv_segments] == ["first csv row"]
+    assert [segment["text"] for segment in csv_segments] == ["first csv row\nsecond csv line"]
 
 
 def test_dataset_ingest_privacy_detector_block_mode_stops_before_segments(
