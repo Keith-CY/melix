@@ -852,6 +852,21 @@ def test_dataset_source_records_probe_restores_gc_state(
         gc.enable()
 
 
+def test_dataset_source_records_probe_supports_multiple_timed_samples(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_DIRS", "2")
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_FILES_PER_DIR", "3")
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_SAMPLES", "2")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+
+    metrics = probe_script["measure"](directory_count=2, files_per_directory=3, samples=2)
+
+    assert metrics["sample_count"] == 2.0
+    assert metrics["file_count_mean"] == 6.0
+    assert metrics["record_elapsed_ms_p95"] >= 0.0
+
+
 def test_dataset_source_records_probe_rejects_changed_file_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

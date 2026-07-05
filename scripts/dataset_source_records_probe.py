@@ -83,8 +83,14 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
         gc.collect()
         if gc_was_enabled:
             gc.disable()
+        paths: list[Path] = []
+        source_kinds: list[str] = []
+        records: list[dict[str, object]] = []
         try:
             for _ in range(samples):
+                paths.clear()
+                source_kinds.clear()
+                records.clear()
                 started = time.perf_counter()
                 paths = _iter_source_file_paths(root)
                 elapsed_ms.append((time.perf_counter() - started) * 1000.0)
@@ -109,6 +115,7 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
                         source_kind=source_kind,
                         text="Melix source row\n",
                         metadata={},
+                        normalized=True,
                     )
                     for path, source_kind in zip(paths, source_kinds)
                 ]
@@ -116,6 +123,9 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
                 if records[0]["byte_size"] != len("Melix source row\n".encode("utf-8")):
                     raise RuntimeError("source record byte accounting changed")
         finally:
+            paths.clear()
+            source_kinds.clear()
+            records.clear()
             if gc_was_enabled:
                 gc.enable()
     return {

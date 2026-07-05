@@ -89,9 +89,9 @@ Measurement points:
 - import overhead on default/off and unrelated dataset listing/source scan
   paths, which must not eager-load privacy detector regex or workspace preflight
   modules before they are needed.
-- source-record scan probe stability, with garbage collection isolated from
-  the timed source enumeration loop so Path-heavy sample cleanup does not
-  dominate p95 measurements.
+- source-record scan probe stability, with garbage collection and previous
+  sample object cleanup isolated from the timed source enumeration and record
+  construction loops so sample cleanup does not dominate p95 measurements.
 
 Success metrics:
 
@@ -111,8 +111,8 @@ Success metrics:
 - Focused Python import test proving `dataset_preparation` does not eager-load
   the privacy detector module for default/off and unrelated listing paths.
 - Focused source-record probe tests proving the probe restores the caller's GC
-  state and still rejects changed source count, ordering, source-kind
-  classification, and byte accounting.
+  state, supports multiple timed samples, and still rejects changed source
+  count, ordering, source-kind classification, and byte accounting.
 - Focused diagnostics tests remain unchanged because bundle writers must not
   scan content.
 - Full pre-commit gate before opening the PR.
