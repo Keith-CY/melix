@@ -26,6 +26,8 @@ _ORD_QUOTE = ord('"')
 _ORD_COLON = ord(":")
 _ORD_OBJECT_START = ord("{")
 _ORD_OBJECT_END = ord("}")
+_ASSERT_PRECEDING_BOUNDARIES = frozenset("\n\r;:")
+_ASSERT_LINE_SPACING = frozenset(" \t")
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,7 +272,7 @@ def run_python_code_evaluation(
 
 @lru_cache(maxsize=128)
 def _count_tests(test_code: str) -> int:
-    if "assert" not in test_code:
+    if not _may_contain_assert_statement(test_code):
         return _count_nonblank_test_lines(test_code)
     try:
         module = ast.parse(test_code, filename="<tests>", mode="exec")
@@ -278,6 +280,28 @@ def _count_tests(test_code: str) -> int:
         return _count_nonblank_test_lines(test_code)
     assert_count = _count_assert_nodes(module)
     return assert_count or _count_nonblank_test_lines(test_code)
+
+
+def _may_contain_assert_statement(test_code: str) -> bool:
+    if "assert" not in test_code:
+        return False
+    cursor = 0
+    text_length = len(test_code)
+    while True:
+        cursor = test_code.find("assert", cursor)
+        if cursor < 0:
+            return False
+        after_index = cursor + 6
+        after = test_code[after_index] if after_index < text_length else "\n"
+        if after == "_" or after.isalnum():
+            cursor = after_index
+            continue
+        before_index = cursor - 1
+        while before_index >= 0 and test_code[before_index] in _ASSERT_LINE_SPACING:
+            before_index -= 1
+        if before_index < 0 or test_code[before_index] in _ASSERT_PRECEDING_BOUNDARIES:
+            return True
+        cursor = after_index
 
 
 def _count_assert_nodes(
