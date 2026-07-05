@@ -837,6 +837,30 @@ def test_project_local_job_session_followup_uses_narrow_receipt_copies(
     )
 
 
+def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value() -> None:
+    scalar_text = "redacted completion summary"
+    scalar_payload = {
+        "text": scalar_text,
+        "count": 2,
+        "ratio": 0.5,
+        "ok": True,
+        "missing": None,
+    }
+
+    copied = local_job_continuation_module._copy_json_like_value(
+        {"summary": scalar_payload, "items": [scalar_payload]}
+    )
+
+    assert copied == {"summary": scalar_payload, "items": [scalar_payload]}
+    assert copied is not scalar_payload
+    assert copied["summary"] is not scalar_payload
+    assert copied["items"] is not scalar_payload
+    assert copied["items"][0] is not scalar_payload
+    assert copied["summary"]["text"] is scalar_text
+    copied["summary"]["text"] = "downstream mutation"
+    assert scalar_payload["text"] == scalar_text
+
+
 def test_project_local_job_session_followup_returns_none_for_missing_record(
     tmp_path: Path,
 ) -> None:

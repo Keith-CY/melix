@@ -980,6 +980,15 @@ def _copy_untrusted_context_receipts(
 
 
 def _copy_json_like_value(value: Any) -> Any:
+    value_type = type(value)
+    if (
+        value_type is str
+        or value_type is int
+        or value_type is float
+        or value_type is bool
+        or value is None
+    ):
+        return value
     if isinstance(value, dict):
         return {key: _copy_json_like_value(nested) for key, nested in value.items()}
     if isinstance(value, list):

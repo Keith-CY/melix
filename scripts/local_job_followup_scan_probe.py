@@ -149,15 +149,80 @@ def run_projection_probe(*, record_count: int = 250, samples: int = 5) -> dict[s
     }
 
 
+def _baseline_copy_json_like_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _baseline_copy_json_like_value(nested) for key, nested in value.items()}
+    if isinstance(value, list):
+        return [_baseline_copy_json_like_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_baseline_copy_json_like_value(item) for item in value)
+    return value
+
+
+def _scalar_copy_payload() -> dict[str, object]:
+    return {
+        "summary": "Redacted completion summary",
+        "status": "completed",
+        "metrics": {"count": 7, "ratio": 0.25, "ok": True, "missing": None},
+        "items": [
+            {"text": "artifact", "count": index, "ok": False}
+            for index in range(12)
+        ],
+        "coords": ("x", {"y": "z", "n": 1}),
+    }
+
+
+def _measure_copy_helper(helper, payload: dict[str, object], iterations: int) -> float:
+    checksum = 0
+    started = time.perf_counter()
+    for _ in range(iterations):
+        copied = helper(payload)
+        checksum += int(copied["metrics"]["count"]) + len(copied["items"])
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    expected_checksum = iterations * 19
+    if checksum != expected_checksum:  # pragma: no cover - probe corruption guard
+        raise RuntimeError(f"unexpected scalar-copy checksum: {checksum}")
+    return elapsed_ms
+
+
+def run_scalar_copy_probe(*, iterations: int = 200_000, samples: int = 5) -> dict[str, float]:
+    payload = _scalar_copy_payload()
+    baseline_samples = [
+        _measure_copy_helper(_baseline_copy_json_like_value, payload, iterations)
+        for _ in range(samples)
+    ]
+    optimized_samples = [
+        _measure_copy_helper(target._copy_json_like_value, payload, iterations)
+        for _ in range(samples)
+    ]
+    baseline_mean = statistics.fmean(baseline_samples)
+    optimized_mean = statistics.fmean(optimized_samples)
+    return {
+        "scalar_copy_baseline_elapsed_ms_mean": round(baseline_mean, 6),
+        "scalar_copy_optimized_elapsed_ms_mean": round(optimized_mean, 6),
+        "scalar_copy_delta_ms": round(optimized_mean - baseline_mean, 6),
+        "scalar_copy_speedup": round(baseline_mean / optimized_mean, 6)
+        if optimized_mean
+        else 0.0,
+        "scalar_copy_iterations": float(iterations),
+    }
+
+
 def main() -> int:
     record_count = int(os.environ.get("MELIX_LOCAL_JOB_SCAN_RECORDS", "500"))
     samples = int(os.environ.get("MELIX_LOCAL_JOB_SCAN_SAMPLES", "5"))
     projection_record_count = int(
         os.environ.get("MELIX_LOCAL_JOB_PROJECTION_RECORDS", "250")
     )
+    scalar_copy_iterations = int(
+        os.environ.get("MELIX_LOCAL_JOB_SCALAR_COPY_ITERATIONS", "200000")
+    )
     metrics = run_probe(record_count=record_count, samples=samples)
     metrics.update(
         run_projection_probe(record_count=projection_record_count, samples=samples)
+    )
+    metrics.update(
+        run_scalar_copy_probe(iterations=scalar_copy_iterations, samples=samples)
     )
     print(json.dumps(metrics, sort_keys=True))
     return 0
