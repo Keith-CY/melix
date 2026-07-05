@@ -19,7 +19,9 @@ evidence without scanning content inside diagnostics bundle writers.
   receipts, operator failures, diagnostics metadata, and CLI output.
 - Align the Python pattern detector with the Swift detector for quoted secret
   assignments, optional whitespace around `=`, unquoted token punctuation, and
-  case-insensitive Hugging Face token prefixes.
+  case-insensitive Hugging Face token prefixes. Unquoted assignment detection
+  preserves semicolon statement separators instead of redacting into the next
+  statement.
 - Extend the dataset ingest CLI with the same detector mode control.
 
 ## Non-Goals
@@ -96,6 +98,8 @@ Success metrics:
 ## Verification
 
 - Focused Python tests for detector regex parity.
+- Focused Swift tests for the shared pattern detector statement-separator
+  behavior and Hugging Face token casing.
 - Focused Python tests for dataset ingest redact mode, block mode, off mode,
   stable receipt fields, and CLI mode propagation.
 - Focused diagnostics tests remain unchanged because bundle writers must not
