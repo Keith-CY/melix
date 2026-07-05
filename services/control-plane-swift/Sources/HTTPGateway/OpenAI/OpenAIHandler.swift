@@ -3394,7 +3394,7 @@ button.primary:active {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
         switch rawValue {
-        case "redact", "block":
+        case "detect", "redact", "block":
             return rawValue
         default:
             return nil

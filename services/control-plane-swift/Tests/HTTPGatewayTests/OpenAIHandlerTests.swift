@@ -2320,6 +2320,65 @@ struct OpenAIHandlerTests {
         #expect(await metricsStore.value(forKey: "privacy_audit.blocked_count") == 1)
     }
 
+    @Test("local proxy privacy detector detects text without mutating worker request")
+    func localProxyPrivacyDetectorDetectsTextWithoutMutatingWorkerRequest() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeTokenEvent(requestID: "req-privacy-detect", seq: 1, text: "ok"),
+            makeCompletedEvent(requestID: "req-privacy-detect", seq: 2, finishReason: "stop", assistantText: "ok"),
+        ])
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-privacy-detect" }),
+            environment: ["MELIX_PRIVACY_DETECTOR_MODE": "detect"]
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Email alice@example.test and use token hf_ABC12345" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let metadata = request.execution.ext
+        let metadataText = metadata.values.joined(separator: " ")
+
+        #expect(response.statusCode == 200)
+        #expect(request.messages.first?.parts.first?.text == "Email alice@example.test and use token hf_ABC12345")
+        #expect(metadata["melix.privacy.detector.policy_mode"] == "detect")
+        #expect(metadata["melix.privacy.detector.action"] == "detected")
+        #expect(metadata["melix.privacy.detector.categories"] == "email,secret")
+        #expect(metadata["melix.privacy.detector.match_count"] == "2")
+        #expect(metadata["melix.privacy.detector.redacted_span_count"] == "0")
+        #expect(metadata["melix.privacy.detector.raw_sensitive_span_count"] == "0")
+        #expect(metadata["melix.privacy.detector.raw_text_included"] == "false")
+        #expect(metadata["melix.privacy.audit.blocked_count"] == "0")
+        #expect(metadata["melix.privacy.audit.redacted_count"] == "0")
+        #expect(metadata["melix.privacy.audit.passed_count"] == "1")
+        #expect(metadataText.contains("alice@example.test") == false)
+        #expect(metadataText.contains("hf_ABC12345") == false)
+        #expect(await metricsStore.value(forKey: "privacy_detector.local_proxy_text_request.detected_count") == 1)
+        #expect(await metricsStore.value(forKey: "privacy_audit.passed_count") == 1)
+    }
+
     @Test("local proxy privacy detector records passed metadata for clean opt-in text")
     func localProxyPrivacyDetectorRecordsPassedMetadataForCleanOptInText() async throws {
         let workerClient = ScriptedWorkerClient(events: [
