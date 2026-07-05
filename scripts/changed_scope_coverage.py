@@ -280,9 +280,14 @@ def _measurable_changed_lines(
                 and len(changed) >= _DENSE_CHANGED_LINE_SCAN_THRESHOLD
                 and len(changed) * 4 >= measured_line_count
             ):
-                executed_lookup = {line_no for line_no in executed_lines if line_no in changed}
-                missing_lookup = {line_no for line_no in missing_lines if line_no in changed}
-                measured_changed = list(executed_lookup | missing_lookup)
+                if isinstance(changed, (set, frozenset)):
+                    executed_lookup = changed.intersection(executed_lines)
+                    missing_lookup = changed.intersection(missing_lines)
+                else:
+                    executed_lookup = {line_no for line_no in executed_lines if line_no in changed}
+                    missing_lookup = {line_no for line_no in missing_lines if line_no in changed}
+                measured_changed = list(executed_lookup)
+                measured_changed.extend(missing_lookup)
             else:
                 measured_changed = [
                     line_no
