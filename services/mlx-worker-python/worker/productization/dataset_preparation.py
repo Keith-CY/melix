@@ -642,19 +642,32 @@ def _privacy_detector_blocked_failure(
 
 
 def _workspace_path_denied_failure(receipt: dict[str, Any]) -> dict[str, Any]:
+    reason = str(receipt.get("reason") or "outside_workspace_roots")
+    if reason == "manifest_invalid":
+        detail = (
+            "Dataset ingest workspace manifest validation failed before path "
+            "confinement."
+        )
+        recovery_hint = (
+            "Repair workspace-manifest.json before preparing the dataset."
+        )
+    else:
+        detail = (
+            "Dataset ingest input path resolves outside the manifest-declared "
+            "workspace artifact roots."
+        )
+        recovery_hint = (
+            "Move the source under a declared workspace artifact root or update "
+            "workspace-manifest.json before preparing the dataset."
+        )
+
     return {
         "id": "dataset-ingest-workspace-path-denied",
         "code": "DATASET_INGEST_WORKSPACE_PATH_DENIED",
         "path": "",
-        "detail": (
-            "Dataset ingest input path resolves outside the manifest-declared "
-            "workspace artifact roots."
-        ),
-        "recovery_hint": (
-            "Move the source under a declared workspace artifact root or update "
-            "workspace-manifest.json before preparing the dataset."
-        ),
-        "reason": str(receipt.get("reason") or "outside_workspace_roots"),
+        "detail": detail,
+        "recovery_hint": recovery_hint,
+        "reason": reason,
     }
 
 

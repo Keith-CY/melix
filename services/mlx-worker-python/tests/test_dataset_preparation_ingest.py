@@ -958,6 +958,18 @@ def test_dataset_ingest_blocks_input_outside_workspace_roots_before_discovery(
     assert not (output_root / "segments.jsonl").exists()
 
 
+def test_workspace_path_denied_failure_describes_invalid_manifest_reason() -> None:
+    failure = dataset_preparation_module._workspace_path_denied_failure(
+        {"reason": "manifest_invalid"}
+    )
+
+    assert failure["code"] == "DATASET_INGEST_WORKSPACE_PATH_DENIED"
+    assert failure["reason"] == "manifest_invalid"
+    assert "manifest validation failed" in failure["detail"]
+    assert "outside the manifest-declared workspace artifact roots" not in failure["detail"]
+    assert "Repair workspace-manifest.json" in failure["recovery_hint"]
+
+
 def test_dataset_ingest_allows_input_under_manifest_root(tmp_path: Path) -> None:
     manifest_path = _write_ready_workspace_manifest(tmp_path)
     input_root = manifest_path.parent / "raw"
