@@ -537,6 +537,43 @@ def test_count_tests_no_assert_fast_path_skips_ast_parse(monkeypatch: pytest.Mon
     assert code_eval_runner._count_tests("setup()\nrun_case(identity)\n") == 2
 
 
+def test_count_tests_ignores_assert_tokens_in_comments_and_strings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    code_eval_runner._count_tests.cache_clear()
+    test_code = textwrap.dedent(
+        '''
+        # assert appears in prose, not as a statement
+        message = "assert should stay inside the string"
+        details = """multi-line assert mention"""
+        value = candidate(1)
+        '''
+    ).strip()
+
+    def fail_parse(*args, **kwargs):
+        raise AssertionError(  # pragma: no cover - regression-only failure path
+            "comment/string assert mentions should use the non-AST fallback"
+        )
+
+    monkeypatch.setattr(code_eval_runner.ast, "parse", fail_parse)
+
+    assert code_eval_runner._count_tests(test_code) == 4
+
+
+def test_count_tests_preserves_inline_assert_statement_detection() -> None:
+    code_eval_runner._count_tests.cache_clear()
+
+    assert code_eval_runner._count_tests("setup(); assert identity(1) == 1") == 1
+
+
+def test_assert_prescan_handles_boundary_and_literal_edges() -> None:
+    assert code_eval_runner._may_contain_assert_statement("# assert only in trailing comment") is False
+    assert code_eval_runner._may_contain_assert_statement("reassert = 'value'") is False
+    assert code_eval_runner._may_contain_assert_statement("text = 'escaped \\\' assert'") is False
+    assert code_eval_runner._may_contain_assert_statement('text = "unterminated assert') is False
+    assert code_eval_runner._may_contain_assert_statement("if ready: assert value") is True
+
+
 def test_count_tests_syntax_error_fallback_uses_nonblank_line_counter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
