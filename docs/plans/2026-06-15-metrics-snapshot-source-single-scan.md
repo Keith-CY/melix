@@ -97,3 +97,17 @@ future behavior slices are gated on meaningful configured-path regressions rathe
 than measurement noise. The behavior contract remains unchanged: configured
 sources still bypass runtime scanning, and runtime-scan `elapsed_ms_*` metrics
 remain percentage-gated.
+
+## 2026-07-05 follow-up slice: indexed latest-path tracking
+
+This Python-only follow-up keeps the same registered
+`melix-metrics-snapshot-runtime-scandir` probe and narrows to the hot latest-file
+tracking structures inside `discover_latest_metrics_paths(...)`. The runtime
+source names are now mapped to compact integer indexes before the directory scan,
+so the per-entry path updates use list indexing instead of repeated source-name
+dictionary get/set operations.
+
+The behavior contract remains unchanged: exact, prefix/suffix, empty-prefix, and
+multi-wildcard runtime pattern matches still select the newest regular file per
+source; configured sources still bypass runtime scanning; and only the final
+winning path for each source is materialized as a `Path`.
