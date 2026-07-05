@@ -92,6 +92,12 @@ def _build_lookup_payload(count: int) -> dict[str, Any]:
                     {"score": (index % 13) / 13},
                     {"shard": index % 11},
                 ],
+                "quad_scores": [
+                    index,
+                    index + 1,
+                    {"rank": index % 7},
+                    {"score": (index % 13) / 13},
+                ],
                 "single_key_detail": {"summary": {"nested": index % 23}},
                 "labels": (
                     "retrieved",
