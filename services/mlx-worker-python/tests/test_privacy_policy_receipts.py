@@ -5,6 +5,7 @@ import json
 from worker.productization.privacy_policy_receipts import (
     PrivacyAuditCounter,
     PrivacyDetectorReceipt,
+    aggregate_privacy_detection_results,
     detect_privacy_patterns,
     network_fetch_policy_receipt_from_metadata,
     network_fetch_policy_receipt_for_url,
@@ -301,6 +302,64 @@ def test_pattern_privacy_detector_defaults_unknown_mode_and_deduplicates_overlap
     assert result.receipt["categories"] == ["secret"]
     assert result.receipt["match_count"] == 1
     assert "hf_abcdef123456" not in json.dumps(result.receipt, sort_keys=True)
+
+
+def test_pattern_privacy_detector_matches_secret_assignment_parity_cases() -> None:
+    result = detect_privacy_patterns(
+        'OPENAI_API_KEY = "sk-quoted-secret" '
+        "HF_TOKEN=sk-secret,with,commas "
+        "HF_ABCDEF123456",
+        surface="workspace_ingest",
+        route_scope="source_import",
+    )
+
+    assert result.receipt["action"] == "redacted"
+    assert result.receipt["categories"] == ["secret"]
+    assert result.receipt["match_count"] == 3
+    assert result.redacted_text.count("[REDACTED_SECRET]") == 3
+    payload = json.dumps(
+        {
+            "redacted_text": result.redacted_text,
+            "receipt": result.receipt,
+            "audit_counter": result.audit_counter,
+        },
+        sort_keys=True,
+    )
+    for raw_fragment in (
+        "OPENAI_API_KEY",
+        "sk-quoted-secret",
+        "sk-secret",
+        "with,commas",
+        "HF_ABCDEF123456",
+    ):
+        assert raw_fragment not in payload
+
+
+def test_pattern_privacy_detector_does_not_redact_past_unquoted_statement_separator() -> None:
+    result = detect_privacy_patterns(
+        "OPENAI_API_KEY=sk-secret;other_var=keep-me",
+        surface="workspace_ingest",
+        route_scope="source_import",
+    )
+
+    assert result.receipt["action"] == "redacted"
+    assert result.receipt["categories"] == ["secret"]
+    assert result.receipt["match_count"] == 1
+    assert result.redacted_text == "[REDACTED_SECRET];other_var=keep-me"
+    assert "sk-secret" not in result.redacted_text
+
+
+def test_privacy_detector_aggregate_defaults_unknown_mode_to_off() -> None:
+    result = aggregate_privacy_detection_results(
+        (),
+        surface="workspace_ingest",
+        route_scope="source_import",
+        policy_mode="audit-only",
+    )
+
+    assert result.receipt["policy_mode"] == "off"
+    assert result.receipt["action"] == "passed"
+    assert result.audit_counter["passed_count"] == 1
 
 
 def test_privacy_detector_receipt_metadata_derivation_rejects_raw_text_receipts() -> None:

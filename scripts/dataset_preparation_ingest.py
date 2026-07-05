@@ -33,6 +33,7 @@ def build_receipt(
     segmentation_strategy: str,
     upload_cap_bytes: int = 0,
     source_cap_bytes: int = 0,
+    privacy_detector_mode: str = "off",
     output_path: Path | None = None,
 ) -> dict[str, object]:
     receipt = prepare_dataset_ingest(
@@ -49,6 +50,7 @@ def build_receipt(
             segmentation_strategy=segmentation_strategy,
             upload_cap_bytes=upload_cap_bytes,
             source_cap_bytes=source_cap_bytes,
+            privacy_detector_mode=privacy_detector_mode,
         )
     )
     if output_path:
@@ -72,6 +74,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--segmentation-strategy", default="paragraph")
     parser.add_argument("--upload-cap-bytes", type=int, default=0)
     parser.add_argument("--source-cap-bytes", type=int, default=0)
+    parser.add_argument(
+        "--privacy-detector-mode",
+        choices=("off", "redact", "block"),
+        default="off",
+    )
     args = parser.parse_args(argv)
 
     receipt = build_receipt(
@@ -87,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         segmentation_strategy=args.segmentation_strategy,
         upload_cap_bytes=args.upload_cap_bytes,
         source_cap_bytes=args.source_cap_bytes,
+        privacy_detector_mode=args.privacy_detector_mode,
         output_path=args.output,
     )
     print(json.dumps(receipt, indent=2, sort_keys=True))

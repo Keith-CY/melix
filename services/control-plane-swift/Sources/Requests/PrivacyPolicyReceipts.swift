@@ -171,7 +171,7 @@ public enum PatternPrivacyDetector {
             "secret",
             "[REDACTED_SECRET]",
             try! NSRegularExpression(
-                pattern: #"\b[A-Za-z0-9_]*(?:HF_TOKEN|HUGGINGFACE_HUB_TOKEN|MELIX_HF_TOKEN|MELIX_HUGGINGFACE_TOKEN|MELIX_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|API_KEY|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN|SECRET_KEY|CLIENT_SECRET|PASSWORD)\s*=\s*(?:"[^"]*"|'[^']*'|\S+)"#,
+                pattern: #"\b[A-Za-z0-9_]*(?:HF_TOKEN|HUGGINGFACE_HUB_TOKEN|MELIX_HF_TOKEN|MELIX_HUGGINGFACE_TOKEN|MELIX_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|API_KEY|ACCESS_TOKEN|AUTH_TOKEN|BEARER_TOKEN|SECRET_KEY|CLIENT_SECRET|PASSWORD)\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s;]+)"#,
                 options: [.caseInsensitive]
             )
         ),

@@ -3,8 +3,8 @@ import Testing
 @testable import MelixControlPlaneCore
 
 struct PrivacyPolicyReceiptsTests {
-    @Test("pattern privacy detector redacts unquoted assignment values through punctuation")
-    func patternPrivacyDetectorRedactsUnquotedAssignmentValuesThroughPunctuation() {
+    @Test("pattern privacy detector preserves statement separators after unquoted assignments")
+    func patternPrivacyDetectorPreservesStatementSeparatorsAfterUnquotedAssignments() {
         let result = PatternPrivacyDetector.detect(
             textSegments: ["Use API_KEY=abc,def;ghi before sending."],
             surface: "local_proxy_text_request",
@@ -12,7 +12,7 @@ struct PrivacyPolicyReceiptsTests {
             policyMode: "redact"
         )
 
-        #expect(result.redactedTexts == ["Use [REDACTED_SECRET] before sending."])
+        #expect(result.redactedTexts == ["Use [REDACTED_SECRET];ghi before sending."])
         #expect(result.receipt.matchCount == 1)
         #expect(result.receipt.categories == ["secret"])
     }
