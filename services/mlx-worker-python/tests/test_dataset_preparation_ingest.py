@@ -630,6 +630,73 @@ def test_dataset_ingest_privacy_detector_redacts_source_records_before_segments(
     assert [segment["text"] for segment in csv_segments] == ["first csv row\nsecond csv line"]
 
 
+def test_dataset_ingest_privacy_detector_detect_mode_audits_without_mutating_segments(
+    tmp_path: Path,
+) -> None:
+    input_root = tmp_path / "raw-inputs"
+    output_root = tmp_path / "prepared"
+    input_root.mkdir()
+    (input_root / "notes.txt").write_text(
+        "Audit only HF_TOKEN=sk-detect-workspace and alice@example.com.\n",
+        encoding="utf-8",
+    )
+
+    receipt = prepare_dataset_ingest(
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=_write_ready_workspace_manifest(tmp_path),
+            input_path=input_root,
+            output_dir=output_root,
+            dataset_preparation_id="prep-detector-detect",
+            pii_mask=False,
+            exact_dedup=False,
+            fuzzy_dedup=False,
+            segmentation=True,
+            privacy_detector_mode="detect",
+        )
+    )
+
+    assert receipt["status"] == "ready"
+    assert receipt["privacy_detector_receipts"] == [
+        {
+            "schema_version": "melix.privacy_detector_receipt.v1",
+            "surface": "workspace_ingest",
+            "route_scope": "source_import",
+            "detector_id": "melix.pattern_detector.v1",
+            "policy_id": "melix.default_privacy_policy.v1",
+            "policy_mode": "detect",
+            "action": "detected",
+            "categories": ["email", "secret"],
+            "match_count": 2,
+            "redacted_span_count": 0,
+            "blocked_reason": "",
+            "confidence_source": "deterministic_pattern",
+            "raw_sensitive_span_count": 0,
+            "raw_text_included": False,
+        }
+    ]
+    assert receipt["privacy_audit_counters"] == [
+        {
+            "schema_version": "melix.privacy_audit_counter.v1",
+            "surface": "workspace_ingest",
+            "route_scope": "source_import",
+            "blocked_count": 0,
+            "redacted_count": 0,
+            "passed_count": 1,
+            "raw_sensitive_span_count": 0,
+        }
+    ]
+    assert receipt["metrics"]["privacy_detector_match_count"] == 2
+    assert receipt["metrics"]["privacy_detector_redacted_span_count"] == 0
+    assert receipt["metrics"]["privacy_detector_latency_ms"] >= 0
+
+    segment_text = (output_root / "segments.jsonl").read_text(encoding="utf-8")
+    assert "sk-detect-workspace" in segment_text
+    assert "alice@example.com" in segment_text
+    assert "sk-detect-workspace" not in json.dumps(receipt, sort_keys=True)
+    assert "alice@example.com" not in json.dumps(receipt, sort_keys=True)
+
+
 def test_dataset_ingest_privacy_detector_block_mode_stops_before_segments(
     tmp_path: Path,
 ) -> None:
@@ -957,6 +1024,61 @@ def test_dataset_ingest_cli_accepts_privacy_detector_mode(tmp_path: Path) -> Non
     assert "with,commas" not in output_payload
 
 
+def test_dataset_ingest_cli_accepts_detect_privacy_detector_mode(tmp_path: Path) -> None:
+    import dataset_preparation_ingest
+
+    input_root = tmp_path / "raw-inputs"
+    output_root = tmp_path / "prepared"
+    receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
+    input_root.mkdir()
+    (input_root / "notes.txt").write_text(
+        "Secret HF_TOKEN=sk-cli-detect-secret,with,commas.\n",
+        encoding="utf-8",
+    )
+
+    exit_code = dataset_preparation_ingest.main(
+        [
+            "--workspace-project-id",
+            "m-courtyard-demo",
+            "--workspace-manifest",
+            str(manifest_path),
+            "--input",
+            str(input_root),
+            "--output-dir",
+            str(output_root),
+            "--dataset-preparation-id",
+            "prep-cli-detect-detector",
+            "--output",
+            str(receipt_path),
+            "--pii-mask",
+            "false",
+            "--exact-dedup",
+            "false",
+            "--fuzzy-dedup",
+            "false",
+            "--segmentation",
+            "true",
+            "--privacy-detector-mode",
+            "detect",
+        ]
+    )
+
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    segment_text = (output_root / "segments.jsonl").read_text(encoding="utf-8")
+    assert exit_code == 0
+    assert payload["privacy_detector_receipts"][0]["policy_mode"] == "detect"
+    assert payload["privacy_detector_receipts"][0]["action"] == "detected"
+    assert payload["privacy_detector_receipts"][0]["match_count"] == 1
+    assert payload["privacy_detector_receipts"][0]["redacted_span_count"] == 0
+    assert payload["privacy_audit_counters"][0]["passed_count"] == 1
+    assert "sk-cli-detect-secret" in segment_text
+    assert "with,commas" in segment_text
+    output_payload = json.dumps(payload, sort_keys=True)
+    assert "sk-cli-detect-secret" not in output_payload
+    assert "with,commas" not in output_payload
+
+
 def test_dataset_ingest_cli_accepts_privacy_detector_mode_from_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1005,6 +1127,63 @@ def test_dataset_ingest_cli_accepts_privacy_detector_mode_from_environment(
     assert payload["privacy_detector_receipts"][0]["action"] == "redacted"
     output_payload = json.dumps(payload, sort_keys=True)
     assert "sk-env-secret" not in output_payload
+    assert "with,commas" not in output_payload
+
+
+def test_dataset_ingest_cli_accepts_detect_privacy_detector_mode_from_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dataset_preparation_ingest
+
+    monkeypatch.setenv("MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE", "detect")
+    input_root = tmp_path / "raw-inputs"
+    output_root = tmp_path / "prepared"
+    receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
+    input_root.mkdir()
+    (input_root / "notes.txt").write_text(
+        "Secret HF_TOKEN=sk-env-detect-secret,with,commas.\n",
+        encoding="utf-8",
+    )
+
+    exit_code = dataset_preparation_ingest.main(
+        [
+            "--workspace-project-id",
+            "m-courtyard-demo",
+            "--workspace-manifest",
+            str(manifest_path),
+            "--input",
+            str(input_root),
+            "--output-dir",
+            str(output_root),
+            "--dataset-preparation-id",
+            "prep-cli-env-detect-detector",
+            "--output",
+            str(receipt_path),
+            "--pii-mask",
+            "false",
+            "--exact-dedup",
+            "false",
+            "--fuzzy-dedup",
+            "false",
+            "--segmentation",
+            "true",
+        ]
+    )
+
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    segment_text = (output_root / "segments.jsonl").read_text(encoding="utf-8")
+    assert exit_code == 0
+    assert payload["privacy_detector_receipts"][0]["policy_mode"] == "detect"
+    assert payload["privacy_detector_receipts"][0]["action"] == "detected"
+    assert payload["privacy_detector_receipts"][0]["match_count"] == 1
+    assert payload["privacy_detector_receipts"][0]["redacted_span_count"] == 0
+    assert payload["privacy_audit_counters"][0]["passed_count"] == 1
+    assert "sk-env-detect-secret" in segment_text
+    assert "with,commas" in segment_text
+    output_payload = json.dumps(payload, sort_keys=True)
+    assert "sk-env-detect-secret" not in output_payload
     assert "with,commas" not in output_payload
 
 
@@ -1067,7 +1246,7 @@ def test_dataset_ingest_cli_ignores_unsupported_privacy_detector_environment(
 ) -> None:
     import dataset_preparation_ingest
 
-    monkeypatch.setenv("MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE", "detect")
+    monkeypatch.setenv("MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE", "audit-only")
     input_root = tmp_path / "raw-inputs"
     output_root = tmp_path / "prepared"
     receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"

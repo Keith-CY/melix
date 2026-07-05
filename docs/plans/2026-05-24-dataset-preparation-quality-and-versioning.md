@@ -77,11 +77,13 @@ Every source record receives a stable `source_id`, `source_uri`, `source_kind`,
 Cleaning controls must be independently enableable and reportable:
 
 - `privacy_detector`: optionally run the deterministic local privacy detector in
-  `off`, `redact`, or `block` mode after source records are read and before
-  PII masking, deduplication, and segmentation. `off` mode keeps the receipt
-  contract stable with a passed zero-match receipt, but must not scan source
-  records or enter detector aggregation. The dataset ingest CLI resolves the
-  mode from `--privacy-detector-mode`, then
+  `off`, `detect`, `redact`, or `block` mode after source records are read and
+  before PII masking, deduplication, and segmentation. `detect` mode is
+  audit-only: it scans records, emits `action: detected` receipts and aggregate
+  match counts, but does not mutate source records or block ingest. `off` mode
+  keeps the receipt contract stable with a passed zero-match receipt, but must
+  not scan source records or enter detector aggregation. The dataset ingest CLI
+  resolves the mode from `--privacy-detector-mode`, then
   `MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE`, then `off`. Unsupported or empty
   environment values normalize to `off`.
 - `pii_mask`: mask email addresses, phone-like numbers, API-token-like
@@ -150,8 +152,10 @@ when the manifest is not ready.
 `melix.privacy_detector_receipt.v1` entries for the workspace source import
 surface. `privacy_audit_counters` contains the matching
 `melix.privacy_audit_counter.v1` counters. Both shapes must omit raw source
-text and raw sensitive spans. In `block` mode, any detector match blocks before
-`segments.jsonl` is written and records only category and count evidence.
+  text and raw sensitive spans. In `detect` mode, source segments stay
+  unchanged and the detector records only category and count evidence. In
+  `block` mode, any detector match blocks before `segments.jsonl` is written
+  and records only category and count evidence.
 
 Ingest must call workspace preflight before reading or segmenting source files.
 If preflight returns `blocked`, ingest writes the workspace preflight receipt

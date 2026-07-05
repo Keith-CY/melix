@@ -559,7 +559,7 @@ def _workspace_privacy_detection_evidence(
 
 def _privacy_detector_mode(value: object) -> str:
     normalized = str(value or "off").strip().lower()
-    return normalized if normalized in {"off", "redact", "block"} else "off"
+    return normalized if normalized in {"off", "detect", "redact", "block"} else "off"
 
 
 def _privacy_detector_metrics(

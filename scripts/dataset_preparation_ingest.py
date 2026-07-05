@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-cap-bytes", type=int, default=0)
     parser.add_argument(
         "--privacy-detector-mode",
-        choices=("off", "redact", "block"),
+        choices=("off", "detect", "redact", "block"),
         default=None,
     )
     args = parser.parse_args(argv)
@@ -118,7 +118,7 @@ WORKSPACE_PRIVACY_DETECTOR_MODE_ENV = "MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE"
 
 def _privacy_detector_mode_from_env() -> str:
     normalized = os.environ.get(WORKSPACE_PRIVACY_DETECTOR_MODE_ENV, "").strip().lower()
-    return normalized if normalized in {"redact", "block"} else "off"
+    return normalized if normalized in {"detect", "redact", "block"} else "off"
 
 
 if __name__ == "__main__":

@@ -413,6 +413,7 @@ def test_dataset_preparation_probes_cover_privacy_detector_ingest_tests() -> Non
     privacy_test_file = "services/mlx-worker-python/tests/test_dataset_preparation_ingest.py"
     required_tests = (
         f"{privacy_test_file}::test_dataset_ingest_privacy_detector_redacts_source_records_before_segments",
+        f"{privacy_test_file}::test_dataset_ingest_privacy_detector_detect_mode_audits_without_mutating_segments",
         f"{privacy_test_file}::test_dataset_ingest_privacy_detector_block_mode_stops_before_segments",
         f"{privacy_test_file}::test_dataset_ingest_privacy_detector_off_does_not_enter_detection_helpers",
         f"{privacy_test_file}::test_dataset_preparation_import_does_not_eagerly_load_privacy_patterns",
@@ -420,7 +421,9 @@ def test_dataset_preparation_probes_cover_privacy_detector_ingest_tests() -> Non
         f"{privacy_test_file}::test_blocked_ingest_receipt_preserves_passed_privacy_fields_when_only_metrics_default",
         f"{privacy_test_file}::test_dataset_ingest_cli_writes_stable_json_receipt",
         f"{privacy_test_file}::test_dataset_ingest_cli_accepts_privacy_detector_mode",
+        f"{privacy_test_file}::test_dataset_ingest_cli_accepts_detect_privacy_detector_mode",
         f"{privacy_test_file}::test_dataset_ingest_cli_accepts_privacy_detector_mode_from_environment",
+        f"{privacy_test_file}::test_dataset_ingest_cli_accepts_detect_privacy_detector_mode_from_environment",
         f"{privacy_test_file}::test_dataset_ingest_cli_privacy_detector_flag_overrides_environment",
         f"{privacy_test_file}::test_dataset_ingest_cli_ignores_unsupported_privacy_detector_environment",
     )

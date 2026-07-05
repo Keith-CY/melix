@@ -254,7 +254,7 @@ def privacy_audit_counter(
         route_scope=route_scope,
         blocked_count=sum(1 for decision in decisions if decision == "blocked"),
         redacted_count=sum(1 for decision in decisions if decision == "redacted"),
-        passed_count=sum(1 for decision in decisions if decision == "passed"),
+        passed_count=sum(1 for decision in decisions if decision in {"passed", "detected"}),
         raw_sensitive_span_count=raw_sensitive_span_count,
     )
 
@@ -270,7 +270,7 @@ def detect_privacy_patterns(
 ) -> PrivacyDetectionResult:
     text = value if isinstance(value, str) else ""
     normalized_mode = str(policy_mode).strip().lower() or "redact"
-    if normalized_mode not in {"redact", "block"}:
+    if normalized_mode not in {"redact", "block", "detect"}:
         normalized_mode = "redact"
 
     matches = _privacy_pattern_matches(text)
@@ -285,6 +285,8 @@ def detect_privacy_patterns(
         action = "blocked"
         blocked_reason = "pattern_match_blocked"
         redacted_text = ""
+    elif match_count and normalized_mode == "detect":
+        action = "detected"
     elif match_count:
         action = "redacted"
         redacted_span_count = match_count
@@ -335,6 +337,8 @@ def aggregate_privacy_detection_results(
         blocked_reason = "pattern_match_blocked"
     elif any(decision == "redacted" for decision in actions):
         action = "redacted"
+    elif any(decision == "detected" for decision in actions):
+        action = "detected"
 
     categories = tuple(sorted({
         category
@@ -346,7 +350,7 @@ def aggregate_privacy_detection_results(
         result.receipt_object.redacted_span_count for result in result_tuple
     )
     normalized_mode = str(policy_mode).strip().lower() or "off"
-    if normalized_mode not in {"off", "redact", "block"}:
+    if normalized_mode not in {"off", "detect", "redact", "block"}:
         normalized_mode = "off"
     receipt = PrivacyDetectorReceipt(
         surface=surface,
@@ -491,7 +495,7 @@ def privacy_detector_receipt_from_metadata(
     if schema_version != PRIVACY_DETECTOR_RECEIPT_SCHEMA_VERSION:
         return {}
     action = str(receipt["action"])
-    if action not in {"passed", "redacted", "blocked"}:
+    if action not in {"passed", "detected", "redacted", "blocked"}:
         return {}
     categories = _category_values(receipt["categories"])
     if categories is None:

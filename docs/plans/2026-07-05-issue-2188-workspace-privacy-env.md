@@ -10,12 +10,17 @@
 
 ---
 
+Follow-up: `2026-07-05-issue-2188-workspace-detect-mode.md` extends the
+environment and CLI controls with explicit audit-only `detect` mode. Unsupported
+environment-value examples should use a value such as `audit-only`; `detect` is
+now a supported mode.
+
 ## Scope
 
 - Add `MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE` as an explicit workspace-ingest operator override.
 - Keep workspace ingest default behavior unchanged when the environment variable and CLI flag are absent.
 - Treat unsupported or empty environment values as `off`, matching the local proxy's safe unsupported-value behavior.
-- Keep `--privacy-detector-mode off|redact|block` as the highest-precedence explicit CLI override.
+- Keep `--privacy-detector-mode off|detect|redact|block` as the highest-precedence explicit CLI override.
 - Preserve the existing receipt shape: `privacy_detector_receipts`, `privacy_audit_counters`, and privacy detector metrics still come from `prepare_dataset_ingest(...)`.
 - Keep raw secret values, raw source text, and raw matched spans out of CLI JSON and receipt metadata.
 
@@ -91,7 +96,7 @@ environment is not read or if precedence is wrong.
 - [x] **Step 3: Add unsupported environment RED test**
 
 Add `test_dataset_ingest_cli_ignores_unsupported_privacy_detector_environment`.
-Set `MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE=detect`, omit the CLI flag, and
+Set `MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE=audit-only`, omit the CLI flag, and
 assert the effective receipt mode is `off`. This prevents a malformed operator
 environment from blocking ingestion unexpectedly.
 
@@ -118,7 +123,7 @@ Add helper:
 def _privacy_detector_mode_from_env() -> str:
     raw_value = os.environ.get(WORKSPACE_PRIVACY_DETECTOR_MODE_ENV, "")
     normalized = raw_value.strip().lower()
-    return normalized if normalized in {"redact", "block"} else "off"
+    return normalized if normalized in {"detect", "redact", "block"} else "off"
 ```
 
 - [x] **Step 2: Resolve CLI flag precedence**
@@ -128,7 +133,7 @@ Change the parser argument default from `"off"` to `None`:
 ```python
 parser.add_argument(
     "--privacy-detector-mode",
-    choices=("off", "redact", "block"),
+    choices=("off", "detect", "redact", "block"),
     default=None,
 )
 ```
