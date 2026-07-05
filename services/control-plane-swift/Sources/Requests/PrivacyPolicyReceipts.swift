@@ -126,6 +126,9 @@ public enum PatternPrivacyDetector {
             redactedSpanCount = 0
             blockedReason = "pattern_match_blocked"
         } else if normalizedMode == "detect" {
+            // Redacted text is still computed above to keep scan behavior shared,
+            // but detect mode reports a non-mutating action so callers must not
+            // apply replacement text.
             action = "detected"
             redactedSpanCount = 0
             blockedReason = ""
