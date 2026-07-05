@@ -861,6 +861,32 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
     assert scalar_payload["text"] == scalar_text
 
 
+class _CopyDict(dict):
+    pass
+
+
+class _CopyList(list):
+    pass
+
+
+class _CopyTuple(tuple):
+    pass
+
+
+def test_project_local_job_session_followup_copy_preserves_container_subclasses() -> None:
+    nested = _CopyDict({"value": _CopyList([_CopyTuple(("x", {"y": "z"}))])})
+
+    copied = local_job_continuation_module._copy_json_like_value(nested)
+
+    assert copied == nested
+    assert copied is not nested
+    assert copied["value"] is not nested["value"]
+    assert copied["value"][0] is not nested["value"][0]
+    assert copied["value"][0][1] is not nested["value"][0][1]
+    copied["value"][0][1]["y"] = "mutated"
+    assert nested["value"][0][1]["y"] == "z"
+
+
 def test_project_local_job_session_followup_returns_none_for_missing_record(
     tmp_path: Path,
 ) -> None:
