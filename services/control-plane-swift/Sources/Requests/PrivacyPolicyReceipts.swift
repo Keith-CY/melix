@@ -125,6 +125,10 @@ public enum PatternPrivacyDetector {
             action = "blocked"
             redactedSpanCount = 0
             blockedReason = "pattern_match_blocked"
+        } else if normalizedMode == "detect" {
+            action = "detected"
+            redactedSpanCount = 0
+            blockedReason = ""
         } else {
             action = "redacted"
             redactedSpanCount = matchCount
@@ -146,7 +150,7 @@ public enum PatternPrivacyDetector {
             routeScope: routeScope,
             blockedCount: action == "blocked" ? 1 : 0,
             redactedCount: action == "redacted" ? 1 : 0,
-            passedCount: action == "passed" ? 1 : 0
+            passedCount: action == "passed" || action == "detected" ? 1 : 0
         )
         return PatternPrivacyDetectionResult(
             redactedTexts: redactedTexts,
@@ -157,7 +161,12 @@ public enum PatternPrivacyDetector {
 
     private static func normalizedPolicyMode(_ value: String) -> String {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return normalized == "block" ? "block" : "redact"
+        return switch normalized {
+        case "block", "detect":
+            normalized
+        default:
+            "redact"
+        }
     }
 
     private struct PatternMatch {
