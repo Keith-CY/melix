@@ -227,7 +227,7 @@ def test_dataset_ingest_source_file_paths_skips_scandir_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     input_root = tmp_path / "raw-inputs"
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     child_dir = input_root / "child"
     file_path = input_root / "ok.txt"
 
@@ -281,9 +281,9 @@ def test_dataset_ingest_source_file_paths_skips_scandir_errors(
 def test_dataset_ingest_receipt_reports_independent_cleaning_controls(
     tmp_path: Path,
 ) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text(
         "Contact jane@example.com about Melix.\n",
         encoding="utf-8",
@@ -399,9 +399,9 @@ def test_dataset_ingest_receipt_reports_independent_cleaning_controls(
 
 
 def test_dataset_ingest_controls_can_be_inspected_independently(tmp_path: Path) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text(
         "Email jane@example.com.\n\nEmail jane@example.com.\n",
         encoding="utf-8",
@@ -434,9 +434,9 @@ def test_dataset_ingest_controls_can_be_inspected_independently(tmp_path: Path) 
 def test_dataset_ingest_privacy_detector_redacts_source_records_before_segments(
     tmp_path: Path,
 ) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text(
         'Workspace note with OPENAI_API_KEY = "sk-workspace-secret" and HF_ABCDEF123456.\n',
         encoding="utf-8",
@@ -497,7 +497,7 @@ def test_dataset_ingest_privacy_detector_redacts_source_records_before_segments(
     for raw_fragment in ("OPENAI_API_KEY", "sk-workspace-secret", "HF_ABCDEF123456"):
         assert raw_fragment not in payload
 
-    structured_root = tmp_path / "structured-text-guard-inputs"
+    structured_root = tmp_path / "workspace" / "structured-text-guard-inputs"
     structured_output = tmp_path / "prepared-structured-text-guard"
     structured_root.mkdir()
     (structured_root / "rows.jsonl").write_text(
@@ -535,7 +535,7 @@ def test_dataset_ingest_privacy_detector_redacts_source_records_before_segments(
     assert "{'secret'" not in structured_payload
     assert "[\"alice@example.com\"]" not in structured_payload
 
-    json_array_root = tmp_path / "structured-json-array-inputs"
+    json_array_root = tmp_path / "workspace" / "structured-json-array-inputs"
     json_array_output = tmp_path / "prepared-json-array-text-guard"
     json_array_root.mkdir()
     (json_array_root / "array.json").write_text(
@@ -587,7 +587,7 @@ def test_dataset_ingest_privacy_detector_redacts_source_records_before_segments(
         sort_keys=True,
     )
 
-    csv_root = tmp_path / "structured-csv-inputs"
+    csv_root = tmp_path / "workspace" / "structured-csv-inputs"
     csv_output = tmp_path / "prepared-csv-text-guard"
     csv_root.mkdir()
     (csv_root / "rows.csv").write_text(
@@ -633,9 +633,9 @@ def test_dataset_ingest_privacy_detector_redacts_source_records_before_segments(
 def test_dataset_ingest_privacy_detector_detect_mode_audits_without_mutating_segments(
     tmp_path: Path,
 ) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text(
         "Audit only HF_TOKEN=sk-detect-workspace and alice@example.com.\n",
         encoding="utf-8",
@@ -700,9 +700,9 @@ def test_dataset_ingest_privacy_detector_detect_mode_audits_without_mutating_seg
 def test_dataset_ingest_privacy_detector_block_mode_stops_before_segments(
     tmp_path: Path,
 ) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text(
         "Workspace source with HF_TOKEN=sk-secret,with,commas.\n",
         encoding="utf-8",
@@ -857,9 +857,9 @@ def test_dataset_ingest_emits_typed_operator_failures(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "empty.txt").write_text("", encoding="utf-8")
     (input_root / "blank.txt").write_text(" \n\t\n", encoding="utf-8")
     (input_root / "archive.bin").write_bytes(b"\x00\x01")
@@ -897,7 +897,7 @@ def test_dataset_ingest_blocks_on_workspace_preflight_before_segmenting_sources(
 ) -> None:
     input_root = tmp_path / "raw-inputs"
     output_root = tmp_path / "prepared"
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text("This source should not be segmented.\n", encoding="utf-8")
     manifest_path = _write_ready_workspace_manifest(tmp_path, skip_roots={"jobs"})
 
@@ -922,15 +922,119 @@ def test_dataset_ingest_blocks_on_workspace_preflight_before_segmenting_sources(
     assert not (output_root / "segments.jsonl").exists()
 
 
+def test_dataset_ingest_blocks_input_outside_workspace_roots_before_discovery(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
+    outside_root = tmp_path.parent / f"{tmp_path.name}-outside"
+    input_root = outside_root / "sources"
+    output_root = tmp_path / "prepared"
+    input_root.mkdir(parents=True)
+    (input_root / "customer-token-notes.txt").write_text(
+        "This source must not be read.\n",
+        encoding="utf-8",
+    )
+
+    receipt = prepare_dataset_ingest(
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=manifest_path,
+            input_path=input_root,
+            output_dir=output_root,
+            dataset_preparation_id="prep-path-denied",
+        )
+    )
+
+    serialized = json.dumps(receipt, sort_keys=True)
+    assert receipt["status"] == "blocked"
+    assert receipt["source_inventory"] == []
+    assert receipt["quality_control_summary"]["source_file_count"] == 0
+    assert receipt["quality_control_summary"]["segment_count"] == 0
+    assert receipt["operator_failures"][0]["code"] == "DATASET_INGEST_WORKSPACE_PATH_DENIED"
+    assert receipt["workspace_path_policy_receipts"][0]["decision"] == "denied"
+    assert receipt["workspace_path_policy_receipts"][0]["candidate_path"] == "<outside-workspace>"
+    assert str(outside_root) not in serialized
+    assert "customer-token-notes.txt" not in serialized
+    assert not (output_root / "segments.jsonl").exists()
+
+
+def test_workspace_path_denied_failure_describes_invalid_manifest_reason() -> None:
+    failure = dataset_preparation_module._workspace_path_denied_failure(
+        {"reason": "manifest_invalid"}
+    )
+
+    assert failure["code"] == "DATASET_INGEST_WORKSPACE_PATH_DENIED"
+    assert failure["reason"] == "manifest_invalid"
+    assert "manifest validation failed" in failure["detail"]
+    assert "outside the manifest-declared workspace artifact roots" not in failure["detail"]
+    assert "Repair workspace-manifest.json" in failure["recovery_hint"]
+
+
+def test_dataset_ingest_allows_input_under_manifest_root(tmp_path: Path) -> None:
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
+    input_root = manifest_path.parent / "raw"
+    output_root = tmp_path / "prepared"
+    (input_root / "dialogues.jsonl").write_text(
+        '{"id":"row-1","text":"Workspace-local source row"}\n',
+        encoding="utf-8",
+    )
+
+    receipt = prepare_dataset_ingest(
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=manifest_path,
+            input_path=input_root,
+            output_dir=output_root,
+            dataset_preparation_id="prep-path-allowed",
+        )
+    )
+
+    assert receipt["status"] == "ready"
+    assert receipt["source_inventory"][0]["source_uri"] == "dialogues.jsonl"
+    assert receipt["workspace_path_policy_receipts"][0]["decision"] == "allowed"
+    assert (output_root / "segments.jsonl").is_file()
+
+
+def test_dataset_ingest_blocks_symlink_escape_under_manifest_root(tmp_path: Path) -> None:
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
+    outside_root = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside_path = outside_root / "customer-token-notes.txt"
+    output_root = tmp_path / "prepared"
+    outside_path.parent.mkdir(parents=True)
+    outside_path.write_text("This source must not be read.\n", encoding="utf-8")
+    link_path = manifest_path.parent / "raw" / "linked-secret.txt"
+    link_path.symlink_to(outside_path)
+
+    receipt = prepare_dataset_ingest(
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=manifest_path,
+            input_path=link_path,
+            output_dir=output_root,
+            dataset_preparation_id="prep-symlink-denied",
+        )
+    )
+
+    serialized = json.dumps(receipt, sort_keys=True)
+    assert receipt["status"] == "blocked"
+    assert receipt["source_inventory"] == []
+    assert receipt["operator_failures"][0]["code"] == "DATASET_INGEST_WORKSPACE_PATH_DENIED"
+    assert receipt["workspace_path_policy_receipts"][0]["decision"] == "denied"
+    assert str(outside_root) not in serialized
+    assert "customer-token-notes.txt" not in serialized
+    assert "linked-secret.txt" not in serialized
+    assert not (output_root / "segments.jsonl").exists()
+
+
 def test_dataset_ingest_cli_writes_stable_json_receipt(tmp_path: Path) -> None:
     import dataset_preparation_ingest
 
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
-    manifest_path = _write_ready_workspace_manifest(tmp_path)
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text("Email jane@example.com.\n", encoding="utf-8")
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
 
     exit_code = dataset_preparation_ingest.main(
         [
@@ -978,15 +1082,15 @@ def test_dataset_ingest_cli_writes_stable_json_receipt(tmp_path: Path) -> None:
 def test_dataset_ingest_cli_accepts_privacy_detector_mode(tmp_path: Path) -> None:
     import dataset_preparation_ingest
 
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
-    manifest_path = _write_ready_workspace_manifest(tmp_path)
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text(
         "Secret HF_TOKEN=sk-secret,with,commas.\n",
         encoding="utf-8",
     )
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
 
     exit_code = dataset_preparation_ingest.main(
         [
@@ -1027,15 +1131,15 @@ def test_dataset_ingest_cli_accepts_privacy_detector_mode(tmp_path: Path) -> Non
 def test_dataset_ingest_cli_accepts_detect_privacy_detector_mode(tmp_path: Path) -> None:
     import dataset_preparation_ingest
 
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
-    manifest_path = _write_ready_workspace_manifest(tmp_path)
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text(
         "Secret HF_TOKEN=sk-cli-detect-secret,with,commas.\n",
         encoding="utf-8",
     )
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
 
     exit_code = dataset_preparation_ingest.main(
         [
@@ -1086,15 +1190,15 @@ def test_dataset_ingest_cli_accepts_privacy_detector_mode_from_environment(
     import dataset_preparation_ingest
 
     monkeypatch.setenv("MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE", "redact")
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
-    manifest_path = _write_ready_workspace_manifest(tmp_path)
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text(
         "Secret HF_TOKEN=sk-env-secret,with,commas.\n",
         encoding="utf-8",
     )
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
 
     exit_code = dataset_preparation_ingest.main(
         [
@@ -1137,15 +1241,15 @@ def test_dataset_ingest_cli_accepts_detect_privacy_detector_mode_from_environmen
     import dataset_preparation_ingest
 
     monkeypatch.setenv("MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE", "detect")
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
-    manifest_path = _write_ready_workspace_manifest(tmp_path)
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text(
         "Secret HF_TOKEN=sk-env-detect-secret,with,commas.\n",
         encoding="utf-8",
     )
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
 
     exit_code = dataset_preparation_ingest.main(
         [
@@ -1194,15 +1298,15 @@ def test_dataset_ingest_cli_privacy_detector_flag_overrides_environment(
     import dataset_preparation_ingest
 
     monkeypatch.setenv("MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE", "block")
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
-    manifest_path = _write_ready_workspace_manifest(tmp_path)
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text(
         "Secret HF_TOKEN=sk-cli-override-secret.\n",
         encoding="utf-8",
     )
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
 
     exit_code = dataset_preparation_ingest.main(
         [
@@ -1247,15 +1351,15 @@ def test_dataset_ingest_cli_ignores_unsupported_privacy_detector_environment(
     import dataset_preparation_ingest
 
     monkeypatch.setenv("MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE", "audit-only")
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
     receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
-    manifest_path = _write_ready_workspace_manifest(tmp_path)
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text(
         "Secret HF_TOKEN=sk-unsupported-env-secret.\n",
         encoding="utf-8",
     )
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
 
     exit_code = dataset_preparation_ingest.main(
         [
@@ -1297,8 +1401,6 @@ def _write_ready_workspace_manifest(
     workspace_root = tmp_path / "workspace"
     manifest = json.loads(WORKSPACE_FIXTURE.read_text(encoding="utf-8"))
     workspace_root.mkdir(parents=True, exist_ok=True)
-    manifest_path = workspace_root / "workspace-manifest.json"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     skip_roots = skip_roots or set()
     root_paths = {
@@ -1315,4 +1417,55 @@ def _write_ready_workspace_manifest(
         artifact_path = workspace_root / root_path / artifact["relative_path"]
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         artifact_path.write_text(artifact["artifact_id"], encoding="utf-8")
+    _append_existing_workspace_test_artifacts(manifest, workspace_root)
+    manifest_path = workspace_root / "workspace-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
+
+
+def _append_existing_workspace_test_artifacts(
+    manifest: dict[str, object],
+    workspace_root: Path,
+) -> None:
+    artifacts = manifest["artifacts"]
+    assert isinstance(artifacts, list)
+    managed_paths = {
+        str(artifact["relative_path"])
+        for artifact in artifacts
+        if isinstance(artifact, dict) and artifact.get("root_id") == "workspace"
+    }
+    for path in sorted(workspace_root.rglob("*")):
+        try:
+            is_symlink = path.is_symlink()
+        except OSError:
+            is_symlink = False
+        if path.name == "workspace-manifest.json" or is_symlink:
+            continue
+        try:
+            is_file = path.is_file()
+        except OSError:
+            is_file = True
+        if not is_file:
+            continue
+        relative_path = path.relative_to(workspace_root).as_posix()
+        if relative_path in managed_paths:
+            continue
+        artifacts.append(
+            {
+                "artifact_id": f"test-raw-{_safe_test_artifact_id(relative_path)}",
+                "artifact_type": "WORKSPACE_ARTIFACT_TYPE_RAW_INPUTS",
+                "root_id": "workspace",
+                "relative_path": relative_path,
+                "media_type": "text/plain",
+                "provenance_ref_ids": ["operator-import"],
+            }
+        )
+        managed_paths.add(relative_path)
+
+
+def _safe_test_artifact_id(relative_path: str) -> str:
+    normalized = "".join(
+        character if character.isalnum() else "-"
+        for character in relative_path.lower()
+    ).strip("-")
+    return normalized or "source"

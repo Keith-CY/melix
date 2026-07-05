@@ -570,20 +570,57 @@ def test_dataset_preparation_version_script_writes_version_retry_and_list_json(
     ]
 
 
+def test_dataset_version_workspace_manifest_helper_tolerates_path_stat_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    input_root = workspace_root / "raw-inputs"
+    input_root.mkdir(parents=True)
+    source_path = input_root / "notes.txt"
+    source_path.write_text("Support note.\n", encoding="utf-8")
+    (workspace_root / "workspace-manifest.json").write_text("{}", encoding="utf-8")
+    manifest: dict[str, object] = {"artifacts": []}
+
+    original_is_symlink = Path.is_symlink
+    original_is_file = Path.is_file
+
+    def flaky_is_symlink(path: Path) -> bool:
+        if path == source_path:
+            raise OSError("lstat denied")
+        return original_is_symlink(path)
+
+    def flaky_is_file(path: Path) -> bool:
+        if path == source_path:
+            raise OSError("stat denied")
+        return original_is_file(path)
+
+    monkeypatch.setattr(Path, "is_symlink", flaky_is_symlink)
+    monkeypatch.setattr(Path, "is_file", flaky_is_file)
+
+    _append_existing_workspace_test_artifacts(manifest, workspace_root)
+
+    artifacts = manifest["artifacts"]
+    assert isinstance(artifacts, list)
+    assert [artifact["relative_path"] for artifact in artifacts] == ["raw-inputs/notes.txt"]
+    assert artifacts[0]["artifact_id"] == "test-raw-raw-inputs-notes-txt"
+
+
 def _prepare_ingest_fixture(tmp_path: Path) -> dict[str, object]:
-    input_root = tmp_path / "raw-inputs"
+    input_root = tmp_path / "workspace" / "raw-inputs"
     output_root = tmp_path / "prepared"
-    input_root.mkdir()
+    input_root.mkdir(parents=True)
     (input_root / "notes.txt").write_text(
         "Alpha support answer for jane@example.com.\n\n"
         "Beta support answer.\n\n"
         "Gamma support answer.\n",
         encoding="utf-8",
     )
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
     return prepare_dataset_ingest(
         DatasetIngestRequest(
             workspace_project_id="m-courtyard-demo",
-            workspace_manifest_path=_write_ready_workspace_manifest(tmp_path),
+            workspace_manifest_path=manifest_path,
             input_path=input_root,
             output_dir=output_root,
             dataset_preparation_id="prep-demo",
@@ -612,8 +649,6 @@ def _write_ready_workspace_manifest(
     workspace_root = tmp_path / "workspace"
     manifest = json.loads(WORKSPACE_FIXTURE.read_text(encoding="utf-8"))
     workspace_root.mkdir(parents=True, exist_ok=True)
-    manifest_path = workspace_root / "workspace-manifest.json"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     skip_roots = skip_roots or set()
     root_paths = {
@@ -630,4 +665,55 @@ def _write_ready_workspace_manifest(
         artifact_path = workspace_root / root_path / artifact["relative_path"]
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         artifact_path.write_text(artifact["artifact_id"], encoding="utf-8")
+    _append_existing_workspace_test_artifacts(manifest, workspace_root)
+    manifest_path = workspace_root / "workspace-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
+
+
+def _append_existing_workspace_test_artifacts(
+    manifest: dict[str, object],
+    workspace_root: Path,
+) -> None:
+    artifacts = manifest["artifacts"]
+    assert isinstance(artifacts, list)
+    managed_paths = {
+        str(artifact["relative_path"])
+        for artifact in artifacts
+        if isinstance(artifact, dict) and artifact.get("root_id") == "workspace"
+    }
+    for path in sorted(workspace_root.rglob("*")):
+        try:
+            is_symlink = path.is_symlink()
+        except OSError:
+            is_symlink = False
+        if path.name == "workspace-manifest.json" or is_symlink:
+            continue
+        try:
+            is_file = path.is_file()
+        except OSError:
+            is_file = True
+        if not is_file:
+            continue
+        relative_path = path.relative_to(workspace_root).as_posix()
+        if relative_path in managed_paths:
+            continue
+        artifacts.append(
+            {
+                "artifact_id": f"test-raw-{_safe_test_artifact_id(relative_path)}",
+                "artifact_type": "WORKSPACE_ARTIFACT_TYPE_RAW_INPUTS",
+                "root_id": "workspace",
+                "relative_path": relative_path,
+                "media_type": "text/plain",
+                "provenance_ref_ids": ["operator-import"],
+            }
+        )
+        managed_paths.add(relative_path)
+
+
+def _safe_test_artifact_id(relative_path: str) -> str:
+    normalized = "".join(
+        character if character.isalnum() else "-"
+        for character in relative_path.lower()
+    ).strip("-")
+    return normalized or "source"

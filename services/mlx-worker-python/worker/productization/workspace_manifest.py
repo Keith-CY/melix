@@ -16,6 +16,7 @@ from worker.productization.privacy_policy_receipts import (
 
 WORKSPACE_MANIFEST_SCHEMA_VERSION = "melix.workspace_manifest.v1"
 WORKSPACE_PREFLIGHT_RECEIPT_SCHEMA_VERSION = "melix.workspace_preflight_receipt.v1"
+WORKSPACE_PATH_POLICY_RECEIPT_SCHEMA_VERSION = "melix.workspace_path_policy_receipt.v1"
 WORKSPACE_MANIFEST_FILENAME = "workspace-manifest.json"
 WORKSPACE_PREFLIGHT_RECEIPT_FILENAME = "workspace-preflight-receipt.json"
 
@@ -281,6 +282,115 @@ def preflight_workspace(
         "privacy_audit_counters": workspace_ingest_privacy_audit_counters(),
         "checks": checks,
         "metrics": metrics,
+    }
+
+
+def workspace_path_policy_receipt(
+    manifest_path: Path | str,
+    candidate_path: Path | str,
+) -> dict[str, Any]:
+    """Return sanitized path-containment evidence for one workspace candidate."""
+
+    manifest_path = Path(manifest_path).expanduser()
+    workspace_root = manifest_path.parent.resolve(strict=False)
+    candidate = Path(candidate_path).expanduser()
+    resolved_candidate = candidate.resolve(strict=False)
+    manifest, validation_report = validate_workspace_manifest_file(
+        manifest_path,
+        return_manifest=True,
+    )
+
+    if not validation_report.ok:
+        return {
+            "schema_version": WORKSPACE_PATH_POLICY_RECEIPT_SCHEMA_VERSION,
+            "decision": "denied",
+            "reason": "manifest_invalid",
+            "candidate_path": _workspace_candidate_display(
+                resolved_candidate,
+                workspace_root,
+                allowed=False,
+            ),
+            "root_id": "",
+            "root_path": "",
+            "checks": [
+                _check(
+                    code="WORKSPACE_PATH_POLICY_MANIFEST_INVALID",
+                    status="blocked",
+                    title="Workspace path policy could not trust the manifest",
+                    detail="Workspace manifest validation failed before path confinement.",
+                    recovery_hint="Repair workspace-manifest.json before using workspace ingest sources.",
+                    items=[{"error": error} for error in validation_report.errors],
+                )
+            ],
+        }
+
+    unsafe_path_items = _unsafe_path_items(manifest)
+    resolved_roots = _resolved_safe_roots(workspace_root, manifest, unsafe_path_items)
+
+    for root_id, root_path in _roots_by_specificity(resolved_roots):
+        if not _path_contains(root_path, resolved_candidate):
+            continue
+        root_manifest_path = _manifest_root_path(manifest, root_id)
+        return {
+            "schema_version": WORKSPACE_PATH_POLICY_RECEIPT_SCHEMA_VERSION,
+            "decision": "allowed",
+            "reason": "inside_workspace_root",
+            "candidate_path": _relative_posix_path(resolved_candidate, workspace_root),
+            "root_id": root_id,
+            "root_path": root_manifest_path,
+            "checks": [
+                _check(
+                    code="WORKSPACE_INPUT_PATH_ALLOWED",
+                    status="ready",
+                    title="Workspace input path is inside a manifest root",
+                    detail="The requested input path is confined to a declared workspace artifact root.",
+                    recovery_hint="No action required.",
+                    items=[
+                        {
+                            "root_id": root_id,
+                            "root_path": root_manifest_path,
+                            "candidate_path": _relative_posix_path(
+                                resolved_candidate,
+                                workspace_root,
+                            ),
+                        }
+                    ],
+                )
+            ],
+        }
+
+    return {
+        "schema_version": WORKSPACE_PATH_POLICY_RECEIPT_SCHEMA_VERSION,
+        "decision": "denied",
+        "reason": "outside_workspace_roots",
+        "candidate_path": _workspace_candidate_display(
+            resolved_candidate,
+            workspace_root,
+            allowed=False,
+        ),
+        "root_id": "",
+        "root_path": "",
+        "checks": [
+            _check(
+                code="WORKSPACE_INPUT_PATH_DENIED",
+                status="blocked",
+                title="Workspace input path is outside manifest roots",
+                detail="The requested input path resolves outside the manifest-declared workspace artifact roots.",
+                recovery_hint=(
+                    "Move the source under a declared workspace artifact root or update "
+                    "workspace-manifest.json before running dataset ingest."
+                ),
+                items=[
+                    {
+                        "candidate_path": _workspace_candidate_display(
+                            resolved_candidate,
+                            workspace_root,
+                            allowed=False,
+                        )
+                    }
+                ],
+            )
+        ],
     }
 
 
@@ -621,6 +731,45 @@ def _relative_posix_path(path: Path, root: Path) -> str:
         return path.relative_to(root).as_posix()
     except ValueError:
         return path.as_posix()
+
+
+def _path_contains(root: Path, candidate: Path) -> bool:
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _roots_by_specificity(resolved_roots: dict[str, Path]) -> tuple[tuple[str, Path], ...]:
+    return tuple(
+        sorted(
+            resolved_roots.items(),
+            key=lambda item: len(item[1].parts),
+            reverse=True,
+        )
+    )
+
+
+def _manifest_root_path(
+    manifest: workspace_manifest_pb2.WorkspaceManifest,
+    root_id: str,
+) -> str:
+    for root in manifest.artifact_roots:
+        if root.root_id == root_id:
+            return root.path
+    return ""
+
+
+def _workspace_candidate_display(
+    candidate: Path,
+    workspace_root: Path,
+    *,
+    allowed: bool,
+) -> str:
+    if allowed or _path_contains(workspace_root, candidate):
+        return _relative_posix_path(candidate, workspace_root)
+    return "<outside-workspace>"
 
 
 def _safe_relative_path_error(path_value: str, *, allow_current_dir: bool) -> str | None:

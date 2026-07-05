@@ -46,6 +46,14 @@ def preflight_workspace(*args: Any, **kwargs: Any) -> dict[str, Any]:
     return preflight(*args, **kwargs)
 
 
+def workspace_path_policy_receipt(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    from worker.productization.workspace_manifest import (
+        workspace_path_policy_receipt as path_policy,
+    )
+
+    return path_policy(*args, **kwargs)
+
+
 def detect_privacy_patterns(text: str, **kwargs: Any) -> Any:
     # Keep privacy regex compilation out of default/off dataset ingest and listing paths.
     from worker.productization.privacy_policy_receipts import detect_privacy_patterns as detect
@@ -171,6 +179,33 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         _write_json(receipt_path, receipt)
         return receipt
 
+    workspace_path_policy = workspace_path_policy_receipt(
+        Path(request.workspace_manifest_path).expanduser(),
+        input_path,
+    )
+    workspace_path_policy_receipts = [workspace_path_policy]
+    if workspace_path_policy.get("decision") != "allowed":
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        receipt = _blocked_ingest_receipt(
+            request=request,
+            segments_path=segments_path,
+            receipt_path=receipt_path,
+            workspace_preflight_receipt_path=workspace_preflight_receipt_path,
+            workspace_preflight_receipt=workspace_preflight_receipt,
+            operator_failures=[_workspace_path_denied_failure(workspace_path_policy)],
+            elapsed_ms=elapsed_ms,
+            source_inventory=[],
+            source_file_count=0,
+            observed_payload_bytes=0,
+            upload_cap_bytes=upload_cap_bytes,
+            source_cap_bytes=source_cap_bytes,
+            rejection_reason="workspace_path_denied",
+            partial_artifact_cleanup=_cleanup_partial_artifact(segments_path),
+            workspace_path_policy_receipts=workspace_path_policy_receipts,
+        )
+        _write_json(receipt_path, receipt)
+        return receipt
+
     source_paths = _input_source_paths(input_path)
     source_size_entries = _source_size_entries(source_paths)
     observed_payload_bytes = sum(size for _, size in source_size_entries)
@@ -259,6 +294,7 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
             privacy_detector_receipts=privacy_detector_receipts,
             privacy_audit_counters=privacy_audit_counters,
             privacy_detector_metrics=privacy_detector_metrics,
+            workspace_path_policy_receipts=workspace_path_policy_receipts,
         )
         _write_json(receipt_path, receipt)
         return receipt
@@ -321,6 +357,7 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
             privacy_detector_receipts=privacy_detector_receipts,
             privacy_audit_counters=privacy_audit_counters,
             privacy_detector_metrics=privacy_detector_metrics,
+            workspace_path_policy_receipts=workspace_path_policy_receipts,
         )
         _write_json(receipt_path, receipt)
         return receipt
@@ -360,6 +397,7 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         "workspace_manifest_path": str(Path(request.workspace_manifest_path)),
         "workspace_preflight_receipt_path": str(workspace_preflight_receipt_path),
         "workspace_preflight_receipt": workspace_preflight_receipt,
+        "workspace_path_policy_receipts": workspace_path_policy_receipts,
         "privacy_detector_receipts": privacy_detector_receipts,
         "privacy_audit_counters": privacy_audit_counters,
         "dataset_preparation_id": request.dataset_preparation_id,
@@ -603,6 +641,36 @@ def _privacy_detector_blocked_failure(
     }
 
 
+def _workspace_path_denied_failure(receipt: dict[str, Any]) -> dict[str, Any]:
+    reason = str(receipt.get("reason") or "outside_workspace_roots")
+    if reason == "manifest_invalid":
+        detail = (
+            "Dataset ingest workspace manifest validation failed before path "
+            "confinement."
+        )
+        recovery_hint = (
+            "Repair workspace-manifest.json before preparing the dataset."
+        )
+    else:
+        detail = (
+            "Dataset ingest input path resolves outside the manifest-declared "
+            "workspace artifact roots."
+        )
+        recovery_hint = (
+            "Move the source under a declared workspace artifact root or update "
+            "workspace-manifest.json before preparing the dataset."
+        )
+
+    return {
+        "id": "dataset-ingest-workspace-path-denied",
+        "code": "DATASET_INGEST_WORKSPACE_PATH_DENIED",
+        "path": "",
+        "detail": detail,
+        "recovery_hint": recovery_hint,
+        "reason": reason,
+    }
+
+
 def _blocked_ingest_receipt(
     *,
     request: DatasetIngestRequest,
@@ -623,6 +691,7 @@ def _blocked_ingest_receipt(
     privacy_detector_receipts: list[dict[str, object]] | None = None,
     privacy_audit_counters: list[dict[str, object]] | None = None,
     privacy_detector_metrics: dict[str, float | int] | None = None,
+    workspace_path_policy_receipts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if (
         privacy_detector_receipts is None
@@ -636,6 +705,7 @@ def _blocked_ingest_receipt(
             privacy_audit_counters = [evidence.audit_counter]
         if privacy_detector_metrics is None:
             privacy_detector_metrics = _privacy_detector_metrics(evidence)
+    workspace_path_policy_receipts = workspace_path_policy_receipts or []
     summary = {
         "source_file_count": source_file_count,
         "source_record_count": source_record_count,
@@ -652,6 +722,7 @@ def _blocked_ingest_receipt(
         "workspace_manifest_path": str(Path(request.workspace_manifest_path)),
         "workspace_preflight_receipt_path": str(workspace_preflight_receipt_path),
         "workspace_preflight_receipt": workspace_preflight_receipt,
+        "workspace_path_policy_receipts": workspace_path_policy_receipts,
         "privacy_detector_receipts": privacy_detector_receipts,
         "privacy_audit_counters": privacy_audit_counters,
         "dataset_preparation_id": request.dataset_preparation_id,
