@@ -497,6 +497,137 @@ def test_dataset_ingest_privacy_detector_redacts_source_records_before_segments(
     for raw_fragment in ("OPENAI_API_KEY", "sk-workspace-secret", "HF_ABCDEF123456"):
         assert raw_fragment not in payload
 
+    structured_root = tmp_path / "structured-text-guard-inputs"
+    structured_output = tmp_path / "prepared-structured-text-guard"
+    structured_root.mkdir()
+    (structured_root / "rows.jsonl").write_text(
+        '{"id":"row-1","text":"safe workspace note"}\n'
+        '{"id":"row-2","text":{"secret":"sk-raw-object-secret"}}\n'
+        '{"id":"row-3","text":["alice@example.com"]}\n',
+        encoding="utf-8",
+    )
+
+    structured_receipt = prepare_dataset_ingest(
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=_write_ready_workspace_manifest(tmp_path),
+            input_path=structured_root,
+            output_dir=structured_output,
+            dataset_preparation_id="prep-structured-text-guard",
+            privacy_detector_mode="redact",
+        )
+    )
+
+    assert structured_receipt["status"] == "blocked"
+    failures = [
+        failure
+        for failure in structured_receipt["operator_failures"]
+        if failure["code"] == "DATASET_INGEST_UNSUPPORTED_TEXT_VALUE"
+    ]
+    assert [failure["metadata"]["row_index"] for failure in failures] == [2, 3]
+    assert {failure["metadata"]["value_type"] for failure in failures} == {"dict", "list"}
+    assert structured_receipt["quality_control_summary"]["source_record_count"] == 1
+    assert structured_receipt["quality_control_summary"]["segment_count"] == 1
+
+    structured_payload = json.dumps(structured_receipt, sort_keys=True)
+    assert "sk-raw-object-secret" not in structured_payload
+    assert "alice@example.com" not in structured_payload
+    assert "{'secret'" not in structured_payload
+    assert "[\"alice@example.com\"]" not in structured_payload
+
+    json_array_root = tmp_path / "structured-json-array-inputs"
+    json_array_output = tmp_path / "prepared-json-array-text-guard"
+    json_array_root.mkdir()
+    (json_array_root / "array.json").write_text(
+        json.dumps(
+            [
+                {"text": "first string row"},
+                {"text": {"secret": "sk-json-array-object-secret"}},
+                {"title": "fallback row", "body": "still supported"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    json_array_receipt = prepare_dataset_ingest(
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=_write_ready_workspace_manifest(tmp_path),
+            input_path=json_array_root,
+            output_dir=json_array_output,
+            dataset_preparation_id="prep-json-array-text-guard",
+        )
+    )
+
+    assert json_array_receipt["status"] == "blocked"
+    assert json_array_receipt["quality_control_summary"]["source_record_count"] == 2
+    assert json_array_receipt["quality_control_summary"]["segment_count"] == 2
+    assert any(
+        failure["code"] == "DATASET_INGEST_UNSUPPORTED_TEXT_VALUE"
+        and failure["metadata"] == {
+            "source_uri": "array.json",
+            "row_index": 2,
+            "value_type": "dict",
+        }
+        for failure in json_array_receipt["operator_failures"]
+    )
+
+    json_array_segments = [
+        json.loads(line)
+        for line in Path(json_array_receipt["segment_artifacts"]["segments_path"]).read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    assert [segment["text"] for segment in json_array_segments] == [
+        "first string row",
+        "body: still supported title: fallback row",
+    ]
+    assert "sk-json-array-object-secret" not in json.dumps(
+        json_array_receipt,
+        sort_keys=True,
+    )
+
+    csv_root = tmp_path / "structured-csv-inputs"
+    csv_output = tmp_path / "prepared-csv-text-guard"
+    csv_root.mkdir()
+    (csv_root / "rows.csv").write_text(
+        "id,text\n"
+        "row-1,first csv row\n"
+        "row-2\n",
+        encoding="utf-8",
+    )
+
+    csv_receipt = prepare_dataset_ingest(
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=_write_ready_workspace_manifest(tmp_path),
+            input_path=csv_root,
+            output_dir=csv_output,
+            dataset_preparation_id="prep-csv-text-guard",
+        )
+    )
+
+    assert csv_receipt["status"] == "blocked"
+    assert csv_receipt["quality_control_summary"]["source_record_count"] == 1
+    assert csv_receipt["quality_control_summary"]["segment_count"] == 1
+    assert any(
+        failure["code"] == "DATASET_INGEST_UNSUPPORTED_TEXT_VALUE"
+        and failure["metadata"] == {
+            "source_uri": "rows.csv",
+            "row_index": 2,
+            "value_type": "NoneType",
+        }
+        for failure in csv_receipt["operator_failures"]
+    )
+
+    csv_segments = [
+        json.loads(line)
+        for line in Path(csv_receipt["segment_artifacts"]["segments_path"]).read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    assert [segment["text"] for segment in csv_segments] == ["first csv row"]
+
 
 def test_dataset_ingest_privacy_detector_block_mode_stops_before_segments(
     tmp_path: Path,

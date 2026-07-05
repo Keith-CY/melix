@@ -63,6 +63,13 @@ The supported first-slice source kinds are:
 | `pdf` | Accept extracted text fixtures and a parser adapter boundary for optional real binary extraction. |
 | `docx` | Accept extracted text fixtures and a parser adapter boundary for optional real binary extraction. |
 
+Structured JSONL, JSON, CSV, and TSV rows with an explicit `text` field must
+provide a string value. Non-string explicit `text` values are rejected at the
+workspace ingest boundary with a typed operator failure before privacy
+detection, PII masking, deduplication, segmentation, or dataset versioning can
+stringify raw objects, arrays, numbers, booleans, or nulls into downstream
+artifacts.
+
 Every source record receives a stable `source_id`, `source_uri`, `source_kind`,
 `content_sha256`, `byte_size`, and optional `page`, `row_index`, `language`, or
 `section_path` metadata.
@@ -125,6 +132,7 @@ failure codes are:
 
 - `DATASET_INGEST_PRIVACY_DETECTOR_BLOCKED`
 - `DATASET_INGEST_UNSUPPORTED_SOURCE`
+- `DATASET_INGEST_UNSUPPORTED_TEXT_VALUE`
 - `DATASET_INGEST_PARSE_FAILED`
 - `DATASET_INGEST_EMPTY_SOURCE`
 - `DATASET_INGEST_PII_POLICY_INVALID`
