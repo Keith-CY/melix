@@ -1478,6 +1478,7 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
                     {"shard": 4},
                 ),
                 "long_scores": [3, 4, {"rank": 0}, {"score": 0.9}, {"shard": 2}],
+                "quad_scores": [3, 4, {"rank": 0}, {"score": 0.9}],
                 "scores": [3, 4, {"rank": 0}],
                 "single_key_detail": {"summary": {"nested": "copied"}},
             },
@@ -1532,6 +1533,18 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
     assert (
         copied["retrieved_context"]["metadata"]["long_scores"][2]
         is not payload["retrieved_context"]["metadata"]["long_scores"][2]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["quad_scores"]
+        == payload["retrieved_context"]["metadata"]["quad_scores"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["quad_scores"]
+        is not payload["retrieved_context"]["metadata"]["quad_scores"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["quad_scores"][2]
+        is not payload["retrieved_context"]["metadata"]["quad_scores"][2]
     )
     assert copied["retrieved_context"]["optional_note"] is None
     assert copied["retrieved_context"]["title"] is payload["retrieved_context"]["title"]
