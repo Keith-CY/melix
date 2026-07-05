@@ -15,8 +15,6 @@ for candidate in (ROOT, WORKER_ROOT):
         sys.path.insert(0, str(candidate))
 
 
-WORKSPACE_PRIVACY_DETECTOR_MODE_ENV = "MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE"
-
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     prepare_dataset_ingest,
@@ -113,6 +111,9 @@ def _parse_bool(value: str) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise argparse.ArgumentTypeError(f"expected boolean value, got {value!r}")
+
+
+WORKSPACE_PRIVACY_DETECTOR_MODE_ENV = "MELIX_WORKSPACE_PRIVACY_DETECTOR_MODE"
 
 
 def _privacy_detector_mode_from_env() -> str:
