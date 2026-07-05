@@ -647,6 +647,14 @@ def _copy_payload_value(value: Any) -> Any:
         return {key: copy_value(item) for key, item in value.items()}
     if value_type is list:
         value_len = len(value)
+        if value_len == 5:
+            return [
+                copy_value(value[0]),
+                copy_value(value[1]),
+                copy_value(value[2]),
+                copy_value(value[3]),
+                copy_value(value[4]),
+            ]
         if value_len == 3:
             return [copy_value(value[0]), copy_value(value[1]), copy_value(value[2])]
         if value_len == 2:
