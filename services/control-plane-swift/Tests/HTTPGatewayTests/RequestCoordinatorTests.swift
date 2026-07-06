@@ -4603,6 +4603,15 @@ struct RequestCoordinatorTests {
         #expect(prefillRequest.execution.ext["melix.serving.capability.unsupported_reason"] == "none")
         #expect(prefillRequest.execution.ext["melix.serving.capability.ignored_flags"] == "")
         #expect(prefillRequest.execution.ext["melix.serving.capability.fallback_policy"] == "observable_fallback")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.schema_version"] == "melix.resolved_acceleration_config.v1")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.method"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.requested_method"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.sidecar_model"] == "melix-dev-text")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.num_speculative_tokens"] == "7")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.profile"] == "throughput")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.conflicting_flags"] == "")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.controller_scope"] == "request")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.disabled_reason"] == "none")
 
         await workerClient.emitDecodeStarted(
             requestID: "req-gateway-speculative-defaults",

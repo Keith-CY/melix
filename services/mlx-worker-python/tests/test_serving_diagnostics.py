@@ -550,6 +550,80 @@ def test_serving_diagnostics_effective_config_materializes_control_plane_capabil
     }
 
 
+def test_serving_diagnostics_effective_config_derives_acceleration_config_receipt_from_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-control-plane-acceleration-config",
+        invocation={},
+        effective_config={
+            "execution_ext": {
+                "melix.serving.acceleration_config.schema_version": (
+                    "melix.resolved_acceleration_config.v1"
+                ),
+                "melix.serving.acceleration_config.method": "speculative_decode",
+                "melix.serving.acceleration_config.requested_method": (
+                    "speculative_decode"
+                ),
+                "melix.serving.acceleration_config.sidecar_model": (
+                    "melix-dev-draft"
+                ),
+                "melix.serving.acceleration_config.num_speculative_tokens": "6",
+                "melix.serving.acceleration_config.profile": "throughput",
+                "melix.serving.acceleration_config.conflicting_flags": (
+                    "draft_model_id, acceleration_profile"
+                ),
+                "melix.serving.acceleration_config.controller_scope": "request",
+                "melix.serving.acceleration_config.disabled_reason": "none",
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config["serving_acceleration_config"] == {
+        "schema_version": "melix.resolved_acceleration_config.v1",
+        "method": "speculative_decode",
+        "requested_method": "speculative_decode",
+        "sidecar_model": "melix-dev-draft",
+        "num_speculative_tokens": 6,
+        "profile": "throughput",
+        "conflicting_flags": ["draft_model_id", "acceleration_profile"],
+        "controller_scope": "request",
+        "disabled_reason": "none",
+    }
+
+
+def test_serving_diagnostics_acceleration_config_skips_invalid_token_count() -> None:
+    receipt = (
+        serving_diagnostics_module._serving_acceleration_config_receipt_from_audit_metadata(
+            {
+                "melix.serving.acceleration_config.schema_version": (
+                    "melix.resolved_acceleration_config.v1"
+                ),
+                "melix.serving.acceleration_config.method": "baseline",
+                "melix.serving.acceleration_config.requested_method": (
+                    "speculative_decode"
+                ),
+                "melix.serving.acceleration_config.sidecar_model": "",
+                "melix.serving.acceleration_config.num_speculative_tokens": "six",
+                "melix.serving.acceleration_config.profile": "balanced",
+                "melix.serving.acceleration_config.conflicting_flags": "",
+                "melix.serving.acceleration_config.controller_scope": "none",
+                "melix.serving.acceleration_config.disabled_reason": (
+                    "invalid_token_count"
+                ),
+            }
+        )
+    )
+
+    assert receipt == {}
+
+
 def test_serving_diagnostics_capability_receipt_normalizes_sequence_metadata() -> None:
     receipt = (
         serving_diagnostics_module._serving_capability_receipt_from_audit_metadata(

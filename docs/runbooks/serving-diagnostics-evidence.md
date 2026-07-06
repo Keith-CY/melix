@@ -228,6 +228,48 @@ draft is missing or refused, `acceleration_mode` when the requested mode or
 acceleration capability is unsupported, and `acceleration_profile` when profile
 admission is refused after acceleration capability admission succeeds.
 
+When upstream serving code has normalized low-level acceleration fields into one
+typed config contract, `effective-config.json` should also include a
+`serving_acceleration_config` receipt. This receipt is diagnostics-only: it
+records the already-resolved control-plane parser and admission result and must
+not start an acceleration controller, probe optional runtimes, load a sidecar,
+or alter fallback behavior during bundle writing.
+
+`serving_acceleration_config` fields:
+
+- `schema_version` - `melix.resolved_acceleration_config.v1`.
+- `method` - effective acceleration method, such as `baseline` or
+  `speculative_decode`.
+- `requested_method` - requested method after compatibility normalization.
+- `sidecar_model` - resolved draft or companion model id, or an empty string.
+- `num_speculative_tokens` - resolved speculative token count.
+- `profile` - serving acceleration profile tied to the resolved config.
+- `conflicting_flags` - low-level flags or overrides rejected, suppressed, or
+  ignored during config resolution.
+- `controller_scope` - `request` for request-scoped speculative controllers or
+  `none` when no controller is active.
+- `disabled_reason` - typed reason for a disabled or refused acceleration path,
+  or `none`.
+
+Diagnostics writers may derive `serving_acceleration_config` from namespaced
+metadata when all of these keys are present:
+
+- `melix.serving.acceleration_config.schema_version`
+- `melix.serving.acceleration_config.method`
+- `melix.serving.acceleration_config.requested_method`
+- `melix.serving.acceleration_config.sidecar_model`
+- `melix.serving.acceleration_config.num_speculative_tokens`
+- `melix.serving.acceleration_config.profile`
+- `melix.serving.acceleration_config.conflicting_flags`
+- `melix.serving.acceleration_config.controller_scope`
+- `melix.serving.acceleration_config.disabled_reason`
+
+The `conflicting_flags` metadata value is a comma-separated list. Empty list
+items are ignored. `num_speculative_tokens` must be a decimal integer. If any
+required key is missing or the token count is invalid, the writer leaves the
+original metadata in place and does not synthesize a partial top-level
+`serving_acceleration_config` receipt.
+
 When a proxy, workspace-ingest, or worker path has already evaluated network
 fetch safety, `effective-config.json` may include a `network_fetch_policy`
 receipt and `privacy_audit_counters`. These receipts are diagnostics-only:
