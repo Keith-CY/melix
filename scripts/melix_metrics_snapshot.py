@@ -199,7 +199,11 @@ def resolve_source_paths(
 
         runtime_source_names.append(name)
 
-    runtime_paths = discover_latest_metrics_paths(runtime_dir, tuple(runtime_source_names))
+    runtime_paths = (
+        discover_latest_metrics_paths(runtime_dir, tuple(runtime_source_names))
+        if runtime_source_names
+        else {}
+    )
     for name in runtime_source_names:
         runtime_path = runtime_paths[name]
         if runtime_path is not None:
