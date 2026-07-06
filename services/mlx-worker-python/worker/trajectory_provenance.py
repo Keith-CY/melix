@@ -13,6 +13,7 @@ _PATH_READ_BYTES = Path.read_bytes
 _OPEN = _builtin_open
 _STR = str
 _TYPE = type
+_LIST_COPY = list.copy
 
 
 def _strip_manifest_text(value: Any) -> str:
@@ -60,7 +61,7 @@ def _copy_json_list(value: list[Any]) -> list[Any]:
     for item in value:
         if value_type(item) not in immutable_types:
             return [_copy_trajectory_provenance_value(item) for item in value]
-    return [*value]
+    return _LIST_COPY(value)
 
 
 def _copy_json_tuple(value: tuple[Any, ...]) -> tuple[Any, ...]:
