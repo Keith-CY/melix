@@ -663,14 +663,6 @@ public enum ModelCapabilityReceipts {
             "image",
             "video",
             "audio",
-            "generate_text",
-            "generate_multimodal",
-            "embed_text",
-            "rerank_text",
-            "transcribe_audio",
-            "speak_text",
-            "image_generate",
-            "image_edit",
         ]
         var result = preferredOrder.filter(valueSet.contains)
         result.append(contentsOf: valueSet.subtracting(preferredOrder).sorted())
