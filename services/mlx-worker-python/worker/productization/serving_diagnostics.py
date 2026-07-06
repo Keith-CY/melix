@@ -380,7 +380,7 @@ class ServingEvidenceRun:
             "effective_top_k": int(self.effective_top_k),
             "sampler_is_greedy": self.sampler_is_greedy,
             "tier_stability_status": self.tier_stability_status,
-            "serving_acceleration_config": _stable_optional_mapping(
+            "serving_acceleration_config": _stable_json_object(
                 serving_acceleration_config
             ),
             "native_acceleration": {}
@@ -551,10 +551,10 @@ def _comparison_methodology(
         "sampler_is_greedy": accelerated.sampler_is_greedy,
         "tier_stability_status": accelerated.tier_stability_status,
         "acceleration_configs": {
-            "baseline": _stable_optional_mapping(
+            "baseline": _stable_json_object(
                 baseline.serving_acceleration_config
             ),
-            "accelerated": _stable_optional_mapping(
+            "accelerated": _stable_json_object(
                 accelerated.serving_acceleration_config
             ),
         },
@@ -617,12 +617,6 @@ def _safe_artifact_id(value: str) -> str:
     if not stripped or stripped in {".", ".."} or "/" in stripped or "\x00" in stripped:
         raise ValueError("artifact id must be non-empty and path-local")
     return stripped
-
-
-def _stable_optional_mapping(payload: Mapping[str, object]) -> dict[str, object]:
-    if not payload:
-        return {}
-    return _stable_json_object(payload)
 
 
 def _stable_json_object(payload: Mapping[str, object]) -> dict[str, object]:
