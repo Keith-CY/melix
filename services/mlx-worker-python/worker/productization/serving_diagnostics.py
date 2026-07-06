@@ -358,9 +358,11 @@ class ServingEvidenceRun:
     effective_top_k: int
     tier_stability_status: str
     metrics: dict[str, float]
+    serving_acceleration_config: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES
     native_acceleration: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES
 
     def to_dict(self) -> dict[str, object]:
+        serving_acceleration_config = self.serving_acceleration_config
         native_acceleration = self.native_acceleration
         return {
             "run_id": self.run_id,
@@ -378,6 +380,9 @@ class ServingEvidenceRun:
             "effective_top_k": int(self.effective_top_k),
             "sampler_is_greedy": self.sampler_is_greedy,
             "tier_stability_status": self.tier_stability_status,
+            "serving_acceleration_config": _stable_json_object(
+                serving_acceleration_config
+            ),
             "native_acceleration": {}
             if native_acceleration is _EMPTY_EVENT_ATTRIBUTES
             else _stable_json_object(native_acceleration),
@@ -545,6 +550,14 @@ def _comparison_methodology(
         "effective_top_k": int(accelerated.effective_top_k),
         "sampler_is_greedy": accelerated.sampler_is_greedy,
         "tier_stability_status": accelerated.tier_stability_status,
+        "acceleration_configs": {
+            "baseline": _stable_json_object(
+                baseline.serving_acceleration_config
+            ),
+            "accelerated": _stable_json_object(
+                accelerated.serving_acceleration_config
+            ),
+        },
     }
 
 
