@@ -16,6 +16,7 @@ from worker.productization.dataset_preparation import (
     _SOURCE_KIND_NAME_CACHE_MAX,
     _blocked_ingest_receipt,
     _iter_source_file_paths,
+    _language_for_suffix,
     _normalize_line_endings,
     _record,
     _read_source_text,
@@ -184,6 +185,14 @@ def test_dataset_ingest_source_kind_name_cache_bypasses_insert_at_bound() -> Non
     assert _source_kind_for_name("next.txt") == "text"
 
     assert _SOURCE_KIND_BY_NAME == cached_entries
+
+
+def test_dataset_ingest_code_language_suffix_map_preserves_known_and_unknown_suffixes() -> None:
+    assert _language_for_suffix(".py") == "python"
+    assert _language_for_suffix(".swift") == "swift"
+    assert _language_for_suffix(".h") == "c"
+    assert _language_for_suffix(".zig") == "zig"
+    assert _language_for_suffix("") == "text"
 
 
 def test_dataset_ingest_record_copies_nonempty_metadata_and_fast_paths_empty_metadata() -> None:
