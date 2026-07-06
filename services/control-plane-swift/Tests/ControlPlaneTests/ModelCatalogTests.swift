@@ -440,6 +440,149 @@ struct ModelCatalogTests {
         #expect(metadata["melix.serving.capability.output_modalities"] == "text,audio,image")
     }
 
+    @Test("resolved acceleration config receipt normalizes low-level acceleration fields")
+    func resolvedAccelerationConfigReceiptNormalizesLowLevelAccelerationFields() async throws {
+        let baselineValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: ModelCatalog.devTextModel(),
+            requestedMode: .baseline,
+            draftModelID: "",
+            requestedProfileID: "balanced"
+        )
+        var baselinePolicy = Melix_Worker_V1_AccelerationPolicy()
+        baselinePolicy.mode = .baseline
+        baselinePolicy.profileID = "balanced"
+
+        let baselineConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: baselinePolicy,
+            executionMetadata: [:],
+            validation: baselineValidation
+        )
+        #expect(baselineConfig.method == "baseline")
+        #expect(baselineConfig.requestedMethod == "baseline")
+        #expect(baselineConfig.sidecarModel == "")
+        #expect(baselineConfig.numSpeculativeTokens == 0)
+        #expect(baselineConfig.profile == "balanced")
+        #expect(baselineConfig.conflictingFlags == [])
+        #expect(baselineConfig.controllerScope == "none")
+        #expect(baselineConfig.disabledReason == "none")
+
+        let forcedOffConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: baselinePolicy,
+            executionMetadata: [
+                "melix.gateway.suppressed_overrides": "speculative_decode",
+                "melix.gateway.speculative.disabled_reason": "operator_disabled",
+            ],
+            validation: baselineValidation
+        )
+        #expect(forcedOffConfig.method == "baseline")
+        #expect(forcedOffConfig.requestedMethod == "speculative_decode")
+        #expect(forcedOffConfig.conflictingFlags == ["speculative_decode"])
+        #expect(forcedOffConfig.controllerScope == "none")
+        #expect(forcedOffConfig.disabledReason == "operator_disabled")
+
+        var admittedModel = ModelCatalog.devTextModel()
+        admittedModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        admittedModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        admittedModel.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        admittedModel.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        admittedModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        admittedModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+        let admittedValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: admittedModel,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        var speculativePolicy = Melix_Worker_V1_AccelerationPolicy()
+        speculativePolicy.mode = .speculativeDecode
+        speculativePolicy.profileID = "throughput"
+        speculativePolicy.draftModelID = "melix-dev-draft"
+        speculativePolicy.numDraftTokens = 6
+
+        let admittedConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: speculativePolicy,
+            executionMetadata: [:],
+            validation: admittedValidation
+        )
+        #expect(admittedConfig.method == "speculative_decode")
+        #expect(admittedConfig.requestedMethod == "speculative_decode")
+        #expect(admittedConfig.sidecarModel == "melix-dev-draft")
+        #expect(admittedConfig.numSpeculativeTokens == 6)
+        #expect(admittedConfig.profile == "throughput")
+        #expect(admittedConfig.conflictingFlags == [])
+        #expect(admittedConfig.controllerScope == "request")
+        #expect(admittedConfig.disabledReason == "none")
+
+        let admittedMetadata = ModelCapabilityReceipts.resolvedAccelerationConfigAuditMetadata(admittedConfig)
+        #expect(admittedMetadata["melix.serving.acceleration_config.schema_version"] == "melix.resolved_acceleration_config.v1")
+        #expect(admittedMetadata["melix.serving.acceleration_config.method"] == "speculative_decode")
+        #expect(admittedMetadata["melix.serving.acceleration_config.sidecar_model"] == "melix-dev-draft")
+        #expect(admittedMetadata["melix.serving.acceleration_config.num_speculative_tokens"] == "6")
+        #expect(admittedMetadata["melix.serving.acceleration_config.controller_scope"] == "request")
+
+        var invalidDraftModel = admittedModel
+        invalidDraftModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        let invalidDraftValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: invalidDraftModel,
+            requestedMode: .speculativeDecode,
+            draftModelID: "other-draft",
+            requestedProfileID: "throughput"
+        )
+        speculativePolicy.draftModelID = "other-draft"
+        let invalidDraftConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: speculativePolicy,
+            executionMetadata: [:],
+            validation: invalidDraftValidation
+        )
+        #expect(invalidDraftConfig.method == "baseline")
+        #expect(invalidDraftConfig.requestedMethod == "speculative_decode")
+        #expect(invalidDraftConfig.sidecarModel == "")
+        #expect(invalidDraftConfig.numSpeculativeTokens == 0)
+        #expect(invalidDraftConfig.profile == "throughput")
+        #expect(invalidDraftConfig.conflictingFlags == ["draft_model_id"])
+        #expect(invalidDraftConfig.disabledReason == "draft_model_not_allowed")
+
+        var unsupportedModePolicy = Melix_Worker_V1_AccelerationPolicy()
+        unsupportedModePolicy.mode = .acceleratedPrefill
+        unsupportedModePolicy.profileID = "balanced"
+        let unsupportedModeValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: ModelCatalog.devTextModel(),
+            requestedMode: .acceleratedPrefill,
+            draftModelID: "",
+            requestedProfileID: "balanced"
+        )
+        let unsupportedModeConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: unsupportedModePolicy,
+            executionMetadata: [:],
+            validation: unsupportedModeValidation
+        )
+        #expect(unsupportedModeConfig.method == "baseline")
+        #expect(unsupportedModeConfig.requestedMethod == "accelerated_prefill")
+        #expect(unsupportedModeConfig.conflictingFlags == ["acceleration_mode"])
+        #expect(unsupportedModeConfig.disabledReason == "unsupported_mode")
+
+        var unverifiedProfileModel = admittedModel
+        unverifiedProfileModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = ""
+        unverifiedProfileModel.settings.ext["melix.acceleration.profile.verification_status"] = ""
+        let unverifiedProfileValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: unverifiedProfileModel,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        speculativePolicy.draftModelID = "melix-dev-draft"
+        let unverifiedProfileConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: speculativePolicy,
+            executionMetadata: [:],
+            validation: unverifiedProfileValidation
+        )
+        #expect(unverifiedProfileConfig.method == "baseline")
+        #expect(unverifiedProfileConfig.requestedMethod == "speculative_decode")
+        #expect(unverifiedProfileConfig.profile == "throughput")
+        #expect(unverifiedProfileConfig.conflictingFlags == ["acceleration_profile"])
+        #expect(unverifiedProfileConfig.disabledReason == "experimental_unverified")
+    }
+
     @Test("capability receipt validation refuses invalid drafts and inconsistent speculative metadata")
     func capabilityReceiptValidationRefusesInvalidDraftsAndInconsistentSpeculativeMetadata() async throws {
         var model = ModelCatalog.devTextModel()

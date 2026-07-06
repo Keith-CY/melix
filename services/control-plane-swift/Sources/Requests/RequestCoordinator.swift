@@ -2077,12 +2077,22 @@ public actor RequestCoordinator {
         )
         let receipt = validation.receipt
         let accelerationRefusal: AccelerationReceiptValidation? = validation.ok ? nil : validation
+        var accelerationMetadata = ModelCapabilityReceipts.accelerationAuditMetadata(
+            receipt,
+            profileReceipt: validation.profileReceipt,
+            model: model
+        )
+        let resolvedAccelerationConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: workerRequest.execution.acceleration,
+            executionMetadata: workerRequest.execution.ext,
+            validation: validation
+        )
+        accelerationMetadata.merge(
+            ModelCapabilityReceipts.resolvedAccelerationConfigAuditMetadata(resolvedAccelerationConfig),
+            uniquingKeysWith: { _, receiptValue in receiptValue }
+        )
         workerRequest.execution.ext.merge(
-            ModelCapabilityReceipts.accelerationAuditMetadata(
-                receipt,
-                profileReceipt: validation.profileReceipt,
-                model: model
-            ),
+            accelerationMetadata,
             uniquingKeysWith: { _, receiptValue in receiptValue }
         )
 

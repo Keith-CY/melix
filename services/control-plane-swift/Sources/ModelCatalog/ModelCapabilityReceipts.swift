@@ -26,6 +26,19 @@ public struct ServingProfileAdmissionReceipt: Sendable, Equatable {
     }
 }
 
+public struct ResolvedAccelerationConfig: Sendable, Equatable {
+    public static let schemaVersion = "melix.resolved_acceleration_config.v1"
+
+    public let method: String
+    public let requestedMethod: String
+    public let sidecarModel: String
+    public let numSpeculativeTokens: UInt32
+    public let profile: String
+    public let conflictingFlags: [String]
+    public let controllerScope: String
+    public let disabledReason: String
+}
+
 public enum ModelCapabilityReceipts {
     public static let schemaVersion = "melix.model_capability_receipt.v1"
 
@@ -332,6 +345,114 @@ public enum ModelCapabilityReceipts {
             "melix.acceleration.profile.fallback_reason": receipt.fallbackReason,
             "melix.acceleration.profile.recovery_hint": receipt.recoveryHint,
         ]
+    }
+
+    public static func resolvedAccelerationConfig(
+        for acceleration: Melix_Worker_V1_AccelerationPolicy,
+        executionMetadata: [String: String],
+        validation: AccelerationReceiptValidation
+    ) -> ResolvedAccelerationConfig {
+        let disabledReason = resolvedAccelerationDisabledReason(
+            validation: validation,
+            executionMetadata: executionMetadata
+        )
+        let conflictingFlags = resolvedAccelerationConflictingFlags(
+            receipt: validation.receipt,
+            profileReceipt: validation.profileReceipt,
+            executionMetadata: executionMetadata
+        )
+        let requestedMethod = resolvedAccelerationRequestedMethod(
+            receipt: validation.receipt,
+            conflictingFlags: conflictingFlags
+        )
+        let disabled = disabledReason != "none"
+        let method = disabled
+            ? "baseline"
+            : accelerationModeIdentifier(validation.receipt.resolvedAccelerationMode)
+        let sidecarModel = method == "speculative_decode"
+            ? acceleration.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+        let numSpeculativeTokens = method == "speculative_decode"
+            ? acceleration.numDraftTokens
+            : 0
+        return ResolvedAccelerationConfig(
+            method: method,
+            requestedMethod: requestedMethod,
+            sidecarModel: sidecarModel,
+            numSpeculativeTokens: numSpeculativeTokens,
+            profile: servingCapabilityAccelerationProfile(validation.profileReceipt),
+            conflictingFlags: conflictingFlags,
+            controllerScope: method == "speculative_decode" ? "request" : "none",
+            disabledReason: disabledReason
+        )
+    }
+
+    public static func resolvedAccelerationConfigAuditMetadata(
+        _ config: ResolvedAccelerationConfig
+    ) -> [String: String] {
+        [
+            "melix.serving.acceleration_config.schema_version": ResolvedAccelerationConfig.schemaVersion,
+            "melix.serving.acceleration_config.method": config.method,
+            "melix.serving.acceleration_config.requested_method": config.requestedMethod,
+            "melix.serving.acceleration_config.sidecar_model": config.sidecarModel,
+            "melix.serving.acceleration_config.num_speculative_tokens": String(config.numSpeculativeTokens),
+            "melix.serving.acceleration_config.profile": config.profile,
+            "melix.serving.acceleration_config.conflicting_flags": config.conflictingFlags.joined(separator: ","),
+            "melix.serving.acceleration_config.controller_scope": config.controllerScope,
+            "melix.serving.acceleration_config.disabled_reason": config.disabledReason,
+        ]
+    }
+
+    private static func resolvedAccelerationDisabledReason(
+        validation: AccelerationReceiptValidation,
+        executionMetadata: [String: String]
+    ) -> String {
+        if let disabledReason = executionMetadata["melix.gateway.speculative.disabled_reason"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty,
+            disabledReason != "none" {
+            return disabledReason
+        }
+        guard !validation.ok else {
+            return "none"
+        }
+        if validation.receipt.state != .capabilitySupported {
+            let reason = unsupportedReasonIdentifier(validation.unsupportedReason)
+            return reason == "none" ? "unsupported_mode" : reason
+        }
+        return validation.profileReceipt.fallbackReason.nilIfEmpty
+            ?? validation.profileReceipt.profileAdmissionStatus.nilIfEmpty
+            ?? "experimental_unverified"
+    }
+
+    private static func resolvedAccelerationConflictingFlags(
+        receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
+        profileReceipt: ServingProfileAdmissionReceipt,
+        executionMetadata: [String: String]
+    ) -> [String] {
+        var flags = servingCapabilityIgnoredFlags(receipt, profileReceipt: profileReceipt)
+        for flag in parsedList(executionMetadata["melix.gateway.suppressed_overrides"]) {
+            appendUnique(flag, to: &flags)
+        }
+        return flags
+    }
+
+    private static func resolvedAccelerationRequestedMethod(
+        receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
+        conflictingFlags: [String]
+    ) -> String {
+        if conflictingFlags.contains("speculative_decode") {
+            return "speculative_decode"
+        }
+        return accelerationModeIdentifier(receipt.requestedAccelerationMode)
+    }
+
+    private static func appendUnique(_ value: String, to values: inout [String]) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !values.contains(trimmed) else {
+            return
+        }
+        values.append(trimmed)
     }
 
     private static func servingCapabilityAccelerationProfile(

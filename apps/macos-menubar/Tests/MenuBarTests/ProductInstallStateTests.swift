@@ -262,8 +262,12 @@ struct ProductInstallStateTests {
     }
 
     @Test("filesystem provider returns nil without a resolvable manifest")
-    func returnsNilWithoutResolvableManifest() {
-        let provider = FilesystemProductInstallStateProvider(environment: ["HOME": ""])
+    func returnsNilWithoutResolvableManifest() throws {
+        let temporaryRoot = try makeTemporaryRoot(prefix: "melix-missing-manifest")
+        let manifestURL = temporaryRoot.appendingPathComponent("missing-install-manifest.json")
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let provider = FilesystemProductInstallStateProvider(manifestURL: manifestURL)
 
         #expect(provider.updateStatus() == nil)
         #expect(provider.startupFailureDiagnostic(for: MenuBarTestError(description: "handshake failed")) == nil)
