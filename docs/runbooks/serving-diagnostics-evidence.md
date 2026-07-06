@@ -560,6 +560,8 @@ The comparison artifact records:
 - effective top-p
 - effective top-k
 - greedy sampler status
+- baseline and accelerated resolved acceleration configs when upstream provided
+  `serving_acceleration_config` receipts
 - acceleration admission status
 - fallback reason
 - tier stability status
@@ -570,6 +572,13 @@ on prompt protocol, prompt digest, prompt template digest, model id, task kind,
 or generation config. It also rejects non-greedy sampler settings because
 deterministic sampling is required before the artifact can support a performance
 claim.
+
+When present, the comparison artifact writes each run's
+`serving_acceleration_config` receipt under
+`runs.<baseline|accelerated>.serving_acceleration_config` and mirrors both
+receipts under `methodology.acceleration_configs`. Missing receipts serialize as
+empty objects; the comparison writer must not synthesize acceleration configs or
+probe runtime state while writing evidence.
 
 ## Prefill Override Validation
 

@@ -1706,11 +1706,34 @@ def test_validate_prefill_chunk_size_accepts_positive_integer_string() -> None:
 def test_baseline_accelerated_evidence_requires_same_protocol_and_greedy_sampler(
     tmp_path: Path,
 ) -> None:
+    baseline_acceleration_config = {
+        "schema_version": "melix.resolved_acceleration_config.v1",
+        "method": "baseline",
+        "requested_method": "baseline",
+        "sidecar_model": "",
+        "num_speculative_tokens": 0,
+        "profile": "balanced",
+        "conflicting_flags": [],
+        "controller_scope": "none",
+        "disabled_reason": "none",
+    }
+    accelerated_acceleration_config = {
+        "schema_version": "melix.resolved_acceleration_config.v1",
+        "method": "speculative_decode",
+        "requested_method": "speculative_decode",
+        "sidecar_model": "melix-dev-draft",
+        "num_speculative_tokens": 6,
+        "profile": "throughput",
+        "conflicting_flags": [],
+        "controller_scope": "request",
+        "disabled_reason": "none",
+    }
     baseline = _evidence_run(
         run_id="baseline",
         acceleration_mode="baseline",
         acceleration_admitted=False,
         fallback_reason="",
+        serving_acceleration_config=baseline_acceleration_config,
     )
     accelerated = _evidence_run(
         run_id="accelerated",
@@ -1718,6 +1741,7 @@ def test_baseline_accelerated_evidence_requires_same_protocol_and_greedy_sampler
         acceleration_admitted=True,
         fallback_reason="",
         metrics={"prefill_ms": 7.0, "decode_ms": 20.0},
+        serving_acceleration_config=accelerated_acceleration_config,
         native_acceleration={
             "schema_version": "melix.native_acceleration.status.v1",
             "runtime_active": False,
@@ -1758,8 +1782,20 @@ def test_baseline_accelerated_evidence_requires_same_protocol_and_greedy_sampler
         "effective_top_k": 1,
         "sampler_is_greedy": True,
         "tier_stability_status": "stable",
+        "acceleration_configs": {
+            "baseline": baseline_acceleration_config,
+            "accelerated": accelerated_acceleration_config,
+        },
     }
     assert payload["runs"]["accelerated"]["acceleration_admitted"] is True
+    assert (
+        payload["runs"]["baseline"]["serving_acceleration_config"]
+        == baseline_acceleration_config
+    )
+    assert (
+        payload["runs"]["accelerated"]["serving_acceleration_config"]
+        == accelerated_acceleration_config
+    )
     assert payload["runs"]["accelerated"]["fallback_reason"] == ""
     assert payload["runs"]["accelerated"]["native_acceleration"]["runtime_active"] is False
     assert (
@@ -1780,6 +1816,32 @@ def test_baseline_accelerated_evidence_requires_same_protocol_and_greedy_sampler
     assert prefill_row["baseline"] == 10.0
     assert prefill_row["accelerated"] == 7.0
     assert prefill_row["delta"] == -3.0
+
+    omitted_config_paths = write_baseline_accelerated_evidence(
+        output_root=tmp_path,
+        comparison_id="cmp-omitted-config",
+        baseline=_evidence_run(
+            run_id="baseline-omitted-config",
+            acceleration_mode="baseline",
+            acceleration_admitted=False,
+        ),
+        accelerated=_evidence_run(
+            run_id="accelerated-omitted-config",
+            acceleration_mode="baseline",
+            acceleration_admitted=False,
+        ),
+    )
+    omitted_config_payload = json.loads(
+        omitted_config_paths["comparison"].read_text(encoding="utf-8")
+    )
+    assert (
+        omitted_config_payload["methodology"]["acceleration_configs"]
+        == {"baseline": {}, "accelerated": {}}
+    )
+    assert (
+        omitted_config_payload["runs"]["baseline"]["serving_acceleration_config"]
+        == {}
+    )
 
     with pytest.raises(ServingDiagnosticsComparisonError, match="prompt_protocol_id"):
         write_baseline_accelerated_evidence(
@@ -1850,6 +1912,7 @@ def _evidence_run(
     prompt_protocol_id: str = "chat.completions.v1",
     effective_temperature: float = 0.0,
     metrics: dict[str, float] | None = None,
+    serving_acceleration_config: dict[str, object] | None = None,
     native_acceleration: dict[str, object] | None = None,
 ) -> ServingEvidenceRun:
     return ServingEvidenceRun(
@@ -1868,5 +1931,6 @@ def _evidence_run(
         effective_top_k=1,
         tier_stability_status="stable",
         metrics=metrics or {"prefill_ms": 10.0, "decode_ms": 20.0},
+        serving_acceleration_config=serving_acceleration_config or {},
         native_acceleration=native_acceleration or {},
     )
