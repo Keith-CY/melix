@@ -280,6 +280,20 @@ _DIAGNOSIS_PATTERNS = (
 _DIAGNOSIS_MARKERS = tuple(
     dict.fromkeys(marker for pattern in _DIAGNOSIS_PATTERNS for marker in pattern.markers)
 )
+_DIAGNOSIS_PATTERN_BY_CODE = {pattern.code: pattern for pattern in _DIAGNOSIS_PATTERNS}
+_DIAGNOSIS_FAST_PHRASE_PATTERNS = (
+    ("unsupported architecture", _DIAGNOSIS_PATTERN_BY_CODE[CODE_UNSUPPORTED_ARCHITECTURE]),
+    ("bad cpu type", _DIAGNOSIS_PATTERN_BY_CODE[CODE_UNSUPPORTED_ARCHITECTURE]),
+    ("duplicate tensor", _DIAGNOSIS_PATTERN_BY_CODE[CODE_DUPLICATE_TENSOR_NAME]),
+    ("missing blob", _DIAGNOSIS_PATTERN_BY_CODE[CODE_MISSING_BLOB]),
+    ("runtime binary not installed", _DIAGNOSIS_PATTERN_BY_CODE[CODE_MISSING_BINARY]),
+    ("invalid runtime path", _DIAGNOSIS_PATTERN_BY_CODE[CODE_INVALID_RUNTIME_PATH]),
+    ("timed out", _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_TIMEOUT]),
+    ("permission denied", _DIAGNOSIS_PATTERN_BY_CODE[CODE_PERMISSION_DENIED]),
+    ("out of memory", _DIAGNOSIS_PATTERN_BY_CODE[CODE_INSUFFICIENT_MEMORY]),
+    ("runtime load failed", _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_LOAD_FAILED]),
+    ("model load failed", _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_LOAD_FAILED]),
+)
 
 
 def write_export_diagnostics_receipt(
@@ -804,6 +818,7 @@ def _diagnoses_from_excerpt(
     seen_codes: set[str] = set()
     seen_codes_add = seen_codes.add
     patterns = _DIAGNOSIS_PATTERNS
+    fast_phrase_patterns = _DIAGNOSIS_FAST_PHRASE_PATTERNS
     source_lines_local = source_lines
     has_diagnosis_marker = _has_diagnosis_marker
     remaining_known_code_count = len(_KNOWN_DIAGNOSIS_CODE_SET)
@@ -813,6 +828,28 @@ def _diagnoses_from_excerpt(
         text = source_lines_local[index].text
         lowered_text = text.lower()
         if not has_diagnosis_marker(lowered_text):
+            continue
+        fast_pattern = None
+        for phrase, pattern in fast_phrase_patterns:
+            if phrase in lowered_text:
+                pattern_code = pattern.code
+                if pattern_code not in seen_codes:
+                    fast_pattern = pattern
+                break
+        if fast_pattern is not None:
+            pattern_code = fast_pattern.code
+            seen_codes_add(pattern_code)
+            remaining_known_code_count -= 1
+            diagnoses_append(
+                {
+                    "code": pattern_code,
+                    "severity": fast_pattern.severity,
+                    "matched_pattern_id": fast_pattern.pattern_id,
+                    "operator_message": fast_pattern.operator_message,
+                    "remediation": fast_pattern.remediation,
+                    "evidence_path": f"{excerpt_path}#line-{line_number}",
+                }
+            )
             continue
         for pattern in patterns:
             pattern_code = pattern.code
