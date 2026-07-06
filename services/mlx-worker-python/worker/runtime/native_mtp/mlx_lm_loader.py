@@ -21,7 +21,8 @@ _MTP_WEIGHT_KEY_PREFIXES = ("language_model.mtp.", "mtp.")
 
 def _load_json_payload(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_bytes())
+        with open(path, "rb") as payload_file:
+            payload = json.loads(payload_file.read())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
     return payload if isinstance(payload, dict) else {}

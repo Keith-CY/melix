@@ -2409,9 +2409,14 @@ def test_native_mtp_index_payload_loads_from_bytes(
     def fail_read_text(self: Path, *args, **kwargs):  # pragma: no cover - regression guard
         raise AssertionError("_load_json_payload() should not allocate a decoded read_text copy")
 
+    def fail_read_bytes(self: Path):  # pragma: no cover - regression guard
+        raise AssertionError("_load_json_payload() should use direct binary open")
+
     monkeypatch.setattr(Path, "read_text", fail_read_text)
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
 
     assert _load_json_payload(index_path) == index_payload
+    assert quantized_tensor_metadata_module._load_json_payload(index_path) == index_payload
     assert _load_json_payload(tmp_path / "missing.json") == {}
 
 
