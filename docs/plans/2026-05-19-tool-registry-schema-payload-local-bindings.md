@@ -131,6 +131,22 @@ Expected effect:
 - leave registry selection, schema serialization, protobuf config handling, and
   tool definitions unchanged.
 
+## Follow-up Slice: Full List Template Branch
+
+The 2026-07-06 follow-up keeps `built_in_tool_config(list(BUILTIN_AGENTIC_TOOL_NAMES))`
+behavior unchanged, but checks the full-list template case inside the list branch
+instead of first comparing the caller's list to the canonical tuple. The hot path
+still returns a fresh mutable protobuf copy from the built-in template, while the
+registered selector probe's full-list workload avoids an unnecessary cross-type
+sequence comparison before taking the existing template fast path.
+
+Expected effect:
+
+- reduce `tool-registry-select-name-index-cache` `full_config_template_elapsed_ms_mean`;
+- preserve mutation isolation for returned `ToolConfig` messages;
+- leave partial selections, tuple full selections, registry selection, and tool
+  definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
