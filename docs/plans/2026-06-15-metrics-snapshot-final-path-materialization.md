@@ -25,6 +25,14 @@ Avoid materializing a `Path` object each time the current newest directory entry
 changes during the scan. Keep the current best `DirEntry.path` string in the hot
 loop and construct the returned `Path` only once after the scan completes.
 
+## Follow-up slice: configured-source discovery elision
+
+When all metrics sources are explicitly configured by CLI arguments or
+environment variables, `resolve_source_paths()` has no runtime source names left
+to discover. Skip the batched runtime-discovery helper entirely in that case so
+the configured-source hot path avoids the extra empty dispatch/allocation while
+preserving the existing no-`os.scandir()` behavior.
+
 ## Verification plan
 
 Run the registered focused tests, changed-scope coverage command, and registered
