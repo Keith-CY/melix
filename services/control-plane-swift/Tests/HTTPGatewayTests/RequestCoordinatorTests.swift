@@ -4799,6 +4799,59 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("serving memory admission treats zero detected memory metadata as telemetry")
+    func servingMemoryAdmissionTreatsZeroDetectedMemoryMetadataAsTelemetry() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.maxContext = 131_072
+        textModel.settings.memoryBudgetBytes = 1_073_741_824
+        textModel.settings.ext["melix.serving.memory.available_bytes"] = "0"
+        textModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: SchedulerReadModel(),
+            metricsStore: MetricsStore(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-memory-admission-zero-detected-memory",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "4",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.memory_telemetry_source"] == "detected")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.admission_reason"] == "insufficient_memory")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_context"] == "2048")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_batch"] == "1")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.fits_memory"] == "false")
+
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-memory-admission-zero-detected-memory",
+            decodeHandle: decodeRequest.decodeHandle
+        )
+        await workerClient.emitToken(requestID: "req-memory-admission-zero-detected-memory", text: "memory")
+        await workerClient.finishDecode(requestID: "req-memory-admission-zero-detected-memory")
+        _ = await consumer.result
+    }
+
     @Test("unsupported speculative draft is rejected before worker dispatch")
     func unsupportedSpeculativeDraftIsRejectedBeforeWorkerDispatch() async throws {
         let workerClient = PhaseAwareWorkerClient()

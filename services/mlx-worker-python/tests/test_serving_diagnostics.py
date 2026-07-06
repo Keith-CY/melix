@@ -624,6 +624,28 @@ def test_serving_diagnostics_acceleration_config_skips_invalid_token_count() -> 
     assert receipt == {}
 
 
+def test_serving_diagnostics_acceleration_config_skips_negative_token_count() -> None:
+    receipt = (
+        serving_diagnostics_module._serving_acceleration_config_receipt_from_audit_metadata(
+            {
+                "melix.serving.acceleration_config.schema_version": (
+                    "melix.resolved_acceleration_config.v1"
+                ),
+                "melix.serving.acceleration_config.method": "baseline",
+                "melix.serving.acceleration_config.requested_method": "baseline",
+                "melix.serving.acceleration_config.sidecar_model": "",
+                "melix.serving.acceleration_config.num_speculative_tokens": "-1",
+                "melix.serving.acceleration_config.profile": "balanced",
+                "melix.serving.acceleration_config.conflicting_flags": "",
+                "melix.serving.acceleration_config.controller_scope": "none",
+                "melix.serving.acceleration_config.disabled_reason": "invalid_token_count",
+            }
+        )
+    )
+
+    assert receipt == {}
+
+
 def test_serving_diagnostics_effective_config_derives_memory_admission_receipt_from_metadata(
     tmp_path: Path,
 ) -> None:

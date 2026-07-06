@@ -1819,10 +1819,15 @@ public actor RequestCoordinator {
         _ translatedRequest: TranslatedChatRequest
     ) async throws -> SchedulingPlan {
         let recoveredRequest = await resolvedRecoveryRequest(translatedRequest)
-        let accelerationResolution = await resolvedModelAccelerationRequest(recoveredRequest)
+        let batchingDefaults = GatewayBatchingExecutionDefaults(
+            executionExt: recoveredRequest.workerRequest.execution.ext
+        )
+        let accelerationResolution = await resolvedModelAccelerationRequest(
+            recoveredRequest,
+            batchingDefaults: batchingDefaults
+        )
         let request = accelerationResolution.request
         let accelerationRefusal = accelerationResolution.accelerationRefusal
-        let batchingDefaults = GatewayBatchingExecutionDefaults(executionExt: request.workerRequest.execution.ext)
         let routeRequest = requestRouteRequest(for: request.workerRequest)
         let routeResolution = await workerRegistry.admitInferenceRoute(
             requestID: request.requestID,
@@ -2010,7 +2015,8 @@ public actor RequestCoordinator {
     }
 
     private func resolvedModelAccelerationRequest(
-        _ translatedRequest: TranslatedChatRequest
+        _ translatedRequest: TranslatedChatRequest,
+        batchingDefaults: GatewayBatchingExecutionDefaults
     ) async -> ModelAccelerationResolution {
         guard
             let modelCatalog,
@@ -2106,7 +2112,7 @@ public actor RequestCoordinator {
         let memoryAdmissionReceipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
             for: model,
             requestedContext: requestedServingContext(from: workerRequest.execution.ext),
-            requestedBatch: requestedServingBatch(from: workerRequest.execution.ext),
+            requestedBatch: batchingDefaults.effectiveAdmissionBatchSize,
             detectedMemoryBytes: detectedServingMemoryBytes(for: model)
         )
         accelerationMetadata.merge(
@@ -2183,10 +2189,6 @@ public actor RequestCoordinator {
         return nil
     }
 
-    private func requestedServingBatch(from executionExt: [String: String]) -> UInt32 {
-        GatewayBatchingExecutionDefaults(executionExt: executionExt).effectiveAdmissionBatchSize
-    }
-
     private func detectedServingMemoryBytes(
         for model: Melix_Controlplane_V1_ModelSummary
     ) -> UInt64? {
@@ -2195,7 +2197,7 @@ public actor RequestCoordinator {
             "melix.serving.memory.detected_memory_bytes",
             "melix.device.memory_total_bytes",
         ] {
-            if let value = parsePositiveUInt64(model.settings.ext[key]) {
+            if let value = parseUInt64Value(model.settings.ext[key], allowZero: true) {
                 return value
             }
         }
@@ -2204,10 +2206,6 @@ public actor RequestCoordinator {
 
     private func parsePositiveUInt32(_ rawValue: String?) -> UInt32? {
         parseUInt32Value(rawValue)
-    }
-
-    private func parsePositiveUInt64(_ rawValue: String?) -> UInt64? {
-        parseUInt64Value(rawValue)
     }
 
     private func isContinuousBatchEligible(

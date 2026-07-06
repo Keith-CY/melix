@@ -55,6 +55,9 @@ The first estimator is intentionally conservative and deterministic:
 Unknown memory telemetry must not invent precision. In that case the receipt
 records `memory_telemetry_source=unknown`, `memory_headroom_bytes=0`, and does
 not perform memory-based step-down beyond the repository default context cap.
+When detected memory is present and the uncapped default request already fits,
+the receipt records `admission_reason=detected_memory_fits` so diagnostics can
+distinguish a memory-checked admission from the unknown-memory safe default.
 
 Telemetry wiring gap: this slice only consumes detected memory when upstream
 model settings metadata includes one of `melix.serving.memory.available_bytes`,
@@ -112,6 +115,7 @@ Follow TDD:
    - long-context model without explicit context caps to `8192`;
    - explicit requested context is preserved when memory telemetry is unknown;
    - detected low memory steps down context and batch only when needed;
+   - detected memory that already fits records `detected_memory_fits`;
    - zero detected memory is treated as detected telemetry and produces an
      `insufficient_memory` receipt rather than an unknown-memory pass;
    - audit metadata includes stable `melix.serving.memory_admission.*` keys.

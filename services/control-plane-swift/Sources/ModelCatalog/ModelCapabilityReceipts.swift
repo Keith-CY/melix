@@ -461,7 +461,9 @@ public enum ModelCapabilityReceipts {
                 ? detectedMemoryBytes - memoryHeadroomBytes
                 : 0
             fitsMemory = estimatedActiveBytes <= usableMemoryBytes
-            if !fitsMemory, explicitContext == nil {
+            if fitsMemory, explicitContext == nil, requestedContext <= defaultServingContextCap {
+                admissionReason = "detected_memory_fits"
+            } else if !fitsMemory, explicitContext == nil {
                 var selected: (context: UInt32, batch: UInt32, estimate: UInt64)?
                 for candidate in servingMemoryFitCandidates(
                     effectiveContext: effectiveContext,
@@ -619,14 +621,14 @@ public enum ModelCapabilityReceipts {
     private static func servingModelResidentBytes(
         _ model: Melix_Controlplane_V1_ModelSummary
     ) -> UInt64 {
-        parsedUInt64(model.settings.ext["melix.serving.memory.estimated_model_bytes"])
+        parsedPositiveUInt64(model.settings.ext["melix.serving.memory.estimated_model_bytes"])
             ?? model.settings.memoryBudgetBytes
     }
 
     private static func servingBytesPerToken(
         _ model: Melix_Controlplane_V1_ModelSummary
     ) -> UInt64 {
-        parsedUInt64(model.settings.ext["melix.serving.memory.bytes_per_token"])
+        parsedPositiveUInt64(model.settings.ext["melix.serving.memory.bytes_per_token"])
             ?? defaultServingBytesPerToken
     }
 
@@ -642,10 +644,11 @@ public enum ModelCapabilityReceipts {
         )
     }
 
-    private static func parsedUInt64(_ rawValue: String?) -> UInt64? {
+    private static func parsedPositiveUInt64(_ rawValue: String?) -> UInt64? {
         guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
               !rawValue.isEmpty,
-              let value = UInt64(rawValue)
+              let value = UInt64(rawValue),
+              value > 0
         else {
             return nil
         }

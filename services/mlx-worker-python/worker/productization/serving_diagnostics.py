@@ -808,10 +808,10 @@ def _serving_acceleration_config_receipt_from_audit_metadata(
         if receipt_key in _ACCELERATION_CONFIG_RECEIPT_LIST_FIELDS:
             receipt[receipt_key] = _metadata_list(value)
         elif receipt_key in _ACCELERATION_CONFIG_RECEIPT_INT_FIELDS:
-            try:
-                receipt[receipt_key] = int(str(value).strip())
-            except ValueError:
+            parsed_int = _metadata_non_negative_int(value)
+            if parsed_int is None:
                 return {}
+            receipt[receipt_key] = parsed_int
         else:
             receipt[receipt_key] = str(value)
     if _ACCELERATION_CONFIG_RECEIPT_REQUIRED_FIELDS.issubset(receipt):
@@ -828,13 +828,10 @@ def _serving_memory_admission_receipt_from_audit_metadata(
         if value is None:
             continue
         if receipt_key in _MEMORY_ADMISSION_RECEIPT_INT_FIELDS:
-            try:
-                parsed = int(str(value).strip())
-            except ValueError:
+            parsed_int = _metadata_non_negative_int(value)
+            if parsed_int is None:
                 return {}
-            if parsed < 0:
-                return {}
-            receipt[receipt_key] = parsed
+            receipt[receipt_key] = parsed_int
         elif receipt_key in _MEMORY_ADMISSION_RECEIPT_BOOL_FIELDS:
             parsed_bool = _metadata_bool(value)
             if parsed_bool is None:
@@ -863,6 +860,16 @@ def _metadata_list(value: object) -> list[str]:
 
 def _metadata_bool(value: object) -> bool | None:
     return _bool_value(value)
+
+
+def _metadata_non_negative_int(value: object) -> int | None:
+    try:
+        parsed = int(str(value).strip())
+    except ValueError:
+        return None
+    if parsed < 0:
+        return None
+    return parsed
 
 
 def _stable_json_value(value: object) -> object:
