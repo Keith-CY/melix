@@ -56,6 +56,16 @@ Unknown memory telemetry must not invent precision. In that case the receipt
 records `memory_telemetry_source=unknown`, `memory_headroom_bytes=0`, and does
 not perform memory-based step-down beyond the repository default context cap.
 
+Telemetry wiring gap: this slice only consumes detected memory when upstream
+model settings metadata includes one of `melix.serving.memory.available_bytes`,
+`melix.serving.memory.detected_memory_bytes`, or
+`melix.device.memory_total_bytes`. Current production catalog discovery does not
+populate those keys, so production receipts can report
+`memory_telemetry_source=unknown` until a follow-up wires device or worker memory
+telemetry into model settings, or introduces a dedicated telemetry carrier.
+The `melix.serving.memory_admission.*` namespace is audit output and is not
+treated as serving request input.
+
 ## Receipt Contract
 
 The diagnostics top-level receipt is:
@@ -102,14 +112,19 @@ Follow TDD:
    - long-context model without explicit context caps to `8192`;
    - explicit requested context is preserved when memory telemetry is unknown;
    - detected low memory steps down context and batch only when needed;
+   - zero detected memory is treated as detected telemetry and produces an
+     `insufficient_memory` receipt rather than an unknown-memory pass;
    - audit metadata includes stable `melix.serving.memory_admission.*` keys.
 2. Add a RequestCoordinator RED assertion proving worker request metadata
    includes the memory admission receipt before prefill dispatch.
-3. Add Python diagnostics RED tests proving complete metadata materializes the
+3. Add RequestCoordinator RED assertions proving memory admission batch uses the
+   same gateway batching defaults, including disabled-concurrency admission, and
+   does not read the audit namespace as context input.
+4. Add Python diagnostics RED tests proving complete metadata materializes the
    top-level receipt and invalid integer/boolean metadata is skipped.
-4. Implement the Swift receipt resolver and RequestCoordinator wiring.
-5. Implement passive Python receipt derivation.
-6. Update this plan and the serving diagnostics runbook with final evidence.
+5. Implement the Swift receipt resolver and RequestCoordinator wiring.
+6. Implement passive Python receipt derivation.
+7. Update this plan and the serving diagnostics runbook with final evidence.
 
 Focused verification:
 

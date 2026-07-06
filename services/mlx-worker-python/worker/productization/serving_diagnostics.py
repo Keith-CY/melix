@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import Any
 
 from worker.productization.privacy_policy_receipts import (
+    _bool_value,
     network_fetch_policy_receipt_from_metadata,
     privacy_audit_counter_from_metadata,
     privacy_detector_receipt_from_metadata,
@@ -861,14 +862,7 @@ def _metadata_list(value: object) -> list[str]:
 
 
 def _metadata_bool(value: object) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    normalized = str(value).strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    return None
+    return _bool_value(value)
 
 
 def _stable_json_value(value: object) -> object:

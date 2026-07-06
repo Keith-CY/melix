@@ -646,6 +646,28 @@ struct ModelCatalogTests {
         #expect(metadata["melix.serving.memory_admission.fits_memory"] == "true")
     }
 
+    @Test("memory-aware serving admission treats zero detected memory as telemetry")
+    func memoryAwareServingAdmissionTreatsZeroDetectedMemoryAsTelemetry() async throws {
+        var longContextModel = ModelCatalog.devTextModel()
+        longContextModel.maxContext = 131_072
+        longContextModel.settings.memoryBudgetBytes = 1_073_741_824
+        longContextModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+
+        let receipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: longContextModel,
+            requestedContext: nil,
+            requestedBatch: 4,
+            detectedMemoryBytes: 0
+        )
+
+        #expect(receipt.memoryTelemetrySource == "detected")
+        #expect(receipt.memoryHeadroomBytes == 2_147_483_648)
+        #expect(receipt.admissionReason == "insufficient_memory")
+        #expect(receipt.effectiveContext == 2_048)
+        #expect(receipt.effectiveBatch == 1)
+        #expect(receipt.fitsMemory == false)
+    }
+
     @Test("capability receipt validation refuses invalid drafts and inconsistent speculative metadata")
     func capabilityReceiptValidationRefusesInvalidDraftsAndInconsistentSpeculativeMetadata() async throws {
         var model = ModelCatalog.devTextModel()

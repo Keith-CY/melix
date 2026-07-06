@@ -434,10 +434,10 @@ public enum ModelCapabilityReceipts {
         let cappedContext = min(requestedContext, defaultServingContextCap)
         var effectiveContext = explicitContext ?? cappedContext
         var effectiveBatch = requestedBatch
-        let memoryTelemetrySource = (detectedMemoryBytes ?? 0) > 0 ? "detected" : "unknown"
-        let memoryHeadroomBytes = memoryTelemetrySource == "detected"
-            ? defaultServingMemoryHeadroomBytes
-            : 0
+        let memoryTelemetrySource = detectedMemoryBytes == nil ? "unknown" : "detected"
+        let memoryHeadroomBytes = detectedMemoryBytes == nil
+            ? 0
+            : defaultServingMemoryHeadroomBytes
         let modelResidentBytes = servingModelResidentBytes(model)
         let bytesPerToken = servingBytesPerToken(model)
         var estimatedActiveBytes = estimatedServingActiveBytes(
@@ -456,8 +456,7 @@ public enum ModelCapabilityReceipts {
             admissionReason = "unknown_memory_safe_default"
         }
 
-        if memoryTelemetrySource == "detected",
-           let detectedMemoryBytes {
+        if let detectedMemoryBytes {
             let usableMemoryBytes = detectedMemoryBytes > memoryHeadroomBytes
                 ? detectedMemoryBytes - memoryHeadroomBytes
                 : 0

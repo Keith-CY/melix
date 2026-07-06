@@ -741,6 +741,18 @@ def test_serving_diagnostics_memory_admission_accepts_false_bool_values() -> Non
     )
     assert receipt["fits_memory"] is False
 
+    metadata["melix.serving.memory_admission.fits_memory"] = 1.0
+    receipt = serving_diagnostics_module._serving_memory_admission_receipt_from_audit_metadata(
+        metadata
+    )
+    assert receipt["fits_memory"] is True
+
+    metadata["melix.serving.memory_admission.fits_memory"] = "off"
+    receipt = serving_diagnostics_module._serving_memory_admission_receipt_from_audit_metadata(
+        metadata
+    )
+    assert receipt["fits_memory"] is False
+
 
 def test_serving_diagnostics_capability_receipt_normalizes_sequence_metadata() -> None:
     receipt = (

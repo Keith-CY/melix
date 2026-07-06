@@ -331,6 +331,28 @@ private let activeKVQuantProfiles: Set<String> = [
     "q8",
 ]
 
+private func parseUInt32Value(_ rawValue: String?, allowZero: Bool = false) -> UInt32? {
+    guard
+        let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+        let parsed = UInt32(rawValue),
+        allowZero || parsed > 0
+    else {
+        return nil
+    }
+    return parsed
+}
+
+private func parseUInt64Value(_ rawValue: String?, allowZero: Bool = false) -> UInt64? {
+    guard
+        let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+        let parsed = UInt64(rawValue),
+        allowZero || parsed > 0
+    else {
+        return nil
+    }
+    return parsed
+}
+
 private struct GatewayBatchingExecutionDefaults: Sendable {
     let concurrentProcessingEnabled: Bool
     let maxConcurrentRequests: UInt32
@@ -378,10 +400,7 @@ private struct GatewayBatchingExecutionDefaults: Sendable {
     }
 
     private static func parseUInt32(_ rawValue: String?, fallback: UInt32) -> UInt32 {
-        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines), let parsed = UInt32(rawValue), parsed > 0 else {
-            return fallback
-        }
-        return parsed
+        parseUInt32Value(rawValue) ?? fallback
     }
 }
 
@@ -421,14 +440,7 @@ private struct GatewaySpeculativeExecutionDefaults: Sendable {
         fallback: UInt32,
         allowZero: Bool = false
     ) -> UInt32 {
-        guard
-            let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-            let parsed = UInt32(rawValue),
-            allowZero || parsed > 0
-        else {
-            return fallback
-        }
-        return parsed
+        parseUInt32Value(rawValue, allowZero: allowZero) ?? fallback
     }
 }
 
@@ -2163,7 +2175,6 @@ public actor RequestCoordinator {
         for key in [
             "melix.gateway.context_length",
             "melix.gateway.requested_context",
-            "melix.serving.memory_admission.requested_context",
         ] {
             if let value = parsePositiveUInt32(executionExt[key]) {
                 return value
@@ -2173,15 +2184,7 @@ public actor RequestCoordinator {
     }
 
     private func requestedServingBatch(from executionExt: [String: String]) -> UInt32 {
-        let values = [
-            parsePositiveUInt32(
-                executionExt["melix.gateway.max_concurrent_sequences"]
-                    ?? executionExt["melix.gateway.max_concurrent_requests"]
-            ),
-            parsePositiveUInt32(executionExt["melix.gateway.prefill_batch_size"]),
-            parsePositiveUInt32(executionExt["melix.gateway.completion_batch_size"]),
-        ].compactMap { $0 }
-        return values.min() ?? 1
+        GatewayBatchingExecutionDefaults(executionExt: executionExt).effectiveAdmissionBatchSize
     }
 
     private func detectedServingMemoryBytes(
@@ -2200,25 +2203,11 @@ public actor RequestCoordinator {
     }
 
     private func parsePositiveUInt32(_ rawValue: String?) -> UInt32? {
-        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !rawValue.isEmpty,
-              let value = UInt32(rawValue),
-              value > 0
-        else {
-            return nil
-        }
-        return value
+        parseUInt32Value(rawValue)
     }
 
     private func parsePositiveUInt64(_ rawValue: String?) -> UInt64? {
-        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !rawValue.isEmpty,
-              let value = UInt64(rawValue),
-              value > 0
-        else {
-            return nil
-        }
-        return value
+        parseUInt64Value(rawValue)
     }
 
     private func isContinuousBatchEligible(
