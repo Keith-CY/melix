@@ -105,7 +105,8 @@ _NATIVE_MULTIMODAL_CONTAINER_HIGH_PRECISION_DIRECT_PREFIXES = tuple(
 
 def _load_json_payload(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_bytes())
+        with open(path, "rb") as payload_file:
+            payload = json.loads(payload_file.read())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
     return payload if isinstance(payload, dict) else {}
