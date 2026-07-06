@@ -35,6 +35,18 @@ _CODE_SOURCE_SUFFIXES = frozenset(
     (".py", ".swift", ".js", ".ts", ".java", ".go", ".rs", ".cpp", ".c", ".h")
 )
 _STRUCTURED_DATA_SOURCE_SUFFIXES = frozenset((".jsonl", ".json", ".csv", ".tsv"))
+_CODE_SOURCE_LANGUAGE_BY_SUFFIX = {
+    ".py": "python",
+    ".swift": "swift",
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".java": "java",
+    ".go": "go",
+    ".rs": "rust",
+    ".cpp": "cpp",
+    ".c": "c",
+    ".h": "c",
+}
 _SOURCE_KIND_NAME_CACHE_MAX = 4096
 _SOURCE_KIND_BY_NAME: dict[str, str | None] = {}
 _MISSING = object()
@@ -1498,18 +1510,10 @@ def _metadata_for_path(path: Path, source_kind: str) -> dict[str, Any]:
 
 
 def _language_for_suffix(suffix: str) -> str:
-    return {
-        ".py": "python",
-        ".swift": "swift",
-        ".js": "javascript",
-        ".ts": "typescript",
-        ".java": "java",
-        ".go": "go",
-        ".rs": "rust",
-        ".cpp": "cpp",
-        ".c": "c",
-        ".h": "c",
-    }.get(suffix, suffix.lstrip(".") or "text")
+    try:
+        return _CODE_SOURCE_LANGUAGE_BY_SUFFIX[suffix]
+    except KeyError:
+        return suffix.lstrip(".") or "text"
 
 
 def _source_inventory(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
