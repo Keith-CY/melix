@@ -13,6 +13,20 @@ _UNPACK_DIGEST_UINT32 = struct.Struct("<8I").unpack
 _DIGEST_UINT32_SCALE = 2.0 / 0xFFFFFFFF
 
 
+def _sum_squares_8(values: list[float]) -> float:
+    value0, value1, value2, value3, value4, value5, value6, value7 = values
+    return (
+        value0 * value0
+        + value1 * value1
+        + value2 * value2
+        + value3 * value3
+        + value4 * value4
+        + value5 * value5
+        + value6 * value6
+        + value7 * value7
+    )
+
+
 @dataclass(frozen=True)
 class EmbeddingBackendDescriptor:
     backend_id: str
@@ -61,7 +75,7 @@ class DeterministicEmbeddingBackend:
             for raw in _UNPACK_DIGEST_UINT32(_sha256(seed_text.encode("utf-8")).digest())
         ]
         if dimensions == 8:
-            l2_norm = _sqrt(sum(value * value for value in base_values))
+            l2_norm = _sqrt(_sum_squares_8(base_values))
             if l2_norm == 0.0:
                 return [0.0] * 8
             inverse_l2_norm = 1.0 / l2_norm
@@ -79,7 +93,7 @@ class DeterministicEmbeddingBackend:
         _round=_ROUND,
     ) -> list[float]:
         full_repeats, remainder = divmod(dimensions, 8)
-        squared_sum = sum(value * value for value in base_values) * full_repeats
+        squared_sum = _sum_squares_8(base_values) * full_repeats
         if remainder == 1:
             value = base_values[0]
             squared_sum += value * value
