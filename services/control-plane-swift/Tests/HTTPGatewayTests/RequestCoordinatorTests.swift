@@ -4612,6 +4612,15 @@ struct RequestCoordinatorTests {
         #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.conflicting_flags"] == "")
         #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.controller_scope"] == "request")
         #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.disabled_reason"] == "none")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.schema_version"] == "melix.serving_memory_admission.v1")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.requested_context"] == "8192")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_context"] == "8192")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.requested_batch"] == "1")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_batch"] == "1")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.memory_headroom_bytes"] == "0")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.memory_telemetry_source"] == "unknown")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.admission_reason"] == "unknown_memory_safe_default")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.fits_memory"] == "true")
 
         await workerClient.emitDecodeStarted(
             requestID: "req-gateway-speculative-defaults",

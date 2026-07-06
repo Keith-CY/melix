@@ -2091,6 +2091,16 @@ public actor RequestCoordinator {
             ModelCapabilityReceipts.resolvedAccelerationConfigAuditMetadata(resolvedAccelerationConfig),
             uniquingKeysWith: { _, receiptValue in receiptValue }
         )
+        let memoryAdmissionReceipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: model,
+            requestedContext: requestedServingContext(from: workerRequest.execution.ext),
+            requestedBatch: requestedServingBatch(from: workerRequest.execution.ext),
+            detectedMemoryBytes: detectedServingMemoryBytes(for: model)
+        )
+        accelerationMetadata.merge(
+            ModelCapabilityReceipts.servingMemoryAdmissionAuditMetadata(memoryAdmissionReceipt),
+            uniquingKeysWith: { _, receiptValue in receiptValue }
+        )
         workerRequest.execution.ext.merge(
             accelerationMetadata,
             uniquingKeysWith: { _, receiptValue in receiptValue }
@@ -2147,6 +2157,65 @@ public actor RequestCoordinator {
             return normalized
         }
         return defaultActiveKVQuantProfile
+    }
+
+    private func requestedServingContext(from executionExt: [String: String]) -> UInt32? {
+        for key in [
+            "melix.gateway.context_length",
+            "melix.gateway.requested_context",
+            "melix.serving.memory_admission.requested_context",
+        ] {
+            if let value = parsePositiveUInt32(executionExt[key]) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func requestedServingBatch(from executionExt: [String: String]) -> UInt32 {
+        let values = [
+            parsePositiveUInt32(executionExt["melix.gateway.max_concurrent_requests"]),
+            parsePositiveUInt32(executionExt["melix.gateway.prefill_batch_size"]),
+            parsePositiveUInt32(executionExt["melix.gateway.completion_batch_size"]),
+        ].compactMap { $0 }
+        return values.min() ?? 1
+    }
+
+    private func detectedServingMemoryBytes(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> UInt64? {
+        for key in [
+            "melix.serving.memory.available_bytes",
+            "melix.serving.memory.detected_memory_bytes",
+            "melix.device.memory_total_bytes",
+        ] {
+            if let value = parsePositiveUInt64(model.settings.ext[key]) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func parsePositiveUInt32(_ rawValue: String?) -> UInt32? {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty,
+              let value = UInt32(rawValue),
+              value > 0
+        else {
+            return nil
+        }
+        return value
+    }
+
+    private func parsePositiveUInt64(_ rawValue: String?) -> UInt64? {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty,
+              let value = UInt64(rawValue),
+              value > 0
+        else {
+            return nil
+        }
+        return value
     }
 
     private func isContinuousBatchEligible(
