@@ -771,11 +771,13 @@ struct MelixCLIRunnerTests {
     @Test("json metric placeholders sanitize scalar names without changing token shape")
     func jsonMetricPlaceholdersSanitizeScalarNamesWithoutChangingTokenShape() {
         let placeholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.json_encode-ms")
+        let unicodePlaceholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.測試-ms")
 
         #expect(placeholder.token.hasPrefix("__MELIX_METRIC_melix_cli_json_encode_ms_"))
         #expect(placeholder.token.hasSuffix("__"))
         #expect(placeholder.jsonLiteral == "\"\(placeholder.token)\"")
         #expect(placeholder.jsonLiteralData == Data(placeholder.jsonLiteral.utf8))
+        #expect(unicodePlaceholder.token.hasPrefix("__MELIX_METRIC_melix_cli_測試_ms_"))
     }
 
     @Test("settings show resolves precedence and reports source metadata")
