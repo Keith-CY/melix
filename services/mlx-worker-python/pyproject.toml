@@ -33,7 +33,7 @@ audio = [
   "mlx-audio==0.4.4",
 ]
 synthetic-data = [
-  "data-designer>=0.5.9,<0.7",
+  "data-designer>=0.5.9,<0.8",
 ]
 
 [tool.pytest.ini_options]
