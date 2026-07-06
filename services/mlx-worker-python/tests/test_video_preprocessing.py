@@ -467,3 +467,18 @@ def test_prepare_video_input_rejects_invalid_contracts(
 def test_validate_video_uri_accepts_parsed_and_string_remote_references() -> None:
     video_preprocessing._validate_video_uri(_parse_video_reference("https://example.com/demo.mov"))
     video_preprocessing._validate_video_uri("https://123-example.com/demo.mov")
+
+
+def test_validate_video_uri_public_host_fast_path_skips_non_plain_parser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_non_plain_parser(authority: str) -> None:  # pragma: no cover - regression only
+        raise AssertionError(f"public host should stay on the fast path: {authority}")
+
+    monkeypatch.setattr(
+        video_preprocessing,
+        "_validate_non_plain_remote_video_reference",
+        fail_non_plain_parser,
+    )
+
+    video_preprocessing._validate_video_uri("https://example.com/demo.mov")
