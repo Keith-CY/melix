@@ -146,7 +146,7 @@ def measure_failed_partition(*, segment_count: int, failed_modulus: int, samples
 def main() -> int:
     train_count = int(os.environ.get("MELIX_DATASET_QUALITY_LENGTHS_TRAIN_ROWS", "12000"))
     validation_count = int(os.environ.get("MELIX_DATASET_QUALITY_LENGTHS_VALIDATION_ROWS", "3000"))
-    samples = int(os.environ.get("MELIX_DATASET_QUALITY_LENGTHS_SAMPLES", "7"))
+    samples = int(os.environ.get("MELIX_DATASET_QUALITY_LENGTHS_SAMPLES", "25"))
     segment_count = int(os.environ.get("MELIX_DATASET_FAILED_PARTITION_SEGMENTS", "15000"))
     failed_modulus = int(os.environ.get("MELIX_DATASET_FAILED_PARTITION_MODULUS", "5"))
     metrics = measure(train_count=train_count, validation_count=validation_count, samples=samples)

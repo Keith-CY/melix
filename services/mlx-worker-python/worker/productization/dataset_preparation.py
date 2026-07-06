@@ -1802,11 +1802,10 @@ def _sample_output_length_stats(
     validation_rows: list[dict[str, Any]],
 ) -> tuple[int, int, int]:
     lengths: list[int] = []
-    _append_sample_output_lengths(lengths, train_rows, validation_rows)
+    output_length_total = _append_sample_output_lengths(lengths, train_rows, validation_rows)
     length_count = len(lengths)
     if not length_count:
         return 0, 0, 0
-    output_length_total = sum(lengths)
     lengths.sort()
     index = min(length_count - 1, int(round((length_count - 1) * 0.95)))
     return length_count, output_length_total, lengths[index]
@@ -1816,19 +1815,22 @@ def _append_sample_output_lengths(
     lengths: list[int],
     train_rows: list[dict[str, Any]],
     validation_rows: list[dict[str, Any]],
-) -> None:
-    _append_rows_output_lengths(lengths, train_rows)
-    _append_rows_output_lengths(lengths, validation_rows)
+) -> int:
+    return _append_rows_output_lengths(lengths, train_rows) + _append_rows_output_lengths(
+        lengths,
+        validation_rows,
+    )
 
 
 def _append_rows_output_lengths(
     lengths: list[int],
     rows: list[dict[str, Any]],
-) -> None:
+) -> int:
     append = lengths.append
     len_ = len
     str_ = str
     missing = _MISSING
+    output_length_total = 0
     for row in rows:
         completion = row.get("completion", missing)
         if completion is missing:
@@ -1847,11 +1849,15 @@ def _append_rows_output_lengths(
                 else:
                     total += len_(str_(content))
             append(total)
+            output_length_total += total
         else:
             if type(completion) is str:
-                append(len_(completion))
+                length = len_(completion)
             else:
-                append(len_(str_(completion)))
+                length = len_(str_(completion))
+            append(length)
+            output_length_total += length
+    return output_length_total
 
 
 def _p95(values: list[int]) -> int:
