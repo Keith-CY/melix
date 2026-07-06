@@ -4659,6 +4659,53 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("serving memory admission uses gateway max concurrent sequences")
+    func servingMemoryAdmissionUsesGatewayMaxConcurrentSequences() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: SchedulerReadModel(),
+            metricsStore: MetricsStore(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-memory-admission-sequences",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "3",
+                    "melix.gateway.prefill_batch_size": "4",
+                    "melix.gateway.completion_batch_size": "5",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.requested_batch"] == "3")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_batch"] == "3")
+
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-memory-admission-sequences",
+            decodeHandle: decodeRequest.decodeHandle
+        )
+        await workerClient.emitToken(requestID: "req-memory-admission-sequences", text: "batch")
+        await workerClient.finishDecode(requestID: "req-memory-admission-sequences")
+        _ = await consumer.result
+    }
+
     @Test("unsupported speculative draft is rejected before worker dispatch")
     func unsupportedSpeculativeDraftIsRejectedBeforeWorkerDispatch() async throws {
         let workerClient = PhaseAwareWorkerClient()

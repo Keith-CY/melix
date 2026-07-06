@@ -2174,7 +2174,10 @@ public actor RequestCoordinator {
 
     private func requestedServingBatch(from executionExt: [String: String]) -> UInt32 {
         let values = [
-            parsePositiveUInt32(executionExt["melix.gateway.max_concurrent_requests"]),
+            parsePositiveUInt32(
+                executionExt["melix.gateway.max_concurrent_sequences"]
+                    ?? executionExt["melix.gateway.max_concurrent_requests"]
+            ),
             parsePositiveUInt32(executionExt["melix.gateway.prefill_batch_size"]),
             parsePositiveUInt32(executionExt["melix.gateway.completion_batch_size"]),
         ].compactMap { $0 }
