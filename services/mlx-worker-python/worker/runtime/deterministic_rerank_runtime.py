@@ -41,11 +41,14 @@ class DeterministicRerankRuntime:
             query_token_set=query_token_set,
         )
         document_score_cache: dict[str, float] = {}
+        document_score_cache_get = document_score_cache.get
         scores: list[float] = []
+        scores_append = scores.append
+        family_score = family.score
         for document in documents:
-            score = document_score_cache.get(document)
+            score = document_score_cache_get(document)
             if score is None:
-                score = family.score(
+                score = family_score(
                     backend,
                     query,
                     document,
@@ -54,5 +57,5 @@ class DeterministicRerankRuntime:
                     query_token_set=query_token_set,
                 )
                 document_score_cache[document] = score
-            scores.append(score)
+            scores_append(score)
         return scores
