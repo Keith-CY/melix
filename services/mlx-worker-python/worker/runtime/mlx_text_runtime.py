@@ -80,6 +80,7 @@ class RuntimeTokenEvent:
     cache_hit_mode: str | None = None
     recovered_prefix_tokens: int | None = None
     cache_fallback_reason: str | None = None
+    cache_hit_tier: str | None = None
 
 
 @dataclass(slots=True)
@@ -998,6 +999,139 @@ def _declared_kwargs(callable_obj: Any, names: tuple[str, ...]) -> tuple[str, ..
     return tuple(name for name in names if _callable_accepts_kwarg(callable_obj, name))
 
 
+_SESSION_CACHE_DEFAULT_BLOCK_SIZE = 64
+
+
+@dataclass(frozen=True)
+class _SessionCacheContext:
+    session_id: str
+    model_id: str
+    model_revision: str
+    block_size: int
+    acceleration_mode: str
+    cache_mode: str
+    force_fallback: bool
+
+
+def _session_cache_context(execution_ext: dict[str, str] | None) -> _SessionCacheContext:
+    """Parse the session-scoped prefix-cache fields shared by all text decode paths."""
+    ext = execution_ext or {}
+    session_id = str(ext.get("_melix.session_id", "") or "")
+    model_id = str(ext.get("_melix.model_id", "") or "")
+    model_revision = str(ext.get("_melix.model_revision", "") or "")
+    # An unset proto field arrives as "0"; treat "0"/"" as "use the default"
+    # rather than letting max(1, int("0")) collapse to a degenerate 1-token block.
+    raw_block_size = str(ext.get("_melix.block_size", "") or "").strip()
+    if raw_block_size in ("", "0"):
+        block_size = _SESSION_CACHE_DEFAULT_BLOCK_SIZE
+    else:
+        try:
+            block_size = int(raw_block_size)
+        except (ValueError, TypeError):
+            block_size = _SESSION_CACHE_DEFAULT_BLOCK_SIZE
+        if block_size < 1:
+            block_size = _SESSION_CACHE_DEFAULT_BLOCK_SIZE
+    acceleration_mode = str(ext.get("_melix.acceleration_mode", "") or "")
+    # Cache mode flows from the request; unspecified ("", "0") stores as a
+    # standard tiered cache. A rotating value is preserved so find_lcp's
+    # rotating-exclusion gate can reject the stored entry on the next turn.
+    cache_mode = str(ext.get("_melix.cache_mode", "") or "")
+    if not cache_mode or cache_mode in ("0", "CACHE_MODE_UNSPECIFIED"):
+        cache_mode = "CACHE_MODE_TIERED"
+    # Debug-only fallback hook: never honored from a live request unless the
+    # operator has explicitly enabled test cache hooks for the process.
+    force_fallback = (
+        _truthy_string(os.environ.get("MELIX_ENABLE_TEST_CACHE_HOOKS"))
+        and ext.get("_test.force_cache_fallback", "").lower() in ("1", "true", "yes")
+    )
+    return _SessionCacheContext(
+        session_id=session_id,
+        model_id=model_id,
+        model_revision=model_revision,
+        block_size=block_size,
+        acceleration_mode=acceleration_mode,
+        cache_mode=cache_mode,
+        force_fallback=force_fallback,
+    )
+
+
+def _prompt_encode_add_special_tokens(tokenizer: Any, prompt: str) -> bool:
+    return getattr(tokenizer, "bos_token", None) is None or not prompt.startswith(
+        str(getattr(tokenizer, "bos_token", "") or "")
+    )
+
+
+def _standard_stream_event(
+    response: Any,
+    cumulative_raw_text: str,
+) -> tuple[RuntimeTokenEvent | None, str]:
+    """Build one RuntimeTokenEvent from a stream_generate response chunk.
+
+    Returns (None, unchanged_raw_text) for chunks that carry neither text nor a
+    finish reason, mirroring the historical skip behavior of generate_tokens.
+    """
+    text = getattr(response, "text", "")
+    finish_reason = getattr(response, "finish_reason", None)
+    if not text and finish_reason is None:
+        return None, cumulative_raw_text
+    response_raw_text = getattr(response, "raw_text", None)
+    if response_raw_text is None:
+        cumulative_raw_text += str(text or "")
+        raw_text = cumulative_raw_text
+    else:
+        raw_text = response_raw_text
+    event = RuntimeTokenEvent(
+        text=text,
+        raw_text=raw_text,
+        token_ids=_int_tuple(
+            _first_present(
+                getattr(response, "token_ids", None),
+                getattr(response, "tokens", None),
+                getattr(response, "token", None),
+                getattr(response, "token_id", None),
+            )
+        ),
+        token_logprobs=_float_tuple(
+            _first_present(
+                getattr(response, "token_logprobs", None),
+                getattr(response, "logprobs", None),
+                getattr(response, "logprob", None),
+            )
+        ),
+        token_bytes=_bytes_value(
+            _first_present(
+                getattr(response, "token_bytes", None),
+                getattr(response, "byte_fallback_bytes", None),
+            )
+        ),
+        parser_observation=str(getattr(response, "parser_observation", "") or ""),
+        prompt_tokens=getattr(response, "prompt_tokens", None),
+        completion_tokens=getattr(response, "generation_tokens", None),
+        prompt_tps=getattr(response, "prompt_tps", None),
+        generation_tps=getattr(response, "generation_tps", None),
+        peak_memory=getattr(response, "peak_memory", None),
+        finish_reason=finish_reason,
+        speculative_acceptance_rate=getattr(response, "speculative_acceptance_rate", None),
+        speculative_rollback_rate=getattr(response, "speculative_rollback_rate", None),
+        speculative_accepted_tokens=getattr(response, "speculative_accepted_tokens", None),
+        speculative_rejected_tokens=getattr(response, "speculative_rejected_tokens", None),
+        speculative_fallback_count=getattr(response, "speculative_fallback_count", None),
+        speculative_num_draft_tokens=getattr(response, "speculative_num_draft_tokens", None),
+        speculative_draft_model_configured=getattr(
+            response,
+            "speculative_draft_model_configured",
+            None,
+        ),
+        speculative_draft_propose_ms=getattr(response, "speculative_draft_propose_ms", None),
+        speculative_target_verify_ms=getattr(response, "speculative_target_verify_ms", None),
+        dflash_enabled=getattr(response, "dflash_enabled", None),
+        dflash_block_size=getattr(response, "dflash_block_size", None),
+        dflash_rollback_count=getattr(response, "dflash_rollback_count", None),
+        dflash_target_hidden_layers=getattr(response, "dflash_target_hidden_layers", None),
+    )
+    return event, cumulative_raw_text
+
+
 class AutoMLXBackend:
     runtime_name = "mlx-unavailable"
 
@@ -1007,9 +1141,11 @@ class AutoMLXBackend:
         load_fn=None,
         stream_generate_fn=None,
         sampler_factory=None,
+        prompt_cache_factory=None,
     ) -> None:
         self._stream_stop_kwarg = ""
         self._sampler_penalty_kwargs: tuple[str, ...] = ()
+        self._prompt_cache_factory = prompt_cache_factory
         if load_fn is not None and stream_generate_fn is not None and sampler_factory is not None:
             self._available = True
             self._error = None
@@ -1185,6 +1321,38 @@ class AutoMLXBackend:
             )
             return
 
+        cache_ctx = self._session_prompt_cache_plan(loaded_model, execution_ext)
+        if cache_ctx is not None:
+            yield from self._generate_session_cached_tokens(
+                loaded_model,
+                prompt,
+                sampler=sampler,
+                max_tokens=max_tokens,
+                stream_kwargs=stream_kwargs,
+                cancel_event=cancel_event,
+                cache_ctx=cache_ctx,
+            )
+            return
+
+        yield from self._stream_standard_events(
+            loaded_model,
+            prompt,
+            sampler=sampler,
+            max_tokens=max_tokens,
+            stream_kwargs=stream_kwargs,
+            cancel_event=cancel_event,
+        )
+
+    def _stream_standard_events(
+        self,
+        loaded_model,
+        prompt: str,
+        *,
+        sampler,
+        max_tokens: int,
+        stream_kwargs: dict[str, Any],
+        cancel_event,
+    ) -> Iterable[RuntimeTokenEvent]:
         cumulative_raw_text = ""
         for response in self._stream_generate_fn(
             loaded_model["model"],
@@ -1196,65 +1364,189 @@ class AutoMLXBackend:
         ):
             if cancel_event.is_set():
                 return
-            text = getattr(response, "text", "")
-            finish_reason = getattr(response, "finish_reason", None)
-            if not text and finish_reason is None:
+            event, cumulative_raw_text = _standard_stream_event(response, cumulative_raw_text)
+            if event is None:
                 continue
-            response_raw_text = getattr(response, "raw_text", None)
-            if response_raw_text is None:
-                cumulative_raw_text += str(text or "")
-                raw_text = cumulative_raw_text
-            else:
-                raw_text = response_raw_text
-            yield RuntimeTokenEvent(
-                text=text,
-                raw_text=raw_text,
-                token_ids=_int_tuple(
-                    _first_present(
-                        getattr(response, "token_ids", None),
-                        getattr(response, "tokens", None),
-                        getattr(response, "token", None),
-                        getattr(response, "token_id", None),
-                    )
-                ),
-                token_logprobs=_float_tuple(
-                    _first_present(
-                        getattr(response, "token_logprobs", None),
-                        getattr(response, "logprobs", None),
-                        getattr(response, "logprob", None),
-                    )
-                ),
-                token_bytes=_bytes_value(
-                    _first_present(
-                        getattr(response, "token_bytes", None),
-                        getattr(response, "byte_fallback_bytes", None),
-                    )
-                ),
-                parser_observation=str(getattr(response, "parser_observation", "") or ""),
-                prompt_tokens=getattr(response, "prompt_tokens", None),
-                completion_tokens=getattr(response, "generation_tokens", None),
-                prompt_tps=getattr(response, "prompt_tps", None),
-                generation_tps=getattr(response, "generation_tps", None),
-                peak_memory=getattr(response, "peak_memory", None),
-                finish_reason=finish_reason,
-                speculative_acceptance_rate=getattr(response, "speculative_acceptance_rate", None),
-                speculative_rollback_rate=getattr(response, "speculative_rollback_rate", None),
-                speculative_accepted_tokens=getattr(response, "speculative_accepted_tokens", None),
-                speculative_rejected_tokens=getattr(response, "speculative_rejected_tokens", None),
-                speculative_fallback_count=getattr(response, "speculative_fallback_count", None),
-                speculative_num_draft_tokens=getattr(response, "speculative_num_draft_tokens", None),
-                speculative_draft_model_configured=getattr(
-                    response,
-                    "speculative_draft_model_configured",
-                    None,
-                ),
-                speculative_draft_propose_ms=getattr(response, "speculative_draft_propose_ms", None),
-                speculative_target_verify_ms=getattr(response, "speculative_target_verify_ms", None),
-                dflash_enabled=getattr(response, "dflash_enabled", None),
-                dflash_block_size=getattr(response, "dflash_block_size", None),
-                dflash_rollback_count=getattr(response, "dflash_rollback_count", None),
-                dflash_target_hidden_layers=getattr(response, "dflash_target_hidden_layers", None),
+            yield event
+
+    def _session_prompt_cache_plan(
+        self,
+        loaded_model,
+        execution_ext: dict[str, str] | None,
+    ) -> _SessionCacheContext | None:
+        """Decide whether this request can use session-scoped prefix KV reuse.
+
+        Returns the parsed cache context when a session id is present, the
+        active stream_generate accepts an explicit prompt_cache, the tokenizer
+        can encode, and a prompt-cache factory is resolvable; None keeps the
+        request on the plain uncached path.
+        """
+        ctx = _session_cache_context(execution_ext)
+        if not ctx.session_id:
+            return None
+        if not _callable_accepts_kwarg(self._stream_generate_fn, "prompt_cache"):
+            return None
+        tokenizer = loaded_model.get("tokenizer") if isinstance(loaded_model, dict) else None
+        if tokenizer is None or not hasattr(tokenizer, "encode"):
+            return None
+        if self._resolve_prompt_cache_factory() is None:
+            return None
+        return ctx
+
+    def _resolve_prompt_cache_factory(self):
+        if self._prompt_cache_factory is not None:
+            return self._prompt_cache_factory
+        try:
+            from mlx_lm.models.cache import make_prompt_cache
+        except (ModuleNotFoundError, ImportError):
+            return None
+        self._prompt_cache_factory = make_prompt_cache
+        return make_prompt_cache
+
+    def _generate_session_cached_tokens(
+        self,
+        loaded_model,
+        prompt: str,
+        *,
+        sampler,
+        max_tokens: int,
+        stream_kwargs: dict[str, Any],
+        cancel_event,
+        cache_ctx: _SessionCacheContext,
+    ) -> Iterable[RuntimeTokenEvent]:
+        """Standard decode with session prefix KV reuse.
+
+        Mirrors the native-MTP path's store contract: entries hold prompt-only
+        cache state keyed by session, LCP hits replay only the token suffix,
+        and the refreshed prompt state is put back so multi-turn conversations
+        accumulate reusable context.
+        """
+        tokenizer = loaded_model["tokenizer"]
+        model = loaded_model["model"]
+        prompt_tokens = list(
+            tokenizer.encode(
+                prompt,
+                add_special_tokens=_prompt_encode_add_special_tokens(tokenizer, prompt),
             )
+        )
+        if not prompt_tokens:
+            return
+
+        prefix_store = _get_prefix_store()
+        lcp = prefix_store.find_lcp(
+            prompt_tokens,
+            cache_ctx.model_id,
+            cache_ctx.model_revision,
+            cache_ctx.block_size,
+            acceleration_mode=cache_ctx.acceleration_mode,
+            force_fallback=cache_ctx.force_fallback,
+        )
+        entry_to_release = lcp.entry
+        try:
+            use_lcp = (
+                lcp.mode != "none"
+                and lcp.entry is not None
+                and lcp.entry.cache_snapshot is not None
+            )
+            prompt_cache = None
+            input_tokens = list(prompt_tokens)
+            if use_lcp:
+                assert lcp.entry is not None
+                restored = _clone_cache_snapshot(lcp.entry.cache_snapshot)
+                # The snapshot holds KV state for the full stored prompt; trim
+                # the tail beyond the validated common prefix so the suffix
+                # replays onto correctly aligned state.
+                trim_tokens = len(lcp.entry.token_ids) - lcp.recovered_prefix_tokens
+                input_tokens = list(lcp.suffix_token_ids)
+                if not input_tokens:
+                    # Exact hit: hold the last prompt token out of the reused
+                    # state so decode has an input token to step from.
+                    trim_tokens += 1
+                    input_tokens = [int(prompt_tokens[-1])]
+                if restored is not None and _trim_restored_cache(restored, trim_tokens):
+                    prompt_cache = restored
+                else:
+                    use_lcp = False
+                    input_tokens = list(prompt_tokens)
+                    # Clear the tracker before releasing so the finally block
+                    # can never double-release even if release() raises here.
+                    entry = entry_to_release
+                    entry_to_release = None
+                    if entry is not None:
+                        prefix_store.release(entry)
+            if prompt_cache is None:
+                factory = self._resolve_prompt_cache_factory()
+                try:
+                    prompt_cache = factory(model) if factory is not None else None
+                except Exception:
+                    prompt_cache = None
+            if prompt_cache is None:
+                yield from self._stream_standard_events(
+                    loaded_model,
+                    prompt,
+                    sampler=sampler,
+                    max_tokens=max_tokens,
+                    stream_kwargs=stream_kwargs,
+                    cancel_event=cancel_event,
+                )
+                return
+
+            reused_tokens = len(prompt_tokens) - len(input_tokens)
+            cache_hit_mode = lcp.mode if use_lcp else "none"
+            cache_fallback_reason = "" if use_lcp else (lcp.fallback_reason or "cache_reuse_unavailable")
+            cache_hit_tier = (lcp.tier or None) if use_lcp else None
+
+            stored = False
+            cumulative_raw_text = ""
+            for response in self._stream_generate_fn(
+                model,
+                tokenizer,
+                input_tokens,
+                max_tokens=max_tokens,
+                sampler=sampler,
+                prompt_cache=prompt_cache,
+                **stream_kwargs,
+            ):
+                if cancel_event.is_set():
+                    return
+                if not stored:
+                    # The first response implies prefill completed: the cache
+                    # holds exactly the prompt state. Store the full prompt so
+                    # the next turn's LCP recovers the whole conversation.
+                    stored = True
+                    snapshot = _clone_cache_snapshot(prompt_cache)
+                    if snapshot is not None:
+                        prefix_store.put(
+                            session_id=cache_ctx.session_id,
+                            token_ids=list(prompt_tokens),
+                            cache_snapshot=snapshot,
+                            cache_mode=cache_ctx.cache_mode,
+                            model_id=cache_ctx.model_id,
+                            model_revision=cache_ctx.model_revision,
+                            block_size=cache_ctx.block_size,
+                            total_bytes=_estimate_cache_bytes(prompt_cache),
+                            acceleration_mode=cache_ctx.acceleration_mode,
+                        )
+                event, cumulative_raw_text = _standard_stream_event(response, cumulative_raw_text)
+                if event is None:
+                    continue
+                event = replace(event, prompt_tokens=len(prompt_tokens))
+                if event.finish_reason is not None:
+                    event = replace(
+                        event,
+                        cache_hit_mode=cache_hit_mode,
+                        recovered_prefix_tokens=reused_tokens,
+                        cache_fallback_reason=cache_fallback_reason,
+                        cache_hit_tier=cache_hit_tier,
+                    )
+                yield event
+        finally:
+            if entry_to_release is not None:
+                try:
+                    prefix_store.release(entry_to_release)
+                except Exception:
+                    pass
+            prefix_store.flush_deferred_clear()
 
     def _generate_native_mtp_batch_tokens(
         self,
@@ -1288,9 +1580,7 @@ class AutoMLXBackend:
             tokenizer = TokenizerWrapper(tokenizer)
             loaded_model["tokenizer"] = tokenizer
 
-        add_special_tokens = getattr(tokenizer, "bos_token", None) is None or not prompt.startswith(
-            str(getattr(tokenizer, "bos_token", "") or "")
-        )
+        add_special_tokens = _prompt_encode_add_special_tokens(tokenizer, prompt)
         encode_started_at = time.perf_counter()
         prompt_tokens = list(tokenizer.encode(prompt, add_special_tokens=add_special_tokens))
         prompt_encode_ms = (time.perf_counter() - encode_started_at) * 1000.0
@@ -1304,36 +1594,14 @@ class AutoMLXBackend:
         if callable(reset):
             reset()
 
-        _ext = execution_ext or {}
-        _session_id = str(_ext.get("_melix.session_id", "") or "")
-        _model_id = str(_ext.get("_melix.model_id", "") or "")
-        _model_revision = str(_ext.get("_melix.model_revision", "") or "")
-        _DEFAULT_BLOCK_SIZE = 64
-        # An unset proto field arrives as "0"; treat "0"/"" as "use the default"
-        # rather than letting max(1, int("0")) collapse to a degenerate 1-token block.
-        _raw_block_size = str(_ext.get("_melix.block_size", "") or "").strip()
-        if _raw_block_size in ("", "0"):
-            _block_size = _DEFAULT_BLOCK_SIZE
-        else:
-            try:
-                _block_size = int(_raw_block_size)
-            except (ValueError, TypeError):
-                _block_size = _DEFAULT_BLOCK_SIZE
-            if _block_size < 1:
-                _block_size = _DEFAULT_BLOCK_SIZE
-        _acceleration_mode = str(_ext.get("_melix.acceleration_mode", "") or "")
-        # Cache mode flows from the request; unspecified ("", "0") stores as a
-        # standard tiered cache. A rotating value is preserved so find_lcp's
-        # rotating-exclusion gate can reject the stored entry on the next turn.
-        _cache_mode = str(_ext.get("_melix.cache_mode", "") or "")
-        if not _cache_mode or _cache_mode in ("0", "CACHE_MODE_UNSPECIFIED"):
-            _cache_mode = "CACHE_MODE_TIERED"
-        # Debug-only fallback hook: never honored from a live request unless the
-        # operator has explicitly enabled test cache hooks for the process.
-        _force_fallback = (
-            _truthy_string(os.environ.get("MELIX_ENABLE_TEST_CACHE_HOOKS"))
-            and _ext.get("_test.force_cache_fallback", "").lower() in ("1", "true", "yes")
-        )
+        _cache_ctx = _session_cache_context(execution_ext)
+        _session_id = _cache_ctx.session_id
+        _model_id = _cache_ctx.model_id
+        _model_revision = _cache_ctx.model_revision
+        _block_size = _cache_ctx.block_size
+        _acceleration_mode = _cache_ctx.acceleration_mode
+        _cache_mode = _cache_ctx.cache_mode
+        _force_fallback = _cache_ctx.force_fallback
         _prefix_store = _get_prefix_store()
 
         _lcp: _LCPResult | None = None
@@ -1484,10 +1752,12 @@ class AutoMLXBackend:
                         _cache_hit_mode = _lcp.mode if _lcp is not None else "none"
                         _recovered_prefix_tokens = _lcp.recovered_prefix_tokens if _lcp is not None else 0
                         _cache_fallback_reason = _lcp.fallback_reason if _lcp is not None else "no_session_id"
+                        _cache_hit_tier = (_lcp.tier or None) if _lcp is not None else None
                     else:
                         _cache_hit_mode = None
                         _recovered_prefix_tokens = None
                         _cache_fallback_reason = None
+                        _cache_hit_tier = None
                     yield RuntimeTokenEvent(
                         text=text,
                         raw_text=cumulative_raw_text,
@@ -1529,6 +1799,7 @@ class AutoMLXBackend:
                         cache_hit_mode=_cache_hit_mode,
                         recovered_prefix_tokens=_recovered_prefix_tokens,
                         cache_fallback_reason=_cache_fallback_reason,
+                        cache_hit_tier=_cache_hit_tier,
                     )
                     if finish_reason is not None:
                         return
