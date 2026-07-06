@@ -187,7 +187,18 @@ def _validate_parsed_video_uri(reference: ParsedVideoReference) -> None:
         authority = reference.authority
         if not authority:
             raise VideoPreprocessError("Remote video URI requires a host.")
-        if _is_plain_allowed_remote_authority(authority):
+        first_character = authority[0]
+        if (
+            first_character != "["
+            and not first_character.isdigit()
+            and "@" not in authority
+            and ":" not in authority
+            and (
+                len(authority) < len("localhost")
+                or authority[-1] not in {"t", "T"}
+                or not _authority_mentions_localhost(authority.lower())
+            )
+        ):
             return
         _validate_non_plain_remote_video_reference(authority)
         return
