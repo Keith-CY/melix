@@ -301,7 +301,7 @@ def _report_matrix_roles(
     runs = _dict_list(report.get("runs"))
     targets = _dict_list(report.get("targets"))
     metrics = _dict_list(report.get("metrics"))
-    run_kind_values: frozenset[str] | None = None
+    run_kind_values: set[str] | None = None
     probe_phases: set[str] | None = None
     run_kind_only_rule = _run_kind_only_rule
     run_kind_rule_matches = _run_kind_rule_matches
@@ -340,7 +340,7 @@ def _run_kind_only_rule(rule: dict[str, object]) -> bool:
     )
 
 
-def _run_kind_rule_matches(run_kinds: object, run_kind_values: frozenset[str]) -> bool:
+def _run_kind_rule_matches(run_kinds: object, run_kind_values: AbstractSet[str]) -> bool:
     if isinstance(run_kinds, tuple):
         if len(run_kinds) == 1:
             run_kind = run_kinds[0]
@@ -356,7 +356,7 @@ def _run_kind_rule_matches(run_kinds: object, run_kind_values: frozenset[str]) -
     return not _string_frozenset(run_kinds).isdisjoint(run_kind_values)
 
 
-def _report_run_kind_values(runs: list[dict[str, object]]) -> frozenset[str]:
+def _report_run_kind_values(runs: list[dict[str, object]]) -> set[str]:
     run_kind_key = "run_kind"
     values: set[str] = set()
     values_add = values.add
@@ -367,7 +367,7 @@ def _report_run_kind_values(runs: list[dict[str, object]]) -> frozenset[str]:
             values_add(run_kind)
         else:
             values_add(to_string(run_kind))
-    return frozenset(values)
+    return values
 
 
 def _rule_matches_report(
