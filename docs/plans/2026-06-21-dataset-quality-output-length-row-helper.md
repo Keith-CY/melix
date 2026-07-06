@@ -10,6 +10,8 @@ The affected path is covered by the registered PR-scoped probe `dataset-quality-
 
 `_append_sample_output_lengths()` previously iterated over a temporary `(train_rows, validation_rows)` tuple and kept the per-row extraction loop nested under that outer loop. This slice keeps output semantics unchanged while moving the row loop into `_append_rows_output_lengths()` and calling it once for train rows and once for validation rows. The goal is to remove the outer tuple iteration from the hot path and keep local `append`/`str` bindings scoped to the direct row pass.
 
+A 2026-07-06 follow-up keeps the same row helper and returns the accumulated output-length total while appending each length. `_sample_output_length_stats()` uses that inline total instead of rescanning the collected lengths with `sum()` before sorting for p95, preserving output semantics while removing one full pass over the hot length list. The registered probe default sample count also increases from 7 to 25 so the short dataset-quality timing path is less sensitive to single-sample scheduler noise in CI and local comparisons.
+
 ## Verification Plan
 
 1. Run the registered local probe on `origin/main` before the change and on `HEAD` after the change.
