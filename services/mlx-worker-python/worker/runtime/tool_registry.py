@@ -512,9 +512,11 @@ def agentic_tool_index_metadata() -> dict[str, ToolIndexMetadata]:
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
     copy_tool_config = _copy_tool_config
-    if names is None or names is BUILTIN_AGENTIC_TOOL_NAMES or names == BUILTIN_AGENTIC_TOOL_NAMES:
+    if names is None or names is BUILTIN_AGENTIC_TOOL_NAMES:
         return copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
     if isinstance(names, tuple):
+        if names == BUILTIN_AGENTIC_TOOL_NAMES:
+            return copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
         cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(names)
         if cached_config is not None:
             return copy_tool_config(cached_config)
