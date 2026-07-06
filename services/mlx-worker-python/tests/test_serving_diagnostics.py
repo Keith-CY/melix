@@ -504,6 +504,52 @@ def test_serving_diagnostics_effective_config_derives_capability_receipt_from_me
     }
 
 
+def test_serving_diagnostics_effective_config_materializes_control_plane_capability_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-control-plane-serving-capability",
+        invocation={},
+        effective_config={
+            "execution_ext": {
+                "melix.serving.capability.schema_version": (
+                    "melix.serving_capability_receipt.v1"
+                ),
+                "melix.serving.capability.capabilities": "generate_text",
+                "melix.serving.capability.input_modalities": "text",
+                "melix.serving.capability.output_modalities": "text",
+                "melix.serving.capability.acceleration_profile": "throughput",
+                "melix.serving.capability.requested_mode": "speculative_decode",
+                "melix.serving.capability.resolved_mode": "speculative_decode",
+                "melix.serving.capability.optional_dependency_source": "not_required",
+                "melix.serving.capability.unsupported_reason": "none",
+                "melix.serving.capability.ignored_flags": "",
+                "melix.serving.capability.fallback_policy": "observable_fallback",
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config["serving_capability"] == {
+        "schema_version": "melix.serving_capability_receipt.v1",
+        "capabilities": ["generate_text"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "acceleration_profile": "throughput",
+        "requested_mode": "speculative_decode",
+        "resolved_mode": "speculative_decode",
+        "optional_dependency_source": "not_required",
+        "unsupported_reason": "none",
+        "ignored_flags": [],
+        "fallback_policy": "observable_fallback",
+    }
+
+
 def test_serving_diagnostics_capability_receipt_normalizes_sequence_metadata() -> None:
     receipt = (
         serving_diagnostics_module._serving_capability_receipt_from_audit_metadata(

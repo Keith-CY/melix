@@ -214,6 +214,20 @@ ignored; an empty `ignored_flags` value records an empty list. If any required
 capability metadata key is missing, the writer leaves the original metadata in
 place and does not synthesize a partial top-level `serving_capability` receipt.
 
+The control-plane profile preflight path emits these metadata keys after model
+capability and acceleration admission have already been resolved. The emitted
+receipt uses model catalog task/modality metadata, the acceleration capability
+receipt, and the serving profile admission receipt. For metadata-only
+preflight rows, `optional_dependency_source` is `not_required`; rejected
+explicit acceleration flags use `fallback_policy=fail_closed`, while admitted
+requests use `fallback_policy=observable_fallback`. Bundle writing still must
+not perform its own model discovery or optional dependency probes.
+
+For this emitter, `ignored_flags` can include `draft_model_id` when a speculative
+draft is missing or refused, `acceleration_mode` when the requested mode or
+acceleration capability is unsupported, and `acceleration_profile` when profile
+admission is refused after acceleration capability admission succeeds.
+
 When a proxy, workspace-ingest, or worker path has already evaluated network
 fetch safety, `effective-config.json` may include a `network_fetch_policy`
 receipt and `privacy_audit_counters`. These receipts are diagnostics-only:

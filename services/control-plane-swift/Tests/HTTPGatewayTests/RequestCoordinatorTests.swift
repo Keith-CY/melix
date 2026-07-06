@@ -4592,6 +4592,17 @@ struct RequestCoordinatorTests {
         #expect(prefillRequest.execution.ext["melix.acceleration.valid_draft_model_ids"] == "melix-dev-text")
         #expect(prefillRequest.execution.ext["melix.acceleration.profile.profile_admission_status"] == "admitted")
         #expect(prefillRequest.execution.ext["melix.acceleration.profile.proof_matrix_id"] == "profile-proof-throughput-v1")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.schema_version"] == "melix.serving_capability_receipt.v1")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.capabilities"] == "generate_text")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.input_modalities"] == "text")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.output_modalities"] == "text")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.acceleration_profile"] == "throughput")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.requested_mode"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.resolved_mode"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.optional_dependency_source"] == "not_required")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.unsupported_reason"] == "none")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.ignored_flags"] == "")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.fallback_policy"] == "observable_fallback")
 
         await workerClient.emitDecodeStarted(
             requestID: "req-gateway-speculative-defaults",

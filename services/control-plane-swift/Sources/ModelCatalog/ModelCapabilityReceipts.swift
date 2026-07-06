@@ -260,7 +260,8 @@ public enum ModelCapabilityReceipts {
 
     public static func accelerationAuditMetadata(
         _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
-        profileReceipt: ServingProfileAdmissionReceipt? = nil
+        profileReceipt: ServingProfileAdmissionReceipt? = nil,
+        model: Melix_Controlplane_V1_ModelSummary? = nil
     ) -> [String: String] {
         var metadata = [
             "melix.capability.receipt_schema": schemaVersion,
@@ -281,7 +282,41 @@ public enum ModelCapabilityReceipts {
         if let profileReceipt {
             metadata.merge(profileAdmissionAuditMetadata(profileReceipt), uniquingKeysWith: { _, newValue in newValue })
         }
+        if let model {
+            metadata.merge(
+                servingCapabilityAuditMetadata(
+                    receipt,
+                    profileReceipt: profileReceipt,
+                    model: model
+                ),
+                uniquingKeysWith: { _, newValue in newValue }
+            )
+        }
         return metadata
+    }
+
+    public static func servingCapabilityAuditMetadata(
+        _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
+        profileReceipt: ServingProfileAdmissionReceipt?,
+        model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String: String] {
+        let capabilities = servingCapabilities(for: model)
+        let inputModalities = servingInputModalities(for: model)
+        let outputModalities = servingOutputModalities(for: capabilities)
+        let unsupportedReason = unsupportedReasonIdentifier(receipt.unsupportedReason)
+        return [
+            "melix.serving.capability.schema_version": "melix.serving_capability_receipt.v1",
+            "melix.serving.capability.capabilities": capabilities.joined(separator: ","),
+            "melix.serving.capability.input_modalities": inputModalities.joined(separator: ","),
+            "melix.serving.capability.output_modalities": outputModalities.joined(separator: ","),
+            "melix.serving.capability.acceleration_profile": servingCapabilityAccelerationProfile(profileReceipt),
+            "melix.serving.capability.requested_mode": accelerationModeIdentifier(receipt.requestedAccelerationMode),
+            "melix.serving.capability.resolved_mode": accelerationModeIdentifier(receipt.resolvedAccelerationMode),
+            "melix.serving.capability.optional_dependency_source": "not_required",
+            "melix.serving.capability.unsupported_reason": unsupportedReason,
+            "melix.serving.capability.ignored_flags": servingCapabilityIgnoredFlags(receipt, profileReceipt: profileReceipt).joined(separator: ","),
+            "melix.serving.capability.fallback_policy": servingCapabilityFallbackPolicy(receipt, profileReceipt: profileReceipt),
+        ]
     }
 
     public static func profileAdmissionAuditMetadata(
@@ -297,6 +332,55 @@ public enum ModelCapabilityReceipts {
             "melix.acceleration.profile.fallback_reason": receipt.fallbackReason,
             "melix.acceleration.profile.recovery_hint": receipt.recoveryHint,
         ]
+    }
+
+    private static func servingCapabilityAccelerationProfile(
+        _ profileReceipt: ServingProfileAdmissionReceipt?
+    ) -> String {
+        guard let profileReceipt else {
+            return ServingAccelerationProfiles.defaultProfileID
+        }
+        if profileReceipt.isAdmitted {
+            return profileReceipt.effectiveProfile
+        }
+        return profileReceipt.requestedProfile
+    }
+
+    private static func servingCapabilityFallbackPolicy(
+        _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
+        profileReceipt: ServingProfileAdmissionReceipt?
+    ) -> String {
+        if receipt.state != .capabilitySupported {
+            return "fail_closed"
+        }
+        if let profileReceipt, !profileReceipt.isAdmitted {
+            return "fail_closed"
+        }
+        return "observable_fallback"
+    }
+
+    private static func servingCapabilityIgnoredFlags(
+        _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
+        profileReceipt: ServingProfileAdmissionReceipt?
+    ) -> [String] {
+        var flags: [String] = []
+        switch receipt.unsupportedReason {
+        case .unsupportedReasonDraftModelNotAllowed, .unsupportedReasonMissingDraftModel:
+            flags.append("draft_model_id")
+        case .unsupportedReasonUnsupportedMode,
+             .unsupportedReasonTargetDisabled,
+             .unsupportedReasonDrafterDisabled,
+             .unsupportedReasonRuntimeUnavailable:
+            flags.append("acceleration_mode")
+        default:
+            break
+        }
+        if receipt.state == .capabilitySupported,
+           let profileReceipt,
+           !profileReceipt.isAdmitted {
+            flags.append("acceleration_profile")
+        }
+        return flags
     }
 
     public static func unsupportedReasonIdentifier(
@@ -477,6 +561,112 @@ public enum ModelCapabilityReceipts {
         receipt.recoveryHint = supported ? "" : "Choose a model whose capability receipt lists \(capability) as supported."
         receipt.metadata = metadata
         return receipt
+    }
+
+    private static func servingCapabilities(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String] {
+        let supportedTasks = model.supportedTasks.map(normalizedTaskIdentifier).filter { !$0.isEmpty }
+        let capabilityClass = ModelCatalogPresentation.capabilityIdentifier(for: model)
+        var capabilities: [String] = []
+        if supportsTask(supportedTasks, matching: ["generate", "completion", "generate_text"])
+            || capabilityClass == "text"
+            || capabilityClass == "vlm" {
+            capabilities.append("generate_text")
+        }
+        if supportsTask(supportedTasks, matching: ["vlm", "generate_multimodal"])
+            || capabilityClass == "vlm" {
+            capabilities.append("generate_multimodal")
+        }
+        if supportsTask(supportedTasks, matching: ["embed", "embedding", "embed_text"]) {
+            capabilities.append("embed_text")
+        }
+        if supportsTask(supportedTasks, matching: ["rerank", "reranking", "rerank_text"]) {
+            capabilities.append("rerank_text")
+        }
+        if supportsTask(supportedTasks, matching: ["transcribe", "transcription", "transcribe_audio"]) {
+            capabilities.append("transcribe_audio")
+        }
+        if supportsTask(supportedTasks, matching: ["speak", "speech", "speak_text"]) {
+            capabilities.append("speak_text")
+        }
+        if supportsTask(supportedTasks, matching: ["image_generate", "image_generation", "generate_image"]) {
+            capabilities.append("image_generate")
+        }
+        if supportsTask(supportedTasks, matching: ["image_edit", "edit_image"]) {
+            capabilities.append("image_edit")
+        }
+        return capabilities
+    }
+
+    private static func supportsTask(_ taskIdentifiers: [String], matching aliases: [String]) -> Bool {
+        let aliasIdentifiers = aliases.map(normalizedTaskIdentifier)
+        return taskIdentifiers.contains { taskIdentifier in
+            aliasIdentifiers.contains { aliasIdentifier in
+                taskIdentifier == aliasIdentifier
+                    || (allowsQualifiedTaskSuffix(aliasIdentifier) && taskIdentifier.hasSuffix("_\(aliasIdentifier)"))
+            }
+        }
+    }
+
+    private static func allowsQualifiedTaskSuffix(_ aliasIdentifier: String) -> Bool {
+        aliasIdentifier.contains("_")
+            || ["embedding", "reranking", "transcription", "speech"].contains(aliasIdentifier)
+    }
+
+    private static func normalizedTaskIdentifier(_ value: String?) -> String {
+        var result = ""
+        var lastWasSeparator = false
+        for scalar in normalized(value).unicodeScalars {
+            if CharacterSet.alphanumerics.contains(scalar) {
+                result.append(String(scalar))
+                lastWasSeparator = false
+            } else if !lastWasSeparator {
+                result.append("_")
+                lastWasSeparator = true
+            }
+        }
+        return result.split(separator: "_").joined(separator: "_")
+    }
+
+    private static func servingInputModalities(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String] {
+        canonicalServingList(model.supportedModalities)
+    }
+
+    private static func servingOutputModalities(
+        for capabilities: [String]
+    ) -> [String] {
+        var outputModalities: [String] = []
+        if capabilities.contains("generate_text")
+            || capabilities.contains("generate_multimodal")
+            || capabilities.contains("embed_text")
+            || capabilities.contains("rerank_text")
+            || capabilities.contains("transcribe_audio") {
+            outputModalities.append("text")
+        }
+        if capabilities.contains("speak_text") {
+            outputModalities.append("audio")
+        }
+        if capabilities.contains("image_generate")
+            || capabilities.contains("image_edit") {
+            outputModalities.append("image")
+        }
+        return outputModalities
+    }
+
+    private static func canonicalServingList(_ values: [String]) -> [String] {
+        let valueSet = Set(values.map(normalized).filter { !$0.isEmpty })
+        let preferredOrder = [
+            "text",
+            "image",
+            "video",
+            "audio",
+        ]
+        var result = preferredOrder.filter(valueSet.contains)
+        result.append(contentsOf: valueSet.subtracting(preferredOrder).sorted())
+        return result
     }
 
     private static func supportedAccelerationModes(

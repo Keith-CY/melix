@@ -2080,7 +2080,8 @@ public actor RequestCoordinator {
         workerRequest.execution.ext.merge(
             ModelCapabilityReceipts.accelerationAuditMetadata(
                 receipt,
-                profileReceipt: validation.profileReceipt
+                profileReceipt: validation.profileReceipt,
+                model: model
             ),
             uniquingKeysWith: { _, receiptValue in receiptValue }
         )
