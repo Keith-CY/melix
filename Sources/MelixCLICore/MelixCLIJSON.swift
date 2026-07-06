@@ -11,6 +11,18 @@ enum MelixCLIJSONMetricPatch {
     private static let metricLiteralLocale = Locale(identifier: "en_US_POSIX")
     private static let metricNameAlphanumerics = CharacterSet.alphanumerics
 
+    private static func asciiMetricNameScalarOrUnderscore(_ scalar: Unicode.Scalar) -> Unicode.Scalar? {
+        guard scalar.isASCII else {
+            return nil
+        }
+        switch scalar {
+        case "0"..."9", "A"..."Z", "a"..."z":
+            return scalar
+        default:
+            return "_"
+        }
+    }
+
     struct Placeholder {
         let token: String
         let jsonLiteral: String
@@ -27,9 +39,13 @@ enum MelixCLIJSONMetricPatch {
         var safeMetricName = String()
         safeMetricName.reserveCapacity(metricName.count)
         for scalar in metricName.unicodeScalars {
-            safeMetricName.unicodeScalars.append(
-                metricNameAlphanumerics.contains(scalar) ? scalar : "_"
-            )
+            if let replacement = asciiMetricNameScalarOrUnderscore(scalar) {
+                safeMetricName.unicodeScalars.append(replacement)
+            } else {
+                safeMetricName.unicodeScalars.append(
+                    metricNameAlphanumerics.contains(scalar) ? scalar : "_"
+                )
+            }
         }
         return Placeholder(token: "__MELIX_METRIC_\(safeMetricName)_\(UUID().uuidString)__")
     }
