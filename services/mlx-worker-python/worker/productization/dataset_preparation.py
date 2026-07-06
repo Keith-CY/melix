@@ -1745,9 +1745,11 @@ def _quality_summary(
         validation_rows,
     )
     quality_controls = ingest_receipt.get("quality_control_summary", {})
-    source_record_count = float(quality_controls.get("source_record_count", 0) or 0)
-    exact_dedup_count = float(quality_controls.get("exact_dedup_count", 0) or 0)
-    fuzzy_dedup_count = float(quality_controls.get("fuzzy_dedup_count", 0) or 0)
+    quality_controls_get = quality_controls.get
+    source_record_count = float(quality_controls_get("source_record_count", 0) or 0)
+    exact_dedup_count = float(quality_controls_get("exact_dedup_count", 0) or 0)
+    fuzzy_dedup_count = float(quality_controls_get("fuzzy_dedup_count", 0) or 0)
+    pii_mask_count = int(quality_controls_get("pii_mask_count", 0) or 0)
     blocking_reasons = ["failed_generation"] if failed_count else []
     return {
         "schema_version": DATASET_QUALITY_SUMMARY_SCHEMA_VERSION,
@@ -1759,7 +1761,7 @@ def _quality_summary(
         "failed_count": failed_count,
         "train_count": train_count,
         "validation_count": validation_count,
-        "pii_mask_count": int(quality_controls.get("pii_mask_count", 0) or 0),
+        "pii_mask_count": pii_mask_count,
         "dedup_ratio": (exact_dedup_count + fuzzy_dedup_count) / source_record_count if source_record_count else 0,
         "mean_output_length": output_length_total / output_length_count if output_length_count else 0,
         "p95_output_length": p95_output_length,
