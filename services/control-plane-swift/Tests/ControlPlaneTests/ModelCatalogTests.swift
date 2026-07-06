@@ -363,6 +363,42 @@ struct ModelCatalogTests {
         #expect(admittedDraftMetadata["melix.serving.capability.fallback_policy"] == "observable_fallback")
     }
 
+    @Test("serving capability audit metadata canonicalizes task aliases")
+    func servingCapabilityAuditMetadataCanonicalizesTaskAliases() async throws {
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "alias-heavy-model"
+        model.kind = "custom"
+        model.supportedTasks = [
+            "org.melix.generate-text",
+            "provider.generate_multimodal",
+            "embedding",
+            "reranking",
+            "transcription",
+            "speech",
+            "image-generate",
+            "image.edit",
+        ]
+        model.supportedModalities = ["audio", "image", "text"]
+
+        let validation = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .baseline,
+            draftModelID: "",
+            requestedProfileID: "balanced"
+        )
+        let metadata = ModelCapabilityReceipts.servingCapabilityAuditMetadata(
+            validation.receipt,
+            profileReceipt: validation.profileReceipt,
+            model: model
+        )
+
+        #expect(
+            metadata["melix.serving.capability.capabilities"]
+                == "generate_text,generate_multimodal,embed_text,rerank_text,transcribe_audio,speak_text,image_generate,image_edit"
+        )
+        #expect(metadata["melix.serving.capability.output_modalities"] == "text,audio,image")
+    }
+
     @Test("capability receipt validation refuses invalid drafts and inconsistent speculative metadata")
     func capabilityReceiptValidationRefusesInvalidDraftsAndInconsistentSpeculativeMetadata() async throws {
         var model = ModelCatalog.devTextModel()

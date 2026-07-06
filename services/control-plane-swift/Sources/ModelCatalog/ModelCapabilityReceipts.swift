@@ -566,39 +566,67 @@ public enum ModelCapabilityReceipts {
     private static func servingCapabilities(
         for model: Melix_Controlplane_V1_ModelSummary
     ) -> [String] {
-        let supportedTasks = Set(model.supportedTasks.map(normalized))
+        let supportedTasks = model.supportedTasks.map(normalizedTaskIdentifier).filter { !$0.isEmpty }
         let capabilityClass = ModelCatalogPresentation.capabilityIdentifier(for: model)
         var capabilities: [String] = []
-        if supportedTasks.contains("generate")
-            || supportedTasks.contains("completion")
+        if supportsTask(supportedTasks, matching: ["generate", "completion", "generate_text"])
             || capabilityClass == "text"
             || capabilityClass == "vlm" {
             capabilities.append("generate_text")
         }
-        if supportedTasks.contains("vlm")
-            || supportedTasks.contains("generate_multimodal")
+        if supportsTask(supportedTasks, matching: ["vlm", "generate_multimodal"])
             || capabilityClass == "vlm" {
             capabilities.append("generate_multimodal")
         }
-        if supportedTasks.contains("embed") {
+        if supportsTask(supportedTasks, matching: ["embed", "embedding", "embed_text"]) {
             capabilities.append("embed_text")
         }
-        if supportedTasks.contains("rerank") {
+        if supportsTask(supportedTasks, matching: ["rerank", "reranking", "rerank_text"]) {
             capabilities.append("rerank_text")
         }
-        if supportedTasks.contains("transcribe") {
+        if supportsTask(supportedTasks, matching: ["transcribe", "transcription", "transcribe_audio"]) {
             capabilities.append("transcribe_audio")
         }
-        if supportedTasks.contains("speak") {
+        if supportsTask(supportedTasks, matching: ["speak", "speech", "speak_text"]) {
             capabilities.append("speak_text")
         }
-        if supportedTasks.contains("image_generate") {
+        if supportsTask(supportedTasks, matching: ["image_generate", "image_generation", "generate_image"]) {
             capabilities.append("image_generate")
         }
-        if supportedTasks.contains("image_edit") {
+        if supportsTask(supportedTasks, matching: ["image_edit", "edit_image"]) {
             capabilities.append("image_edit")
         }
         return capabilities
+    }
+
+    private static func supportsTask(_ taskIdentifiers: [String], matching aliases: [String]) -> Bool {
+        let aliasIdentifiers = aliases.map(normalizedTaskIdentifier)
+        return taskIdentifiers.contains { taskIdentifier in
+            aliasIdentifiers.contains { aliasIdentifier in
+                taskIdentifier == aliasIdentifier
+                    || (allowsQualifiedTaskSuffix(aliasIdentifier) && taskIdentifier.hasSuffix("_\(aliasIdentifier)"))
+            }
+        }
+    }
+
+    private static func allowsQualifiedTaskSuffix(_ aliasIdentifier: String) -> Bool {
+        aliasIdentifier.contains("_")
+            || ["embedding", "reranking", "transcription", "speech"].contains(aliasIdentifier)
+    }
+
+    private static func normalizedTaskIdentifier(_ value: String?) -> String {
+        var result = ""
+        var lastWasSeparator = false
+        for scalar in normalized(value).unicodeScalars {
+            if CharacterSet.alphanumerics.contains(scalar) {
+                result.append(String(scalar))
+                lastWasSeparator = false
+            } else if !lastWasSeparator {
+                result.append("_")
+                lastWasSeparator = true
+            }
+        }
+        return result.split(separator: "_").joined(separator: "_")
     }
 
     private static func servingInputModalities(
