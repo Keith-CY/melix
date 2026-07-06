@@ -101,11 +101,12 @@ def normalize_trajectory_provenance(
     normalized: dict[str, Any] = {}
     provenance_get = provenance.get
     copy_value = _copy_trajectory_provenance_value
+    value_type_of = _TYPE
     for field in TRAJECTORY_PROVENANCE_FIELDS:
         value = provenance_get(field)
         if value is None:
             continue
-        value_type = type(value)
+        value_type = value_type_of(value)
         if value_type is str:
             if value == "":
                 continue
