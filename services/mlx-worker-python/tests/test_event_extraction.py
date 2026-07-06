@@ -139,6 +139,12 @@ def test_parse_response_json_trims_closing_fence_with_trailing_space() -> None:
     assert event_extraction_module._parse_response_json(response) == {"events": []}
 
 
+def test_parse_response_json_trims_inline_closing_fence_with_trailing_space() -> None:
+    response = '```json\n{"events": []}```   '
+
+    assert event_extraction_module._parse_response_json(response) == {"events": []}
+
+
 def test_parse_response_json_accepts_leading_whitespace_before_fence() -> None:
     response = '  \n```json\n{"events": [{"event_type": "handoff"}]}\n```'
 
