@@ -169,6 +169,19 @@ def test_parse_response_json_accepts_unfenced_json_without_pretrim_copy() -> Non
     }
 
 
+def test_parse_response_json_preserves_non_ascii_whitespace_fallback() -> None:
+    response = '\u2003{"events": [{"event_type": "unicode-space"}]}\u2003'
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "unicode-space"}]
+    }
+
+
+def test_parse_response_json_rejects_control_character_before_payload() -> None:
+    with pytest.raises(json.JSONDecodeError):
+        event_extraction_module._parse_response_json('\x00{"events": []}')
+
+
 def test_parse_response_json_leading_whitespace_object_skips_fence_prefix_checks() -> None:
     class NoFencePrefixCheck(str):
         def startswith(self, *args, **kwargs):  # pragma: no cover

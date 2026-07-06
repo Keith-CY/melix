@@ -2963,7 +2963,12 @@ def _has_only_trailing_whitespace(response_text: str, start: int, response_lengt
 def _skip_json_whitespace(response_text: str, start: int, response_length: int) -> int:
     while start < response_length:
         char = response_text[start]
-        if char in _JSON_ASCII_WHITESPACE or char.isspace():
+        if char <= " ":
+            if char in _JSON_ASCII_WHITESPACE or char.isspace():
+                start += 1
+                continue
+            break
+        if char.isspace():
             start += 1
             continue
         break
