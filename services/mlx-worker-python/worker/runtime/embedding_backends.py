@@ -69,13 +69,14 @@ class DeterministicEmbeddingBackend:
         _sha256=_SHA256,
         _sqrt=_SQRT,
         _round=_ROUND,
+        _sum_squares=_sum_squares_8,
     ) -> list[float]:
         base_values = [
             raw * _DIGEST_UINT32_SCALE - 1.0
             for raw in _UNPACK_DIGEST_UINT32(_sha256(seed_text.encode("utf-8")).digest())
         ]
         if dimensions == 8:
-            l2_norm = _sqrt(_sum_squares_8(base_values))
+            l2_norm = _sqrt(_sum_squares(base_values))
             if l2_norm == 0.0:
                 return [0.0] * 8
             inverse_l2_norm = 1.0 / l2_norm
