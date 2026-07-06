@@ -311,6 +311,12 @@ def test_report_evidence_gate_matrix_roles_keep_non_string_run_kind_match() -> N
 
 def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> None:
     report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
+    run_kind_values = report_evidence_gate_module._report_run_kind_values(
+        [{"run_kind": "serving_benchmark"}, {"run_kind": "evaluation"}]
+    )
+    assert type(run_kind_values) is set
+    assert run_kind_values == {"serving_benchmark", "evaluation"}
+
     roles = report_evidence_gate_module._report_matrix_roles(
         {"runs": [{"run_kind": "serving_benchmark"}, {"run_kind": "evaluation"}]},
         {

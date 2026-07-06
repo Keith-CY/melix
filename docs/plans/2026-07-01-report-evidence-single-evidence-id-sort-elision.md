@@ -34,6 +34,15 @@ precomputed report run-kind set instead of dispatching through the general
 `_run_kind_rule_matches` helper on every role. Multi-value, non-tuple, and
 non-string run-kind rules continue to use the existing general matching behavior.
 
+## 2026-07-06 follow-up: mutable run-kind value set
+
+This Python-only follow-up keeps the same registered probe and narrows to
+`_report_matrix_roles`. The role scanner only needs transient membership checks
+for the run kinds observed in a report, so `_report_run_kind_values` can return
+the populated `set[str]` directly instead of wrapping it in a `frozenset`. The
+set is not exposed outside the scan and remains equivalent for membership and
+`isdisjoint` checks while avoiding an extra container allocation.
+
 ## Verification plan
 
 Run the registered focused test command, changed-scope coverage command, and the
