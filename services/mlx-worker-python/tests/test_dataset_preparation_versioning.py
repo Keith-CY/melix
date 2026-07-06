@@ -7,6 +7,7 @@ import sys
 import pytest
 
 from dataset_ingest_limit_contract import exercise_dataset_ingest_limit_contract
+from worker.productization import dataset_preparation as dataset_preparation_module
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     DatasetRetryFailedRequest,
@@ -212,6 +213,20 @@ def test_dataset_quality_message_rows_skip_completion_key_lookup() -> None:
     row = MessageRow({"messages": [{"content": "hello"}, {"content": 678}, "skip-me"]})
 
     assert _sample_output_lengths([], [row]) == [8]
+
+
+def test_dataset_quality_length_stats_accumulates_total_inline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_sum(*args: object, **kwargs: object) -> int:  # pragma: no cover - regression tripwire
+        raise AssertionError("output-length stats should not rescan lengths with sum()")
+
+    monkeypatch.setattr(dataset_preparation_module, "sum", fail_sum, raising=False)
+
+    assert _sample_output_length_stats(
+        [{"completion": "abc"}, {"completion": 12345}],
+        [{"messages": [{"content": "hello"}, {"content": "world"}]}],
+    ) == (3, 18, 10)
 
 
 def test_dataset_quality_summary_reuses_train_validation_counts() -> None:
