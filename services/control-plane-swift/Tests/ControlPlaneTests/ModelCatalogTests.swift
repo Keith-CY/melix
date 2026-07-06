@@ -337,6 +337,47 @@ struct ModelCatalogTests {
         #expect(invalidDraftMetadata["melix.serving.capability.ignored_flags"] == "draft_model_id")
         #expect(invalidDraftMetadata["melix.serving.capability.fallback_policy"] == "fail_closed")
 
+        let unsupportedModeValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: ModelCatalog.devTextModel(),
+            requestedMode: .acceleratedPrefill,
+            draftModelID: "",
+            requestedProfileID: "balanced"
+        )
+        let unsupportedModeMetadata = ModelCapabilityReceipts.servingCapabilityAuditMetadata(
+            unsupportedModeValidation.receipt,
+            profileReceipt: unsupportedModeValidation.profileReceipt,
+            model: ModelCatalog.devTextModel()
+        )
+        #expect(unsupportedModeValidation.ok == false)
+        #expect(unsupportedModeMetadata["melix.serving.capability.requested_mode"] == "accelerated_prefill")
+        #expect(unsupportedModeMetadata["melix.serving.capability.resolved_mode"] == "baseline")
+        #expect(unsupportedModeMetadata["melix.serving.capability.unsupported_reason"] == "unsupported_mode")
+        #expect(unsupportedModeMetadata["melix.serving.capability.ignored_flags"] == "acceleration_mode")
+        #expect(unsupportedModeMetadata["melix.serving.capability.fallback_policy"] == "fail_closed")
+
+        var unprovenProfileModel = ModelCatalog.devTextModel()
+        unprovenProfileModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        unprovenProfileModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        unprovenProfileModel.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        unprovenProfileModel.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        let unprovenProfileValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: unprovenProfileModel,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        let unprovenProfileMetadata = ModelCapabilityReceipts.servingCapabilityAuditMetadata(
+            unprovenProfileValidation.receipt,
+            profileReceipt: unprovenProfileValidation.profileReceipt,
+            model: unprovenProfileModel
+        )
+        #expect(unprovenProfileValidation.ok == false)
+        #expect(unprovenProfileMetadata["melix.serving.capability.acceleration_profile"] == "throughput")
+        #expect(unprovenProfileMetadata["melix.serving.capability.requested_mode"] == "speculative_decode")
+        #expect(unprovenProfileMetadata["melix.serving.capability.resolved_mode"] == "speculative_decode")
+        #expect(unprovenProfileMetadata["melix.serving.capability.ignored_flags"] == "acceleration_profile")
+        #expect(unprovenProfileMetadata["melix.serving.capability.fallback_policy"] == "fail_closed")
+
         var admittedDraftModel = ModelCatalog.devTextModel()
         admittedDraftModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
         admittedDraftModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"

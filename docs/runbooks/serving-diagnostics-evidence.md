@@ -223,6 +223,11 @@ explicit acceleration flags use `fallback_policy=fail_closed`, while admitted
 requests use `fallback_policy=observable_fallback`. Bundle writing still must
 not perform its own model discovery or optional dependency probes.
 
+For this emitter, `ignored_flags` can include `draft_model_id` when a speculative
+draft is missing or refused, `acceleration_mode` when the requested mode or
+acceleration capability is unsupported, and `acceleration_profile` when profile
+admission is refused after acceleration capability admission succeeds.
+
 When a proxy, workspace-ingest, or worker path has already evaluated network
 fetch safety, `effective-config.json` may include a `network_fetch_policy`
 receipt and `privacy_audit_counters`. These receipts are diagnostics-only:
