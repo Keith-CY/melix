@@ -51,6 +51,27 @@ FIXTURE_ROOT = (
 )
 
 
+def test_export_target_diagnostics_common_phrase_fast_path_skips_regex_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(export_target_diagnostics_module, "_DIAGNOSIS_PATTERNS", ())
+    source_lines = [
+        _SourceLine(
+            source_path="logs/ollama-create.log",
+            text="runtime load failed while opening model",
+        )
+    ]
+
+    diagnoses = _diagnoses_from_excerpt(
+        source_lines,
+        {0: 1},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert [diagnosis["code"] for diagnosis in diagnoses] == [CODE_RUNTIME_LOAD_FAILED]
+    assert diagnoses[0]["matched_pattern_id"] == "runtime-load-failed-v1"
+
+
 def test_export_target_diagnostics_source_line_extension_matches_split_helper() -> None:
     lines: list[_SourceLine] = []
 
@@ -550,7 +571,7 @@ def test_export_target_diagnostics_preserves_overlap_priority_after_prior_match(
     ]
 
 
-def test_export_target_diagnostics_runtime_load_markers_skip_progress_regexes(
+def test_export_target_diagnostics_runtime_load_fast_phrase_skips_regexes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_load_pattern = next(
@@ -590,7 +611,7 @@ def test_export_target_diagnostics_runtime_load_markers_skip_progress_regexes(
     )
 
     assert [diagnosis["code"] for diagnosis in diagnoses] == [CODE_RUNTIME_LOAD_FAILED]
-    assert [expression.search.call_count for expression in expressions] == [1, 1, 1, 0, 0]
+    assert [expression.search.call_count for expression in expressions] == [0, 0, 0, 0, 0]
 
 
 def test_export_target_diagnostics_skips_secret_regexes_for_plain_path_lines(
