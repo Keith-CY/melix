@@ -2115,6 +2115,14 @@ public actor RequestCoordinator {
             validation: validation
         )
         workerRequest.execution.acceleration = featureGuardrailResolution.effectiveAcceleration
+        let guardrailReceipt = featureGuardrailResolution.receipt
+        if guardrailReceipt.effectiveCacheBudgetBytes > 0,
+           guardrailReceipt.effectiveCacheBudgetBytes != guardrailReceipt.requestedCacheBudgetBytes {
+            let requestBudgetBytes = workerRequest.execution.cacheHints.cacheMemoryBudgetBytes
+            workerRequest.execution.cacheHints.cacheMemoryBudgetBytes = requestBudgetBytes > 0
+                ? min(requestBudgetBytes, guardrailReceipt.effectiveCacheBudgetBytes)
+                : guardrailReceipt.effectiveCacheBudgetBytes
+        }
         if featureGuardrailResolution.receipt.decision == "refuse_unsafe_composition" {
             var suppressedOverrides = workerRequest.execution.ext["melix.gateway.suppressed_overrides"]?
                 .split(separator: ",")

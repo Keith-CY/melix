@@ -785,7 +785,10 @@ feature-composition guardrail decisions, and failure-stage regressions.
 The numeric feature-composition guardrail fields are policy receipts, not
 performance direction metrics. Evaluation reports aggregate them as diagnostic
 means with neutral direction. `feature_guardrail_reason` is preserved in matrix
-request exports but is not aggregated as a numeric metric.
+request exports but is not aggregated as a numeric metric. When
+`feature_guardrail_effective_cache_budget_bytes` is lower than
+`feature_guardrail_requested_cache_budget_bytes`, it reflects the per-request
+worker cache budget applied by the guardrail.
 
 Swift export decoders may default missing additive numeric and boolean probes to `0` or `false`
 when reading legacy artifacts. Consumers must treat those defaults as compatibility sentinels

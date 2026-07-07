@@ -474,11 +474,13 @@ public enum ModelCapabilityReceipts {
 
         var decision = "accept"
         var guardrailReason = "none"
+        var didCapDraftTokens = false
         if requestedNumDraftTokens > 1 {
             effectiveNumDraftTokens = 1
             effectiveAcceleration.numDraftTokens = 1
             decision = "auto_cap_draft_tokens"
             guardrailReason = "disk_streaming_speculative_fanout_cap"
+            didCapDraftTokens = true
         }
 
         let draftWeightBytes = parsedFeatureGuardrailUInt64(
@@ -506,7 +508,10 @@ public enum ModelCapabilityReceipts {
            requestedCacheBudgetBytes > 0,
            estimatedCompositionBytes > memoryThresholdBytes {
             effectiveCacheBudgetBytes = max(requestedCacheBudgetBytes / 2, minCacheBudgetBytes)
-            if decision == "accept" {
+            if didCapDraftTokens {
+                decision = "auto_cap_draft_tokens_and_tighten_cache_budget"
+                guardrailReason = "disk_streaming_speculative_fanout_cap_and_main_draft_footprint_exceeds_threshold"
+            } else {
                 decision = "tighten_cache_budget"
                 guardrailReason = "main_draft_footprint_exceeds_threshold"
             }

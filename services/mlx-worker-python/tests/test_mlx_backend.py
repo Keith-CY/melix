@@ -2240,16 +2240,24 @@ def test_generate_native_mtp_invalid_block_size_falls_back_to_default(
     loaded[mlx_text_runtime_module._NATIVE_MTP_TEXT_ACTIVE_FIELD] = True
 
     import threading
-    # Non-integer value hits the except branch.
+    # Non-integer values hit the parsing fallback branches.
     events = list(backend.generate_tokens(
         loaded, "hi", common_pb2.SamplingConfig(max_output_tokens=1), threading.Event(),
-        execution_ext={"_melix.session_id": "s", "_melix.block_size": "not-an-int"},
+        execution_ext={
+            "_melix.session_id": "s",
+            "_melix.block_size": "not-an-int",
+            "_melix.cache_memory_budget_bytes": "not-an-int",
+        },
     ))
     assert len(events) > 0
-    # Negative value parses as an int but trips the < 1 guard → default.
+    # Negative values parse as ints but trip the < 1 guards.
     events = list(backend.generate_tokens(
         loaded, "hi", common_pb2.SamplingConfig(max_output_tokens=1), threading.Event(),
-        execution_ext={"_melix.session_id": "s2", "_melix.block_size": "-5"},
+        execution_ext={
+            "_melix.session_id": "s2",
+            "_melix.block_size": "-5",
+            "_melix.cache_memory_budget_bytes": "-5",
+        },
     ))
     assert len(events) > 0
 
@@ -2360,7 +2368,7 @@ def test_native_mtp_prefill_prompt_cache_restore_runs_suffix_prefill(
 def test_generate_native_mtp_lcp_store_consulted_with_session_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Covers LCP ext-extraction and store query code paths."""
+    """Covers LCP ext-extraction, store query, and request budget write ceiling."""
     fake_core = _install_fake_mlx_core(monkeypatch)
     _install_fake_mlx_lm_cache(monkeypatch, fake_core)
 
@@ -2369,8 +2377,12 @@ def test_generate_native_mtp_lcp_store_consulted_with_session_id(
     mock_store = _pbs.PrefixBlockStore()
     monkeypatch.setattr(_pbs, "get_store", lambda *a, **kw: mock_store)
     monkeypatch.setattr(mlx_text_runtime_module, "_get_prefix_store", lambda *a, **kw: mock_store)
-    monkeypatch.setattr(mlx_text_runtime_module, "_clone_cache_snapshot", lambda cache: None)
-    monkeypatch.setattr(mlx_text_runtime_module, "_estimate_cache_bytes", lambda cache: 0)
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_clone_cache_snapshot",
+        lambda cache: [SimpleNamespace(state=[])] if cache is not None else None,
+    )
+    monkeypatch.setattr(mlx_text_runtime_module, "_estimate_cache_bytes", lambda cache: 4096)
 
     def fake_prefill(model, tokens, *, prefill_step_size, stream, restore_cache=None, restore_token_count=0):
         cache = restore_cache if restore_cache is not None else [SimpleNamespace(state=[])]
@@ -2483,6 +2495,7 @@ def test_generate_native_mtp_lcp_store_consulted_with_session_id(
                 "_melix.model_revision": "v1",
                 "_melix.block_size": "4",
                 "_melix.acceleration_mode": "",
+                "_melix.cache_memory_budget_bytes": "1024",
             },
         )
     )
@@ -2491,6 +2504,13 @@ def test_generate_native_mtp_lcp_store_consulted_with_session_id(
     final = events[-1]
     assert final.cache_hit_mode == "none"
     assert final.recovered_prefix_tokens == 0
+    lcp = mock_store.find_lcp(
+        [10, 20, 30, 40, 50, 60, 70, 80],
+        "test-model",
+        "v1",
+        4,
+    )
+    assert lcp.mode == "none"
 
 
 def test_generate_native_mtp_lcp_warm_path_uses_restored_cache(

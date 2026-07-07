@@ -283,13 +283,16 @@ load a sidecar, or re-run admission during bundle writing.
 - `composition` - `ssd_expert_streaming_x_speculative_decode` when the
   composition is active, otherwise `none`.
 - `decision` - one of `accept`, `auto_cap_draft_tokens`,
-  `tighten_cache_budget`, or `refuse_unsafe_composition`.
+  `tighten_cache_budget`, `auto_cap_draft_tokens_and_tighten_cache_budget`, or
+  `refuse_unsafe_composition`.
 - `requested_num_draft_tokens` - caller or gateway requested speculative draft
   token count.
 - `effective_num_draft_tokens` - token count admitted for the worker request.
 - `resource_fanout_estimate` - estimated serving fan-out after the guardrail.
 - `requested_cache_budget_bytes` - model requested cache budget.
-- `effective_cache_budget_bytes` - cache budget admitted after tightening.
+- `effective_cache_budget_bytes` - cache budget admitted after tightening. When
+  this is lower than `requested_cache_budget_bytes`, it has been applied to the
+  worker request through `execution.cache_hints.cache_memory_budget_bytes`.
 - `guardrail_reason` - typed reason for the decision, or `none`.
 
 Diagnostics writers may derive `feature_composition_guardrail` from namespaced

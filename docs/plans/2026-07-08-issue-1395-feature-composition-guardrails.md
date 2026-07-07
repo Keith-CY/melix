@@ -21,9 +21,12 @@ In scope:
 - Apply the guardrail in the request coordinator before worker dispatch.
 - Cap speculative draft fan-out when the composition is active.
 - Tighten the effective cache budget when the estimated main plus draft
-  footprint crosses a configured threshold.
+  footprint crosses a configured threshold, and apply that budget through the
+  worker request cache hints.
 - Downgrade unsafe compositions to baseline when no safe effective cache budget
   remains.
+- Add a per-request worker `CacheHints.cache_memory_budget_bytes` field for
+  guardrail-applied cache budgets.
 - Export guardrail request-level fields through benchmark matrix schemas and
   evaluation report aggregation.
 - Document the receipt fields and benchmark probes.
@@ -31,8 +34,7 @@ In scope:
 Out of scope:
 
 - Implementing real SSD expert streaming.
-- Changing protobuf schemas.
-- Changing sampler, attention, KV-cache, or model-load internals.
+- Changing sampler, attention, or model-load internals.
 - Claiming throughput, latency, or memory improvements.
 
 ## Receipt Contract
@@ -60,6 +62,7 @@ Otherwise it is `none`.
 - `accept`
 - `auto_cap_draft_tokens`
 - `tighten_cache_budget`
+- `auto_cap_draft_tokens_and_tighten_cache_budget`
 - `refuse_unsafe_composition`
 
 ## Policy
@@ -81,7 +84,18 @@ When the configured main plus draft footprint estimate crosses
 `melix.acceleration.feature_guardrail.memory_threshold_bytes`, the control plane
 tightens the effective cache budget to half the requested cache budget, bounded
 by `melix.acceleration.feature_guardrail.min_cache_budget_bytes`, and records
-`tighten_cache_budget` unless draft fan-out was already capped.
+`tighten_cache_budget` unless draft fan-out was already capped. If both controls
+apply, the decision is `auto_cap_draft_tokens_and_tighten_cache_budget` and the
+reason is
+`disk_streaming_speculative_fanout_cap_and_main_draft_footprint_exceeds_threshold`.
+
+When the effective cache budget is lower than the requested model cache budget,
+the request coordinator writes it to
+`execution.cache_hints.cache_memory_budget_bytes` before dispatch. The Python
+worker forwards that value to the native MTP text runtime as
+`_melix.cache_memory_budget_bytes`; the runtime treats it as a per-request LCP
+cache write ceiling and skips storing a prompt-cache snapshot whose estimated
+size exceeds the budget.
 
 When the effective cache budget is below
 `melix.acceleration.feature_guardrail.min_safe_cache_budget_bytes`, the control
@@ -108,7 +122,8 @@ Focused verification:
 
 - `xcrun swift test --no-parallel --package-path services/control-plane-swift --filter ModelCatalogTests`
 - `xcrun swift test --no-parallel --package-path services/control-plane-swift --filter RequestCoordinatorTests`
-- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --project services/mlx-worker-python --extra mlx pytest -q services/mlx-worker-python/tests/test_benchmark_schemas.py services/mlx-worker-python/tests/test_benchmark_evaluation_report.py`
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --project services/mlx-worker-python --extra mlx pytest -q services/mlx-worker-python/tests/test_benchmark_schemas.py services/mlx-worker-python/tests/test_benchmark_evaluation_report.py services/mlx-worker-python/tests/test_generate_stream.py services/mlx-worker-python/tests/test_mlx_backend.py`
+- `make proto`
 - `git diff --check`
 
 Before commit and PR:

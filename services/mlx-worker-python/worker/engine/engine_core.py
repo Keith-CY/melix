@@ -316,6 +316,10 @@ class EngineCore:
         # is 0, which the runtime must treat as "use the default", not block_size=1.
         if execution.cache_hints.preferred_block_size > 0:
             _routing_ext["_melix.block_size"] = str(execution.cache_hints.preferred_block_size)
+        if execution.cache_hints.cache_memory_budget_bytes > 0:
+            _routing_ext["_melix.cache_memory_budget_bytes"] = str(
+                execution.cache_hints.cache_memory_budget_bytes
+            )
         sampling = request.sampling
         reasoning = execution.reasoning
         request_id = execution.id.request_id
