@@ -15,12 +15,18 @@ entries and reports both aggregate diagnostic report latency and
 ## Optimization
 
 `_diagnoses_from_excerpt()` already lowercases each candidate log line and gates
-unrelated text with diagnosis markers. This slice adds a narrow fast phrase table
-for the most common literal runtime failure phrases emitted by fixtures and
+unrelated text with diagnosis markers. The first slice added a narrow fast phrase
+table for the most common literal runtime failure phrases emitted by fixtures and
 runtime smoke checks. When a phrase maps directly to a known diagnosis pattern,
 the parser emits the same diagnosis payload without walking the regex expression
 table for that line. Lines that do not hit the phrase table keep the existing
 marker and regex behavior unchanged.
+
+This follow-up slice adds an exact lowered-text lookup for those canonical
+runtime smoke failure lines before the phrase scan. Exact matches still dedupe
+previously emitted diagnosis codes and then emit the same diagnosis payload, but
+avoid the repeated ordered phrase checks on the common fixture/runtime messages.
+Non-exact log text continues through the existing phrase and regex paths.
 
 ## Verification
 
