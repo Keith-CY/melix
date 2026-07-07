@@ -1274,24 +1274,33 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
 
 
 def _classify_source_kind_name(name: str) -> str | None:
-    if name[-4:] == ".txt":
-        if len(name) >= 8 and name[-8] == "." and name[-7:-4].lower() == "pdf":
-            return "pdf"
-        if len(name) >= 9 and name[-9] == "." and name[-8:-4].lower() == "docx":
-            return "docx"
-        return "text"
-    if name[-5:] == ".text":
-        return "text"
-    if name[-3:] == ".md":
-        return "markdown"
-    if name[-3:] == ".py":
-        return "code"
-    if name[-6:] == ".jsonl":
-        return "structured_data"
-    if name[-5:] == ".json":
-        return "structured_data"
-    if name[-4:] in (".csv", ".tsv"):
-        return "structured_data"
+    if not name:
+        return None
+    last_char = name[-1]
+    if last_char == "t":
+        if name[-4:] == ".txt":
+            if len(name) >= 8 and name[-8] == "." and name[-7:-4].lower() == "pdf":
+                return "pdf"
+            if len(name) >= 9 and name[-9] == "." and name[-8:-4].lower() == "docx":
+                return "docx"
+            return "text"
+        if name[-5:] == ".text":
+            return "text"
+    elif last_char == "d":
+        if name[-3:] == ".md":
+            return "markdown"
+    elif last_char == "y":
+        if name[-3:] == ".py":
+            return "code"
+    elif last_char == "l":
+        if name[-6:] == ".jsonl":
+            return "structured_data"
+    elif last_char == "n":
+        if name[-5:] == ".json":
+            return "structured_data"
+    elif last_char == "v":
+        if name[-4:] in (".csv", ".tsv"):
+            return "structured_data"
 
     dot_index = name.rfind(".")
     if dot_index < 0:
