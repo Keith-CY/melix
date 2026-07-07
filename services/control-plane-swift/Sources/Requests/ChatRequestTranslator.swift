@@ -250,7 +250,7 @@ public extension NormalizedTextRequest {
     func mergingOpenAICompatibilityReceipts(
         _ receipts: [String: String]
     ) -> NormalizedTextRequest {
-        guard receipts.isEmpty == false else {
+        guard !receipts.isEmpty else {
             return self
         }
         var mergedReceipts = openAICompatibilityReceipts
