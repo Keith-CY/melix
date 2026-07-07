@@ -619,6 +619,32 @@ def test_export_target_diagnostics_runtime_load_fast_phrase_skips_regexes(
     assert [expression.search.call_count for expression in expressions] == [0, 0, 0, 0, 0]
 
 
+def test_export_target_diagnostics_exact_text_fast_path_skips_marker_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_marker_scan(_lowered_text: str) -> bool:  # pragma: no cover - regression guard
+        raise AssertionError("exact diagnosis text should skip marker scanning")
+
+    monkeypatch.setattr(
+        export_target_diagnostics_module,
+        "_has_diagnosis_marker",
+        fail_marker_scan,
+    )
+
+    diagnoses = _diagnoses_from_excerpt(
+        [
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text="runtime load failed while opening model",
+            ),
+        ],
+        {0: 1},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert [diagnosis["code"] for diagnosis in diagnoses] == [CODE_RUNTIME_LOAD_FAILED]
+
+
 def test_export_target_diagnostics_skips_secret_regexes_for_plain_path_lines(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
