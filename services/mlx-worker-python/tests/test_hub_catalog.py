@@ -546,6 +546,30 @@ def test_direct_explicit_size_hint_handles_common_readme_lines() -> None:
     assert hub_catalog_module._direct_explicit_size_hint_from_text("mOdel size: 12 GB") == 0
 
 
+def test_direct_size_hint_fast_paths_cache_repeated_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    hub_catalog_module._direct_card_size_hint_from_text.cache_clear()
+    hub_catalog_module._direct_explicit_size_hint_from_text.cache_clear()
+    original = hub_catalog_module._direct_size_hint_from_text
+    direct_calls: list[str] = []
+
+    def counting_direct_size_hint(text: str) -> int:
+        direct_calls.append(text)
+        return original(text)
+
+    monkeypatch.setattr(hub_catalog_module, "_direct_size_hint_from_text", counting_direct_size_hint)
+
+    for _ in range(3):
+        assert hub_catalog_module._direct_card_size_hint_from_text("Model size: 12 MB") == 12 * MB
+        assert (
+            hub_catalog_module._direct_explicit_size_hint_from_text(
+                "README\nModel size: 12 MB\nother metadata"
+            )
+            == 12 * MB
+        )
+
+    assert direct_calls == ["12 MB", "12 MB"]
+
+
 def test_weight_or_config_file_preserves_case_insensitive_matches() -> None:
     assert hub_catalog_module._is_weight_or_config_file("config.json") is True
     assert hub_catalog_module._is_weight_or_config_file("model.safetensors") is True
