@@ -684,6 +684,30 @@ struct ModelCatalogTests {
         #expect(receipt.fitsMemory == true)
     }
 
+    @Test("memory-aware serving admission does not step small-context models above their effective context")
+    func memoryAwareServingAdmissionDoesNotStepSmallContextModelsAboveEffectiveContext() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.maxContext = 1_024
+        model.settings.memoryBudgetBytes = 1_073_741_824
+        model.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+
+        let receipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: model,
+            requestedContext: nil,
+            requestedBatch: 8,
+            detectedMemoryBytes: 4_294_967_296
+        )
+
+        #expect(receipt.requestedContext == 1_024)
+        #expect(receipt.effectiveContext == 1_024)
+        #expect(receipt.requestedBatch == 8)
+        #expect(receipt.effectiveBatch == 1)
+        #expect(receipt.memoryTelemetrySource == "detected")
+        #expect(receipt.estimatedActiveBytes == 1_342_177_280)
+        #expect(receipt.admissionReason == "memory_step_down")
+        #expect(receipt.fitsMemory == true)
+    }
+
     @Test("memory-aware serving admission treats zero detected memory as telemetry")
     func memoryAwareServingAdmissionTreatsZeroDetectedMemoryAsTelemetry() async throws {
         var longContextModel = ModelCatalog.devTextModel()

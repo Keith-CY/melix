@@ -594,10 +594,16 @@ public enum ModelCapabilityReceipts {
         appendServingMemoryCandidate(
             context: effectiveContext,
             batch: 1,
+            maximumContext: effectiveContext,
             to: &candidates
         )
         for context in [defaultServingContextCap / 2, minimumServingContext] {
-            appendServingMemoryCandidate(context: context, batch: 1, to: &candidates)
+            appendServingMemoryCandidate(
+                context: context,
+                batch: 1,
+                maximumContext: effectiveContext,
+                to: &candidates
+            )
         }
         if requestedBatch == 1 {
             return candidates.filter { $0.context < effectiveContext }
@@ -608,9 +614,10 @@ public enum ModelCapabilityReceipts {
     private static func appendServingMemoryCandidate(
         context: UInt32,
         batch: UInt32,
+        maximumContext: UInt32,
         to candidates: inout [(context: UInt32, batch: UInt32)]
     ) {
-        let context = max(context, minimumServingContext)
+        let context = min(max(context, minimumServingContext), maximumContext)
         let batch = max(batch, 1)
         guard !candidates.contains(where: { $0.context == context && $0.batch == batch }) else {
             return
