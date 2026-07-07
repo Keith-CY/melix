@@ -173,6 +173,77 @@ def test_cold_store_budget_evicts_oldest(tmp_path: Path) -> None:
     assert meta is not None and matched == 4  # newest kept
 
 
+def test_cold_store_index_reload_drops_orphaned_meta(tmp_path: Path) -> None:
+    first = _make_cold(tmp_path)
+    first.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+    snapshot_files = list((tmp_path / "cold").glob("*.kv.safetensors"))
+    assert len(snapshot_files) == 1
+    snapshot_files[0].unlink()
+
+    second = _make_cold(tmp_path)
+    meta, _ = second.match([1, 2, 3, 4], "m1", "r1", 4)
+    assert meta is None
+    # The orphaned sidecar is removed so restarts stop rescanning it.
+    assert list((tmp_path / "cold").glob("*.meta.json")) == []
+
+
+def test_promotion_accounts_live_bytes_not_file_size(tmp_path: Path) -> None:
+    cold = _make_cold(tmp_path)
+    estimated: list[Any] = []
+
+    def estimator(snapshot: Any) -> int:
+        estimated.append(snapshot)
+        return 4096
+
+    store = PrefixBlockStore(
+        max_memory_bytes=1500,
+        min_session_count=1,
+        cold_store=cold,
+        bytes_estimator=estimator,
+    )
+    _put(store, "s1", [1, 2, 3, 4, 5, 6, 7, 8], total_bytes=1000)
+    _put(store, "s2", [9] * 8, total_bytes=1000)  # evicts + demotes s1
+    store.flush_deferred_clear()
+
+    result = store.find_lcp([1, 2, 3, 4, 5, 6, 7, 8], "m1", "r1", 4)
+    assert result.tier == "cold"
+    assert result.entry is not None
+    assert estimated  # the estimator ran on the restored snapshot
+    # Hot budget accounts the estimated live footprint, not the tiny JSON
+    # file size the fake serializer produced.
+    assert result.entry.total_bytes == 4096
+    assert store.total_bytes() >= 4096
+    store.release(result.entry)
+
+
+def test_promotion_falls_back_to_file_size_when_estimate_is_zero(tmp_path: Path) -> None:
+    cold = _make_cold(tmp_path)
+    store = PrefixBlockStore(
+        max_memory_bytes=1500,
+        min_session_count=1,
+        cold_store=cold,
+        bytes_estimator=lambda snapshot: 0,
+    )
+    _put(store, "s1", [1, 2, 3, 4, 5, 6, 7, 8], total_bytes=1000)
+    _put(store, "s2", [9] * 8, total_bytes=1000)
+    store.flush_deferred_clear()
+
+    result = store.find_lcp([1, 2, 3, 4, 5, 6, 7, 8], "m1", "r1", 4)
+    assert result.tier == "cold"
+    assert result.entry is not None
+    assert result.entry.total_bytes > 0  # serialized size, better than zero
+    store.release(result.entry)
+
+
 def test_cold_store_reloads_index_from_disk(tmp_path: Path) -> None:
     first = _make_cold(tmp_path)
     first.store(

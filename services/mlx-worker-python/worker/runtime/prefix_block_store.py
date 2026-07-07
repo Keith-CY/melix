@@ -289,6 +289,10 @@ class ColdPrefixStore:
                 session_id = str(payload["session_id"])
                 snapshot_path = self._root / f"{_session_digest(session_id)}.kv.safetensors"
                 if not snapshot_path.is_file():
+                    # Orphaned sidecar (crash between snapshot write and meta
+                    # write, or manual snapshot deletion) — drop it so restarts
+                    # stop rescanning it.
+                    _remove_quietly(meta_path)
                     continue
                 self._index[session_id] = ColdEntryMeta(
                     session_id=session_id,
@@ -326,6 +330,42 @@ class ColdPrefixStore:
             _remove_quietly(meta.meta_path)
 
 
+def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
+    """Estimate the live in-memory bytes of a prompt-cache layer list.
+
+    Supports both .state (older mlx-lm) and .keys/.values (newer KVCache)
+    layer shapes; tensors report via .nbytes or size*itemsize.
+    """
+    if not isinstance(cache_snapshot, list):
+        return 0
+    total = 0
+    for layer_cache in cache_snapshot:
+        tensors: list[Any] = []
+        state = getattr(layer_cache, "state", None)
+        if state is not None:
+            if isinstance(state, list | tuple):
+                tensors.extend(state)
+            else:
+                tensors.append(state)
+        else:
+            keys = getattr(layer_cache, "keys", None)
+            values = getattr(layer_cache, "values", None)
+            if keys is not None:
+                tensors.append(keys)
+            if values is not None:
+                tensors.append(values)
+        for tensor in tensors:
+            nbytes = getattr(tensor, "nbytes", None)
+            if nbytes is None:
+                size = getattr(tensor, "size", None)
+                itemsize = getattr(tensor, "itemsize", None)
+                if size is not None and itemsize is not None:
+                    nbytes = int(size) * int(itemsize)
+            if nbytes is not None:
+                total += int(nbytes)
+    return total
+
+
 def _session_digest(session_id: str) -> str:
     return hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32]
 
@@ -357,11 +397,13 @@ class PrefixBlockStore:
         min_session_count: int = _MIN_SESSION_FLOOR,
         on_cleanup: Any = None,
         cold_store: ColdPrefixStore | None = None,
+        bytes_estimator: Any = None,
     ) -> None:
         self._max_memory_bytes = max_memory_bytes
         self._min_session_count = min_session_count
         self._on_cleanup = on_cleanup  # callable(entry) invoked on final cleanup
         self._cold_store = cold_store
+        self._bytes_estimator = bytes_estimator or estimate_cache_snapshot_bytes
         self._lock = threading.Lock()
         self._sessions: OrderedDict[str, _BlockEntry] = OrderedDict()
         self._total_bytes = 0
@@ -562,6 +604,16 @@ class PrefixBlockStore:
         snapshot = self._cold_store.restore(meta)
         if snapshot is None:
             return None
+        # The hot tier budgets live memory: account the promoted entry by its
+        # restored in-memory footprint, not the serialized file size recorded
+        # in the cold sidecar (safetensors on disk is usually smaller than the
+        # resident MLX arrays, which would under-count and under-evict).
+        try:
+            live_bytes = int(self._bytes_estimator(snapshot))
+        except Exception:
+            live_bytes = 0
+        if live_bytes <= 0:
+            live_bytes = meta.total_bytes
         self.put(
             session_id=meta.session_id,
             token_ids=list(meta.token_ids),
@@ -570,7 +622,7 @@ class PrefixBlockStore:
             model_id=meta.model_id,
             model_revision=meta.model_revision,
             block_size=meta.block_size,
-            total_bytes=meta.total_bytes,
+            total_bytes=live_bytes,
             acceleration_mode=meta.acceleration_mode,
         )
         entry = self.acquire(meta.session_id)

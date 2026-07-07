@@ -17,6 +17,7 @@ from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.prefix_block_store import (
     LCPResult as _LCPResult,
     clone_cache_snapshot as _clone_cache_snapshot,
+    estimate_cache_snapshot_bytes as _estimate_cache_snapshot_bytes,
     get_store as _get_prefix_store,
 )
 from worker.runtime.runtime_utils import (
@@ -497,35 +498,7 @@ def _trim_restored_cache(prompt_cache: Any, trim_tokens: int) -> bool:
 
 
 def _estimate_cache_bytes(prompt_cache: Any) -> int:
-    if not isinstance(prompt_cache, list):
-        return 0
-    total = 0
-    for layer_cache in prompt_cache:
-        # Support both .state (older mlx-lm) and .keys/.values (newer KVCache)
-        tensors: list[Any] = []
-        state = getattr(layer_cache, "state", None)
-        if state is not None:
-            if isinstance(state, list | tuple):
-                tensors.extend(state)
-            else:
-                tensors.append(state)
-        else:  # pragma: no cover - newer KVCache interface
-            keys = getattr(layer_cache, "keys", None)
-            values = getattr(layer_cache, "values", None)
-            if keys is not None:
-                tensors.append(keys)
-            if values is not None:
-                tensors.append(values)
-        for tensor in tensors:
-            nbytes = getattr(tensor, "nbytes", None)
-            if nbytes is None:
-                size = getattr(tensor, "size", None)
-                itemsize = getattr(tensor, "itemsize", None)
-                if size is not None and itemsize is not None:
-                    nbytes = int(size) * int(itemsize)
-            if nbytes is not None:
-                total += int(nbytes)
-    return total
+    return _estimate_cache_snapshot_bytes(prompt_cache)
 
 
 def _tokenizer_eos_stop_tokens(tokenizer: Any) -> list[list[int]] | None:
@@ -1381,8 +1354,9 @@ class AutoMLXBackend:
         can encode, and a prompt-cache factory is resolvable; None keeps the
         request on the plain uncached path.
         """
-        ctx = _session_cache_context(execution_ext)
-        if not ctx.session_id:
+        # Fast path: requests without a session id must not pay any context
+        # parsing on the per-request hot loop.
+        if not execution_ext or not execution_ext.get("_melix.session_id"):
             return None
         if not _callable_accepts_kwarg(self._stream_generate_fn, "prompt_cache"):
             return None
@@ -1390,6 +1364,9 @@ class AutoMLXBackend:
         if tokenizer is None or not hasattr(tokenizer, "encode"):
             return None
         if self._resolve_prompt_cache_factory() is None:
+            return None
+        ctx = _session_cache_context(execution_ext)
+        if not ctx.session_id:
             return None
         return ctx
 
