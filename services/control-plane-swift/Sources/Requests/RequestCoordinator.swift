@@ -644,6 +644,7 @@ public actor RequestCoordinator {
     private let cacheMetadataStore: CacheMetadataStore?
     private let routeSelectionReceiptWriter: JSONLReceiptWriter?
     private let now: @Sendable () -> Date
+    private let servingMemoryBytesProvider: @Sendable () -> UInt64?
     private let lifecyclePolicy: ConnectionLifecyclePolicy
     private var activeWorkerClients: [String: any WorkerClient]
     private var executionHubs: [String: ResumableExecutionHub]
@@ -676,6 +677,7 @@ public actor RequestCoordinator {
         cacheMetadataStore: CacheMetadataStore? = nil,
         routeSelectionReceiptPath: String? = ProcessInfo.processInfo.environment["MELIX_ROUTE_SELECTION_RECEIPT_PATH"],
         lifecyclePolicy: ConnectionLifecyclePolicy = ConnectionLifecyclePolicy.fromEnvironment(),
+        servingMemoryBytesProvider: @escaping @Sendable () -> UInt64? = { nil },
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.workerRegistry = workerRegistry
@@ -693,6 +695,7 @@ public actor RequestCoordinator {
             : JSONLReceiptWriter(path: trimmedReceiptPath)
         self.lifecyclePolicy = lifecyclePolicy
         self.now = now
+        self.servingMemoryBytesProvider = servingMemoryBytesProvider
         self.activeWorkerClients = [:]
         self.executionHubs = [:]
         self.disconnectGraceTasks = [:]
@@ -711,6 +714,11 @@ public actor RequestCoordinator {
         self.prefixAffinityCheckCount = 0
         self.prefixAffinityHitCount = 0
         self.workerDispatchReadinessCheckedAt = [:]
+    }
+
+    public static func processInfoPhysicalMemoryBytes() -> UInt64? {
+        let bytes = ProcessInfo.processInfo.physicalMemory
+        return bytes > 0 ? bytes : nil
     }
 
     public func resumeChatCompletion(requestID: String) async throws -> CoordinatedChatExecution {
@@ -2201,7 +2209,7 @@ public actor RequestCoordinator {
                 return value
             }
         }
-        return nil
+        return servingMemoryBytesProvider()
     }
 
     private func parsePositiveUInt32(_ rawValue: String?) -> UInt32? {

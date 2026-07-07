@@ -9004,6 +9004,59 @@ struct ControlPlaneServiceTests {
         #expect(generated.execution.ext["melix.gateway.batch.disabled_reason"] == "incompatible_batch_size")
     }
 
+    @Test("startChat default coordinator uses process memory telemetry")
+    func startChatDefaultCoordinatorUsesProcessMemoryTelemetry() async throws {
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.memoryBudgetBytes = 0
+        textModel.settings.ext["melix.serving.memory.bytes_per_token"] = "1"
+        let modelCatalog = ModelCatalog(seedModels: [textModel])
+        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-process-memory-telemetry"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-process-memory-telemetry",
+                finishReason: "stop",
+                assistant: "done",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-process-memory-telemetry" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")]
+            )
+        )
+        _ = try await Array(execution.stream)
+        let generated = try #require(await textClient.lastGenerateRequest)
+
+        #expect(generated.execution.ext["melix.serving.memory_admission.memory_telemetry_source"] == "detected")
+        let headroomString = try #require(
+            generated.execution.ext["melix.serving.memory_admission.memory_headroom_bytes"]
+        )
+        let headroomBytes = try #require(UInt64(headroomString))
+        let estimatedActiveString = try #require(
+            generated.execution.ext["melix.serving.memory_admission.estimated_active_bytes"]
+        )
+        let estimatedActiveBytes = try #require(UInt64(estimatedActiveString))
+        let detectedMemoryBytes = try #require(RequestCoordinator.processInfoPhysicalMemoryBytes())
+        let usableMemoryBytes = detectedMemoryBytes > headroomBytes
+            ? detectedMemoryBytes - headroomBytes
+            : 0
+
+        #expect(headroomBytes > 0)
+        #expect(estimatedActiveBytes > 0)
+        #expect(
+            generated.execution.ext["melix.serving.memory_admission.fits_memory"]
+                == String(estimatedActiveBytes <= usableMemoryBytes)
+        )
+    }
+
     @Test("startChat propagates explicit reasoning and template flags before worker dispatch")
     func startChatPropagatesExplicitReasoningAndTemplateFlagsBeforeWorkerDispatch() async throws {
         let modelCatalog = ModelCatalog()
