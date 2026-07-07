@@ -81,6 +81,8 @@ _GEMMA4_QAT_AUTOMATIC_SCOPE = "mlx-community-gemma4-q4"
 _GEMMA4_QAT_BASE_MODEL_MARKER = "base_model:"
 _GEMMA4_QAT_BASE_MODEL_MARKER_LEN = len(_GEMMA4_QAT_BASE_MODEL_MARKER)
 _GEMMA4_QAT_BASE_MODEL_STRIP_CHARS = " \t\r\n'\"[]"
+_GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER = "\n  'base_model:"
+_GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER_LEN = len(_GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER)
 _GEMMA4_QAT_SIZE_NAMES = {
     "e2b": "E2B",
     "e4b": "E4B",
@@ -2031,6 +2033,25 @@ def _gemma4_qat_source_model(
 ) -> str:
     marker = _GEMMA4_QAT_BASE_MODEL_MARKER
     marker_len = _GEMMA4_QAT_BASE_MODEL_MARKER_LEN
+    quoted_marker_index = readme_text.find(_GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER)
+    if quoted_marker_index >= 0:
+        quoted_marker_start = quoted_marker_index + len("\n  '")
+        marker_index = readme_text.find(marker)
+        while 0 <= marker_index < quoted_marker_start:
+            line_start = readme_text.rfind("\n", 0, marker_index) + 1
+            if not readme_text[line_start:marker_index].strip(" \t\r'\""):
+                break
+            marker_index = readme_text.find(marker, marker_index + 1)
+        if marker_index != quoted_marker_start:
+            quoted_marker_index = -1
+    if quoted_marker_index >= 0:
+        value_start = quoted_marker_index + _GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER_LEN
+        line_end = readme_text.find("\n", value_start)
+        if line_end < 0:
+            line_end = len(readme_text)
+        value = readme_text[value_start:line_end].strip(_GEMMA4_QAT_BASE_MODEL_STRIP_CHARS)
+        if value:
+            return value
     search_start = 0
     while True:
         marker_index = readme_text.find(marker, search_start)
