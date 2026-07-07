@@ -60,12 +60,16 @@ def test_export_target_diagnostics_common_phrase_fast_path_skips_regex_table(
         _SourceLine(
             source_path="logs/ollama-create.log",
             text="runtime load failed while opening model",
-        )
+        ),
+        _SourceLine(
+            source_path="logs/ollama-create.log",
+            text="runtime load failed while opening model",
+        ),
     ]
 
     diagnoses = _diagnoses_from_excerpt(
         source_lines,
-        {0: 1},
+        {0: 1, 1: 2},
         "diagnostics/redacted-log-excerpt.txt",
     )
 
