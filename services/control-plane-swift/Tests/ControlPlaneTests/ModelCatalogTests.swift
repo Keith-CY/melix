@@ -583,6 +583,153 @@ struct ModelCatalogTests {
         #expect(unverifiedProfileConfig.disabledReason == "experimental_unverified")
     }
 
+    @Test("memory-aware serving admission receipt caps defaults and preserves explicit overrides")
+    func memoryAwareServingAdmissionReceiptCapsDefaultsAndPreservesExplicitOverrides() async throws {
+        var longContextModel = ModelCatalog.devTextModel()
+        longContextModel.maxContext = 131_072
+        longContextModel.settings.memoryBudgetBytes = 1_073_741_824
+
+        let cappedDefault = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: longContextModel,
+            requestedContext: nil,
+            requestedBatch: 4,
+            detectedMemoryBytes: nil
+        )
+        #expect(cappedDefault.requestedContext == 131_072)
+        #expect(cappedDefault.effectiveContext == 8_192)
+        #expect(cappedDefault.requestedBatch == 4)
+        #expect(cappedDefault.effectiveBatch == 4)
+        #expect(cappedDefault.memoryHeadroomBytes == 0)
+        #expect(cappedDefault.memoryTelemetrySource == "unknown")
+        #expect(cappedDefault.admissionReason == "default_context_cap")
+        #expect(cappedDefault.fitsMemory == true)
+
+        let explicitOverride = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: longContextModel,
+            requestedContext: 32_768,
+            requestedBatch: 4,
+            detectedMemoryBytes: nil
+        )
+        #expect(explicitOverride.requestedContext == 32_768)
+        #expect(explicitOverride.effectiveContext == 32_768)
+        #expect(explicitOverride.effectiveBatch == 4)
+        #expect(explicitOverride.admissionReason == "explicit_override_preserved")
+        #expect(explicitOverride.memoryTelemetrySource == "unknown")
+
+        longContextModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+        let steppedDown = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: longContextModel,
+            requestedContext: nil,
+            requestedBatch: 4,
+            detectedMemoryBytes: 4_294_967_296
+        )
+        #expect(steppedDown.requestedContext == 131_072)
+        #expect(steppedDown.effectiveContext == 4_096)
+        #expect(steppedDown.requestedBatch == 4)
+        #expect(steppedDown.effectiveBatch == 1)
+        #expect(steppedDown.memoryHeadroomBytes == 2_147_483_648)
+        #expect(steppedDown.estimatedActiveBytes == 2_147_483_648)
+        #expect(steppedDown.memoryTelemetrySource == "detected")
+        #expect(steppedDown.admissionReason == "memory_step_down")
+        #expect(steppedDown.fitsMemory == true)
+
+        let metadata = ModelCapabilityReceipts.servingMemoryAdmissionAuditMetadata(steppedDown)
+        #expect(metadata["melix.serving.memory_admission.schema_version"] == "melix.serving_memory_admission.v1")
+        #expect(metadata["melix.serving.memory_admission.requested_context"] == "131072")
+        #expect(metadata["melix.serving.memory_admission.effective_context"] == "4096")
+        #expect(metadata["melix.serving.memory_admission.requested_batch"] == "4")
+        #expect(metadata["melix.serving.memory_admission.effective_batch"] == "1")
+        #expect(metadata["melix.serving.memory_admission.memory_headroom_bytes"] == "2147483648")
+        #expect(metadata["melix.serving.memory_admission.estimated_active_bytes"] == "2147483648")
+        #expect(metadata["melix.serving.memory_admission.memory_telemetry_source"] == "detected")
+        #expect(metadata["melix.serving.memory_admission.admission_reason"] == "memory_step_down")
+        #expect(metadata["melix.serving.memory_admission.fits_memory"] == "true")
+    }
+
+    @Test("memory-aware serving admission labels detected memory fits distinctly")
+    func memoryAwareServingAdmissionLabelsDetectedMemoryFitsDistinctly() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.memoryBudgetBytes = 1_073_741_824
+
+        let receipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: model,
+            requestedContext: nil,
+            requestedBatch: 1,
+            detectedMemoryBytes: 17_179_869_184
+        )
+
+        #expect(receipt.memoryTelemetrySource == "detected")
+        #expect(receipt.memoryHeadroomBytes == 2_147_483_648)
+        #expect(receipt.admissionReason == "detected_memory_fits")
+        #expect(receipt.effectiveContext == 8_192)
+        #expect(receipt.effectiveBatch == 1)
+        #expect(receipt.fitsMemory == true)
+    }
+
+    @Test("memory-aware serving admission ignores zero bytes per token overrides")
+    func memoryAwareServingAdmissionIgnoresZeroBytesPerTokenOverrides() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.memoryBudgetBytes = 1_073_741_824
+        model.settings.ext["melix.serving.memory.bytes_per_token"] = "0"
+
+        let receipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: model,
+            requestedContext: nil,
+            requestedBatch: 1,
+            detectedMemoryBytes: 17_179_869_184
+        )
+
+        #expect(receipt.estimatedActiveBytes == 3_221_225_472)
+        #expect(receipt.admissionReason == "detected_memory_fits")
+        #expect(receipt.fitsMemory == true)
+    }
+
+    @Test("memory-aware serving admission does not step small-context models above their effective context")
+    func memoryAwareServingAdmissionDoesNotStepSmallContextModelsAboveEffectiveContext() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.maxContext = 1_024
+        model.settings.memoryBudgetBytes = 1_073_741_824
+        model.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+
+        let receipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: model,
+            requestedContext: nil,
+            requestedBatch: 8,
+            detectedMemoryBytes: 4_294_967_296
+        )
+
+        #expect(receipt.requestedContext == 1_024)
+        #expect(receipt.effectiveContext == 1_024)
+        #expect(receipt.requestedBatch == 8)
+        #expect(receipt.effectiveBatch == 1)
+        #expect(receipt.memoryTelemetrySource == "detected")
+        #expect(receipt.estimatedActiveBytes == 1_342_177_280)
+        #expect(receipt.admissionReason == "memory_step_down")
+        #expect(receipt.fitsMemory == true)
+    }
+
+    @Test("memory-aware serving admission treats zero detected memory as telemetry")
+    func memoryAwareServingAdmissionTreatsZeroDetectedMemoryAsTelemetry() async throws {
+        var longContextModel = ModelCatalog.devTextModel()
+        longContextModel.maxContext = 131_072
+        longContextModel.settings.memoryBudgetBytes = 1_073_741_824
+        longContextModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+
+        let receipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: longContextModel,
+            requestedContext: nil,
+            requestedBatch: 4,
+            detectedMemoryBytes: 0
+        )
+
+        #expect(receipt.memoryTelemetrySource == "detected")
+        #expect(receipt.memoryHeadroomBytes == 2_147_483_648)
+        #expect(receipt.admissionReason == "insufficient_memory")
+        #expect(receipt.effectiveContext == 2_048)
+        #expect(receipt.effectiveBatch == 1)
+        #expect(receipt.fitsMemory == false)
+    }
+
     @Test("capability receipt validation refuses invalid drafts and inconsistent speculative metadata")
     func capabilityReceiptValidationRefusesInvalidDraftsAndInconsistentSpeculativeMetadata() async throws {
         var model = ModelCatalog.devTextModel()

@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import Any
 
 from worker.productization.privacy_policy_receipts import (
+    _bool_value,
     network_fetch_policy_receipt_from_metadata,
     privacy_audit_counter_from_metadata,
     privacy_detector_receipt_from_metadata,
@@ -85,6 +86,38 @@ _ACCELERATION_CONFIG_RECEIPT_REQUIRED_FIELDS = frozenset(
 )
 _ACCELERATION_CONFIG_RECEIPT_LIST_FIELDS = frozenset(("conflicting_flags",))
 _ACCELERATION_CONFIG_RECEIPT_INT_FIELDS = frozenset(("num_speculative_tokens",))
+_MEMORY_ADMISSION_AUDIT_TO_RECEIPT_FIELDS = {
+    "melix.serving.memory_admission.schema_version": "schema_version",
+    "melix.serving.memory_admission.requested_context": "requested_context",
+    "melix.serving.memory_admission.effective_context": "effective_context",
+    "melix.serving.memory_admission.requested_batch": "requested_batch",
+    "melix.serving.memory_admission.effective_batch": "effective_batch",
+    "melix.serving.memory_admission.memory_headroom_bytes": (
+        "memory_headroom_bytes"
+    ),
+    "melix.serving.memory_admission.estimated_active_bytes": (
+        "estimated_active_bytes"
+    ),
+    "melix.serving.memory_admission.memory_telemetry_source": (
+        "memory_telemetry_source"
+    ),
+    "melix.serving.memory_admission.admission_reason": "admission_reason",
+    "melix.serving.memory_admission.fits_memory": "fits_memory",
+}
+_MEMORY_ADMISSION_RECEIPT_REQUIRED_FIELDS = frozenset(
+    _MEMORY_ADMISSION_AUDIT_TO_RECEIPT_FIELDS.values()
+)
+_MEMORY_ADMISSION_RECEIPT_INT_FIELDS = frozenset(
+    (
+        "requested_context",
+        "effective_context",
+        "requested_batch",
+        "effective_batch",
+        "memory_headroom_bytes",
+        "estimated_active_bytes",
+    )
+)
+_MEMORY_ADMISSION_RECEIPT_BOOL_FIELDS = frozenset(("fits_memory",))
 _EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
 _JSON_COMPACT_SEPARATORS = (",", ":")
 _JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
@@ -662,6 +695,14 @@ def _effective_config_with_profile_receipt(
             if receipt:
                 enriched_config["serving_acceleration_config"] = receipt
                 break
+    if "serving_memory_admission" not in enriched_config:
+        for metadata in metadata_sources:
+            receipt = _serving_memory_admission_receipt_from_audit_metadata(
+                metadata
+            )
+            if receipt:
+                enriched_config["serving_memory_admission"] = receipt
+                break
     if "network_fetch_policy" not in enriched_config:
         for metadata in metadata_sources:
             receipt = network_fetch_policy_receipt_from_metadata(metadata)
@@ -767,13 +808,38 @@ def _serving_acceleration_config_receipt_from_audit_metadata(
         if receipt_key in _ACCELERATION_CONFIG_RECEIPT_LIST_FIELDS:
             receipt[receipt_key] = _metadata_list(value)
         elif receipt_key in _ACCELERATION_CONFIG_RECEIPT_INT_FIELDS:
-            try:
-                receipt[receipt_key] = int(str(value).strip())
-            except ValueError:
+            parsed_int = _metadata_non_negative_int(value)
+            if parsed_int is None:
                 return {}
+            receipt[receipt_key] = parsed_int
         else:
             receipt[receipt_key] = str(value)
     if _ACCELERATION_CONFIG_RECEIPT_REQUIRED_FIELDS.issubset(receipt):
+        return receipt
+    return {}
+
+
+def _serving_memory_admission_receipt_from_audit_metadata(
+    metadata: Mapping[str, object],
+) -> dict[str, object]:
+    receipt: dict[str, object] = {}
+    for audit_key, receipt_key in _MEMORY_ADMISSION_AUDIT_TO_RECEIPT_FIELDS.items():
+        value = metadata.get(audit_key)
+        if value is None:
+            continue
+        if receipt_key in _MEMORY_ADMISSION_RECEIPT_INT_FIELDS:
+            parsed_int = _metadata_non_negative_int(value)
+            if parsed_int is None:
+                return {}
+            receipt[receipt_key] = parsed_int
+        elif receipt_key in _MEMORY_ADMISSION_RECEIPT_BOOL_FIELDS:
+            parsed_bool = _metadata_bool(value)
+            if parsed_bool is None:
+                return {}
+            receipt[receipt_key] = parsed_bool
+        else:
+            receipt[receipt_key] = str(value)
+    if _MEMORY_ADMISSION_RECEIPT_REQUIRED_FIELDS.issubset(receipt):
         return receipt
     return {}
 
@@ -790,6 +856,20 @@ def _metadata_list(value: object) -> list[str]:
         for item in raw_items
         if item is not None and (item_text := str(item).strip())
     ]
+
+
+def _metadata_bool(value: object) -> bool | None:
+    return _bool_value(value)
+
+
+def _metadata_non_negative_int(value: object) -> int | None:
+    try:
+        parsed = int(str(value).strip())
+    except ValueError:
+        return None
+    if parsed < 0:
+        return None
+    return parsed
 
 
 def _stable_json_value(value: object) -> object:

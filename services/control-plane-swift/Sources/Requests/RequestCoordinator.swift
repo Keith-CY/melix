@@ -331,6 +331,28 @@ private let activeKVQuantProfiles: Set<String> = [
     "q8",
 ]
 
+private func parseUInt32Value(_ rawValue: String?, allowZero: Bool = false) -> UInt32? {
+    guard
+        let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+        let parsed = UInt32(rawValue),
+        allowZero || parsed > 0
+    else {
+        return nil
+    }
+    return parsed
+}
+
+private func parseUInt64Value(_ rawValue: String?, allowZero: Bool = false) -> UInt64? {
+    guard
+        let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+        let parsed = UInt64(rawValue),
+        allowZero || parsed > 0
+    else {
+        return nil
+    }
+    return parsed
+}
+
 private struct GatewayBatchingExecutionDefaults: Sendable {
     let concurrentProcessingEnabled: Bool
     let maxConcurrentRequests: UInt32
@@ -378,10 +400,7 @@ private struct GatewayBatchingExecutionDefaults: Sendable {
     }
 
     private static func parseUInt32(_ rawValue: String?, fallback: UInt32) -> UInt32 {
-        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines), let parsed = UInt32(rawValue), parsed > 0 else {
-            return fallback
-        }
-        return parsed
+        parseUInt32Value(rawValue) ?? fallback
     }
 }
 
@@ -421,14 +440,7 @@ private struct GatewaySpeculativeExecutionDefaults: Sendable {
         fallback: UInt32,
         allowZero: Bool = false
     ) -> UInt32 {
-        guard
-            let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-            let parsed = UInt32(rawValue),
-            allowZero || parsed > 0
-        else {
-            return fallback
-        }
-        return parsed
+        parseUInt32Value(rawValue, allowZero: allowZero) ?? fallback
     }
 }
 
@@ -1807,10 +1819,15 @@ public actor RequestCoordinator {
         _ translatedRequest: TranslatedChatRequest
     ) async throws -> SchedulingPlan {
         let recoveredRequest = await resolvedRecoveryRequest(translatedRequest)
-        let accelerationResolution = await resolvedModelAccelerationRequest(recoveredRequest)
+        let batchingDefaults = GatewayBatchingExecutionDefaults(
+            executionExt: recoveredRequest.workerRequest.execution.ext
+        )
+        let accelerationResolution = await resolvedModelAccelerationRequest(
+            recoveredRequest,
+            batchingDefaults: batchingDefaults
+        )
         let request = accelerationResolution.request
         let accelerationRefusal = accelerationResolution.accelerationRefusal
-        let batchingDefaults = GatewayBatchingExecutionDefaults(executionExt: request.workerRequest.execution.ext)
         let routeRequest = requestRouteRequest(for: request.workerRequest)
         let routeResolution = await workerRegistry.admitInferenceRoute(
             requestID: request.requestID,
@@ -1998,7 +2015,8 @@ public actor RequestCoordinator {
     }
 
     private func resolvedModelAccelerationRequest(
-        _ translatedRequest: TranslatedChatRequest
+        _ translatedRequest: TranslatedChatRequest,
+        batchingDefaults: GatewayBatchingExecutionDefaults
     ) async -> ModelAccelerationResolution {
         guard
             let modelCatalog,
@@ -2091,6 +2109,16 @@ public actor RequestCoordinator {
             ModelCapabilityReceipts.resolvedAccelerationConfigAuditMetadata(resolvedAccelerationConfig),
             uniquingKeysWith: { _, receiptValue in receiptValue }
         )
+        let memoryAdmissionReceipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: model,
+            requestedContext: requestedServingContext(from: workerRequest.execution.ext),
+            requestedBatch: batchingDefaults.effectiveAdmissionBatchSize,
+            detectedMemoryBytes: detectedServingMemoryBytes(for: model)
+        )
+        accelerationMetadata.merge(
+            ModelCapabilityReceipts.servingMemoryAdmissionAuditMetadata(memoryAdmissionReceipt),
+            uniquingKeysWith: { _, receiptValue in receiptValue }
+        )
         workerRequest.execution.ext.merge(
             accelerationMetadata,
             uniquingKeysWith: { _, receiptValue in receiptValue }
@@ -2147,6 +2175,37 @@ public actor RequestCoordinator {
             return normalized
         }
         return defaultActiveKVQuantProfile
+    }
+
+    private func requestedServingContext(from executionExt: [String: String]) -> UInt32? {
+        for key in [
+            "melix.gateway.context_length",
+            "melix.gateway.requested_context",
+        ] {
+            if let value = parsePositiveUInt32(executionExt[key]) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func detectedServingMemoryBytes(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> UInt64? {
+        for key in [
+            "melix.serving.memory.available_bytes",
+            "melix.serving.memory.detected_memory_bytes",
+            "melix.device.memory_total_bytes",
+        ] {
+            if let value = parseUInt64Value(model.settings.ext[key], allowZero: true) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func parsePositiveUInt32(_ rawValue: String?) -> UInt32? {
+        parseUInt32Value(rawValue)
     }
 
     private func isContinuousBatchEligible(

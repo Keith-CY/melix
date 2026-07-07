@@ -270,6 +270,55 @@ required key is missing or the token count is invalid, the writer leaves the
 original metadata in place and does not synthesize a partial top-level
 `serving_acceleration_config` receipt.
 
+When upstream serving admission has evaluated dry-run context and batch memory
+fit before worker load or decode, `effective-config.json` should also include a
+`serving_memory_admission` receipt. This receipt is diagnostics-only: it records
+the already-resolved admission result and must not probe memory, load a model,
+start a worker, or change runtime fallback behavior during bundle writing.
+
+`serving_memory_admission` fields:
+
+- `schema_version` - `melix.serving_memory_admission.v1`.
+- `requested_context` - caller or model requested serving context length.
+- `effective_context` - context length admitted for the worker request.
+- `requested_batch` - requested serving batch or concurrency value.
+- `effective_batch` - batch value admitted for the worker request.
+- `memory_headroom_bytes` - host-memory headroom reserved by admission.
+- `estimated_active_bytes` - estimated active serving footprint after
+  admission.
+- `memory_telemetry_source` - `detected` when upstream admission had a detected
+  memory value, or `unknown` when it used a conservative default.
+- `admission_reason` - typed reason for the effective context and batch choice.
+- `fits_memory` - whether the admitted estimate fits the available memory model.
+
+Current control-plane admission reports `memory_telemetry_source=detected` only
+when upstream model settings metadata includes a detected-memory value such as
+`melix.serving.memory.available_bytes`,
+`melix.serving.memory.detected_memory_bytes`, or
+`melix.device.memory_total_bytes`. Production catalog discovery may not populate
+those keys yet, so diagnostics can legitimately show `unknown` telemetry and no
+memory-based step-down until device or worker memory telemetry is wired into the
+serving admission input path.
+
+Diagnostics writers may derive `serving_memory_admission` from namespaced
+metadata when all of these keys are present:
+
+- `melix.serving.memory_admission.schema_version`
+- `melix.serving.memory_admission.requested_context`
+- `melix.serving.memory_admission.effective_context`
+- `melix.serving.memory_admission.requested_batch`
+- `melix.serving.memory_admission.effective_batch`
+- `melix.serving.memory_admission.memory_headroom_bytes`
+- `melix.serving.memory_admission.estimated_active_bytes`
+- `melix.serving.memory_admission.memory_telemetry_source`
+- `melix.serving.memory_admission.admission_reason`
+- `melix.serving.memory_admission.fits_memory`
+
+The integer metadata values must be decimal, non-negative integers. The
+`fits_memory` metadata value must be a boolean string. If any required key is
+missing or invalid, the writer leaves the original metadata in place and does
+not synthesize a partial top-level `serving_memory_admission` receipt.
+
 When a proxy, workspace-ingest, or worker path has already evaluated network
 fetch safety, `effective-config.json` may include a `network_fetch_policy`
 receipt and `privacy_audit_counters`. These receipts are diagnostics-only:

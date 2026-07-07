@@ -624,6 +624,158 @@ def test_serving_diagnostics_acceleration_config_skips_invalid_token_count() -> 
     assert receipt == {}
 
 
+def test_serving_diagnostics_acceleration_config_skips_negative_token_count() -> None:
+    receipt = (
+        serving_diagnostics_module._serving_acceleration_config_receipt_from_audit_metadata(
+            {
+                "melix.serving.acceleration_config.schema_version": (
+                    "melix.resolved_acceleration_config.v1"
+                ),
+                "melix.serving.acceleration_config.method": "baseline",
+                "melix.serving.acceleration_config.requested_method": "baseline",
+                "melix.serving.acceleration_config.sidecar_model": "",
+                "melix.serving.acceleration_config.num_speculative_tokens": "-1",
+                "melix.serving.acceleration_config.profile": "balanced",
+                "melix.serving.acceleration_config.conflicting_flags": "",
+                "melix.serving.acceleration_config.controller_scope": "none",
+                "melix.serving.acceleration_config.disabled_reason": "invalid_token_count",
+            }
+        )
+    )
+
+    assert receipt == {}
+
+
+def test_serving_diagnostics_effective_config_derives_memory_admission_receipt_from_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-control-plane-memory-admission",
+        invocation={},
+        effective_config={
+            "execution_ext": {
+                "melix.serving.memory_admission.schema_version": (
+                    "melix.serving_memory_admission.v1"
+                ),
+                "melix.serving.memory_admission.requested_context": "131072",
+                "melix.serving.memory_admission.effective_context": "4096",
+                "melix.serving.memory_admission.requested_batch": "4",
+                "melix.serving.memory_admission.effective_batch": "1",
+                "melix.serving.memory_admission.memory_headroom_bytes": (
+                    "2147483648"
+                ),
+                "melix.serving.memory_admission.estimated_active_bytes": (
+                    "2147483648"
+                ),
+                "melix.serving.memory_admission.memory_telemetry_source": (
+                    "detected"
+                ),
+                "melix.serving.memory_admission.admission_reason": (
+                    "memory_step_down"
+                ),
+                "melix.serving.memory_admission.fits_memory": "true",
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config["serving_memory_admission"] == {
+        "schema_version": "melix.serving_memory_admission.v1",
+        "requested_context": 131072,
+        "effective_context": 4096,
+        "requested_batch": 4,
+        "effective_batch": 1,
+        "memory_headroom_bytes": 2147483648,
+        "estimated_active_bytes": 2147483648,
+        "memory_telemetry_source": "detected",
+        "admission_reason": "memory_step_down",
+        "fits_memory": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("melix.serving.memory_admission.requested_context", "many"),
+        ("melix.serving.memory_admission.requested_batch", "-1"),
+        ("melix.serving.memory_admission.fits_memory", "maybe"),
+    ),
+)
+def test_serving_diagnostics_memory_admission_skips_invalid_metadata(
+    field: str,
+    value: str,
+) -> None:
+    metadata = {
+        "melix.serving.memory_admission.schema_version": (
+            "melix.serving_memory_admission.v1"
+        ),
+        "melix.serving.memory_admission.requested_context": "8192",
+        "melix.serving.memory_admission.effective_context": "8192",
+        "melix.serving.memory_admission.requested_batch": "1",
+        "melix.serving.memory_admission.effective_batch": "1",
+        "melix.serving.memory_admission.memory_headroom_bytes": "0",
+        "melix.serving.memory_admission.estimated_active_bytes": "0",
+        "melix.serving.memory_admission.memory_telemetry_source": "unknown",
+        "melix.serving.memory_admission.admission_reason": (
+            "unknown_memory_safe_default"
+        ),
+        "melix.serving.memory_admission.fits_memory": "true",
+    }
+    metadata[field] = value
+
+    assert (
+        serving_diagnostics_module._serving_memory_admission_receipt_from_audit_metadata(
+            metadata
+        )
+        == {}
+    )
+
+
+def test_serving_diagnostics_memory_admission_accepts_false_bool_values() -> None:
+    metadata = {
+        "melix.serving.memory_admission.schema_version": (
+            "melix.serving_memory_admission.v1"
+        ),
+        "melix.serving.memory_admission.requested_context": "8192",
+        "melix.serving.memory_admission.effective_context": "8192",
+        "melix.serving.memory_admission.requested_batch": "1",
+        "melix.serving.memory_admission.effective_batch": "1",
+        "melix.serving.memory_admission.memory_headroom_bytes": "0",
+        "melix.serving.memory_admission.estimated_active_bytes": "0",
+        "melix.serving.memory_admission.memory_telemetry_source": "detected",
+        "melix.serving.memory_admission.admission_reason": "insufficient_memory",
+        "melix.serving.memory_admission.fits_memory": False,
+    }
+
+    receipt = serving_diagnostics_module._serving_memory_admission_receipt_from_audit_metadata(
+        metadata
+    )
+    assert receipt["fits_memory"] is False
+
+    metadata["melix.serving.memory_admission.fits_memory"] = "false"
+    receipt = serving_diagnostics_module._serving_memory_admission_receipt_from_audit_metadata(
+        metadata
+    )
+    assert receipt["fits_memory"] is False
+
+    metadata["melix.serving.memory_admission.fits_memory"] = 1.0
+    receipt = serving_diagnostics_module._serving_memory_admission_receipt_from_audit_metadata(
+        metadata
+    )
+    assert receipt["fits_memory"] is True
+
+    metadata["melix.serving.memory_admission.fits_memory"] = "off"
+    receipt = serving_diagnostics_module._serving_memory_admission_receipt_from_audit_metadata(
+        metadata
+    )
+    assert receipt["fits_memory"] is False
+
+
 def test_serving_diagnostics_capability_receipt_normalizes_sequence_metadata() -> None:
     receipt = (
         serving_diagnostics_module._serving_capability_receipt_from_audit_metadata(

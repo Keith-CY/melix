@@ -39,8 +39,26 @@ public struct ResolvedAccelerationConfig: Sendable, Equatable {
     public let disabledReason: String
 }
 
+public struct ServingMemoryAdmissionReceipt: Sendable, Equatable {
+    public static let schemaVersion = "melix.serving_memory_admission.v1"
+
+    public let requestedContext: UInt32
+    public let effectiveContext: UInt32
+    public let requestedBatch: UInt32
+    public let effectiveBatch: UInt32
+    public let memoryHeadroomBytes: UInt64
+    public let estimatedActiveBytes: UInt64
+    public let memoryTelemetrySource: String
+    public let admissionReason: String
+    public let fitsMemory: Bool
+}
+
 public enum ModelCapabilityReceipts {
     public static let schemaVersion = "melix.model_capability_receipt.v1"
+    private static let defaultServingContextCap: UInt32 = 8_192
+    private static let minimumServingContext: UInt32 = 2_048
+    private static let defaultServingMemoryHeadroomBytes: UInt64 = 2_147_483_648
+    private static let defaultServingBytesPerToken: UInt64 = 262_144
 
     public static func receipt(
         for model: Melix_Controlplane_V1_ModelSummary
@@ -403,6 +421,119 @@ public enum ModelCapabilityReceipts {
         ]
     }
 
+    public static func servingMemoryAdmissionReceipt(
+        for model: Melix_Controlplane_V1_ModelSummary,
+        requestedContext explicitRequestedContext: UInt32? = nil,
+        requestedBatch: UInt32,
+        detectedMemoryBytes: UInt64? = nil
+    ) -> ServingMemoryAdmissionReceipt {
+        let requestedBatch = max(requestedBatch, 1)
+        let modelContext = model.maxContext > 0 ? model.maxContext : defaultServingContextCap
+        let explicitContext = explicitRequestedContext.flatMap { $0 > 0 ? $0 : nil }
+        let requestedContext = explicitContext ?? modelContext
+        let cappedContext = min(requestedContext, defaultServingContextCap)
+        var effectiveContext = explicitContext ?? cappedContext
+        var effectiveBatch = requestedBatch
+        let memoryTelemetrySource = detectedMemoryBytes == nil ? "unknown" : "detected"
+        let memoryHeadroomBytes = detectedMemoryBytes == nil
+            ? 0
+            : defaultServingMemoryHeadroomBytes
+        let modelResidentBytes = servingModelResidentBytes(model)
+        let bytesPerToken = servingBytesPerToken(model)
+        var estimatedActiveBytes = estimatedServingActiveBytes(
+            modelResidentBytes: modelResidentBytes,
+            context: effectiveContext,
+            batch: effectiveBatch,
+            bytesPerToken: bytesPerToken
+        )
+        var fitsMemory = true
+        var admissionReason: String
+        if explicitContext != nil {
+            admissionReason = "explicit_override_preserved"
+        } else if requestedContext > defaultServingContextCap {
+            admissionReason = "default_context_cap"
+        } else {
+            admissionReason = "unknown_memory_safe_default"
+        }
+
+        if let detectedMemoryBytes {
+            let usableMemoryBytes = detectedMemoryBytes > memoryHeadroomBytes
+                ? detectedMemoryBytes - memoryHeadroomBytes
+                : 0
+            fitsMemory = estimatedActiveBytes <= usableMemoryBytes
+            if fitsMemory, explicitContext == nil, requestedContext <= defaultServingContextCap {
+                admissionReason = "detected_memory_fits"
+            } else if !fitsMemory, explicitContext == nil {
+                var selected: (context: UInt32, batch: UInt32, estimate: UInt64)?
+                for candidate in servingMemoryFitCandidates(
+                    effectiveContext: effectiveContext,
+                    requestedBatch: requestedBatch
+                ) {
+                    let estimate = estimatedServingActiveBytes(
+                        modelResidentBytes: modelResidentBytes,
+                        context: candidate.context,
+                        batch: candidate.batch,
+                        bytesPerToken: bytesPerToken
+                    )
+                    if estimate <= usableMemoryBytes {
+                        selected = (candidate.context, candidate.batch, estimate)
+                        break
+                    }
+                }
+                if let selected {
+                    effectiveContext = selected.context
+                    effectiveBatch = selected.batch
+                    estimatedActiveBytes = selected.estimate
+                    fitsMemory = true
+                    admissionReason = "memory_step_down"
+                } else {
+                    let fallbackContext = min(effectiveContext, minimumServingContext)
+                    effectiveContext = fallbackContext
+                    effectiveBatch = 1
+                    estimatedActiveBytes = estimatedServingActiveBytes(
+                        modelResidentBytes: modelResidentBytes,
+                        context: fallbackContext,
+                        batch: 1,
+                        bytesPerToken: bytesPerToken
+                    )
+                    fitsMemory = false
+                    admissionReason = "insufficient_memory"
+                }
+            } else if !fitsMemory {
+                admissionReason = "explicit_override_memory_warning"
+            }
+        }
+
+        return ServingMemoryAdmissionReceipt(
+            requestedContext: requestedContext,
+            effectiveContext: effectiveContext,
+            requestedBatch: requestedBatch,
+            effectiveBatch: effectiveBatch,
+            memoryHeadroomBytes: memoryHeadroomBytes,
+            estimatedActiveBytes: estimatedActiveBytes,
+            memoryTelemetrySource: memoryTelemetrySource,
+            admissionReason: admissionReason,
+            fitsMemory: fitsMemory
+        )
+    }
+
+    public static func servingMemoryAdmissionAuditMetadata(
+        _ receipt: ServingMemoryAdmissionReceipt
+    ) -> [String: String] {
+        [
+            "melix.serving.memory_admission.schema_version": ServingMemoryAdmissionReceipt.schemaVersion,
+            "melix.serving.memory_admission.requested_context": String(receipt.requestedContext),
+            "melix.serving.memory_admission.effective_context": String(receipt.effectiveContext),
+            "melix.serving.memory_admission.requested_batch": String(receipt.requestedBatch),
+            "melix.serving.memory_admission.effective_batch": String(receipt.effectiveBatch),
+            "melix.serving.memory_admission.memory_headroom_bytes": String(receipt.memoryHeadroomBytes),
+            "melix.serving.memory_admission.estimated_active_bytes": String(receipt.estimatedActiveBytes),
+            "melix.serving.memory_admission.memory_telemetry_source": receipt.memoryTelemetrySource,
+            "melix.serving.memory_admission.admission_reason": receipt.admissionReason,
+            "melix.serving.memory_admission.fits_memory": receipt.fitsMemory ? "true" : "false",
+        ]
+    }
+
     private static func resolvedAccelerationDisabledReason(
         validation: AccelerationReceiptValidation,
         executionMetadata: [String: String]
@@ -453,6 +584,96 @@ public enum ModelCapabilityReceipts {
             return
         }
         values.append(trimmed)
+    }
+
+    private static func servingMemoryFitCandidates(
+        effectiveContext: UInt32,
+        requestedBatch: UInt32
+    ) -> [(context: UInt32, batch: UInt32)] {
+        var candidates: [(context: UInt32, batch: UInt32)] = []
+        appendServingMemoryCandidate(
+            context: effectiveContext,
+            batch: 1,
+            maximumContext: effectiveContext,
+            to: &candidates
+        )
+        for context in [defaultServingContextCap / 2, minimumServingContext] {
+            appendServingMemoryCandidate(
+                context: context,
+                batch: 1,
+                maximumContext: effectiveContext,
+                to: &candidates
+            )
+        }
+        if requestedBatch == 1 {
+            return candidates.filter { $0.context < effectiveContext }
+        }
+        return candidates
+    }
+
+    private static func appendServingMemoryCandidate(
+        context: UInt32,
+        batch: UInt32,
+        maximumContext: UInt32,
+        to candidates: inout [(context: UInt32, batch: UInt32)]
+    ) {
+        let context = min(max(context, minimumServingContext), maximumContext)
+        let batch = max(batch, 1)
+        guard !candidates.contains(where: { $0.context == context && $0.batch == batch }) else {
+            return
+        }
+        candidates.append((context, batch))
+    }
+
+    private static func servingModelResidentBytes(
+        _ model: Melix_Controlplane_V1_ModelSummary
+    ) -> UInt64 {
+        parsedPositiveUInt64(model.settings.ext["melix.serving.memory.estimated_model_bytes"])
+            ?? model.settings.memoryBudgetBytes
+    }
+
+    private static func servingBytesPerToken(
+        _ model: Melix_Controlplane_V1_ModelSummary
+    ) -> UInt64 {
+        parsedPositiveUInt64(model.settings.ext["melix.serving.memory.bytes_per_token"])
+            ?? defaultServingBytesPerToken
+    }
+
+    private static func estimatedServingActiveBytes(
+        modelResidentBytes: UInt64,
+        context: UInt32,
+        batch: UInt32,
+        bytesPerToken: UInt64
+    ) -> UInt64 {
+        saturatedAdd(
+            modelResidentBytes,
+            saturatedMultiply(UInt64(context), UInt64(batch), bytesPerToken)
+        )
+    }
+
+    private static func parsedPositiveUInt64(_ rawValue: String?) -> UInt64? {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty,
+              let value = UInt64(rawValue),
+              value > 0
+        else {
+            return nil
+        }
+        return value
+    }
+
+    private static func saturatedMultiply(_ lhs: UInt64, _ rhs: UInt64, _ extra: UInt64) -> UInt64 {
+        let first = lhs.multipliedReportingOverflow(by: rhs)
+        guard !first.overflow else {
+            return UInt64.max
+        }
+        let second = first.partialValue.multipliedReportingOverflow(by: extra)
+        return second.overflow ? UInt64.max : second.partialValue
+    }
+
+    private static func saturatedAdd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        let result = lhs.addingReportingOverflow(rhs)
+        return result.overflow ? UInt64.max : result.partialValue
     }
 
     private static func servingCapabilityAccelerationProfile(
