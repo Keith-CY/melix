@@ -24,7 +24,10 @@ fields.
    against the trained adapter.
 3. Add a held-out evaluation receipt.
    Runs without `test_ratio` write a skipped receipt with an explicit reason.
-   Runs with a test split write completed metrics and paths.
+   Runs with a test split write completed metrics and paths. If optional
+   post-training evaluation fails after adapter audit, the adapter remains
+   valid and the receipt records `status=failed` with
+   `reason=heldout_evaluation_failed`.
 4. Persist held-out fields in the adapter manifest, adapter provenance final
    metrics, and LoRA experiment run records.
 
@@ -43,7 +46,11 @@ fields.
 - Success metrics:
   - Held-out rows are absent from both train and validation JSONL.
   - Completed held-out receipt records finite loss/perplexity and sample count.
-  - No-test runs record a skipped receipt reason.
+  - No-test runs record a skipped receipt reason; agentic trace splits that
+    drop all held-out rows during SFT formatting record
+    `test_split_empty_after_formatting`.
+  - Held-out evaluation backend failures record a failed receipt without failing
+    the completed training job.
   - Experiment store exposes held-out metrics for run comparison.
 
 ## Verification Plan

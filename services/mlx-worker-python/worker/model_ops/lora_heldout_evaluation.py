@@ -62,7 +62,10 @@ def evaluate_heldout_if_requested(
         return {
             "schema_version": "melix.lora_heldout_evaluation_receipt.v1",
             "status": "skipped",
-            "reason": "test_split_not_requested",
+            "reason": _skipped_reason(
+                normalized_snapshot=normalized_snapshot,
+                test_ratio=test_ratio,
+            ),
             "test_ratio": test_ratio,
             "test_path": "",
             "sample_count": 0,
@@ -71,24 +74,39 @@ def evaluate_heldout_if_requested(
             "backend": "",
         }
 
-    result = call_with_training_failure_cleanup(
-        lambda: runner.evaluate_heldout(
-            HeldoutEvaluationRequest(
-                job_id=job_id,
-                base_model_id=source_model.model_id,
-                model_path=training_model_path,
-                model_revision=source_model.revision,
-                adapter_dir=adapter_output_dir,
-                normalized_dataset_dir=normalized_snapshot.dataset_dir,
-                config=config,
-                dataset_format=trainer_dataset_format,
-                test_sample_count=normalized_snapshot.test_sample_count,
-                source_model_kind=source_model.model_kind,
-                source_model_ext=dict(source_model.ext),
-            )
-        ),
-        details=runtime_failure_details,
-    )
+    try:
+        result = call_with_training_failure_cleanup(
+            lambda: runner.evaluate_heldout(
+                HeldoutEvaluationRequest(
+                    job_id=job_id,
+                    base_model_id=source_model.model_id,
+                    model_path=training_model_path,
+                    model_revision=source_model.revision,
+                    adapter_dir=adapter_output_dir,
+                    normalized_dataset_dir=normalized_snapshot.dataset_dir,
+                    config=config,
+                    dataset_format=trainer_dataset_format,
+                    test_sample_count=normalized_snapshot.test_sample_count,
+                    source_model_kind=source_model.model_kind,
+                    source_model_ext=dict(source_model.ext),
+                )
+            ),
+            details=runtime_failure_details,
+        )
+    except ModelOperationError as exc:
+        return {
+            "schema_version": "melix.lora_heldout_evaluation_receipt.v1",
+            "status": "failed",
+            "reason": "heldout_evaluation_failed",
+            "test_ratio": test_ratio,
+            "test_path": str(normalized_snapshot.test_path),
+            "sample_count": normalized_snapshot.test_sample_count,
+            "loss": None,
+            "perplexity": None,
+            "backend": "",
+            "error_code": exc.code,
+            "error_message": exc.message,
+        }
     return {
         "schema_version": "melix.lora_heldout_evaluation_receipt.v1",
         "status": "completed",
@@ -100,6 +118,20 @@ def evaluate_heldout_if_requested(
         "perplexity": result.perplexity,
         "backend": result.execution_backend,
     }
+
+
+def _skipped_reason(
+    *,
+    normalized_snapshot: NormalizedDatasetSnapshot,
+    test_ratio: float,
+) -> str:
+    if test_ratio > 0.0:
+        reason = str(
+            normalized_snapshot.manifest_payload.get("test_split_reason", "")
+        ).strip()
+        if reason:
+            return reason
+    return "test_split_not_requested"
 
 
 def write_heldout_evaluation_receipt(

@@ -284,6 +284,12 @@ Expected training behavior:
   experiment run record
 - when no held-out split is requested, Melix still writes a skipped held-out
   evaluation receipt with reason `test_split_not_requested`
+- if an `agentic_tool_trace` held-out split is selected but all held-out traces
+  drop during SFT formatting, Melix writes a skipped receipt with reason
+  `test_split_empty_after_formatting`
+- held-out evaluation is post-hoc evidence: if the evaluation backend fails
+  after adapter audit, Melix keeps the trained adapter and writes a failed
+  held-out receipt with reason `heldout_evaluation_failed`
 - Melix emits the stages `resolve_source`, `validate_dataset`, `normalize_config`, `prepare_training_data`, `apply_lora`, `train`, `write_adapter`, and `write_manifest`
 - component-scoped multimodal adapter receipts include `multimodal_lora_nan_guard_triggered`,
   `unexpected_frozen_param_count`, `adapter_checkpoint_bytes`, and `adapter_freeze_audit`; any

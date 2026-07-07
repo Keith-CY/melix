@@ -174,6 +174,48 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     assert stale_agentic_train_path.exists() is False
     assert stale_agentic_valid_path.exists() is False
     assert training_dataset_module.trainer_sample_counts(dataset) == (1, 0)
+
+    degenerate_agentic_samples = [
+        {
+            "trace_id": f"trace-{index}",
+            "question": f"What is item {index}?",
+            "turns": [{"role": "user", "content": f"Describe item {index}."}],
+            "final_answer": "",
+        }
+        for index in range(4)
+    ]
+    degenerate_agentic_dataset = TrainingDatasetPackage(
+        package_path=tmp_path / "agentic-empty-test-package",
+        manifest_path=tmp_path / "agentic-empty-test-package" / "manifest.json",
+        samples_path=tmp_path / "agentic-empty-test-package" / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="agentic-empty-test-demo",
+        format="agentic_tool_trace",
+        sample_count=len(degenerate_agentic_samples),
+        version="1",
+        normalized_samples=degenerate_agentic_samples,
+        normalized_validation_samples=[],
+        validation_sample_count=0,
+        response_only_supported=True,
+    )
+    degenerate_snapshot = write_normalized_dataset_snapshot(
+        degenerate_agentic_dataset,
+        output_dir=tmp_path / "agentic-empty-test-exports",
+        test_ratio=0.75,
+    )
+    degenerate_manifest = json.loads(
+        degenerate_snapshot.manifest_path.read_text(encoding="utf-8")
+    )
+    assert degenerate_manifest["test_ratio"] == 0.75
+    assert degenerate_manifest["test_sample_count"] == 0
+    assert degenerate_manifest["source_trace_test_sample_count"] == 3
+    assert degenerate_manifest["test_split_reason"] == "test_split_empty_after_formatting"
+    assert degenerate_snapshot.test_path is None
+    assert (degenerate_snapshot.dataset_dir / "test.jsonl").exists() is False
+    assert (
+        degenerate_snapshot.dataset_dir / "agentic-traces.test.jsonl"
+    ).exists() is False
+
     agentic_package_path = tmp_path / "agentic-package"
     agentic_package_path.mkdir(parents=True, exist_ok=True)
     (agentic_package_path / "manifest.json").write_text(
@@ -886,7 +928,6 @@ def test_agentic_test_split_and_holdout_edge_coverage(tmp_path: Path) -> None:
     assert snapshot_without_test.test_path is None
     assert snapshot_without_test.test_sample_count == 0
     assert agentic_test_path.exists() is False
-
 
 
 def test_load_training_dataset_package_respects_sample_limit_after_skipping_blank_lines(

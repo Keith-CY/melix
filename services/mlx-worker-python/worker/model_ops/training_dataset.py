@@ -568,6 +568,7 @@ def write_normalized_dataset_snapshot(
     source_validation_samples = dataset.normalized_validation_samples
     source_test_samples: list[dict[str, Any]] = []
     test_split_strategy = ""
+    test_split_reason = ""
     if test_ratio > 0.0:
         source_train_samples, source_test_samples = _deterministic_test_split(
             dataset.normalized_samples,
@@ -603,6 +604,8 @@ def write_normalized_dataset_snapshot(
         trainer_sample_count = len(train_samples)
         trainer_validation_sample_count = len(validation_samples)
         trainer_test_sample_count = len(test_samples)
+        if test_ratio > 0.0 and source_test_samples and not test_samples:
+            test_split_reason = "test_split_empty_after_formatting"
         agentic_projection = {
             "trainer_format": trainer_format,
             "agentic_sft_formatter": agentic_sft_formatter.AGENTIC_SFT_FORMATTER_ID,
@@ -646,6 +649,8 @@ def write_normalized_dataset_snapshot(
     if test_split_strategy:
         manifest_payload["test_ratio"] = test_ratio
         manifest_payload["test_split_strategy"] = test_split_strategy
+    if test_split_reason:
+        manifest_payload["test_split_reason"] = test_split_reason
     if dataset.format == "agentic_tool_trace":
         manifest_payload.update(_agentic_trace_snapshot_manifest_fields(dataset))
         manifest_payload.update(agentic_projection)
