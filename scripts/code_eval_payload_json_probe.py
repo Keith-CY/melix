@@ -45,7 +45,10 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="melix-code-eval-payload-probe-") as temp_dir:
         payload_path = Path(temp_dir) / "payload.json"
-        payload_path.write_text(json.dumps(_build_payload(), sort_keys=True), encoding="utf-8")
+        payload_path.write_text(
+            json.dumps(_build_payload(), sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
         payload_bytes = float(payload_path.stat().st_size)
 
         for _ in range(sample_count):

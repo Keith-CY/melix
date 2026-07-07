@@ -508,7 +508,7 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
 
 def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object] | None:
     payload: dict[str, object] = {}
-    field_value_start = _json_field_value_start_for_token
+    field_value_start = _compact_json_field_value_start_for_token
     extract_int_and_end = _extract_json_int_field_value_and_end
     payload_startswith = payload_bytes.startswith
 
@@ -570,6 +570,25 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
     payload["timeout_status"] = "ok"
 
     return payload
+
+
+def _compact_json_field_value_start_for_token(
+    payload_bytes: bytes,
+    key_token: bytes,
+    *,
+    start: int = 0,
+) -> int | None:
+    key_index = payload_bytes.find(key_token, start)
+    if key_index < 0:
+        return None
+    value_start = key_index + len(key_token) + 1
+    if (
+        value_start >= len(payload_bytes)
+        or payload_bytes[value_start - 1] != _ORD_COLON
+        or payload_bytes[value_start] in _JSON_PAYLOAD_WHITESPACE
+    ):
+        return _json_field_value_start_for_token(payload_bytes, key_token, start=key_index)
+    return value_start
 
 
 def _json_field_value_start(payload_bytes: bytes, key: str) -> int | None:
@@ -1110,7 +1129,7 @@ _RUNNER_SCRIPT = textwrap.dedent(
                     "failure_detail": "".join(traceback.format_exception_only(type(exc), exc)).strip(),
                 }
 
-            payload_path.write_text(json.dumps(payload), encoding="utf-8")
+            payload_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
             return 0
 
 
