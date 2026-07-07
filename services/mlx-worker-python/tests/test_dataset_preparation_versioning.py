@@ -12,6 +12,7 @@ from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     DatasetRetryFailedRequest,
     DatasetVersionRequest,
+    _failed_segment_id_set,
     _partition_failed_segments,
     _quality_summary,
     _sample_output_length_stats,
@@ -183,6 +184,23 @@ def test_dataset_version_failed_segment_partition_scans_nonempty_failures_once()
     assert successful_segments == [segments[0], segments[2]]
     assert failed_segments == [segments[1]]
     assert segments.iter_calls == 1
+
+
+def test_dataset_version_failed_segment_partition_caches_failed_id_set() -> None:
+    _failed_segment_id_set.cache_clear()
+    failed_ids = ("b", "d")
+    segments = [
+        {"segment_id": "a", "text": "first"},
+        {"segment_id": "b", "text": "second"},
+        {"segment_id": "c", "text": "third"},
+    ]
+
+    assert _partition_failed_segments(segments, failed_ids)[1] == [segments[1]]
+    assert _failed_segment_id_set.cache_info().misses == 1
+    assert _partition_failed_segments(segments, failed_ids)[1] == [segments[1]]
+    cache_info = _failed_segment_id_set.cache_info()
+    assert cache_info.hits == 1
+    assert cache_info.currsize == 1
 
 
 def test_dataset_quality_output_lengths_preserve_completion_and_message_semantics() -> None:
