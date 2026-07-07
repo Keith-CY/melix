@@ -5,6 +5,8 @@ import re
 
 UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION = "melix.untrusted_context_receipt.v1"
 _PUBLIC_SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,96}$")
+_SOURCE_ID_PREFIX = "source:"
+_SOURCE_ID_PREFIX_LENGTH = len(_SOURCE_ID_PREFIX)
 
 
 def untrusted_context_receipt(
@@ -77,4 +79,8 @@ def _redacted_segment_id(
 
 
 def _is_public_source_id(source_id: str) -> bool:
+    if source_id.startswith(_SOURCE_ID_PREFIX):
+        source_suffix = source_id[_SOURCE_ID_PREFIX_LENGTH:]
+        if source_suffix.isdigit():
+            return len(source_id) <= 96
     return _PUBLIC_SOURCE_ID_RE.fullmatch(source_id) is not None
