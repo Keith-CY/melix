@@ -26,11 +26,12 @@ The probe must be base-compatible so `origin/main` still runs successfully durin
 
 ## Success Metrics
 
-- `_latency_stats()` performs one sort per invocation instead of two.
+- `_latency_stats()` performs one ordering pass per invocation instead of two.
 - A 2026-05-28 follow-up micro-slice keeps the same behavior and one-sort invariant while inlining the two fixed percentile calculations inside `_latency_stats()`. The previous class-attribute binding step is already present on `main`, so this slice removes the remaining two `_ordered_percentile(...)` helper calls from the hot return path instead of rebinding them again.
+- A 2026-07-07 follow-up micro-slice preserves caller input order while replacing `sorted(values)` with `values.copy(); sorted_values.sort()` so the hot path avoids the `builtins.sorted` call wrapper and keeps a single copied vector for `p50`, `p95`, and `max`.
 - Latency summary outputs (`mean`, `p50`, `p95`, `max`) remain unchanged.
 - Focused changed-scope coverage for touched executable files is at least 95%.
-- The registered local probe must show stable or lower `elapsed_ms_mean` versus `origin/main`; `sorted_calls_mean` must remain `1.0`.
+- The registered local probe must show stable or lower `elapsed_ms_mean` versus `origin/main`; `sorted_calls_mean` may drop below `1.0` when the implementation uses `list.sort()` on a defensive copy instead of `builtins.sorted`.
 
 ## Verification Commands
 

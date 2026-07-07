@@ -1926,7 +1926,8 @@ class EvaluationCore:
         if not values:
             return {"mean": 0.0, "p50": 0.0, "p95": 0.0, "max": 0.0}
         total = sum(values)
-        sorted_values = sorted(values)
+        sorted_values = values.copy()
+        sorted_values.sort()
         value_count = len(sorted_values)
         round_ms = cls._round_ms
         if value_count == 1:

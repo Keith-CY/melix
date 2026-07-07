@@ -6459,7 +6459,7 @@ def test_evaluation_latency_percentile_probe_command_emits_metrics() -> None:
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["sorted_calls_mean"] == 1.0
+    assert metrics["sorted_calls_mean"] == 0.0
     assert metrics["sample_count"] == 12000.0
     assert metrics["iteration_count"] == 160.0
     assert metrics["p95"] >= metrics["p50"]
