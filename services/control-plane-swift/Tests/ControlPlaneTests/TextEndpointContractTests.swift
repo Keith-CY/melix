@@ -35,6 +35,49 @@ struct TextEndpointContractTests {
         #expect(message.content == "alpha\nbeta")
     }
 
+    @Test("gateway request context budget keeps output caps distinct from context windows")
+    func gatewayRequestContextBudgetKeepsOutputCapsDistinctFromContextWindows() throws {
+        let longContextBudget = try #require(
+            GatewayRequestContextBudget.derive(
+                contextWindowTokens: 131_072,
+                outputCapTokens: 512,
+                promptTokensEstimated: 2,
+                estimateSlackTokens: 2_048
+            )
+        )
+
+        #expect(longContextBudget.contextLength == 2_562)
+        #expect(longContextBudget.outputCapTokens == 512)
+        #expect(longContextBudget.contextLength != longContextBudget.outputCapTokens)
+        #expect(longContextBudget.metadata["melix.gateway.context_length"] == "2562")
+        #expect(longContextBudget.metadata["melix.gateway.requested_context"] == "2562")
+        #expect(longContextBudget.metadata["melix.gateway.context_source"] == "control_plane_prompt_budget")
+        #expect(longContextBudget.metadata["melix.gateway.context_window_tokens"] == "131072")
+        #expect(longContextBudget.metadata["melix.gateway.output_cap_tokens"] == "512")
+        #expect(longContextBudget.metadata["melix.gateway.prompt_tokens_estimated"] == "2")
+        #expect(longContextBudget.metadata["melix.gateway.prompt_tokens_estimate_source"] == "control_plane_heuristic_utf8_whitespace")
+        #expect(longContextBudget.metadata["melix.gateway.prompt_tokens_estimate_slack"] == "2048")
+
+        let clampedBudget = try #require(
+            GatewayRequestContextBudget.derive(
+                contextWindowTokens: 1_024,
+                outputCapTokens: 2_048,
+                promptTokensEstimated: 100,
+                estimateSlackTokens: 0
+            )
+        )
+        #expect(clampedBudget.contextLength == 1_024)
+
+        #expect(
+            GatewayRequestContextBudget.derive(
+                contextWindowTokens: 0,
+                outputCapTokens: 512,
+                promptTokensEstimated: 2,
+                estimateSlackTokens: 0
+            ) == nil
+        )
+    }
+
     @Test("stream options encode include_usage across public contracts")
     func streamOptionsEncodeIncludeUsageAcrossPublicContracts() throws {
         let encoder = JSONEncoder()

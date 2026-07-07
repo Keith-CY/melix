@@ -2959,6 +2959,14 @@ button.primary:active {
         ) {
             throw HTTPRequestHandlingError.gatewayResponse(admissionFailure)
         }
+        let admittedExecutionRequest = executionRequest.mergingOpenAICompatibilityReceipts(
+            requestContextBudgetMetadata(
+                normalized: executionRequest,
+                model: resolvedModel,
+                modelSamplingPolicy: modelSamplingPolicy,
+                gatewayServingDefaults: servingDefaults
+            )
+        )
         if let mediaAdmissionFailure = mediaAdmissionFailure(
             for: routed,
             model: originalModel,
@@ -2975,7 +2983,7 @@ button.primary:active {
                 workerRegistry: workerRegistry,
                 metricsStore: metricsStore,
                 routeKindOverride: loadRouteKindOverride(
-                    for: executionRequest,
+                    for: admittedExecutionRequest,
                     originalModel: originalModel,
                     resolvedModel: resolvedModel
                 )
@@ -3009,7 +3017,7 @@ button.primary:active {
         }
         let shapingStartedAt = Date()
         let translated = try translator.translate(
-            executionRequest,
+            admittedExecutionRequest,
             modelHandle: modelHandle,
             modelToolParser: shapingModelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
@@ -3963,6 +3971,32 @@ button.primary:active {
                 ],
             ]
         )
+    }
+
+    private func requestContextBudgetMetadata(
+        normalized: NormalizedTextRequest,
+        model: Melix_Controlplane_V1_ModelSummary?,
+        modelSamplingPolicy: ModelSamplingPolicy?,
+        gatewayServingDefaults: GatewayServingDefaultsPolicy?
+    ) -> [String: String] {
+        let contextWindowTokens = model?.maxContext ?? 0
+        guard contextWindowTokens > 0 else {
+            return [:]
+        }
+        let outputCapTokens = promptBudgetOutputCapTokens(
+            normalized: normalized,
+            modelSamplingPolicy: modelSamplingPolicy,
+            gatewayServingDefaults: gatewayServingDefaults,
+            contextWindowTokens: contextWindowTokens
+        )
+        let promptTokensEstimated = estimatedPromptTokens(for: normalized.messages)
+        let estimateSlackTokens = promptBudgetEstimateSlackTokens(contextWindowTokens: contextWindowTokens)
+        return GatewayRequestContextBudget.derive(
+            contextWindowTokens: contextWindowTokens,
+            outputCapTokens: outputCapTokens,
+            promptTokensEstimated: promptTokensEstimated,
+            estimateSlackTokens: estimateSlackTokens
+        )?.metadata ?? [:]
     }
 
     private func promptBudgetOutputCapTokens(

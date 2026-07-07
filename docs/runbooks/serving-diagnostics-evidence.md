@@ -300,6 +300,20 @@ those keys yet, so diagnostics can legitimately show `unknown` telemetry and no
 memory-based step-down until device or worker memory telemetry is wired into the
 serving admission input path.
 
+For OpenAI-compatible text requests, the control-plane gateway derives the
+request-side serving context from the same prompt-budget inputs used for
+admission. It writes `melix.gateway.context_length` and
+`melix.gateway.requested_context` as the bounded estimate
+`min(model_context_window, prompt_tokens_estimated + output_cap_tokens + slack)`.
+The output cap remains only an output cap; it is not treated as the context
+window. Additional provenance metadata includes
+`melix.gateway.context_source`, `melix.gateway.context_window_tokens`,
+`melix.gateway.output_cap_tokens`, `melix.gateway.prompt_tokens_estimated`,
+`melix.gateway.prompt_tokens_estimate_source`, and
+`melix.gateway.prompt_tokens_estimate_slack`. `RequestCoordinator` consumes the
+context keys as serving-admission input, then emits the
+`melix.serving.memory_admission.*` audit namespace below.
+
 Diagnostics writers may derive `serving_memory_admission` from namespaced
 metadata when all of these keys are present:
 
