@@ -4852,6 +4852,108 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("serving memory admission uses injected device memory when model metadata is absent")
+    func servingMemoryAdmissionUsesInjectedDeviceMemoryWhenModelMetadataIsAbsent() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.maxContext = 131_072
+        textModel.settings.memoryBudgetBytes = 1_073_741_824
+        textModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog,
+            servingMemoryBytesProvider: { 4_294_967_296 }
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-memory-admission-injected-device-memory",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "4",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.memory_telemetry_source"] == "detected")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.memory_headroom_bytes"] == "2147483648")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.admission_reason"] == "memory_step_down")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_context"] == "4096")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_batch"] == "1")
+
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-memory-admission-injected-device-memory",
+            decodeHandle: decodeRequest.decodeHandle
+        )
+        await workerClient.emitToken(requestID: "req-memory-admission-injected-device-memory", text: "memory")
+        await workerClient.finishDecode(requestID: "req-memory-admission-injected-device-memory")
+        _ = await consumer.result
+    }
+
+    @Test("serving memory admission prefers explicit model memory metadata over injected device memory")
+    func servingMemoryAdmissionPrefersExplicitModelMemoryMetadataOverInjectedDeviceMemory() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.maxContext = 131_072
+        textModel.settings.memoryBudgetBytes = 1_073_741_824
+        textModel.settings.ext["melix.serving.memory.available_bytes"] = "0"
+        textModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog,
+            servingMemoryBytesProvider: { 17_179_869_184 }
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-memory-admission-metadata-precedence",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "4",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.memory_telemetry_source"] == "detected")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.admission_reason"] == "insufficient_memory")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_context"] == "2048")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.fits_memory"] == "false")
+
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-memory-admission-metadata-precedence",
+            decodeHandle: decodeRequest.decodeHandle
+        )
+        await workerClient.emitToken(requestID: "req-memory-admission-metadata-precedence", text: "memory")
+        await workerClient.finishDecode(requestID: "req-memory-admission-metadata-precedence")
+        _ = await consumer.result
+    }
+
     @Test("unsupported speculative draft is rejected before worker dispatch")
     func unsupportedSpeculativeDraftIsRejectedBeforeWorkerDispatch() async throws {
         let workerClient = PhaseAwareWorkerClient()

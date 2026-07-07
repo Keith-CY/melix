@@ -291,14 +291,16 @@ start a worker, or change runtime fallback behavior during bundle writing.
 - `admission_reason` - typed reason for the effective context and batch choice.
 - `fits_memory` - whether the admitted estimate fits the available memory model.
 
-Current control-plane admission reports `memory_telemetry_source=detected` only
-when upstream model settings metadata includes a detected-memory value such as
-`melix.serving.memory.available_bytes`,
+Current control-plane admission first reads upstream model settings metadata for
+a detected-memory value such as `melix.serving.memory.available_bytes`,
 `melix.serving.memory.detected_memory_bytes`, or
-`melix.device.memory_total_bytes`. Production catalog discovery may not populate
-those keys yet, so diagnostics can legitimately show `unknown` telemetry and no
-memory-based step-down until device or worker memory telemetry is wired into the
-serving admission input path.
+`melix.device.memory_total_bytes`. Production `ControlPlaneService` and
+bootstrap construction paths fall back to `ProcessInfo.processInfo.physicalMemory`
+when those model metadata keys are absent, so production serving requests can
+emit `memory_telemetry_source=detected` without requiring catalog discovery to
+pre-populate memory metadata. Tests and custom `RequestCoordinator` construction
+can inject no memory supplier, in which case diagnostics legitimately show
+`unknown` telemetry and no memory-based step-down.
 
 For OpenAI-compatible text requests, the control-plane gateway derives the
 request-side serving context from the same prompt-budget inputs used for
