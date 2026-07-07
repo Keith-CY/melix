@@ -368,10 +368,7 @@ class LocalJobContinuationStore:
             json_suffix_length = len(json_suffix)
             for entry in os.scandir(root_fspath):
                 name = entry.name
-                if (
-                    len(name) < json_suffix_length
-                    or name[-json_suffix_length:] != json_suffix
-                ):
+                if not name.endswith(json_suffix):
                     continue
                 if entry.is_file(follow_symlinks=False):
                     # The scan has already filtered this to a .json file name.
