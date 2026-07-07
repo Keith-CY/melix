@@ -104,6 +104,9 @@ def _write_provenance(
     validation_sample_count: int = 6,
     loss_best: float = 0.21,
     loss_final: float = 0.25,
+    heldout_test_loss: float | None = None,
+    heldout_test_perplexity: float | None = None,
+    heldout_test_sample_count: int = 0,
     export_eligible: bool = True,
     loss_series_row_count: int = 2,
     note_count: int = 1,
@@ -177,6 +180,12 @@ def _write_provenance(
         "created_at_unix_ms": 1_000,
         "updated_at_unix_ms": 2_000,
     }
+    if heldout_test_loss is not None:
+        payload["final_metrics"]["heldout_test_loss"] = heldout_test_loss
+    if heldout_test_perplexity is not None:
+        payload["final_metrics"]["heldout_test_perplexity"] = heldout_test_perplexity
+    if heldout_test_sample_count:
+        payload["final_metrics"]["heldout_test_sample_count"] = heldout_test_sample_count
     provenance_path.write_text(
         json.dumps(payload, indent=2) + "\n",
         encoding="utf-8",
@@ -449,6 +458,9 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
         checkpoint_sort_key="0000000102",
         selected_checkpoint_path="/tmp/model-ops-0003/adapter/checkpoint-102/adapters.safetensors",
         selected_checkpoint_loss_source="loss_best",
+        heldout_test_loss=0.29,
+        heldout_test_perplexity=1.34,
+        heldout_test_sample_count=8,
     )
     assert lora_experiment_store_module._optional_finite_float("not-a-number", "0.5") == 0.5
 
@@ -466,6 +478,9 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
     assert provenance_run["validation_sample_count"] == 6
     assert provenance_run["loss_best"] == 0.21
     assert provenance_run["loss_final"] == 0.25
+    assert provenance_run["heldout_test_loss"] == 0.29
+    assert provenance_run["heldout_test_perplexity"] == 1.34
+    assert provenance_run["heldout_test_sample_count"] == 8
     assert provenance_run["tokens_per_second"] == 111.0
     assert provenance_run["peak_memory_gb"] == 3.5
     assert provenance_run["loss_series_row_count"] == 2
@@ -479,11 +494,17 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
     assert provenance_run["export_eligible"] is True
     assert provenance_run["adapter_provenance_manifest_path"] == str(provenance_path)
     assert provenance_group["best_loss"] == 0.21
+    assert provenance_group["latest_heldout_test_loss"] == 0.29
+    assert provenance_group["latest_heldout_test_perplexity"] == 1.34
+    assert provenance_group["latest_heldout_test_sample_count"] == 8
     assert provenance_group["recommended_provenance_manifest_path"] == str(provenance_path)
     assert provenance_group["latest_export_eligible"] is True
     assert provenance_group["best_known_adapter"]["provenance_manifest_path"] == str(provenance_path)
     assert provenance_group["best_known_adapter"]["checkpoint_step"] == 102
     assert provenance_group["best_known_adapter"]["checkpoint_sort_key"] == "0000000102"
+    assert provenance_group["best_known_adapter"]["heldout_test_loss"] == 0.29
+    assert provenance_group["best_known_adapter"]["heldout_test_perplexity"] == 1.34
+    assert provenance_group["best_known_adapter"]["heldout_test_sample_count"] == 8
     assert provenance_group["best_known_adapter"]["selected_checkpoint_path"].endswith(
         "checkpoint-102/adapters.safetensors"
     )

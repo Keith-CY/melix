@@ -174,6 +174,48 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     assert stale_agentic_train_path.exists() is False
     assert stale_agentic_valid_path.exists() is False
     assert training_dataset_module.trainer_sample_counts(dataset) == (1, 0)
+
+    degenerate_agentic_samples = [
+        {
+            "trace_id": f"trace-{index}",
+            "question": f"What is item {index}?",
+            "turns": [{"role": "user", "content": f"Describe item {index}."}],
+            "final_answer": "",
+        }
+        for index in range(4)
+    ]
+    degenerate_agentic_dataset = TrainingDatasetPackage(
+        package_path=tmp_path / "agentic-empty-test-package",
+        manifest_path=tmp_path / "agentic-empty-test-package" / "manifest.json",
+        samples_path=tmp_path / "agentic-empty-test-package" / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="agentic-empty-test-demo",
+        format="agentic_tool_trace",
+        sample_count=len(degenerate_agentic_samples),
+        version="1",
+        normalized_samples=degenerate_agentic_samples,
+        normalized_validation_samples=[],
+        validation_sample_count=0,
+        response_only_supported=True,
+    )
+    degenerate_snapshot = write_normalized_dataset_snapshot(
+        degenerate_agentic_dataset,
+        output_dir=tmp_path / "agentic-empty-test-exports",
+        test_ratio=0.75,
+    )
+    degenerate_manifest = json.loads(
+        degenerate_snapshot.manifest_path.read_text(encoding="utf-8")
+    )
+    assert degenerate_manifest["test_ratio"] == 0.75
+    assert degenerate_manifest["test_sample_count"] == 0
+    assert degenerate_manifest["source_trace_test_sample_count"] == 3
+    assert degenerate_manifest["test_split_reason"] == "test_split_empty_after_formatting"
+    assert degenerate_snapshot.test_path is None
+    assert (degenerate_snapshot.dataset_dir / "test.jsonl").exists() is False
+    assert (
+        degenerate_snapshot.dataset_dir / "agentic-traces.test.jsonl"
+    ).exists() is False
+
     agentic_package_path = tmp_path / "agentic-package"
     agentic_package_path.mkdir(parents=True, exist_ok=True)
     (agentic_package_path / "manifest.json").write_text(
@@ -728,6 +770,164 @@ def test_write_normalized_dataset_snapshot_clears_stale_valid_jsonl_when_no_vali
     assert snapshot.valid_path is None
     assert stale_valid_path.exists() is False
 
+
+def test_write_normalized_dataset_snapshot_writes_deterministic_test_split_and_cleans_stale_test_jsonl(
+    tmp_path: Path,
+) -> None:
+    package_path = tmp_path / "dataset-package"
+    package_path.mkdir(parents=True, exist_ok=True)
+    output_dir = tmp_path / "exports"
+    stale_test_path = output_dir / "normalized_dataset" / "test.jsonl"
+    stale_test_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_test_path.write_text("stale\n", encoding="utf-8")
+    samples = [
+        {"prompt": f"prompt-{index}", "completion": f"completion-{index}"}
+        for index in range(10)
+    ]
+    validation_samples = [{"prompt": "valid", "completion": "answer"}]
+    dataset = TrainingDatasetPackage(
+        package_path=package_path,
+        manifest_path=package_path / "manifest.json",
+        samples_path=package_path / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="melix-demo",
+        format="prompt_completion",
+        sample_count=len(samples),
+        version="1",
+        normalized_samples=list(samples),
+        normalized_validation_samples=validation_samples,
+        validation_sample_count=len(validation_samples),
+        response_only_supported=False,
+    )
+    expected_test_indices = {
+        index
+        for _, index in sorted(
+            (
+                training_dataset_module._canonical_sample_digest(sample),
+                index,
+            )
+            for index, sample in enumerate(samples)
+        )[:3]
+    }
+    expected_train_rows = [
+        sample for index, sample in enumerate(samples) if index not in expected_test_indices
+    ]
+    expected_test_rows = [
+        sample for index, sample in enumerate(samples) if index in expected_test_indices
+    ]
+
+    snapshot = write_normalized_dataset_snapshot(
+        dataset,
+        output_dir=output_dir,
+        test_ratio=0.3,
+    )
+
+    train_rows = [
+        json.loads(line)
+        for line in snapshot.train_path.read_text(encoding="utf-8").splitlines()
+    ]
+    test_rows = [
+        json.loads(line)
+        for line in stale_test_path.read_text(encoding="utf-8").splitlines()
+    ]
+    manifest = json.loads(snapshot.manifest_path.read_text(encoding="utf-8"))
+    assert snapshot.test_path == stale_test_path
+    assert snapshot.test_sample_count == 3
+    assert train_rows == expected_train_rows
+    assert test_rows == expected_test_rows
+    assert snapshot.samples_path.read_text(encoding="utf-8") == snapshot.train_path.read_text(
+        encoding="utf-8"
+    )
+    assert snapshot.valid_path is not None
+    assert json.loads(snapshot.valid_path.read_text(encoding="utf-8")) == validation_samples[0]
+    assert manifest["sample_count"] == 7
+    assert manifest["validation_sample_count"] == 1
+    assert manifest["test_sample_count"] == 3
+    assert manifest["test_ratio"] == 0.3
+    assert manifest["test_split_strategy"] == "deterministic_digest"
+
+    snapshot_without_test = write_normalized_dataset_snapshot(
+        dataset,
+        output_dir=output_dir,
+        test_ratio=0.0,
+    )
+
+    manifest_without_test = json.loads(
+        snapshot_without_test.manifest_path.read_text(encoding="utf-8")
+    )
+    assert snapshot_without_test.test_path is None
+    assert snapshot_without_test.test_sample_count == 0
+    assert stale_test_path.exists() is False
+    assert manifest_without_test["sample_count"] == 10
+    assert manifest_without_test["test_sample_count"] == 0
+    assert "test_ratio" not in manifest_without_test
+
+
+def test_agentic_test_split_and_holdout_edge_coverage(tmp_path: Path) -> None:
+    package_path = tmp_path / "agentic-dataset-package"
+    output_dir = tmp_path / "agentic-exports"
+    agentic_test_path = output_dir / "normalized_dataset" / "agentic-traces.test.jsonl"
+    package_path.mkdir(parents=True, exist_ok=True)
+    samples = [
+        {
+            "trace_id": f"trace-{index}",
+            "question": f"What is item {index}?",
+            "turns": [
+                {"role": "user", "content": f"Describe item {index}."},
+            ],
+            "final_answer": f"item-{index}",
+        }
+        for index in range(4)
+    ]
+    dataset = TrainingDatasetPackage(
+        package_path=package_path,
+        manifest_path=package_path / "manifest.json",
+        samples_path=package_path / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="agentic-demo",
+        format="agentic_tool_trace",
+        sample_count=len(samples),
+        version="1",
+        normalized_samples=samples,
+        normalized_validation_samples=[],
+        validation_sample_count=0,
+        response_only_supported=True,
+    )
+
+    validation_train, validation_holdout = training_dataset_module._deterministic_validation_split(
+        samples,
+        0.25,
+    )
+    assert len(validation_train) == 3
+    assert len(validation_holdout) == 1
+    assert training_dataset_module.trainer_sample_counts_with_test(
+        dataset,
+        test_ratio=0.75,
+    ) == (1, 0, 3)
+    with pytest.raises(ModelOperationError) as invalid_ratio_exc:
+        training_dataset_module.trainer_sample_counts_with_test(dataset, test_ratio=1.0)
+    assert invalid_ratio_exc.value.details["field"] == "test_ratio"
+
+    snapshot = write_normalized_dataset_snapshot(
+        dataset,
+        output_dir=output_dir,
+        test_ratio=0.75,
+    )
+
+    assert snapshot.test_path is not None
+    assert snapshot.test_sample_count == 3
+    assert agentic_test_path.is_file()
+    assert len(agentic_test_path.read_text(encoding="utf-8").splitlines()) == 3
+
+    snapshot_without_test = write_normalized_dataset_snapshot(
+        dataset,
+        output_dir=output_dir,
+        test_ratio=0.0,
+    )
+
+    assert snapshot_without_test.test_path is None
+    assert snapshot_without_test.test_sample_count == 0
+    assert agentic_test_path.exists() is False
 
 
 def test_load_training_dataset_package_respects_sample_limit_after_skipping_blank_lines(

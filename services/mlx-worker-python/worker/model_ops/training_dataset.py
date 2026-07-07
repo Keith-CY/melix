@@ -69,8 +69,10 @@ class NormalizedDatasetSnapshot:
     samples_path: Path
     train_path: Path
     valid_path: Path | None
+    test_path: Path | None
     sample_count: int
     validation_sample_count: int
+    test_sample_count: int
     format: str
     trainer_format: str
 
@@ -546,7 +548,9 @@ def write_normalized_dataset_snapshot(
     *,
     output_dir: Path,
     manifest_overrides: Mapping[str, Any] | None = None,
+    test_ratio: float = 0.0,
 ) -> NormalizedDatasetSnapshot:
+    _validate_holdout_ratio(test_ratio, field_name="test_ratio")
     dataset_dir = output_dir / "normalized_dataset"
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
@@ -554,29 +558,54 @@ def write_normalized_dataset_snapshot(
     samples_path = dataset_dir / "samples.jsonl"
     train_path = dataset_dir / "train.jsonl"
     valid_path = dataset_dir / "valid.jsonl"
+    test_path: Path | None = dataset_dir / "test.jsonl"
     agentic_train_path = dataset_dir / "agentic-traces.train.jsonl"
     agentic_valid_path = dataset_dir / "agentic-traces.valid.jsonl"
+    agentic_test_path = dataset_dir / "agentic-traces.test.jsonl"
 
     trainer_format = dataset.format
-    train_samples = dataset.normalized_samples
-    validation_samples = dataset.normalized_validation_samples
-    trainer_sample_count = dataset.sample_count
+    source_train_samples = dataset.normalized_samples
+    source_validation_samples = dataset.normalized_validation_samples
+    source_test_samples: list[dict[str, Any]] = []
+    test_split_strategy = ""
+    test_split_reason = ""
+    if test_ratio > 0.0:
+        source_train_samples, source_test_samples = _deterministic_test_split(
+            dataset.normalized_samples,
+            test_ratio,
+        )
+        test_split_strategy = "deterministic_digest"
+    train_samples = source_train_samples
+    validation_samples = source_validation_samples
+    test_samples = source_test_samples
+    trainer_sample_count = (
+        len(source_train_samples) if test_ratio > 0.0 else dataset.sample_count
+    )
     trainer_validation_sample_count = dataset.validation_sample_count
+    trainer_test_sample_count = len(source_test_samples)
     agentic_projection: dict[str, Any] = {}
     if dataset.format == "agentic_tool_trace":
         trainer_format = "chat_messages"
         train_token_metrics = agentic_sft_formatter.new_token_metrics()
         train_samples, train_projection_metrics = agentic_sft_formatter.format_trace_rows(
-            dataset.normalized_samples,
+            source_train_samples,
             token_metrics=train_token_metrics,
         )
         validation_token_metrics = agentic_sft_formatter.new_token_metrics()
         validation_samples, validation_projection_metrics = agentic_sft_formatter.format_trace_rows(
-            dataset.normalized_validation_samples,
+            source_validation_samples,
             token_metrics=validation_token_metrics,
+        )
+        test_token_metrics = agentic_sft_formatter.new_token_metrics()
+        test_samples, test_projection_metrics = agentic_sft_formatter.format_trace_rows(
+            source_test_samples,
+            token_metrics=test_token_metrics,
         )
         trainer_sample_count = len(train_samples)
         trainer_validation_sample_count = len(validation_samples)
+        trainer_test_sample_count = len(test_samples)
+        if test_ratio > 0.0 and source_test_samples and not test_samples:
+            test_split_reason = "test_split_empty_after_formatting"
         agentic_projection = {
             "trainer_format": trainer_format,
             "agentic_sft_formatter": agentic_sft_formatter.AGENTIC_SFT_FORMATTER_ID,
@@ -585,17 +614,22 @@ def write_normalized_dataset_snapshot(
             "agentic_trace_valid_path": (
                 str(agentic_valid_path) if dataset.normalized_validation_samples else ""
             ),
+            "agentic_trace_test_path": str(agentic_test_path) if source_test_samples else "",
             "source_trace_sample_count": dataset.sample_count,
             "source_trace_validation_sample_count": dataset.validation_sample_count,
+            "source_trace_test_sample_count": len(source_test_samples),
             "trainer_sample_count": trainer_sample_count,
             "trainer_validation_sample_count": trainer_validation_sample_count,
+            "trainer_test_sample_count": trainer_test_sample_count,
             "agentic_sft_projection_metrics": agentic_sft_formatter.merge_projection_metrics(
                 train_projection_metrics,
                 validation_projection_metrics,
+                test_projection_metrics,
             ),
             "agentic_sft_token_metrics": agentic_sft_formatter.merge_token_metrics(
                 train_token_metrics,
                 validation_token_metrics,
+                test_token_metrics,
             ),
         }
 
@@ -606,11 +640,17 @@ def write_normalized_dataset_snapshot(
         "trainer_format": trainer_format,
         "sample_count": trainer_sample_count,
         "validation_sample_count": trainer_validation_sample_count,
+        "test_sample_count": trainer_test_sample_count,
         "version": dataset.version,
         "source_manifest_path": str(dataset.manifest_path),
         "source_samples_path": str(dataset.samples_path),
         "response_only_supported": dataset.response_only_supported,
     }
+    if test_split_strategy:
+        manifest_payload["test_ratio"] = test_ratio
+        manifest_payload["test_split_strategy"] = test_split_strategy
+    if test_split_reason:
+        manifest_payload["test_split_reason"] = test_split_reason
     if dataset.format == "agentic_tool_trace":
         manifest_payload.update(_agentic_trace_snapshot_manifest_fields(dataset))
         manifest_payload.update(agentic_projection)
@@ -620,7 +660,7 @@ def write_normalized_dataset_snapshot(
 
     _write_duplicate_jsonl_rows((samples_path, train_path), train_samples)
     if dataset.format == "agentic_tool_trace":
-        _write_jsonl_rows(agentic_train_path, dataset.normalized_samples)
+        _write_jsonl_rows(agentic_train_path, source_train_samples)
     elif agentic_train_path.exists():
         agentic_train_path.unlink()
     if validation_samples:
@@ -633,6 +673,16 @@ def write_normalized_dataset_snapshot(
         valid_path = None
         if agentic_valid_path.exists():
             agentic_valid_path.unlink()
+    if test_samples and test_path is not None:
+        _write_jsonl_rows(test_path, test_samples)
+        if dataset.format == "agentic_tool_trace":
+            _write_jsonl_rows(agentic_test_path, source_test_samples)
+    else:
+        if test_path is not None and test_path.exists():
+            test_path.unlink()
+        test_path = None
+        if agentic_test_path.exists():
+            agentic_test_path.unlink()
 
     return NormalizedDatasetSnapshot(
         dataset_dir=dataset_dir,
@@ -641,21 +691,45 @@ def write_normalized_dataset_snapshot(
         samples_path=samples_path,
         train_path=train_path,
         valid_path=valid_path,
+        test_path=test_path,
         sample_count=trainer_sample_count,
         validation_sample_count=trainer_validation_sample_count,
+        test_sample_count=trainer_test_sample_count,
         format=dataset.format,
         trainer_format=trainer_format,
     )
 
 
 def trainer_sample_counts(dataset: TrainingDatasetPackage) -> tuple[int, int]:
+    trainer_sample_count, trainer_validation_sample_count, _ = trainer_sample_counts_with_test(
+        dataset,
+        test_ratio=0.0,
+    )
+    return trainer_sample_count, trainer_validation_sample_count
+
+
+def trainer_sample_counts_with_test(
+    dataset: TrainingDatasetPackage,
+    *,
+    test_ratio: float = 0.0,
+) -> tuple[int, int, int]:
+    _validate_holdout_ratio(test_ratio, field_name="test_ratio")
+    train_samples = dataset.normalized_samples
+    test_samples: list[dict[str, Any]] = []
+    if test_ratio > 0.0:
+        train_samples, test_samples = _deterministic_test_split(
+            dataset.normalized_samples,
+            test_ratio,
+        )
     if dataset.format != "agentic_tool_trace":
-        return dataset.sample_count, dataset.validation_sample_count
+        train_count = len(train_samples) if test_ratio > 0.0 else dataset.sample_count
+        return train_count, dataset.validation_sample_count, len(test_samples)
     return (
-        agentic_sft_formatter.count_trace_trainer_rows(dataset.normalized_samples),
+        agentic_sft_formatter.count_trace_trainer_rows(train_samples),
         agentic_sft_formatter.count_trace_trainer_rows(
             dataset.normalized_validation_samples
         ),
+        agentic_sft_formatter.count_trace_trainer_rows(test_samples),
     )
 
 
@@ -1898,16 +1972,40 @@ def _deterministic_validation_split(
     samples: list[dict[str, Any]],
     validation_ratio: float,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    return _deterministic_holdout_split(
+        samples,
+        validation_ratio,
+        holdout_name="validation",
+    )
+
+
+def _deterministic_test_split(
+    samples: list[dict[str, Any]],
+    test_ratio: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    return _deterministic_holdout_split(
+        samples,
+        test_ratio,
+        holdout_name="test",
+    )
+
+
+def _deterministic_holdout_split(
+    samples: list[dict[str, Any]],
+    holdout_ratio: float,
+    *,
+    holdout_name: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if len(samples) < 2:
         raise ModelOperationError(
             code="invalid_dataset_source",
-            message="Automatic validation split requires at least two samples.",
+            message=f"Automatic {holdout_name} split requires at least two samples.",
         )
 
     sample_count = len(samples)
-    validation_count = int(round(sample_count * validation_ratio))
-    validation_count = max(1, min(sample_count - 1, validation_count))
-    train_count = sample_count - validation_count
+    holdout_count = int(round(sample_count * holdout_ratio))
+    holdout_count = max(1, min(sample_count - 1, holdout_count))
+    train_count = sample_count - holdout_count
     canonical_sample_digest = _canonical_sample_digest
     ranked_samples = (
         (
@@ -1917,27 +2015,43 @@ def _deterministic_validation_split(
         for index, sample in enumerate(samples)
     )
     train_samples: list[dict[str, Any]] = []
-    validation_samples: list[dict[str, Any]] = []
-    if train_count < validation_count:
+    holdout_samples: list[dict[str, Any]] = []
+    if train_count < holdout_count:
         train_indices = {index for _, index in heapq.nlargest(train_count, ranked_samples)}
         train_append = train_samples.append
-        validation_append = validation_samples.append
+        holdout_append = holdout_samples.append
         for index, sample in enumerate(samples):
             if index in train_indices:
                 train_append(sample)
             else:
-                validation_append(sample)
-        return train_samples, validation_samples
+                holdout_append(sample)
+        return train_samples, holdout_samples
 
-    validation_indices = {index for _, index in heapq.nsmallest(validation_count, ranked_samples)}
+    holdout_indices = {index for _, index in heapq.nsmallest(holdout_count, ranked_samples)}
     train_append = train_samples.append
-    validation_append = validation_samples.append
+    holdout_append = holdout_samples.append
     for index, sample in enumerate(samples):
-        if index in validation_indices:
-            validation_append(sample)
+        if index in holdout_indices:
+            holdout_append(sample)
         else:
             train_append(sample)
-    return train_samples, validation_samples
+    return train_samples, holdout_samples
+
+
+def _validate_holdout_ratio(value: float, *, field_name: str) -> None:
+    if 0.0 <= value < 1.0:
+        return
+    raise ModelOperationError(
+        code="invalid_argument",
+        message=f"{field_name} must be greater than or equal to 0 and less than 1.",
+        details={
+            "field": field_name,
+            "reason": "out_of_bounds",
+            "received": str(value),
+            "allowed_bounds": "0 <= value < 1",
+            "http_status": "422",
+        },
+    )
 
 
 def _build_quality_report(samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
