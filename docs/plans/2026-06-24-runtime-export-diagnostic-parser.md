@@ -225,6 +225,13 @@ small mapping rows for synthetic smoke failures, so this avoids repeated helper
 calls and repeated `Mapping` dispatch for every check row while preserving the
 same source-path fallback and failed/blocked status filter.
 
+A follow-up 2026-07-07 exact diagnosis text slice keeps diagnosis semantics and
+matched pattern ids unchanged while checking the exact lowercased diagnosis-text
+table before the broader marker prefilter. Fixture-like common lines already
+covered by the exact table now skip the union marker scan and phrase loop,
+whereas non-exact lines continue through the same marker, phrase, and regex
+fallbacks.
+
 Focused verification:
 
 ```bash
