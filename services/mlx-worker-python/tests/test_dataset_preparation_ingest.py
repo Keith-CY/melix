@@ -20,6 +20,7 @@ from worker.productization.dataset_preparation import (
     _normalize_line_endings,
     _record,
     _read_source_text,
+    _source_size_entries,
     _source_kind,
     _source_kind_for_name,
     _workspace_privacy_detection_evidence,
@@ -57,6 +58,20 @@ def test_dataset_ingest_source_file_paths_use_scandir_without_rglob(
         "a/a.txt",
         "b/b.txt",
         "z.txt",
+    ]
+
+
+def test_dataset_ingest_source_size_entries_preserve_order_and_missing_files(tmp_path: Path) -> None:
+    first = tmp_path / "first.txt"
+    missing = tmp_path / "missing.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("alpha", encoding="utf-8")
+    second.write_text("bravo-charlie", encoding="utf-8")
+
+    assert _source_size_entries([first, missing, second]) == [
+        (first, 5),
+        (missing, 0),
+        (second, 13),
     ]
 
 
