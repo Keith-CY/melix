@@ -996,6 +996,12 @@ def _copy_json_like_value(value: Any) -> Any:
     if value_type is tuple:
         if len(value) == 2:
             return (_copy_json_like_value(value[0]), _copy_json_like_value(value[1]))
+        if len(value) == 3:
+            return (
+                _copy_json_like_value(value[0]),
+                _copy_json_like_value(value[1]),
+                _copy_json_like_value(value[2]),
+            )
         return tuple(_copy_json_like_value(item) for item in value)
     if isinstance(value, dict):
         return {key: _copy_json_like_value(nested) for key, nested in value.items()}

@@ -169,6 +169,7 @@ def _scalar_copy_payload() -> dict[str, object]:
             for index in range(12)
         ],
         "coords": ("x", {"y": "z", "n": 1}),
+        "triple": ("phase", {"elapsed_ms": 1.5, "ok": True}, "done"),
     }
 
 
