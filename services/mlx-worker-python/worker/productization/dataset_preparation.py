@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import csv
 from datetime import datetime, timezone
+from functools import lru_cache
 import hashlib
 import io
 import json
@@ -922,7 +923,7 @@ def _partition_failed_segments(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if not fail_segment_ids:
         return segments, []
-    failed_id_set = set(fail_segment_ids)
+    failed_id_set = _failed_segment_id_set(fail_segment_ids)
     successful_segments: list[dict[str, Any]] = []
     failed_segments: list[dict[str, Any]] = []
     successful_segments_append = successful_segments.append
@@ -938,6 +939,11 @@ def _partition_failed_segments(
         else:
             successful_segments_append(segment)
     return successful_segments, failed_segments
+
+
+@lru_cache(maxsize=128)
+def _failed_segment_id_set(fail_segment_ids: tuple[str, ...]) -> frozenset[str]:
+    return frozenset(fail_segment_ids)
 
 
 def retry_failed_dataset_version(request: DatasetRetryFailedRequest) -> dict[str, Any]:
@@ -1840,10 +1846,13 @@ def _append_rows_output_lengths(
                 continue
             total = 0
             for item in messages:
-                try:
+                if type(item) is dict:
                     content = item.get("content", "")
-                except AttributeError:
-                    continue
+                else:
+                    try:
+                        content = item.get("content", "")
+                    except AttributeError:
+                        continue
                 if type(content) is str:
                     total += len_(content)
                 else:
