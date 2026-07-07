@@ -851,8 +851,6 @@ def _diagnoses_from_excerpt(
             break
         text = source_lines_local[index].text
         lowered_text = text.lower()
-        if not has_diagnosis_marker(lowered_text):
-            continue
         fast_pattern = exact_fast_text_patterns.get(lowered_text)
         if fast_pattern is not None:
             pattern_code = fast_pattern.code
@@ -872,6 +870,8 @@ def _diagnoses_from_excerpt(
             )
             continue
         fast_pattern = None
+        if not has_diagnosis_marker(lowered_text):
+            continue
         for phrase, pattern in fast_phrase_patterns:
             if phrase in lowered_text:
                 pattern_code = pattern.code
