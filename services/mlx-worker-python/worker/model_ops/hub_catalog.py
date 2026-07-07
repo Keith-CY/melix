@@ -4,6 +4,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote_plus, urlencode
@@ -958,6 +959,7 @@ def _direct_size_hint_from_text(text: str) -> int:
         return 0
 
 
+@lru_cache(maxsize=4096)
 def _direct_card_size_hint_from_text(text: str) -> int:
     stripped_text = _strip_model_size_label(text)
     if stripped_text:
@@ -979,6 +981,7 @@ def _direct_size_hint_from_line(text: str, value_start: int) -> int:
     return _direct_size_hint_from_text(text[value_start:value_end])
 
 
+@lru_cache(maxsize=4096)
 def _direct_explicit_size_hint_from_text(text: str) -> int:
     marker_index = text.find("MODEL SIZE | ")
     if marker_index >= 0:
