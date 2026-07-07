@@ -54,3 +54,31 @@ registered probe replay kept the targeted matrix-role metric positive at about
 0.247 ms faster than baseline (~6.58%) while unrelated submetrics showed normal
 noise. A focused single-rule microprobe over 1,000,000 iterations and seven
 samples measured old_mean=193.395 ms, new_mean=189.821 ms, speedup=1.019x.
+
+## 2026-07-07 follow-up slice: release-matrix membership binding
+
+This follow-up keeps the same registered probe,
+`report-evidence-gate-run-kind-set-membership`, and stays limited to
+`_release_matrix_rows()`. The release-matrix row builder now binds the matrix
+membership check once before scanning report roles, reducing repeated attribute
+lookup overhead while preserving the existing invalid-role skip behavior and row
+ordering semantics.
+
+Local Linux pre-change probe from `origin/main`:
+
+- `elapsed_ms_mean=1001.6281351912767`
+- `release_matrix_elapsed_ms_mean=29.859048197977245`
+- `matrix_roles_elapsed_ms_mean=3.3346045936923474`
+
+Local Linux candidate probe replays:
+
+- first replay: `elapsed_ms_mean=946.8983010097872`,
+  `release_matrix_elapsed_ms_mean=29.390572203556076`,
+  `matrix_roles_elapsed_ms_mean=3.2762992021162063`
+- second replay: `elapsed_ms_mean=946.6942346014548`,
+  `release_matrix_elapsed_ms_mean=28.76191778923385`,
+  `matrix_roles_elapsed_ms_mean=3.227511403383687`
+
+The targeted release-matrix metric improved by 0.468 ms (~1.57%) on the first
+replay and 1.097 ms (~3.67%) on the second replay, with overall probe mean also
+lower in both candidate runs.
