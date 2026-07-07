@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 from dataclasses import asdict, dataclass, field, replace
 import json
@@ -153,6 +154,29 @@ class TrainingResult:
 
 
 @dataclass(frozen=True)
+class HeldoutEvaluationRequest:
+    job_id: str
+    base_model_id: str
+    model_path: Path
+    model_revision: str
+    adapter_dir: Path
+    normalized_dataset_dir: Path
+    config: LoRATrainingConfig
+    dataset_format: str
+    test_sample_count: int
+    source_model_kind: str = "text"
+    source_model_ext: dict[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class HeldoutEvaluationResult:
+    loss: float
+    perplexity: float
+    sample_count: int
+    execution_backend: str
+
+
+@dataclass(frozen=True)
 class ActivationMetrics:
     job_duration_ms: float
 
@@ -230,6 +254,14 @@ class MLXLMRunner:
 
     def supports_alignment_training(self, config: LoRATrainingConfig) -> bool:
         return config.training_objective in {"preference", "alignment_rl"}
+
+    def evaluate_heldout(self, request: HeldoutEvaluationRequest) -> HeldoutEvaluationResult:
+        try:
+            result = self.evaluate_heldout_native(request)
+            return result if result.execution_backend else replace(result, execution_backend="native")
+        except NativeExecutionUnavailable as exc:
+            result = self.evaluate_heldout_subprocess(request, exc)
+            return replace(result, execution_backend="subprocess")
 
     def activate(self, request: ActivationRequest) -> ActivationResult:
         try:
@@ -390,6 +422,93 @@ class MLXLMRunner:
         payload_path.write_text(json.dumps(_serialize_training_request(request), indent=2) + "\n", encoding="utf-8")
         result = self._run_subprocess("train", payload_path, error_code="backend_training_failure")
         return _deserialize_training_result(result)
+
+    def evaluate_heldout_native(
+        self,
+        request: HeldoutEvaluationRequest,
+    ) -> HeldoutEvaluationResult:
+        if request.test_sample_count <= 0:
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="Held-out evaluation requires at least one test sample.",
+            )
+        try:
+            from mlx_lm.lora import CacheDataset
+            from mlx_lm.tuner.datasets import load_local_dataset
+            from mlx_lm.tuner.trainer import evaluate
+            from mlx_lm.utils import load
+        except ModuleNotFoundError as exc:
+            raise NativeExecutionUnavailable("MLX-LM is not available in the current runtime.") from exc
+
+        training_request = _training_request_for_heldout_evaluation(request)
+        args = _mlx_lora_namespace(training_request)
+        args.train = False
+        args.test = True
+        args.test_batches = request.test_sample_count
+        model, tokenizer = _load_lora_evaluation_model(request, load)
+        _, _, test_set = load_local_dataset(
+            request.normalized_dataset_dir,
+            tokenizer,
+            args,
+        )
+        try:
+            actual_test_count = len(test_set)
+        except TypeError:
+            actual_test_count = request.test_sample_count
+        if actual_test_count <= 0:
+            raise ModelOperationError(
+                code="invalid_dataset_package",
+                message="Held-out evaluation test dataset is empty.",
+            )
+
+        try:
+            loss = float(
+                evaluate(
+                    model=model,
+                    dataset=CacheDataset(test_set),
+                    batch_size=1,
+                    num_batches=actual_test_count,
+                    max_seq_length=request.config.max_seq_length,
+                )
+            )
+        except Exception as exc:
+            raise ModelOperationError(
+                code="heldout_evaluation_failure",
+                message=f"MLX-LM held-out evaluation failed: {exc}",
+            ) from exc
+        if not math.isfinite(loss):
+            raise ModelOperationError(
+                code="heldout_evaluation_failure",
+                message="MLX-LM held-out evaluation returned a non-finite loss.",
+            )
+        try:
+            perplexity = math.exp(loss)
+        except OverflowError:
+            perplexity = float("inf")
+        return HeldoutEvaluationResult(
+            loss=loss,
+            perplexity=perplexity,
+            sample_count=actual_test_count,
+            execution_backend="native",
+        )
+
+    def evaluate_heldout_subprocess(
+        self,
+        request: HeldoutEvaluationRequest,
+        reason: Exception,
+    ) -> HeldoutEvaluationResult:
+        payload_path = request.normalized_dataset_dir.parent / ".melix_heldout_eval_request.json"
+        payload_path.parent.mkdir(parents=True, exist_ok=True)
+        payload_path.write_text(
+            json.dumps(_serialize_heldout_evaluation_request(request), indent=2) + "\n",
+            encoding="utf-8",
+        )
+        result = self._run_subprocess(
+            "evaluate-heldout",
+            payload_path,
+            error_code="heldout_evaluation_failure",
+        )
+        return _deserialize_heldout_evaluation_result(result)
 
     def activate_native(self, request: ActivationRequest) -> ActivationResult:
         try:
@@ -604,6 +723,34 @@ def _load_lora_training_model(request: TrainingRequest, load_fn: Any) -> tuple[A
         return model, tokenizer
 
 
+def _load_lora_evaluation_model(
+    request: HeldoutEvaluationRequest,
+    load_fn: Any,
+) -> tuple[Any, Any]:
+    return load_fn(
+        str(request.model_path),
+        adapter_path=str(request.adapter_dir),
+        lazy=False,
+    )
+
+
+def _training_request_for_heldout_evaluation(
+    request: HeldoutEvaluationRequest,
+) -> TrainingRequest:
+    return TrainingRequest(
+        job_id=request.job_id,
+        base_model_id=request.base_model_id,
+        model_path=request.model_path,
+        model_revision=request.model_revision,
+        adapter_output_dir=request.adapter_dir,
+        normalized_dataset_dir=request.normalized_dataset_dir,
+        config=request.config,
+        dataset_format=request.dataset_format,
+        source_model_kind=request.source_model_kind,
+        source_model_ext=request.source_model_ext,
+    )
+
+
 def _should_retry_quantized_lora_load_without_strict(
     request: TrainingRequest,
     exc: ValueError,
@@ -684,6 +831,64 @@ def _deserialize_training_result(payload: dict) -> TrainingResult:
         weights_path=Path(payload["weights_path"]),
         adapter_config_path=Path(payload["adapter_config_path"]),
         metrics=TrainingMetrics(**payload["metrics"]),
+        execution_backend=str(payload["execution_backend"]),
+    )
+
+
+def _serialize_heldout_evaluation_request(request: HeldoutEvaluationRequest) -> dict:
+    return {
+        "job_id": request.job_id,
+        "base_model_id": request.base_model_id,
+        "model_path": str(request.model_path),
+        "model_revision": request.model_revision,
+        "adapter_dir": str(request.adapter_dir),
+        "normalized_dataset_dir": str(request.normalized_dataset_dir),
+        "dataset_format": request.dataset_format,
+        "test_sample_count": request.test_sample_count,
+        "source_model_kind": request.source_model_kind,
+        "source_model_ext": dict(request.source_model_ext or {}),
+        "config": asdict(request.config),
+    }
+
+
+def _deserialize_heldout_evaluation_request(payload: dict) -> HeldoutEvaluationRequest:
+    config_payload = dict(payload["config"])
+    alignment_payload = config_payload.get("alignment")
+    if isinstance(alignment_payload, dict):
+        config_payload["alignment"] = AlignmentTrainingConfig(**alignment_payload)
+    config = LoRATrainingConfig(**config_payload)
+    return HeldoutEvaluationRequest(
+        job_id=str(payload["job_id"]),
+        base_model_id=str(payload["base_model_id"]),
+        model_path=Path(payload["model_path"]),
+        model_revision=str(payload["model_revision"]),
+        adapter_dir=Path(payload["adapter_dir"]),
+        normalized_dataset_dir=Path(payload["normalized_dataset_dir"]),
+        config=config,
+        dataset_format=str(payload["dataset_format"]),
+        test_sample_count=int(payload["test_sample_count"]),
+        source_model_kind=str(payload.get("source_model_kind", "") or "text"),
+        source_model_ext={
+            str(key): str(value)
+            for key, value in dict(payload.get("source_model_ext", {}) or {}).items()
+        },
+    )
+
+
+def _serialize_heldout_evaluation_result(result: HeldoutEvaluationResult) -> dict:
+    return {
+        "loss": result.loss,
+        "perplexity": result.perplexity,
+        "sample_count": result.sample_count,
+        "execution_backend": result.execution_backend,
+    }
+
+
+def _deserialize_heldout_evaluation_result(payload: dict) -> HeldoutEvaluationResult:
+    return HeldoutEvaluationResult(
+        loss=float(payload["loss"]),
+        perplexity=float(payload["perplexity"]),
+        sample_count=int(payload["sample_count"]),
         execution_backend=str(payload["execution_backend"]),
     )
 
@@ -1135,15 +1340,29 @@ def _run_activate_cli(payload_path: Path) -> None:
     print(_RESULT_PREFIX + json.dumps(_serialize_activation_result(result), sort_keys=True))
 
 
+def _run_heldout_evaluation_cli(payload_path: Path) -> None:
+    request = _deserialize_heldout_evaluation_request(
+        json.loads(payload_path.read_text(encoding="utf-8"))
+    )
+    result = MLXLMRunner().evaluate_heldout_native(request)
+    print(
+        _RESULT_PREFIX
+        + json.dumps(_serialize_heldout_evaluation_result(result), sort_keys=True)
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Melix MLX-LM runner wrapper.")
-    parser.add_argument("command", choices=["train", "activate"])
+    parser.add_argument("command", choices=["train", "activate", "evaluate-heldout"])
     parser.add_argument("payload_path")
     args = parser.parse_args(argv)
     payload_path = Path(args.payload_path).resolve()
 
     if args.command == "train":
         _run_train_cli(payload_path)
+        return 0
+    if args.command == "evaluate-heldout":
+        _run_heldout_evaluation_cli(payload_path)
         return 0
 
     _run_activate_cli(payload_path)

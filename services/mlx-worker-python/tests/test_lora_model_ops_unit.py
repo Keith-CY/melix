@@ -22,6 +22,7 @@ from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeli
 from worker.model_ops.lora_training_pipeline import (
     LoRATrainingPipeline,
     _content_hash,
+    _float_ext,
     _int_ext,
     _latest_checkpoint_from_directory,
     _load_manifest_payload,
@@ -1984,6 +1985,359 @@ def test_training_request_deserialization_restores_alignment_config(tmp_path: Pa
     assert restored.source_model_ext == {"text_family_id": "qwen"}
 
 
+def test_float_ext_rejects_non_numeric_and_out_of_range_values() -> None:
+    assert _float_ext({}, "test_ratio") == 0.0
+    assert _float_ext({"test_ratio": "0.25"}, "test_ratio") == 0.25
+
+    with pytest.raises(ModelOperationError) as non_numeric:
+        _float_ext({"test_ratio": "not-a-number"}, "test_ratio")
+    assert non_numeric.value.details == {
+        "field": "test_ratio",
+        "reason": "not_a_number",
+        "received": "not-a-number",
+        "http_status": "422",
+    }
+
+    with pytest.raises(ModelOperationError) as out_of_range:
+        _float_ext({"test_ratio": "1.0"}, "test_ratio")
+    assert out_of_range.value.details == {
+        "field": "test_ratio",
+        "reason": "out_of_bounds",
+        "received": "1.0",
+        "allowed_bounds": "0 <= value < 1",
+        "http_status": "422",
+    }
+
+
+def test_heldout_evaluation_request_and_result_serialization_round_trip(
+    tmp_path: Path,
+) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model"), family_id="qwen"),
+        ext={},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=4,
+    )
+    request = mlx_lm_runner_module.HeldoutEvaluationRequest(
+        job_id="train-heldout-eval",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_dir=tmp_path / "adapter",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="chat_messages",
+        test_sample_count=2,
+        source_model_kind="text",
+        source_model_ext={"text_family_id": "qwen"},
+    )
+    result = mlx_lm_runner_module.HeldoutEvaluationResult(
+        loss=0.29,
+        perplexity=1.34,
+        sample_count=2,
+        execution_backend="native",
+    )
+
+    restored_request = mlx_lm_runner_module._deserialize_heldout_evaluation_request(
+        mlx_lm_runner_module._serialize_heldout_evaluation_request(request)
+    )
+    restored_result = mlx_lm_runner_module._deserialize_heldout_evaluation_result(
+        mlx_lm_runner_module._serialize_heldout_evaluation_result(result)
+    )
+
+    assert restored_request.job_id == "train-heldout-eval"
+    assert restored_request.adapter_dir == tmp_path / "adapter"
+    assert restored_request.test_sample_count == 2
+    assert restored_request.source_model_ext == {"text_family_id": "qwen"}
+    assert restored_request.config.adapter_algorithm == "lora"
+    assert restored_result.loss == pytest.approx(0.29)
+    assert restored_result.perplexity == pytest.approx(1.34)
+    assert restored_result.sample_count == 2
+    assert restored_result.execution_backend == "native"
+
+
+def _heldout_evaluation_request(
+    tmp_path: Path,
+    *,
+    test_sample_count: int = 2,
+) -> mlx_lm_runner_module.HeldoutEvaluationRequest:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model"), family_id="qwen"),
+        ext={},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=max(test_sample_count, 1),
+    )
+    return mlx_lm_runner_module.HeldoutEvaluationRequest(
+        job_id="train-heldout-eval",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_dir=tmp_path / "adapter",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="chat_messages",
+        test_sample_count=test_sample_count,
+        source_model_kind="text",
+        source_model_ext={"text_family_id": "qwen"},
+    )
+
+
+def _install_fake_mlx_lm_evaluation_modules(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    test_set: object,
+    loss: object = 0.29,
+    evaluate_error: Exception | None = None,
+) -> dict[str, object]:
+    calls: dict[str, object] = {}
+    lora_module = types.ModuleType("mlx_lm.lora")
+    datasets_module = types.ModuleType("mlx_lm.tuner.datasets")
+    trainer_module = types.ModuleType("mlx_lm.tuner.trainer")
+    utils_module = types.ModuleType("mlx_lm.utils")
+    tuner_module = types.ModuleType("mlx_lm.tuner")
+    root_module = types.ModuleType("mlx_lm")
+
+    class CacheDataset:
+        def __init__(self, dataset: object) -> None:
+            self.dataset = dataset
+            calls["cached_dataset"] = dataset
+
+    def load(model_path: str, *, adapter_path: str, lazy: bool) -> tuple[str, str]:
+        calls["load"] = {
+            "model_path": model_path,
+            "adapter_path": adapter_path,
+            "lazy": lazy,
+        }
+        return "model", "tokenizer"
+
+    def load_local_dataset(
+        normalized_dataset_dir: Path,
+        tokenizer: str,
+        args: object,
+    ) -> tuple[list[object], list[object], object]:
+        calls["load_local_dataset"] = {
+            "normalized_dataset_dir": normalized_dataset_dir,
+            "tokenizer": tokenizer,
+            "train": args.train,
+            "test": args.test,
+            "test_batches": args.test_batches,
+        }
+        return [], [], test_set
+
+    def evaluate(
+        *,
+        model: str,
+        dataset: object,
+        batch_size: int,
+        num_batches: int,
+        max_seq_length: int,
+    ) -> object:
+        calls["evaluate"] = {
+            "model": model,
+            "dataset": dataset,
+            "batch_size": batch_size,
+            "num_batches": num_batches,
+            "max_seq_length": max_seq_length,
+        }
+        if evaluate_error is not None:
+            raise evaluate_error
+        return loss
+
+    lora_module.CacheDataset = CacheDataset
+    datasets_module.load_local_dataset = load_local_dataset
+    trainer_module.evaluate = evaluate
+    utils_module.load = load
+    monkeypatch.setitem(sys.modules, "mlx_lm", root_module)
+    monkeypatch.setitem(sys.modules, "mlx_lm.lora", lora_module)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner", tuner_module)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.datasets", datasets_module)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.trainer", trainer_module)
+    monkeypatch.setitem(sys.modules, "mlx_lm.utils", utils_module)
+    return calls
+
+
+def test_mlx_lm_runner_evaluate_heldout_native_uses_adapter_and_test_split(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _heldout_evaluation_request(tmp_path)
+    calls = _install_fake_mlx_lm_evaluation_modules(
+        monkeypatch,
+        test_set=[{"id": 1}, {"id": 2}],
+        loss=0.29,
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner().evaluate_heldout_native(request)
+
+    assert result.loss == pytest.approx(0.29)
+    assert result.perplexity == pytest.approx(1.336427488025472)
+    assert result.sample_count == 2
+    assert result.execution_backend == "native"
+    assert calls["load"] == {
+        "model_path": str(tmp_path / "base-model"),
+        "adapter_path": str(tmp_path / "adapter"),
+        "lazy": False,
+    }
+    assert calls["load_local_dataset"] == {
+        "normalized_dataset_dir": tmp_path / "normalized",
+        "tokenizer": "tokenizer",
+        "train": False,
+        "test": True,
+        "test_batches": 2,
+    }
+    assert calls["evaluate"]["batch_size"] == 1
+    assert calls["evaluate"]["num_batches"] == 2
+
+
+def test_mlx_lm_runner_evaluate_heldout_native_handles_eval_edge_cases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(ModelOperationError) as no_samples:
+        mlx_lm_runner_module.MLXLMRunner().evaluate_heldout_native(
+            _heldout_evaluation_request(tmp_path, test_sample_count=0)
+        )
+    assert no_samples.value.code == "invalid_dataset_package"
+
+    _install_fake_mlx_lm_evaluation_modules(monkeypatch, test_set=[])
+    with pytest.raises(ModelOperationError) as empty_test_set:
+        mlx_lm_runner_module.MLXLMRunner().evaluate_heldout_native(
+            _heldout_evaluation_request(tmp_path)
+        )
+    assert empty_test_set.value.code == "invalid_dataset_package"
+
+    class LenRaises:
+        def __len__(self) -> int:
+            raise TypeError("length unavailable")
+
+    _install_fake_mlx_lm_evaluation_modules(
+        monkeypatch,
+        test_set=LenRaises(),
+        loss=0.3,
+    )
+    len_fallback = mlx_lm_runner_module.MLXLMRunner().evaluate_heldout_native(
+        _heldout_evaluation_request(tmp_path, test_sample_count=1)
+    )
+    assert len_fallback.sample_count == 1
+    assert len_fallback.loss == pytest.approx(0.3)
+
+    _install_fake_mlx_lm_evaluation_modules(
+        monkeypatch,
+        test_set=[{"id": 1}],
+        evaluate_error=RuntimeError("boom"),
+    )
+    with pytest.raises(ModelOperationError) as eval_failed:
+        mlx_lm_runner_module.MLXLMRunner().evaluate_heldout_native(
+            _heldout_evaluation_request(tmp_path, test_sample_count=1)
+        )
+    assert eval_failed.value.code == "heldout_evaluation_failure"
+
+    _install_fake_mlx_lm_evaluation_modules(
+        monkeypatch,
+        test_set=[{"id": 1}],
+        loss=float("nan"),
+    )
+    with pytest.raises(ModelOperationError) as non_finite:
+        mlx_lm_runner_module.MLXLMRunner().evaluate_heldout_native(
+            _heldout_evaluation_request(tmp_path, test_sample_count=1)
+        )
+    assert non_finite.value.code == "heldout_evaluation_failure"
+
+    _install_fake_mlx_lm_evaluation_modules(
+        monkeypatch,
+        test_set=[{"id": 1}],
+        loss=1000.0,
+    )
+    result = mlx_lm_runner_module.MLXLMRunner().evaluate_heldout_native(
+        _heldout_evaluation_request(tmp_path, test_sample_count=1)
+    )
+    assert result.perplexity == float("inf")
+
+
+def test_mlx_lm_runner_evaluate_heldout_subprocess_and_fallback(
+    tmp_path: Path,
+) -> None:
+    request = _heldout_evaluation_request(tmp_path)
+    observed: dict[str, object] = {}
+
+    class SubprocessRunner(mlx_lm_runner_module.MLXLMRunner):
+        def evaluate_heldout_native(
+            self,
+            request: mlx_lm_runner_module.HeldoutEvaluationRequest,
+        ) -> mlx_lm_runner_module.HeldoutEvaluationResult:
+            raise mlx_lm_runner_module.NativeExecutionUnavailable("missing")
+
+        def _run_subprocess(
+            self,
+            command: str,
+            payload_path: Path,
+            *,
+            error_code: str,
+        ) -> dict[str, object]:
+            observed["command"] = command
+            observed["payload"] = json.loads(payload_path.read_text(encoding="utf-8"))
+            observed["error_code"] = error_code
+            return {
+                "loss": 0.31,
+                "perplexity": 1.36,
+                "sample_count": 2,
+                "execution_backend": "",
+            }
+
+    result = SubprocessRunner().evaluate_heldout(request)
+
+    assert result.loss == pytest.approx(0.31)
+    assert result.perplexity == pytest.approx(1.36)
+    assert result.sample_count == 2
+    assert result.execution_backend == "subprocess"
+    assert observed["command"] == "evaluate-heldout"
+    assert observed["error_code"] == "heldout_evaluation_failure"
+    assert observed["payload"]["adapter_dir"] == str(tmp_path / "adapter")
+
+
+def test_mlx_lm_runner_heldout_evaluation_cli_and_main_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    request = _heldout_evaluation_request(tmp_path)
+    payload_path = tmp_path / "heldout-request.json"
+    payload_path.write_text(
+        json.dumps(
+            mlx_lm_runner_module._serialize_heldout_evaluation_request(request)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class CliRunner:
+        def evaluate_heldout_native(
+            self,
+            request: mlx_lm_runner_module.HeldoutEvaluationRequest,
+        ) -> mlx_lm_runner_module.HeldoutEvaluationResult:
+            return mlx_lm_runner_module.HeldoutEvaluationResult(
+                loss=0.32,
+                perplexity=1.38,
+                sample_count=request.test_sample_count,
+                execution_backend="native",
+            )
+
+    monkeypatch.setattr(mlx_lm_runner_module, "MLXLMRunner", CliRunner)
+
+    assert mlx_lm_runner_module.main(["evaluate-heldout", str(payload_path)]) == 0
+    stdout = capsys.readouterr().out
+    result_payload = mlx_lm_runner_module._extract_structured_result_payload(stdout)
+
+    assert result_payload == {
+        "execution_backend": "native",
+        "loss": 0.32,
+        "perplexity": 1.38,
+        "sample_count": 2,
+    }
+
+
 def test_training_metrics_serializes_preference_fields(tmp_path: Path) -> None:
     metrics = mlx_lm_runner_module.TrainingMetrics(
         job_duration_ms=10.0,
@@ -2748,6 +3102,7 @@ def test_train_preference_native_wires_mlx_lm_trainer_and_metrics(
 def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     payload_path = tmp_path / "payload.json"
     payload_path.write_text("{}\n", encoding="utf-8")
@@ -2772,6 +3127,31 @@ def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
     monkeypatch.setattr(mlx_lm_runner_module.subprocess, "run", fake_run)
 
     assert runner._run_subprocess("train", payload_path, error_code="backend_training_failure") == structured_payload
+    test_float_ext_rejects_non_numeric_and_out_of_range_values()
+    test_heldout_evaluation_request_and_result_serialization_round_trip(
+        tmp_path / "heldout-round-trip"
+    )
+    with monkeypatch.context() as heldout_monkeypatch:
+        test_mlx_lm_runner_evaluate_heldout_native_uses_adapter_and_test_split(
+            tmp_path / "heldout-native",
+            heldout_monkeypatch,
+        )
+    with monkeypatch.context() as heldout_monkeypatch:
+        test_mlx_lm_runner_evaluate_heldout_native_handles_eval_edge_cases(
+            tmp_path / "heldout-native-edges",
+            heldout_monkeypatch,
+        )
+    test_mlx_lm_runner_evaluate_heldout_subprocess_and_fallback(
+        tmp_path / "heldout-subprocess"
+    )
+    heldout_cli_path = tmp_path / "heldout-cli"
+    heldout_cli_path.mkdir()
+    with monkeypatch.context() as heldout_monkeypatch:
+        test_mlx_lm_runner_heldout_evaluation_cli_and_main_branch(
+            heldout_cli_path,
+            heldout_monkeypatch,
+            capsys,
+        )
     test_training_metrics_serializes_training_log_events(tmp_path)
     test_training_info_log_line_projects_callback_fields()
     with monkeypatch.context() as training_monkeypatch:

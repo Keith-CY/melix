@@ -488,6 +488,11 @@ def dataset_files_resolved_receipt(
             if normalized_snapshot.valid_path is not None
             else ""
         ),
+        "normalized_test_path": (
+            str(normalized_snapshot.test_path)
+            if normalized_snapshot.test_path is not None
+            else ""
+        ),
     }
 
 
