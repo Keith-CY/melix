@@ -13672,6 +13672,62 @@ struct OpenAIHandlerTests {
         #expect(await workerClient.lastGenerateRequest == nil)
     }
 
+    @Test("gateway context metadata feeds memory admission for accepted text requests")
+    func gatewayContextMetadataFeedsMemoryAdmissionForAcceptedTextRequests() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "req-context-metadata",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "ok"
+            ),
+        ])
+        var model = warmModel()
+        model.maxContext = 131_072
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerRegistry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-context-metadata" })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "max_completion_tokens": 512,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        _ = try await jsonPayload(from: response.body)
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let metadata = request.execution.ext
+
+        #expect(response.statusCode == 200)
+        #expect(metadata["melix.gateway.context_length"] == "2562")
+        #expect(metadata["melix.gateway.requested_context"] == "2562")
+        #expect(metadata["melix.gateway.context_source"] == "control_plane_prompt_budget")
+        #expect(metadata["melix.gateway.context_window_tokens"] == "131072")
+        #expect(metadata["melix.gateway.output_cap_tokens"] == "512")
+        #expect(metadata["melix.gateway.prompt_tokens_estimated"] == "2")
+        #expect(metadata["melix.gateway.prompt_tokens_estimate_source"] == "control_plane_heuristic_utf8_whitespace")
+        #expect(metadata["melix.gateway.prompt_tokens_estimate_slack"] == "2048")
+        #expect(metadata["melix.serving.memory_admission.requested_context"] == "2562")
+        #expect(metadata["melix.serving.memory_admission.effective_context"] == "2562")
+    }
+
     @Test("chat requests return 409 when the model is not ready")
     func modelNotReadyReturns409() async throws {
         let handler = OpenAIHandler(
