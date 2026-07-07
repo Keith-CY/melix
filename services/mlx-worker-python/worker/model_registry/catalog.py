@@ -2035,6 +2035,16 @@ def _gemma4_qat_source_model(
     marker_len = _GEMMA4_QAT_BASE_MODEL_MARKER_LEN
     quoted_marker_index = readme_text.find(_GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER)
     if quoted_marker_index >= 0:
+        quoted_marker_start = quoted_marker_index + len("\n  '")
+        marker_index = readme_text.find(marker)
+        while 0 <= marker_index < quoted_marker_start:
+            line_start = readme_text.rfind("\n", 0, marker_index) + 1
+            if not readme_text[line_start:marker_index].strip(" \t\r'\""):
+                break
+            marker_index = readme_text.find(marker, marker_index + 1)
+        if marker_index != quoted_marker_start:
+            quoted_marker_index = -1
+    if quoted_marker_index >= 0:
         value_start = quoted_marker_index + _GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER_LEN
         line_end = readme_text.find("\n", value_start)
         if line_end < 0:

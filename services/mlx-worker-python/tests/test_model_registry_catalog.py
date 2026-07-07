@@ -1852,6 +1852,14 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
 def test_gemma4_qat_source_model_rejects_non_marker_prefix_without_prefix_strip() -> None:
     assert (
         catalog_module._gemma4_qat_source_model(
+            "base_model: correct-source\nextra text\n  'base_model: wrong-source'\n",
+            model_size="e2b",
+            companion=False,
+        )
+        == "correct-source"
+    )
+    assert (
+        catalog_module._gemma4_qat_source_model(
             "metadata_base_model: ignored\n  'base_model: [google/gemma-4-E2B-it-qat-q4_0-unquantized]'\n",
             model_size="e2b",
             companion=False,
