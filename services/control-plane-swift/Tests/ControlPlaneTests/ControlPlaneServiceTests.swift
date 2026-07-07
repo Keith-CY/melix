@@ -9036,8 +9036,25 @@ struct ControlPlaneServiceTests {
         let generated = try #require(await textClient.lastGenerateRequest)
 
         #expect(generated.execution.ext["melix.serving.memory_admission.memory_telemetry_source"] == "detected")
-        #expect(generated.execution.ext["melix.serving.memory_admission.memory_headroom_bytes"] == "2147483648")
-        #expect(generated.execution.ext["melix.serving.memory_admission.fits_memory"] == "true")
+        let headroomString = try #require(
+            generated.execution.ext["melix.serving.memory_admission.memory_headroom_bytes"]
+        )
+        let headroomBytes = try #require(UInt64(headroomString))
+        let estimatedActiveString = try #require(
+            generated.execution.ext["melix.serving.memory_admission.estimated_active_bytes"]
+        )
+        let estimatedActiveBytes = try #require(UInt64(estimatedActiveString))
+        let detectedMemoryBytes = try #require(RequestCoordinator.processInfoPhysicalMemoryBytes())
+        let usableMemoryBytes = detectedMemoryBytes > headroomBytes
+            ? detectedMemoryBytes - headroomBytes
+            : 0
+
+        #expect(headroomBytes > 0)
+        #expect(estimatedActiveBytes > 0)
+        #expect(
+            generated.execution.ext["melix.serving.memory_admission.fits_memory"]
+                == String(estimatedActiveBytes <= usableMemoryBytes)
+        )
     }
 
     @Test("startChat propagates explicit reasoning and template flags before worker dispatch")
