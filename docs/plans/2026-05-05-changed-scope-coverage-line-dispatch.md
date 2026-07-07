@@ -17,6 +17,14 @@ implementation can use C-level `set.intersection(...)` against the executed and
 missing line lists. The fallback path still supports generic `Set[int]`
 implementations, and coverage classification remains identical.
 
+## 2026-07 sparse measured-line membership binding slice
+
+This follow-up slice is limited to the sparse measured-line fallback in
+`_measurable_changed_lines(...)`. It keeps the bisect-based membership helper but
+binds it once per measured-file path before the changed-line list comprehension,
+reducing repeated global lookups while preserving the dense `set.intersection`
+path and all coverage classification semantics.
+
 ## Registered performance probe
 
 The affected path is already covered by the registered PR-scoped probe `changed-scope-coverage-diff-parser` in `infra/perf/pr_scoped_probes.json`, including focused `test_command`, `coverage_command`, and `probe_command` entries. The probe builds a deterministic synthetic multi-file diff and reports:
