@@ -887,6 +887,7 @@ def test_runner_script_loads_config_from_bytes(tmp_path: Path) -> None:
         "memory_limit_mb": 64,
     }
     assert "payload = _json_loads(config_path.read_bytes())" in script
+    assert 'json.dumps(payload, separators=(",", ":"))' in script
     assert "json.load(file)" not in script
 
     code_eval_runner._runner_script.cache_clear()
@@ -1075,6 +1076,40 @@ def test_load_payload_file_fast_path_extracts_sorted_payload_without_json_parse(
         }
     )
     assert payload_path.read_bytes_calls == 1
+
+
+def test_sorted_payload_fast_path_uses_compact_field_offsets(monkeypatch) -> None:
+    payload = json.dumps(
+        {
+            "failure_detail": "",
+            "metadata": {f"case_{index}": "ignored" for index in range(128)},
+            "runtime_status": "ok",
+            "test_status": "passed",
+            "tests_passed": 7,
+            "tests_total": 7,
+            "timeout_status": "ok",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    def fail_generic_scanner(*_args: object, **_kwargs: object) -> int | None:  # pragma: no cover
+        raise AssertionError("compact sorted payload should not use the whitespace scanner")
+
+    monkeypatch.setattr(
+        code_eval_runner,
+        "_json_field_value_start_for_token",
+        fail_generic_scanner,
+    )
+
+    assert code_eval_runner._extract_sorted_code_eval_payload_fields(payload) == {
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 7,
+        "tests_total": 7,
+        "timeout_status": "ok",
+    }
 
 
 def test_sorted_payload_fast_path_returns_none_for_missing_or_malformed_fields() -> None:
