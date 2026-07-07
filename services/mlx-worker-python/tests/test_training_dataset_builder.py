@@ -174,12 +174,6 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     assert stale_agentic_train_path.exists() is False
     assert stale_agentic_valid_path.exists() is False
     assert training_dataset_module.trainer_sample_counts(dataset) == (1, 0)
-    test_write_normalized_dataset_snapshot_writes_deterministic_test_split_and_cleans_stale_test_jsonl(
-        tmp_path / "test-split-coverage"
-    )
-    _assert_agentic_test_split_and_holdout_edge_coverage(
-        tmp_path / "agentic-test-split-coverage"
-    )
     agentic_package_path = tmp_path / "agentic-package"
     agentic_package_path.mkdir(parents=True, exist_ok=True)
     (agentic_package_path / "manifest.json").write_text(
@@ -827,7 +821,7 @@ def test_write_normalized_dataset_snapshot_writes_deterministic_test_split_and_c
     assert "test_ratio" not in manifest_without_test
 
 
-def _assert_agentic_test_split_and_holdout_edge_coverage(tmp_path: Path) -> None:
+def test_agentic_test_split_and_holdout_edge_coverage(tmp_path: Path) -> None:
     package_path = tmp_path / "agentic-dataset-package"
     output_dir = tmp_path / "agentic-exports"
     agentic_test_path = output_dir / "normalized_dataset" / "agentic-traces.test.jsonl"

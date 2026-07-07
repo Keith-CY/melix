@@ -433,8 +433,7 @@ class MLXLMRunner:
                 message="Held-out evaluation requires at least one test sample.",
             )
         try:
-            from mlx_lm.lora import CacheDataset
-            from mlx_lm.tuner.datasets import load_local_dataset
+            from mlx_lm.tuner.datasets import CacheDataset, load_local_dataset
             from mlx_lm.tuner.trainer import evaluate
             from mlx_lm.utils import load
         except ModuleNotFoundError as exc:

@@ -14,7 +14,7 @@ from worker.model_ops.training_runtime_preflight import call_with_training_failu
 
 
 def float_ext(ext: dict[str, str], key: str) -> float:
-    raw_value = ext.get(key, "").strip()
+    raw_value = (ext.get(key) or "").strip()
     if not raw_value:
         return 0.0
     try:

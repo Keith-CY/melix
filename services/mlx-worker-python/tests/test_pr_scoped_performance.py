@@ -6517,6 +6517,24 @@ def test_mlx_lm_result_tail_probe_script_emits_metrics() -> None:
     assert metrics["sample_count"] == 5.0
 
 
+def test_mlx_lm_result_tail_probe_covers_heldout_evaluation_import_tests() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-lm-structured-result-tail-parse"
+    )
+    selectors = (
+        "services/mlx-worker-python/tests/test_lora_model_ops_unit.py"
+        "::test_float_ext_rejects_non_numeric_and_out_of_range_values",
+        "services/mlx-worker-python/tests/test_lora_model_ops_unit.py"
+        "::test_mlx_lm_runner_evaluate_heldout_native_uses_adapter_and_test_split",
+    )
+
+    for selector in selectors:
+        assert selector in probe.test_command
+        assert selector in probe.coverage_command
+
+
 def test_mlx_audio_local_uri_probe_script_emits_metrics() -> None:
     probe = next(
         probe

@@ -1987,6 +1987,7 @@ def test_training_request_deserialization_restores_alignment_config(tmp_path: Pa
 
 def test_float_ext_rejects_non_numeric_and_out_of_range_values() -> None:
     assert _float_ext({}, "test_ratio") == 0.0
+    assert _float_ext({"test_ratio": None}, "test_ratio") == 0.0
     assert _float_ext({"test_ratio": "0.25"}, "test_ratio") == 0.25
 
     with pytest.raises(ModelOperationError) as non_numeric:
@@ -2145,7 +2146,7 @@ def _install_fake_mlx_lm_evaluation_modules(
             raise evaluate_error
         return loss
 
-    lora_module.CacheDataset = CacheDataset
+    datasets_module.CacheDataset = CacheDataset
     datasets_module.load_local_dataset = load_local_dataset
     trainer_module.evaluate = evaluate
     utils_module.load = load
@@ -3102,7 +3103,6 @@ def test_train_preference_native_wires_mlx_lm_trainer_and_metrics(
 def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     payload_path = tmp_path / "payload.json"
     payload_path.write_text("{}\n", encoding="utf-8")
@@ -3127,31 +3127,6 @@ def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
     monkeypatch.setattr(mlx_lm_runner_module.subprocess, "run", fake_run)
 
     assert runner._run_subprocess("train", payload_path, error_code="backend_training_failure") == structured_payload
-    test_float_ext_rejects_non_numeric_and_out_of_range_values()
-    test_heldout_evaluation_request_and_result_serialization_round_trip(
-        tmp_path / "heldout-round-trip"
-    )
-    with monkeypatch.context() as heldout_monkeypatch:
-        test_mlx_lm_runner_evaluate_heldout_native_uses_adapter_and_test_split(
-            tmp_path / "heldout-native",
-            heldout_monkeypatch,
-        )
-    with monkeypatch.context() as heldout_monkeypatch:
-        test_mlx_lm_runner_evaluate_heldout_native_handles_eval_edge_cases(
-            tmp_path / "heldout-native-edges",
-            heldout_monkeypatch,
-        )
-    test_mlx_lm_runner_evaluate_heldout_subprocess_and_fallback(
-        tmp_path / "heldout-subprocess"
-    )
-    heldout_cli_path = tmp_path / "heldout-cli"
-    heldout_cli_path.mkdir()
-    with monkeypatch.context() as heldout_monkeypatch:
-        test_mlx_lm_runner_heldout_evaluation_cli_and_main_branch(
-            heldout_cli_path,
-            heldout_monkeypatch,
-            capsys,
-        )
     test_training_metrics_serializes_training_log_events(tmp_path)
     test_training_info_log_line_projects_callback_fields()
     with monkeypatch.context() as training_monkeypatch:
