@@ -502,17 +502,36 @@ def _collect_source_lines(
             _extend_source_lines(lines, row.path, text)
 
     for check in failure_checks:
-        failure_message = _check_value(check, "failure_message")
-        failure_code = _check_value(check, "failure_code")
-        status = _check_value(check, "status")
+        if isinstance(check, Mapping):
+            check_get = check.get
+            raw_failure_message = check_get("failure_message", "")
+            raw_failure_code = check_get("failure_code", "")
+            raw_status = check_get("status", "")
+            raw_check_name = check_get("check", "") or check_get("name", "")
+            raw_evidence_path = check_get("evidence_path", "")
+        else:
+            raw_failure_message = getattr(check, "failure_message", "")
+            raw_failure_code = getattr(check, "failure_code", "")
+            raw_status = getattr(check, "status", "")
+            raw_check_name = getattr(check, "check", "") or getattr(check, "name", "")
+            raw_evidence_path = getattr(check, "evidence_path", "")
+        failure_message = str(raw_failure_message) if raw_failure_message is not None else ""
+        failure_code = str(raw_failure_code) if raw_failure_code is not None else ""
+        status = str(raw_status) if raw_status is not None else ""
         if not failure_message and not failure_code:
             continue
         if status and status not in _FAILING_CHECK_STATUSES:
             continue
-        check_name = _check_value(check, "check") or _check_value(check, "name") or "smoke_failure"
-        evidence_path = _check_value(check, "evidence_path") or manifest.evidence.smoke_receipt_path
-        text = f"{check_name}: {failure_code}: {failure_message}".strip()
-        _extend_source_lines(lines, evidence_path or "smoke/smoke-receipt.json", text)
+        check_name = str(raw_check_name) if raw_check_name is not None else ""
+        evidence_path = str(raw_evidence_path) if raw_evidence_path is not None else ""
+        text = f"{check_name or 'smoke_failure'}: {failure_code}: {failure_message}".strip()
+        _extend_source_lines(
+            lines,
+            evidence_path
+            or manifest.evidence.smoke_receipt_path
+            or "smoke/smoke-receipt.json",
+            text,
+        )
 
     return lines
 
@@ -539,13 +558,6 @@ def _split_source_lines(source_path: str, text: str) -> list[_SourceLine]:
     _extend_source_lines(lines, source_path, text)
     return lines
 
-
-def _check_value(check: object, name: str) -> str:
-    if isinstance(check, Mapping):
-        value = check.get(name, "")
-    else:
-        value = getattr(check, name, "")
-    return str(value) if value is not None else ""
 
 
 def _build_redacted_excerpt(

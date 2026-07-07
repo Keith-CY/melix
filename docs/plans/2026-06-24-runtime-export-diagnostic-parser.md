@@ -218,6 +218,13 @@ fails. Paths with empty relative text or `..` segments continue through the same
 safe fallback behavior, but ordinary bounded runtime excerpts skip the unused
 fallback assignment and the extra parent-segment boundary checks.
 
+A follow-up 2026-07-07 failure-check source collection slice keeps mapping and
+attribute-style smoke check semantics unchanged while extracting failure check
+fields inline in `_collect_source_lines()`. The hot diagnostic parser probe uses
+small mapping rows for synthetic smoke failures, so this avoids repeated helper
+calls and repeated `Mapping` dispatch for every check row while preserving the
+same source-path fallback and failed/blocked status filter.
+
 Focused verification:
 
 ```bash
