@@ -2065,6 +2065,7 @@ def _gemma4_qat_source_model(
     suffix = "-assistant" if companion else ""
     return f"google/gemma-4-{size_name}-it-qat-q4_0-unquantized{suffix}"
 
+
 def _multimodal_load_receipt_metadata(
     *,
     model_dir: Path,
