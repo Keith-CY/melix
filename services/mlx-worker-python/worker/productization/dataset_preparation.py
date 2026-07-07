@@ -35,6 +35,7 @@ _CODE_SOURCE_SUFFIXES = frozenset(
     (".py", ".swift", ".js", ".ts", ".java", ".go", ".rs", ".cpp", ".c", ".h")
 )
 _STRUCTURED_DATA_SOURCE_SUFFIXES = frozenset((".jsonl", ".json", ".csv", ".tsv"))
+_SHA256 = hashlib.sha256
 _CODE_SOURCE_LANGUAGE_BY_SUFFIX = {
     ".py": "python",
     ".swift": "swift",
@@ -326,7 +327,7 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
             text, record_pii_mask_count = _mask_pii(text)
         normalized = _normalize_text(text)
         if request.exact_dedup:
-            exact_key = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+            exact_key = _SHA256(normalized.encode("utf-8")).hexdigest()
             if exact_key in exact_seen:
                 exact_dedup_count += 1
                 continue
@@ -1482,14 +1483,13 @@ def _record(
     normalized_text = text if normalized else _normalize_line_endings(text)
     normalized_bytes = normalized_text.encode("utf-8")
     record_metadata = dict(metadata) if metadata else {}
-    sha256 = hashlib.sha256
     path_name = path.name
     path_key = str(path).encode("utf-8")
     return {
-        "source_id": sha256(path_key).hexdigest()[:16],
+        "source_id": _SHA256(path_key).hexdigest()[:16],
         "source_uri": path_name,
         "source_kind": source_kind,
-        "content_sha256": sha256(normalized_bytes).hexdigest(),
+        "content_sha256": _SHA256(normalized_bytes).hexdigest(),
         "byte_size": len(normalized_bytes),
         "record_count": 1,
         "text": normalized_text,
@@ -1684,7 +1684,12 @@ def _split_dataset_version_validation(
     validation_count = min(max(validation_count, 1), len(rows) - 1)
     validation_segment_ids = {
         row["source_segment_id"]
-        for row in sorted(rows, key=lambda item: hashlib.sha256(str(item["source_segment_id"]).encode("utf-8")).hexdigest())[:validation_count]
+        for row in sorted(
+            rows,
+            key=lambda item: _SHA256(
+                str(item["source_segment_id"]).encode("utf-8")
+            ).hexdigest(),
+        )[:validation_count]
     }
     train_rows: list[dict[str, Any]] = []
     validation_rows: list[dict[str, Any]] = []
