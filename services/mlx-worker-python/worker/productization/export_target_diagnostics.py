@@ -782,8 +782,12 @@ def _redact_absolute_path(
     resolved_target_root_text: str,
     summary: _RedactionSummary,
 ) -> str:
-    trimmed_path = raw_path.rstrip(".,)")
-    suffix = raw_path[len(trimmed_path):]
+    if raw_path[-1] in ".,)":
+        trimmed_path = raw_path.rstrip(".,)")
+        suffix = raw_path[len(trimmed_path):]
+    else:
+        trimmed_path = raw_path
+        suffix = ""
     relative_text = _target_relative_text(trimmed_path, resolved_target_root_text)
     if relative_text is not None:
         summary.redacted_absolute_path_count += 1

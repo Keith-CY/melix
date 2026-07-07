@@ -36,6 +36,8 @@ from worker.productization.export_target_diagnostics import (
     _has_named_secret_marker,
     _has_private_text_line_marker,
     _has_secret_redaction_marker,
+    _redact_absolute_path,
+    _RedactionSummary,
     _split_source_lines,
     _target_relative_text,
 )
@@ -92,6 +94,37 @@ def test_export_target_diagnostics_source_line_extension_matches_split_helper() 
 
 def test_export_target_diagnostics_target_relative_text_handles_root_slash_boundary() -> None:
     assert _target_relative_text("/tmp/melix-target/", "/tmp/melix-target") is None
+
+
+def test_export_target_diagnostics_absolute_path_redaction_preserves_suffix_contract(
+    tmp_path: Path,
+) -> None:
+    summary = _RedactionSummary()
+    target_root = tmp_path / "target"
+    target_root.mkdir()
+    target_file = target_root / "artifacts" / "model.gguf"
+
+    assert (
+        _redact_absolute_path(
+            str(target_file),
+            target_root,
+            str(target_root),
+            summary,
+        )
+        == "<target>/artifacts/model.gguf"
+    )
+    assert summary.redacted_absolute_path_count == 1
+
+    assert (
+        _redact_absolute_path(
+            f"{target_file}.)",
+            target_root,
+            str(target_root),
+            summary,
+        )
+        == "<target>/artifacts/model.gguf.)"
+    )
+    assert summary.redacted_absolute_path_count == 2
 
 
 @pytest.mark.parametrize(
