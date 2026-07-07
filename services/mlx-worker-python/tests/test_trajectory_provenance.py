@@ -618,18 +618,24 @@ def test_normalize_trajectory_provenance_copies_nested_json_containers() -> None
             "components": [{"name": "format", "score": 1.0}],
         },
         "agentic_sft_token_metrics": {"trace_tokens": 12},
+        "trajectory_package_path": ["packages", "agentic"],
     }
 
     normalized = normalize_trajectory_provenance(source)
     copied_quality = normalized["trajectory_quality_metrics"]
+    copied_token_metrics = normalized["agentic_sft_token_metrics"]
 
     assert copied_quality == source["trajectory_quality_metrics"]
     assert copied_quality is not source["trajectory_quality_metrics"]
     assert copied_quality["components"] is not source["trajectory_quality_metrics"]["components"]
     assert copied_quality["components"][0] is not source["trajectory_quality_metrics"]["components"][0]
+    assert copied_token_metrics == source["agentic_sft_token_metrics"]
+    assert copied_token_metrics is not source["agentic_sft_token_metrics"]
 
     source["trajectory_quality_metrics"]["components"][0]["score"] = 0.0
+    source["agentic_sft_token_metrics"]["trace_tokens"] = 99
     assert copied_quality["components"][0]["score"] == 1.0
+    assert copied_token_metrics["trace_tokens"] == 12
 
 
 def test_normalize_trajectory_provenance_copies_containers_without_empty_string_compare() -> None:
@@ -775,6 +781,44 @@ def test_copy_json_tuple_still_copies_nested_mutable_items() -> None:
     assert copied is not source
     assert copied[1] is not source[1]
     assert copied[1]["labels"] is not source[1]["labels"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {},
+        {"trajectory_dataset_id": "agentic"},
+        {"trace_tokens": 12, "tool_call_tokens": 3, "passed": True, "score": 0.75},
+    ],
+)
+def test_copy_json_dict_copies_flat_scalar_dicts_without_recursive_calls(
+    source: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_recursive_copy(value: object) -> object:  # pragma: no cover - only runs on regression
+        raise AssertionError(f"unexpected recursive copy for scalar dict value {value!r}")
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        fail_recursive_copy,
+    )
+
+    copied = trajectory_provenance_module._copy_json_dict(source)
+
+    assert copied == source
+    assert copied is not source
+
+
+def test_copy_json_dict_still_copies_nested_mutable_items() -> None:
+    source = {"reward_coverage_count": 1, "components": [{"name": "format"}]}
+
+    copied = trajectory_provenance_module._copy_json_dict(source)
+
+    assert copied == source
+    assert copied is not source
+    assert copied["components"] is not source["components"]
+    assert copied["components"][0] is not source["components"][0]
 
 
 def test_copy_trajectory_provenance_value_falls_back_for_custom_mutables() -> None:
