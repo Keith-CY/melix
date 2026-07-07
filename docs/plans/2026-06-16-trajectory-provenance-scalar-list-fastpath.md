@@ -22,3 +22,9 @@ The probe measures `normalize_trajectory_provenance` on synthetic trajectory qua
 2. Add regression coverage proving scalar-only lists are copied without recursive helper calls and mixed lists still deep-copy nested mutable values.
 3. Run focused tests, changed-scope coverage, and the registered probe locally on Linux.
 4. Use GitHub Actions PR-scoped performance as the merge gate.
+
+## 2026-07 follow-up: flat scalar dict copy fast path
+
+This follow-up keeps the same Python path and registered probe. It adds a narrow exact-dict fast path for trajectory provenance mappings whose values are JSON-immutable scalars, such as `agentic_sft_token_metrics`. Nested mutable values still route through the existing recursive defensive copy so normalized provenance remains isolated from caller mutation.
+
+Validation remains the registered `trajectory-provenance-copy-elision` probe, plus focused regression tests proving flat scalar dicts copy without recursive helper calls and nested mutable dict values are still deep-copied.
