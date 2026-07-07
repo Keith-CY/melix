@@ -4,6 +4,8 @@
 
 Apply `sample_limit` consistently to both `samples.jsonl` and `valid.jsonl` when loading a local training dataset package. Limited preview/smoke paths should not parse or normalize the entire validation split when only a bounded sample is requested.
 
+This follow-up micro-slice keeps that behavior unchanged and reduces per-row JSONL iterator overhead by binding JSON decode helpers and the sample-limit branch outside `_iter_dataset_package_jsonl_rows()`'s hot loop.
+
 ## Linux Constraint
 
 This is a Python-only slice under `services/mlx-worker-python`, verifiable on Linux with focused pytest, changed-scope coverage, and a local synthetic performance probe.
@@ -32,4 +34,4 @@ Success metrics:
 
 ## PR-Scoped Performance CI
 
-`training-dataset-token-percentiles-single-sort` already watches `training_dataset.py` and `test_training_dataset_builder.py`; the focused test/coverage command covers the changed training dataset scope. The local probe records the specific validation-limit metric for this small loader path.
+The affected path is covered by the registered `training-dataset-validation-sample-limit` PR-scoped probe in `infra/perf/pr_scoped_probes.json`. Its `test_command`, `coverage_command`, and `probe_command` entries cover the loader, focused training dataset tests, and `scripts/training_dataset_validation_limit_probe.py`.

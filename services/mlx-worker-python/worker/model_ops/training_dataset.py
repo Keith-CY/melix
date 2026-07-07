@@ -148,14 +148,17 @@ def _iter_dataset_package_jsonl_rows(
     sample_limit: int = 0,
 ) -> Iterable[dict[str, Any]]:
     yielded = 0
+    limited = sample_limit > 0
+    json_loads = json.loads
+    json_decode_error = json.JSONDecodeError
     with path.open("r", encoding="utf-8") as handle:
         for line_number, raw_line in enumerate(handle, start=1):
             line = raw_line.strip()
             if not line:
                 continue
             try:
-                payload = json.loads(line)
-            except json.JSONDecodeError as exc:
+                payload = json_loads(line)
+            except json_decode_error as exc:
                 raise ModelOperationError(
                     code="invalid_dataset_package",
                     message=invalid_json_message,
@@ -163,7 +166,7 @@ def _iter_dataset_package_jsonl_rows(
                 ) from exc
             yield payload
             yielded += 1
-            if sample_limit > 0 and yielded >= sample_limit:
+            if limited and yielded >= sample_limit:
                 break
 
 
