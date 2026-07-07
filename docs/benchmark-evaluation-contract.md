@@ -767,10 +767,25 @@ when the runner can observe them:
 - `dflash_rollback_count`
 - `dflash_target_hidden_layers`
 
+Benchmark matrix request rows must also preserve feature-composition guardrail
+diagnostic fields when the runner can observe them:
+
+- `feature_guardrail_requested_num_draft_tokens`
+- `feature_guardrail_effective_num_draft_tokens`
+- `feature_guardrail_resource_fanout_estimate`
+- `feature_guardrail_requested_cache_budget_bytes`
+- `feature_guardrail_effective_cache_budget_bytes`
+- `feature_guardrail_reason`
+
 The fields are phase-localization aids. Missing or zero values do not invalidate older persisted
 artifacts, but new runners should populate them so operators can distinguish dataset
 materialization, prompt rendering, prefill, decode, runtime-cache, speculative decode, DFlash, and
-failure-stage regressions.
+feature-composition guardrail decisions, and failure-stage regressions.
+
+The numeric feature-composition guardrail fields are policy receipts, not
+performance direction metrics. Evaluation reports aggregate them as diagnostic
+means with neutral direction. `feature_guardrail_reason` is preserved in matrix
+request exports but is not aggregated as a numeric metric.
 
 Swift export decoders may default missing additive numeric and boolean probes to `0` or `false`
 when reading legacy artifacts. Consumers must treat those defaults as compatibility sentinels
@@ -1178,6 +1193,12 @@ Each completed matrix request row must persist:
 - `dflash_block_size`
 - `dflash_rollback_count`
 - `dflash_target_hidden_layers`
+- `feature_guardrail_requested_num_draft_tokens`
+- `feature_guardrail_effective_num_draft_tokens`
+- `feature_guardrail_resource_fanout_estimate`
+- `feature_guardrail_requested_cache_budget_bytes`
+- `feature_guardrail_effective_cache_budget_bytes`
+- `feature_guardrail_reason`
 - `tool_call_count`
 - `tool_latency_ms`
 - `observation_bytes`
@@ -1991,6 +2012,9 @@ Report semantics:
   metrics, plus speculative acceptance and accepted-token metrics
 - runtime metadata from job parameters is rendered as metadata rows; matching values are `ok`, and
   differing non-numeric values are `not_comparable`
+- feature-composition guardrail request metrics are rendered as neutral
+  diagnostic rows; they explain policy decisions and must not be treated as
+  performance regressions or improvements by themselves
 - repeated-run group rows with overlapping baseline and candidate 95 percent
   confidence intervals are inconclusive and must be rendered as informational
   rather than warning or improvement rows, even when the raw delta exceeds the

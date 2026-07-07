@@ -583,6 +583,127 @@ struct ModelCatalogTests {
         #expect(unverifiedProfileConfig.disabledReason == "experimental_unverified")
     }
 
+    @Test("feature composition guardrail caps disk-backed speculative fan-out")
+    func featureCompositionGuardrailCapsDiskBackedSpeculativeFanOut() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.diskStreamingMode = .diskStreamingRequireDisk
+        model.settings.cacheMemoryBudgetBytes = 8_192
+        model.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        model.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        model.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        model.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        model.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        model.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+
+        var policy = Melix_Worker_V1_AccelerationPolicy()
+        policy.mode = .speculativeDecode
+        policy.profileID = "throughput"
+        policy.draftModelID = "melix-dev-draft"
+        policy.numDraftTokens = 6
+
+        let validation = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        let resolution = ModelCapabilityReceipts.featureCompositionGuardrailResolution(
+            for: model,
+            acceleration: policy,
+            executionMetadata: [:],
+            validation: validation
+        )
+
+        #expect(resolution.effectiveAcceleration.mode == .speculativeDecode)
+        #expect(resolution.effectiveAcceleration.numDraftTokens == 1)
+        #expect(resolution.receipt.composition == "ssd_expert_streaming_x_speculative_decode")
+        #expect(resolution.receipt.decision == "auto_cap_draft_tokens")
+        #expect(resolution.receipt.requestedNumDraftTokens == 6)
+        #expect(resolution.receipt.effectiveNumDraftTokens == 1)
+        #expect(resolution.receipt.resourceFanoutEstimate == 2)
+        #expect(resolution.receipt.requestedCacheBudgetBytes == 8_192)
+        #expect(resolution.receipt.effectiveCacheBudgetBytes == 8_192)
+        #expect(resolution.receipt.guardrailReason == "disk_streaming_speculative_fanout_cap")
+
+        let metadata = ModelCapabilityReceipts.featureCompositionGuardrailAuditMetadata(resolution.receipt)
+        #expect(
+            metadata["melix.acceleration.feature_guardrail.schema_version"]
+                == "melix.feature_composition_guardrail.v1"
+        )
+        #expect(metadata["melix.acceleration.feature_guardrail.composition"] == "ssd_expert_streaming_x_speculative_decode")
+        #expect(metadata["melix.acceleration.feature_guardrail.decision"] == "auto_cap_draft_tokens")
+        #expect(metadata["melix.acceleration.feature_guardrail.requested_num_draft_tokens"] == "6")
+        #expect(metadata["melix.acceleration.feature_guardrail.effective_num_draft_tokens"] == "1")
+        #expect(metadata["melix.acceleration.feature_guardrail.resource_fanout_estimate"] == "2")
+        #expect(metadata["melix.acceleration.feature_guardrail.requested_cache_budget_bytes"] == "8192")
+        #expect(metadata["melix.acceleration.feature_guardrail.effective_cache_budget_bytes"] == "8192")
+        #expect(
+            metadata["melix.acceleration.feature_guardrail.guardrail_reason"]
+                == "disk_streaming_speculative_fanout_cap"
+        )
+    }
+
+    @Test("feature composition guardrail tightens cache budget and refuses unsafe compositions")
+    func featureCompositionGuardrailTightensCacheBudgetAndRefusesUnsafeCompositions() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.diskStreamingMode = .diskStreamingPreferDisk
+        model.settings.memoryBudgetBytes = 10_000
+        model.settings.cacheMemoryBudgetBytes = 4_096
+        model.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        model.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        model.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        model.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        model.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        model.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+        model.settings.ext["melix.acceleration.feature_guardrail.draft_weight_bytes"] = "6000"
+        model.settings.ext["melix.acceleration.feature_guardrail.memory_threshold_bytes"] = "12000"
+        model.settings.ext["melix.acceleration.feature_guardrail.min_cache_budget_bytes"] = "1024"
+        model.settings.ext["melix.acceleration.feature_guardrail.min_safe_cache_budget_bytes"] = "1024"
+
+        var policy = Melix_Worker_V1_AccelerationPolicy()
+        policy.mode = .speculativeDecode
+        policy.profileID = "throughput"
+        policy.draftModelID = "melix-dev-draft"
+        policy.numDraftTokens = 1
+
+        let validation = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        let tightened = ModelCapabilityReceipts.featureCompositionGuardrailResolution(
+            for: model,
+            acceleration: policy,
+            executionMetadata: [:],
+            validation: validation
+        )
+
+        #expect(tightened.effectiveAcceleration.mode == .speculativeDecode)
+        #expect(tightened.effectiveAcceleration.numDraftTokens == 1)
+        #expect(tightened.receipt.decision == "tighten_cache_budget")
+        #expect(tightened.receipt.requestedCacheBudgetBytes == 4_096)
+        #expect(tightened.receipt.effectiveCacheBudgetBytes == 2_048)
+        #expect(tightened.receipt.guardrailReason == "main_draft_footprint_exceeds_threshold")
+
+        model.settings.ext["melix.acceleration.feature_guardrail.min_safe_cache_budget_bytes"] = "3072"
+        let refused = ModelCapabilityReceipts.featureCompositionGuardrailResolution(
+            for: model,
+            acceleration: policy,
+            executionMetadata: [:],
+            validation: validation
+        )
+
+        #expect(refused.effectiveAcceleration.mode == .baseline)
+        #expect(refused.effectiveAcceleration.numDraftTokens == 0)
+        #expect(refused.effectiveAcceleration.draftModelID == "")
+        #expect(refused.receipt.decision == "refuse_unsafe_composition")
+        #expect(refused.receipt.effectiveNumDraftTokens == 0)
+        #expect(refused.receipt.resourceFanoutEstimate == 1)
+        #expect(refused.receipt.effectiveCacheBudgetBytes == 2_048)
+        #expect(refused.receipt.guardrailReason == "no_safe_effective_cache_budget")
+    }
+
     @Test("memory-aware serving admission receipt caps defaults and preserves explicit overrides")
     func memoryAwareServingAdmissionReceiptCapsDefaultsAndPreservesExplicitOverrides() async throws {
         var longContextModel = ModelCatalog.devTextModel()

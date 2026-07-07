@@ -2108,6 +2108,28 @@ public actor RequestCoordinator {
             profileReceipt: validation.profileReceipt,
             model: model
         )
+        let featureGuardrailResolution = ModelCapabilityReceipts.featureCompositionGuardrailResolution(
+            for: model,
+            acceleration: workerRequest.execution.acceleration,
+            executionMetadata: workerRequest.execution.ext,
+            validation: validation
+        )
+        workerRequest.execution.acceleration = featureGuardrailResolution.effectiveAcceleration
+        if featureGuardrailResolution.receipt.decision == "refuse_unsafe_composition" {
+            var suppressedOverrides = workerRequest.execution.ext["melix.gateway.suppressed_overrides"]?
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty } ?? []
+            if !suppressedOverrides.contains("speculative_decode") {
+                suppressedOverrides.append("speculative_decode")
+            }
+            workerRequest.execution.ext["melix.gateway.suppressed_overrides"] = suppressedOverrides.joined(separator: ",")
+            workerRequest.execution.ext["melix.gateway.speculative.disabled_reason"] = "feature_composition_guardrail"
+        }
+        accelerationMetadata.merge(
+            ModelCapabilityReceipts.featureCompositionGuardrailAuditMetadata(featureGuardrailResolution.receipt),
+            uniquingKeysWith: { _, receiptValue in receiptValue }
+        )
         let resolvedAccelerationConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
             for: workerRequest.execution.acceleration,
             executionMetadata: workerRequest.execution.ext,

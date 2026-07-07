@@ -630,9 +630,10 @@ def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
 
 
 def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
-    return _benchmark_summary_rows_to_csv(
-        (row for row in bundle.get("benchmark_summary_rows", []) if isinstance(row, dict)),
-    )
+    raw_rows = bundle.get("benchmark_summary_rows", [])
+    if isinstance(raw_rows, Iterable):
+        return _benchmark_summary_rows_to_csv(raw_rows)
+    return _benchmark_summary_rows_to_csv(())
 
 
 def build_benchmark_context_csv(bundle: dict[str, object]) -> str:
@@ -1320,6 +1321,8 @@ def _benchmark_summary_rows_to_csv(rows: Iterable[dict[str, object]]) -> str:
 
     def csv_rows() -> Iterable[tuple[object, ...]]:
         for row in rows:
+            if not isinstance(row, dict):
+                continue
             row_get = row.get
             job_id = row_get("job_id", "")
             model_id = row_get("model_id", "")
@@ -1707,6 +1710,12 @@ def _canonical_benchmark_matrix_request_columns() -> list[str]:
         "dflash_block_size",
         "dflash_rollback_count",
         "dflash_target_hidden_layers",
+        "feature_guardrail_requested_num_draft_tokens",
+        "feature_guardrail_effective_num_draft_tokens",
+        "feature_guardrail_resource_fanout_estimate",
+        "feature_guardrail_requested_cache_budget_bytes",
+        "feature_guardrail_effective_cache_budget_bytes",
+        "feature_guardrail_reason",
         "tool_call_count",
         "tool_latency_ms",
         "observation_bytes",

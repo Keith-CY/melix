@@ -53,6 +53,24 @@ public struct ServingMemoryAdmissionReceipt: Sendable, Equatable {
     public let fitsMemory: Bool
 }
 
+public struct FeatureCompositionGuardrailReceipt: Sendable, Equatable {
+    public static let schemaVersion = "melix.feature_composition_guardrail.v1"
+
+    public let composition: String
+    public let decision: String
+    public let requestedNumDraftTokens: UInt32
+    public let effectiveNumDraftTokens: UInt32
+    public let resourceFanoutEstimate: Double
+    public let requestedCacheBudgetBytes: UInt64
+    public let effectiveCacheBudgetBytes: UInt64
+    public let guardrailReason: String
+}
+
+public struct FeatureCompositionGuardrailResolution: Sendable, Equatable {
+    public let receipt: FeatureCompositionGuardrailReceipt
+    public let effectiveAcceleration: Melix_Worker_V1_AccelerationPolicy
+}
+
 public enum ModelCapabilityReceipts {
     public static let schemaVersion = "melix.model_capability_receipt.v1"
     private static let defaultServingContextCap: UInt32 = 8_192
@@ -421,6 +439,125 @@ public enum ModelCapabilityReceipts {
         ]
     }
 
+    public static func featureCompositionGuardrailResolution(
+        for model: Melix_Controlplane_V1_ModelSummary,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        executionMetadata: [String: String],
+        validation: AccelerationReceiptValidation
+    ) -> FeatureCompositionGuardrailResolution {
+        var effectiveAcceleration = acceleration
+        let requestedNumDraftTokens = acceleration.mode == .speculativeDecode
+            ? acceleration.numDraftTokens
+            : 0
+        var effectiveNumDraftTokens = requestedNumDraftTokens
+        let requestedCacheBudgetBytes = model.settings.cacheMemoryBudgetBytes
+        var effectiveCacheBudgetBytes = requestedCacheBudgetBytes
+
+        guard validation.receipt.resolvedAccelerationMode == .speculativeDecode,
+              featureCompositionGuardrailIsActive(model: model, executionMetadata: executionMetadata)
+        else {
+            let receipt = FeatureCompositionGuardrailReceipt(
+                composition: "none",
+                decision: "accept",
+                requestedNumDraftTokens: requestedNumDraftTokens,
+                effectiveNumDraftTokens: effectiveNumDraftTokens,
+                resourceFanoutEstimate: Double(1 + effectiveNumDraftTokens),
+                requestedCacheBudgetBytes: requestedCacheBudgetBytes,
+                effectiveCacheBudgetBytes: effectiveCacheBudgetBytes,
+                guardrailReason: "none"
+            )
+            return FeatureCompositionGuardrailResolution(
+                receipt: receipt,
+                effectiveAcceleration: effectiveAcceleration
+            )
+        }
+
+        var decision = "accept"
+        var guardrailReason = "none"
+        if requestedNumDraftTokens > 1 {
+            effectiveNumDraftTokens = 1
+            effectiveAcceleration.numDraftTokens = 1
+            decision = "auto_cap_draft_tokens"
+            guardrailReason = "disk_streaming_speculative_fanout_cap"
+        }
+
+        let draftWeightBytes = parsedFeatureGuardrailUInt64(
+            key: "melix.acceleration.feature_guardrail.draft_weight_bytes",
+            model: model,
+            executionMetadata: executionMetadata
+        ) ?? 0
+        let memoryThresholdBytes = parsedFeatureGuardrailUInt64(
+            key: "melix.acceleration.feature_guardrail.memory_threshold_bytes",
+            model: model,
+            executionMetadata: executionMetadata
+        ) ?? 0
+        let minCacheBudgetBytes = parsedFeatureGuardrailUInt64(
+            key: "melix.acceleration.feature_guardrail.min_cache_budget_bytes",
+            model: model,
+            executionMetadata: executionMetadata
+        ) ?? 0
+        let minSafeCacheBudgetBytes = parsedFeatureGuardrailUInt64(
+            key: "melix.acceleration.feature_guardrail.min_safe_cache_budget_bytes",
+            model: model,
+            executionMetadata: executionMetadata
+        ) ?? 0
+        let estimatedCompositionBytes = saturatedAdd(servingModelResidentBytes(model), draftWeightBytes)
+        if memoryThresholdBytes > 0,
+           requestedCacheBudgetBytes > 0,
+           estimatedCompositionBytes > memoryThresholdBytes {
+            effectiveCacheBudgetBytes = max(requestedCacheBudgetBytes / 2, minCacheBudgetBytes)
+            if decision == "accept" {
+                decision = "tighten_cache_budget"
+                guardrailReason = "main_draft_footprint_exceeds_threshold"
+            }
+        }
+
+        if minSafeCacheBudgetBytes > 0,
+           effectiveCacheBudgetBytes < minSafeCacheBudgetBytes {
+            decision = "refuse_unsafe_composition"
+            guardrailReason = "no_safe_effective_cache_budget"
+            effectiveNumDraftTokens = 0
+            effectiveAcceleration.mode = .baseline
+            effectiveAcceleration.draftModelID = ""
+            effectiveAcceleration.numDraftTokens = 0
+        }
+
+        effectiveAcceleration.ext["melix.acceleration.feature_guardrail.effective_cache_budget_bytes"] =
+            String(effectiveCacheBudgetBytes)
+        let receipt = FeatureCompositionGuardrailReceipt(
+            composition: "ssd_expert_streaming_x_speculative_decode",
+            decision: decision,
+            requestedNumDraftTokens: requestedNumDraftTokens,
+            effectiveNumDraftTokens: effectiveNumDraftTokens,
+            resourceFanoutEstimate: Double(1 + effectiveNumDraftTokens),
+            requestedCacheBudgetBytes: requestedCacheBudgetBytes,
+            effectiveCacheBudgetBytes: effectiveCacheBudgetBytes,
+            guardrailReason: guardrailReason
+        )
+        return FeatureCompositionGuardrailResolution(
+            receipt: receipt,
+            effectiveAcceleration: effectiveAcceleration
+        )
+    }
+
+    public static func featureCompositionGuardrailAuditMetadata(
+        _ receipt: FeatureCompositionGuardrailReceipt
+    ) -> [String: String] {
+        [
+            "melix.acceleration.feature_guardrail.schema_version": FeatureCompositionGuardrailReceipt.schemaVersion,
+            "melix.acceleration.feature_guardrail.composition": receipt.composition,
+            "melix.acceleration.feature_guardrail.decision": receipt.decision,
+            "melix.acceleration.feature_guardrail.requested_num_draft_tokens": String(receipt.requestedNumDraftTokens),
+            "melix.acceleration.feature_guardrail.effective_num_draft_tokens": String(receipt.effectiveNumDraftTokens),
+            "melix.acceleration.feature_guardrail.resource_fanout_estimate": formattedGuardrailDouble(
+                receipt.resourceFanoutEstimate
+            ),
+            "melix.acceleration.feature_guardrail.requested_cache_budget_bytes": String(receipt.requestedCacheBudgetBytes),
+            "melix.acceleration.feature_guardrail.effective_cache_budget_bytes": String(receipt.effectiveCacheBudgetBytes),
+            "melix.acceleration.feature_guardrail.guardrail_reason": receipt.guardrailReason,
+        ]
+    }
+
     public static func servingMemoryAdmissionReceipt(
         for model: Melix_Controlplane_V1_ModelSummary,
         requestedContext explicitRequestedContext: UInt32? = nil,
@@ -576,6 +713,43 @@ public enum ModelCapabilityReceipts {
             return "speculative_decode"
         }
         return accelerationModeIdentifier(receipt.requestedAccelerationMode)
+    }
+
+    private static func featureCompositionGuardrailIsActive(
+        model: Melix_Controlplane_V1_ModelSummary,
+        executionMetadata: [String: String]
+    ) -> Bool {
+        if model.settings.diskStreamingMode == .diskStreamingPreferDisk
+            || model.settings.diskStreamingMode == .diskStreamingRequireDisk {
+            return true
+        }
+        return parsedBool(model.settings.ext["melix.acceleration.expert_streaming.enabled"])
+            || parsedBool(executionMetadata["melix.acceleration.expert_streaming.enabled"])
+    }
+
+    private static func parsedFeatureGuardrailUInt64(
+        key: String,
+        model: Melix_Controlplane_V1_ModelSummary,
+        executionMetadata: [String: String]
+    ) -> UInt64? {
+        parsedPositiveUInt64(executionMetadata[key])
+            ?? parsedPositiveUInt64(model.settings.ext[key])
+    }
+
+    private static func parsedBool(_ rawValue: String?) -> Bool {
+        switch rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func formattedGuardrailDouble(_ value: Double) -> String {
+        if value.rounded(.towardZero) == value {
+            return String(Int64(value))
+        }
+        return String(value)
     }
 
     private static func appendUnique(_ value: String, to values: inout [String]) {

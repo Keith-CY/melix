@@ -1187,6 +1187,12 @@ def test_report_builder_includes_runtime_metadata_and_decode_probes() -> None:
                 "speculative_target_verify_ms": 12.0,
                 "dflash_enabled": True,
                 "dflash_rollback_count": 1,
+                "feature_guardrail_requested_num_draft_tokens": 6,
+                "feature_guardrail_effective_num_draft_tokens": 1,
+                "feature_guardrail_resource_fanout_estimate": 2.0,
+                "feature_guardrail_requested_cache_budget_bytes": 8192,
+                "feature_guardrail_effective_cache_budget_bytes": 4096,
+                "feature_guardrail_reason": "disk_streaming_speculative_fanout_cap",
             }
         ],
     }
@@ -1214,6 +1220,12 @@ def test_report_builder_includes_runtime_metadata_and_decode_probes() -> None:
                 "speculative_target_verify_ms": 11.0,
                 "dflash_enabled": True,
                 "dflash_rollback_count": 2,
+                "feature_guardrail_requested_num_draft_tokens": 6,
+                "feature_guardrail_effective_num_draft_tokens": 1,
+                "feature_guardrail_resource_fanout_estimate": 2.0,
+                "feature_guardrail_requested_cache_budget_bytes": 8192,
+                "feature_guardrail_effective_cache_budget_bytes": 4096,
+                "feature_guardrail_reason": "disk_streaming_speculative_fanout_cap",
             }
         ],
     }
@@ -1235,6 +1247,13 @@ def test_report_builder_includes_runtime_metadata_and_decode_probes() -> None:
     )
     assert rows_by_metric[f"{label}.dflash_rollback_count_sum"]["status"] == "warning"
     assert rows_by_metric[f"{label}.dflash_enabled_rate"]["status"] == "ok"
+    assert rows_by_metric[f"{label}.feature_guardrail_requested_num_draft_tokens_mean"]["status"] == "ok"
+    assert rows_by_metric[f"{label}.feature_guardrail_requested_num_draft_tokens_mean"]["direction"] == "neutral"
+    assert rows_by_metric[f"{label}.feature_guardrail_effective_num_draft_tokens_mean"]["status"] == "ok"
+    assert rows_by_metric[f"{label}.feature_guardrail_resource_fanout_estimate_mean"]["status"] == "ok"
+    assert rows_by_metric[f"{label}.feature_guardrail_requested_cache_budget_bytes_mean"]["status"] == "ok"
+    assert rows_by_metric[f"{label}.feature_guardrail_requested_cache_budget_bytes_mean"]["direction"] == "neutral"
+    assert rows_by_metric[f"{label}.feature_guardrail_effective_cache_budget_bytes_mean"]["status"] == "ok"
     assert report["summary"]["warning_count"] == 4
 
 

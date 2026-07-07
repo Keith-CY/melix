@@ -737,6 +737,12 @@ class BenchmarkMatrixRequestRow:
     dflash_block_size: int = 0
     dflash_rollback_count: int = 0
     dflash_target_hidden_layers: int = 0
+    feature_guardrail_requested_num_draft_tokens: int = 0
+    feature_guardrail_effective_num_draft_tokens: int = 0
+    feature_guardrail_resource_fanout_estimate: float = 0.0
+    feature_guardrail_requested_cache_budget_bytes: int = 0
+    feature_guardrail_effective_cache_budget_bytes: int = 0
+    feature_guardrail_reason: str = ""
     tool_call_count: int = 0
     tool_latency_ms: float = 0.0
     observation_bytes: int = 0
@@ -795,6 +801,12 @@ class BenchmarkMatrixRequestRow:
             "dflash_block_size": self.dflash_block_size,
             "dflash_rollback_count": self.dflash_rollback_count,
             "dflash_target_hidden_layers": self.dflash_target_hidden_layers,
+            "feature_guardrail_requested_num_draft_tokens": self.feature_guardrail_requested_num_draft_tokens,
+            "feature_guardrail_effective_num_draft_tokens": self.feature_guardrail_effective_num_draft_tokens,
+            "feature_guardrail_resource_fanout_estimate": self.feature_guardrail_resource_fanout_estimate,
+            "feature_guardrail_requested_cache_budget_bytes": self.feature_guardrail_requested_cache_budget_bytes,
+            "feature_guardrail_effective_cache_budget_bytes": self.feature_guardrail_effective_cache_budget_bytes,
+            "feature_guardrail_reason": self.feature_guardrail_reason,
             "tool_call_count": self.tool_call_count,
             "tool_latency_ms": self.tool_latency_ms,
             "observation_bytes": self.observation_bytes,
@@ -1347,6 +1359,12 @@ def build_benchmark_matrix_request_row(
     dflash_block_size: int = 0,
     dflash_rollback_count: int = 0,
     dflash_target_hidden_layers: int = 0,
+    feature_guardrail_requested_num_draft_tokens: int = 0,
+    feature_guardrail_effective_num_draft_tokens: int = 0,
+    feature_guardrail_resource_fanout_estimate: float = 0.0,
+    feature_guardrail_requested_cache_budget_bytes: int = 0,
+    feature_guardrail_effective_cache_budget_bytes: int = 0,
+    feature_guardrail_reason: str = "",
     tool_call_count: int = 0,
     tool_latency_ms: float = 0.0,
     observation_bytes: int = 0,
@@ -1413,6 +1431,12 @@ def build_benchmark_matrix_request_row(
         dflash_block_size=dflash_block_size,
         dflash_rollback_count=dflash_rollback_count,
         dflash_target_hidden_layers=dflash_target_hidden_layers,
+        feature_guardrail_requested_num_draft_tokens=feature_guardrail_requested_num_draft_tokens,
+        feature_guardrail_effective_num_draft_tokens=feature_guardrail_effective_num_draft_tokens,
+        feature_guardrail_resource_fanout_estimate=feature_guardrail_resource_fanout_estimate,
+        feature_guardrail_requested_cache_budget_bytes=feature_guardrail_requested_cache_budget_bytes,
+        feature_guardrail_effective_cache_budget_bytes=feature_guardrail_effective_cache_budget_bytes,
+        feature_guardrail_reason=feature_guardrail_reason,
         tool_call_count=int(agentic_fields["tool_call_count"]),
         tool_latency_ms=float(agentic_fields["tool_latency_ms"]),
         observation_bytes=int(agentic_fields["observation_bytes"]),

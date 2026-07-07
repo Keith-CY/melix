@@ -4659,6 +4659,90 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("gateway feature composition guardrail caps disk-backed speculative fan-out")
+    func gatewayFeatureCompositionGuardrailCapsDiskBackedSpeculativeFanOut() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .unspecified
+        textModel.settings.diskStreamingMode = .diskStreamingRequireDisk
+        textModel.settings.cacheMemoryBudgetBytes = 8_192
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-text"
+        textModel.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        textModel.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-gateway-feature-guardrail",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.acceleration_mode": "speculative_decode",
+                    "melix.gateway.acceleration_profile": "throughput",
+                    "melix.gateway.draft_model_id": "melix-dev-text",
+                    "melix.gateway.num_draft_tokens": "7",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.mode == .speculativeDecode)
+        #expect(prefillRequest.execution.acceleration.numDraftTokens == 1)
+        #expect(decodeRequest.execution.acceleration.mode == .speculativeDecode)
+        #expect(decodeRequest.execution.acceleration.numDraftTokens == 1)
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.num_speculative_tokens"] == "1")
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.schema_version"]
+                == "melix.feature_composition_guardrail.v1"
+        )
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.composition"]
+                == "ssd_expert_streaming_x_speculative_decode"
+        )
+        #expect(prefillRequest.execution.ext["melix.acceleration.feature_guardrail.decision"] == "auto_cap_draft_tokens")
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.requested_num_draft_tokens"] == "7"
+        )
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.effective_num_draft_tokens"] == "1"
+        )
+        #expect(prefillRequest.execution.ext["melix.acceleration.feature_guardrail.resource_fanout_estimate"] == "2")
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.requested_cache_budget_bytes"] == "8192"
+        )
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.effective_cache_budget_bytes"] == "8192"
+        )
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.guardrail_reason"]
+                == "disk_streaming_speculative_fanout_cap"
+        )
+
+        await workerClient.finish(requestID: "req-gateway-feature-guardrail")
+        _ = await consumer.result
+    }
+
     @Test("serving memory admission uses gateway max concurrent sequences")
     func servingMemoryAdmissionUsesGatewayMaxConcurrentSequences() async throws {
         let workerClient = PhaseAwareWorkerClient()
