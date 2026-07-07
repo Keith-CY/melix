@@ -1112,6 +1112,44 @@ def test_sorted_payload_fast_path_uses_compact_field_offsets(monkeypatch) -> Non
     }
 
 
+def test_compact_field_offset_fallback_reuses_known_key_index(monkeypatch) -> None:
+    payload = b'{"metadata":{},"runtime_status" : "ok"}'
+    key_token = b'"runtime_status"'
+    original_start = payload.find(b'{}')
+    expected_key_index = payload.find(key_token, original_start)
+    starts: list[int] = []
+    original_generic_scanner = code_eval_runner._json_field_value_start_for_token
+
+    def tracking_generic_scanner(
+        payload_bytes: bytes,
+        tracked_key_token: bytes,
+        *,
+        start: int = 0,
+    ) -> int | None:
+        starts.append(start)
+        return original_generic_scanner(
+            payload_bytes,
+            tracked_key_token,
+            start=start,
+        )
+
+    monkeypatch.setattr(
+        code_eval_runner,
+        "_json_field_value_start_for_token",
+        tracking_generic_scanner,
+    )
+
+    assert (
+        code_eval_runner._compact_json_field_value_start_for_token(
+            payload,
+            key_token,
+            start=original_start,
+        )
+        == payload.find(b'"ok"')
+    )
+    assert starts == [expected_key_index]
+
+
 def test_sorted_payload_fast_path_returns_none_for_missing_or_malformed_fields() -> None:
     assert (
         code_eval_runner._extract_sorted_code_eval_payload_fields(

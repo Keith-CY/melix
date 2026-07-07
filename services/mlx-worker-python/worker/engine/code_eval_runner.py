@@ -587,7 +587,7 @@ def _compact_json_field_value_start_for_token(
         or payload_bytes[value_start - 1] != _ORD_COLON
         or payload_bytes[value_start] in _JSON_PAYLOAD_WHITESPACE
     ):
-        return _json_field_value_start_for_token(payload_bytes, key_token, start=start)
+        return _json_field_value_start_for_token(payload_bytes, key_token, start=key_index)
     return value_start
 
 
