@@ -2214,6 +2214,19 @@ def test_build_benchmark_summary_csv_treats_non_iterable_rows_as_empty() -> None
     assert rows == []
 
 
+def test_build_benchmark_summary_csv_accepts_non_list_iterables() -> None:
+    bundle = {
+        "benchmark_summary_rows": (
+            {"job_id": "bench-1", "model_id": "melix-dev-text", "task_kind": "text-generation"},
+            "not-a-row",
+        )
+    }
+
+    rows = list(csv.DictReader(io.StringIO(build_benchmark_summary_csv(bundle))))
+
+    assert [row["job_id"] for row in rows] == ["bench-1"]
+
+
 def test_build_benchmark_summary_csv_serializes_tuple_and_none_values() -> None:
     class CustomOutputPath:
         def __str__(self) -> str:

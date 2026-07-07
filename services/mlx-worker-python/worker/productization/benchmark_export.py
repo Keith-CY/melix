@@ -631,8 +631,10 @@ def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
 
 def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
     raw_rows = bundle.get("benchmark_summary_rows", [])
+    if type(raw_rows) is list:
+        return _benchmark_summary_rows_to_csv(row for row in raw_rows if isinstance(row, dict))
     if isinstance(raw_rows, Iterable):
-        return _benchmark_summary_rows_to_csv(raw_rows)
+        return _benchmark_summary_rows_to_csv(row for row in raw_rows if isinstance(row, dict))
     return _benchmark_summary_rows_to_csv(())
 
 
@@ -1321,8 +1323,6 @@ def _benchmark_summary_rows_to_csv(rows: Iterable[dict[str, object]]) -> str:
 
     def csv_rows() -> Iterable[tuple[object, ...]]:
         for row in rows:
-            if not isinstance(row, dict):
-                continue
             row_get = row.get
             job_id = row_get("job_id", "")
             model_id = row_get("model_id", "")
