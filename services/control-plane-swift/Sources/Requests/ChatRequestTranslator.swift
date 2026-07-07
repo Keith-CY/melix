@@ -241,6 +241,30 @@ public struct NormalizedTextRequest: Sendable, Equatable {
 
 public extension NormalizedTextRequest {
     func replacingModel(_ model: String) -> NormalizedTextRequest {
+        copy(
+            model: model,
+            openAICompatibilityReceipts: openAICompatibilityReceipts
+        )
+    }
+
+    func mergingOpenAICompatibilityReceipts(
+        _ receipts: [String: String]
+    ) -> NormalizedTextRequest {
+        guard !receipts.isEmpty else {
+            return self
+        }
+        var mergedReceipts = openAICompatibilityReceipts
+        mergedReceipts.merge(receipts, uniquingKeysWith: { _, new in new })
+        return copy(
+            model: model,
+            openAICompatibilityReceipts: mergedReceipts
+        )
+    }
+
+    private func copy(
+        model: String,
+        openAICompatibilityReceipts: [String: String]
+    ) -> NormalizedTextRequest {
         NormalizedTextRequest(
             endpoint: endpoint,
             model: model,
