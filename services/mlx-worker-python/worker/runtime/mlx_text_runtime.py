@@ -1294,27 +1294,37 @@ class AutoMLXBackend:
             )
             return
 
-        cache_ctx = self._session_prompt_cache_plan(loaded_model, execution_ext)
-        if cache_ctx is not None:
-            yield from self._generate_session_cached_tokens(
-                loaded_model,
-                prompt,
-                sampler=sampler,
-                max_tokens=max_tokens,
-                stream_kwargs=stream_kwargs,
-                cancel_event=cancel_event,
-                cache_ctx=cache_ctx,
-            )
-            return
+        if execution_ext and execution_ext.get("_melix.session_id"):
+            cache_ctx = self._session_prompt_cache_plan(loaded_model, execution_ext)
+            if cache_ctx is not None:
+                yield from self._generate_session_cached_tokens(
+                    loaded_model,
+                    prompt,
+                    sampler=sampler,
+                    max_tokens=max_tokens,
+                    stream_kwargs=stream_kwargs,
+                    cancel_event=cancel_event,
+                    cache_ctx=cache_ctx,
+                )
+                return
 
-        yield from self._stream_standard_events(
-            loaded_model,
+        # Plain uncached loop stays inline: an extra generator layer here costs
+        # measurable per-chunk forwarding overhead on the no-session hot path.
+        cumulative_raw_text = ""
+        for response in self._stream_generate_fn(
+            loaded_model["model"],
+            loaded_model["tokenizer"],
             prompt,
-            sampler=sampler,
             max_tokens=max_tokens,
-            stream_kwargs=stream_kwargs,
-            cancel_event=cancel_event,
-        )
+            sampler=sampler,
+            **stream_kwargs,
+        ):
+            if cancel_event.is_set():
+                return
+            event, cumulative_raw_text = _standard_stream_event(response, cumulative_raw_text)
+            if event is None:
+                continue
+            yield event
 
     def _stream_standard_events(
         self,
