@@ -508,6 +508,7 @@ def test_trust_policy_auto_map_common_string_uses_leading_character_fast_path() 
 def test_trust_policy_auto_map_custom_loader_scan_preserves_blank_string_behavior() -> None:
     assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": ""}) is False
     assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": " \t\n"}) is False
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": "\u2003\u2003"}) is False
     assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": "custom.Loader"}) is True
 
 

@@ -318,7 +318,8 @@ def _auto_map_has_custom_loader(auto_map: dict[Any, Any]) -> bool:
         if isinstance(value, str):
             if not value:
                 continue
-            if not value[0].isspace() or not value.isspace():
+            first = value[0]
+            if " " < first <= "~" or not first.isspace() or not value.isspace():
                 return True
         elif value is not None and str(value).strip():
             return True
