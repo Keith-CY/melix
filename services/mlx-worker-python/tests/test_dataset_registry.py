@@ -450,6 +450,43 @@ def test_dataset_catalog_jsonl_row_reader_stops_after_limited_dict_rows(
     assert load_calls == 3
 
 
+def test_dataset_catalog_jsonl_limit_one_returns_first_dict_directly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    jsonl_path = tmp_path / "sample.jsonl"
+    jsonl_path.write_text(
+        '\n'.join(
+            [
+                "",
+                json.dumps(["not", "a", "dict"]),
+                json.dumps({"prompt": "first"}),
+                json.dumps({"prompt": "second"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    original_loads = catalog.json.loads
+    load_calls = 0
+
+    def counting_loads(payload: str) -> object:
+        nonlocal load_calls
+        load_calls += 1
+        return original_loads(payload)
+
+    monkeypatch.setattr(catalog.json, "loads", counting_loads)
+
+    assert catalog._read_rows_from_file(jsonl_path, limit=1) == [
+        {"prompt": "first"},
+    ]
+    assert load_calls == 2
+
+    no_dict_path = tmp_path / "no-dict.jsonl"
+    no_dict_path.write_text("\n[]\n", encoding="utf-8")
+    assert catalog._read_rows_from_file(no_dict_path, limit=1) == []
+
+
 def test_dataset_catalog_first_preview_scan_skips_readme_without_rescan(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshot"
     data_dir = snapshot_dir / "data"
