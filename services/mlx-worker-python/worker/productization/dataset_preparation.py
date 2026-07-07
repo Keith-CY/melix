@@ -7,6 +7,7 @@ from functools import lru_cache
 import hashlib
 import io
 import json
+from operator import itemgetter
 import os
 import re
 import time
@@ -1084,6 +1085,7 @@ def list_dataset_versions(
     versions_append = versions.append
     json_loads = json.loads
     open_file = open
+    common_string_sort_keys = True
     for manifest_path in _iter_dataset_version_manifest_paths(versions_root):
         try:
             with open_file(manifest_path, "rb") as handle:
@@ -1091,11 +1093,15 @@ def list_dataset_versions(
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             continue
         try:
+            created_at = version["created_at"]
+            version_id = version["version_id"]
+            if type(created_at) is not str or type(version_id) is not str:
+                common_string_sort_keys = False
             versions_append(
                 {
                     "dataset_id": version["dataset_id"],
-                    "version_id": version["version_id"],
-                    "created_at": version["created_at"],
+                    "version_id": version_id,
+                    "created_at": created_at,
                     "status": version["status"],
                     "train_count": version["train_count"],
                     "validation_count": version["validation_count"],
@@ -1106,11 +1112,15 @@ def list_dataset_versions(
             )
         except KeyError:
             version_get = version.get
+            created_at = version_get("created_at", "")
+            version_id = version_get("version_id", "")
+            if type(created_at) is not str or type(version_id) is not str:
+                common_string_sort_keys = False
             versions_append(
                 {
                     "dataset_id": version_get("dataset_id", ""),
-                    "version_id": version_get("version_id", ""),
-                    "created_at": version_get("created_at", ""),
+                    "version_id": version_id,
+                    "created_at": created_at,
                     "status": version_get("status", ""),
                     "train_count": version_get("train_count", 0),
                     "validation_count": version_get("validation_count", 0),
@@ -1119,7 +1129,11 @@ def list_dataset_versions(
                     "dataset_version_path": manifest_path,
                 }
             )
-    versions.sort(key=_dataset_version_list_sort_key)
+    versions.sort(
+        key=_DATASET_VERSION_LIST_STRING_SORT_KEY
+        if common_string_sort_keys
+        else _dataset_version_list_sort_key
+    )
     return {
         "schema_version": DATASET_VERSION_LIST_SCHEMA_VERSION,
         "workspace_manifest_path": manifest_path_string,
@@ -1139,6 +1153,9 @@ def _dataset_version_list_sort_key(item: dict[str, Any]) -> tuple[str, str]:
         created_at if type(created_at) is str else str(created_at),
         version_id if type(version_id) is str else str(version_id),
     )
+
+
+_DATASET_VERSION_LIST_STRING_SORT_KEY = itemgetter("created_at", "version_id")
 
 
 def _iter_dataset_version_manifest_paths(versions_root: Path) -> Iterable[str]:

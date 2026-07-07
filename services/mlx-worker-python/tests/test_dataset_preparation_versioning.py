@@ -458,6 +458,46 @@ def test_dataset_version_listing_handles_missing_versions_root(tmp_path: Path) -
     assert listing["metrics"]["dataset_version_count"] == 0
 
 
+def test_dataset_version_listing_preserves_non_string_sort_key_fallback(tmp_path: Path) -> None:
+    versions_root = tmp_path / "datasets" / "support-chat" / "versions"
+    for version_id, created_at in [
+        ("support-chat-v2", 2),
+        ("support-chat-v10", 10),
+        ("support-chat-v1", "2026-05-24T01:00:00Z"),
+    ]:
+        version_dir = versions_root / version_id
+        version_dir.mkdir(parents=True)
+        payload = {
+            "dataset_id": "support-chat",
+            "version_id": version_id,
+            "created_at": created_at,
+            "status": "ready",
+            "train_count": 0,
+            "validation_count": 0,
+            "failed_count": 0,
+            "quality_summary_path": "",
+        }
+        if version_id == "support-chat-v1":
+            payload.pop("status")
+            payload["created_at"] = 1
+        (version_dir / "dataset-version.json").write_text(
+            json.dumps(payload),
+            encoding="utf-8",
+        )
+
+    listing = list_dataset_versions(
+        workspace_manifest_path=tmp_path / "workspace-manifest.json",
+        output_root=tmp_path / "datasets",
+        dataset_id="support-chat",
+    )
+
+    assert [item["version_id"] for item in listing["versions"]] == [
+        "support-chat-v1",
+        "support-chat-v10",
+        "support-chat-v2",
+    ]
+
+
 def test_failed_only_retry_copies_successful_samples_without_rewriting(
     tmp_path: Path,
 ) -> None:
