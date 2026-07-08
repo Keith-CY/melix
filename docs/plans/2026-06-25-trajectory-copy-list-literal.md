@@ -45,3 +45,13 @@ guards now reuse a module-level `type` binding inside the per-item scan instead
 of resolving the builtin on every iteration. Container isolation and recursive
 copy behavior stay unchanged; the slice only targets the exact-scalar list/tuple
 hot loops measured by the registered probe.
+
+## 2026-07-06 follow-up: normalize value type binding
+
+This follow-up remains limited to `normalize_trajectory_provenance(...)` in the
+same Python-only trajectory provenance path. The normalizer now reuses the
+module-level `_TYPE` binding for each provenance field type check instead of
+resolving the builtin `type` during every field iteration. Copy isolation,
+empty-value filtering, and scalar forwarding semantics stay unchanged. The
+registered `trajectory-provenance-copy-elision` probe remains the local Linux and
+CI validation gate for the affected path.

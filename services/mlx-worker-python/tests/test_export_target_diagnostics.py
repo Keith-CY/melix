@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -49,6 +50,31 @@ FIXTURE_ROOT = (
     Path(__file__).resolve().parents[1]
     / "fixtures/runtime-export/target-manifests.dev.v1"
 )
+
+
+def test_export_target_diagnostics_common_phrase_fast_path_skips_regex_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(export_target_diagnostics_module, "_DIAGNOSIS_PATTERNS", ())
+    source_lines = [
+        _SourceLine(
+            source_path="logs/ollama-create.log",
+            text="runtime load failed while opening model",
+        ),
+        _SourceLine(
+            source_path="logs/ollama-create.log",
+            text="runtime load failed while opening model",
+        ),
+    ]
+
+    diagnoses = _diagnoses_from_excerpt(
+        source_lines,
+        {0: 1, 1: 2},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert [diagnosis["code"] for diagnosis in diagnoses] == [CODE_RUNTIME_LOAD_FAILED]
+    assert diagnoses[0]["matched_pattern_id"] == "runtime-load-failed-v1"
 
 
 def test_export_target_diagnostics_source_line_extension_matches_split_helper() -> None:
@@ -550,7 +576,7 @@ def test_export_target_diagnostics_preserves_overlap_priority_after_prior_match(
     ]
 
 
-def test_export_target_diagnostics_runtime_load_markers_skip_progress_regexes(
+def test_export_target_diagnostics_runtime_load_fast_phrase_skips_regexes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_load_pattern = next(
@@ -590,7 +616,33 @@ def test_export_target_diagnostics_runtime_load_markers_skip_progress_regexes(
     )
 
     assert [diagnosis["code"] for diagnosis in diagnoses] == [CODE_RUNTIME_LOAD_FAILED]
-    assert [expression.search.call_count for expression in expressions] == [1, 1, 1, 0, 0]
+    assert [expression.search.call_count for expression in expressions] == [0, 0, 0, 0, 0]
+
+
+def test_export_target_diagnostics_exact_text_fast_path_skips_marker_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_marker_scan(_lowered_text: str) -> bool:  # pragma: no cover - regression guard
+        raise AssertionError("exact diagnosis text should skip marker scanning")
+
+    monkeypatch.setattr(
+        export_target_diagnostics_module,
+        "_has_diagnosis_marker",
+        fail_marker_scan,
+    )
+
+    diagnoses = _diagnoses_from_excerpt(
+        [
+            _SourceLine(
+                source_path="logs/ollama-create.log",
+                text="runtime load failed while opening model",
+            ),
+        ],
+        {0: 1},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert [diagnosis["code"] for diagnosis in diagnoses] == [CODE_RUNTIME_LOAD_FAILED]
 
 
 def test_export_target_diagnostics_skips_secret_regexes_for_plain_path_lines(
@@ -771,6 +823,59 @@ def test_export_target_diagnostics_source_collection_skips_duplicates_and_missin
 
     assert [line.source_path for line in lines].count(log_path) == 1
     assert all(line.source_path != "logs/missing-runtime.log" for line in lines)
+
+
+def test_export_target_diagnostics_collects_mapping_and_object_failure_checks(
+    tmp_path: Path,
+) -> None:
+    _target_root, manifest = _materialized_manifest(
+        tmp_path,
+        FIXTURE_ROOT / "melix_managed/export-target-manifest.json",
+    )
+    layout = build_export_target_layout(tmp_path, manifest)
+
+    lines = _collect_source_lines(
+        layout,
+        manifest,
+        failure_checks=(
+            {
+                "check": "load_check",
+                "status": "passed",
+                "failure_code": "runtime_load_failed",
+                "failure_message": "should be skipped",
+                "evidence_path": "smoke/skipped.json",
+            },
+            {
+                "name": "metadata_check",
+                "status": "failed",
+                "failure_code": "missing_blob",
+                "failure_message": "missing blob sha256-777777",
+                "evidence_path": "smoke/metadata.json",
+            },
+            SimpleNamespace(
+                check="generation_check",
+                status="blocked",
+                failure_code="runtime_timeout",
+                failure_message="generation smoke timed out",
+                evidence_path="smoke/generation.json",
+            ),
+        ),
+        bounded_bytes=1024,
+    )
+
+    collected = [(line.source_path, line.text) for line in lines]
+    assert (
+        "smoke/skipped.json",
+        "load_check: runtime_load_failed: should be skipped",
+    ) not in collected
+    assert (
+        "smoke/metadata.json",
+        "metadata_check: missing_blob: missing blob sha256-777777",
+    ) in collected
+    assert (
+        "smoke/generation.json",
+        "generation_check: runtime_timeout: generation smoke timed out",
+    ) in collected
 
 
 def test_export_target_diagnostics_falls_back_when_path_resolution_raises_oserror(

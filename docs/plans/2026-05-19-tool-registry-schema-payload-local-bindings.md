@@ -131,6 +131,39 @@ Expected effect:
 - leave registry selection, schema serialization, protobuf config handling, and
   tool definitions unchanged.
 
+## Follow-up Slice: Full List Template Branch
+
+The 2026-07-06 follow-up keeps `built_in_tool_config(list(BUILTIN_AGENTIC_TOOL_NAMES))`
+behavior unchanged, but checks the full-list template case inside the list branch
+instead of first comparing the caller's list to the canonical tuple. The hot path
+still returns a fresh mutable protobuf copy from the built-in template, while the
+registered selector probe's full-list workload avoids an unnecessary cross-type
+sequence comparison before taking the existing template fast path.
+
+Expected effect:
+
+- reduce `tool-registry-select-name-index-cache` `full_config_template_elapsed_ms_mean`;
+- preserve mutation isolation for returned `ToolConfig` messages;
+- leave partial selections, tuple full selections, registry selection, and tool
+  definitions unchanged.
+
+## Follow-up Slice: Empty OpenAI Tool Selection Fast Path
+
+The 2026-07-08 follow-up keeps `ToolRegistry.as_openai_tools()` copy-on-return
+behavior unchanged, but returns a fresh empty list before binding copy helpers or
+entering the template-cloning comprehension when a selected registry has no
+OpenAI tool templates. Empty selected registries are already cached by
+`ToolRegistry.select(())`; this slice narrows the zero-tool OpenAI schema path
+without changing full or partial registry payloads.
+
+Expected effect:
+
+- reduce `tool-registry-openai-tools-template-cache` `empty_elapsed_ms_mean` for
+  empty selected registries;
+- preserve fresh-list mutation isolation for `as_openai_tools()` callers;
+- leave non-empty OpenAI tool payload construction, registry selection,
+  schema serialization, and protobuf config handling unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.

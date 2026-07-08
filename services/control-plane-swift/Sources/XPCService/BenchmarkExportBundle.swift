@@ -515,6 +515,12 @@ public struct ControlPlaneBenchmarkMatrixRequestCSVRow: Codable, Equatable, Send
     public let dflashBlockSize: Int
     public let dflashRollbackCount: Int
     public let dflashTargetHiddenLayers: Int
+    public let featureGuardrailRequestedNumDraftTokens: Int
+    public let featureGuardrailEffectiveNumDraftTokens: Int
+    public let featureGuardrailResourceFanoutEstimate: Double
+    public let featureGuardrailRequestedCacheBudgetBytes: UInt64
+    public let featureGuardrailEffectiveCacheBudgetBytes: UInt64
+    public let featureGuardrailReason: String
     public let toolCallCount: Int
     public let toolLatencyMS: Double
     public let observationBytes: UInt64
@@ -569,6 +575,12 @@ public struct ControlPlaneBenchmarkMatrixRequestCSVRow: Codable, Equatable, Send
         case dflashBlockSize = "dflash_block_size"
         case dflashRollbackCount = "dflash_rollback_count"
         case dflashTargetHiddenLayers = "dflash_target_hidden_layers"
+        case featureGuardrailRequestedNumDraftTokens = "feature_guardrail_requested_num_draft_tokens"
+        case featureGuardrailEffectiveNumDraftTokens = "feature_guardrail_effective_num_draft_tokens"
+        case featureGuardrailResourceFanoutEstimate = "feature_guardrail_resource_fanout_estimate"
+        case featureGuardrailRequestedCacheBudgetBytes = "feature_guardrail_requested_cache_budget_bytes"
+        case featureGuardrailEffectiveCacheBudgetBytes = "feature_guardrail_effective_cache_budget_bytes"
+        case featureGuardrailReason = "feature_guardrail_reason"
         case toolCallCount = "tool_call_count"
         case toolLatencyMS = "tool_latency_ms"
         case observationBytes = "observation_bytes"
@@ -625,6 +637,27 @@ public struct ControlPlaneBenchmarkMatrixRequestCSVRow: Codable, Equatable, Send
         dflashBlockSize = try container.decodeIfPresent(Int.self, forKey: .dflashBlockSize) ?? 0
         dflashRollbackCount = try container.decodeIfPresent(Int.self, forKey: .dflashRollbackCount) ?? 0
         dflashTargetHiddenLayers = try container.decodeIfPresent(Int.self, forKey: .dflashTargetHiddenLayers) ?? 0
+        featureGuardrailRequestedNumDraftTokens = try container.decodeIfPresent(
+            Int.self,
+            forKey: .featureGuardrailRequestedNumDraftTokens
+        ) ?? 0
+        featureGuardrailEffectiveNumDraftTokens = try container.decodeIfPresent(
+            Int.self,
+            forKey: .featureGuardrailEffectiveNumDraftTokens
+        ) ?? 0
+        featureGuardrailResourceFanoutEstimate = try container.decodeIfPresent(
+            Double.self,
+            forKey: .featureGuardrailResourceFanoutEstimate
+        ) ?? 0
+        featureGuardrailRequestedCacheBudgetBytes = try container.decodeIfPresent(
+            UInt64.self,
+            forKey: .featureGuardrailRequestedCacheBudgetBytes
+        ) ?? 0
+        featureGuardrailEffectiveCacheBudgetBytes = try container.decodeIfPresent(
+            UInt64.self,
+            forKey: .featureGuardrailEffectiveCacheBudgetBytes
+        ) ?? 0
+        featureGuardrailReason = try container.decodeIfPresent(String.self, forKey: .featureGuardrailReason) ?? ""
         toolCallCount = try container.decodeIfPresent(Int.self, forKey: .toolCallCount) ?? 0
         toolLatencyMS = try container.decodeIfPresent(Double.self, forKey: .toolLatencyMS) ?? 0
         observationBytes = try container.decodeIfPresent(UInt64.self, forKey: .observationBytes) ?? 0
@@ -1797,7 +1830,7 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func benchmarkMatrixRequestsCSV(jobID: String? = nil) -> String {
         let rows = benchmarkMatrixRequestRows(jobID: jobID)
-        let header = "job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count,created_at_unix_ms"
+        let header = "job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,feature_guardrail_requested_num_draft_tokens,feature_guardrail_effective_num_draft_tokens,feature_guardrail_resource_fanout_estimate,feature_guardrail_requested_cache_budget_bytes,feature_guardrail_effective_cache_budget_bytes,feature_guardrail_reason,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count,created_at_unix_ms"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
@@ -1849,6 +1882,12 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                 String(row.dflashBlockSize),
                 String(row.dflashRollbackCount),
                 String(row.dflashTargetHiddenLayers),
+                String(row.featureGuardrailRequestedNumDraftTokens),
+                String(row.featureGuardrailEffectiveNumDraftTokens),
+                String(row.featureGuardrailResourceFanoutEstimate),
+                String(row.featureGuardrailRequestedCacheBudgetBytes),
+                String(row.featureGuardrailEffectiveCacheBudgetBytes),
+                row.featureGuardrailReason,
                 String(row.toolCallCount),
                 String(row.toolLatencyMS),
                 String(row.observationBytes),

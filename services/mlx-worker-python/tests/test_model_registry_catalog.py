@@ -1779,6 +1779,14 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
         )
         == "google/gemma-4-E2B-it-qat-q4_0-unquantized"
     )
+    assert (
+        catalog_module._gemma4_qat_source_model(
+            "not_base_model: ignored\n\t\"base_model: google/gemma-4-E4B-it-qat-q4_0-unquantized\"\n",
+            model_size="e4b",
+            companion=False,
+        )
+        == "google/gemma-4-E4B-it-qat-q4_0-unquantized"
+    )
 
     operator_cache = tmp_path / "operator-hf-cache"
     operator_snapshot = operator_cache / "models--mlx-community--OperatorTiny" / "snapshots" / "abc123"
@@ -1838,6 +1846,33 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
             companion=False,
         )
         == "google/gemma-4-E2B-it-qat-q4_0-unquantized"
+    )
+
+
+def test_gemma4_qat_source_model_rejects_non_marker_prefix_without_prefix_strip() -> None:
+    assert (
+        catalog_module._gemma4_qat_source_model(
+            "base_model: correct-source\nextra text\n  'base_model: wrong-source'\n",
+            model_size="e2b",
+            companion=False,
+        )
+        == "correct-source"
+    )
+    assert (
+        catalog_module._gemma4_qat_source_model(
+            "metadata_base_model: ignored\n  'base_model: [google/gemma-4-E2B-it-qat-q4_0-unquantized]'\n",
+            model_size="e2b",
+            companion=False,
+        )
+        == "google/gemma-4-E2B-it-qat-q4_0-unquantized"
+    )
+    assert (
+        catalog_module._gemma4_qat_source_model(
+            "metadata_base_model: ignored\n  'base_model: [google/gemma-4-12B-it-qat-q4_0-unquantized]'",
+            model_size="12b",
+            companion=False,
+        )
+        == "google/gemma-4-12B-it-qat-q4_0-unquantized"
     )
 
 

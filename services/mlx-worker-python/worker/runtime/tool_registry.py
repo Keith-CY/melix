@@ -435,6 +435,9 @@ class ToolRegistry:
         return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
+        openai_tool_templates = self._openai_tool_templates
+        if not openai_tool_templates:
+            return []
         copy_dict = _COPY_DICT
         copy_list = _COPY_LIST
         return [
@@ -463,7 +466,7 @@ class ToolRegistry:
                 observation_kind,
                 schema_properties,
                 required_arguments,
-            ) in self._openai_tool_templates
+            ) in openai_tool_templates
         ]
 
     def as_worker_tool_config(self) -> common_pb2.ToolConfig:
@@ -512,9 +515,11 @@ def agentic_tool_index_metadata() -> dict[str, ToolIndexMetadata]:
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
     copy_tool_config = _copy_tool_config
-    if names is None or names is BUILTIN_AGENTIC_TOOL_NAMES or names == BUILTIN_AGENTIC_TOOL_NAMES:
+    if names is None or names is BUILTIN_AGENTIC_TOOL_NAMES:
         return copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
     if isinstance(names, tuple):
+        if names == BUILTIN_AGENTIC_TOOL_NAMES:
+            return copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
         cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(names)
         if cached_config is not None:
             return copy_tool_config(cached_config)

@@ -331,6 +331,28 @@ private let activeKVQuantProfiles: Set<String> = [
     "q8",
 ]
 
+private func parseUInt32Value(_ rawValue: String?, allowZero: Bool = false) -> UInt32? {
+    guard
+        let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+        let parsed = UInt32(rawValue),
+        allowZero || parsed > 0
+    else {
+        return nil
+    }
+    return parsed
+}
+
+private func parseUInt64Value(_ rawValue: String?, allowZero: Bool = false) -> UInt64? {
+    guard
+        let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+        let parsed = UInt64(rawValue),
+        allowZero || parsed > 0
+    else {
+        return nil
+    }
+    return parsed
+}
+
 private struct GatewayBatchingExecutionDefaults: Sendable {
     let concurrentProcessingEnabled: Bool
     let maxConcurrentRequests: UInt32
@@ -378,10 +400,7 @@ private struct GatewayBatchingExecutionDefaults: Sendable {
     }
 
     private static func parseUInt32(_ rawValue: String?, fallback: UInt32) -> UInt32 {
-        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines), let parsed = UInt32(rawValue), parsed > 0 else {
-            return fallback
-        }
-        return parsed
+        parseUInt32Value(rawValue) ?? fallback
     }
 }
 
@@ -421,14 +440,7 @@ private struct GatewaySpeculativeExecutionDefaults: Sendable {
         fallback: UInt32,
         allowZero: Bool = false
     ) -> UInt32 {
-        guard
-            let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-            let parsed = UInt32(rawValue),
-            allowZero || parsed > 0
-        else {
-            return fallback
-        }
-        return parsed
+        parseUInt32Value(rawValue, allowZero: allowZero) ?? fallback
     }
 }
 
@@ -632,6 +644,7 @@ public actor RequestCoordinator {
     private let cacheMetadataStore: CacheMetadataStore?
     private let routeSelectionReceiptWriter: JSONLReceiptWriter?
     private let now: @Sendable () -> Date
+    private let servingMemoryBytesProvider: @Sendable () -> UInt64?
     private let lifecyclePolicy: ConnectionLifecyclePolicy
     private var activeWorkerClients: [String: any WorkerClient]
     private var executionHubs: [String: ResumableExecutionHub]
@@ -664,6 +677,7 @@ public actor RequestCoordinator {
         cacheMetadataStore: CacheMetadataStore? = nil,
         routeSelectionReceiptPath: String? = ProcessInfo.processInfo.environment["MELIX_ROUTE_SELECTION_RECEIPT_PATH"],
         lifecyclePolicy: ConnectionLifecyclePolicy = ConnectionLifecyclePolicy.fromEnvironment(),
+        servingMemoryBytesProvider: @escaping @Sendable () -> UInt64? = { nil },
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.workerRegistry = workerRegistry
@@ -681,6 +695,7 @@ public actor RequestCoordinator {
             : JSONLReceiptWriter(path: trimmedReceiptPath)
         self.lifecyclePolicy = lifecyclePolicy
         self.now = now
+        self.servingMemoryBytesProvider = servingMemoryBytesProvider
         self.activeWorkerClients = [:]
         self.executionHubs = [:]
         self.disconnectGraceTasks = [:]
@@ -699,6 +714,11 @@ public actor RequestCoordinator {
         self.prefixAffinityCheckCount = 0
         self.prefixAffinityHitCount = 0
         self.workerDispatchReadinessCheckedAt = [:]
+    }
+
+    public static func processInfoPhysicalMemoryBytes() -> UInt64? {
+        let bytes = ProcessInfo.processInfo.physicalMemory
+        return bytes > 0 ? bytes : nil
     }
 
     public func resumeChatCompletion(requestID: String) async throws -> CoordinatedChatExecution {
@@ -1807,10 +1827,15 @@ public actor RequestCoordinator {
         _ translatedRequest: TranslatedChatRequest
     ) async throws -> SchedulingPlan {
         let recoveredRequest = await resolvedRecoveryRequest(translatedRequest)
-        let accelerationResolution = await resolvedModelAccelerationRequest(recoveredRequest)
+        let batchingDefaults = GatewayBatchingExecutionDefaults(
+            executionExt: recoveredRequest.workerRequest.execution.ext
+        )
+        let accelerationResolution = await resolvedModelAccelerationRequest(
+            recoveredRequest,
+            batchingDefaults: batchingDefaults
+        )
         let request = accelerationResolution.request
         let accelerationRefusal = accelerationResolution.accelerationRefusal
-        let batchingDefaults = GatewayBatchingExecutionDefaults(executionExt: request.workerRequest.execution.ext)
         let routeRequest = requestRouteRequest(for: request.workerRequest)
         let routeResolution = await workerRegistry.admitInferenceRoute(
             requestID: request.requestID,
@@ -1998,7 +2023,8 @@ public actor RequestCoordinator {
     }
 
     private func resolvedModelAccelerationRequest(
-        _ translatedRequest: TranslatedChatRequest
+        _ translatedRequest: TranslatedChatRequest,
+        batchingDefaults: GatewayBatchingExecutionDefaults
     ) async -> ModelAccelerationResolution {
         guard
             let modelCatalog,
@@ -2077,11 +2103,62 @@ public actor RequestCoordinator {
         )
         let receipt = validation.receipt
         let accelerationRefusal: AccelerationReceiptValidation? = validation.ok ? nil : validation
+        var accelerationMetadata = ModelCapabilityReceipts.accelerationAuditMetadata(
+            receipt,
+            profileReceipt: validation.profileReceipt,
+            model: model
+        )
+        let featureGuardrailResolution = ModelCapabilityReceipts.featureCompositionGuardrailResolution(
+            for: model,
+            acceleration: workerRequest.execution.acceleration,
+            executionMetadata: workerRequest.execution.ext,
+            validation: validation
+        )
+        workerRequest.execution.acceleration = featureGuardrailResolution.effectiveAcceleration
+        let guardrailReceipt = featureGuardrailResolution.receipt
+        if guardrailReceipt.effectiveCacheBudgetBytes > 0,
+           guardrailReceipt.effectiveCacheBudgetBytes != guardrailReceipt.requestedCacheBudgetBytes {
+            let requestBudgetBytes = workerRequest.execution.cacheHints.cacheMemoryBudgetBytes
+            workerRequest.execution.cacheHints.cacheMemoryBudgetBytes = requestBudgetBytes > 0
+                ? min(requestBudgetBytes, guardrailReceipt.effectiveCacheBudgetBytes)
+                : guardrailReceipt.effectiveCacheBudgetBytes
+        }
+        if featureGuardrailResolution.receipt.decision == "refuse_unsafe_composition" {
+            var suppressedOverrides = workerRequest.execution.ext["melix.gateway.suppressed_overrides"]?
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty } ?? []
+            if !suppressedOverrides.contains("speculative_decode") {
+                suppressedOverrides.append("speculative_decode")
+            }
+            workerRequest.execution.ext["melix.gateway.suppressed_overrides"] = suppressedOverrides.joined(separator: ",")
+            workerRequest.execution.ext["melix.gateway.speculative.disabled_reason"] = "feature_composition_guardrail"
+        }
+        accelerationMetadata.merge(
+            ModelCapabilityReceipts.featureCompositionGuardrailAuditMetadata(featureGuardrailResolution.receipt),
+            uniquingKeysWith: { _, receiptValue in receiptValue }
+        )
+        let resolvedAccelerationConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: workerRequest.execution.acceleration,
+            executionMetadata: workerRequest.execution.ext,
+            validation: validation
+        )
+        accelerationMetadata.merge(
+            ModelCapabilityReceipts.resolvedAccelerationConfigAuditMetadata(resolvedAccelerationConfig),
+            uniquingKeysWith: { _, receiptValue in receiptValue }
+        )
+        let memoryAdmissionReceipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: model,
+            requestedContext: requestedServingContext(from: workerRequest.execution.ext),
+            requestedBatch: batchingDefaults.effectiveAdmissionBatchSize,
+            detectedMemoryBytes: detectedServingMemoryBytes(for: model)
+        )
+        accelerationMetadata.merge(
+            ModelCapabilityReceipts.servingMemoryAdmissionAuditMetadata(memoryAdmissionReceipt),
+            uniquingKeysWith: { _, receiptValue in receiptValue }
+        )
         workerRequest.execution.ext.merge(
-            ModelCapabilityReceipts.accelerationAuditMetadata(
-                receipt,
-                profileReceipt: validation.profileReceipt
-            ),
+            accelerationMetadata,
             uniquingKeysWith: { _, receiptValue in receiptValue }
         )
 
@@ -2136,6 +2213,37 @@ public actor RequestCoordinator {
             return normalized
         }
         return defaultActiveKVQuantProfile
+    }
+
+    private func requestedServingContext(from executionExt: [String: String]) -> UInt32? {
+        for key in [
+            "melix.gateway.context_length",
+            "melix.gateway.requested_context",
+        ] {
+            if let value = parsePositiveUInt32(executionExt[key]) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func detectedServingMemoryBytes(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> UInt64? {
+        for key in [
+            "melix.serving.memory.available_bytes",
+            "melix.serving.memory.detected_memory_bytes",
+            "melix.device.memory_total_bytes",
+        ] {
+            if let value = parseUInt64Value(model.settings.ext[key], allowZero: true) {
+                return value
+            }
+        }
+        return servingMemoryBytesProvider()
+    }
+
+    private func parsePositiveUInt32(_ rawValue: String?) -> UInt32? {
+        parseUInt32Value(rawValue)
     }
 
     private func isContinuousBatchEligible(

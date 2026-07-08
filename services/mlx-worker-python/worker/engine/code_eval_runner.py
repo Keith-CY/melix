@@ -464,7 +464,8 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
     if bounds is None:
         return None
 
-    if payload_bytes.startswith(_CODE_EVAL_PAYLOAD_RUNNER_PREFIX, bounds[0]):
+    payload_startswith = payload_bytes.startswith
+    if payload_startswith(_CODE_EVAL_PAYLOAD_RUNNER_PREFIX, bounds[0]):
         failure_index = payload_bytes.find(_CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"])
         runtime_index = payload_bytes.find(_CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"])
         if 0 <= failure_index < runtime_index:
@@ -507,14 +508,15 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
 
 def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object] | None:
     payload: dict[str, object] = {}
-    field_value_start = _json_field_value_start_for_token
+    field_value_start = _compact_json_field_value_start_for_token
     extract_int_and_end = _extract_json_int_field_value_and_end
+    payload_startswith = payload_bytes.startswith
 
     failure_start = field_value_start(
         payload_bytes,
         _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"],
     )
-    if failure_start is None or not payload_bytes.startswith(b'""', failure_start):
+    if failure_start is None or not payload_startswith(b'""', failure_start):
         return None
     payload["failure_detail"] = ""
 
@@ -523,7 +525,7 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
         _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"],
         start=failure_start + 2,
     )
-    if runtime_start is None or not payload_bytes.startswith(b'"ok"', runtime_start):
+    if runtime_start is None or not payload_startswith(b'"ok"', runtime_start):
         return None
     payload["runtime_status"] = "ok"
 
@@ -532,7 +534,7 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
         _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"],
         start=runtime_start + 4,
     )
-    if test_start is None or not payload_bytes.startswith(b'"passed"', test_start):
+    if test_start is None or not payload_startswith(b'"passed"', test_start):
         return None
     payload["test_status"] = "passed"
 
@@ -563,11 +565,30 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
         _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"],
         start=total_end,
     )
-    if timeout_start is None or not payload_bytes.startswith(b'"ok"', timeout_start):
+    if timeout_start is None or not payload_startswith(b'"ok"', timeout_start):
         return None
     payload["timeout_status"] = "ok"
 
     return payload
+
+
+def _compact_json_field_value_start_for_token(
+    payload_bytes: bytes,
+    key_token: bytes,
+    *,
+    start: int = 0,
+) -> int | None:
+    key_index = payload_bytes.find(key_token, start)
+    if key_index < 0:
+        return None
+    value_start = key_index + len(key_token) + 1
+    if (
+        value_start >= len(payload_bytes)
+        or payload_bytes[value_start - 1] != _ORD_COLON
+        or payload_bytes[value_start] in _JSON_PAYLOAD_WHITESPACE
+    ):
+        return _json_field_value_start_for_token(payload_bytes, key_token, start=key_index)
+    return value_start
 
 
 def _json_field_value_start(payload_bytes: bytes, key: str) -> int | None:
@@ -640,26 +661,27 @@ def _known_code_eval_payload_string_value(
     value_end: int,
 ) -> str | None:
     value_length = value_end - value_start
+    payload_startswith = payload_bytes.startswith
     if value_length == 0:
         return ""
     if value_length == 2:
-        return "ok" if payload_bytes.startswith(b"ok", value_start) else None
+        return "ok" if payload_startswith(b"ok", value_start) else None
     if value_length == 5:
-        return "error" if payload_bytes.startswith(b"error", value_start) else None
+        return "error" if payload_startswith(b"error", value_start) else None
     if value_length == 6:
-        if payload_bytes.startswith(b"failed", value_start):
+        if payload_startswith(b"failed", value_start):
             return "failed"
-        return "passed" if payload_bytes.startswith(b"passed", value_start) else None
+        return "passed" if payload_startswith(b"passed", value_start) else None
     if value_length == 7:
-        if payload_bytes.startswith(b"not_run", value_start):
+        if payload_startswith(b"not_run", value_start):
             return "not_run"
-        return "timeout" if payload_bytes.startswith(b"timeout", value_start) else None
+        return "timeout" if payload_startswith(b"timeout", value_start) else None
     if value_length == 8:
-        return "compiled" if payload_bytes.startswith(b"compiled", value_start) else None
+        return "compiled" if payload_startswith(b"compiled", value_start) else None
     if value_length == 9:
-        return "timed_out" if payload_bytes.startswith(b"timed_out", value_start) else None
+        return "timed_out" if payload_startswith(b"timed_out", value_start) else None
     if value_length == 12:
-        return "syntax_error" if payload_bytes.startswith(b"syntax_error", value_start) else None
+        return "syntax_error" if payload_startswith(b"syntax_error", value_start) else None
     return None
 
 
@@ -1033,8 +1055,9 @@ _RUNNER_SCRIPT = textwrap.dedent(
         def _load_config(
             config_path: Path,
             _json_loads=json.loads,
+            _read_bytes=Path.read_bytes,
         ) -> dict[str, object]:
-            payload = _json_loads(config_path.read_bytes())
+            payload = _json_loads(_read_bytes(config_path))
             if not isinstance(payload, dict):
                 raise TypeError("runner config must be a JSON object")
             return payload
@@ -1107,7 +1130,7 @@ _RUNNER_SCRIPT = textwrap.dedent(
                     "failure_detail": "".join(traceback.format_exception_only(type(exc), exc)).strip(),
                 }
 
-            payload_path.write_text(json.dumps(payload), encoding="utf-8")
+            payload_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
             return 0
 
 

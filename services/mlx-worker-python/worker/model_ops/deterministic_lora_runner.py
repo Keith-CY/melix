@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 from pathlib import Path
 
@@ -8,6 +9,8 @@ from worker.model_ops.mlx_lm_runner import (
     ActivationMetrics,
     ActivationRequest,
     ActivationResult,
+    HeldoutEvaluationRequest,
+    HeldoutEvaluationResult,
     MLXLMRunner,
     TrainingMetrics,
     TrainingRequest,
@@ -74,6 +77,17 @@ class DeterministicLoRARunner(MLXLMRunner):
                 ),
                 training_log_event_preview=list(training_log_fields["training_log_event_preview"]),
             ),
+            execution_backend="native",
+        )
+
+    def evaluate_heldout_native(
+        self,
+        request: HeldoutEvaluationRequest,
+    ) -> HeldoutEvaluationResult:
+        return HeldoutEvaluationResult(
+            loss=0.29,
+            perplexity=math.exp(0.29),
+            sample_count=request.test_sample_count,
             execution_backend="native",
         )
 

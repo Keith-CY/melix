@@ -275,6 +275,7 @@ def _measurable_changed_lines(
             missing_lookup = missing_lines
         if isinstance(executed_lookup, list) and isinstance(missing_lookup, list):
             measured_line_count = len(executed_lookup) + len(missing_lookup)
+            sorted_line_list_contains = _sorted_line_list_contains
             if (
                 measured_line_count
                 and len(changed) >= _DENSE_CHANGED_LINE_SCAN_THRESHOLD
@@ -292,8 +293,8 @@ def _measurable_changed_lines(
                 measured_changed = [
                     line_no
                     for line_no in changed
-                    if _sorted_line_list_contains(executed_lookup, line_no)
-                    or _sorted_line_list_contains(missing_lookup, line_no)
+                    if sorted_line_list_contains(executed_lookup, line_no)
+                    or sorted_line_list_contains(missing_lookup, line_no)
                 ]
         else:
             measured_changed = [

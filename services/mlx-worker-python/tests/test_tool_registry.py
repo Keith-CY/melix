@@ -195,11 +195,29 @@ def test_tool_registry_worker_config_reuses_isolated_template_copy() -> None:
 
 
 def test_built_in_tool_config_full_tuple_selection_returns_full_template_copy() -> None:
-    selected_config = built_in_tool_config(BUILTIN_AGENTIC_TOOL_NAMES)
+    selected_config = built_in_tool_config(tuple(list(BUILTIN_AGENTIC_TOOL_NAMES)))
     selected_config.tools.pop()
     selected_config.schema_version = "mutated"
 
-    next_selected_config = built_in_tool_config(BUILTIN_AGENTIC_TOOL_NAMES)
+    next_selected_config = built_in_tool_config(tuple(list(BUILTIN_AGENTIC_TOOL_NAMES)))
+
+    assert [tool.name for tool in next_selected_config.tools] == list(BUILTIN_AGENTIC_TOOL_NAMES)
+    assert next_selected_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
+
+
+def test_built_in_tool_config_full_list_selection_returns_full_template_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_select(self: ToolRegistry, names: tuple[str, ...]) -> object:  # pragma: no cover
+        raise AssertionError("full list selection should reuse the built-in template")
+
+    monkeypatch.setattr(ToolRegistry, "select", fail_select)
+
+    selected_config = built_in_tool_config(list(BUILTIN_AGENTIC_TOOL_NAMES))
+    selected_config.tools.pop()
+    selected_config.schema_version = "mutated"
+
+    next_selected_config = built_in_tool_config(list(BUILTIN_AGENTIC_TOOL_NAMES))
 
     assert [tool.name for tool in next_selected_config.tools] == list(BUILTIN_AGENTIC_TOOL_NAMES)
     assert next_selected_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
@@ -300,6 +318,16 @@ def test_tool_registry_empty_selection_reuses_cached_registry() -> None:
     assert selected.metrics().required_argument_count == 0
     assert registry.select(()) is selected
     assert registry.select([]) is selected
+
+
+def test_tool_registry_empty_selection_openai_tools_returns_fresh_empty_list() -> None:
+    registry = built_in_tool_registry().select([])
+
+    tools = registry.as_openai_tools()
+    tools.append({"mutated": True})
+
+    assert registry.as_openai_tools() == []
+    assert registry.as_openai_tools() is not tools
 
 
 def test_tool_registry_names_reuses_registry_snapshot() -> None:

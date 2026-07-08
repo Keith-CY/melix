@@ -243,7 +243,8 @@ public actor ControlPlaneService {
                 metricsStore: metricsStore,
                 modelCatalog: modelCatalog,
                 sessionGraphStore: sessionGraphStore,
-                cacheMetadataStore: cacheMetadataStore
+                cacheMetadataStore: cacheMetadataStore,
+                servingMemoryBytesProvider: RequestCoordinator.processInfoPhysicalMemoryBytes
             )
         }
         self.remoteProviderClient = remoteProviderClient

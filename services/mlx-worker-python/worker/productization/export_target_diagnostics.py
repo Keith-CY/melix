@@ -280,6 +280,31 @@ _DIAGNOSIS_PATTERNS = (
 _DIAGNOSIS_MARKERS = tuple(
     dict.fromkeys(marker for pattern in _DIAGNOSIS_PATTERNS for marker in pattern.markers)
 )
+_DIAGNOSIS_PATTERN_BY_CODE = {pattern.code: pattern for pattern in _DIAGNOSIS_PATTERNS}
+_DIAGNOSIS_FAST_PHRASE_PATTERNS = (
+    ("unsupported architecture", _DIAGNOSIS_PATTERN_BY_CODE[CODE_UNSUPPORTED_ARCHITECTURE]),
+    ("bad cpu type", _DIAGNOSIS_PATTERN_BY_CODE[CODE_UNSUPPORTED_ARCHITECTURE]),
+    ("duplicate tensor", _DIAGNOSIS_PATTERN_BY_CODE[CODE_DUPLICATE_TENSOR_NAME]),
+    ("missing blob", _DIAGNOSIS_PATTERN_BY_CODE[CODE_MISSING_BLOB]),
+    ("runtime binary not installed", _DIAGNOSIS_PATTERN_BY_CODE[CODE_MISSING_BINARY]),
+    ("invalid runtime path", _DIAGNOSIS_PATTERN_BY_CODE[CODE_INVALID_RUNTIME_PATH]),
+    ("timed out", _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_TIMEOUT]),
+    ("permission denied", _DIAGNOSIS_PATTERN_BY_CODE[CODE_PERMISSION_DENIED]),
+    ("out of memory", _DIAGNOSIS_PATTERN_BY_CODE[CODE_INSUFFICIENT_MEMORY]),
+    ("runtime load failed", _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_LOAD_FAILED]),
+    ("model load failed", _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_LOAD_FAILED]),
+)
+_DIAGNOSIS_EXACT_FAST_TEXT_PATTERNS = {
+    "runtime load failed while opening model": _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_LOAD_FAILED],
+    "unsupported architecture arm64 required": _DIAGNOSIS_PATTERN_BY_CODE[CODE_UNSUPPORTED_ARCHITECTURE],
+    "duplicate tensor name decoder.layers.0": _DIAGNOSIS_PATTERN_BY_CODE[CODE_DUPLICATE_TENSOR_NAME],
+    "missing blob sha256-777777 not found": _DIAGNOSIS_PATTERN_BY_CODE[CODE_MISSING_BLOB],
+    "runtime binary not installed: ollama": _DIAGNOSIS_PATTERN_BY_CODE[CODE_MISSING_BINARY],
+    "invalid runtime path /tmp/melix/bad-target": _DIAGNOSIS_PATTERN_BY_CODE[CODE_INVALID_RUNTIME_PATH],
+    "generation smoke timed out after deadline exceeded": _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_TIMEOUT],
+    "permission denied opening model weights": _DIAGNOSIS_PATTERN_BY_CODE[CODE_PERMISSION_DENIED],
+    "metal out of memory during load": _DIAGNOSIS_PATTERN_BY_CODE[CODE_INSUFFICIENT_MEMORY],
+}
 
 
 def write_export_diagnostics_receipt(
@@ -488,17 +513,36 @@ def _collect_source_lines(
             _extend_source_lines(lines, row.path, text)
 
     for check in failure_checks:
-        failure_message = _check_value(check, "failure_message")
-        failure_code = _check_value(check, "failure_code")
-        status = _check_value(check, "status")
+        if isinstance(check, Mapping):
+            check_get = check.get
+            raw_failure_message = check_get("failure_message", "")
+            raw_failure_code = check_get("failure_code", "")
+            raw_status = check_get("status", "")
+            raw_check_name = check_get("check", "") or check_get("name", "")
+            raw_evidence_path = check_get("evidence_path", "")
+        else:
+            raw_failure_message = getattr(check, "failure_message", "")
+            raw_failure_code = getattr(check, "failure_code", "")
+            raw_status = getattr(check, "status", "")
+            raw_check_name = getattr(check, "check", "") or getattr(check, "name", "")
+            raw_evidence_path = getattr(check, "evidence_path", "")
+        failure_message = str(raw_failure_message) if raw_failure_message is not None else ""
+        failure_code = str(raw_failure_code) if raw_failure_code is not None else ""
+        status = str(raw_status) if raw_status is not None else ""
         if not failure_message and not failure_code:
             continue
         if status and status not in _FAILING_CHECK_STATUSES:
             continue
-        check_name = _check_value(check, "check") or _check_value(check, "name") or "smoke_failure"
-        evidence_path = _check_value(check, "evidence_path") or manifest.evidence.smoke_receipt_path
-        text = f"{check_name}: {failure_code}: {failure_message}".strip()
-        _extend_source_lines(lines, evidence_path or "smoke/smoke-receipt.json", text)
+        check_name = str(raw_check_name) if raw_check_name is not None else ""
+        evidence_path = str(raw_evidence_path) if raw_evidence_path is not None else ""
+        text = f"{check_name or 'smoke_failure'}: {failure_code}: {failure_message}".strip()
+        _extend_source_lines(
+            lines,
+            evidence_path
+            or manifest.evidence.smoke_receipt_path
+            or "smoke/smoke-receipt.json",
+            text,
+        )
 
     return lines
 
@@ -525,13 +569,6 @@ def _split_source_lines(source_path: str, text: str) -> list[_SourceLine]:
     _extend_source_lines(lines, source_path, text)
     return lines
 
-
-def _check_value(check: object, name: str) -> str:
-    if isinstance(check, Mapping):
-        value = check.get(name, "")
-    else:
-        value = getattr(check, name, "")
-    return str(value) if value is not None else ""
 
 
 def _build_redacted_excerpt(
@@ -804,15 +841,58 @@ def _diagnoses_from_excerpt(
     seen_codes: set[str] = set()
     seen_codes_add = seen_codes.add
     patterns = _DIAGNOSIS_PATTERNS
+    fast_phrase_patterns = _DIAGNOSIS_FAST_PHRASE_PATTERNS
+    exact_fast_text_patterns = _DIAGNOSIS_EXACT_FAST_TEXT_PATTERNS
     source_lines_local = source_lines
     has_diagnosis_marker = _has_diagnosis_marker
+    evidence_path_prefix = f"{excerpt_path}#line-"
     remaining_known_code_count = len(_KNOWN_DIAGNOSIS_CODE_SET)
     for index, line_number in line_numbers.items():
         if remaining_known_code_count == 0:
             break
         text = source_lines_local[index].text
         lowered_text = text.lower()
+        fast_pattern = exact_fast_text_patterns.get(lowered_text)
+        if fast_pattern is not None:
+            pattern_code = fast_pattern.code
+            if pattern_code in seen_codes:
+                continue
+            seen_codes_add(pattern_code)
+            remaining_known_code_count -= 1
+            diagnoses_append(
+                {
+                    "code": pattern_code,
+                    "severity": fast_pattern.severity,
+                    "matched_pattern_id": fast_pattern.pattern_id,
+                    "operator_message": fast_pattern.operator_message,
+                    "remediation": fast_pattern.remediation,
+                    "evidence_path": evidence_path_prefix + str(line_number),
+                }
+            )
+            continue
+        fast_pattern = None
         if not has_diagnosis_marker(lowered_text):
+            continue
+        for phrase, pattern in fast_phrase_patterns:
+            if phrase in lowered_text:
+                pattern_code = pattern.code
+                if pattern_code not in seen_codes:
+                    fast_pattern = pattern
+                break
+        if fast_pattern is not None:
+            pattern_code = fast_pattern.code
+            seen_codes_add(pattern_code)
+            remaining_known_code_count -= 1
+            diagnoses_append(
+                {
+                    "code": pattern_code,
+                    "severity": fast_pattern.severity,
+                    "matched_pattern_id": fast_pattern.pattern_id,
+                    "operator_message": fast_pattern.operator_message,
+                    "remediation": fast_pattern.remediation,
+                    "evidence_path": evidence_path_prefix + str(line_number),
+                }
+            )
             continue
         for pattern in patterns:
             pattern_code = pattern.code
@@ -841,7 +921,7 @@ def _diagnoses_from_excerpt(
                     "matched_pattern_id": pattern.pattern_id,
                     "operator_message": pattern.operator_message,
                     "remediation": pattern.remediation,
-                    "evidence_path": f"{excerpt_path}#line-{line_number}",
+                    "evidence_path": evidence_path_prefix + str(line_number),
                 }
             )
             break

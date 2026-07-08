@@ -64,6 +64,38 @@ def _make_plain_stream(calls: list[dict[str, Any]]):
     return fake_stream_generate
 
 
+def _fake_prefill_prompt_cache(
+    model: Any,
+    prompt_tokens: list[int],
+    *,
+    prefill_step_size: int,
+    stream: Any,
+    restore_cache: Any = None,
+    restore_token_count: int = 0,
+) -> tuple[list[FakeCacheLayer], list[int], list[int]]:
+    _ = model, prefill_step_size, stream
+    tokens = list(prompt_tokens)
+    if not tokens:
+        return [FakeCacheLayer()], [], []
+    if restore_cache is None:
+        prefill_tokens = tokens[:-1]
+        return [FakeCacheLayer(prefill_tokens)], [int(tokens[-1])], prefill_tokens
+
+    prompt_cache = restore_cache
+    suffix_tokens = tokens[int(restore_token_count) :]
+    if len(suffix_tokens) <= 1:
+        last_token = list(suffix_tokens) if suffix_tokens else [int(tokens[-1])]
+        return prompt_cache, last_token, list(tokens[: int(restore_token_count)])
+
+    prefill_tokens = suffix_tokens[:-1]
+    prompt_cache[0].tokens.extend(int(token) for token in prefill_tokens)
+    return (
+        prompt_cache,
+        [int(suffix_tokens[-1])],
+        list(tokens[: int(restore_token_count)]) + prefill_tokens,
+    )
+
+
 def _make_backend(stream_fn) -> AutoMLXBackend:
     return AutoMLXBackend(
         load_fn=lambda model_source, **kwargs: (object(), FakeTokenizer()),
@@ -98,6 +130,7 @@ def _ext(session_id: str = "sess-1", block_size: int = 4) -> dict[str, str]:
 @pytest.fixture(autouse=True)
 def _fresh_store(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("MELIX_PREFIX_CACHE_COLD_DIR", raising=False)
+    monkeypatch.setattr(mlx_text_runtime, "_prefill_prompt_cache", _fake_prefill_prompt_cache)
     reset_store()
     yield
     reset_store()
@@ -144,7 +177,7 @@ def test_first_turn_miss_prefills_full_prompt_and_stores_state() -> None:
         backend.generate_tokens(_loaded_model(), prompt, _sampling(), Event(), execution_ext=_ext())
     )
 
-    assert calls[0]["prompt"] == [ord(ch) for ch in prompt]
+    assert calls[0]["prompt"] == [ord(prompt[-1])]
     assert calls[0]["prompt_cache"] is not None
 
     store = get_store()
@@ -174,8 +207,8 @@ def test_second_turn_partial_hit_replays_suffix_only() -> None:
         backend.generate_tokens(_loaded_model(), turn_two, _sampling(), Event(), execution_ext=_ext())
     )
 
-    # Second call only replays the 4-token suffix onto the restored state.
-    assert calls[1]["prompt"] == [ord(ch) for ch in "wxyz"]
+    # Second call prefills the suffix through y, then streams z from the restored state.
+    assert calls[1]["prompt"] == [ord("z")]
     restored_cache = calls[1]["prompt_cache"]
     assert restored_cache[0].tokens == [ord(ch) for ch in turn_two]
 
@@ -239,11 +272,11 @@ def test_trim_failure_falls_back_to_full_prefill(monkeypatch: pytest.MonkeyPatch
     )
 
     # The partial hit needs a 2-token trim; the failed trim falls back to a
-    # full prefill instead of reusing misaligned state.
-    assert calls[1]["prompt"] == [ord(ch) for ch in turn_two]
+    # full prefill through the last input token instead of reusing misaligned state.
+    assert calls[1]["prompt"] == [ord(turn_two[-1])]
     terminal = events[-1]
     assert terminal.cache_hit_mode == "none"
-    assert terminal.cache_fallback_reason == "cache_reuse_unavailable"
+    assert terminal.cache_fallback_reason == "cache_restore_failed"
     assert terminal.recovered_prefix_tokens == 0
 
 

@@ -6,6 +6,7 @@ import json
 import pytest
 
 from worker.runtime import retrieval_context as retrieval_context_module
+from worker.runtime import untrusted_context as untrusted_context_module
 from worker.runtime.retrieval_context import (
     RetrievalContextAdmissionError,
     RetrievalContextEntry,
@@ -691,6 +692,35 @@ def test_project_retrieval_contexts_inlines_public_receipts(
             "source_id": "doc:local-7",
         }
     ]
+
+
+def test_project_retrieval_contexts_inlines_source_numeric_ids_without_regex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RegexGuard:
+        def fullmatch(self, value: str) -> object:  # pragma: no cover - regression guard
+            raise AssertionError(f"source numeric fast path should skip regex for {value}")
+
+    monkeypatch.setattr(untrusted_context_module, "_PUBLIC_SOURCE_ID_RE", RegexGuard())
+
+    projection = project_retrieval_contexts(
+        [
+            RetrievalContextEntry(
+                context_kind="retrieved_document",
+                source_id="source:7",
+                payload={"title": "Local note"},
+                owner_scope_checked=True,
+                segment_id="search:result-7",
+                source_field="retrieved_document_7",
+                reason="retrieved document result is prompt data",
+                corrective_action="keep retrieved documents in user-role context",
+            )
+        ]
+    )
+
+    assert projection.refusal_receipts == []
+    assert projection.untrusted_context_receipts[0]["source_id"] == "source:7"
+    assert projection.untrusted_context_receipts[0]["segment_id"] == "search:result-7"
 
 
 def test_project_retrieval_contexts_redacts_nonpublic_source_ids_with_fast_check() -> None:
@@ -1477,6 +1507,22 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
                     {"source": "local"},
                     {"shard": 4},
                 ),
+                "six_labels": (
+                    "retrieved",
+                    {"kind": "document"},
+                    {"bucket": 1},
+                    {"source": "local"},
+                    {"shard": 4},
+                    {"page": 2},
+                ),
+                "six_scores": [
+                    3,
+                    4,
+                    {"rank": 0},
+                    {"score": 0.9},
+                    {"shard": 2},
+                    {"page": 2},
+                ],
                 "long_scores": [3, 4, {"rank": 0}, {"score": 0.9}, {"shard": 2}],
                 "quad_scores": [3, 4, {"rank": 0}, {"score": 0.9}],
                 "scores": [3, 4, {"rank": 0}],
@@ -1521,6 +1567,30 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
     assert (
         copied["retrieved_context"]["metadata"]["long_labels"][1]
         is not payload["retrieved_context"]["metadata"]["long_labels"][1]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["six_labels"]
+        == payload["retrieved_context"]["metadata"]["six_labels"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["six_labels"]
+        is not payload["retrieved_context"]["metadata"]["six_labels"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["six_labels"][1]
+        is not payload["retrieved_context"]["metadata"]["six_labels"][1]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["six_scores"]
+        == payload["retrieved_context"]["metadata"]["six_scores"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["six_scores"]
+        is not payload["retrieved_context"]["metadata"]["six_scores"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["six_scores"][2]
+        is not payload["retrieved_context"]["metadata"]["six_scores"][2]
     )
     assert (
         copied["retrieved_context"]["metadata"]["long_scores"]

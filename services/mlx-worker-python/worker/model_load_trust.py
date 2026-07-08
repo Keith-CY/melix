@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from builtins import open as _OPEN
 from dataclasses import dataclass
 from functools import lru_cache
 import json
@@ -23,6 +24,9 @@ CONFIG_JSON_DETECTION = (False, CONFIG_JSON_SOURCE)
 CONFIG_JSON_ABSENT_DETECTION = (False, CONFIG_JSON_ABSENT_SOURCE)
 CONFIG_JSON_AUTO_MAP_DETECTION = (True, CONFIG_JSON_AUTO_MAP_SOURCE)
 _JSON_LOADS = json.loads
+_OS_STAT = os.stat
+_OS_SCANDIR = os.scandir
+_STAT_ISREG = stat.S_ISREG
 EXECUTABLE_MODEL_FILE_PREFIXES = (
     "configuration",
     "feature_extraction",
@@ -258,10 +262,10 @@ def _detect_custom_loader_requirement(model_spec: common_pb2.ModelSpec) -> tuple
     if config_path is not None:
         config_path_text, stat_path = config_path
         try:
-            config_stat = os.stat(stat_path)
+            config_stat = _OS_STAT(stat_path)
         except OSError:
             config_stat = None
-        if config_stat is not None and stat.S_ISREG(config_stat.st_mode):
+        if config_stat is not None and _STAT_ISREG(config_stat.st_mode):
             config_detection = _detect_custom_loader_requirement_for_stat(
                 config_path_text,
                 config_stat.st_mtime_ns,
@@ -285,7 +289,7 @@ def _detect_executable_model_files(model_spec: common_pb2.ModelSpec) -> tuple[st
         scan_path = model_path
     is_executable_model_file_entry = _is_executable_model_file_entry
     try:
-        with os.scandir(scan_path) as entries:
+        with _OS_SCANDIR(scan_path) as entries:
             return tuple(
                 sorted(
                     entry.name
@@ -331,8 +335,8 @@ def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | Non
         return None
     config_path_text, stat_path = config_path
     try:
-        config_stat = os.stat(stat_path)
-        if not stat.S_ISREG(config_stat.st_mode):
+        config_stat = _OS_STAT(stat_path)
+        if not _STAT_ISREG(config_stat.st_mode):
             return None
     except OSError:
         return None
@@ -391,7 +395,7 @@ def _read_model_config_for_stat(
     _ = (mtime_ns, size)
     loads = _JSON_LOADS
     try:
-        with open(config_path, "rb") as handle:
+        with _OPEN(config_path, "rb") as handle:
             payload = loads(handle.read())
     except (OSError, json.JSONDecodeError):
         return None

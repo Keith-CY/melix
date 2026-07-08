@@ -741,9 +741,9 @@ def _bool_value(value: object) -> bool | None:
             return False
     if isinstance(value, str):
         normalized = value.strip().lower()
-        if normalized in {"true", "1", "yes"}:
+        if normalized in {"true", "1", "yes", "on"}:
             return True
-        if normalized in {"false", "0", "no"}:
+        if normalized in {"false", "0", "no", "off"}:
             return False
     return None
 

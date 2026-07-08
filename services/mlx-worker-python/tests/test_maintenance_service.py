@@ -4890,6 +4890,24 @@ def test_split_capability_values_returns_isolated_cached_lists() -> None:
         "qwen",
     ]
 
+    single = maintenance_core_module._split_capability_values(" qwen ")
+    single.append("mutated")
+
+    assert maintenance_core_module._split_capability_values(" qwen ") == ["qwen"]
+
+
+def test_split_capability_values_bounds_single_value_cache() -> None:
+    cache = maintenance_core_module._CAPABILITY_SINGLE_VALUE_CACHE
+    cache.clear()
+    try:
+        for index in range(maintenance_core_module._CAPABILITY_SINGLE_VALUE_CACHE_MAX_SIZE):
+            cache[f"raw-{index}"] = f"raw-{index}"
+
+        assert maintenance_core_module._split_capability_values(" fresh ") == ["fresh"]
+        assert cache == {" fresh ": "fresh"}
+    finally:
+        cache.clear()
+
 
 def test_get_model_info_appends_tool_parser_when_capability_parser_metadata_is_absent(
     tmp_path: Path,

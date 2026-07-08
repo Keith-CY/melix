@@ -61,6 +61,9 @@ def _manifest_payload(tmp_path: Path) -> dict[str, object]:
         "peak_memory_gb": 2.5,
         "loss_final": 0.42,
         "loss_best": 0.33,
+        "heldout_test_loss": 0.29,
+        "heldout_test_perplexity": 1.34,
+        "heldout_test_sample_count": 5,
         "completion_loss": 0.41,
         "round_trip_passed": True,
         "grad_norm": 0.7,
@@ -131,6 +134,9 @@ def test_build_adapter_provenance_manifest_records_training_facts_and_loss_serie
     ]
     assert provenance["final_metrics"]["loss_best"] == pytest.approx(0.33)
     assert provenance["final_metrics"]["validation_loss_best"] == pytest.approx(0.37)
+    assert provenance["final_metrics"]["heldout_test_loss"] == pytest.approx(0.29)
+    assert provenance["final_metrics"]["heldout_test_perplexity"] == pytest.approx(1.34)
+    assert provenance["final_metrics"]["heldout_test_sample_count"] == 5
     assert provenance["operator_notes"]["schema_version"] == ADAPTER_OPERATOR_NOTES_SCHEMA_VERSION
     assert provenance["operator_notes"]["path"] == str(notes_path)
     assert provenance["export_eligibility"]["eligible"] is True

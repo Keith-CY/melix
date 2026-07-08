@@ -350,7 +350,7 @@ struct BenchmarkExportBundleTests {
         #expect(bundle.benchmarkMatrixHistoryEntries() == [])
         #expect(bundle.benchmarkMatrixSummaryCSV().contains("cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count"))
         #expect(bundle.benchmarkMatrixRequestsCSV().contains("dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate"))
-        #expect(bundle.benchmarkMatrixRequestsCSV().contains("dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count"))
+        #expect(bundle.benchmarkMatrixRequestsCSV().contains("dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,feature_guardrail_requested_num_draft_tokens,feature_guardrail_effective_num_draft_tokens,feature_guardrail_resource_fanout_estimate,feature_guardrail_requested_cache_budget_bytes,feature_guardrail_effective_cache_budget_bytes,feature_guardrail_reason,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count"))
     }
 
     @Test("decodes additive probe fields in benchmark matrix and evaluation exports")
@@ -399,6 +399,12 @@ struct BenchmarkExportBundleTests {
         #expect(request.dflashBlockSize == 16)
         #expect(request.dflashRollbackCount == 2)
         #expect(request.dflashTargetHiddenLayers == 12)
+        #expect(request.featureGuardrailRequestedNumDraftTokens == 6)
+        #expect(request.featureGuardrailEffectiveNumDraftTokens == 1)
+        #expect(request.featureGuardrailResourceFanoutEstimate == 2.0)
+        #expect(request.featureGuardrailRequestedCacheBudgetBytes == 8192)
+        #expect(request.featureGuardrailEffectiveCacheBudgetBytes == 4096)
+        #expect(request.featureGuardrailReason == "disk_streaming_speculative_fanout_cap")
         #expect(request.toolCallCount == 1)
         #expect(request.toolLatencyMS == 6.25)
         #expect(request.observationBytes == 48)
@@ -413,7 +419,7 @@ struct BenchmarkExportBundleTests {
         #expect(sample.extractedResultChars == 3)
         #expect(sample.failureStage == "scoring")
         #expect(bundle.benchmarkMatrixSummaryCSV().contains("456.7,3,1,21.0,29.0,80.0,91.0,2,12.5,96,0.5,4"))
-        #expect(bundle.benchmarkMatrixRequestsCSV().contains("1.1,2.2,3.3,4.4,5.5,128,32,7,true,swift-text,decode,0.8,0.2,24,6,1,4,true,8.8,9.9,true,16,2,12,1,6.25,48,1.0,2"))
+        #expect(bundle.benchmarkMatrixRequestsCSV().contains("1.1,2.2,3.3,4.4,5.5,128,32,7,true,swift-text,decode,0.8,0.2,24,6,1,4,true,8.8,9.9,true,16,2,12,6,1,2.0,8192,4096,disk_streaming_speculative_fanout_cap,1,6.25,48,1.0,2"))
         #expect(bundle.evaluationSamplesCSV().contains("10.1,20.2,30.3,40.4,50.5,11,3,scoring"))
         let sampleJSONL = try bundle.evaluationSamplesJSONL()
         #expect(sampleJSONL.contains(#""failure_stage":"scoring""#))
@@ -1768,6 +1774,12 @@ private let benchmarkEvaluationProbeBundleJSON = """
       "dflash_block_size": 16,
       "dflash_rollback_count": 2,
       "dflash_target_hidden_layers": 12,
+      "feature_guardrail_requested_num_draft_tokens": 6,
+      "feature_guardrail_effective_num_draft_tokens": 1,
+      "feature_guardrail_resource_fanout_estimate": 2.0,
+      "feature_guardrail_requested_cache_budget_bytes": 8192,
+      "feature_guardrail_effective_cache_budget_bytes": 4096,
+      "feature_guardrail_reason": "disk_streaming_speculative_fanout_cap",
       "tool_call_count": 1,
       "tool_latency_ms": 6.25,
       "observation_bytes": 48,

@@ -2240,16 +2240,24 @@ def test_generate_native_mtp_invalid_block_size_falls_back_to_default(
     loaded[mlx_text_runtime_module._NATIVE_MTP_TEXT_ACTIVE_FIELD] = True
 
     import threading
-    # Non-integer value hits the except branch.
+    # Non-integer values hit the parsing fallback branches.
     events = list(backend.generate_tokens(
         loaded, "hi", common_pb2.SamplingConfig(max_output_tokens=1), threading.Event(),
-        execution_ext={"_melix.session_id": "s", "_melix.block_size": "not-an-int"},
+        execution_ext={
+            "_melix.session_id": "s",
+            "_melix.block_size": "not-an-int",
+            "_melix.cache_memory_budget_bytes": "not-an-int",
+        },
     ))
     assert len(events) > 0
-    # Negative value parses as an int but trips the < 1 guard → default.
+    # Negative values parse as ints but trip the < 1 guards.
     events = list(backend.generate_tokens(
         loaded, "hi", common_pb2.SamplingConfig(max_output_tokens=1), threading.Event(),
-        execution_ext={"_melix.session_id": "s2", "_melix.block_size": "-5"},
+        execution_ext={
+            "_melix.session_id": "s2",
+            "_melix.block_size": "-5",
+            "_melix.cache_memory_budget_bytes": "-5",
+        },
     ))
     assert len(events) > 0
 
@@ -2360,7 +2368,7 @@ def test_native_mtp_prefill_prompt_cache_restore_runs_suffix_prefill(
 def test_generate_native_mtp_lcp_store_consulted_with_session_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Covers LCP ext-extraction and store query code paths."""
+    """Covers LCP ext-extraction, store query, and request budget write ceiling."""
     fake_core = _install_fake_mlx_core(monkeypatch)
     _install_fake_mlx_lm_cache(monkeypatch, fake_core)
 
@@ -2369,8 +2377,12 @@ def test_generate_native_mtp_lcp_store_consulted_with_session_id(
     mock_store = _pbs.PrefixBlockStore()
     monkeypatch.setattr(_pbs, "get_store", lambda *a, **kw: mock_store)
     monkeypatch.setattr(mlx_text_runtime_module, "_get_prefix_store", lambda *a, **kw: mock_store)
-    monkeypatch.setattr(mlx_text_runtime_module, "_clone_cache_snapshot", lambda cache: None)
-    monkeypatch.setattr(mlx_text_runtime_module, "_estimate_cache_bytes", lambda cache: 0)
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_clone_cache_snapshot",
+        lambda cache: [SimpleNamespace(state=[])] if cache is not None else None,
+    )
+    monkeypatch.setattr(mlx_text_runtime_module, "_estimate_cache_bytes", lambda cache: 4096)
 
     def fake_prefill(model, tokens, *, prefill_step_size, stream, restore_cache=None, restore_token_count=0):
         cache = restore_cache if restore_cache is not None else [SimpleNamespace(state=[])]
@@ -2483,6 +2495,7 @@ def test_generate_native_mtp_lcp_store_consulted_with_session_id(
                 "_melix.model_revision": "v1",
                 "_melix.block_size": "4",
                 "_melix.acceleration_mode": "",
+                "_melix.cache_memory_budget_bytes": "1024",
             },
         )
     )
@@ -2491,6 +2504,14 @@ def test_generate_native_mtp_lcp_store_consulted_with_session_id(
     final = events[-1]
     assert final.cache_hit_mode == "none"
     assert final.recovered_prefix_tokens == 0
+    lcp = mock_store.find_lcp(
+        [10, 20, 30, 40, 50, 60, 70, 80],
+        "test-model",
+        "v1",
+        4,
+    )
+    assert lcp.mode == "none"
+    _assert_standard_path_session_cache_miss_prefills_and_stores(monkeypatch)
 
 
 def test_generate_native_mtp_lcp_warm_path_uses_restored_cache(
@@ -2642,6 +2663,8 @@ def test_generate_native_mtp_lcp_warm_path_uses_restored_cache(
     assert len(events) > 0
     final = events[-1]
     assert final.cache_hit_mode in ("partial", "exact")
+    _assert_standard_path_warm_partial_hit_replays_suffix_with_restored_cache(monkeypatch)
+    _assert_standard_path_exact_hit_replays_final_token(monkeypatch)
 
 
 def _build_lcp_backend(monkeypatch, *, store, clone_fn, responses, encode_tokens=None,
@@ -2888,6 +2911,7 @@ def test_generate_native_mtp_partial_hit_falls_back_when_trim_incomplete(
     assert entry is not None
     assert entry._active_refs == 1
     store.release(entry)
+    _assert_standard_path_trim_failure_releases_and_falls_back(monkeypatch)
 
 
 def test_generate_native_mtp_unset_block_size_defaults_not_one(
@@ -2975,3 +2999,464 @@ def test_generate_native_mtp_no_session_reports_no_session_id(
     ))
     assert events[-1].cache_hit_mode == "none"
     assert events[-1].cache_fallback_reason == "no_session_id"
+    _assert_standard_path_no_session_uses_raw_stream(monkeypatch)
+    _assert_standard_path_prompt_cache_bypass_when_unsupported(monkeypatch)
+    _assert_standard_path_tokenizer_without_encode_bypasses_cache(monkeypatch)
+    _assert_standard_path_empty_encoded_prompt_bypasses_cache(monkeypatch)
+
+
+# ---------------------------------------------------------------------------
+# generate_tokens standard stream path - PrefixBlockStore integration
+# ---------------------------------------------------------------------------
+
+
+def _build_standard_cache_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    store,
+    encode_tokens: list[int],
+    stream_calls: list[dict],
+    prefill_calls: list[dict],
+    stream_supports_prompt_cache: bool = True,
+    tokenizer_has_encode: bool = True,
+):
+    from worker.runtime import prefix_block_store as _pbs
+
+    monkeypatch.setattr(_pbs, "get_store", lambda *a, **kw: store)
+    monkeypatch.setattr(mlx_text_runtime_module, "_get_prefix_store", lambda *a, **kw: store)
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_clone_cache_snapshot",
+        lambda cache: [SimpleNamespace(state=[])] if cache is not None else None,
+    )
+    monkeypatch.setattr(mlx_text_runtime_module, "_estimate_cache_bytes", lambda cache: 128)
+
+    def fake_prefill(model, tokens, *, prefill_step_size, stream, restore_cache=None, restore_token_count=0):
+        prefill_calls.append(
+            {
+                "tokens": list(tokens),
+                "restore_cache": restore_cache,
+                "restore_token_count": restore_token_count,
+            }
+        )
+        cache = restore_cache if restore_cache is not None else [SimpleNamespace(state=[])]
+        return cache, [int(tokens[-1])], list(tokens[:-1])
+
+    monkeypatch.setattr(mlx_text_runtime_module, "_prefill_prompt_cache", fake_prefill, raising=False)
+    monkeypatch.setattr(mlx_text_runtime_module, "_native_mtp_prefill_prompt_cache", fake_prefill)
+
+    if tokenizer_has_encode:
+
+        class FakeTokenizer:
+            bos_token = None
+            eos_token = "</s>"
+            eos_token_id = 2
+
+            def encode(self, prompt, add_special_tokens=True):
+                return list(encode_tokens)
+
+    else:
+
+        class FakeTokenizer:
+            bos_token = None
+            eos_token = "</s>"
+            eos_token_id = 2
+
+    def fake_load(model_source: str, **kwargs):
+        return SimpleNamespace(), FakeTokenizer()
+
+    def make_response(prompt, *, finish_reason: str | None):
+        return SimpleNamespace(
+            text="x",
+            raw_text="x",
+            token=101,
+            logprobs=None,
+            prompt_tokens=len(prompt) if isinstance(prompt, list) else len(str(prompt)),
+            generation_tokens=1,
+            prompt_tps=1.0,
+            generation_tps=1.0,
+            peak_memory=0.0,
+            finish_reason=finish_reason,
+        )
+
+    if stream_supports_prompt_cache:
+
+        def fake_stream_generate(model, tokenizer, prompt, *, max_tokens, sampler, prompt_cache=None, **kwargs):
+            stream_calls.append(
+                {
+                    "prompt": list(prompt) if isinstance(prompt, list) else prompt,
+                    "prompt_cache": prompt_cache,
+                    "max_tokens": max_tokens,
+                }
+            )
+            yield make_response(prompt, finish_reason=None)
+            yield make_response(prompt, finish_reason="stop")
+
+    else:
+
+        def fake_stream_generate(model, tokenizer, prompt, *, max_tokens, sampler):
+            stream_calls.append(
+                {
+                    "prompt": list(prompt) if isinstance(prompt, list) else prompt,
+                    "prompt_cache": None,
+                    "max_tokens": max_tokens,
+                }
+            )
+            yield make_response(prompt, finish_reason=None)
+            yield make_response(prompt, finish_reason="stop")
+
+    backend = mlx_text_runtime_module.AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=lambda **kw: "sampler",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "x"})
+    loaded = backend.load_model(model_spec)
+    loaded[mlx_text_runtime_module._NATIVE_MTP_TEXT_ACTIVE_FIELD] = False
+    return backend, loaded
+
+
+def _assert_standard_path_session_cache_miss_prefills_and_stores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    stream_calls: list[dict] = []
+    prefill_calls: list[dict] = []
+    backend, loaded = _build_standard_cache_backend(
+        monkeypatch,
+        store=store,
+        encode_tokens=[10, 20, 30, 40, 50, 60, 70, 80],
+        stream_calls=stream_calls,
+        prefill_calls=prefill_calls,
+    )
+
+    events = list(
+        backend.generate_tokens(
+            loaded,
+            "hello world",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            Event(),
+            execution_ext={
+                "_melix.session_id": "standard-cold",
+                "_melix.model_id": "test-model",
+                "_melix.model_revision": "v1",
+                "_melix.block_size": "4",
+            },
+        )
+    )
+
+    assert prefill_calls[0]["restore_cache"] is None
+    assert stream_calls[0]["prompt"] == [80]
+    assert stream_calls[0]["prompt_cache"] is not None
+    assert events[0].finish_reason is None
+    assert events[0].cache_hit_tier is None
+    assert events[-1].cache_hit_mode == "none"
+    assert events[-1].recovered_prefix_tokens == 0
+    assert events[-1].cache_fallback_reason == "no_reusable_prefix"
+    lcp = store.find_lcp([10, 20, 30, 40, 50, 60, 70, 80], "test-model", "v1", 4)
+    assert lcp.mode == "exact"
+    assert lcp.recovered_prefix_tokens == 8
+    assert lcp.entry is not None
+    store.release(lcp.entry)
+
+
+def _assert_standard_path_warm_partial_hit_replays_suffix_with_restored_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    store.put(
+        session_id="standard-warm",
+        token_ids=[10, 20, 30, 40, 50, 60, 70, 80],
+        cache_snapshot=[SimpleNamespace(state=[])],
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="test-model",
+        model_revision="v1",
+        block_size=4,
+        total_bytes=512,
+    )
+    _install_fake_trim(monkeypatch, returns=4)
+    stream_calls: list[dict] = []
+    prefill_calls: list[dict] = []
+    backend, loaded = _build_standard_cache_backend(
+        monkeypatch,
+        store=store,
+        encode_tokens=[10, 20, 30, 40, 99, 99, 99, 99],
+        stream_calls=stream_calls,
+        prefill_calls=prefill_calls,
+    )
+
+    events = list(
+        backend.generate_tokens(
+            loaded,
+            "hello world",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            Event(),
+            execution_ext={
+                "_melix.session_id": "standard-warm",
+                "_melix.model_id": "test-model",
+                "_melix.model_revision": "v1",
+                "_melix.block_size": "4",
+            },
+        )
+    )
+
+    assert prefill_calls[0]["restore_cache"] is not None
+    assert prefill_calls[0]["restore_token_count"] == 4
+    assert stream_calls[0]["prompt"] == [99]
+    assert events[-1].cache_hit_mode == "partial"
+    assert events[-1].recovered_prefix_tokens == 4
+
+
+def _assert_standard_path_exact_hit_replays_final_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    store.put(
+        session_id="standard-exact",
+        token_ids=[10, 20, 30, 40, 50, 60, 70, 80],
+        cache_snapshot=[SimpleNamespace(state=[])],
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="test-model",
+        model_revision="v1",
+        block_size=4,
+        total_bytes=512,
+    )
+    trim_calls = _install_fake_trim(monkeypatch, returns=1)
+    stream_calls: list[dict] = []
+    prefill_calls: list[dict] = []
+    backend, loaded = _build_standard_cache_backend(
+        monkeypatch,
+        store=store,
+        encode_tokens=[10, 20, 30, 40, 50, 60, 70, 80],
+        stream_calls=stream_calls,
+        prefill_calls=prefill_calls,
+    )
+
+    events = list(
+        backend.generate_tokens(
+            loaded,
+            "hello world",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            Event(),
+            execution_ext={
+                "_melix.session_id": "standard-exact",
+                "_melix.model_id": "test-model",
+                "_melix.model_revision": "v1",
+                "_melix.block_size": "4",
+            },
+        )
+    )
+
+    assert trim_calls == [(prefill_calls[0]["restore_cache"], 1)]
+    assert prefill_calls[0]["restore_cache"] is not None
+    assert prefill_calls[0]["restore_token_count"] == 7
+    assert stream_calls[0]["prompt"] == [80]
+    assert events[0].cache_hit_mode is None
+    assert events[0].cache_hit_tier is None
+    assert events[-1].cache_hit_mode == "exact"
+    assert events[-1].cache_hit_tier == "hot"
+    assert events[-1].recovered_prefix_tokens == 7
+
+
+def _assert_standard_path_trim_failure_releases_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    store.put(
+        session_id="trim-fail-standard",
+        token_ids=[10, 20, 30, 40, 50, 60, 70, 80],
+        cache_snapshot=[SimpleNamespace(state=[])],
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="test-model",
+        model_revision="v1",
+        block_size=4,
+        total_bytes=512,
+    )
+    _install_fake_trim(monkeypatch, returns=2)
+    stream_calls: list[dict] = []
+    prefill_calls: list[dict] = []
+    backend, loaded = _build_standard_cache_backend(
+        monkeypatch,
+        store=store,
+        encode_tokens=[10, 20, 30, 40, 99, 99, 99, 99],
+        stream_calls=stream_calls,
+        prefill_calls=prefill_calls,
+    )
+
+    events = list(
+        backend.generate_tokens(
+            loaded,
+            "hello world",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            Event(),
+            execution_ext={
+                "_melix.session_id": "trim-fail-standard",
+                "_melix.model_id": "test-model",
+                "_melix.model_revision": "v1",
+                "_melix.block_size": "4",
+            },
+        )
+    )
+
+    assert all(call["restore_cache"] is None for call in prefill_calls)
+    assert events[-1].cache_hit_mode == "none"
+    assert events[-1].cache_fallback_reason == "cache_restore_failed"
+    entry = store.acquire("trim-fail-standard")
+    assert entry is not None
+    assert entry._active_refs == 1
+    store.release(entry)
+
+
+def _assert_standard_path_no_session_uses_raw_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    stream_calls: list[dict] = []
+    prefill_calls: list[dict] = []
+    backend, loaded = _build_standard_cache_backend(
+        monkeypatch,
+        store=store,
+        encode_tokens=[10, 20, 30, 40],
+        stream_calls=stream_calls,
+        prefill_calls=prefill_calls,
+    )
+
+    events = list(
+        backend.generate_tokens(
+            loaded,
+            "hello world",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            Event(),
+            execution_ext={"_melix.model_id": "test-model", "_melix.model_revision": "v1"},
+        )
+    )
+
+    assert stream_calls[0]["prompt"] == "hello world"
+    assert stream_calls[0]["prompt_cache"] is None
+    assert prefill_calls == []
+    assert events[-1].cache_hit_mode is None
+    assert events[-1].recovered_prefix_tokens is None
+    assert events[-1].cache_fallback_reason is None
+
+
+def _assert_standard_path_prompt_cache_bypass_when_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    stream_calls: list[dict] = []
+    prefill_calls: list[dict] = []
+    backend, loaded = _build_standard_cache_backend(
+        monkeypatch,
+        store=store,
+        encode_tokens=[10, 20, 30, 40],
+        stream_calls=stream_calls,
+        prefill_calls=prefill_calls,
+        stream_supports_prompt_cache=False,
+    )
+
+    events = list(
+        backend.generate_tokens(
+            loaded,
+            "hello world",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            Event(),
+            execution_ext={
+                "_melix.session_id": "standard-unsupported",
+                "_melix.model_id": "test-model",
+                "_melix.model_revision": "v1",
+                "_melix.block_size": "4",
+            },
+        )
+    )
+
+    assert stream_calls[0]["prompt"] == "hello world"
+    assert prefill_calls == []
+    assert events[-1].cache_hit_mode == "none"
+    assert events[-1].cache_fallback_reason == "prompt_cache_unsupported"
+
+
+def _assert_standard_path_tokenizer_without_encode_bypasses_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    stream_calls: list[dict] = []
+    prefill_calls: list[dict] = []
+    backend, loaded = _build_standard_cache_backend(
+        monkeypatch,
+        store=store,
+        encode_tokens=[],
+        stream_calls=stream_calls,
+        prefill_calls=prefill_calls,
+        tokenizer_has_encode=False,
+    )
+
+    events = list(
+        backend.generate_tokens(
+            loaded,
+            "hello world",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            Event(),
+            execution_ext={
+                "_melix.session_id": "standard-no-encode",
+                "_melix.model_id": "test-model",
+                "_melix.model_revision": "v1",
+                "_melix.block_size": "4",
+            },
+        )
+    )
+
+    assert stream_calls[0]["prompt"] == "hello world"
+    assert prefill_calls == []
+    assert events[-1].cache_hit_mode == "none"
+    assert events[-1].cache_fallback_reason == "tokenizer_encode_unavailable"
+
+
+def _assert_standard_path_empty_encoded_prompt_bypasses_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    stream_calls: list[dict] = []
+    prefill_calls: list[dict] = []
+    backend, loaded = _build_standard_cache_backend(
+        monkeypatch,
+        store=store,
+        encode_tokens=[],
+        stream_calls=stream_calls,
+        prefill_calls=prefill_calls,
+    )
+
+    events = list(
+        backend.generate_tokens(
+            loaded,
+            "hello world",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            Event(),
+            execution_ext={
+                "_melix.session_id": "standard-empty-prompt",
+                "_melix.model_id": "test-model",
+                "_melix.model_revision": "v1",
+                "_melix.block_size": "4",
+            },
+        )
+    )
+
+    assert stream_calls[0]["prompt"] == "hello world"
+    assert prefill_calls == []
+    assert events[-1].cache_hit_mode == "none"
+    assert events[-1].cache_fallback_reason == "empty_prompt"

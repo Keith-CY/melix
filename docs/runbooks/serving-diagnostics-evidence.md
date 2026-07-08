@@ -214,6 +214,169 @@ ignored; an empty `ignored_flags` value records an empty list. If any required
 capability metadata key is missing, the writer leaves the original metadata in
 place and does not synthesize a partial top-level `serving_capability` receipt.
 
+The control-plane profile preflight path emits these metadata keys after model
+capability and acceleration admission have already been resolved. The emitted
+receipt uses model catalog task/modality metadata, the acceleration capability
+receipt, and the serving profile admission receipt. For metadata-only
+preflight rows, `optional_dependency_source` is `not_required`; rejected
+explicit acceleration flags use `fallback_policy=fail_closed`, while admitted
+requests use `fallback_policy=observable_fallback`. Bundle writing still must
+not perform its own model discovery or optional dependency probes.
+
+For this emitter, `ignored_flags` can include `draft_model_id` when a speculative
+draft is missing or refused, `acceleration_mode` when the requested mode or
+acceleration capability is unsupported, and `acceleration_profile` when profile
+admission is refused after acceleration capability admission succeeds.
+
+When upstream serving code has normalized low-level acceleration fields into one
+typed config contract, `effective-config.json` should also include a
+`serving_acceleration_config` receipt. This receipt is diagnostics-only: it
+records the already-resolved control-plane parser and admission result and must
+not start an acceleration controller, probe optional runtimes, load a sidecar,
+or alter fallback behavior during bundle writing.
+
+`serving_acceleration_config` fields:
+
+- `schema_version` - `melix.resolved_acceleration_config.v1`.
+- `method` - effective acceleration method, such as `baseline` or
+  `speculative_decode`.
+- `requested_method` - requested method after compatibility normalization.
+- `sidecar_model` - resolved draft or companion model id, or an empty string.
+- `num_speculative_tokens` - resolved speculative token count.
+- `profile` - serving acceleration profile tied to the resolved config.
+- `conflicting_flags` - low-level flags or overrides rejected, suppressed, or
+  ignored during config resolution.
+- `controller_scope` - `request` for request-scoped speculative controllers or
+  `none` when no controller is active.
+- `disabled_reason` - typed reason for a disabled or refused acceleration path,
+  or `none`.
+
+Diagnostics writers may derive `serving_acceleration_config` from namespaced
+metadata when all of these keys are present:
+
+- `melix.serving.acceleration_config.schema_version`
+- `melix.serving.acceleration_config.method`
+- `melix.serving.acceleration_config.requested_method`
+- `melix.serving.acceleration_config.sidecar_model`
+- `melix.serving.acceleration_config.num_speculative_tokens`
+- `melix.serving.acceleration_config.profile`
+- `melix.serving.acceleration_config.conflicting_flags`
+- `melix.serving.acceleration_config.controller_scope`
+- `melix.serving.acceleration_config.disabled_reason`
+
+The `conflicting_flags` metadata value is a comma-separated list. Empty list
+items are ignored. `num_speculative_tokens` must be a decimal integer. If any
+required key is missing or the token count is invalid, the writer leaves the
+original metadata in place and does not synthesize a partial top-level
+`serving_acceleration_config` receipt.
+
+When upstream serving code has evaluated feature-composition guardrails for
+speculative decoding combined with disk-backed serving or explicit expert
+streaming, `effective-config.json` should also include a
+`feature_composition_guardrail` receipt. This receipt is diagnostics-only: it
+records the already-applied worker request policy and must not probe storage,
+load a sidecar, or re-run admission during bundle writing.
+
+`feature_composition_guardrail` fields:
+
+- `schema_version` - `melix.feature_composition_guardrail.v1`.
+- `composition` - `ssd_expert_streaming_x_speculative_decode` when the
+  composition is active, otherwise `none`.
+- `decision` - one of `accept`, `auto_cap_draft_tokens`,
+  `tighten_cache_budget`, `auto_cap_draft_tokens_and_tighten_cache_budget`, or
+  `refuse_unsafe_composition`.
+- `requested_num_draft_tokens` - caller or gateway requested speculative draft
+  token count.
+- `effective_num_draft_tokens` - token count admitted for the worker request.
+- `resource_fanout_estimate` - estimated serving fan-out after the guardrail.
+- `requested_cache_budget_bytes` - model requested cache budget.
+- `effective_cache_budget_bytes` - cache budget admitted after tightening. When
+  this is lower than `requested_cache_budget_bytes`, it has been applied to the
+  worker request through `execution.cache_hints.cache_memory_budget_bytes`.
+- `guardrail_reason` - typed reason for the decision, or `none`.
+
+Diagnostics writers may derive `feature_composition_guardrail` from namespaced
+metadata when all of these keys are present:
+
+- `melix.acceleration.feature_guardrail.schema_version`
+- `melix.acceleration.feature_guardrail.composition`
+- `melix.acceleration.feature_guardrail.decision`
+- `melix.acceleration.feature_guardrail.requested_num_draft_tokens`
+- `melix.acceleration.feature_guardrail.effective_num_draft_tokens`
+- `melix.acceleration.feature_guardrail.resource_fanout_estimate`
+- `melix.acceleration.feature_guardrail.requested_cache_budget_bytes`
+- `melix.acceleration.feature_guardrail.effective_cache_budget_bytes`
+- `melix.acceleration.feature_guardrail.guardrail_reason`
+
+The numeric guardrail fields must be decimal values. If any required key is
+missing or malformed, the writer leaves the original metadata in place and does
+not synthesize a partial top-level receipt.
+
+When upstream serving admission has evaluated dry-run context and batch memory
+fit before worker load or decode, `effective-config.json` should also include a
+`serving_memory_admission` receipt. This receipt is diagnostics-only: it records
+the already-resolved admission result and must not probe memory, load a model,
+start a worker, or change runtime fallback behavior during bundle writing.
+
+`serving_memory_admission` fields:
+
+- `schema_version` - `melix.serving_memory_admission.v1`.
+- `requested_context` - caller or model requested serving context length.
+- `effective_context` - context length admitted for the worker request.
+- `requested_batch` - requested serving batch or concurrency value.
+- `effective_batch` - batch value admitted for the worker request.
+- `memory_headroom_bytes` - host-memory headroom reserved by admission.
+- `estimated_active_bytes` - estimated active serving footprint after
+  admission.
+- `memory_telemetry_source` - `detected` when upstream admission had a detected
+  memory value, or `unknown` when it used a conservative default.
+- `admission_reason` - typed reason for the effective context and batch choice.
+- `fits_memory` - whether the admitted estimate fits the available memory model.
+
+Current control-plane admission first reads upstream model settings metadata for
+a detected-memory value such as `melix.serving.memory.available_bytes`,
+`melix.serving.memory.detected_memory_bytes`, or
+`melix.device.memory_total_bytes`. Production `ControlPlaneService` and
+bootstrap construction paths fall back to `ProcessInfo.processInfo.physicalMemory`
+when those model metadata keys are absent, so production serving requests can
+emit `memory_telemetry_source=detected` without requiring catalog discovery to
+pre-populate memory metadata. Tests and custom `RequestCoordinator` construction
+can inject no memory supplier, in which case diagnostics legitimately show
+`unknown` telemetry and no memory-based step-down.
+
+For OpenAI-compatible text requests, the control-plane gateway derives the
+request-side serving context from the same prompt-budget inputs used for
+admission. It writes `melix.gateway.context_length` and
+`melix.gateway.requested_context` as the bounded estimate
+`min(model_context_window, prompt_tokens_estimated + output_cap_tokens + slack)`.
+The output cap remains only an output cap; it is not treated as the context
+window. Additional provenance metadata includes
+`melix.gateway.context_source`, `melix.gateway.context_window_tokens`,
+`melix.gateway.output_cap_tokens`, `melix.gateway.prompt_tokens_estimated`,
+`melix.gateway.prompt_tokens_estimate_source`, and
+`melix.gateway.prompt_tokens_estimate_slack`. `RequestCoordinator` consumes the
+context keys as serving-admission input, then emits the
+`melix.serving.memory_admission.*` audit namespace below.
+
+Diagnostics writers may derive `serving_memory_admission` from namespaced
+metadata when all of these keys are present:
+
+- `melix.serving.memory_admission.schema_version`
+- `melix.serving.memory_admission.requested_context`
+- `melix.serving.memory_admission.effective_context`
+- `melix.serving.memory_admission.requested_batch`
+- `melix.serving.memory_admission.effective_batch`
+- `melix.serving.memory_admission.memory_headroom_bytes`
+- `melix.serving.memory_admission.estimated_active_bytes`
+- `melix.serving.memory_admission.memory_telemetry_source`
+- `melix.serving.memory_admission.admission_reason`
+- `melix.serving.memory_admission.fits_memory`
+
+The integer metadata values must be decimal, non-negative integers. The
+`fits_memory` metadata value must be a boolean string. If any required key is
+missing or invalid, the writer leaves the original metadata in place and does
+not synthesize a partial top-level `serving_memory_admission` receipt.
+
 When a proxy, workspace-ingest, or worker path has already evaluated network
 fetch safety, `effective-config.json` may include a `network_fetch_policy`
 receipt and `privacy_audit_counters`. These receipts are diagnostics-only:
@@ -504,6 +667,8 @@ The comparison artifact records:
 - effective top-p
 - effective top-k
 - greedy sampler status
+- baseline and accelerated resolved acceleration configs when upstream provided
+  `serving_acceleration_config` receipts
 - acceleration admission status
 - fallback reason
 - tier stability status
@@ -514,6 +679,13 @@ on prompt protocol, prompt digest, prompt template digest, model id, task kind,
 or generation config. It also rejects non-greedy sampler settings because
 deterministic sampling is required before the artifact can support a performance
 claim.
+
+When present, the comparison artifact writes each run's
+`serving_acceleration_config` receipt under
+`runs.<baseline|accelerated>.serving_acceleration_config` and mirrors both
+receipts under `methodology.acceleration_configs`. Missing receipts serialize as
+empty objects; the comparison writer must not synthesize acceleration configs or
+probe runtime state while writing evidence.
 
 ## Prefill Override Validation
 

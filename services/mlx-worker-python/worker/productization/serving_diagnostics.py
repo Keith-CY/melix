@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import Any
 
 from worker.productization.privacy_policy_receipts import (
+    _bool_value,
     network_fetch_policy_receipt_from_metadata,
     privacy_audit_counter_from_metadata,
     privacy_detector_receipt_from_metadata,
@@ -67,6 +68,56 @@ _CAPABILITY_RECEIPT_REQUIRED_FIELDS = frozenset(
 _CAPABILITY_RECEIPT_LIST_FIELDS = frozenset(
     ("capabilities", "input_modalities", "output_modalities", "ignored_flags")
 )
+_ACCELERATION_CONFIG_AUDIT_TO_RECEIPT_FIELDS = {
+    "melix.serving.acceleration_config.schema_version": "schema_version",
+    "melix.serving.acceleration_config.method": "method",
+    "melix.serving.acceleration_config.requested_method": "requested_method",
+    "melix.serving.acceleration_config.sidecar_model": "sidecar_model",
+    "melix.serving.acceleration_config.num_speculative_tokens": (
+        "num_speculative_tokens"
+    ),
+    "melix.serving.acceleration_config.profile": "profile",
+    "melix.serving.acceleration_config.conflicting_flags": "conflicting_flags",
+    "melix.serving.acceleration_config.controller_scope": "controller_scope",
+    "melix.serving.acceleration_config.disabled_reason": "disabled_reason",
+}
+_ACCELERATION_CONFIG_RECEIPT_REQUIRED_FIELDS = frozenset(
+    _ACCELERATION_CONFIG_AUDIT_TO_RECEIPT_FIELDS.values()
+)
+_ACCELERATION_CONFIG_RECEIPT_LIST_FIELDS = frozenset(("conflicting_flags",))
+_ACCELERATION_CONFIG_RECEIPT_INT_FIELDS = frozenset(("num_speculative_tokens",))
+_MEMORY_ADMISSION_AUDIT_TO_RECEIPT_FIELDS = {
+    "melix.serving.memory_admission.schema_version": "schema_version",
+    "melix.serving.memory_admission.requested_context": "requested_context",
+    "melix.serving.memory_admission.effective_context": "effective_context",
+    "melix.serving.memory_admission.requested_batch": "requested_batch",
+    "melix.serving.memory_admission.effective_batch": "effective_batch",
+    "melix.serving.memory_admission.memory_headroom_bytes": (
+        "memory_headroom_bytes"
+    ),
+    "melix.serving.memory_admission.estimated_active_bytes": (
+        "estimated_active_bytes"
+    ),
+    "melix.serving.memory_admission.memory_telemetry_source": (
+        "memory_telemetry_source"
+    ),
+    "melix.serving.memory_admission.admission_reason": "admission_reason",
+    "melix.serving.memory_admission.fits_memory": "fits_memory",
+}
+_MEMORY_ADMISSION_RECEIPT_REQUIRED_FIELDS = frozenset(
+    _MEMORY_ADMISSION_AUDIT_TO_RECEIPT_FIELDS.values()
+)
+_MEMORY_ADMISSION_RECEIPT_INT_FIELDS = frozenset(
+    (
+        "requested_context",
+        "effective_context",
+        "requested_batch",
+        "effective_batch",
+        "memory_headroom_bytes",
+        "estimated_active_bytes",
+    )
+)
+_MEMORY_ADMISSION_RECEIPT_BOOL_FIELDS = frozenset(("fits_memory",))
 _EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
 _JSON_COMPACT_SEPARATORS = (",", ":")
 _JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
@@ -340,9 +391,11 @@ class ServingEvidenceRun:
     effective_top_k: int
     tier_stability_status: str
     metrics: dict[str, float]
+    serving_acceleration_config: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES
     native_acceleration: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES
 
     def to_dict(self) -> dict[str, object]:
+        serving_acceleration_config = self.serving_acceleration_config
         native_acceleration = self.native_acceleration
         return {
             "run_id": self.run_id,
@@ -360,6 +413,9 @@ class ServingEvidenceRun:
             "effective_top_k": int(self.effective_top_k),
             "sampler_is_greedy": self.sampler_is_greedy,
             "tier_stability_status": self.tier_stability_status,
+            "serving_acceleration_config": _stable_json_object(
+                serving_acceleration_config
+            ),
             "native_acceleration": {}
             if native_acceleration is _EMPTY_EVENT_ATTRIBUTES
             else _stable_json_object(native_acceleration),
@@ -527,6 +583,14 @@ def _comparison_methodology(
         "effective_top_k": int(accelerated.effective_top_k),
         "sampler_is_greedy": accelerated.sampler_is_greedy,
         "tier_stability_status": accelerated.tier_stability_status,
+        "acceleration_configs": {
+            "baseline": _stable_json_object(
+                baseline.serving_acceleration_config
+            ),
+            "accelerated": _stable_json_object(
+                accelerated.serving_acceleration_config
+            ),
+        },
     }
 
 
@@ -623,6 +687,22 @@ def _effective_config_with_profile_receipt(
             if receipt:
                 enriched_config["serving_capability"] = receipt
                 break
+    if "serving_acceleration_config" not in enriched_config:
+        for metadata in metadata_sources:
+            receipt = _serving_acceleration_config_receipt_from_audit_metadata(
+                metadata
+            )
+            if receipt:
+                enriched_config["serving_acceleration_config"] = receipt
+                break
+    if "serving_memory_admission" not in enriched_config:
+        for metadata in metadata_sources:
+            receipt = _serving_memory_admission_receipt_from_audit_metadata(
+                metadata
+            )
+            if receipt:
+                enriched_config["serving_memory_admission"] = receipt
+                break
     if "network_fetch_policy" not in enriched_config:
         for metadata in metadata_sources:
             receipt = network_fetch_policy_receipt_from_metadata(metadata)
@@ -717,6 +797,53 @@ def _serving_capability_receipt_from_audit_metadata(
     return {}
 
 
+def _serving_acceleration_config_receipt_from_audit_metadata(
+    metadata: Mapping[str, object],
+) -> dict[str, object]:
+    receipt: dict[str, object] = {}
+    for audit_key, receipt_key in _ACCELERATION_CONFIG_AUDIT_TO_RECEIPT_FIELDS.items():
+        value = metadata.get(audit_key)
+        if value is None:
+            continue
+        if receipt_key in _ACCELERATION_CONFIG_RECEIPT_LIST_FIELDS:
+            receipt[receipt_key] = _metadata_list(value)
+        elif receipt_key in _ACCELERATION_CONFIG_RECEIPT_INT_FIELDS:
+            parsed_int = _metadata_non_negative_int(value)
+            if parsed_int is None:
+                return {}
+            receipt[receipt_key] = parsed_int
+        else:
+            receipt[receipt_key] = str(value)
+    if _ACCELERATION_CONFIG_RECEIPT_REQUIRED_FIELDS.issubset(receipt):
+        return receipt
+    return {}
+
+
+def _serving_memory_admission_receipt_from_audit_metadata(
+    metadata: Mapping[str, object],
+) -> dict[str, object]:
+    receipt: dict[str, object] = {}
+    for audit_key, receipt_key in _MEMORY_ADMISSION_AUDIT_TO_RECEIPT_FIELDS.items():
+        value = metadata.get(audit_key)
+        if value is None:
+            continue
+        if receipt_key in _MEMORY_ADMISSION_RECEIPT_INT_FIELDS:
+            parsed_int = _metadata_non_negative_int(value)
+            if parsed_int is None:
+                return {}
+            receipt[receipt_key] = parsed_int
+        elif receipt_key in _MEMORY_ADMISSION_RECEIPT_BOOL_FIELDS:
+            parsed_bool = _metadata_bool(value)
+            if parsed_bool is None:
+                return {}
+            receipt[receipt_key] = parsed_bool
+        else:
+            receipt[receipt_key] = str(value)
+    if _MEMORY_ADMISSION_RECEIPT_REQUIRED_FIELDS.issubset(receipt):
+        return receipt
+    return {}
+
+
 def _metadata_list(value: object) -> list[str]:
     if isinstance(value, (list, tuple)):
         raw_items = value
@@ -729,6 +856,20 @@ def _metadata_list(value: object) -> list[str]:
         for item in raw_items
         if item is not None and (item_text := str(item).strip())
     ]
+
+
+def _metadata_bool(value: object) -> bool | None:
+    return _bool_value(value)
+
+
+def _metadata_non_negative_int(value: object) -> int | None:
+    try:
+        parsed = int(str(value).strip())
+    except ValueError:
+        return None
+    if parsed < 0:
+        return None
+    return parsed
 
 
 def _stable_json_value(value: object) -> object:
@@ -765,12 +906,16 @@ def _write_jsonl(path: Path, rows: Any) -> None:
     append_line = payload.extend
     newline = b"\n"
     request_id_literals: dict[str, bytes] = {}
+    decode_completed_duration_prefixes: dict[float, bytes] = {}
+    decode_completed_request_suffixes: dict[str, bytes] = {}
     for row in rows:
         if isinstance(row, event_type):
             if extend_empty_attribute_event(
                 append_line,
                 row,
                 request_id_literals,
+                decode_completed_duration_prefixes,
+                decode_completed_request_suffixes,
             ):
                 continue
             row = row.to_dict()
@@ -793,6 +938,8 @@ def _extend_empty_attribute_event_json_line_bytes(
     append_line: Any,
     event: ServingDiagnosticsEvent,
     request_id_literals: dict[str, bytes],
+    decode_completed_duration_prefixes: dict[float, bytes] | None = None,
+    decode_completed_request_suffixes: dict[str, bytes] | None = None,
 ) -> bool:
     if event._attributes is not _EMPTY_EVENT_ATTRIBUTES:
         return False
@@ -805,21 +952,45 @@ def _extend_empty_attribute_event_json_line_bytes(
     phase = event._phase
     request_id = event._request_id
     status = event._status
+    duration_literal = _ascii_float_literal(duration_ms)
+    event_index_literal = _ascii_int_literal(event_index)
+    if phase == "decode" and status == "completed":
+        if decode_completed_duration_prefixes is None:
+            decode_completed_duration_prefixes = {}
+        if decode_completed_request_suffixes is None:
+            decode_completed_request_suffixes = {}
+        duration_prefix = decode_completed_duration_prefixes.get(duration_ms)
+        if duration_prefix is None:
+            duration_prefix = b"".join(
+                (
+                    _EMPTY_EVENT_JSON_DECODE_COMPLETED_PREFIX,
+                    duration_literal,
+                    _EMPTY_EVENT_JSON_DECODE_COMPLETED_MID,
+                )
+            )
+            decode_completed_duration_prefixes[duration_ms] = duration_prefix
+        request_suffix = decode_completed_request_suffixes.get(request_id)
+        if request_suffix is None:
+            encoded_request_id = request_id_literals.get(request_id)
+            if encoded_request_id is None:
+                encoded_request_id = _json_string_literal_bytes(request_id)
+                request_id_literals[request_id] = encoded_request_id
+            request_suffix = b"".join(
+                (
+                    _EMPTY_EVENT_JSON_DECODE_COMPLETED_REQUEST_PREFIX,
+                    encoded_request_id,
+                    _EMPTY_EVENT_JSON_DECODE_COMPLETED_SUFFIX_LINE,
+                )
+            )
+            decode_completed_request_suffixes[request_id] = request_suffix
+        append_line(duration_prefix)
+        append_line(event_index_literal)
+        append_line(request_suffix)
+        return True
     encoded_request_id = request_id_literals.get(request_id)
     if encoded_request_id is None:
         encoded_request_id = _json_string_literal_bytes(request_id)
         request_id_literals[request_id] = encoded_request_id
-    duration_literal = _ascii_float_literal(duration_ms)
-    event_index_literal = _ascii_int_literal(event_index)
-    if phase == "decode" and status == "completed":
-        append_line(_EMPTY_EVENT_JSON_DECODE_COMPLETED_PREFIX)
-        append_line(duration_literal)
-        append_line(_EMPTY_EVENT_JSON_DECODE_COMPLETED_MID)
-        append_line(event_index_literal)
-        append_line(_EMPTY_EVENT_JSON_DECODE_COMPLETED_REQUEST_PREFIX)
-        append_line(encoded_request_id)
-        append_line(_EMPTY_EVENT_JSON_DECODE_COMPLETED_SUFFIX_LINE)
-        return True
     append_line(b'{"attributes":{},"duration_ms":')
     append_line(duration_literal)
     append_line(b',"event_index":')

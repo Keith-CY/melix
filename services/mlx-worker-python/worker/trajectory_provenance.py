@@ -72,6 +72,15 @@ def _copy_json_tuple(value: tuple[Any, ...]) -> tuple[Any, ...]:
     return value
 
 
+def _copy_json_dict(value: dict[str, Any]) -> dict[str, Any]:
+    immutable_types = _JSON_IMMUTABLE_TYPE_SET
+    value_type = _TYPE
+    for item in value.values():
+        if value_type(item) not in immutable_types:
+            return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
+    return value.copy()
+
+
 def _copy_trajectory_provenance_value(value: Any) -> Any:
     value_type = type(value)
     if value_type in _JSON_IMMUTABLE_TYPE_SET:
@@ -101,16 +110,22 @@ def normalize_trajectory_provenance(
     normalized: dict[str, Any] = {}
     provenance_get = provenance.get
     copy_value = _copy_trajectory_provenance_value
+    value_type_of = _TYPE
     for field in TRAJECTORY_PROVENANCE_FIELDS:
         value = provenance_get(field)
         if value is None:
             continue
-        value_type = type(value)
+        value_type = value_type_of(value)
         if value_type is str:
             if value == "":
                 continue
             normalized[field] = value
-        elif value_type is dict or value_type is list:
+        elif value_type is dict:
+            if field == "agentic_sft_token_metrics":
+                normalized[field] = _copy_json_dict(value)
+            else:
+                normalized[field] = copy_value(value)
+        elif value_type is list:
             normalized[field] = copy_value(value)
         elif isinstance(value, (dict, list)):
             normalized[field] = copy_value(value)

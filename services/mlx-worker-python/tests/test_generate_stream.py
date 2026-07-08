@@ -671,21 +671,35 @@ def test_generate_without_usage_skips_prompt_token_count_fallback(monkeypatch) -
     inference_service, model_handle = build_usage_counting_services(runtime)
 
     summary_calls = 0
+    media_usage_calls = 0
     original_summary = EngineCore._media_admission_summary
+    original_media_usage = engine_core_module._media_feature_usage_from_probe
 
     def counted_media_summary(messages):
         nonlocal summary_calls
         summary_calls += 1
         return original_summary(messages)
 
+    def counted_media_usage(probe):
+        nonlocal media_usage_calls
+        media_usage_calls += 1
+        return original_media_usage(probe)
+
     monkeypatch.setattr(EngineCore, "_media_admission_summary", staticmethod(counted_media_summary))
+    monkeypatch.setattr(engine_core_module, "_media_feature_usage_from_probe", counted_media_usage)
 
     events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=False), context=None))
-    rejected_events = list(inference_service.Generate(media_rejection_request(model_handle), context=None))
 
     assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
     assert not any(event.HasField("usage_delta") for event in events)
     assert runtime.prompt_token_count_calls == 0
+    assert media_usage_calls == 0
+
+    usage_events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None))
+    rejected_events = list(inference_service.Generate(media_rejection_request(model_handle), context=None))
+
+    assert any(event.HasField("usage_delta") for event in usage_events)
+    assert media_usage_calls == 1
     assert summary_calls == 1
     assert len(rejected_events) == 1
     assert rejected_events[0].HasField("error")
@@ -2409,7 +2423,7 @@ def test_text_native_mtp_parser_metrics_fallback_reason_surfaced() -> None:
 
 
 def test_generate_forwards_positive_block_size_to_runtime() -> None:
-    """A client-set preferred_block_size must reach the runtime via _melix.block_size."""
+    """Client-set cache hints must reach the runtime routing metadata."""
     runtime = UsageCountingRuntime(prompt_tokens=0)
     captured: dict[str, str] = {}
     original = runtime.generate_tokens
@@ -2425,7 +2439,10 @@ def test_generate_forwards_positive_block_size_to_runtime() -> None:
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(request_id="req-blocksize"),
             model_handle=model_handle,
-            cache_hints=common_pb2.CacheHints(preferred_block_size=32),
+            cache_hints=common_pb2.CacheHints(
+                preferred_block_size=32,
+                cache_memory_budget_bytes=2048,
+            ),
         ),
         messages=[common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="hi")])],
         sampling=common_pb2.SamplingConfig(max_output_tokens=2),
@@ -2433,6 +2450,7 @@ def test_generate_forwards_positive_block_size_to_runtime() -> None:
     )
     list(inference_service.Generate(request, context=None))
     assert captured.get("_melix.block_size") == "32"
+    assert captured.get("_melix.cache_memory_budget_bytes") == "2048"
 
 
 def test_generate_omits_block_size_when_unset() -> None:

@@ -368,10 +368,7 @@ class LocalJobContinuationStore:
             json_suffix_length = len(json_suffix)
             for entry in os.scandir(root_fspath):
                 name = entry.name
-                if (
-                    len(name) < json_suffix_length
-                    or name[-json_suffix_length:] != json_suffix
-                ):
+                if not name.endswith(json_suffix):
                     continue
                 if entry.is_file(follow_symlinks=False):
                     # The scan has already filtered this to a .json file name.
@@ -994,6 +991,14 @@ def _copy_json_like_value(value: Any) -> Any:
     if value_type is list:
         return [_copy_json_like_value(item) for item in value]
     if value_type is tuple:
+        if len(value) == 2:
+            return (_copy_json_like_value(value[0]), _copy_json_like_value(value[1]))
+        if len(value) == 3:
+            return (
+                _copy_json_like_value(value[0]),
+                _copy_json_like_value(value[1]),
+                _copy_json_like_value(value[2]),
+            )
         return tuple(_copy_json_like_value(item) for item in value)
     if isinstance(value, dict):
         return {key: _copy_json_like_value(nested) for key, nested in value.items()}

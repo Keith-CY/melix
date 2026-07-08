@@ -126,7 +126,8 @@ enum MelixControlPlaneBootstrap {
                 metricsStore: metricsStore,
                 modelCatalog: modelCatalog,
                 sessionGraphStore: sessionGraphStore,
-                cacheMetadataStore: cacheMetadataStore
+                cacheMetadataStore: cacheMetadataStore,
+                servingMemoryBytesProvider: RequestCoordinator.processInfoPhysicalMemoryBytes
             ),
             workerRegistry: workerRegistry,
             metricsStore: metricsStore,

@@ -320,6 +320,7 @@ struct TextGenerationSummary: Sendable {
     let dflashTargetHiddenLayers: Int?
     let activeKVProbe: ActiveKVProbeSummary?
     let decodeBatchProbe: DecodeBatchProbeSummary?
+    let decodeBatchFallbackReason: String?
 
     init(
         promptTokens: Int,
@@ -340,7 +341,8 @@ struct TextGenerationSummary: Sendable {
         dflashRollbackCount: Int? = nil,
         dflashTargetHiddenLayers: Int? = nil,
         activeKVProbe: ActiveKVProbeSummary? = nil,
-        decodeBatchProbe: DecodeBatchProbeSummary? = nil
+        decodeBatchProbe: DecodeBatchProbeSummary? = nil,
+        decodeBatchFallbackReason: String? = nil
     ) {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
@@ -361,6 +363,32 @@ struct TextGenerationSummary: Sendable {
         self.dflashTargetHiddenLayers = dflashTargetHiddenLayers
         self.activeKVProbe = activeKVProbe
         self.decodeBatchProbe = decodeBatchProbe
+        self.decodeBatchFallbackReason = decodeBatchFallbackReason
+    }
+
+    func withDecodeBatchFallbackReason(_ reason: String?) -> TextGenerationSummary {
+        TextGenerationSummary(
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+            tokensPerSecond: tokensPerSecond,
+            decodeBatchSize: decodeBatchSize,
+            modelEvalBatchSize: modelEvalBatchSize,
+            decodeLoopIterations: decodeLoopIterations,
+            perBatchOutputTokenCount: perBatchOutputTokenCount,
+            perBatchOutputTokensPerSecond: perBatchOutputTokensPerSecond,
+            speculativeAcceptedTokens: speculativeAcceptedTokens,
+            speculativeRejectedTokens: speculativeRejectedTokens,
+            speculativeFallbackCount: speculativeFallbackCount,
+            speculativeDraftProposeMillis: speculativeDraftProposeMillis,
+            speculativeTargetVerifyMillis: speculativeTargetVerifyMillis,
+            dflashEnabled: dflashEnabled,
+            dflashBlockSize: dflashBlockSize,
+            dflashRollbackCount: dflashRollbackCount,
+            dflashTargetHiddenLayers: dflashTargetHiddenLayers,
+            activeKVProbe: activeKVProbe,
+            decodeBatchProbe: decodeBatchProbe,
+            decodeBatchFallbackReason: reason ?? decodeBatchFallbackReason
+        )
     }
 }
 

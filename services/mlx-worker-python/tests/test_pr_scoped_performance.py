@@ -1067,6 +1067,8 @@ def test_tool_registry_openai_tools_probe_script_emits_metrics(
 
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["empty_elapsed_ms_mean"] >= 0.0
+    assert metrics["empty_checksum"] == 0.0
     assert metrics["descriptor_as_openai_tool_calls_mean"] == 0.0
     assert metrics["isolated_payload_calls_mean"] == 20.0
 
@@ -6459,7 +6461,7 @@ def test_evaluation_latency_percentile_probe_command_emits_metrics() -> None:
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["sorted_calls_mean"] == 1.0
+    assert metrics["sorted_calls_mean"] == 0.0
     assert metrics["sample_count"] == 12000.0
     assert metrics["iteration_count"] == 160.0
     assert metrics["p95"] >= metrics["p50"]
@@ -6515,6 +6517,24 @@ def test_mlx_lm_result_tail_probe_script_emits_metrics() -> None:
     assert metrics["payload_value"] == 42.0
     assert metrics["line_count"] == 50002.0
     assert metrics["sample_count"] == 5.0
+
+
+def test_mlx_lm_result_tail_probe_covers_heldout_evaluation_import_tests() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mlx-lm-structured-result-tail-parse"
+    )
+    selectors = (
+        "services/mlx-worker-python/tests/test_lora_model_ops_unit.py"
+        "::test_float_ext_rejects_non_numeric_and_out_of_range_values",
+        "services/mlx-worker-python/tests/test_lora_model_ops_unit.py"
+        "::test_mlx_lm_runner_evaluate_heldout_native_uses_adapter_and_test_split",
+    )
+
+    for selector in selectors:
+        assert selector in probe.test_command
+        assert selector in probe.coverage_command
 
 
 def test_mlx_audio_local_uri_probe_script_emits_metrics() -> None:

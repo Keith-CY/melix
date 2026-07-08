@@ -318,6 +318,10 @@ class EngineCore:
         # is 0, which the runtime must treat as "use the default", not block_size=1.
         if execution.cache_hints.preferred_block_size > 0:
             _routing_ext["_melix.block_size"] = str(execution.cache_hints.preferred_block_size)
+        if execution.cache_hints.cache_memory_budget_bytes > 0:
+            _routing_ext["_melix.cache_memory_budget_bytes"] = str(
+                execution.cache_hints.cache_memory_budget_bytes
+            )
         sampling = request.sampling
         reasoning = execution.reasoning
         request_id = execution.id.request_id
@@ -370,10 +374,10 @@ class EngineCore:
         prompt_tokens_default: int | None = None
         track_usage = bool(request.return_usage)
         completion_token_count = 0
-        finalized_prompt_tokens = 0
-        finalized_completion_tokens = 0
-        finalized_cached_prompt_tokens = 0
-        finalized_media_usage = _media_feature_usage_from_probe(None)
+        finalized_prompt_tokens: int = 0
+        finalized_completion_tokens: int = 0
+        finalized_cached_prompt_tokens: int = 0
+        finalized_media_usage: dict[str, int] | None = None
         usage_trailer_emitted = False
         last_token_event: RuntimeTokenEvent | None = None
         last_finish_reason = ""
@@ -598,7 +602,7 @@ class EngineCore:
                     prompt_tokens = int(last_token_event.prompt_tokens)
                 else:
                     if prompt_tokens_default is None:
-                        prompt_tokens_default = (
+                        prompt_tokens_default = int(
                             runtime.prompt_token_count(prompt)
                             if hasattr(runtime, "prompt_token_count")
                             else _whitespace_token_count(prompt)
@@ -707,17 +711,26 @@ class EngineCore:
                 parser_metrics["token_route_receipt_json"] = token_route_receipt_json
                 parser_metrics["allowed_tools_receipt_json"] = allowed_tools_receipt_json
             _apply_prompt_context_receipt_metrics(parser_metrics, execution_ext)
+            if finalized_media_usage:
+                finalization_usage = TextFinalizationUsage(
+                    prompt_tokens=finalized_prompt_tokens,
+                    completion_tokens=finalized_completion_tokens,
+                    cached_prompt_tokens=finalized_cached_prompt_tokens,
+                    **finalized_media_usage,
+                )
+            else:
+                finalization_usage = TextFinalizationUsage(
+                    prompt_tokens=finalized_prompt_tokens,
+                    completion_tokens=finalized_completion_tokens,
+                    cached_prompt_tokens=finalized_cached_prompt_tokens,
+                )
+
             finalization_receipt = finalize_text_response(
                 response_id=request_id,
                 created=created,
                 stream_mode=bool(request.stream),
                 finish_reason=finish_reason,
-                usage=TextFinalizationUsage(
-                    prompt_tokens=finalized_prompt_tokens,
-                    completion_tokens=finalized_completion_tokens,
-                    cached_prompt_tokens=finalized_cached_prompt_tokens,
-                    **finalized_media_usage,
-                ),
+                usage=finalization_usage,
                 usage_trailer_emitted=usage_trailer_emitted,
                 reasoning_text=assembled.reasoning_text,
                 tool_call_count=assembled.tool_call_count,

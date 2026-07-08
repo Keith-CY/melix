@@ -139,6 +139,12 @@ def test_parse_response_json_trims_closing_fence_with_trailing_space() -> None:
     assert event_extraction_module._parse_response_json(response) == {"events": []}
 
 
+def test_parse_response_json_trims_inline_closing_fence_with_trailing_space() -> None:
+    response = '```json\n{"events": []}```   '
+
+    assert event_extraction_module._parse_response_json(response) == {"events": []}
+
+
 def test_parse_response_json_accepts_leading_whitespace_before_fence() -> None:
     response = '  \n```json\n{"events": [{"event_type": "handoff"}]}\n```'
 
@@ -175,6 +181,28 @@ def test_parse_response_json_leading_whitespace_object_skips_fence_prefix_checks
     }
 
 
+def test_parse_response_json_direct_object_subclass_rejects_trailing_text() -> None:
+    class NoFencePrefixCheck(str):
+        def startswith(self, *args, **kwargs):  # pragma: no cover
+            raise AssertionError("direct object fast path should bypass fence checks")
+
+    response = NoFencePrefixCheck('{"events": []} trailing')
+
+    with pytest.raises(json.JSONDecodeError, match="Extra data"):
+        event_extraction_module._parse_response_json(response)
+
+
+def test_parse_response_json_leading_object_subclass_rejects_trailing_text() -> None:
+    class NoFencePrefixCheck(str):
+        def startswith(self, *args, **kwargs):  # pragma: no cover
+            raise AssertionError("leading object fast path should bypass fence checks")
+
+    response = NoFencePrefixCheck('  {"events": []} trailing')
+
+    with pytest.raises(json.JSONDecodeError, match="Extra data"):
+        event_extraction_module._parse_response_json(response)
+
+
 def test_parse_response_json_leading_whitespace_object_rejects_trailing_text() -> None:
     response = '  {"events": []} trailing'
 
@@ -195,6 +223,16 @@ def test_parse_response_json_accepts_direct_object_fast_path() -> None:
     assert event_extraction_module._parse_response_json(response) == {
         "events": [{"event_type": "direct"}]
     }
+
+
+def test_parse_response_json_object_fast_paths_skip_json_loads(monkeypatch) -> None:
+    def fail_json_loads(_: str):  # pragma: no cover - regression guard
+        raise AssertionError("object fast paths should use raw_decode directly")
+
+    monkeypatch.setattr(event_extraction_module, "_JSON_LOADS", fail_json_loads)
+
+    assert event_extraction_module._parse_response_json('{"events": []}  ') == {"events": []}
+    assert event_extraction_module._parse_response_json('  {"events": []}  ') == {"events": []}
 
 
 def test_parse_response_json_rejects_unfenced_closing_fence() -> None:

@@ -385,6 +385,7 @@ message CacheHints {
   uint32 preferred_block_size = 9;
   CacheRestorePlan restore_plan = 10;
   CacheMode cache_mode = 11;
+  uint64 cache_memory_budget_bytes = 12;
 }
 
 message RequestIdentity {

@@ -824,10 +824,15 @@ def test_project_local_job_session_followup_uses_narrow_receipt_copies(
     assert projection_summary["details"]["coords"] is not (
         claim_summary["details"]["coords"]
     )
+    assert projection_summary["details"]["coords"][1] is not (
+        claim_summary["details"]["coords"][1]
+    )
     projection_summary["summary"] = "Downstream mutation."
     projection_summary["details"]["items"][0]["name"] = "mutated"
+    projection_summary["details"]["coords"][1]["y"] = "mutated"
     assert claim_summary["summary"] == "Redacted completion summary."
     assert claim_summary["details"]["items"][0]["name"] == "artifact"
+    assert claim_summary["details"]["coords"][1]["y"] == "z"
     assert projection.untrusted_context_receipts is not (
         projection.claim.prompt_context.untrusted_context_receipts
     )
@@ -848,15 +853,26 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
     }
 
     copied = local_job_continuation_module._copy_json_like_value(
-        {"summary": scalar_payload, "items": [scalar_payload]}
+        {
+            "summary": scalar_payload,
+            "items": [scalar_payload],
+            "triple": ("a", scalar_payload, 3),
+        }
     )
 
-    assert copied == {"summary": scalar_payload, "items": [scalar_payload]}
+    assert copied == {
+        "summary": scalar_payload,
+        "items": [scalar_payload],
+        "triple": ("a", scalar_payload, 3),
+    }
     assert copied is not scalar_payload
     assert copied["summary"] is not scalar_payload
     assert copied["items"] is not scalar_payload
     assert copied["items"][0] is not scalar_payload
+    assert copied["triple"][1] is not scalar_payload
     assert copied["summary"]["text"] is scalar_text
+    assert copied["triple"][0] == "a"
+    assert copied["triple"][2] == 3
     copied["summary"]["text"] = "downstream mutation"
     assert scalar_payload["text"] == scalar_text
 
