@@ -322,6 +322,9 @@ class EngineCore:
             _routing_ext["_melix.cache_memory_budget_bytes"] = str(
                 execution.cache_hints.cache_memory_budget_bytes
             )
+        active_kv_quant_profile = str(execution.acceleration.active_kv_quant_profile or "").strip()
+        if active_kv_quant_profile:
+            _routing_ext["_melix.active_kv_quant_profile"] = active_kv_quant_profile
         sampling = request.sampling
         reasoning = execution.reasoning
         request_id = execution.id.request_id

@@ -875,6 +875,8 @@ def test_generate_routing_ext_preserves_client_ext_and_positive_block_size() -> 
     request.execution.scope.revision = "revision-routing-custom"
     request.execution.ext["client-key"] = "client-value"
     request.execution.cache_hints.preferred_block_size = 16
+    request.execution.acceleration.mode = common_pb2.ACCELERATION_MODE_ACTIVE_KV_QUANTIZED
+    request.execution.acceleration.active_kv_quant_profile = "q4:g64"
 
     events = list(inference_service.Generate(request, context=None))
 
@@ -886,7 +888,8 @@ def test_generate_routing_ext_preserves_client_ext_and_positive_block_size() -> 
             "_melix.session_id": "session-routing-custom",
             "_melix.model_id": "model-routing-custom",
             "_melix.model_revision": "revision-routing-custom",
-            "_melix.acceleration_mode": "0",
+            "_melix.acceleration_mode": "4",
+            "_melix.active_kv_quant_profile": "q4:g64",
             "_melix.cache_mode": "0",
             "_melix.block_size": "16",
         }
@@ -2414,12 +2417,12 @@ def test_text_native_mtp_parser_metrics_fallback_reason_surfaced() -> None:
             text="done",
             cache_hit_mode="none",
             recovered_prefix_tokens=0,
-            cache_fallback_reason="active_kv_excluded",
+            cache_fallback_reason="kv_quant_profile_missing",
         )
     )
     assert metrics["cache_hit_mode"] == "none"
     assert metrics["recovered_prefix_tokens"] == "0"
-    assert metrics["cache_fallback_reason"] == "active_kv_excluded"
+    assert metrics["cache_fallback_reason"] == "kv_quant_profile_missing"
 
 
 def test_generate_forwards_positive_block_size_to_runtime() -> None:

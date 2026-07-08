@@ -1,6 +1,6 @@
 # Text Prefix KV Cache Tiering
 
-_Last updated: 2026-07-06_
+_Last updated: 2026-07-09_
 
 This runbook describes session-scoped prefix KV reuse for the Python text
 worker, including the hot (in-memory) tier and the opt-in cold (disk) tier.
@@ -20,9 +20,10 @@ Two decode paths share the store:
   `prompt_cache` and reuses/stores prefix state the same way
 
 The reuse contract is identical for both paths: entries hold prompt-only
-state keyed by session, LCP hits are block-aligned, rotating-cache and
-active-KV-quantized sessions are excluded, and a failed trim falls back to a
-full prefill rather than reusing misaligned state.
+state keyed by session, LCP hits are block-aligned, rotating-cache sessions
+are excluded, active-KV-quantized sessions are keyed by an exact active KV
+quantization profile, and a failed trim falls back to a full prefill rather
+than reusing misaligned state.
 
 ## Hot tier
 
@@ -62,7 +63,8 @@ Terminal token events carry:
 - `cache_hit_tier` — `hot` or `cold` on a hit
 - `recovered_prefix_tokens` — prompt tokens served from reused state
 - `cache_fallback_reason` — why reuse did not happen (`no_reusable_prefix`,
-  `active_kv_excluded`, `cache_reuse_unavailable`, …)
+  `kv_quant_profile_missing`, `kv_quant_profile_mismatch`,
+  `cache_reuse_unavailable`, …)
 
 `PrefixBlockStore.stats()` exposes advisory counters: hot/cold hits, misses,
 promotions, demotions, demotion failures, cold restore failures, cold entry
@@ -70,8 +72,11 @@ count and bytes.
 
 ## Boundaries
 
-- KV-quantized (`ACCELERATION_MODE_ACTIVE_KV_QUANTIZED`) sessions are still
-  excluded from both tiers (#2607 tracks lifting this).
+- KV-quantized (`ACCELERATION_MODE_ACTIVE_KV_QUANTIZED`) sessions are eligible
+  in both tiers only when the request and stored snapshot carry the same
+  active KV quantization profile. Missing profiles fall back with
+  `kv_quant_profile_missing`; profile mismatches fall back with
+  `kv_quant_profile_mismatch`.
 - The Swift text worker's L1/L2 cache stores remain metadata-level (#2601).
 - Cold entries are keyed by exact model id + revision; a model update
   invalidates them naturally via LCP mismatch.
