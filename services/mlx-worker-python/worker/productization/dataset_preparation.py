@@ -1514,7 +1514,7 @@ def _record(
     normalized: bool = False,
 ) -> dict[str, Any]:
     normalized_text = text if normalized else _normalize_line_endings(text)
-    normalized_bytes = normalized_text.encode("utf-8")
+    content_sha256, byte_size = _record_content_digest_and_size(normalized_text)
     record_metadata = dict(metadata) if metadata else {}
     sha256 = hashlib.sha256
     path_name = path.name
@@ -1523,12 +1523,18 @@ def _record(
         "source_id": sha256(path_key).hexdigest()[:16],
         "source_uri": path_name,
         "source_kind": source_kind,
-        "content_sha256": sha256(normalized_bytes).hexdigest(),
-        "byte_size": len(normalized_bytes),
+        "content_sha256": content_sha256,
+        "byte_size": byte_size,
         "record_count": 1,
         "text": normalized_text,
         "metadata": record_metadata,
     }
+
+
+@lru_cache(maxsize=4096)
+def _record_content_digest_and_size(normalized_text: str) -> tuple[str, int]:
+    normalized_bytes = normalized_text.encode("utf-8")
+    return hashlib.sha256(normalized_bytes).hexdigest(), len(normalized_bytes)
 
 
 def _failure_id(reason: str, name: str) -> str:
