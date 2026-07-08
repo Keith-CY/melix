@@ -1321,6 +1321,16 @@ class AutoMLXBackend:
                 _block_size = _DEFAULT_BLOCK_SIZE
             if _block_size < 1:
                 _block_size = _DEFAULT_BLOCK_SIZE
+        _raw_cache_memory_budget = str(_ext.get("_melix.cache_memory_budget_bytes", "") or "").strip()
+        if _raw_cache_memory_budget in ("", "0"):
+            _cache_memory_budget_bytes = 0
+        else:
+            try:
+                _cache_memory_budget_bytes = int(_raw_cache_memory_budget)
+            except (ValueError, TypeError):
+                _cache_memory_budget_bytes = 0
+            if _cache_memory_budget_bytes < 1:
+                _cache_memory_budget_bytes = 0
         _acceleration_mode = str(_ext.get("_melix.acceleration_mode", "") or "")
         # Cache mode flows from the request; unspecified ("", "0") stores as a
         # standard tiered cache. A rotating value is preserved so find_lcp's
@@ -1427,17 +1437,19 @@ class AutoMLXBackend:
                 # conversations accumulate context even after an LCP warm hit.
                 _snapshot = _clone_cache_snapshot(prompt_cache)
                 if _snapshot is not None:
-                    _prefix_store.put(
-                        session_id=_session_id,
-                        token_ids=list(prompt_tokens),
-                        cache_snapshot=_snapshot,
-                        cache_mode=_cache_mode,
-                        model_id=_model_id,
-                        model_revision=_model_revision,
-                        block_size=_block_size,
-                        total_bytes=_estimate_cache_bytes(prompt_cache),
-                        acceleration_mode=_acceleration_mode,
-                    )
+                    _snapshot_bytes = _estimate_cache_bytes(prompt_cache)
+                    if _cache_memory_budget_bytes <= 0 or _snapshot_bytes <= _cache_memory_budget_bytes:
+                        _prefix_store.put(
+                            session_id=_session_id,
+                            token_ids=list(prompt_tokens),
+                            cache_snapshot=_snapshot,
+                            cache_mode=_cache_mode,
+                            model_id=_model_id,
+                            model_revision=_model_revision,
+                            block_size=_block_size,
+                            total_bytes=_snapshot_bytes,
+                            acceleration_mode=_acceleration_mode,
+                        )
 
             batch_insert_started_at = time.perf_counter()
             inserted = batch_generator.insert(

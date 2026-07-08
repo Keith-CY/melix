@@ -2409,7 +2409,7 @@ def test_text_native_mtp_parser_metrics_fallback_reason_surfaced() -> None:
 
 
 def test_generate_forwards_positive_block_size_to_runtime() -> None:
-    """A client-set preferred_block_size must reach the runtime via _melix.block_size."""
+    """Client-set cache hints must reach the runtime routing metadata."""
     runtime = UsageCountingRuntime(prompt_tokens=0)
     captured: dict[str, str] = {}
     original = runtime.generate_tokens
@@ -2425,7 +2425,10 @@ def test_generate_forwards_positive_block_size_to_runtime() -> None:
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(request_id="req-blocksize"),
             model_handle=model_handle,
-            cache_hints=common_pb2.CacheHints(preferred_block_size=32),
+            cache_hints=common_pb2.CacheHints(
+                preferred_block_size=32,
+                cache_memory_budget_bytes=2048,
+            ),
         ),
         messages=[common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="hi")])],
         sampling=common_pb2.SamplingConfig(max_output_tokens=2),
@@ -2433,6 +2436,7 @@ def test_generate_forwards_positive_block_size_to_runtime() -> None:
     )
     list(inference_service.Generate(request, context=None))
     assert captured.get("_melix.block_size") == "32"
+    assert captured.get("_melix.cache_memory_budget_bytes") == "2048"
 
 
 def test_generate_omits_block_size_when_unset() -> None:

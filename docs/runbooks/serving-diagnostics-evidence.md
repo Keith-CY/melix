@@ -270,6 +270,48 @@ required key is missing or the token count is invalid, the writer leaves the
 original metadata in place and does not synthesize a partial top-level
 `serving_acceleration_config` receipt.
 
+When upstream serving code has evaluated feature-composition guardrails for
+speculative decoding combined with disk-backed serving or explicit expert
+streaming, `effective-config.json` should also include a
+`feature_composition_guardrail` receipt. This receipt is diagnostics-only: it
+records the already-applied worker request policy and must not probe storage,
+load a sidecar, or re-run admission during bundle writing.
+
+`feature_composition_guardrail` fields:
+
+- `schema_version` - `melix.feature_composition_guardrail.v1`.
+- `composition` - `ssd_expert_streaming_x_speculative_decode` when the
+  composition is active, otherwise `none`.
+- `decision` - one of `accept`, `auto_cap_draft_tokens`,
+  `tighten_cache_budget`, `auto_cap_draft_tokens_and_tighten_cache_budget`, or
+  `refuse_unsafe_composition`.
+- `requested_num_draft_tokens` - caller or gateway requested speculative draft
+  token count.
+- `effective_num_draft_tokens` - token count admitted for the worker request.
+- `resource_fanout_estimate` - estimated serving fan-out after the guardrail.
+- `requested_cache_budget_bytes` - model requested cache budget.
+- `effective_cache_budget_bytes` - cache budget admitted after tightening. When
+  this is lower than `requested_cache_budget_bytes`, it has been applied to the
+  worker request through `execution.cache_hints.cache_memory_budget_bytes`.
+- `guardrail_reason` - typed reason for the decision, or `none`.
+
+Diagnostics writers may derive `feature_composition_guardrail` from namespaced
+metadata when all of these keys are present:
+
+- `melix.acceleration.feature_guardrail.schema_version`
+- `melix.acceleration.feature_guardrail.composition`
+- `melix.acceleration.feature_guardrail.decision`
+- `melix.acceleration.feature_guardrail.requested_num_draft_tokens`
+- `melix.acceleration.feature_guardrail.effective_num_draft_tokens`
+- `melix.acceleration.feature_guardrail.resource_fanout_estimate`
+- `melix.acceleration.feature_guardrail.requested_cache_budget_bytes`
+- `melix.acceleration.feature_guardrail.effective_cache_budget_bytes`
+- `melix.acceleration.feature_guardrail.guardrail_reason`
+
+The numeric guardrail fields must be decimal values. If any required key is
+missing or malformed, the writer leaves the original metadata in place and does
+not synthesize a partial top-level receipt.
+
 When upstream serving admission has evaluated dry-run context and batch memory
 fit before worker load or decode, `effective-config.json` should also include a
 `serving_memory_admission` receipt. This receipt is diagnostics-only: it records

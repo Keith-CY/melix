@@ -1683,6 +1683,8 @@ public nonisolated struct Melix_Worker_V1_CacheHints: Sendable {
 
   public var cacheMode: Melix_Worker_V1_CacheMode = .unspecified
 
+  public var cacheMemoryBudgetBytes: UInt64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3668,7 +3670,7 @@ nonisolated extension Melix_Worker_V1_ChatMessage: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Melix_Worker_V1_CacheHints: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheHints"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}allow_l1\0\u{3}allow_l2\0\u{3}persist_l2\0\u{3}prefer_hot_prefix\0\u{3}save_boundary_snapshot\0\u{3}restore_snapshot_id\0\u{3}pin_prefix_ids\0\u{3}cache_policy\0\u{3}preferred_block_size\0\u{3}restore_plan\0\u{3}cache_mode\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}allow_l1\0\u{3}allow_l2\0\u{3}persist_l2\0\u{3}prefer_hot_prefix\0\u{3}save_boundary_snapshot\0\u{3}restore_snapshot_id\0\u{3}pin_prefix_ids\0\u{3}cache_policy\0\u{3}preferred_block_size\0\u{3}restore_plan\0\u{3}cache_mode\0\u{3}cache_memory_budget_bytes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3687,6 +3689,7 @@ nonisolated extension Melix_Worker_V1_CacheHints: SwiftProtobuf.Message, SwiftPr
       case 9: try { try decoder.decodeSingularUInt32Field(value: &self.preferredBlockSize) }()
       case 10: try { try decoder.decodeSingularMessageField(value: &self._restorePlan) }()
       case 11: try { try decoder.decodeSingularEnumField(value: &self.cacheMode) }()
+      case 12: try { try decoder.decodeSingularUInt64Field(value: &self.cacheMemoryBudgetBytes) }()
       default: break
       }
     }
@@ -3730,6 +3733,9 @@ nonisolated extension Melix_Worker_V1_CacheHints: SwiftProtobuf.Message, SwiftPr
     if self.cacheMode != .unspecified {
       try visitor.visitSingularEnumField(value: self.cacheMode, fieldNumber: 11)
     }
+    if self.cacheMemoryBudgetBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.cacheMemoryBudgetBytes, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3745,6 +3751,7 @@ nonisolated extension Melix_Worker_V1_CacheHints: SwiftProtobuf.Message, SwiftPr
     if lhs.preferredBlockSize != rhs.preferredBlockSize {return false}
     if lhs._restorePlan != rhs._restorePlan {return false}
     if lhs.cacheMode != rhs.cacheMode {return false}
+    if lhs.cacheMemoryBudgetBytes != rhs.cacheMemoryBudgetBytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
