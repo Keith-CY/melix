@@ -1055,8 +1055,9 @@ _RUNNER_SCRIPT = textwrap.dedent(
         def _load_config(
             config_path: Path,
             _json_loads=json.loads,
+            _read_bytes=Path.read_bytes,
         ) -> dict[str, object]:
-            payload = _json_loads(config_path.read_bytes())
+            payload = _json_loads(_read_bytes(config_path))
             if not isinstance(payload, dict):
                 raise TypeError("runner config must be a JSON object")
             return payload
