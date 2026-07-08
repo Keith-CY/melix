@@ -114,6 +114,23 @@ def test_put_empty_session_id_is_ignored() -> None:
     assert store.session_count() == 0
 
 
+def test_put_active_kv_without_profile_is_ignored() -> None:
+    store = PrefixBlockStore()
+    inserted = store.put(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        total_bytes=1,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+    )
+    assert inserted is None
+    assert store.session_count() == 0
+
+
 def test_put_returns_none_when_new_entry_is_immediately_evicted() -> None:
     store = PrefixBlockStore(max_memory_bytes=0, min_session_count=0)
     inserted = store.put(

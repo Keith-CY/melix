@@ -250,9 +250,7 @@ class ColdPrefixStore:
             meta_active_kv = _is_active_kv_quant_mode(meta.acceleration_mode)
             if meta_active_kv != request_active_kv:
                 continue
-            if meta_active_kv and (
-                _normalize_kv_quant_profile(meta.kv_quant_profile) != request_kv_quant_profile
-            ):
+            if meta_active_kv and meta.kv_quant_profile != request_kv_quant_profile:
                 continue
             stored_blocks = _split_blocks(meta.token_ids, bs)
             match_len = _count_matching_blocks(new_blocks, stored_blocks) * bs
@@ -291,7 +289,7 @@ class ColdPrefixStore:
                 continue
             if not _is_active_kv_quant_mode(meta.acceleration_mode):
                 continue
-            if _normalize_kv_quant_profile(meta.kv_quant_profile) == request_kv_quant_profile:
+            if meta.kv_quant_profile == request_kv_quant_profile:
                 continue
             stored_blocks = _split_blocks(meta.token_ids, bs)
             if _count_matching_blocks(new_blocks, stored_blocks) * bs >= bs:
@@ -360,7 +358,9 @@ class ColdPrefixStore:
                     block_size=max(1, int(payload.get("block_size", 1))),
                     total_bytes=int(payload.get("total_bytes", 0)),
                     acceleration_mode=str(payload.get("acceleration_mode", "")),
-                    kv_quant_profile=str(payload.get("kv_quant_profile", "")),
+                    kv_quant_profile=_normalize_kv_quant_profile(
+                        str(payload.get("kv_quant_profile", ""))
+                    ),
                     stored_at=float(payload.get("stored_at", 0.0)),
                     snapshot_path=snapshot_path,
                     meta_path=meta_path,
@@ -491,6 +491,9 @@ class PrefixBlockStore:
         """Store a prefill result. Replaces any existing entry for session_id."""
         if not session_id:
             return None
+        normalized_profile = _normalize_kv_quant_profile(kv_quant_profile)
+        if _is_active_kv_quant_mode(acceleration_mode) and not normalized_profile:
+            return None
         entry = _BlockEntry(
             session_id=session_id,
             token_ids=list(token_ids),
@@ -501,7 +504,7 @@ class PrefixBlockStore:
             block_size=max(1, block_size),
             total_bytes=total_bytes,
             acceleration_mode=acceleration_mode,
-            kv_quant_profile=_normalize_kv_quant_profile(kv_quant_profile),
+            kv_quant_profile=normalized_profile,
         )
         with self._lock:
             return self._store_entry_locked(entry, acquire=False)
@@ -590,9 +593,7 @@ class PrefixBlockStore:
 
             stored_blocks = _split_blocks(entry.token_ids, bs)
             match_len = _count_matching_blocks(new_blocks, stored_blocks) * bs
-            if entry_active_kv and (
-                _normalize_kv_quant_profile(entry.kv_quant_profile) != request_kv_quant_profile
-            ):
+            if entry_active_kv and entry.kv_quant_profile != request_kv_quant_profile:
                 if match_len >= bs:
                     kv_quant_profile_mismatch = True
                 continue
