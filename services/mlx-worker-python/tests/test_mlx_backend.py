@@ -2664,6 +2664,7 @@ def test_generate_native_mtp_lcp_warm_path_uses_restored_cache(
     final = events[-1]
     assert final.cache_hit_mode in ("partial", "exact")
     _assert_standard_path_warm_partial_hit_replays_suffix_with_restored_cache(monkeypatch)
+    _assert_standard_path_exact_hit_replays_final_token(monkeypatch)
 
 
 def _build_lcp_backend(monkeypatch, *, store, clone_fn, responses, encode_tokens=None,
@@ -3064,7 +3065,7 @@ def _build_standard_cache_backend(
     def fake_load(model_source: str, **kwargs):
         return SimpleNamespace(), FakeTokenizer()
 
-    def make_response(prompt):
+    def make_response(prompt, *, finish_reason: str | None):
         return SimpleNamespace(
             text="x",
             raw_text="x",
@@ -3075,7 +3076,7 @@ def _build_standard_cache_backend(
             prompt_tps=1.0,
             generation_tps=1.0,
             peak_memory=0.0,
-            finish_reason="stop",
+            finish_reason=finish_reason,
         )
 
     if stream_supports_prompt_cache:
@@ -3088,7 +3089,8 @@ def _build_standard_cache_backend(
                     "max_tokens": max_tokens,
                 }
             )
-            yield make_response(prompt)
+            yield make_response(prompt, finish_reason=None)
+            yield make_response(prompt, finish_reason="stop")
 
     else:
 
@@ -3100,7 +3102,8 @@ def _build_standard_cache_backend(
                     "max_tokens": max_tokens,
                 }
             )
-            yield make_response(prompt)
+            yield make_response(prompt, finish_reason=None)
+            yield make_response(prompt, finish_reason="stop")
 
     backend = mlx_text_runtime_module.AutoMLXBackend(
         load_fn=fake_load,
@@ -3147,6 +3150,8 @@ def _assert_standard_path_session_cache_miss_prefills_and_stores(
     assert prefill_calls[0]["restore_cache"] is None
     assert stream_calls[0]["prompt"] == [80]
     assert stream_calls[0]["prompt_cache"] is not None
+    assert events[0].finish_reason is None
+    assert events[0].cache_hit_tier is None
     assert events[-1].cache_hit_mode == "none"
     assert events[-1].recovered_prefix_tokens == 0
     assert events[-1].cache_fallback_reason == "no_reusable_prefix"
@@ -3204,6 +3209,59 @@ def _assert_standard_path_warm_partial_hit_replays_suffix_with_restored_cache(
     assert stream_calls[0]["prompt"] == [99]
     assert events[-1].cache_hit_mode == "partial"
     assert events[-1].recovered_prefix_tokens == 4
+
+
+def _assert_standard_path_exact_hit_replays_final_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    store.put(
+        session_id="standard-exact",
+        token_ids=[10, 20, 30, 40, 50, 60, 70, 80],
+        cache_snapshot=[SimpleNamespace(state=[])],
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="test-model",
+        model_revision="v1",
+        block_size=4,
+        total_bytes=512,
+    )
+    trim_calls = _install_fake_trim(monkeypatch, returns=1)
+    stream_calls: list[dict] = []
+    prefill_calls: list[dict] = []
+    backend, loaded = _build_standard_cache_backend(
+        monkeypatch,
+        store=store,
+        encode_tokens=[10, 20, 30, 40, 50, 60, 70, 80],
+        stream_calls=stream_calls,
+        prefill_calls=prefill_calls,
+    )
+
+    events = list(
+        backend.generate_tokens(
+            loaded,
+            "hello world",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            Event(),
+            execution_ext={
+                "_melix.session_id": "standard-exact",
+                "_melix.model_id": "test-model",
+                "_melix.model_revision": "v1",
+                "_melix.block_size": "4",
+            },
+        )
+    )
+
+    assert trim_calls == [(prefill_calls[0]["restore_cache"], 1)]
+    assert prefill_calls[0]["restore_cache"] is not None
+    assert prefill_calls[0]["restore_token_count"] == 7
+    assert stream_calls[0]["prompt"] == [80]
+    assert events[0].cache_hit_mode is None
+    assert events[0].cache_hit_tier is None
+    assert events[-1].cache_hit_mode == "exact"
+    assert events[-1].cache_hit_tier == "hot"
+    assert events[-1].recovered_prefix_tokens == 7
 
 
 def _assert_standard_path_trim_failure_releases_and_falls_back(

@@ -109,7 +109,24 @@ def test_put_replaces_existing() -> None:
 
 def test_put_empty_session_id_is_ignored() -> None:
     store = PrefixBlockStore()
-    _put(store, "", list(range(8)))
+    assert _put(store, "", list(range(8))) is None
+    assert store.session_count() == 0
+
+
+def test_put_returns_none_when_new_entry_is_immediately_evicted() -> None:
+    store = PrefixBlockStore(max_memory_bytes=0, min_session_count=0)
+    inserted = store.put(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        total_bytes=1,
+        acceleration_mode="",
+    )
+    assert inserted is None
     assert store.session_count() == 0
 
 
@@ -513,3 +530,134 @@ def test_clone_cache_snapshot_mutation_is_independent() -> None:
     assert cloned is not None
     assert cloned is not original
     assert cloned[0] is not layer
+
+
+def test_clone_cache_snapshot_copies_mutable_kv_buffers() -> None:
+    from types import SimpleNamespace
+
+    layer = SimpleNamespace(keys=[["k0"]], values=[["v0"]], offset=1)
+
+    cloned = clone_cache_snapshot([layer])
+
+    assert cloned is not None
+    assert cloned[0] is not layer
+    cloned[0].keys[0].append("k1")
+    cloned[0].values[0].append("v1")
+    assert layer.keys == [["k0"]]
+    assert layer.values == [["v0"]]
+
+
+def test_clone_cache_snapshot_copies_mlx_array_buffers_when_available() -> None:
+    from types import SimpleNamespace
+
+    mx = pytest.importorskip("mlx.core")
+    layer = SimpleNamespace(keys=mx.array([1, 2, 3]), values=mx.array([4, 5, 6]), offset=1)
+
+    cloned = clone_cache_snapshot([layer])
+
+    assert cloned is not None
+    layer.keys[0] = 9
+    cloned[0].values[0] = 8
+    mx.eval(layer.keys, layer.values, cloned[0].keys, cloned[0].values)
+    assert layer.keys.tolist() == [9, 2, 3]
+    assert cloned[0].keys.tolist() == [1, 2, 3]
+    assert layer.values.tolist() == [4, 5, 6]
+    assert cloned[0].values.tolist() == [8, 5, 6]
+
+
+def test_clone_cache_snapshot_copies_container_layers() -> None:
+    original = [(["t0"],), {"s0"}, bytearray(b"ab")]
+
+    cloned = clone_cache_snapshot(original)
+
+    assert cloned is not None
+    cloned[0][0].append("t1")
+    cloned[1].add("s1")
+    cloned[2][0] = ord("z")
+    assert original == [(["t0"],), {"s0"}, bytearray(b"ab")]
+
+
+def test_clone_cache_snapshot_uses_copy_method_for_buffer_values() -> None:
+    from types import SimpleNamespace
+
+    class CopyableBuffer:
+        def __init__(self, values: list[str]) -> None:
+            self.values = values
+
+        def copy(self) -> "CopyableBuffer":
+            return CopyableBuffer(list(self.values))
+
+    layer = SimpleNamespace(keys=CopyableBuffer(["k0"]), values=None)
+
+    cloned = clone_cache_snapshot([layer])
+
+    assert cloned is not None
+    cloned[0].keys.values.append("k1")
+    assert layer.keys.values == ["k0"]
+
+
+def test_clone_cache_snapshot_falls_back_after_copy_method_failure() -> None:
+    from types import SimpleNamespace
+
+    class CopyRaisesBuffer:
+        def __init__(self, values: list[str]) -> None:
+            self.values = values
+
+        def copy(self) -> Any:
+            raise RuntimeError("copy failed")
+
+        def __deepcopy__(self, memo: dict[int, Any]) -> "CopyRaisesBuffer":
+            return CopyRaisesBuffer(list(self.values))
+
+    layer = SimpleNamespace(keys=CopyRaisesBuffer(["k0"]), values=None)
+
+    cloned = clone_cache_snapshot([layer])
+
+    assert cloned is not None
+    cloned[0].keys.values.append("k1")
+    assert layer.keys.values == ["k0"]
+
+
+def test_clone_cache_snapshot_keeps_value_when_all_copy_paths_fail() -> None:
+    from types import SimpleNamespace
+
+    class UncopyableBuffer:
+        def copy(self) -> "UncopyableBuffer":
+            return self
+
+        def __deepcopy__(self, memo: dict[int, Any]) -> Any:
+            raise RuntimeError("deepcopy failed")
+
+    buffer = UncopyableBuffer()
+    layer = SimpleNamespace(keys=buffer, values=None)
+
+    cloned = clone_cache_snapshot([layer])
+
+    assert cloned is not None
+    assert cloned[0].keys is buffer
+
+
+def test_clone_cache_snapshot_tolerates_unreadable_and_readonly_layer_attrs() -> None:
+    class ReadOnlyLayer:
+        keys = None
+
+        @property
+        def state(self) -> Any:
+            raise RuntimeError("state unavailable")
+
+        @property
+        def values(self) -> list[list[str]]:
+            return [["v0"]]
+
+    cloned = clone_cache_snapshot([ReadOnlyLayer()])
+
+    assert cloned is not None
+    assert len(cloned) == 1
+
+
+def test_clone_cache_snapshot_returns_none_when_layer_copy_fails() -> None:
+    class UncopyableLayer:
+        def __reduce_ex__(self, protocol: int) -> Any:
+            raise RuntimeError("copy failed")
+
+    assert clone_cache_snapshot([UncopyableLayer()]) is None

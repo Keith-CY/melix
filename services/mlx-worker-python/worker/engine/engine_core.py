@@ -137,6 +137,7 @@ def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str
         event.cache_hit_mode is not None
         or event.recovered_prefix_tokens is not None
         or event.cache_fallback_reason is not None
+        or event.cache_hit_tier is not None
     )
     if not has_timing and not has_speculative and not has_cache:
         return {}
@@ -159,6 +160,7 @@ def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str
         "cache_hit_mode": event.cache_hit_mode,
         "recovered_prefix_tokens": event.recovered_prefix_tokens,
         "cache_fallback_reason": event.cache_fallback_reason,
+        "cache_hit_tier": event.cache_hit_tier,
     }
     return {key: str(value) for key, value in metric_fields.items() if value is not None}
 
