@@ -733,15 +733,28 @@ def test_copy_json_list_uses_literal_copy_for_scalar_lists(
     assert type(copied) is list
 
 
-def test_copy_json_list_still_copies_nested_mutable_items() -> None:
-    source = ["agentic", {"labels": ["trajectory"]}]
-
+@pytest.mark.parametrize(
+    "source,nested_index",
+    [
+        (["agentic", {"labels": ["trajectory"]}], 1),
+        (["agentic", "trajectory", "quality", 3, True, None, {"score": [0.75]}], 6),
+    ],
+)
+def test_copy_json_list_still_copies_nested_mutable_items(
+    source: list[object],
+    nested_index: int,
+) -> None:
     copied = trajectory_provenance_module._copy_json_list(source)
 
     assert copied == source
     assert copied is not source
-    assert copied[1] is not source[1]
-    assert copied[1]["labels"] is not source[1]["labels"]
+    assert copied[nested_index] is not source[nested_index]
+    key = "labels" if nested_index == 1 else "score"
+    copied_nested = copied[nested_index]
+    source_nested = source[nested_index]
+    assert isinstance(copied_nested, dict)
+    assert isinstance(source_nested, dict)
+    assert copied_nested[key] is not source_nested[key]
 
 
 @pytest.mark.parametrize(
