@@ -166,6 +166,8 @@ def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str
 
 
 def _non_negative_int(value: object) -> int:
+    if type(value) is int:
+        return value if value > 0 else 0
     try:
         return max(0, int(value or 0))
     except (TypeError, ValueError):
