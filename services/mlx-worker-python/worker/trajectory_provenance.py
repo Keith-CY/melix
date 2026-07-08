@@ -343,7 +343,6 @@ def _trajectory_provenance_from_snapshot_manifest(
 def load_trajectory_provenance_from_snapshot_manifest(
     manifest_path: Path | str | os.PathLike[str],
 ) -> dict[str, Any]:
-    read_bytes = _PATH_READ_BYTES
     open_file = _OPEN
     loads = _JSON_LOADS
     extract_provenance = _trajectory_provenance_from_snapshot_manifest
@@ -358,14 +357,15 @@ def load_trajectory_provenance_from_snapshot_manifest(
     else:
         manifest_path = Path(manifest_path)
         manifest_path_text = _STR(manifest_path)
-        payload = loads(read_bytes(manifest_path))
-    if type(payload) is dict:
+        payload = loads(_PATH_READ_BYTES(manifest_path))
+    payload_type = type(payload)
+    if payload_type is dict:
         return extract_provenance(
             payload,
             snapshot_manifest_path=manifest_path_text,
             copy_nested=False,
         )
-    if not isinstance(payload, dict):
+    if payload_type is not dict and not isinstance(payload, dict):
         return {}
     return extract_provenance(
         payload,

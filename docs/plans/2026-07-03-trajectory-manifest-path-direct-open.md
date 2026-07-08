@@ -27,3 +27,12 @@ is locally runnable on Linux.
 Local Linux validation must include the registered probe output with old/new
 mean timings and a changed-scope coverage report for the touched files. GitHub
 Actions PR-scoped performance remains the merge gate after the PR is opened.
+
+## 2026-07-08 follow-up: hot direct-open binding trimming
+
+This follow-up keeps the same Python-only boundary and registered
+`trajectory-manifest-json-load` probe. The manifest loader no longer binds the
+`Path.read_bytes` helper on the common direct-open string/`Path` inputs, and it
+reuses the decoded payload type check before deciding whether to take the exact
+`dict`, dict-subclass fallback, or non-dict empty path. Accepted manifest shapes,
+path-like fallback support, and provenance field semantics remain unchanged.
