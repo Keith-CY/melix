@@ -52,6 +52,31 @@ def _install_fake_native_mtp(
     monkeypatch.setattr(worker_runtime_pkg, "native_mtp", FakeNativeMTP, raising=False)
 
 
+def _native_mtp_receipt(metadata: dict[str, str]) -> dict[str, object]:
+    receipt = json.loads(metadata["melix.native_mtp.receipt_json"])
+    assert receipt["schema_version"] == metadata["melix.native_mtp.receipt.schema"]
+    assert receipt["status"] == metadata["melix.native_mtp.receipt.status"]
+    assert receipt["mode"] == metadata["melix.native_mtp.receipt.mode"]
+    assert receipt["fallback_reason"] == metadata["melix.native_mtp.receipt.fallback_reason"]
+    assert receipt["source"] == metadata["melix.native_mtp.receipt.source"]
+    assert receipt["family"] == metadata["melix.native_mtp.receipt.family"]
+    assert str(receipt["weight_count"]) == metadata["melix.native_mtp.receipt.weight_count"]
+    assert str(receipt["effective_depth"]) == metadata["melix.native_mtp.receipt.effective_depth"]
+    assert receipt["depth_source"] == metadata["melix.native_mtp.receipt.depth_source"]
+    assert receipt["batch_shape"] == metadata["melix.native_mtp.receipt.batch_shape"]
+    assert receipt["hardware_gate"] == metadata["melix.native_mtp.receipt.hardware_gate"]
+    assert receipt["request_gate"] == metadata["melix.native_mtp.receipt.request_gate"]
+    assert receipt["runtime_scope"] == metadata["melix.native_mtp.receipt.runtime_scope"]
+    assert str(receipt["weights_present"]).lower() == metadata["melix.native_mtp.receipt.weights_present"]
+    assert str(receipt["draft_supported"]).lower() == metadata["melix.native_mtp.receipt.draft_supported"]
+    assert str(receipt["draft_loaded"]).lower() == metadata["melix.native_mtp.receipt.draft_loaded"]
+    assert (
+        str(receipt["target_decode_started"]).lower()
+        == metadata["melix.native_mtp.receipt.target_decode_started"]
+    )
+    return receipt
+
+
 def test_registry_accepts_qwen_native_head_shape(tmp_path: Path) -> None:
     model_dir = tmp_path / "qwen-native-head"
     _write_model(
@@ -98,6 +123,31 @@ def test_registry_accepts_qwen_native_head_shape(tmp_path: Path) -> None:
     assert metadata["melix.native_mtp.receipt.effective_depth"] == "1"
     assert metadata["melix.native_mtp.receipt.depth_source"] == "native_head"
     assert metadata["melix.native_mtp.receipt.runtime_scope"] == "text_only_singleton"
+    assert _native_mtp_receipt(metadata) == {
+        "schema_version": "melix.native_mtp.capability.v1",
+        "status": "admitted",
+        "requested_method": "native_mtp",
+        "resolved_method": "native_mtp",
+        "mode": "speculative_decode",
+        "source": "native_head",
+        "family": "qwen3_5",
+        "compatible": True,
+        "weights_present": True,
+        "weight_count": 1,
+        "draft_supported": True,
+        "effective_depth": 1,
+        "depth_source": "native_head",
+        "cache_shape": "qwen3_5_native_mtp",
+        "batch_shape": "singleton_only",
+        "batch_state_policy": "drop_on_extend_or_filter",
+        "hardware_gate": "not_evaluated",
+        "request_gate": "native_mtp_enabled",
+        "runtime_scope": "text_only_singleton",
+        "patch_applied": True,
+        "draft_loaded": True,
+        "target_decode_started": False,
+        "fallback_reason": "",
+    }
 
 
 def test_registry_refuses_assistant_sidecar_shape(tmp_path: Path) -> None:
@@ -132,6 +182,31 @@ def test_registry_refuses_assistant_sidecar_shape(tmp_path: Path) -> None:
     assert metadata["melix.native_mtp.receipt.status"] == "refused"
     assert metadata["melix.native_mtp.receipt.fallback_reason"] == "assistant_sidecar"
     assert metadata["melix.native_mtp.receipt.draft_supported"] == "false"
+    assert _native_mtp_receipt(metadata) == {
+        "schema_version": "melix.native_mtp.capability.v1",
+        "status": "refused",
+        "requested_method": "native_mtp",
+        "resolved_method": "disabled",
+        "mode": "disabled",
+        "source": "assistant_sidecar",
+        "family": "gemma4_assistant",
+        "compatible": False,
+        "weights_present": True,
+        "weight_count": 1,
+        "draft_supported": False,
+        "effective_depth": 0,
+        "depth_source": "none",
+        "cache_shape": "none",
+        "batch_shape": "unsupported",
+        "batch_state_policy": "none",
+        "hardware_gate": "not_evaluated",
+        "request_gate": "assistant_sidecar_refused",
+        "runtime_scope": "none",
+        "patch_applied": False,
+        "draft_loaded": False,
+        "target_decode_started": False,
+        "fallback_reason": "assistant_sidecar",
+    }
 
 
 def test_registry_preserves_disabled_legacy_flag_path(tmp_path: Path) -> None:
