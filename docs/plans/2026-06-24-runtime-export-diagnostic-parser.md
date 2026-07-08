@@ -232,6 +232,13 @@ covered by the exact table now skip the union marker scan and phrase loop,
 whereas non-exact lines continue through the same marker, phrase, and regex
 fallbacks.
 
+A follow-up 2026-07-08 diagnosis evidence-path prefix slice keeps diagnosis
+semantics, matched pattern ids, and emitted evidence anchors unchanged while
+binding the repeated `diagnostics/redacted-log-excerpt.txt#line-` prefix once per
+excerpt scan. Exact-text, fast-phrase, and regex fallback matches now append the
+line number to that bound prefix instead of formatting the full evidence path in
+each matched branch.
+
 Focused verification:
 
 ```bash

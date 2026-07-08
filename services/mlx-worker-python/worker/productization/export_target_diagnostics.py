@@ -845,6 +845,7 @@ def _diagnoses_from_excerpt(
     exact_fast_text_patterns = _DIAGNOSIS_EXACT_FAST_TEXT_PATTERNS
     source_lines_local = source_lines
     has_diagnosis_marker = _has_diagnosis_marker
+    evidence_path_prefix = f"{excerpt_path}#line-"
     remaining_known_code_count = len(_KNOWN_DIAGNOSIS_CODE_SET)
     for index, line_number in line_numbers.items():
         if remaining_known_code_count == 0:
@@ -865,7 +866,7 @@ def _diagnoses_from_excerpt(
                     "matched_pattern_id": fast_pattern.pattern_id,
                     "operator_message": fast_pattern.operator_message,
                     "remediation": fast_pattern.remediation,
-                    "evidence_path": f"{excerpt_path}#line-{line_number}",
+                    "evidence_path": evidence_path_prefix + str(line_number),
                 }
             )
             continue
@@ -889,7 +890,7 @@ def _diagnoses_from_excerpt(
                     "matched_pattern_id": fast_pattern.pattern_id,
                     "operator_message": fast_pattern.operator_message,
                     "remediation": fast_pattern.remediation,
-                    "evidence_path": f"{excerpt_path}#line-{line_number}",
+                    "evidence_path": evidence_path_prefix + str(line_number),
                 }
             )
             continue
@@ -920,7 +921,7 @@ def _diagnoses_from_excerpt(
                     "matched_pattern_id": pattern.pattern_id,
                     "operator_message": pattern.operator_message,
                     "remediation": pattern.remediation,
-                    "evidence_path": f"{excerpt_path}#line-{line_number}",
+                    "evidence_path": evidence_path_prefix + str(line_number),
                 }
             )
             break

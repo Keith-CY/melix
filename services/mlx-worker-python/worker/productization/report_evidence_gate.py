@@ -274,9 +274,10 @@ def _release_matrix_rows(
             evidence_ids_for_role.update(evidence_ids)
 
     rows: list[dict[str, object]] = []
+    rows_append = rows.append
     for role, rule in matrix.items():
         evidence_ids = evidence_by_role_get(role)
-        rows.append(
+        rows_append(
             {
                 "role": role,
                 "required": bool(rule.get("required", True)),
@@ -378,11 +379,12 @@ def _rule_matches_report(
     metrics: list[dict[str, object]],
     probe_phases: AbstractSet[str],
 ) -> bool:
-    run_kinds = rule.get("run_kinds", ())
+    rule_get = rule.get
+    run_kinds = rule_get("run_kinds", ())
     if run_kinds:
         if isinstance(run_kinds, tuple):
-            cached_run_kind_set = rule.get("_melix_cached_run_kind_set")
-            if rule.get("_melix_cached_run_kinds") is run_kinds and isinstance(
+            cached_run_kind_set = rule_get("_melix_cached_run_kind_set")
+            if rule_get("_melix_cached_run_kinds") is run_kinds and isinstance(
                 cached_run_kind_set,
                 frozenset,
             ):
@@ -402,10 +404,10 @@ def _rule_matches_report(
             run_kind = run.get(run_kind_key, "")
             if type(run_kind) is not str and str(run_kind) in run_kind_set:
                 return True
-    metric_prefixes = rule.get("metric_prefixes", ())
+    metric_prefixes = rule_get("metric_prefixes", ())
     if metric_prefixes:
         if isinstance(metric_prefixes, tuple):
-            cached_metric_prefix_state = rule.get("_melix_cached_metric_prefix_state")
+            cached_metric_prefix_state = rule_get("_melix_cached_metric_prefix_state")
             if (
                 isinstance(cached_metric_prefix_state, tuple)
                 and len(cached_metric_prefix_state) == 4
@@ -447,11 +449,11 @@ def _rule_matches_report(
                 and metric_value.startswith(metric_prefix_tuple)
             ):
                 return True
-    target_fields = rule.get("target_fields", ())
+    target_fields = rule_get("target_fields", ())
     if target_fields:
         if isinstance(target_fields, tuple):
-            cached_target_field_set = rule.get("_melix_cached_target_field_set")
-            if rule.get("_melix_cached_target_fields") is target_fields and isinstance(
+            cached_target_field_set = rule_get("_melix_cached_target_field_set")
+            if rule_get("_melix_cached_target_fields") is target_fields and isinstance(
                 cached_target_field_set,
                 frozenset,
             ):
@@ -474,12 +476,12 @@ def _rule_matches_report(
                         return True
                 elif str(value).strip():
                     return True
-    required_probe_phases = rule.get("probe_phases", ())
+    required_probe_phases = rule_get("probe_phases", ())
     if not required_probe_phases:
         return False
     if isinstance(required_probe_phases, tuple):
-        cached_probe_phase_set = rule.get("_melix_cached_probe_phase_set")
-        if rule.get("_melix_cached_probe_phases") is required_probe_phases and isinstance(
+        cached_probe_phase_set = rule_get("_melix_cached_probe_phase_set")
+        if rule_get("_melix_cached_probe_phases") is required_probe_phases and isinstance(
             cached_probe_phase_set,
             frozenset,
         ):
