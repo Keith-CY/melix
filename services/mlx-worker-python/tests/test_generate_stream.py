@@ -671,21 +671,35 @@ def test_generate_without_usage_skips_prompt_token_count_fallback(monkeypatch) -
     inference_service, model_handle = build_usage_counting_services(runtime)
 
     summary_calls = 0
+    media_usage_calls = 0
     original_summary = EngineCore._media_admission_summary
+    original_media_usage = engine_core_module._media_feature_usage_from_probe
 
     def counted_media_summary(messages):
         nonlocal summary_calls
         summary_calls += 1
         return original_summary(messages)
 
+    def counted_media_usage(probe):
+        nonlocal media_usage_calls
+        media_usage_calls += 1
+        return original_media_usage(probe)
+
     monkeypatch.setattr(EngineCore, "_media_admission_summary", staticmethod(counted_media_summary))
+    monkeypatch.setattr(engine_core_module, "_media_feature_usage_from_probe", counted_media_usage)
 
     events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=False), context=None))
-    rejected_events = list(inference_service.Generate(media_rejection_request(model_handle), context=None))
 
     assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
     assert not any(event.HasField("usage_delta") for event in events)
     assert runtime.prompt_token_count_calls == 0
+    assert media_usage_calls == 0
+
+    usage_events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None))
+    rejected_events = list(inference_service.Generate(media_rejection_request(model_handle), context=None))
+
+    assert any(event.HasField("usage_delta") for event in usage_events)
+    assert media_usage_calls == 1
     assert summary_calls == 1
     assert len(rejected_events) == 1
     assert rejected_events[0].HasField("error")
