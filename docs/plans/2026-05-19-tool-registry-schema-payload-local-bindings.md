@@ -164,6 +164,26 @@ Expected effect:
 - leave non-empty OpenAI tool payload construction, registry selection,
   schema serialization, and protobuf config handling unchanged.
 
+## Follow-up Slice: Always-only Selection Metrics Cache
+
+The 2026-07-08 always-only follow-up keeps agentic tool selection receipts and
+selected registry identity unchanged, but reuses precomputed full-catalog metrics
+and dropped-tool counts when the selection runs against the built-in agentic tool
+catalog. Custom registries still compute their own metrics at call time. This
+narrow slice targets the registered selector probe's `always_only_*` and
+`whitespace_turn_*` workloads, which repeatedly return the always-only fallback
+receipt.
+
+Expected effect:
+
+- reduce `tool-registry-select-name-index-cache`
+  `always_only_planning_elapsed_ms_mean` and
+  `whitespace_turn_planning_elapsed_ms_mean`;
+- preserve fresh receipt payloads, selected registry identity, selected schema
+  bytes, full schema bytes, and custom-registry behavior;
+- leave registry selection, OpenAI schema generation, and protobuf config
+  materialization unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
