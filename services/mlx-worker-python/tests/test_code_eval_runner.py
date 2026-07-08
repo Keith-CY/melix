@@ -886,7 +886,8 @@ def test_runner_script_loads_config_from_bytes(tmp_path: Path) -> None:
         "payload_path": "/tmp/payload.json",
         "memory_limit_mb": 64,
     }
-    assert "payload = _json_loads(config_path.read_bytes())" in script
+    assert "_read_bytes=Path.read_bytes" in script
+    assert "payload = _json_loads(_read_bytes(config_path))" in script
     assert 'json.dumps(payload, separators=(",", ":"))' in script
     assert "json.load(file)" not in script
 
