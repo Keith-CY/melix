@@ -5093,6 +5093,17 @@
         "direction": "informational"
       },
       {
+        "key": "no_keyword_fallback_planning_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "no_keyword_fallback_selected_schema_bytes_mean",
+        "unit": "bytes",
+        "direction": "informational"
+      },
+      {
         "key": "whitespace_turn_planning_elapsed_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
