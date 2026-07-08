@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from builtins import open as _OPEN
 import importlib.util
 import json
 import logging
@@ -16,13 +17,15 @@ from worker.runtime.quantized_tensor_metadata import (
 logger = logging.getLogger(__name__)
 
 _PATCHED = False
+_JSON_LOADS = json.loads
 _MTP_WEIGHT_KEY_PREFIXES = ("language_model.mtp.", "mtp.")
 
 
 def _load_json_payload(path: Path) -> dict[str, Any]:
+    loads = _JSON_LOADS
     try:
-        with open(path, "rb") as payload_file:
-            payload = json.loads(payload_file.read())
+        with _OPEN(path, "rb") as payload_file:
+            payload = loads(payload_file.read())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
     return payload if isinstance(payload, dict) else {}
