@@ -13,6 +13,7 @@ from worker.runtime.tool_registry import (
     ToolDescriptor,
     ToolRegistry,
     ToolRegistryError,
+    ToolRegistryMetrics,
     ToolSelectionInput,
     built_in_tool_config,
     built_in_tool_registry,
@@ -963,6 +964,30 @@ def test_agentic_tool_selection_always_only_reuses_cached_registry(
 
     assert result.registry is tool_registry_module._ALWAYS_ONLY_TOOL_REGISTRY
     assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selected_schema_bytes"] == (
+        tool_registry_module._ALWAYS_ONLY_TOOL_METRICS.schema_bytes
+    )
+
+
+def test_agentic_tool_selection_always_only_reuses_cached_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_metrics(self: ToolRegistry) -> ToolRegistryMetrics:
+        raise AssertionError(  # pragma: no cover
+            f"always-only selection should reuse cached metrics for {self!r}"
+        )
+
+    monkeypatch.setattr(ToolRegistry, "metrics", fail_metrics)
+
+    result = select_agentic_tools_for_turn(ToolSelectionInput(max_selected_tools=1))
+
+    assert result.registry is tool_registry_module._ALWAYS_ONLY_TOOL_REGISTRY
+    assert result.receipt["dropped_tool_count"] == (
+        tool_registry_module._ALWAYS_ONLY_DROPPED_TOOL_COUNT
+    )
+    assert result.receipt["full_schema_bytes"] == (
+        tool_registry_module._AGENTIC_TOOL_CATALOG_METRICS.schema_bytes
+    )
     assert result.receipt["selected_schema_bytes"] == (
         tool_registry_module._ALWAYS_ONLY_TOOL_METRICS.schema_bytes
     )
