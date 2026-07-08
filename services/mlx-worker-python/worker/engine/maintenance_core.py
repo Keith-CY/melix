@@ -314,10 +314,21 @@ class BenchmarkLoadedModelResolution:
         yield self.loaded_model
 
 
+_CAPABILITY_SINGLE_VALUE_CACHE_MAX_SIZE = 128
+_CAPABILITY_SINGLE_VALUE_CACHE: dict[str, str] = {}
+_CAPABILITY_SINGLE_VALUE_CACHE_MISSING = object()
+
+
 def _split_capability_values(raw_value: str) -> list[str]:
     if "," not in raw_value:
-        stripped = raw_value.strip()
-        return [stripped] if stripped else []
+        single_value_cache = _CAPABILITY_SINGLE_VALUE_CACHE
+        stripped = single_value_cache.get(raw_value, _CAPABILITY_SINGLE_VALUE_CACHE_MISSING)
+        if stripped is _CAPABILITY_SINGLE_VALUE_CACHE_MISSING:
+            stripped = raw_value.strip()
+            if len(single_value_cache) >= _CAPABILITY_SINGLE_VALUE_CACHE_MAX_SIZE:
+                single_value_cache.clear()
+            single_value_cache[raw_value] = stripped
+        return [stripped] if stripped else []  # type: ignore[list-item]
     return list(_split_capability_value_tuple(raw_value))
 
 
