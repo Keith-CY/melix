@@ -676,11 +676,14 @@ def _build_always_only_tool_selection_result(
     selected_name = "local_compute"
     if registry is _AGENTIC_TOOL_CATALOG_REGISTRY:
         selected_registry = _ALWAYS_ONLY_TOOL_REGISTRY
+        registry_metrics = _AGENTIC_TOOL_CATALOG_METRICS
         selected_metrics = _ALWAYS_ONLY_TOOL_METRICS
+        dropped_tool_count = _ALWAYS_ONLY_DROPPED_TOOL_COUNT
     else:
         selected_registry = registry.select((selected_name,))
+        registry_metrics = registry.metrics()
         selected_metrics = selected_registry.metrics()
-    registry_metrics = registry.metrics()
+        dropped_tool_count = max(0, registry_metrics.tool_count - selected_metrics.tool_count)
     return ToolSelectionResult(
         registry=selected_registry,
         receipt={
@@ -690,9 +693,7 @@ def _build_always_only_tool_selection_result(
             "vector_available": selection_input.vector_available,
             "fallback_reason": "no_keyword_match",
             "selected_tools": [{"tool_id": selected_name, "source": "always"}],
-            "dropped_tool_count": max(
-                0, registry_metrics.tool_count - selected_metrics.tool_count
-            ),
+            "dropped_tool_count": dropped_tool_count,
             "full_schema_bytes": registry_metrics.schema_bytes,
             "selected_schema_bytes": selected_metrics.schema_bytes,
         },
@@ -1060,8 +1061,13 @@ _BUILTIN_AGENTIC_TOOLS = tuple(
     tool for tool in _AGENTIC_TOOL_CATALOG_TOOLS if tool.name in _BUILTIN_TOOL_NAME_SET
 )
 _AGENTIC_TOOL_CATALOG_REGISTRY = ToolRegistry(_AGENTIC_TOOL_CATALOG_TOOLS)
+_AGENTIC_TOOL_CATALOG_METRICS = _AGENTIC_TOOL_CATALOG_REGISTRY.metrics()
 _ALWAYS_ONLY_TOOL_REGISTRY = _AGENTIC_TOOL_CATALOG_REGISTRY.select(("local_compute",))
 _ALWAYS_ONLY_TOOL_METRICS = _ALWAYS_ONLY_TOOL_REGISTRY.metrics()
+_ALWAYS_ONLY_DROPPED_TOOL_COUNT = max(
+    0,
+    _AGENTIC_TOOL_CATALOG_METRICS.tool_count - _ALWAYS_ONLY_TOOL_METRICS.tool_count,
+)
 _BUILTIN_TOOL_CONFIG_REGISTRY = ToolRegistry(_BUILTIN_AGENTIC_TOOLS)
 _BUILTIN_TOOL_CONFIG_NAMES_LIST = list(BUILTIN_AGENTIC_TOOL_NAMES)
 _BUILTIN_TOOL_CONFIG_BYTES = (
