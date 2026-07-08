@@ -435,6 +435,9 @@ class ToolRegistry:
         return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
+        openai_tool_templates = self._openai_tool_templates
+        if not openai_tool_templates:
+            return []
         copy_dict = _COPY_DICT
         copy_list = _COPY_LIST
         return [
@@ -463,7 +466,7 @@ class ToolRegistry:
                 observation_kind,
                 schema_properties,
                 required_arguments,
-            ) in self._openai_tool_templates
+            ) in openai_tool_templates
         ]
 
     def as_worker_tool_config(self) -> common_pb2.ToolConfig:

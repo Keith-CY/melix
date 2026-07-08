@@ -18,11 +18,14 @@ from worker.runtime.tool_registry import BUILTIN_AGENTIC_TOOL_NAMES, built_in_to
 
 def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     registry = built_in_tool_registry()
+    empty_registry = registry.select(())
     expected_names = BUILTIN_AGENTIC_TOOL_NAMES
     elapsed_samples: list[float] = []
+    empty_elapsed_samples: list[float] = []
     descriptor_calls_samples: list[float] = []
     isolated_payload_samples: list[float] = []
     checksum = 0
+    empty_checksum = 0
 
     original_as_openai_tool = tool_registry_module.ToolDescriptor.as_openai_tool
     try:
@@ -52,14 +55,23 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
             elapsed_samples.append((time.perf_counter() - started) * 1000.0)
             descriptor_calls_samples.append(float(call_count))
             isolated_payload_samples.append(float(isolated_payload_count))
+            started = time.perf_counter()
+            for _index in range(iterations):
+                tools = empty_registry.as_openai_tools()
+                if tools:  # pragma: no cover - defensive probe invariant
+                    raise RuntimeError(f"unexpected empty selection tools: {tools!r}")
+                empty_checksum += len(tools)
+            empty_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
     finally:
         tool_registry_module.ToolDescriptor.as_openai_tool = original_as_openai_tool
 
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
+        "empty_elapsed_ms_mean": statistics.fmean(empty_elapsed_samples),
         "descriptor_as_openai_tool_calls_mean": statistics.fmean(descriptor_calls_samples),
         "isolated_payload_calls_mean": statistics.fmean(isolated_payload_samples),
         "checksum": float(checksum),
+        "empty_checksum": float(empty_checksum),
         "iterations": float(iterations),
         "sample_count": float(sample_count),
     }

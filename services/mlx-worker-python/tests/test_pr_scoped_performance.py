@@ -1067,6 +1067,8 @@ def test_tool_registry_openai_tools_probe_script_emits_metrics(
 
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["empty_elapsed_ms_mean"] >= 0.0
+    assert metrics["empty_checksum"] == 0.0
     assert metrics["descriptor_as_openai_tool_calls_mean"] == 0.0
     assert metrics["isolated_payload_calls_mean"] == 20.0
 
