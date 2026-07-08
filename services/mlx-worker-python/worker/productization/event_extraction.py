@@ -86,6 +86,7 @@ Rules:
 """
 SEMANTIC_JUDGE_PROMPT_HASH = f"sha256:{sha256(SEMANTIC_JUDGE_SYSTEM_PROMPT.encode('utf-8')).hexdigest()}"
 _JSON_DECODER = json.JSONDecoder()
+_JSON_LOADS = json.loads
 _JSON_RAW_DECODE = _JSON_DECODER.raw_decode
 _JSON_FENCE_PREFIX = "```json\n"
 _JSON_FENCE_PREFIX_LENGTH = len(_JSON_FENCE_PREFIX)
@@ -2889,9 +2890,12 @@ def _coerce_string_list(value: object) -> list[str]:
 def _parse_response_json(response_text: str) -> dict[str, object]:
     response_length = len(response_text)
     if response_length and response_text[0] == "{":
-        parsed, end_index = _JSON_RAW_DECODE(response_text, 0)
-        if not _has_only_trailing_whitespace(response_text, end_index, response_length):
-            raise json.JSONDecodeError("Extra data", response_text, end_index)
+        if type(response_text) is str:
+            parsed = _JSON_LOADS(response_text)
+        else:
+            parsed, end_index = _JSON_RAW_DECODE(response_text, 0)
+            if not _has_only_trailing_whitespace(response_text, end_index, response_length):
+                raise json.JSONDecodeError("Extra data", response_text, end_index)
         return parsed
 
     if response_length and response_text[0] == "`" and response_text.startswith(_JSON_FENCE_PREFIX):
@@ -2908,11 +2912,12 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
     response_start = _skip_json_whitespace(response_text, 0, response_length)
 
     if response_start < response_length and response_text[response_start] == "{":
-        parsed, end_index = _JSON_RAW_DECODE(response_text, response_start)
-        if not _has_only_trailing_whitespace(response_text, end_index, response_length):
-            raise json.JSONDecodeError("Extra data", response_text, end_index)
-        if not isinstance(parsed, dict):
-            raise ValueError("LLM response must be a JSON object")
+        if type(response_text) is str:
+            parsed = _JSON_LOADS(response_text)
+        else:
+            parsed, end_index = _JSON_RAW_DECODE(response_text, response_start)
+            if not _has_only_trailing_whitespace(response_text, end_index, response_length):
+                raise json.JSONDecodeError("Extra data", response_text, end_index)
         return parsed
 
     if response_text.startswith(_JSON_FENCE_PREFIX, response_start):
