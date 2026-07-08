@@ -2098,19 +2098,20 @@ def evaluate_m9_release_evidence(
     policy: dict[str, Any],
 ) -> tuple[list[str], dict[str, float]]:
     failures: list[str] = []
-    required_probe_count = 0.0
-    missing_probe_count = 0.0
-    failed_threshold_count = 0.0
+    required_probe_count = 0
+    missing_probe_count = 0
+    failed_threshold_count = 0
     report_get = report.get
     failures_extend = failures.extend
     evaluate_section = _evaluate_section_metrics_with_counts
+    dict_type = dict
 
     for section_name, section_rules in policy.items():
-        if not isinstance(section_rules, dict):
+        if not isinstance(section_rules, dict_type):
             continue
         required_probe_count += len(section_rules)
         section = report_get(section_name)
-        metrics = section.get("metrics", {}) if isinstance(section, dict) else {}
+        metrics = section.get("metrics", {}) if isinstance(section, dict_type) else {}
         section_failures, missing_for_section, failed_for_section = evaluate_section(
             metrics,
             section_rules,
