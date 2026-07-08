@@ -147,6 +147,23 @@ Expected effect:
 - leave partial selections, tuple full selections, registry selection, and tool
   definitions unchanged.
 
+## Follow-up Slice: Empty OpenAI Tool Selection Fast Path
+
+The 2026-07-08 follow-up keeps `ToolRegistry.as_openai_tools()` copy-on-return
+behavior unchanged, but returns a fresh empty list before binding copy helpers or
+entering the template-cloning comprehension when a selected registry has no
+OpenAI tool templates. Empty selected registries are already cached by
+`ToolRegistry.select(())`; this slice narrows the zero-tool OpenAI schema path
+without changing full or partial registry payloads.
+
+Expected effect:
+
+- reduce `tool-registry-openai-tools-template-cache` `empty_elapsed_ms_mean` for
+  empty selected registries;
+- preserve fresh-list mutation isolation for `as_openai_tools()` callers;
+- leave non-empty OpenAI tool payload construction, registry selection,
+  schema serialization, and protobuf config handling unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.

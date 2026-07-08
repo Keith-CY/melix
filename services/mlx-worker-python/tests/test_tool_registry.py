@@ -320,6 +320,16 @@ def test_tool_registry_empty_selection_reuses_cached_registry() -> None:
     assert registry.select([]) is selected
 
 
+def test_tool_registry_empty_selection_openai_tools_returns_fresh_empty_list() -> None:
+    registry = built_in_tool_registry().select([])
+
+    tools = registry.as_openai_tools()
+    tools.append({"mutated": True})
+
+    assert registry.as_openai_tools() == []
+    assert registry.as_openai_tools() is not tools
+
+
 def test_tool_registry_names_reuses_registry_snapshot() -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
     expected_names = registry.names()
