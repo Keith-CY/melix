@@ -51,7 +51,7 @@ class CodeEvaluationResult:
 
 
 def extract_candidate_code(raw_response: str) -> tuple[str, str]:
-    if not raw_response or raw_response.isspace():
+    if not raw_response:
         return "", "empty_prediction"
 
     fence = "```"
@@ -71,6 +71,8 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
                 content_start = _code_block_content_start(raw_response, opening + 3)
                 return _stripped_slice(raw_response, content_start, closing), "parsed_code_block"
 
+    if raw_response.isspace():
+        return "", "empty_prediction"
     return raw_response.strip(), "parsed_code"
 
 
