@@ -90,7 +90,6 @@ _JSON_LOADS = json.loads
 _JSON_RAW_DECODE = _JSON_DECODER.raw_decode
 _JSON_FENCE_PREFIX = "```json\n"
 _JSON_FENCE_PREFIX_LENGTH = len(_JSON_FENCE_PREFIX)
-_JSON_ASCII_WHITESPACE = " \t\n\r\v\f"
 _CLOSING_FENCE_WITH_LEADING_NEWLINE = "\n```"
 _CLOSING_FENCE_WITH_LEADING_NEWLINE_LENGTH = len(_CLOSING_FENCE_WITH_LEADING_NEWLINE)
 
@@ -2960,13 +2959,14 @@ def _has_only_trailing_whitespace(response_text: str, start: int, response_lengt
 
 
 def _skip_json_whitespace(response_text: str, start: int, response_length: int) -> int:
-    ascii_whitespace = _JSON_ASCII_WHITESPACE
     while start < response_length:
         char = response_text[start]
-        if char in ascii_whitespace:
-            start += 1
-            continue
-        if char.isspace():
+        if char <= " ":
+            if char == " " or "\t" <= char <= "\r" or "\x1c" <= char <= "\x1f":
+                start += 1
+                continue
+            break
+        if char > "\x7f" and char.isspace():
             start += 1
             continue
         break

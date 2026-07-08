@@ -235,6 +235,18 @@ def test_parse_response_json_object_fast_paths_skip_json_loads(monkeypatch) -> N
     assert event_extraction_module._parse_response_json('  {"events": []}  ') == {"events": []}
 
 
+def test_skip_json_whitespace_preserves_ascii_control_boundary() -> None:
+    response = '\x00{"events": []}'
+
+    assert event_extraction_module._skip_json_whitespace(response, 0, len(response)) == 0
+
+
+def test_skip_json_whitespace_keeps_unicode_whitespace_fallback() -> None:
+    response = '\u2003{"events": []}'
+
+    assert event_extraction_module._skip_json_whitespace(response, 0, len(response)) == 1
+
+
 def test_parse_response_json_rejects_unfenced_closing_fence() -> None:
     response = '{"events": []}\n```'
 

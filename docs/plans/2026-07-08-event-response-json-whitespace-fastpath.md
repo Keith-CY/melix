@@ -17,7 +17,7 @@ The affected path is covered by the registered PR-scoped probe `event-extraction
 
 ## Implementation plan
 
-1. Preserve `_skip_json_whitespace()` behavior for ASCII and Unicode whitespace.
+1. Preserve `_skip_json_whitespace()` behavior for ASCII and Unicode whitespace, with regression coverage for ASCII control-character boundaries and Unicode whitespace fallback.
 2. Check ASCII JSON whitespace first and call `str.isspace()` only for non-ASCII/non-JSON-whitespace characters.
 3. Run the registered focused test command, changed-scope coverage command, and registered probe locally on Linux.
 4. Use GitHub Actions PR-scoped performance as the merge gate for the registered probe report.
