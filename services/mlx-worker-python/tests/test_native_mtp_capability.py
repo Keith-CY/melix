@@ -211,6 +211,22 @@ def test_registry_reports_unsupported_enabled_model(tmp_path: Path) -> None:
     assert metadata["melix.native_mtp.receipt.request_gate"] == "unsupported_model"
 
 
+def test_registry_treats_invalid_utf8_json_payloads_as_empty(tmp_path: Path) -> None:
+    model_dir = tmp_path / "invalid-json-payloads"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_bytes(b"\xff")
+    (model_dir / "model.safetensors.index.json").write_bytes(b"\xff")
+
+    decision = resolve_native_mtp_capability(
+        model_dir,
+        metadata={"melix.native_mtp.enabled": "true"},
+    )
+
+    assert decision.source == "none"
+    assert decision.weights_present is False
+    assert decision.refusal_reason == "unsupported_model"
+
+
 def test_registry_reports_patch_failure_for_native_head(tmp_path: Path) -> None:
     model_dir = tmp_path / "qwen-patch-failed"
     _write_model(

@@ -132,7 +132,7 @@ make integration-test
   `ModuleNotFoundError: No module named 'worker.runtime.native_mtp.capability'`.
 - Focused tests:
   `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --project services/mlx-worker-python --extra mlx pytest -q services/mlx-worker-python/tests/test_native_mtp_capability.py services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_preload_patch_detects_qwen36_mtp_weights`
-  passed with 14 tests.
+  passed with 15 tests.
 - Native MTP regression tests:
   `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --project services/mlx-worker-python --extra mlx pytest -q ...`
   passed with 22 tests across the new registry coverage, VLM preload fixture,

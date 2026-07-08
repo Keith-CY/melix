@@ -178,8 +178,8 @@ def resolve_native_mtp_capability(
 
 def _load_json_payload(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError):
         return {}
     return payload if isinstance(payload, dict) else {}
 
