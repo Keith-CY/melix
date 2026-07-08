@@ -225,6 +225,16 @@ def test_parse_response_json_accepts_direct_object_fast_path() -> None:
     }
 
 
+def test_parse_response_json_object_fast_paths_skip_json_loads(monkeypatch) -> None:
+    def fail_json_loads(_: str):  # pragma: no cover - regression guard
+        raise AssertionError("object fast paths should use raw_decode directly")
+
+    monkeypatch.setattr(event_extraction_module, "_JSON_LOADS", fail_json_loads)
+
+    assert event_extraction_module._parse_response_json('{"events": []}  ') == {"events": []}
+    assert event_extraction_module._parse_response_json('  {"events": []}  ') == {"events": []}
+
+
 def test_parse_response_json_rejects_unfenced_closing_fence() -> None:
     response = '{"events": []}\n```'
 
