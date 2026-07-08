@@ -579,6 +579,21 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
         and (not current_user_turn or current_user_turn.isspace())
     ):
         return _build_always_only_tool_selection_result(registry, selection_input)
+    current_matches: tuple[str, ...] | None = None
+    context_matches: tuple[str, ...] | None = None
+    if not selection_input.vector_selected_tool_ids:
+        current_matches = _keyword_tool_matches(current_user_turn)
+        if not current_matches:
+            if selection_input.recent_user_turns:
+                context_matches = _keyword_tool_matches(
+                    _recent_user_turns_keyword_context(selection_input.recent_user_turns)
+                )
+                if not context_matches:
+                    return _build_always_only_tool_selection_result(
+                        registry, selection_input
+                    )
+            else:
+                return _build_always_only_tool_selection_result(registry, selection_input)
     selected_sources: dict[str, str] = {}
     selected_names: list[str] = []
     selected_tools: list[dict[str, str]] = []
@@ -630,7 +645,8 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
             )
 
     if selection_mode != "vector":
-        current_matches = _keyword_tool_matches(selection_input.current_user_turn)
+        if current_matches is None:
+            current_matches = _keyword_tool_matches(selection_input.current_user_turn)
         for tool_name in current_matches:
             if append_selected_tool(
                 selected_names,
@@ -642,9 +658,10 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
             ):
                 has_keyword_selection = True
         if selection_input.recent_user_turns and len(selected_names) < max_selected_tools:
-            context_matches = _keyword_tool_matches(
-                _recent_user_turns_keyword_context(selection_input.recent_user_turns)
-            )
+            if context_matches is None:
+                context_matches = _keyword_tool_matches(
+                    _recent_user_turns_keyword_context(selection_input.recent_user_turns)
+                )
             for tool_name in context_matches:
                 if append_selected_tool(
                     selected_names,
@@ -658,6 +675,9 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
         if has_keyword_selection:
             selection_mode = "keyword"
             fallback_reason = "vector_unavailable" if not selection_input.vector_available else "vector_no_match"
+
+    if not has_vector_selection and not has_keyword_selection:
+        return _build_always_only_tool_selection_result(registry, selection_input)
 
     return _build_tool_selection_result(
         registry,
