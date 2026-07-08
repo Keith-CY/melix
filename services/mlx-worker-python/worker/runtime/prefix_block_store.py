@@ -722,31 +722,44 @@ class PrefixBlockStore:
     def _enqueue_demotion_locked(self, entry: _BlockEntry) -> None:
         """Queue a cold-tier demotion for a budget-evicted entry (under lock).
 
-        The closure captures a point-in-time snapshot clone so the later
-        `_cleanup_entry` (which nulls `entry.cache_snapshot`) and any concurrent
-        decode against a cloned prompt cache cannot change what gets serialized.
+        The closure captures only cheap metadata while the store lock is held.
+        The expensive prompt-cache clone runs later in `flush_deferred_clear()`,
+        outside the global store lock and before the queued cleanup callback can
+        null `entry.cache_snapshot`.
         Same-session replacement via put() intentionally does not demote — the
         fresh hot entry supersedes the old snapshot, and demoting every turn
         would serialize on each conversation update.
         """
         if self._cold_store is None:
             return
-        snapshot = clone_cache_snapshot(entry.cache_snapshot)
-        if snapshot is None:
+        snapshot_ref = entry.cache_snapshot
+        if snapshot_ref is None or not isinstance(snapshot_ref, list):
             return
         cold = self._cold_store
-        self._deferred_clear_queue.append(
-            lambda: cold.store(
-                session_id=entry.session_id,
-                token_ids=list(entry.token_ids),
+        session_id = entry.session_id
+        token_ids = list(entry.token_ids)
+        cache_mode = entry.cache_mode
+        model_id = entry.model_id
+        model_revision = entry.model_revision
+        block_size = entry.block_size
+        acceleration_mode = entry.acceleration_mode
+
+        def demote() -> None:
+            snapshot = clone_cache_snapshot(snapshot_ref)
+            if snapshot is None:
+                return
+            cold.store(
+                session_id=session_id,
+                token_ids=token_ids,
                 cache_snapshot=snapshot,
-                cache_mode=entry.cache_mode,
-                model_id=entry.model_id,
-                model_revision=entry.model_revision,
-                block_size=entry.block_size,
-                acceleration_mode=entry.acceleration_mode,
+                cache_mode=cache_mode,
+                model_id=model_id,
+                model_revision=model_revision,
+                block_size=block_size,
+                acceleration_mode=acceleration_mode,
             )
-        )
+
+        self._deferred_clear_queue.append(demote)
 
     def _cleanup_entry(self, entry: _BlockEntry) -> None:
         """Final cleanup for an entry whose both reference levels have dropped to zero.

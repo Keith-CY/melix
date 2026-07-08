@@ -337,7 +337,7 @@ def test_budget_eviction_demotes_a_stable_snapshot(tmp_path: Path) -> None:
     cold = _make_cold(tmp_path, serializer=recording_serializer)
     store = PrefixBlockStore(max_memory_bytes=1500, min_session_count=1, cold_store=cold)
     evicted_snapshot = [{"data": ["stable"]}]
-    store.put(
+    entry = store.put(
         session_id="s1",
         token_ids=[1, 2, 3, 4, 5, 6, 7, 8],
         cache_snapshot=evicted_snapshot,
@@ -348,12 +348,50 @@ def test_budget_eviction_demotes_a_stable_snapshot(tmp_path: Path) -> None:
         total_bytes=1000,
         acceleration_mode="",
     )
+    assert entry is not None
     _put(store, "s2", [9] * 8, total_bytes=1000)  # evicts s1
 
-    evicted_snapshot[0]["data"].append("mutated-before-flush")
     store.flush_deferred_clear()
+    evicted_snapshot[0]["data"].append("mutated-after-flush")
 
     assert serialized == [[{"data": ["stable"]}]]
+    assert entry.cache_snapshot is None
+    assert cold.entry_count() == 1
+
+
+def test_budget_eviction_clones_snapshot_outside_store_lock(tmp_path: Path) -> None:
+    lock_states: list[bool] = []
+
+    class LockAwareValue:
+        def __init__(self, value: str) -> None:
+            self.value = value
+
+        def copy(self) -> "LockAwareValue":
+            lock_states.append(store._lock.locked())
+            return LockAwareValue(self.value)
+
+    def recording_serializer(cache_snapshot: Any, path: Path) -> None:
+        path.write_text("snapshot", encoding="utf-8")
+
+    cold = _make_cold(tmp_path, serializer=recording_serializer)
+    store = PrefixBlockStore(max_memory_bytes=1500, min_session_count=1, cold_store=cold)
+    store.put(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4, 5, 6, 7, 8],
+        cache_snapshot=[{"data": LockAwareValue("stable")}],
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        total_bytes=1000,
+        acceleration_mode="",
+    )
+    _put(store, "s2", [9] * 8, total_bytes=1000)  # evicts s1
+
+    assert lock_states == []
+    store.flush_deferred_clear()
+
+    assert lock_states == [False]
     assert cold.entry_count() == 1
 
 
