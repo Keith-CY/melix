@@ -382,7 +382,99 @@ def test_hf_cache_snapshot_fallback_skips_stale_names_before_is_dir(
 
     assert source.live is False
     assert source.local_model_path == str(latest_snapshot.resolve())
-    assert is_dir_calls == ["zzz"]
+    assert is_dir_calls == []
+
+
+def test_hf_cache_snapshot_fallback_rescans_when_lexical_max_is_not_directory(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    snapshots_root = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+    )
+    snapshots_root.mkdir(parents=True)
+    latest_snapshot = snapshots_root / "zzz-snapshot"
+    latest_snapshot.mkdir()
+    (snapshots_root / "zzzz-not-a-directory").write_text("ignored\n", encoding="utf-8")
+
+    source = resolve_real_small_text_model_source(
+        environment={"HOME": str(home)},
+        allow_managed_root=False,
+        allow_hf_cache=True,
+    )
+
+    assert source.live is False
+    assert source.local_model_path == str(latest_snapshot.resolve())
+    assert "using lexicographically last snapshot directory" in source.warnings[0]
+
+
+def test_hf_cache_snapshot_fallback_returns_none_for_empty_snapshots_dir(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    snapshots_root = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+    )
+    snapshots_root.mkdir(parents=True)
+
+    source = resolve_real_small_text_model_source(
+        environment={"HOME": str(home)},
+        allow_managed_root=False,
+        allow_hf_cache=True,
+    )
+
+    assert source.live is True
+    assert source.local_model_path == ""
+    assert source.source_resolution_mode == "hub_fallback"
+
+
+def test_hf_cache_snapshot_fast_path_treats_stat_errors_as_not_directory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    snapshots_root = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+    )
+    snapshots_root.mkdir(parents=True)
+    (snapshots_root / "yyy-snapshot").mkdir()
+    (snapshots_root / "zzz-raises-stat").mkdir()
+
+    original_stat = real_model_support_module.os.stat
+
+    def fake_stat(path, *, follow_symlinks=True):
+        if Path(path).name == "zzz-raises-stat":
+            raise OSError("synthetic stat failure")
+        return original_stat(path, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(real_model_support_module.os, "stat", fake_stat)
+
+    source = resolve_real_small_text_model_source(
+        environment={"HOME": str(home)},
+        allow_managed_root=False,
+        allow_hf_cache=True,
+    )
+
+    assert real_model_support_module._is_hf_cache_snapshot_dir(
+        snapshots_root / "zzz-raises-stat"
+    ) is False
+    assert source.live is False
+    assert source.local_model_path == str((snapshots_root / "zzz-raises-stat").resolve())
 
 
 def test_runtime_model_preflight_marks_real_local_weights(tmp_path: Path) -> None:
