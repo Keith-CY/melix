@@ -82,6 +82,7 @@ struct TextDecodeEngine: Sendable {
             var dflashTargetHiddenLayers: Int?
             var activeKVProbe: ActiveKVProbeSummary?
             var decodeBatchProbe: DecodeBatchProbeSummary?
+            var decodeBatchFallbackReason: String?
             var harmonyFilterTotalMicros = 0
             var harmonyFilterCallCount = 0
             var grpcWriteTotalMicros = 0
@@ -243,6 +244,7 @@ struct TextDecodeEngine: Sendable {
                     dflashTargetHiddenLayers = summary.dflashTargetHiddenLayers
                     activeKVProbe = summary.activeKVProbe
                     decodeBatchProbe = summary.decodeBatchProbe
+                    decodeBatchFallbackReason = summary.decodeBatchFallbackReason
                 }
             }
 
@@ -305,6 +307,9 @@ struct TextDecodeEngine: Sendable {
             completed.finishReason = (abortHandle?.isAborted ?? false) ? "cancelled" : "stop"
             completed.assistantText = outputState.assistantText
             completed.reasoningText = outputState.reasoningText
+            if let decodeBatchFallbackReason, !decodeBatchFallbackReason.isEmpty {
+                completed.parserMetrics["decode_batch_fallback_reason"] = decodeBatchFallbackReason
+            }
 
             var completedEvent = Melix_Worker_V1_ExecuteEvent()
             completedEvent.requestID = requestID
@@ -474,9 +479,7 @@ struct TextDecodeEngine: Sendable {
         let key = TextDecodeBatchEligibilityKey(
             modelHandle: session.loadedModel.handle,
             lane: lane,
-            sampling: TextDecodeSamplingKey(sampling),
             acceleration: TextDecodeAccelerationKey(acceleration),
-            maxOutputTokens: request.maxOutputTokens,
             decodeStepSize: request.decodeStepSize,
             prefillToken: request.prefillToken
         )

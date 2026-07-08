@@ -50,9 +50,7 @@ struct TextDecodeAccelerationKey: Hashable, Sendable {
 struct TextDecodeBatchEligibilityKey: Hashable, Sendable {
     let modelHandle: String
     let lane: String
-    let sampling: TextDecodeSamplingKey
     let acceleration: TextDecodeAccelerationKey
-    let maxOutputTokens: UInt32
     let decodeStepSize: UInt32
     let prefillToken: String
 }

@@ -362,8 +362,13 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         requests: [TextRuntimeDecodeRequest]
     ) async throws -> AsyncThrowingStream<TextBatchGenerationEvent, Error> {
         #if canImport(MLXLMCommon)
-        guard let batchInput = makeSwiftMLXBatchDecodeInput(from: requests) else {
-            return try await makeFallbackDecodeBatchEvents(requests: requests, backend: self)
+        let admission = makeSwiftMLXBatchDecodeAdmission(from: requests)
+        guard let batchInput = admission.input else {
+            return try await makeFallbackDecodeBatchEvents(
+                requests: requests,
+                backend: self,
+                fallbackReason: admission.fallbackReason
+            )
         }
 
         let runtimeStream = try await batchInput.container.perform(values: batchInput) { modelContext, batchInput in
@@ -768,6 +773,7 @@ private struct SpeculativeDecodeRuntimeState: @unchecked Sendable {
 
 private struct BatchDecodeRequestState: @unchecked Sendable {
     let request: TextRuntimeDecodeRequest
+    let maxTokens: Int?
     var output: LMOutput
     var processor: (any LogitProcessor)?
     let sampler: any LogitSampler
@@ -783,11 +789,23 @@ private struct SwiftMLXBatchDecodeInput: @unchecked Sendable {
     let container: ModelContainer
     let requests: [TextRuntimeDecodeRequest]
     let states: [PreparedDecodeState]
-    let parameters: GenerateParameters
-    let acceleration: Melix_Worker_V1_AccelerationPolicy
+    let parametersByRequest: [GenerateParameters]
 
     var supportsBatchedArgMaxTokenIDs: Bool {
-        supportsArgMaxTokenIDFastPath(parameters)
+        parametersByRequest.allSatisfy(supportsArgMaxTokenIDFastPath)
+    }
+}
+
+private struct SwiftMLXBatchDecodeAdmission: @unchecked Sendable {
+    let input: SwiftMLXBatchDecodeInput?
+    let fallbackReason: String?
+
+    static func accepted(_ input: SwiftMLXBatchDecodeInput) -> SwiftMLXBatchDecodeAdmission {
+        SwiftMLXBatchDecodeAdmission(input: input, fallbackReason: nil)
+    }
+
+    static func rejected(_ reason: String?) -> SwiftMLXBatchDecodeAdmission {
+        SwiftMLXBatchDecodeAdmission(input: nil, fallbackReason: reason)
     }
 }
 
@@ -1156,78 +1174,116 @@ private func makePreparedSpeculativeDecodeEvents(
     return stream
 }
 
-private func makeSwiftMLXBatchDecodeInput(
+private func makeSwiftMLXBatchDecodeAdmission(
     from requests: [TextRuntimeDecodeRequest]
-) -> SwiftMLXBatchDecodeInput? {
-    guard requests.count > 1,
-          let firstRequest = requests.first,
-          firstRequest.draftModel == nil,
-          normalizedAccelerationPolicy(firstRequest.acceleration).mode == .baseline,
-          let container = firstRequest.model.storage as? ModelContainer,
-          let firstState = firstRequest.context.storage as? PreparedDecodeState,
-          isTextOnlyBatchDecodeState(firstState)
-    else {
-        return nil
+) -> SwiftMLXBatchDecodeAdmission {
+    guard requests.count > 1 else {
+        return .rejected(nil)
+    }
+    guard let firstRequest = requests.first else {
+        return .rejected(nil)
+    }
+    guard firstRequest.draftModel == nil else {
+        return .rejected("not_batchable:draft_model")
+    }
+    guard normalizedAccelerationPolicy(firstRequest.acceleration).mode == .baseline else {
+        return .rejected("not_batchable:acceleration_mode")
+    }
+    guard let container = firstRequest.model.storage as? ModelContainer else {
+        return .rejected("not_batchable:model_container")
+    }
+    guard let firstState = firstRequest.context.storage as? PreparedDecodeState else {
+        return .rejected("not_batchable:prepared_state")
+    }
+    guard isTextOnlyBatchDecodeState(firstState) else {
+        return .rejected("not_batchable:state_modality")
+    }
+    guard firstState.activeKVQuantizationRatio == 0 else {
+        return .rejected("not_batchable:active_kv_quantized")
     }
 
-    let parameters = makeDecodeParameters(
+    var parametersByRequest = [makeDecodeParameters(
         from: firstRequest.sampling,
         maxOutputTokens: firstRequest.maxOutputTokens,
         decodeStepSize: firstRequest.decodeStepSize,
         acceleration: firstRequest.acceleration
-    )
+    )]
     var states = [firstState]
 
     for request in requests.dropFirst() {
-        guard request.draftModel == nil,
-              normalizedAccelerationPolicy(request.acceleration).mode == .baseline,
-              let requestContainer = request.model.storage as? ModelContainer,
-              requestContainer === container,
-              let state = request.context.storage as? PreparedDecodeState,
-              request.sampling == firstRequest.sampling,
-              request.maxOutputTokens == firstRequest.maxOutputTokens,
-              request.decodeStepSize == firstRequest.decodeStepSize,
-              request.prefillToken == firstRequest.prefillToken,
-              isTextOnlyBatchDecodeState(state),
-              state.activeKVQuantizationRatio == 0
-        else {
-            return nil
+        guard request.draftModel == nil else {
+            return .rejected("not_batchable:draft_model")
+        }
+        guard normalizedAccelerationPolicy(request.acceleration).mode == .baseline else {
+            return .rejected("not_batchable:acceleration_mode")
+        }
+        guard let requestContainer = request.model.storage as? ModelContainer,
+              requestContainer === container else {
+            return .rejected("not_batchable:model_container_mismatch")
+        }
+        guard let state = request.context.storage as? PreparedDecodeState else {
+            return .rejected("not_batchable:prepared_state")
+        }
+        guard request.decodeStepSize == firstRequest.decodeStepSize else {
+            return .rejected("not_batchable:decode_step_size_mismatch")
+        }
+        guard request.prefillToken == firstRequest.prefillToken else {
+            return .rejected("not_batchable:prefill_token_mismatch")
+        }
+        guard isTextOnlyBatchDecodeState(state) else {
+            return .rejected("not_batchable:state_modality")
+        }
+        guard state.activeKVQuantizationRatio == 0 else {
+            return .rejected("not_batchable:active_kv_quantized")
         }
         states.append(state)
+        parametersByRequest.append(makeDecodeParameters(
+            from: request.sampling,
+            maxOutputTokens: request.maxOutputTokens,
+            decodeStepSize: request.decodeStepSize,
+            acceleration: request.acceleration
+        ))
     }
 
-    guard firstState.activeKVQuantizationRatio == 0,
-          statesCanShareBatchDecodeCacheShape(states)
-    else {
-        return nil
+    if let cacheFailure = batchDecodeCacheCompatibilityFailure(states) {
+        return .rejected(cacheFailure)
     }
 
-    return SwiftMLXBatchDecodeInput(
+    return .accepted(SwiftMLXBatchDecodeInput(
         container: container,
         requests: requests,
         states: states,
-        parameters: parameters,
-        acceleration: firstRequest.acceleration
-    )
+        parametersByRequest: parametersByRequest
+    ))
 }
 
-private func statesCanShareBatchDecodeCacheShape(_ states: [PreparedDecodeState]) -> Bool {
+private func batchDecodeCacheCompatibilityFailure(_ states: [PreparedDecodeState]) -> String? {
     guard states.count > 1,
           let first = states.first
     else {
-        return false
+        return "not_batchable:single_request"
     }
 
     guard let firstCacheSignature = cacheBatchSignature(first.cache),
           !firstCacheSignature.isEmpty
     else {
-        return false
+        return "not_batchable:cache_signature_unsupported"
     }
 
-    return states.dropFirst().allSatisfy { state in
-        state.input.text.tokens.size == first.input.text.tokens.size
-            && cacheBatchSignature(state.cache) == firstCacheSignature
+    for state in states.dropFirst() {
+        guard state.input.text.tokens.size == first.input.text.tokens.size else {
+            return "not_batchable:prompt_length_mismatch"
+        }
+        guard let signature = cacheBatchSignature(state.cache),
+              !signature.isEmpty else {
+            return "not_batchable:cache_signature_unsupported"
+        }
+        guard signature == firstCacheSignature else {
+            return "not_batchable:cache_signature_mismatch"
+        }
     }
+
+    return nil
 }
 
 private func isTextOnlyBatchDecodeState(_ state: PreparedDecodeState) -> Bool {
@@ -1257,7 +1313,8 @@ private func cacheBatchSignature(_ cache: [KVCache]) -> [String]? {
 
 private func makeFallbackDecodeBatchEvents(
     requests: [TextRuntimeDecodeRequest],
-    backend: AutoSwiftMLXBackend
+    backend: AutoSwiftMLXBackend,
+    fallbackReason: String?
 ) async throws -> AsyncThrowingStream<TextBatchGenerationEvent, Error> {
     let (stream, continuation) = AsyncThrowingStream<TextBatchGenerationEvent, Error>.makeStream()
     let task = Task {
@@ -1283,7 +1340,10 @@ private func makeFallbackDecodeBatchEvents(
                             case .token(let text):
                                 continuation.yield(.token(requestIndex: requestIndex, text: text))
                             case .summary(let summary):
-                                continuation.yield(.summary(requestIndex: requestIndex, summary))
+                                continuation.yield(.summary(
+                                    requestIndex: requestIndex,
+                                    summary.withDecodeBatchFallbackReason(fallbackReason)
+                                ))
                             }
                         }
                     }
@@ -1354,12 +1414,16 @@ private func makePreparedBatchDecodeEvents(
     let task = Task {
         do {
             var requestCaches = batchInput.states.map(\.cache)
-            for index in requestCaches.indices where batchInput.parameters.kvBits != nil {
+            for index in requestCaches.indices {
+                let parameters = batchInput.parametersByRequest[index]
+                guard parameters.kvBits != nil else {
+                    continue
+                }
                 maybeQuantizeKVCache(
                     cache: &requestCaches[index],
-                    kvBits: batchInput.parameters.kvBits,
-                    kvGroupSize: batchInput.parameters.kvGroupSize,
-                    quantizedKVStart: batchInput.parameters.quantizedKVStart
+                    kvBits: parameters.kvBits,
+                    kvGroupSize: parameters.kvGroupSize,
+                    quantizedKVStart: parameters.quantizedKVStart
                 )
             }
             var batchCacheState = BatchDecodeCacheState(
@@ -1374,13 +1438,15 @@ private func makePreparedBatchDecodeEvents(
             )
 
             var states: [BatchDecodeRequestState] = batchInput.requests.enumerated().map { requestIndex, request in
-                var processor = batchInput.parameters.processor()
+                let parameters = batchInput.parametersByRequest[requestIndex]
+                var processor = parameters.processor()
                 processor?.prompt(batchInput.states[requestIndex].input.text.tokens)
                 return BatchDecodeRequestState(
                     request: request,
+                    maxTokens: parameters.maxTokens,
                     output: initialOutputs[requestIndex],
                     processor: processor,
-                    sampler: batchInput.parameters.sampler(),
+                    sampler: parameters.sampler(),
                     detokenizer: NaiveStreamingDetokenizer(tokenizer: context.tokenizer),
                     pendingToken: nil,
                     pendingTokenID: nil,
@@ -1421,7 +1487,7 @@ private func makePreparedBatchDecodeEvents(
             let supportsBatchDecodeLookahead = shouldUseBatchDecodeLookahead(for: batchInput.states)
 
             for index in states.indices {
-                guard batchInput.parameters.maxTokens.map({ $0 > 0 }) ?? true,
+                guard states[index].maxTokens.map({ $0 > 0 }) ?? true,
                       !states[index].request.shouldAbort()
                 else {
                     states[index].isFinished = true
@@ -1458,9 +1524,11 @@ private func makePreparedBatchDecodeEvents(
                 }
 
                 let activeIndices = batchCacheState.sourceRequestIndices
-                let shouldAdvanceModel = batchInput.parameters.maxTokens.map { maxTokens in
-                    activeIndices.contains { states[$0].generatedTokenCount + 1 < maxTokens }
-                } ?? true
+                let shouldAdvanceModel = activeIndices.contains { requestIndex in
+                    states[requestIndex].maxTokens.map {
+                        states[requestIndex].generatedTokenCount + 1 < $0
+                    } ?? true
+                }
 
                 decodeLoopIterations += 1
                 maxModelEvalBatchSize = max(maxModelEvalBatchSize, activeIndices.count)
@@ -1529,7 +1597,7 @@ private func makePreparedBatchDecodeEvents(
                         decodeStreamYieldTotalMicros += elapsedMicros(since: yieldStartedAt)
                     }
 
-                    if batchInput.parameters.maxTokens.map({ states[requestIndex].generatedTokenCount >= $0 }) ?? false {
+                    if states[requestIndex].maxTokens.map({ states[requestIndex].generatedTokenCount >= $0 }) ?? false {
                         states[requestIndex].isFinished = true
                         clearPendingBatchDecodeToken(&states[requestIndex])
                         continue
@@ -1606,7 +1674,7 @@ private func makePreparedBatchDecodeEvents(
                         decodeStreamYieldTotalMicros += elapsedMicros(since: yieldStartedAt)
                     }
 
-                    if batchInput.parameters.maxTokens.map({ states[index].generatedTokenCount >= $0 }) ?? false {
+                    if states[index].maxTokens.map({ states[index].generatedTokenCount >= $0 }) ?? false {
                         states[index].isFinished = true
                         states[index].pendingToken = nil
                         states[index].pendingTokenID = nil
