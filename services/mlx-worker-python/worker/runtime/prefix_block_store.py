@@ -36,7 +36,7 @@ class LCPResult:
 class _BlockEntry:
     session_id: str
     token_ids: list[int]
-    cache_snapshot: Any  # shallow clone of prompt_cache layer list after prefill
+    cache_snapshot: Any  # stable clone of prompt_cache layer list after prefill
     cache_mode: str  # CacheMode enum name or integer string (e.g. "2")
     model_id: str
     model_revision: str
@@ -428,10 +428,10 @@ class PrefixBlockStore:
         block_size: int,
         total_bytes: int,
         acceleration_mode: str = "",
-    ) -> None:
+    ) -> _BlockEntry | None:
         """Store a prefill result. Replaces any existing entry for session_id."""
         if not session_id:
-            return
+            return None
         entry = _BlockEntry(
             session_id=session_id,
             token_ids=list(token_ids),
@@ -444,10 +444,7 @@ class PrefixBlockStore:
             acceleration_mode=acceleration_mode,
         )
         with self._lock:
-            self._evict_session(session_id)
-            self._sessions[session_id] = entry
-            self._total_bytes += total_bytes
-            self._evict_if_needed()
+            return self._store_entry_locked(entry, acquire=False)
 
     def acquire(self, session_id: str) -> _BlockEntry | None:
         """Return the entry and increment its active refcount, or None if absent/evicted."""
@@ -614,7 +611,7 @@ class PrefixBlockStore:
             live_bytes = 0
         if live_bytes <= 0:
             live_bytes = meta.total_bytes
-        self.put(
+        entry = _BlockEntry(
             session_id=meta.session_id,
             token_ids=list(meta.token_ids),
             cache_snapshot=snapshot,
@@ -625,7 +622,8 @@ class PrefixBlockStore:
             total_bytes=live_bytes,
             acceleration_mode=meta.acceleration_mode,
         )
-        entry = self.acquire(meta.session_id)
+        with self._lock:
+            entry = self._store_entry_locked(entry, acquire=True)
         if entry is None:
             return None
         self._cold_store.remove(meta.session_id)
@@ -685,6 +683,19 @@ class PrefixBlockStore:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _store_entry_locked(self, entry: _BlockEntry, *, acquire: bool) -> _BlockEntry | None:
+        """Insert entry under the store lock and optionally acquire that exact entry."""
+        self._evict_session(entry.session_id)
+        self._sessions[entry.session_id] = entry
+        self._total_bytes += entry.total_bytes
+        self._evict_if_needed()
+        live = self._sessions.get(entry.session_id)
+        if live is not entry:
+            return None
+        if acquire:
+            live.acquire()
+        return live
+
     def _evict_session(self, session_id: str) -> None:
         """Remove and unpin an existing entry for session_id (called under lock)."""
         existing = self._sessions.pop(session_id, None)
@@ -711,15 +722,16 @@ class PrefixBlockStore:
     def _enqueue_demotion_locked(self, entry: _BlockEntry) -> None:
         """Queue a cold-tier demotion for a budget-evicted entry (under lock).
 
-        The closure captures the snapshot reference directly so the later
-        `_cleanup_entry` (which nulls `entry.cache_snapshot`) cannot race it.
+        The closure captures a point-in-time snapshot clone so the later
+        `_cleanup_entry` (which nulls `entry.cache_snapshot`) and any concurrent
+        decode against a cloned prompt cache cannot change what gets serialized.
         Same-session replacement via put() intentionally does not demote — the
         fresh hot entry supersedes the old snapshot, and demoting every turn
         would serialize on each conversation update.
         """
         if self._cold_store is None:
             return
-        snapshot = entry.cache_snapshot
+        snapshot = clone_cache_snapshot(entry.cache_snapshot)
         if snapshot is None:
             return
         cold = self._cold_store
@@ -845,19 +857,68 @@ def _count_matching_blocks(
     return count
 
 
-def clone_cache_snapshot(cache_snapshot: Any) -> Any:
-    """Shallow-copy the prompt_cache list so the clone can be mutated independently.
+def _clone_cache_value(value: Any) -> Any:
+    """Clone mutable tensor/container values held by a prompt-cache layer."""
+    if value is None or isinstance(value, str | bytes | int | float | bool):
+        return value
+    if isinstance(value, list):
+        return [_clone_cache_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_clone_cache_value(item) for item in value)
+    if isinstance(value, dict):
+        return {copy.deepcopy(key): _clone_cache_value(item) for key, item in value.items()}
+    if isinstance(value, set):
+        return {_clone_cache_value(item) for item in value}
+    if isinstance(value, bytearray):
+        return bytearray(value)
 
-    mx.array objects are immutable; only the list container needs copying.
-    The cache layer objects themselves (KVCache instances) are copied shallowly —
-    mlx-lm's cache contract allows independent use of cloned layer objects
-    because state tensors are copy-on-write at the MLX level.
-    """
+    copy_method = getattr(value, "copy", None)
+    if callable(copy_method):
+        try:
+            copied = copy_method()
+            if copied is not value:
+                return copied
+        except Exception:
+            pass
+
+    try:
+        import mlx.core as mx
+
+        return mx.array(value)
+    except Exception:
+        pass
+
+    try:
+        return copy.deepcopy(value)
+    except Exception:
+        return value
+
+
+def _clone_cache_layer(layer: Any) -> Any:
+    if isinstance(layer, list | tuple | dict | set | bytearray):
+        return _clone_cache_value(layer)
+    cloned = copy.copy(layer)
+    for attr in ("state", "keys", "values"):
+        try:
+            value = getattr(layer, attr)
+        except Exception:
+            continue
+        if value is None:
+            continue
+        try:
+            setattr(cloned, attr, _clone_cache_value(value))
+        except Exception:
+            continue
+    return cloned
+
+
+def clone_cache_snapshot(cache_snapshot: Any) -> Any:
+    """Clone a prompt_cache list so decode and demotion mutate independent buffers."""
     if cache_snapshot is None:
         return None
     if not isinstance(cache_snapshot, list):
         return None
     try:
-        return [copy.copy(layer) for layer in cache_snapshot]
+        return [_clone_cache_layer(layer) for layer in cache_snapshot]
     except Exception:
         return None

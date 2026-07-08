@@ -225,6 +225,53 @@ def test_promotion_accounts_live_bytes_not_file_size(tmp_path: Path) -> None:
     store.release(result.entry)
 
 
+def test_cold_promotion_returns_promoted_entry_when_session_is_replaced(
+    tmp_path: Path,
+) -> None:
+    cold = _make_cold(tmp_path)
+    cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4, 5, 6, 7, 8],
+        cache_snapshot=_make_snapshot("cold"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+
+    class RacingAcquireStore(PrefixBlockStore):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.replaced_before_acquire = False
+
+        def acquire(self, session_id: str) -> Any:
+            if session_id == "s1" and not self.replaced_before_acquire:
+                self.replaced_before_acquire = True
+                self.put(
+                    session_id="s1",
+                    token_ids=[99, 98, 97, 96],
+                    cache_snapshot=_make_snapshot("replacement"),
+                    cache_mode="CACHE_MODE_TIERED",
+                    model_id="m1",
+                    model_revision="r1",
+                    block_size=4,
+                    total_bytes=512,
+                    acceleration_mode="",
+                )
+            return super().acquire(session_id)
+
+    store = RacingAcquireStore(cold_store=cold)
+
+    result = store.find_lcp([1, 2, 3, 4, 5, 6, 7, 8], "m1", "r1", 4)
+
+    assert result.tier == "cold"
+    assert result.entry is not None
+    assert result.entry.cache_snapshot == [{"data": "cold"}]
+    assert store.replaced_before_acquire is False
+    store.release(result.entry)
+
+
 def test_promotion_falls_back_to_file_size_when_estimate_is_zero(tmp_path: Path) -> None:
     cold = _make_cold(tmp_path)
     store = PrefixBlockStore(
@@ -278,6 +325,36 @@ def test_budget_eviction_demotes_to_cold_tier(tmp_path: Path) -> None:
     store.flush_deferred_clear()
     assert cold.entry_count() == 1
     assert cold.demotion_count == 1
+
+
+def test_budget_eviction_demotes_a_stable_snapshot(tmp_path: Path) -> None:
+    serialized: list[Any] = []
+
+    def recording_serializer(cache_snapshot: Any, path: Path) -> None:
+        serialized.append(cache_snapshot)
+        _fake_serializer(cache_snapshot, path)
+
+    cold = _make_cold(tmp_path, serializer=recording_serializer)
+    store = PrefixBlockStore(max_memory_bytes=1500, min_session_count=1, cold_store=cold)
+    evicted_snapshot = [{"data": ["stable"]}]
+    store.put(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4, 5, 6, 7, 8],
+        cache_snapshot=evicted_snapshot,
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        total_bytes=1000,
+        acceleration_mode="",
+    )
+    _put(store, "s2", [9] * 8, total_bytes=1000)  # evicts s1
+
+    evicted_snapshot[0]["data"].append("mutated-before-flush")
+    store.flush_deferred_clear()
+
+    assert serialized == [[{"data": ["stable"]}]]
+    assert cold.entry_count() == 1
 
 
 def test_same_session_replacement_does_not_demote(tmp_path: Path) -> None:
