@@ -1089,7 +1089,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
     }
 
-    func testTextDecodeBatchEligibilityKeyIgnoresSequenceLocalSamplingPolicy() {
+    func testTextDecodeBatchCoordinatorBatchesSequenceLocalSamplingPolicyDifferences() async throws {
         var greedySampling = Melix_Worker_V1_SamplingConfig()
         greedySampling.temperature = 0
         greedySampling.topP = 1
@@ -1106,22 +1106,106 @@ final class WorkerScaffoldTests: XCTestCase {
         var acceleration = Melix_Worker_V1_AccelerationPolicy()
         acceleration.mode = .baseline
 
-        let first = TextDecodeBatchEligibilityKey(
-            modelHandle: "model-a",
-            lane: "text.decode.batch",
-            acceleration: TextDecodeAccelerationKey(acceleration),
-            decodeStepSize: 1,
-            prefillToken: ""
+        let services = makeServices(backend: DeterministicTextBackend(tokenDelayNanos: 0))
+        let loaded = try await services.registry.loadModel(makeModelSpec(modelID: "model-a"))
+        let firstPrefill = try await services.registry.prefill(
+            requestID: "req-coordinator-mixed-sampler-1",
+            modelHandle: loaded.handle,
+            messages: [makeUserMessage("coordinator mixed sampler alpha")],
+            prefillStepSize: 1,
+            returnDecodeHandle: true,
+            resumeHint: "",
+            acceleration: acceleration,
+            shouldAbort: { false }
         )
-        let second = TextDecodeBatchEligibilityKey(
-            modelHandle: "model-a",
+        let secondPrefill = try await services.registry.prefill(
+            requestID: "req-coordinator-mixed-sampler-2",
+            modelHandle: loaded.handle,
+            messages: [makeUserMessage("coordinator mixed sampler beta")],
+            prefillStepSize: 1,
+            returnDecodeHandle: true,
+            resumeHint: "",
+            acceleration: acceleration,
+            shouldAbort: { false }
+        )
+        let firstSession = try await services.registry.beginDecode(decodeHandle: firstPrefill.decodeHandle)
+        let secondSession = try await services.registry.beginDecode(decodeHandle: secondPrefill.decodeHandle)
+
+        let key = TextDecodeBatchEligibilityKey(
+            modelHandle: loaded.handle,
             lane: "text.decode.batch",
             acceleration: TextDecodeAccelerationKey(acceleration),
             decodeStepSize: 1,
             prefillToken: ""
         )
 
-        XCTAssertEqual(first, second)
+        func candidate(
+            requestID: String,
+            session: WorkerDecodeSession,
+            sampling: Melix_Worker_V1_SamplingConfig
+        ) -> TextDecodeBatchCandidate {
+            TextDecodeBatchCandidate(
+                requestID: requestID,
+                key: key,
+                maxBatchSize: 2,
+                schedulerCohortSize: 2,
+                session: session,
+                sampling: sampling,
+                maxOutputTokens: sampling.maxOutputTokens,
+                decodeStepSize: 1,
+                prefillToken: "",
+                acceleration: acceleration,
+                shouldAbort: { false }
+            )
+        }
+
+        func batchedStream(
+            from assignment: TextDecodeBatchAssignment,
+            file: StaticString = #filePath,
+            line: UInt = #line
+        ) -> AsyncThrowingStream<TextGenerationEvent, Error>? {
+            switch assignment {
+            case .single:
+                XCTFail("Expected mixed sequence-local sampling policies to share a decode batch.", file: file, line: line)
+                return nil
+            case .batched(let stream, let batchSize):
+                XCTAssertEqual(batchSize, 2, file: file, line: line)
+                return stream
+            }
+        }
+
+        let coordinator = TextDecodeBatchCoordinator(
+            registry: services.registry,
+            pendingWindowNanos: 5_000_000_000,
+            cohortPendingWindowNanos: 5_000_000_000
+        )
+        let firstCandidate = candidate(
+            requestID: "req-coordinator-mixed-sampler-1",
+            session: firstSession,
+            sampling: greedySampling
+        )
+        let secondCandidate = candidate(
+            requestID: "req-coordinator-mixed-sampler-2",
+            session: secondSession,
+            sampling: warmSampling
+        )
+        async let firstAssignment = coordinator.enqueue(firstCandidate)
+        async let secondAssignment = coordinator.enqueue(secondCandidate)
+
+        let assignments = await (firstAssignment, secondAssignment)
+        let firstStream = try XCTUnwrap(batchedStream(from: assignments.0))
+        let secondStream = try XCTUnwrap(batchedStream(from: assignments.1))
+
+        async let firstEvents = collectTextGenerationEvents(from: firstStream)
+        async let secondEvents = collectTextGenerationEvents(from: secondStream)
+        let collected = try await (firstEvents, secondEvents)
+        await services.registry.finishDecode()
+        await services.registry.finishDecode()
+
+        XCTAssertEqual(renderedSummary(from: collected.0)?.decodeBatchSize, 2)
+        XCTAssertEqual(renderedSummary(from: collected.1)?.decodeBatchSize, 2)
+        XCTAssertEqual(renderedSummary(from: collected.0)?.completionTokens, 1)
+        XCTAssertEqual(renderedSummary(from: collected.1)?.completionTokens, 3)
     }
 
     #if canImport(MLX) && canImport(MLXLMCommon) && canImport(MLXLLM) && canImport(Tokenizers)
