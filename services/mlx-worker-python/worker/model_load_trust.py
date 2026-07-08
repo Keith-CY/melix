@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from builtins import open as _OPEN
 from dataclasses import dataclass
 from functools import lru_cache
 import json
@@ -394,7 +395,7 @@ def _read_model_config_for_stat(
     _ = (mtime_ns, size)
     loads = _JSON_LOADS
     try:
-        with open(config_path, "rb") as handle:
+        with _OPEN(config_path, "rb") as handle:
             payload = loads(handle.read())
     except (OSError, json.JSONDecodeError):
         return None

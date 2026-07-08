@@ -19,6 +19,7 @@ from worker.productization.dataset_preparation import (
     _language_for_suffix,
     _normalize_line_endings,
     _record,
+    _record_content_digest_and_size,
     _read_source_text,
     _source_size_entries,
     _source_kind,
@@ -223,6 +224,20 @@ def test_dataset_ingest_record_copies_nonempty_metadata_and_fast_paths_empty_met
     metadata["language"] = "swift"
 
     assert record["metadata"] == {"language": "python"}
+
+
+def test_dataset_ingest_record_reuses_normalized_text_digest_cache() -> None:
+    _record_content_digest_and_size.cache_clear()
+
+    first_record = _record(Path("first.txt"), "text", "hello\n", {}, normalized=True)
+    second_record = _record(Path("second.txt"), "text", "hello\n", {}, normalized=True)
+
+    cache_info = _record_content_digest_and_size.cache_info()
+    assert cache_info.hits == 1
+    assert cache_info.misses == 1
+    assert first_record["content_sha256"] == second_record["content_sha256"]
+    assert first_record["byte_size"] == second_record["byte_size"] == len(b"hello\n")
+    assert first_record["source_id"] != second_record["source_id"]
 
 
 def test_dataset_ingest_record_accepts_pre_normalized_text(

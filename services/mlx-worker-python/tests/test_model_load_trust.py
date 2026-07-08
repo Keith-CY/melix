@@ -373,7 +373,15 @@ def test_trust_policy_reads_config_json_bytes_with_direct_open(
     def fail_read_bytes(path: Path) -> bytes:  # pragma: no cover - only runs on regression.
         raise AssertionError(f"config.json should use direct open(), not Path.read_bytes(): {path}")
 
-    monkeypatch.setattr(model_load_trust_module, "open", counted_open, raising=False)
+    monkeypatch.setattr(model_load_trust_module, "_OPEN", counted_open)
+    monkeypatch.setattr(
+        model_load_trust_module,
+        "open",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("config.json should use the module-local open binding")
+        ),
+        raising=False,
+    )
     monkeypatch.setattr(model_load_trust_module.Path, "read_bytes", fail_read_bytes)
     monkeypatch.setattr(model_load_trust_module.Path, "read_text", fail_read_text)
 
@@ -442,7 +450,7 @@ def test_trust_policy_caches_config_json_by_file_stat(
         open_calls += 1
         return original_open(*args, **kwargs)
 
-    monkeypatch.setattr(model_load_trust_module, "open", counted_open, raising=False)
+    monkeypatch.setattr(model_load_trust_module, "_OPEN", counted_open)
 
     for _ in range(2):
         with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
