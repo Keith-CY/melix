@@ -307,6 +307,11 @@ def _copy_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
     """Copy the message containers without deep-copying immutable string payloads."""
 
     copy_dict = _COPY_DICT
+    message_count = len(messages)
+    if message_count == 2:
+        return [copy_dict(messages[0]), copy_dict(messages[1])]
+    if message_count == 3:
+        return [copy_dict(messages[0]), copy_dict(messages[1]), copy_dict(messages[2])]
     return [copy_dict(message) for message in messages]
 
 
