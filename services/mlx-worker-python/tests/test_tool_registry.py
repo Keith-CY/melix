@@ -993,6 +993,74 @@ def test_agentic_tool_selection_always_only_reuses_cached_metrics(
     )
 
 
+def test_agentic_tool_selection_no_keyword_fallback_reuses_always_only_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_select(self: ToolRegistry, names: list[str] | tuple[str, ...]) -> ToolRegistry:
+        raise AssertionError(  # pragma: no cover
+            f"no-keyword fallback should reuse cached registry for {names!r}"
+        )
+
+    def fail_metrics(self: ToolRegistry) -> ToolRegistryMetrics:
+        raise AssertionError(  # pragma: no cover
+            f"no-keyword fallback should reuse cached metrics for {self!r}"
+        )
+
+    monkeypatch.setattr(ToolRegistry, "select", fail_select)
+    monkeypatch.setattr(ToolRegistry, "metrics", fail_metrics)
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer the researcher briefly about cropland.",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry is tool_registry_module._ALWAYS_ONLY_TOOL_REGISTRY
+    assert result.receipt == {
+        "schema_version": "melix.agentic_tool_selection.v1",
+        "toolset_version": "melix.agentic_tools.builtin.v1",
+        "selection_mode": "fallback",
+        "vector_available": False,
+        "fallback_reason": "no_keyword_match",
+        "selected_tools": [{"tool_id": "local_compute", "source": "always"}],
+        "dropped_tool_count": tool_registry_module._ALWAYS_ONLY_DROPPED_TOOL_COUNT,
+        "full_schema_bytes": tool_registry_module._AGENTIC_TOOL_CATALOG_METRICS.schema_bytes,
+        "selected_schema_bytes": tool_registry_module._ALWAYS_ONLY_TOOL_METRICS.schema_bytes,
+    }
+
+    context_result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer briefly.",
+            recent_user_turns=("Discuss cropland.",),
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert context_result.registry is tool_registry_module._ALWAYS_ONLY_TOOL_REGISTRY
+    assert context_result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"}
+    ]
+
+    invalid_vector_result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer briefly.",
+            recent_user_turns=("Discuss cropland.",),
+            vector_selected_tool_ids=("unknown_tool",),
+            vector_available=True,
+            max_selected_tools=4,
+        )
+    )
+
+    assert invalid_vector_result.registry is tool_registry_module._ALWAYS_ONLY_TOOL_REGISTRY
+    assert invalid_vector_result.receipt["vector_available"] is True
+    assert invalid_vector_result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"}
+    ]
+
+
 def test_agentic_tool_selection_always_only_supports_custom_registry() -> None:
     registry = ToolRegistry(tool_registry_module.agentic_tool_catalog_registry().tools)
 

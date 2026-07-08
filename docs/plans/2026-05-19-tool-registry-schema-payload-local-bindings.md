@@ -184,6 +184,32 @@ Expected effect:
 - leave registry selection, OpenAI schema generation, and protobuf config
   materialization unchanged.
 
+## Follow-up Slice: No-keyword Fallback Always-only Cache
+
+The 2026-07-08 no-keyword fallback follow-up keeps agentic tool selection
+receipts unchanged for non-empty user turns that do not match any optional tool
+keyword. When no vector tool ids were supplied, the selector now checks keyword
+matches before allocating the mutable selected-tool accumulators; once the scans
+prove there are no vector or keyword hits, it returns through the same built-in
+always-only cache used by the max-capacity and whitespace fast paths. This avoids
+building fallback selection accumulators, rebuilding the one-tool selection
+registry, and recomputing registry metrics for generic no-keyword fallback turns
+while preserving fresh receipt payloads.
+
+The registered `tool-registry-select-name-index-cache` probe now reports
+`no_keyword_fallback_planning_elapsed_ms_mean` and
+`no_keyword_fallback_selected_schema_bytes_mean` so this fallback path remains a
+PR-scoped performance gate.
+
+Expected effect:
+
+- reduce `tool-registry-select-name-index-cache`
+  `no_keyword_fallback_planning_elapsed_ms_mean`;
+- preserve selected registry identity, selected schema bytes, full schema bytes,
+  and receipt fields for no-keyword fallback turns;
+- leave vector, keyword, whitespace, max-capacity, registry selection, OpenAI
+  schema generation, and protobuf config materialization unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
@@ -191,7 +217,8 @@ Expected effect:
    least 95% coverage for touched scope.
 3. Run the registered probe command locally before and after the slice and
    compare the relevant registered metric (`schema_payload_elapsed_ms_mean` for
-   schema-payload slices, or `elapsed_ms_mean` for the OpenAI tool payload slice)
-   over repeated samples.
+   schema-payload slices, `elapsed_ms_mean` for the OpenAI tool payload slice,
+   or `no_keyword_fallback_planning_elapsed_ms_mean` for the no-keyword
+   fallback slice) over repeated samples.
 4. Push only if local evidence is neutral-to-improved and rely on the GitHub
    PR-scoped performance workflow as the merge gate.

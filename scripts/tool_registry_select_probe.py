@@ -47,6 +47,8 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     current_capacity_selected_schema_bytes_samples: list[float] = []
     always_only_planning_elapsed_samples: list[float] = []
     always_only_selected_schema_bytes_samples: list[float] = []
+    no_keyword_fallback_planning_elapsed_samples: list[float] = []
+    no_keyword_fallback_selected_schema_bytes_samples: list[float] = []
     whitespace_turn_planning_elapsed_samples: list[float] = []
     whitespace_turn_selected_schema_bytes_samples: list[float] = []
     checksum = 0
@@ -188,8 +190,30 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         )
         checksum += always_only_schema_bytes
 
-        whitespace_turn_schema_bytes = 0
+        no_keyword_fallback_schema_bytes = 0
         keyword_match_cache_clear = tool_registry_module._keyword_tool_matches.cache_clear
+        no_keyword_fallback_started = time.perf_counter()
+        for _index in range(selector_iterations):
+            keyword_match_cache_clear()
+            selection_result = select_agentic_tools_for_turn(
+                ToolSelectionInput(
+                    current_user_turn="Answer the researcher briefly about cropland.",
+                    vector_available=False,
+                    max_selected_tools=4,
+                )
+            )
+            no_keyword_fallback_schema_bytes += int(
+                selection_result.receipt["selected_schema_bytes"]
+            )
+        no_keyword_fallback_planning_elapsed_samples.append(
+            (time.perf_counter() - no_keyword_fallback_started) * 1000.0
+        )
+        no_keyword_fallback_selected_schema_bytes_samples.append(
+            float(no_keyword_fallback_schema_bytes / selector_iterations)
+        )
+        checksum += no_keyword_fallback_schema_bytes
+
+        whitespace_turn_schema_bytes = 0
         whitespace_turn_started = time.perf_counter()
         for _index in range(selector_iterations):
             keyword_match_cache_clear()
@@ -245,6 +269,12 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         ),
         "always_only_selected_schema_bytes_mean": statistics.fmean(
             always_only_selected_schema_bytes_samples
+        ),
+        "no_keyword_fallback_planning_elapsed_ms_mean": statistics.fmean(
+            no_keyword_fallback_planning_elapsed_samples
+        ),
+        "no_keyword_fallback_selected_schema_bytes_mean": statistics.fmean(
+            no_keyword_fallback_selected_schema_bytes_samples
         ),
         "whitespace_turn_planning_elapsed_ms_mean": statistics.fmean(
             whitespace_turn_planning_elapsed_samples
