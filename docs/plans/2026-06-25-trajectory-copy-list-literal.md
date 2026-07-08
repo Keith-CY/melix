@@ -55,3 +55,14 @@ resolving the builtin `type` during every field iteration. Copy isolation,
 empty-value filtering, and scalar forwarding semantics stay unchanged. The
 registered `trajectory-provenance-copy-elision` probe remains the local Linux and
 CI validation gate for the affected path.
+
+## 2026-07-08 follow-up: seven-item scalar list fast path
+
+This follow-up remains limited to `worker.trajectory_provenance._copy_json_list`.
+The registered probe's scalar-list fixture uses the common seven-field token
+metrics shape, so the copier now handles exact seven-item scalar lists with an
+unrolled type guard and direct list literal. Lists with mutable members, including
+seven-item lists, immediately fall back to recursive copying after the unrolled
+check to preserve container isolation without a second scalar scan. The
+registered `trajectory-provenance-copy-elision` probe remains the local Linux and
+CI validation gate for this small Python-only slice.
