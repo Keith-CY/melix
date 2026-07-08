@@ -14,6 +14,8 @@ import time
 from typing import Any
 
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
+from worker.runtime.native_mtp.capability import resolve_native_mtp_capability
+from worker.runtime.native_mtp.preload import apply_native_mtp_preload_decision
 from worker.runtime.prefix_block_store import (
     LCPResult as _LCPResult,
     clone_cache_snapshot as _clone_cache_snapshot,
@@ -195,7 +197,6 @@ _STREAM_STOP_KWARG_NAMES = ("stop", "stop_words", "stop_sequences")
 _SAMPLER_PENALTY_KWARG_NAMES = ("frequency_penalty", "presence_penalty")
 _STOP_CONTRACT_CACHE_FIELD = "_melix.resolved_text_stop_contract_cache"
 _STOP_KWARGS_CACHE_FIELD = "_melix.resolved_text_stop_kwargs_cache"
-_NATIVE_MTP_ENABLED_EXT_KEY = "melix.native_mtp.enabled"
 _NATIVE_MTP_TEXT_BATCH_PREFILL_STEP_SIZE_ENV = "MELIX_TEXT_NATIVE_MTP_PREFILL_STEP_SIZE"
 _NATIVE_MTP_TEXT_BATCH_DEFAULT_PREFILL_STEP_SIZE = 2048
 _NATIVE_MTP_TEXT_ACTIVE_FIELD = "_melix.native_mtp_text_active"
@@ -208,103 +209,13 @@ def _truthy_string(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
-def _load_json_payload(path: Path) -> dict[str, Any]:
-    try:
-        payload = json.loads(path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _native_mtp_model_type(config_payload: dict[str, Any]) -> str:
-    text_config = config_payload.get("text_config")
-    if isinstance(text_config, dict):
-        value = text_config.get("model_type") or config_payload.get("model_type")
-    else:
-        value = config_payload.get("model_type")
-    return str(value or "").strip().lower()
-
-
-def _native_mtp_layer_count(config_payload: dict[str, Any]) -> int:
-    candidates: list[Any] = []
-    text_config = config_payload.get("text_config")
-    if isinstance(text_config, dict):
-        candidates.append(text_config.get("mtp_num_hidden_layers"))
-    candidates.append(config_payload.get("mtp_num_hidden_layers"))
-    for value in candidates:
-        try:
-            return max(0, int(value or 0))
-        except (TypeError, ValueError):
-            continue
-    return 0
-
-
-def _native_mtp_weight_presence(model_dir: Path) -> tuple[bool, int]:
-    index_payload = _load_json_payload(model_dir / "model.safetensors.index.json")
-    weight_map = index_payload.get("weight_map")
-    if not isinstance(weight_map, dict):
-        return False, 0
-    count = sum(
-        1
-        for key in weight_map
-        if str(key).startswith("language_model.mtp.") or str(key).startswith("mtp.")
-    )
-    return count > 0, count
-
-
 def maybe_apply_native_mtp_text_preload_patches(
     model_path: str,
     *,
     metadata: dict[str, str],
 ) -> dict[str, str]:
-    enabled = _truthy_string(metadata.get(_NATIVE_MTP_ENABLED_EXT_KEY, ""))
-    model_dir = Path(model_path)
-    config_payload = _load_json_payload(model_dir / "config.json")
-    model_type = _native_mtp_model_type(config_payload)
-    mtp_layers = _native_mtp_layer_count(config_payload)
-    compatible = model_type in {"qwen3_5", "qwen3_5_text"} and mtp_layers > 0
-    weights_present, weight_count = _native_mtp_weight_presence(model_dir)
-
-    active = False
-    patch_applied = False
-    reason = "disabled"
-    try:
-        from worker.runtime import native_mtp
-
-        native_mtp.set_mtp_active(False)
-        native_mtp.set_mtp_weight_attachment(False)
-        if compatible:
-            native_mtp.set_mtp_weight_attachment(weights_present)
-            patch_applied = native_mtp.apply_native_mtp_patches()
-            if not patch_applied:
-                reason = "patch_failed"
-            elif not enabled:
-                reason = "disabled"
-            elif not weights_present:
-                reason = "missing_mtp_weights"
-            else:
-                active = True
-                reason = ""
-        elif enabled:
-            reason = "unsupported_model"
-        native_mtp.set_mtp_active(active)
-    except Exception:
-        reason = "patch_error"
-        try:
-            native_mtp.set_mtp_active(False)
-            native_mtp.set_mtp_weight_attachment(False)
-        except Exception:
-            pass
-
-    return {
-        "melix.native_mtp.enabled": "true" if enabled else "false",
-        "melix.native_mtp.compatible": "true" if compatible else "false",
-        "melix.native_mtp.weights_present": "true" if weights_present else "false",
-        "melix.native_mtp.weight_count": str(weight_count),
-        "melix.native_mtp.patch_applied": "true" if patch_applied else "false",
-        "melix.native_mtp.active": "true" if active else "false",
-        "melix.native_mtp.reason": reason,
-    }
+    decision = resolve_native_mtp_capability(model_path, metadata=metadata)
+    return apply_native_mtp_preload_decision(decision, model_path=model_path)
 
 
 def _load_mlx_batch_generator_class():
