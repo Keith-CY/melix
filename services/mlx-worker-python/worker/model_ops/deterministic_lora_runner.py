@@ -84,9 +84,12 @@ class DeterministicLoRARunner(MLXLMRunner):
         self,
         request: HeldoutEvaluationRequest,
     ) -> HeldoutEvaluationResult:
+        # Baseline pass (no adapter) reports a deterministically higher loss
+        # so pipeline tests can assert a positive adapter improvement delta.
+        loss = 0.42 if request.adapter_dir is None else 0.29
         return HeldoutEvaluationResult(
-            loss=0.29,
-            perplexity=math.exp(0.29),
+            loss=loss,
+            perplexity=math.exp(loss),
             sample_count=request.test_sample_count,
             execution_backend="native",
         )

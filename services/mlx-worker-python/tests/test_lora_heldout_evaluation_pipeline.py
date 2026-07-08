@@ -26,6 +26,41 @@ class FailingHeldoutEvaluationRunner(DeterministicLoRARunner):
         raise RuntimeError("held-out metric backend unavailable")
 
 
+class FailingBaselineHeldoutEvaluationRunner(DeterministicLoRARunner):
+    def evaluate_heldout_native(
+        self,
+        request: HeldoutEvaluationRequest,
+    ) -> HeldoutEvaluationResult:
+        if request.adapter_dir is None:
+            raise RuntimeError("baseline metric backend unavailable")
+        return super().evaluate_heldout_native(request)
+
+
+def _heldout_dataset_package(tmp_path: Path, name: str, dataset_id: str) -> Path:
+    sample_lines = [
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": f"question {index}"},
+                    {"role": "assistant", "content": f"answer {index}"},
+                ]
+            }
+        )
+        for index in range(8)
+    ]
+    return _write_dataset_package(
+        tmp_path / name,
+        manifest_payload={
+            "schema_version": "melix.training_dataset_package.v1",
+            "dataset_id": dataset_id,
+            "format": "chat_messages",
+            "sample_count": len(sample_lines),
+            "version": "1",
+        },
+        sample_lines=sample_lines,
+    )
+
+
 def test_lora_training_pipeline_records_completed_heldout_evaluation_receipt(
     tmp_path: Path,
 ) -> None:
@@ -239,6 +274,155 @@ def test_lora_training_pipeline_records_skipped_heldout_evaluation_without_test_
         "perplexity": None,
         "backend": "",
     }
+
+
+def test_lora_training_pipeline_records_heldout_baseline_comparison(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _heldout_dataset_package(
+        tmp_path, "dataset-with-baseline-compare", "melix-heldout-baseline"
+    )
+
+    result = LoRATrainingPipeline(runner=DeterministicLoRARunner()).run(
+        job_id="train-heldout-baseline",
+        request_ext={
+            "operation": "train_lora",
+            "adapter_name": "heldout-baseline-adapter",
+            "dataset_uri": str(dataset_dir),
+            "max_steps": "0",
+            "test_ratio": "0.25",
+            "heldout_baseline_compare": "true",
+        },
+        source_model=_text_model(family_id="qwen"),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    manifest = result.manifest
+    receipt = json.loads(
+        Path(manifest["heldout_evaluation_receipt_path"]).read_text(encoding="utf-8")
+    )
+    run_record = json.loads(
+        (tmp_path / "output" / "lora-experiment-run.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["heldout_evaluation_status"] == "completed"
+    assert manifest["heldout_test_loss"] == pytest.approx(0.29)
+    assert manifest["heldout_baseline_status"] == "completed"
+    assert manifest["heldout_baseline_reason"] == ""
+    assert manifest["heldout_baseline_backend"] == "native"
+    assert manifest["heldout_baseline_loss"] == pytest.approx(0.42)
+    assert manifest["heldout_baseline_perplexity"] == pytest.approx(math.exp(0.42))
+    assert manifest["heldout_loss_delta"] == pytest.approx(0.42 - 0.29)
+    assert manifest["heldout_perplexity_ratio"] == pytest.approx(
+        math.exp(0.42) / math.exp(0.29)
+    )
+    assert receipt["baseline_status"] == "completed"
+    assert receipt["baseline_loss"] == pytest.approx(0.42)
+    assert receipt["loss_delta"] == pytest.approx(0.13)
+    assert run_record["heldout_baseline_loss"] == pytest.approx(0.42)
+    assert run_record["heldout_loss_delta"] == pytest.approx(0.13)
+
+
+def test_lora_training_pipeline_baseline_failure_keeps_adapter_heldout_metrics(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _heldout_dataset_package(
+        tmp_path, "dataset-with-failing-baseline", "melix-heldout-baseline-fails"
+    )
+
+    result = LoRATrainingPipeline(runner=FailingBaselineHeldoutEvaluationRunner()).run(
+        job_id="train-heldout-baseline-fails",
+        request_ext={
+            "operation": "train_lora",
+            "adapter_name": "heldout-baseline-failed-adapter",
+            "dataset_uri": str(dataset_dir),
+            "max_steps": "0",
+            "test_ratio": "0.25",
+            "heldout_baseline_compare": "true",
+        },
+        source_model=_text_model(family_id="qwen"),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    manifest = result.manifest
+    receipt = json.loads(
+        Path(manifest["heldout_evaluation_receipt_path"]).read_text(encoding="utf-8")
+    )
+
+    # The adapter's own held-out metrics survive a failed baseline pass.
+    assert manifest["heldout_evaluation_status"] == "completed"
+    assert manifest["heldout_test_loss"] == pytest.approx(0.29)
+    assert manifest["heldout_baseline_status"] == "failed"
+    assert manifest["heldout_baseline_reason"] == "baseline_evaluation_failed"
+    assert manifest["heldout_baseline_loss"] is None
+    assert manifest["heldout_loss_delta"] is None
+    assert receipt["baseline_status"] == "failed"
+    assert receipt["baseline_error_code"] == "backend_training_failure"
+    assert receipt["baseline_error_message"] == "baseline metric backend unavailable"
+    assert receipt["loss_delta"] is None
+
+
+def test_lora_training_pipeline_baseline_not_requested_keeps_receipt_shape(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _heldout_dataset_package(
+        tmp_path, "dataset-without-baseline-compare", "melix-heldout-no-baseline"
+    )
+
+    result = LoRATrainingPipeline(runner=DeterministicLoRARunner()).run(
+        job_id="train-heldout-no-baseline",
+        request_ext={
+            "operation": "train_lora",
+            "adapter_name": "heldout-no-baseline-adapter",
+            "dataset_uri": str(dataset_dir),
+            "max_steps": "0",
+            "test_ratio": "0.25",
+        },
+        source_model=_text_model(family_id="qwen"),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    manifest = result.manifest
+    receipt = json.loads(
+        Path(manifest["heldout_evaluation_receipt_path"]).read_text(encoding="utf-8")
+    )
+
+    assert "baseline_status" not in receipt
+    assert "heldout_baseline_status" not in manifest
+    assert "heldout_loss_delta" not in manifest
+
+
+def test_heldout_baseline_skipped_when_adapter_evaluation_fails(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _heldout_dataset_package(
+        tmp_path, "dataset-adapter-fails-baseline-requested", "melix-heldout-adapter-fails"
+    )
+
+    result = LoRATrainingPipeline(runner=FailingHeldoutEvaluationRunner()).run(
+        job_id="train-heldout-adapter-fails-baseline",
+        request_ext={
+            "operation": "train_lora",
+            "adapter_name": "heldout-adapter-fails-baseline",
+            "dataset_uri": str(dataset_dir),
+            "max_steps": "0",
+            "test_ratio": "0.25",
+            "heldout_baseline_compare": "1",
+        },
+        source_model=_text_model(family_id="qwen"),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    manifest = result.manifest
+    assert manifest["heldout_evaluation_status"] == "failed"
+    assert manifest["heldout_baseline_status"] == "skipped"
+    assert manifest["heldout_baseline_reason"] == "adapter_evaluation_not_completed"
+    assert manifest["heldout_baseline_loss"] is None
+    assert manifest["heldout_loss_delta"] is None
 
 
 def test_heldout_evaluation_skipped_reason_preserves_empty_after_formatting(

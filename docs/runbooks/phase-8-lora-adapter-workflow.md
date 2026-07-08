@@ -282,6 +282,14 @@ Expected training behavior:
   `heldout_test_loss`, `heldout_test_perplexity`, and
   `heldout_test_sample_count` in the adapter manifest, adapter provenance, and
   experiment run record
+- when `heldout_baseline_compare` is truthy alongside a held-out split, Melix
+  also evaluates the plain base model (no adapter) on the same `test.jsonl`
+  and records `heldout_baseline_loss`, `heldout_baseline_perplexity`,
+  `heldout_loss_delta` (baseline minus adapter loss — positive means the
+  adapter improved on the base model), and `heldout_perplexity_ratio` in the
+  held-out receipt, adapter manifest, and experiment run record; a failed
+  baseline pass records `heldout_baseline_status=failed` without disturbing
+  the adapter's own held-out metrics
 - when no held-out split is requested, Melix still writes a skipped held-out
   evaluation receipt with reason `test_split_not_requested`
 - if an `agentic_tool_trace` held-out split is selected but all held-out traces

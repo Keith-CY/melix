@@ -159,7 +159,9 @@ class HeldoutEvaluationRequest:
     base_model_id: str
     model_path: Path
     model_revision: str
-    adapter_dir: Path
+    # None evaluates the plain base model (baseline comparison pass) instead
+    # of the trained adapter.
+    adapter_dir: Path | None
     normalized_dataset_dir: Path
     config: LoRATrainingConfig
     dataset_format: str
@@ -726,6 +728,8 @@ def _load_lora_evaluation_model(
     request: HeldoutEvaluationRequest,
     load_fn: Any,
 ) -> tuple[Any, Any]:
+    if request.adapter_dir is None:
+        return load_fn(str(request.model_path), lazy=False)
     return load_fn(
         str(request.model_path),
         adapter_path=str(request.adapter_dir),
@@ -736,12 +740,19 @@ def _load_lora_evaluation_model(
 def _training_request_for_heldout_evaluation(
     request: HeldoutEvaluationRequest,
 ) -> TrainingRequest:
+    # adapter_output_dir only shapes args.adapter_path in the lora namespace,
+    # which the evaluation path (train=False) never reads; a baseline request
+    # without an adapter substitutes the dataset dir to satisfy the Path field.
     return TrainingRequest(
         job_id=request.job_id,
         base_model_id=request.base_model_id,
         model_path=request.model_path,
         model_revision=request.model_revision,
-        adapter_output_dir=request.adapter_dir,
+        adapter_output_dir=(
+            request.adapter_dir
+            if request.adapter_dir is not None
+            else request.normalized_dataset_dir
+        ),
         normalized_dataset_dir=request.normalized_dataset_dir,
         config=request.config,
         dataset_format=request.dataset_format,
@@ -840,7 +851,7 @@ def _serialize_heldout_evaluation_request(request: HeldoutEvaluationRequest) -> 
         "base_model_id": request.base_model_id,
         "model_path": str(request.model_path),
         "model_revision": request.model_revision,
-        "adapter_dir": str(request.adapter_dir),
+        "adapter_dir": str(request.adapter_dir) if request.adapter_dir is not None else "",
         "normalized_dataset_dir": str(request.normalized_dataset_dir),
         "dataset_format": request.dataset_format,
         "test_sample_count": request.test_sample_count,
@@ -861,7 +872,11 @@ def _deserialize_heldout_evaluation_request(payload: dict) -> HeldoutEvaluationR
         base_model_id=str(payload["base_model_id"]),
         model_path=Path(payload["model_path"]),
         model_revision=str(payload["model_revision"]),
-        adapter_dir=Path(payload["adapter_dir"]),
+        adapter_dir=(
+            Path(str(payload["adapter_dir"]))
+            if str(payload.get("adapter_dir", "") or "").strip()
+            else None
+        ),
         normalized_dataset_dir=Path(payload["normalized_dataset_dir"]),
         config=config,
         dataset_format=str(payload["dataset_format"]),
