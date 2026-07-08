@@ -100,6 +100,15 @@ def _build_lookup_payload(count: int) -> dict[str, Any]:
                     {"shard": index % 11},
                     {"page": index % 17},
                 ],
+                "seven_scores": [
+                    index,
+                    index + 1,
+                    {"rank": index % 7},
+                    {"score": (index % 13) / 13},
+                    {"shard": index % 11},
+                    {"page": index % 17},
+                    {"section": index % 19},
+                ],
                 "six_score_window": [
                     {"first": index},
                     {"second": index + 1},
@@ -129,6 +138,15 @@ def _build_lookup_payload(count: int) -> dict[str, Any]:
                     {"source": index % 5},
                     {"shard": index % 11},
                     {"page": index % 17},
+                ),
+                "seven_labels": (
+                    "retrieved",
+                    {"kind": "document" if index % 2 == 0 else "image"},
+                    {"bucket": index % 3},
+                    {"source": index % 5},
+                    {"shard": index % 11},
+                    {"page": index % 17},
+                    {"section": index % 19},
                 ),
                 "six_label_window": (
                     {"role": "retrieved"},
