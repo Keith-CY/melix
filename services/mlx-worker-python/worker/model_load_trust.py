@@ -23,6 +23,12 @@ BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST = "custom_loader_requires_trust_remote
 CONFIG_JSON_DETECTION = (False, CONFIG_JSON_SOURCE)
 CONFIG_JSON_ABSENT_DETECTION = (False, CONFIG_JSON_ABSENT_SOURCE)
 CONFIG_JSON_AUTO_MAP_DETECTION = (True, CONFIG_JSON_AUTO_MAP_SOURCE)
+MODEL_LOAD_TRUST_DEFAULT_SAFE = common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE
+MODEL_LOAD_TRUST_TRUST_REMOTE_CODE = common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+MODEL_LOAD_TRUST_NOT_APPLICABLE = common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+MODEL_LOAD_TRUST_POLICY = common_pb2.ModelLoadTrustPolicy
+WORKER_ROUTE_CLASS_UNSPECIFIED = common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED
+WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY = common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
 _JSON_LOADS = json.loads
 _OS_STAT = os.stat
 _OS_SCANDIR = os.scandir
@@ -38,8 +44,8 @@ EXECUTABLE_MODEL_FILE_PREFIXES = (
 )
 VALID_REQUESTED_TRUST_MODES = frozenset(
     {
-        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
-        common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
+        MODEL_LOAD_TRUST_DEFAULT_SAFE,
+        MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
     }
 )
 TRUST_APPLICABLE_TEXT_LOADERS = frozenset({"mlx_lm", "mlx_lm_unavailable"})
@@ -49,7 +55,7 @@ TRUST_APPLICABLE_VLM_LOADERS_COMMON = frozenset(
     {"mlx-vlm", "mlx_vlm", "python_vlm", "mlx_vlm_unavailable"}
 )
 ROUTE_CLASS_BY_RUNTIME_KIND = {
-    "text": common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
+    "text": WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
     "vlm": common_pb2.WORKER_ROUTE_PYTHON_VLM,
     "ocr": common_pb2.WORKER_ROUTE_PYTHON_OCR,
     "embedding": common_pb2.WORKER_ROUTE_PYTHON_EMBEDDING,
@@ -100,7 +106,7 @@ def resolve_model_load_trust_policy(
     if not _is_trust_applicable(runtime_kind, loader_family, runtime_name, runtime):
         return _not_applicable_policy(requested_mode, route_class, loader_family)
 
-    policy = common_pb2.ModelLoadTrustPolicy()
+    policy = MODEL_LOAD_TRUST_POLICY()
     policy.requested_mode = requested_mode
     policy.policy_source = _non_empty(
         getattr(request_policy, "policy_source", "") if request_policy is not None else "",
@@ -112,7 +118,7 @@ def resolve_model_load_trust_policy(
     custom_loader_required, detection_source = _detect_custom_loader_requirement(model_spec)
     policy.custom_loader_required = custom_loader_required
     policy.custom_loader_detection_source = detection_source
-    if custom_loader_required and requested_mode != common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE:
+    if custom_loader_required and requested_mode != MODEL_LOAD_TRUST_TRUST_REMOTE_CODE:
         policy.block_reason = BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST
         raise ModelLoadTrustRejection(policy)
     return policy
@@ -131,8 +137,8 @@ def default_not_applicable_load_trust_policy(
     if _is_trust_applicable(runtime_kind, runtime_name, runtime_name, runtime):
         return None
     return _not_applicable_policy(
-        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
-        common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
+        MODEL_LOAD_TRUST_DEFAULT_SAFE,
+        WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
         runtime_name,
     )
 
@@ -145,7 +151,7 @@ def _not_applicable_policy(
 ) -> common_pb2.ModelLoadTrustPolicy:
     return common_pb2.ModelLoadTrustPolicy(
         requested_mode=requested_mode,
-        effective_mode=common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE,
+        effective_mode=MODEL_LOAD_TRUST_NOT_APPLICABLE,
         policy_source=NOT_APPLICABLE_SOURCE,
         custom_loader_detection_source=NOT_APPLICABLE_SOURCE,
         route_class=route_class,
@@ -154,7 +160,7 @@ def _not_applicable_policy(
 
 
 def load_kwargs_for_policy(policy: common_pb2.ModelLoadTrustPolicy) -> dict[str, Any]:
-    if policy.effective_mode != common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE:
+    if policy.effective_mode != MODEL_LOAD_TRUST_TRUST_REMOTE_CODE:
         return {}
     return {"trust_remote_code": True}
 
@@ -171,7 +177,7 @@ def _requested_mode(
         and model_spec.settings.load_trust_mode in valid_requested_modes
     ):
         return model_spec.settings.load_trust_mode, MODEL_SETTINGS_SOURCE
-    return common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE, DEFAULT_SAFE_SOURCE
+    return MODEL_LOAD_TRUST_DEFAULT_SAFE, DEFAULT_SAFE_SOURCE
 
 
 def _route_class(
@@ -179,11 +185,11 @@ def _route_class(
     request_policy: common_pb2.ModelLoadTrustPolicy | None,
     runtime_kind: str,
 ) -> int:
-    if request_policy is not None and request_policy.route_class != common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED:
+    if request_policy is not None and request_policy.route_class != WORKER_ROUTE_CLASS_UNSPECIFIED:
         return request_policy.route_class
-    if model_spec.route_class != common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED:
+    if model_spec.route_class != WORKER_ROUTE_CLASS_UNSPECIFIED:
         return model_spec.route_class
-    return ROUTE_CLASS_BY_RUNTIME_KIND.get(runtime_kind, common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED)
+    return ROUTE_CLASS_BY_RUNTIME_KIND.get(runtime_kind, WORKER_ROUTE_CLASS_UNSPECIFIED)
 
 
 def _loader_family(
