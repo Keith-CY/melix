@@ -18,18 +18,19 @@ The affected path is covered by the registered PR-scoped performance probe
 `code-eval-count-tests-line-scan` in `infra/perf/pr_scoped_probes.json`.
 
 The registry entry already provides focused `test_command`, `coverage_command`,
-and `probe_command` entries for the touched worker path. This slice updates the
-existing probe script so its `assert_elapsed_ms_mean` metric measures uncached
-`_count_tests()` calls on an assert-only payload, which is the path optimized by
-this change.
+and `probe_command` entries for the touched worker path. The registered probe
+remains stable for CI gating; this slice records an additional local same-script
+microbenchmark for the assert-only `_count_tests()` path because the existing
+probe's `assert_elapsed_ms_mean` metric targets the lower-level AST walker.
 
 ## Plan
 
 1. Add regression coverage proving assert-only payloads skip AST parsing, while
    mixed payloads still defer to the parser and preserve assertion counts.
 2. Add a direct assert-line counter before `ast.parse()` in `_count_tests()`.
-3. Update the registered probe script to measure the optimized assert-only
-   `_count_tests()` path instead of only the lower-level AST walker.
+3. Keep the registered probe script stable for CI gating and run an additional
+   same-script local microbenchmark for the optimized assert-only `_count_tests()`
+   path.
 4. Run the focused registered tests, changed-scope coverage, and the registered
    probe locally on Linux.
 5. Use GitHub Actions and the PR-scoped performance report as the merge gate.
