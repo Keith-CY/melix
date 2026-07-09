@@ -6851,5 +6851,61 @@
         "direction": "informational"
       }
     ]
+  },
+  {
+    "id": "prefix-cold-index-scandir",
+    "name": "Prefix cold index scandir",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/prefix_block_store.py",
+      "services/mlx-worker-python/tests/test_prefix_cache_cold_tier.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/prefix_cold_index_scandir_probe.py",
+      "infra/perf/pr_scoped_probes.json"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_prefix_cache_cold_tier.py::test_cold_store_index_reload_drops_orphaned_meta services/mlx-worker-python/tests/test_prefix_cache_cold_tier.py::test_cold_store_index_load_uses_scandir_without_path_glob services/mlx-worker-python/tests/test_prefix_cache_cold_tier.py::test_cold_store_index_load_tolerates_scandir_failure services/mlx-worker-python/tests/test_prefix_cache_cold_tier.py::test_cold_store_index_load_skips_entries_with_metadata_errors services/mlx-worker-python/tests/test_prefix_cache_cold_tier.py::test_cold_hit_promotes_back_to_hot services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_prefix_cold_index_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_prefix_cold_index_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_prefix_cache_cold_tier.py::test_cold_store_index_reload_drops_orphaned_meta services/mlx-worker-python/tests/test_prefix_cache_cold_tier.py::test_cold_store_index_load_uses_scandir_without_path_glob services/mlx-worker-python/tests/test_prefix_cache_cold_tier.py::test_cold_store_index_load_tolerates_scandir_failure services/mlx-worker-python/tests/test_prefix_cache_cold_tier.py::test_cold_store_index_load_skips_entries_with_metadata_errors services/mlx-worker-python/tests/test_prefix_cache_cold_tier.py::test_cold_hit_promotes_back_to_hot services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_prefix_cold_index_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_prefix_cold_index_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/prefix_block_store.py services/mlx-worker-python/tests/test_prefix_cache_cold_tier.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/prefix_cold_index_scandir_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" MELIX_PREFIX_COLD_INDEX_REPO_ROOT=\"$PWD\" uv run --project services/mlx-worker-python bash -c 'SCRIPT=\"scripts/prefix_cold_index_scandir_probe.py\"; for CANDIDATE in \"../head/$SCRIPT\" \"${GITHUB_WORKSPACE:-}/head/$SCRIPT\" \"$SCRIPT\"; do if [ -f \"$CANDIDATE\" ]; then python3 \"$CANDIDATE\"; exit $?; fi; done; echo \"missing probe script fallback for $SCRIPT\" >&2; exit 2'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "elapsed_ms_min",
+        "unit": "ms",
+        "direction": "lower_is_better"
+      },
+      {
+        "key": "elapsed_ms_p95",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "entry_count",
+        "unit": "items",
+        "direction": "informational"
+      },
+      {
+        "key": "loaded_count_mean",
+        "unit": "items",
+        "direction": "informational"
+      },
+      {
+        "key": "path_glob_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better"
+      },
+      {
+        "key": "scandir_calls_mean",
+        "unit": "calls",
+        "direction": "informational"
+      }
+    ]
   }
 ]

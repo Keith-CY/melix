@@ -338,7 +338,22 @@ class ColdPrefixStore:
         self._loaded = True
         if not self._root.is_dir():
             return
-        for meta_path in sorted(self._root.glob("*.meta.json")):
+        meta_paths: list[str] = []
+        try:
+            with os.scandir(self._root) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_file(follow_symlinks=False) and entry.name.endswith(
+                            ".meta.json"
+                        ):
+                            meta_paths.append(entry.path)
+                    except OSError:
+                        continue
+        except OSError:
+            return
+        meta_paths.sort()
+        for meta_path_string in meta_paths:
+            meta_path = Path(meta_path_string)
             try:
                 payload = json.loads(meta_path.read_text(encoding="utf-8"))
                 session_id = str(payload["session_id"])
