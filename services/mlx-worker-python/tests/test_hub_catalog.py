@@ -139,6 +139,30 @@ def test_payload_mlx_tag_detection_preserves_exact_list_and_subclass_semantics()
     ) is False
 
 
+def test_payload_mlx_tag_detection_fast_paths_exact_membership(monkeypatch: pytest.MonkeyPatch) -> None:
+    from worker.model_ops import hub_catalog
+
+    calls = 0
+    original = hub_catalog._is_mlx_atom
+
+    def counted_is_mlx_atom(value: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(hub_catalog, "_is_mlx_atom", counted_is_mlx_atom)
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {"id": "plain/model", "tags": ["Text-Generation", "MLX", object()]}
+    ) is True
+    assert calls == 0
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {"id": "plain/model", "tags": ["Text-Generation", "mLx", object()]}
+    ) is True
+    assert calls == 1
+
+
 class FakeHTTPResponse:
     def __init__(self, payload: object):
         self._payload = json.dumps(payload).encode("utf-8")
