@@ -21,6 +21,10 @@ Use the existing registered probe:
 
 The probe builds synthetic Hub catalog size-hint payloads and exercises both direct `cardData.model_size` parsing and labeled text parsing. The registered probe has focused `test_command`, `coverage_command`, and `probe_command` entries in `infra/perf/pr_scoped_probes.json`.
 
+## 2026-07-09 exact MLX tag membership slice
+
+This follow-up Python-only slice stays within `services/mlx-worker-python/worker/model_ops/hub_catalog.py` and the registered `hub-catalog-size-hint-regex-precompile` PR-scoped probe. It narrows `_tag_payload_contains_mlx(...)` by checking exact `"MLX"` / `"mlx"` list membership before falling back to per-item mixed-case atom checks. Behavior remains identical for exact tags, mixed-case tags, list subclasses, string payloads, and non-string tag payloads; the slice only avoids repeated Python-level tag iteration in the common exact-tag Hub compatibility path.
+
 ## Success Metrics
 
 - Focused Hub catalog tests pass.
