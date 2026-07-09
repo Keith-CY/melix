@@ -344,8 +344,8 @@ class ColdPrefixStore:
             with os.scandir(self._root) as entries:
                 for entry in entries:
                     try:
-                        if entry.is_file(follow_symlinks=False) and entry.name.endswith(
-                            ".meta.json"
+                        if entry.name.endswith(".meta.json") and entry.is_file(
+                            follow_symlinks=False
                         ):
                             meta_paths.append(entry.path)
                     except OSError:
