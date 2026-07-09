@@ -21,7 +21,9 @@ The registry entry already provides focused `test_command`, `coverage_command`,
 and `probe_command` entries for the touched worker path. The registered probe
 remains stable for CI gating; this slice records an additional local same-script
 microbenchmark for the assert-only `_count_tests()` path because the existing
-probe's `assert_elapsed_ms_mean` metric targets the lower-level AST walker.
+probe's `assert_elapsed_ms_mean` metric targets the lower-level AST walker. That
+AST-walker metric is tracked as informational so unrelated runner noise does not
+block this `_count_tests()` slice.
 
 ## Plan
 
