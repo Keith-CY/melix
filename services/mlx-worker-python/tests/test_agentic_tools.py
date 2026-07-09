@@ -272,6 +272,38 @@ def test_agentic_tool_runtime_rejects_tool_dropped_by_selection() -> None:
         )
 
 
+def test_agentic_tool_runtime_web_deny_keeps_visit_out_of_execution_allowlist() -> None:
+    tool_selection = ToolSelectionInput(
+        current_user_turn="Visit fixture://page-1 and summarize it.",
+        vector_available=False,
+        max_selected_tools=4,
+        allow_web=False,
+    )
+    run = execute_agentic_tool_calls(
+        [{"id": "compute-1", "name": "local_compute", "arguments": {"code": "1 + 1"}}],
+        tool_selection=tool_selection,
+    )
+
+    selection_receipt = run.registry_receipt["tool_selection_receipt"]
+
+    assert run.registry_receipt["tools"] == ["local_compute"]
+    assert selection_receipt["tool_policy_receipt"] == {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": False,
+        "explicit_allows": [],
+        "explicit_denies": ["web"],
+        "resolved_disabled_tools": ["visit"],
+        "requested_tools": ["visit"],
+    }
+
+    with pytest.raises(AgenticToolRuntimeError, match="Unknown agentic tool requested: visit"):
+        execute_agentic_tool_calls(
+            [{"id": "visit-1", "name": "visit", "arguments": {"url": "fixture://page-1"}}],
+            fixture_context={"pages": {"fixture://page-1": "secret page"}},
+            tool_selection=tool_selection,
+        )
+
+
 @pytest.mark.parametrize(("tool_name", "arguments"), _BUILT_IN_TOOL_CALLS)
 @pytest.mark.parametrize(
     ("override", "expected_status", "expected_failure_stage", "expected_cancelled"),

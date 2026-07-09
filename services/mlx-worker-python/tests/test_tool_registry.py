@@ -1134,6 +1134,279 @@ def test_agentic_tool_selection_uses_keyword_fallback_when_vector_unavailable() 
     ]
 
 
+def test_agentic_tool_selection_explicit_web_deny_blocks_keyword_visit_with_policy_receipt() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Visit https://example.com/docs and summarize the page.",
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=False,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+    assert result.receipt["fallback_reason"] == "policy_disabled"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"}
+    ]
+    assert result.receipt["tool_policy_receipt"] == {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": False,
+        "explicit_allows": [],
+        "explicit_denies": ["web"],
+        "resolved_disabled_tools": ["visit"],
+        "requested_tools": ["visit"],
+    }
+    assert "https://example.com" not in json.dumps(result.receipt)
+
+
+def test_agentic_policy_append_rejects_invalid_duplicate_and_denied_tools() -> None:
+    selected_names: list[str] = []
+    selected_sources: dict[str, str] = {}
+    selected_tools: list[dict[str, str]] = []
+    denied_tool_names: list[str] = []
+
+    assert not tool_registry_module._append_policy_selected_tool(
+        selected_names,
+        selected_sources,
+        selected_tools,
+        "",
+        "vector",
+        4,
+        frozenset({"visit"}),
+        denied_tool_names,
+    )
+    assert not tool_registry_module._append_policy_selected_tool(
+        selected_names,
+        selected_sources,
+        selected_tools,
+        " \t ",
+        "vector",
+        4,
+        frozenset({"visit"}),
+        denied_tool_names,
+    )
+    assert not tool_registry_module._append_policy_selected_tool(
+        selected_names,
+        selected_sources,
+        selected_tools,
+        "missing_tool",
+        "vector",
+        4,
+        frozenset({"visit"}),
+        denied_tool_names,
+    )
+    assert tool_registry_module._append_policy_selected_tool(
+        selected_names,
+        selected_sources,
+        selected_tools,
+        "local_compute",
+        "always",
+        4,
+        frozenset({"visit"}),
+        denied_tool_names,
+    )
+    assert not tool_registry_module._append_policy_selected_tool(
+        selected_names,
+        selected_sources,
+        selected_tools,
+        "local_compute",
+        "keyword",
+        4,
+        frozenset({"visit"}),
+        denied_tool_names,
+    )
+    assert not tool_registry_module._append_policy_selected_tool(
+        selected_names,
+        selected_sources,
+        selected_tools,
+        " visit ",
+        "keyword",
+        4,
+        frozenset({"visit"}),
+        denied_tool_names,
+    )
+
+    assert selected_names == ["local_compute"]
+    assert selected_tools == [{"tool_id": "local_compute", "source": "always"}]
+    assert denied_tool_names == ["visit"]
+
+
+def test_agentic_tool_policy_receipt_is_absent_without_explicit_policy() -> None:
+    assert (
+        tool_registry_module._agentic_tool_policy_receipt(
+            ToolSelectionInput(current_user_turn="Search local evidence."),
+            None,
+            None,
+        )
+        is None
+    )
+
+
+def test_agentic_tool_selection_explicit_web_deny_max_always_only_records_policy() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Visit https://example.com/docs and summarize the page.",
+            vector_selected_tool_ids=("visit",),
+            vector_available=True,
+            max_selected_tools=1,
+            allow_web=False,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"}
+    ]
+    assert result.receipt["tool_policy_receipt"] == {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": False,
+        "explicit_allows": [],
+        "explicit_denies": ["web"],
+        "resolved_disabled_tools": ["visit"],
+        "requested_tools": [],
+    }
+
+
+def test_agentic_tool_selection_explicit_web_deny_blocks_vector_visit_with_policy_receipt() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Summarize the cited page.",
+            vector_selected_tool_ids=("visit",),
+            vector_available=True,
+            max_selected_tools=4,
+            allow_web=False,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+    assert result.receipt["fallback_reason"] == "policy_disabled"
+    assert result.receipt["tool_policy_receipt"] == {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": False,
+        "explicit_allows": [],
+        "explicit_denies": ["web"],
+        "resolved_disabled_tools": ["visit"],
+        "requested_tools": ["visit"],
+    }
+
+
+def test_agentic_tool_selection_explicit_web_allow_whitespace_turn_records_policy() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn=" \t\n  ",
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=True,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+    assert result.receipt["fallback_reason"] == "no_keyword_match"
+    assert result.receipt["tool_policy_receipt"]["explicit_allows"] == ["web"]
+
+
+def test_agentic_tool_selection_explicit_web_allow_no_keyword_current_falls_back() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer the researcher briefly about cropland.",
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=True,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["fallback_reason"] == "no_keyword_match"
+    assert result.receipt["tool_policy_receipt"]["allow_web"] is True
+
+
+def test_agentic_tool_selection_explicit_web_allow_context_without_keywords_falls_back() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer the researcher briefly about cropland.",
+            recent_user_turns=("Prior note without tool hints.",),
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=True,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["fallback_reason"] == "no_keyword_match"
+    assert result.receipt["tool_policy_receipt"]["allow_web"] is True
+
+
+def test_agentic_tool_selection_explicit_web_allow_recent_context_keyword_selects_tool() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Use two results this time.",
+            recent_user_turns=("Search the local text evidence.",),
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=True,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selection_mode"] == "keyword"
+    assert result.receipt["fallback_reason"] == "vector_unavailable"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "keyword_context"},
+    ]
+    assert result.receipt["tool_policy_receipt"]["allow_web"] is True
+
+
+def test_agentic_tool_selection_explicit_web_allow_vector_selection_returns_vector() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Summarize the cited evidence.",
+            vector_selected_tool_ids=("text_search",),
+            vector_available=True,
+            max_selected_tools=4,
+            allow_web=True,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selection_mode"] == "vector"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "vector"},
+    ]
+    assert result.receipt["tool_policy_receipt"]["explicit_allows"] == ["web"]
+
+
+def test_agentic_tool_selection_explicit_web_allow_records_policy_without_disabling_visit() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Visit fixture://docs/provider-contract and summarize the page.",
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=True,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "visit")
+    assert result.receipt["selection_mode"] == "keyword"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "visit", "source": "keyword"},
+    ]
+    assert result.receipt["tool_policy_receipt"] == {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": True,
+        "explicit_allows": ["web"],
+        "explicit_denies": [],
+        "resolved_disabled_tools": [],
+        "requested_tools": [],
+    }
+
+
 def test_agentic_tool_selection_whitespace_turn_skips_casefold() -> None:
     class CasefoldFailingWhitespace(str):
         def casefold(self) -> str:  # pragma: no cover - must not be called
