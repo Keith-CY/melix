@@ -33,6 +33,17 @@ multiple times, and records elapsed time plus traversal call counts.
 4. Validate with focused tests, changed-scope coverage, and the registered probe
    locally on Linux; rely on PR-scoped CI to replay the registered probe.
 
+## 2026-07-09 JSON stream follow-up
+
+This follow-up Python-only slice keeps the same `prefix-cold-index-scandir`
+probe boundary and limits behavior changes to cold prefix sidecar reload. After
+the scandir rewrite, the reload still constructed a `Path`, read the full JSON
+text into a temporary string, and then parsed it with `json.loads(...)` for every
+sidecar. This slice binds `builtins.open` once and streams each sidecar through
+`json.load(...)` from the existing string path, preserving deterministic sorted
+processing, orphan pruning, and corrupt-sidecar removal while avoiding the
+per-sidecar JSON text allocation.
+
 ## Success metrics
 
 - Behavior parity: valid cold entries reload, orphaned sidecars are still pruned,
@@ -40,4 +51,4 @@ multiple times, and records elapsed time plus traversal call counts.
 - Coverage: changed-scope coverage for the touched helper, tests, registry, and
   probe remains at or above 95%.
 - Performance: registered probe `elapsed_ms_mean` is lower than the pre-change
-  glob baseline, and `path_glob_calls_mean` drops to zero.
+  cold-index reload path, and `path_glob_calls_mean` remains zero.
