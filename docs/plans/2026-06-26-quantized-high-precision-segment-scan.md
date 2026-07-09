@@ -44,3 +44,9 @@ The probe entry already has focused `test_command`, `coverage_command`, and `pro
 A later Python-only performance slice keeps the same registered probe and narrows the changed behavior to `quantized_scales_present(...)` when callers pass an empty materialized `weights` mapping. In metadata-prepass decision loops, the quantized scale answer is already fully determined by `QuantizedTensorMetadata`, so the helper can skip the redundant `scales_key in weights` lookup for empty mappings while preserving non-empty materialized-weight fallback behavior.
 
 The `quantized-tensor-metadata-prepass` probe already covers this path through `metadata_decision_elapsed_ms_mean` and `metadata_decision_peak_bytes_mean`, with the existing focused `test_command`, `coverage_command`, and `probe_command` entries.
+
+## Follow-up slice: safetensors header key normalization once
+
+This Python-only follow-up stays inside `worker.runtime.quantized_tensor_metadata` and the registered `quantized-tensor-metadata-prepass` probe. The safetensors header parser now normalizes each non-`__metadata__` JSON key to `str` once before appending it to the returned tensor-name tuple. Behavior is unchanged for empty names and metadata entries, while the header scan avoids the previous generator expression's duplicate `str(key)` conversion in the hot header prepass.
+
+Validation remains the focused registered test command, changed-scope coverage command, local Linux registered probe, and GitHub Actions PR-scoped performance report.

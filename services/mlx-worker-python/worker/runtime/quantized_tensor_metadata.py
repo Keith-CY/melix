@@ -290,8 +290,12 @@ def _safetensors_header_tensor_names(path: Path) -> tuple[str, ...]:
         return ()
     if not isinstance(header, dict):
         return ()
-    return tuple(
-        str(key)
-        for key in header
-        if key != "__metadata__" and str(key)
-    )
+    tensor_names: list[str] = []
+    append_tensor_name = tensor_names.append
+    for key in header:
+        if key == "__metadata__":
+            continue
+        tensor_name = str(key)
+        if tensor_name:
+            append_tensor_name(tensor_name)
+    return tuple(tensor_names)
