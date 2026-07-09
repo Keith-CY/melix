@@ -156,7 +156,7 @@ actor WorkerRuntimeRegistry {
 
         var cache = Melix_Worker_V1_CacheCapabilities()
         cache.supportsPrefixCache = true
-        cache.supportsPagedCache = true
+        cache.supportsPagedCache = false
         cache.supportsDiskCache = false
         cache.kvQuantProfiles = ActiveKVQuantizationProfiles.supportedProfiles
         cache.supportsBoundarySnapshots = false
