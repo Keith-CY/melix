@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from worker.runtime.mlx_text_runtime import maybe_apply_native_mtp_text_preload_patches
 from worker.runtime.mlx_vlm_runtime import maybe_apply_native_mtp_preload_patches
-from worker.runtime.native_mtp.capability import NativeMTPCapabilityDecision, resolve_native_mtp_capability
+from worker.runtime.native_mtp.capability import (
+    NativeMTPCapabilityDecision,
+    resolve_native_mtp_capability,
+)
 
 
 def _write_model(
@@ -64,7 +68,29 @@ def _native_mtp_receipt(metadata: dict[str, str]) -> dict[str, object]:
     assert str(receipt["effective_depth"]) == metadata["melix.native_mtp.receipt.effective_depth"]
     assert receipt["depth_source"] == metadata["melix.native_mtp.receipt.depth_source"]
     assert receipt["batch_shape"] == metadata["melix.native_mtp.receipt.batch_shape"]
+    assert (
+        receipt["batch_filter_policy"]
+        == metadata["melix.native_mtp.receipt.batch_filter_policy"]
+    )
+    assert (
+        receipt["batch_extend_policy"]
+        == metadata["melix.native_mtp.receipt.batch_extend_policy"]
+    )
+    assert (
+        receipt["batch_multi_row_policy"]
+        == metadata["melix.native_mtp.receipt.batch_multi_row_policy"]
+    )
     assert receipt["hardware_gate"] == metadata["melix.native_mtp.receipt.hardware_gate"]
+    assert receipt["hardware_policy"] == metadata["melix.native_mtp.receipt.hardware_policy"]
+    assert (
+        receipt["hardware_policy_reason"]
+        == metadata["melix.native_mtp.receipt.hardware_policy_reason"]
+    )
+    assert (
+        receipt["hardware_policy_source"]
+        == metadata["melix.native_mtp.receipt.hardware_policy_source"]
+    )
+    assert receipt["operator_override"] == metadata["melix.native_mtp.receipt.operator_override"]
     assert receipt["request_gate"] == metadata["melix.native_mtp.receipt.request_gate"]
     assert receipt["runtime_scope"] == metadata["melix.native_mtp.receipt.runtime_scope"]
     assert str(receipt["weights_present"]).lower() == metadata["melix.native_mtp.receipt.weights_present"]
@@ -75,6 +101,18 @@ def _native_mtp_receipt(metadata: dict[str, str]) -> dict[str, object]:
         == metadata["melix.native_mtp.receipt.target_decode_started"]
     )
     return receipt
+
+
+def test_batch_generator_declares_batch_state_policy() -> None:
+    from worker.runtime.native_mtp import batch_generator
+
+    assert batch_generator.batch_state_policy_receipt() == {
+        "batch_shape": "singleton_only",
+        "batch_state_policy": "singleton_timeline_safe",
+        "batch_filter_policy": "preserve_when_singleton_uid_matches",
+        "batch_extend_policy": "reconcile_then_drop",
+        "batch_multi_row_policy": "multi_row_decode_unsupported",
+    }
 
 
 def test_registry_accepts_qwen_native_head_shape(tmp_path: Path) -> None:
@@ -97,6 +135,7 @@ def test_registry_accepts_qwen_native_head_shape(tmp_path: Path) -> None:
     decision = resolve_native_mtp_capability(
         model_dir,
         metadata={"melix.native_mtp.enabled": "true"},
+        hardware_profile=SimpleNamespace(),
     )
     metadata = decision.to_metadata(patch_applied=True, active=True)
 
@@ -113,7 +152,7 @@ def test_registry_accepts_qwen_native_head_shape(tmp_path: Path) -> None:
     assert metadata["melix.native_mtp.source"] == "native_head"
     assert metadata["melix.native_mtp.head_count"] == "1"
     assert metadata["melix.native_mtp.batch_shape"] == "singleton_only"
-    assert metadata["melix.native_mtp.hardware_gate"] == "not_evaluated"
+    assert metadata["melix.native_mtp.hardware_gate"] == "admitted"
     assert metadata["melix.native_mtp.resolution"] == "accepted"
     assert metadata["melix.native_mtp.refusal_reason"] == ""
     assert metadata["melix.native_mtp.receipt.schema"] == "melix.native_mtp.capability.v1"
@@ -139,8 +178,15 @@ def test_registry_accepts_qwen_native_head_shape(tmp_path: Path) -> None:
         "depth_source": "native_head",
         "cache_shape": "qwen3_5_native_mtp",
         "batch_shape": "singleton_only",
-        "batch_state_policy": "drop_on_extend_or_filter",
-        "hardware_gate": "not_evaluated",
+        "batch_state_policy": "singleton_timeline_safe",
+        "batch_filter_policy": "preserve_when_singleton_uid_matches",
+        "batch_extend_policy": "reconcile_then_drop",
+        "batch_multi_row_policy": "multi_row_decode_unsupported",
+        "hardware_gate": "admitted",
+        "hardware_policy": "auto",
+        "hardware_policy_reason": "unclassified_device",
+        "hardware_policy_source": "auto",
+        "operator_override": "",
         "request_gate": "native_mtp_enabled",
         "runtime_scope": "text_only_singleton",
         "patch_applied": True,
@@ -168,6 +214,7 @@ def test_registry_refuses_assistant_sidecar_shape(tmp_path: Path) -> None:
             "melix.speculative.role": "assistant",
             "melix.speculative.kind": "mtp",
         },
+        hardware_profile=SimpleNamespace(),
     )
     metadata = decision.to_metadata(patch_applied=False, active=False)
 
@@ -199,7 +246,14 @@ def test_registry_refuses_assistant_sidecar_shape(tmp_path: Path) -> None:
         "cache_shape": "none",
         "batch_shape": "unsupported",
         "batch_state_policy": "none",
-        "hardware_gate": "not_evaluated",
+        "batch_filter_policy": "none",
+        "batch_extend_policy": "none",
+        "batch_multi_row_policy": "none",
+        "hardware_gate": "admitted",
+        "hardware_policy": "auto",
+        "hardware_policy_reason": "unclassified_device",
+        "hardware_policy_source": "auto",
+        "operator_override": "",
         "request_gate": "assistant_sidecar_refused",
         "runtime_scope": "none",
         "patch_applied": False,
@@ -264,6 +318,175 @@ def test_registry_reports_missing_native_head_weights(tmp_path: Path) -> None:
     assert decision.refusal_reason == "missing_mtp_weights"
     assert metadata["melix.native_mtp.reason"] == "missing_mtp_weights"
     assert metadata["melix.native_mtp.receipt.request_gate"] == "missing_native_head_weights"
+
+
+def test_registry_recognizes_deepseek_v3_nextn_and_fails_closed_until_patch_exists(
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "deepseek-v3-nextn"
+    _write_model(
+        model_dir,
+        config={
+            "model_type": "deepseek_v3",
+            "num_nextn_predict_layers": 2,
+        },
+        weight_map={
+            "model.layers.0.shared_head.head.weight": "nextn.safetensors",
+            "model.layers.0.eh_proj.weight": "nextn.safetensors",
+            "model.embed_tokens.weight": "model.safetensors",
+        },
+    )
+
+    decision = resolve_native_mtp_capability(
+        model_dir,
+        metadata={"melix.native_mtp.enabled": "true"},
+    )
+    metadata = decision.to_metadata(patch_applied=False, active=False)
+    receipt = _native_mtp_receipt(metadata)
+
+    assert decision.compatible is True
+    assert decision.patchable is False
+    assert decision.family == "deepseek_v3_nextn"
+    assert decision.source == "native_head"
+    assert decision.head_count == 2
+    assert decision.weights_present is True
+    assert decision.weight_count == 2
+    assert decision.resolution == "refused"
+    assert decision.refusal_reason == "patch_unsupported"
+    assert metadata["melix.native_mtp.reason"] == "patch_unsupported"
+    assert metadata["melix.native_mtp.receipt.request_gate"] == "patch_unsupported"
+    assert receipt["family"] == "deepseek_v3_nextn"
+    assert receipt["cache_shape"] == "deepseek_v3_nextn_native_mtp"
+    assert receipt["effective_depth"] == 0
+    assert receipt["draft_supported"] is False
+
+
+def test_registry_reports_missing_deepseek_nextn_weights(tmp_path: Path) -> None:
+    model_dir = tmp_path / "deepseek-v3-missing-nextn"
+    _write_model(
+        model_dir,
+        config={
+            "model_type": "deepseek_v3",
+            "num_nextn_predict_layers": 2,
+        },
+        weight_map={"model.embed_tokens.weight": "model.safetensors"},
+    )
+
+    decision = resolve_native_mtp_capability(
+        model_dir,
+        metadata={"melix.native_mtp.enabled": "true"},
+    )
+    metadata = decision.to_metadata(patch_applied=False, active=False)
+
+    assert decision.compatible is True
+    assert decision.patchable is False
+    assert decision.weights_present is False
+    assert decision.refusal_reason == "missing_mtp_weights"
+    assert metadata["melix.native_mtp.reason"] == "missing_mtp_weights"
+    assert metadata["melix.native_mtp.receipt.request_gate"] == "missing_native_head_weights"
+
+
+def test_registry_device_policy_auto_disables_lower_end_m2(
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "qwen-native-head-m2"
+    _write_model(
+        model_dir,
+        config={"model_type": "qwen3_5_text", "mtp_num_hidden_layers": 1},
+        weight_map={"mtp.fc.weight": "mtp.safetensors"},
+    )
+
+    decision = resolve_native_mtp_capability(
+        model_dir,
+        metadata={"melix.native_mtp.enabled": "true"},
+        hardware_profile=SimpleNamespace(
+            system="Darwin",
+            machine="arm64",
+            chip_family="Apple M2 Pro",
+            model_identifier="Mac14,7",
+        ),
+    )
+    metadata = decision.to_metadata(patch_applied=False, active=False)
+    receipt = _native_mtp_receipt(metadata)
+
+    assert decision.compatible is True
+    assert decision.patchable is True
+    assert decision.refusal_reason == "device_policy_disabled"
+    assert metadata["melix.native_mtp.hardware_gate"] == "disabled"
+    assert metadata["melix.native_mtp.reason"] == "device_policy_disabled"
+    assert metadata["melix.native_mtp.receipt.request_gate"] == "device_policy_disabled"
+    assert receipt["hardware_policy"] == "auto"
+    assert receipt["hardware_policy_reason"] == "m1_m2_compute_bound"
+    assert receipt["hardware_policy_source"] == "auto"
+
+
+def test_registry_device_policy_force_on_overrides_lower_end_m2(
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "qwen-native-head-force-on"
+    _write_model(
+        model_dir,
+        config={"model_type": "qwen3_5_text", "mtp_num_hidden_layers": 1},
+        weight_map={"mtp.fc.weight": "mtp.safetensors"},
+    )
+
+    decision = resolve_native_mtp_capability(
+        model_dir,
+        metadata={
+            "melix.native_mtp.enabled": "true",
+            "melix.native_mtp.device_policy": "force_on",
+        },
+        hardware_profile=SimpleNamespace(
+            system="Darwin",
+            machine="arm64",
+            chip_family="Apple M2 Pro",
+            model_identifier="Mac14,7",
+        ),
+    )
+    metadata = decision.to_metadata(patch_applied=True, active=True)
+    receipt = _native_mtp_receipt(metadata)
+
+    assert metadata["melix.native_mtp.hardware_gate"] == "admitted"
+    assert metadata["melix.native_mtp.reason"] == ""
+    assert receipt["hardware_policy"] == "force_on"
+    assert receipt["hardware_policy_reason"] == "operator_force_on"
+    assert receipt["hardware_policy_source"] == "operator"
+    assert receipt["operator_override"] == "force_on"
+
+
+def test_registry_device_policy_force_off_refuses_even_capable_qwen(
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "qwen-native-head-force-off"
+    _write_model(
+        model_dir,
+        config={"model_type": "qwen3_5_text", "mtp_num_hidden_layers": 1},
+        weight_map={"mtp.fc.weight": "mtp.safetensors"},
+    )
+
+    decision = resolve_native_mtp_capability(
+        model_dir,
+        metadata={
+            "melix.native_mtp.enabled": "true",
+            "melix.native_mtp.device_policy": "force_off",
+        },
+        hardware_profile=SimpleNamespace(
+            system="Darwin",
+            machine="arm64",
+            chip_family="Apple M4 Max",
+            model_identifier="Mac16,5",
+        ),
+    )
+    metadata = decision.to_metadata(patch_applied=False, active=False)
+    receipt = _native_mtp_receipt(metadata)
+
+    assert decision.refusal_reason == "device_policy_disabled"
+    assert metadata["melix.native_mtp.hardware_gate"] == "disabled"
+    assert metadata["melix.native_mtp.reason"] == "device_policy_disabled"
+    assert receipt["hardware_policy"] == "force_off"
+    assert receipt["hardware_policy_reason"] == "operator_force_off"
+    assert receipt["hardware_policy_source"] == "operator"
+    assert receipt["operator_override"] == "force_off"
 
 
 def test_registry_reports_unsupported_enabled_model(tmp_path: Path) -> None:
@@ -470,6 +693,35 @@ def test_text_preload_routes_through_registry_and_refuses_sidecar(
 
     assert metadata["melix.native_mtp.resolution"] == "refused"
     assert metadata["melix.native_mtp.reason"] == "assistant_sidecar"
+    assert ("patch", True) not in calls
+    assert calls[-1] == ("active", False)
+
+
+def test_text_preload_refuses_deepseek_nextn_without_runtime_patch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "text-deepseek-nextn"
+    _write_model(
+        model_dir,
+        config={"model_type": "deepseek_v3", "num_nextn_predict_layers": 2},
+        weight_map={
+            "model.layers.0.shared_head.head.weight": "nextn.safetensors",
+            "model.layers.0.eh_proj.weight": "nextn.safetensors",
+        },
+    )
+    calls: list[tuple[str, bool]] = []
+    _install_fake_native_mtp(monkeypatch, calls)
+
+    metadata = maybe_apply_native_mtp_text_preload_patches(
+        str(model_dir),
+        metadata={"melix.native_mtp.enabled": "true"},
+    )
+
+    assert metadata["melix.native_mtp.compatible"] == "true"
+    assert metadata["melix.native_mtp.family"] == "deepseek_v3_nextn"
+    assert metadata["melix.native_mtp.resolution"] == "refused"
+    assert metadata["melix.native_mtp.reason"] == "patch_unsupported"
     assert ("patch", True) not in calls
     assert calls[-1] == ("active", False)
 
