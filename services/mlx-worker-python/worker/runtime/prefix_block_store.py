@@ -6,6 +6,7 @@ import json
 import os
 import threading
 import time
+from builtins import open as _OPEN
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -355,7 +356,8 @@ class ColdPrefixStore:
         for meta_path_string in meta_paths:
             meta_path = Path(meta_path_string)
             try:
-                payload = json.loads(meta_path.read_text(encoding="utf-8"))
+                with _OPEN(meta_path_string, encoding="utf-8") as meta_file:
+                    payload = json.load(meta_file)
                 session_id = str(payload["session_id"])
                 snapshot_path = self._root / f"{_session_digest(session_id)}.kv.safetensors"
                 if not snapshot_path.is_file():
