@@ -310,6 +310,7 @@ def test_registry_reports_missing_native_head_weights(tmp_path: Path) -> None:
     decision = resolve_native_mtp_capability(
         model_dir,
         metadata={"melix.native_mtp.enabled": "true"},
+        hardware_profile=SimpleNamespace(),
     )
     metadata = decision.to_metadata(patch_applied=True, active=False)
 
@@ -536,6 +537,7 @@ def test_registry_reports_patch_failure_for_native_head(tmp_path: Path) -> None:
     decision = resolve_native_mtp_capability(
         model_dir,
         metadata={"melix.native_mtp.enabled": "true"},
+        hardware_profile=SimpleNamespace(),
     )
     metadata = decision.to_metadata(patch_applied=False, active=False)
 
@@ -660,7 +662,10 @@ def test_text_preload_routes_through_registry_receipt(
 
     metadata = maybe_apply_native_mtp_text_preload_patches(
         str(model_dir),
-        metadata={"melix.native_mtp.enabled": "true"},
+        metadata={
+            "melix.native_mtp.enabled": "true",
+            "melix.native_mtp.device_policy": "force_on",
+        },
     )
 
     assert metadata["melix.native_mtp.active"] == "true"
@@ -750,7 +755,10 @@ def test_vlm_preload_routes_through_registry_receipt(
 
     metadata = maybe_apply_native_mtp_preload_patches(
         str(model_dir),
-        metadata={"melix.native_mtp.enabled": "true"},
+        metadata={
+            "melix.native_mtp.enabled": "true",
+            "melix.native_mtp.device_policy": "force_on",
+        },
     )
 
     assert metadata["melix.native_mtp.active"] == "true"
