@@ -77,6 +77,7 @@ _COMMON_4BIT_OPTIQ_EXCLUDED_TAGS = {
     "float16",
     "qat",
 }
+_EXACT_MLX_LIBRARY_NAMES = frozenset({"MLX", "mlx"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -570,7 +571,9 @@ def _repo_id_contains_mlx(repo_id: str) -> bool:
 def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     raw_library_name = payload.get("library_name")
     library_name = raw_library_name if isinstance(raw_library_name, str) else ""
-    if library_name and _is_mlx_atom(library_name):
+    if library_name in _EXACT_MLX_LIBRARY_NAMES or (
+        library_name and _is_mlx_atom(library_name)
+    ):
         return True
     raw_repo_id = payload.get("id") or payload.get("modelId")
     repo_id = raw_repo_id if isinstance(raw_repo_id, str) else ""
@@ -582,7 +585,14 @@ def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     if not isinstance(card_data, dict):
         return False
     raw_card_library_name = card_data.get("library_name")
-    if not library_name and isinstance(raw_card_library_name, str) and _is_mlx_atom(raw_card_library_name):
+    if (
+        not library_name
+        and isinstance(raw_card_library_name, str)
+        and (
+            raw_card_library_name in _EXACT_MLX_LIBRARY_NAMES
+            or _is_mlx_atom(raw_card_library_name)
+        )
+    ):
         return True
     card_tags = card_data.get("tags")
     if not card_tags:
@@ -601,7 +611,7 @@ def _is_mlx_compatible(
     lowered_tags = _normalized_lowered_tags(tags, lowered_tags)
     if "mlx" in lowered_tags:
         return True
-    if _is_mlx_atom(library_name):
+    if library_name in _EXACT_MLX_LIBRARY_NAMES or _is_mlx_atom(library_name):
         return True
     if _repo_id_contains_mlx(repo_id):
         return True
