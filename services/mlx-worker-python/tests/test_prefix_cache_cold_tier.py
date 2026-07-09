@@ -406,6 +406,42 @@ def test_cold_store_index_load_uses_scandir_without_path_glob(
     assert scandir_calls == 1
 
 
+def test_cold_store_index_load_filters_meta_suffix_before_file_stat(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cold_root = tmp_path / "cold"
+    cold_root.mkdir()
+
+    class NonMetaEntry:
+        name = "snapshot.kv.safetensors"
+        path = str(cold_root / name)
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            raise AssertionError(  # pragma: no cover - regression guard
+                "non-metadata entries should skip file stat"
+            )
+
+    class FakeScandir:
+        def __enter__(self):
+            return [NonMetaEntry()]
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "worker.runtime.prefix_block_store.os.scandir",
+        lambda path: FakeScandir(),
+    )
+
+    reloaded = ColdPrefixStore(
+        cold_root,
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    assert reloaded.entry_count() == 0
+
+
 def test_cold_store_index_load_tolerates_scandir_failure(
     monkeypatch,
     tmp_path: Path,
