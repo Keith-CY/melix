@@ -6965,6 +6965,7 @@ def test_report_results_loader_uses_scandir_and_binary_json_reads(
     results_dir.mkdir()
     (results_dir / "b.json").write_text(json.dumps({"probe": {"id": "b"}}), encoding="utf-8")
     (results_dir / "a.json").write_text(json.dumps({"probe": {"id": "a"}}), encoding="utf-8")
+    (results_dir / "list.json").write_text(json.dumps(["ignored"]), encoding="utf-8")
     (results_dir / "ignored.txt").write_text("ignored", encoding="utf-8")
 
     def fail_glob(self: Path, pattern: str):
@@ -6980,6 +6981,31 @@ def test_report_results_loader_uses_scandir_and_binary_json_reads(
     loaded = report_script["_load_results"](results_dir)
 
     assert [payload["probe"]["id"] for payload in loaded] == ["a", "b"]
+
+
+def test_report_results_loader_uses_module_open_binding(
+    tmp_path: Path,
+) -> None:
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "result.json").write_text(json.dumps({"probe": {"id": "result"}}), encoding="utf-8")
+
+    report_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"))
+    load_results = report_script["_load_results"]
+    open_calls = 0
+    original_open = load_results.__globals__["_OPEN"]
+
+    def counted_open(*args: object, **kwargs: object):
+        nonlocal open_calls
+        open_calls += 1
+        return original_open(*args, **kwargs)
+
+    load_results.__globals__["_OPEN"] = counted_open
+
+    loaded = load_results(results_dir)
+
+    assert loaded == [{"probe": {"id": "result"}}]
+    assert open_calls == 1
 
 
 def test_performance_report_script_load_results_handles_missing_directory() -> None:

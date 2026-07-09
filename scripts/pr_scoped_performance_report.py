@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from builtins import open as _OPEN
 import json
 import os
 import sys
@@ -35,11 +36,11 @@ def _load_results(results_dir: Path) -> list[dict[str, object]]:
     result_paths.sort()
     results_append = results.append
     json_loads = json.loads
-    open_file = open
+    open_file = _OPEN
     for path in result_paths:
-        with open(path, "rb") as result_file:
+        with open_file(path, "rb") as result_file:
             payload = json_loads(result_file.read())
-        if isinstance(payload, dict):
+        if type(payload) is dict:
             results_append(payload)
     return results
 
