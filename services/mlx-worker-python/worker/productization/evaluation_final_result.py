@@ -38,7 +38,7 @@ _HF_DATASETS_SERVER_URL = "https://datasets-server.huggingface.co"
 HFEvaluationDatasetFetcher = Callable[[str, dict[str, str]], dict[str, Any]]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EvaluationProfileDefinition:
     profile_type: str
     result_kind: str
@@ -49,7 +49,7 @@ class EvaluationProfileDefinition:
     ignored_paths: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EvaluationFieldMapping:
     system_path: str = ""
     input_text_path: str = ""
@@ -57,7 +57,7 @@ class EvaluationFieldMapping:
     sample_id_path: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EvaluationMaterializationRequest:
     source_kind: str
     source_path: Path
@@ -67,14 +67,14 @@ class EvaluationMaterializationRequest:
     suite_id: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MaterializedEvaluationDataset:
     package_path: Path
     cache_key: str
     cache_hit: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class HFEvaluationDatasetSource:
     dataset_path: str
     dataset_name: str = ""
@@ -82,14 +82,14 @@ class HFEvaluationDatasetSource:
     split: str = "train"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ExtractionOutcome:
     extracted_result: str
     extraction_status: str
     failure_reason: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ScoringOutcome:
     typed_score: float
     validation_status: str

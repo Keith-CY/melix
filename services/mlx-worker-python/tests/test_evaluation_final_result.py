@@ -14,6 +14,7 @@ from worker.productization.evaluation_final_result import (
     HFEvaluationDatasetSource,
     EvaluationMaterializationRequest,
     EvaluationProfileDefinition,
+    MaterializedEvaluationDataset,
     _local_source_metadata,
     _last_nonblank_text_line,
     _json_typed_score,
@@ -22,6 +23,59 @@ from worker.productization.evaluation_final_result import (
     materialize_local_evaluation_dataset,
     score_final_result,
 )
+
+
+def test_evaluation_final_result_records_are_slotted_without_behavior_drift(
+    tmp_path: Path,
+) -> None:
+    profile = EvaluationProfileDefinition(
+        profile_type="final_result",
+        result_kind="json",
+        extraction_mode="heuristic_final",
+        scoring_mode="json_typed",
+        threshold=0.8,
+        output_schema={"type": "object"},
+        ignored_paths=("metadata.confidence",),
+    )
+    field_mapping = EvaluationFieldMapping(
+        system_path="meta.system",
+        input_text_path="payload.question",
+        target_path="payload.answer",
+        sample_id_path="id",
+    )
+    request = EvaluationMaterializationRequest(
+        source_kind="local_jsonl",
+        source_path=tmp_path / "source.jsonl",
+        profile=profile,
+        field_mapping=field_mapping,
+        dataset_id="dataset-a",
+        suite_id="suite-a",
+    )
+    materialized = MaterializedEvaluationDataset(
+        package_path=tmp_path / "package",
+        cache_key="cache-key",
+        cache_hit=False,
+    )
+    hf_source = HFEvaluationDatasetSource("org/dataset", dataset_name="config", split="test")
+    extracted = extract_final_result(
+        raw_response='```json\n{"answer": "Paris"}\n```',
+        result_kind="json",
+        extraction_mode="heuristic_final",
+    )
+    scored = score_final_result(
+        extracted_result='{"answer": "Paris", "metadata": {"confidence": 0.1}}',
+        target='{"answer": "Paris", "metadata": {"confidence": 0.9}}',
+        profile=profile,
+    )
+
+    records = (profile, field_mapping, request, materialized, hf_source, extracted, scored)
+    assert all(not hasattr(record, "__dict__") for record in records)
+    assert request.field_mapping.target_path == "payload.answer"
+    assert materialized.cache_hit is False
+    assert hf_source.dataset_revision == "main"
+    assert extracted.extraction_status == "extracted"
+    assert scored.validation_status == "validated"
+    assert scored.typed_score == 1.0
 
 
 def test_json_typed_score_short_circuits_exact_root_match_before_child_iteration() -> None:
