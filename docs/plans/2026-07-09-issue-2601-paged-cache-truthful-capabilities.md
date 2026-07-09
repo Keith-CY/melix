@@ -146,7 +146,7 @@ UV_PYTHON=3.12 uv run --python 3.12 python3 scripts/swift_changed_line_coverage.
   services/mlx-text-worker-swift/Tests/CoreTests/WorkerScaffoldTests.swift
 ```
 
-- [ ] **Step 3: Run repository gate before commit**
+- [x] **Step 3: Run repository gate before commit**
 
 ```bash
 git diff --check
