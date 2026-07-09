@@ -26,7 +26,7 @@ def _payload(index: int) -> tuple[dict[str, Any], int]:
     if mode == 2:
         return {"cardData": {}, "readme": f"README\nMODEL SIZE | {value} kb\nother metadata"}, value * 1024
     if mode == 3:
-        return {"cardData": {}, "description": f"description only {value} MB"}, 0
+        return {"cardData": {}, "description": f"massive weights {value} MB"}, 0
     return {
         "cardData": {"description": f"training corpus {value} kb"},
         "description": f"tokenizer assets {value} MB",
