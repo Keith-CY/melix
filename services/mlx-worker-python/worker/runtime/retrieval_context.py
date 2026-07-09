@@ -136,6 +136,11 @@ def project_retrieval_contexts(
     user_payload_update = user_payload.update
     entry_type = RetrievalContextEntry
     dict_copy = dict.copy
+    isinstance_of = isinstance
+    str_type = str
+    dict_type = dict
+    bool_type = bool
+    strip_text = str.strip
 
     for entry in entries:
         if type(entry) is entry_type:
@@ -149,19 +154,19 @@ def project_retrieval_contexts(
             corrective_action = entry.corrective_action
             if (
                 context_kind in ("retrieved_document", "retrieved_image")
-                and isinstance(source_id, str)
-                and isinstance(payload, dict)
-                and isinstance(owner_scope_checked, bool)
-                and isinstance(segment_id, str)
-                and isinstance(source_field, str)
-                and isinstance(reason, str)
-                and isinstance(corrective_action, str)
+                and isinstance_of(source_id, str_type)
+                and isinstance_of(payload, dict_type)
+                and isinstance_of(owner_scope_checked, bool_type)
+                and isinstance_of(segment_id, str_type)
+                and isinstance_of(source_field, str_type)
+                and isinstance_of(reason, str_type)
+                and isinstance_of(corrective_action, str_type)
             ):
-                normalized_source_id = source_id.strip()
-                normalized_segment_id = segment_id.strip()
-                normalized_source_field = source_field.strip()
-                normalized_reason = reason.strip()
-                normalized_corrective_action = corrective_action.strip()
+                normalized_source_id = strip_text(source_id)
+                normalized_segment_id = strip_text(segment_id)
+                normalized_source_field = strip_text(source_field)
+                normalized_reason = strip_text(reason)
+                normalized_corrective_action = strip_text(corrective_action)
                 if (
                     normalized_source_id
                     and normalized_segment_id
