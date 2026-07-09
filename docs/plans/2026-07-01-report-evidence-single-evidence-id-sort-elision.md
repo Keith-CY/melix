@@ -43,6 +43,14 @@ the populated `set[str]` directly instead of wrapping it in a `frozenset`. The
 set is not exposed outside the scan and remains equivalent for membership and
 `isdisjoint` checks while avoiding an extra container allocation.
 
+## 2026-07-09 follow-up: matrix-role append binding
+
+This Python-only follow-up keeps the same registered probe and narrows to
+`_report_matrix_roles`. The scanner already binds `roles.append` for the
+run-kind-only fast path; this slice reuses that bound append in the general rule
+match path as well, preserving role order and matching semantics while avoiding a
+repeated method lookup when mixed release-matrix rules append roles.
+
 ## Verification plan
 
 Run the registered focused test command, changed-scope coverage command, and the
