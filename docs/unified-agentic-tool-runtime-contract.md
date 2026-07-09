@@ -163,6 +163,30 @@ the selector receipt inside its `melix.agentic_tool_run.v1` registry receipt
 when a caller provides a selection input, and the selected registry is the
 execution allowlist for that run.
 
+Request-local tool policy is part of the same selector boundary. The selector
+accepts `allow_web = null|true|false`, where `null` means no explicit operator
+choice was supplied, `true` means web-capable tools are explicitly allowed, and
+`false` means web-capable tools are explicitly denied even when the prompt asks
+to browse, visit, fetch, or open a page. The current network-capable v1 tool is
+`visit`; local compute, workspace-file operations, and local fixture/corpus
+lookup remain separate local capabilities.
+
+When an explicit web policy is present, or when a candidate tool is disabled by
+policy, the selector receipt includes `tool_policy_receipt` with:
+
+- `schema_version = melix.agentic_tool_policy.v1`
+- `allow_web`
+- `explicit_allows[]`
+- `explicit_denies[]`
+- `resolved_disabled_tools[]`
+- `requested_tools[]`
+
+The policy receipt contains only policy states and tool IDs. It must not include
+raw prompts, URLs, tool arguments, account identifiers, or workspace paths. A
+tool that is disabled by policy must be omitted from the selected registry, so
+the deterministic runtime cannot execute it through a later model-emitted tool
+call.
+
 ## Observation Contract
 
 Every emitted observation must include:
