@@ -1734,7 +1734,7 @@ button.primary:active {
             }
             return mediaNormalizationErrorResponse(error)
         } catch let error as StructuredOutputFormatError {
-            return invalidArgumentResponse(message: error.operatorMessage)
+            return structuredOutputInvalidArgumentResponse(error)
         } catch let error as ToolParserConfigurationError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ChatTemplatePolicyError {
@@ -1767,7 +1767,7 @@ button.primary:active {
                 requestStartedAt: requestStartedAt
             )
         } catch let error as StructuredOutputFormatError {
-            return invalidArgumentResponse(message: error.operatorMessage)
+            return structuredOutputInvalidArgumentResponse(error)
         } catch let error as ToolParserConfigurationError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ChatTemplatePolicyError {
@@ -1800,7 +1800,7 @@ button.primary:active {
                 requestStartedAt: requestStartedAt
             )
         } catch let error as StructuredOutputFormatError {
-            return invalidArgumentResponse(message: error.operatorMessage)
+            return structuredOutputInvalidArgumentResponse(error)
         } catch let error as ToolParserConfigurationError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ChatTemplatePolicyError {
@@ -1834,7 +1834,7 @@ button.primary:active {
                 requestStartedAt: requestStartedAt
             )
         } catch let error as StructuredOutputFormatError {
-            return invalidArgumentResponse(message: error.operatorMessage)
+            return structuredOutputInvalidArgumentResponse(error)
         } catch let error as ToolParserConfigurationError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ChatTemplatePolicyError {
@@ -5101,6 +5101,30 @@ button.primary:active {
         jsonResponse(
             statusCode: 400,
             payload: ["error": ["code": "invalid_argument", "message": message]]
+        )
+    }
+
+    private func structuredOutputInvalidArgumentResponse(_ error: StructuredOutputFormatError) -> HTTPResponse {
+        let errorCode: String
+        switch error {
+        case .unsupportedType:
+            errorCode = "unsupported_type"
+        case .missingJSONSchemaDefinition:
+            errorCode = "missing_json_schema_definition"
+        case .schemaRootMustBeObject:
+            errorCode = "schema_root_must_be_object"
+        }
+        return jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "invalid_argument",
+                    "field": "response_format",
+                    "phase": "structured_output",
+                    "structured_output_error": errorCode,
+                    "message": error.operatorMessage,
+                ],
+            ]
         )
     }
 

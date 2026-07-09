@@ -102,6 +102,32 @@ struct OpenAIConformanceMatrixTests {
                 return .pass
             },
             MatrixRow(
+                field: "response_format.json_schema=null",
+                route: "/v1/chat/completions -> typed structured-output rejection",
+                expectedBehavior: "explicit null json_schema is rejected as a missing schema before worker dispatch.",
+                requestBody: """
+                {
+                  "model": "melix-dev-text",
+                  "response_format": {
+                    "type": "json_schema",
+                    "json_schema": null
+                  },
+                  "messages": [
+                    { "role": "user", "content": "Return JSON." }
+                  ]
+                }
+                """
+            ) { response, request in
+                let error = try await conformanceErrorPayload(from: response.body)
+                #expect(response.statusCode == 400)
+                #expect(error["code"] as? String == "invalid_argument")
+                #expect(error["field"] as? String == "response_format")
+                #expect(error["phase"] as? String == "structured_output")
+                #expect(error["structured_output_error"] as? String == "missing_json_schema_definition")
+                #expect(request == nil)
+                return .pass
+            },
+            MatrixRow(
                 field: "backend_unavailable",
                 route: "/v1/chat/completions -> typed backend-unavailable rejection",
                 expectedBehavior: "worker unavailability returns a typed payload naming the dispatch phase before generation.",
@@ -291,6 +317,7 @@ struct OpenAIConformanceMatrixTests {
         let reportJSON = try report.jsonString()
         #expect(reportJSON.contains("\"schema_version\":\"melix.openai_conformance_report.v1\""))
         #expect(reportJSON.contains("\"field\":\"logprobs,top_logprobs\""))
+        #expect(reportJSON.contains("\"field\":\"response_format.json_schema=null\""))
     }
 
     @Test("conformance report summary counts every observed status in one pass")
