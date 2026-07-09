@@ -274,12 +274,47 @@ def run_python_code_evaluation(
 def _count_tests(test_code: str) -> int:
     if not _may_contain_assert_statement(test_code):
         return _count_nonblank_test_lines(test_code)
+    plain_assert_count = _count_plain_assert_statement_lines(test_code)
+    if plain_assert_count > 0:
+        return plain_assert_count
     try:
         module = ast.parse(test_code, filename="<tests>", mode="exec")
     except SyntaxError:
         return _count_nonblank_test_lines(test_code)
     assert_count = _count_assert_nodes(module)
     return assert_count or _count_nonblank_test_lines(test_code)
+
+
+def _count_plain_assert_statement_lines(test_code: str) -> int:
+    """Count simple assert-only test payloads without building a Python AST.
+
+    Code-eval fixtures often consist of thousands of one-line top-level assert
+    statements.  If every nonblank line is such a plain assert statement, the
+    AST parse and walk can be skipped while preserving the slower parser path for
+    mixed statements, inline asserts, comments, and multiline assertions.
+    """
+
+    count = 0
+    start = 0
+    text_length = len(test_code)
+    while start < text_length:
+        newline_index = test_code.find("\n", start)
+        end = text_length if newline_index < 0 else newline_index
+        cursor = start
+        while cursor < end and test_code[cursor] in " \t":
+            cursor += 1
+        if cursor < end:
+            if not test_code.startswith("assert", cursor):
+                return 0
+            after_index = cursor + 6
+            after = test_code[after_index] if after_index < end else "\n"
+            if after == "_" or after.isalnum():
+                return 0
+            count += 1
+        if newline_index < 0:
+            break
+        start = newline_index + 1
+    return count
 
 
 def _may_contain_assert_statement(test_code: str) -> bool:
