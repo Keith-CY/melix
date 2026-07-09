@@ -22,6 +22,14 @@ _COLD_DIR_ENV = "MELIX_PREFIX_CACHE_COLD_DIR"
 _COLD_MAX_BYTES_ENV = "MELIX_PREFIX_CACHE_COLD_MAX_BYTES"
 
 
+def _is_active_kv_quant_mode(acceleration_mode: str) -> bool:
+    return str(acceleration_mode or "") in _ACTIVE_KV_QUANT_MODES
+
+
+def _normalize_kv_quant_profile(kv_quant_profile: str) -> str:
+    return str(kv_quant_profile or "").strip()
+
+
 @dataclass
 class LCPResult:
     mode: str  # "none", "partial", "exact"
@@ -43,6 +51,7 @@ class _BlockEntry:
     block_size: int
     total_bytes: int
     acceleration_mode: str  # AccelerationMode enum name or integer string
+    kv_quant_profile: str = ""
     _active_refs: int = field(default=0, repr=False)
     _pinned: bool = field(default=True, repr=False)
     _cleaned: bool = field(default=False, repr=False)
@@ -74,6 +83,7 @@ class ColdEntryMeta:
     block_size: int
     total_bytes: int
     acceleration_mode: str
+    kv_quant_profile: str
     stored_at: float
     snapshot_path: Path
     meta_path: Path
@@ -146,11 +156,13 @@ class ColdPrefixStore:
         model_revision: str,
         block_size: int,
         acceleration_mode: str,
+        kv_quant_profile: str = "",
     ) -> bool:
         """Demote one snapshot to disk. Returns True when the entry was indexed."""
         if not session_id or cache_snapshot is None:
             return False
-        if acceleration_mode in _ACTIVE_KV_QUANT_MODES:
+        normalized_profile = _normalize_kv_quant_profile(kv_quant_profile)
+        if _is_active_kv_quant_mode(acceleration_mode) and not normalized_profile:
             return False
         if cache_mode in _ROTATING_CACHE_MODES:
             return False
@@ -172,6 +184,7 @@ class ColdPrefixStore:
                 block_size=max(1, block_size),
                 total_bytes=int(total_bytes),
                 acceleration_mode=acceleration_mode,
+                kv_quant_profile=normalized_profile,
                 stored_at=time.time(),
                 snapshot_path=snapshot_path,
                 meta_path=meta_path,
@@ -188,6 +201,7 @@ class ColdPrefixStore:
                         "block_size": meta.block_size,
                         "total_bytes": meta.total_bytes,
                         "acceleration_mode": meta.acceleration_mode,
+                        "kv_quant_profile": meta.kv_quant_profile,
                         "stored_at": meta.stored_at,
                     }
                 ),
@@ -212,9 +226,12 @@ class ColdPrefixStore:
         model_revision: str,
         block_size: int,
         acceleration_mode: str = "",
+        kv_quant_profile: str = "",
     ) -> tuple[ColdEntryMeta | None, int]:
         """Best block-aligned LCP candidate (metadata only — no deserialization)."""
-        if acceleration_mode in _ACTIVE_KV_QUANT_MODES:
+        request_active_kv = _is_active_kv_quant_mode(acceleration_mode)
+        request_kv_quant_profile = _normalize_kv_quant_profile(kv_quant_profile)
+        if request_active_kv and not request_kv_quant_profile:
             return None, 0
         bs = max(1, block_size)
         new_blocks = _split_blocks(token_ids, bs)
@@ -230,7 +247,10 @@ class ColdPrefixStore:
                 continue
             if meta.cache_mode in _ROTATING_CACHE_MODES:
                 continue
-            if meta.acceleration_mode in _ACTIVE_KV_QUANT_MODES:
+            meta_active_kv = _is_active_kv_quant_mode(meta.acceleration_mode)
+            if meta_active_kv != request_active_kv:
+                continue
+            if meta_active_kv and meta.kv_quant_profile != request_kv_quant_profile:
                 continue
             stored_blocks = _split_blocks(meta.token_ids, bs)
             match_len = _count_matching_blocks(new_blocks, stored_blocks) * bs
@@ -240,6 +260,41 @@ class ColdPrefixStore:
         if best is None or best_len < bs:
             return None, 0
         return best, best_len
+
+    def has_kv_quant_profile_mismatch(
+        self,
+        token_ids: list[int],
+        model_id: str,
+        model_revision: str,
+        block_size: int,
+        acceleration_mode: str = "",
+        kv_quant_profile: str = "",
+    ) -> bool:
+        """Return True when an otherwise reusable active-KV prefix has a different profile."""
+        request_active_kv = _is_active_kv_quant_mode(acceleration_mode)
+        request_kv_quant_profile = _normalize_kv_quant_profile(kv_quant_profile)
+        if not request_active_kv or not request_kv_quant_profile:
+            return False
+        bs = max(1, block_size)
+        new_blocks = _split_blocks(token_ids, bs)
+        if not new_blocks:
+            return False
+        with self._lock:
+            self._ensure_loaded_locked()
+            candidates = list(self._index.values())
+        for meta in candidates:
+            if meta.model_id != model_id or meta.model_revision != model_revision:
+                continue
+            if meta.cache_mode in _ROTATING_CACHE_MODES:
+                continue
+            if not _is_active_kv_quant_mode(meta.acceleration_mode):
+                continue
+            if meta.kv_quant_profile == request_kv_quant_profile:
+                continue
+            stored_blocks = _split_blocks(meta.token_ids, bs)
+            if _count_matching_blocks(new_blocks, stored_blocks) * bs >= bs:
+                return True
+        return False
 
     def restore(self, meta: ColdEntryMeta) -> Any:
         """Deserialize one entry. A failed restore drops the entry and returns None."""
@@ -303,6 +358,9 @@ class ColdPrefixStore:
                     block_size=max(1, int(payload.get("block_size", 1))),
                     total_bytes=int(payload.get("total_bytes", 0)),
                     acceleration_mode=str(payload.get("acceleration_mode", "")),
+                    kv_quant_profile=_normalize_kv_quant_profile(
+                        str(payload.get("kv_quant_profile", ""))
+                    ),
                     stored_at=float(payload.get("stored_at", 0.0)),
                     snapshot_path=snapshot_path,
                     meta_path=meta_path,
@@ -428,9 +486,13 @@ class PrefixBlockStore:
         block_size: int,
         total_bytes: int,
         acceleration_mode: str = "",
+        kv_quant_profile: str = "",
     ) -> _BlockEntry | None:
         """Store a prefill result. Replaces any existing entry for session_id."""
         if not session_id:
+            return None
+        normalized_profile = _normalize_kv_quant_profile(kv_quant_profile)
+        if _is_active_kv_quant_mode(acceleration_mode) and not normalized_profile:
             return None
         entry = _BlockEntry(
             session_id=session_id,
@@ -442,6 +504,7 @@ class PrefixBlockStore:
             block_size=max(1, block_size),
             total_bytes=total_bytes,
             acceleration_mode=acceleration_mode,
+            kv_quant_profile=normalized_profile,
         )
         with self._lock:
             return self._store_entry_locked(entry, acquire=False)
@@ -470,6 +533,7 @@ class PrefixBlockStore:
         model_revision: str,
         block_size: int,
         acceleration_mode: str = "",
+        kv_quant_profile: str = "",
         force_fallback: bool = False,
     ) -> LCPResult:
         """Find the longest common block-aligned prefix among stored sessions.
@@ -487,12 +551,14 @@ class PrefixBlockStore:
                 suffix_token_ids=list(token_ids),
             )
 
-        if acceleration_mode in _ACTIVE_KV_QUANT_MODES:
+        request_active_kv = _is_active_kv_quant_mode(acceleration_mode)
+        request_kv_quant_profile = _normalize_kv_quant_profile(kv_quant_profile)
+        if request_active_kv and not request_kv_quant_profile:
             self.miss_count += 1
             return LCPResult(
                 mode="none",
                 recovered_prefix_tokens=0,
-                fallback_reason="active_kv_excluded",
+                fallback_reason="kv_quant_profile_missing",
                 entry=None,
                 suffix_token_ids=list(token_ids),
             )
@@ -511,6 +577,7 @@ class PrefixBlockStore:
 
         best_entry: _BlockEntry | None = None
         best_len = 0
+        kv_quant_profile_mismatch = False
 
         with self._lock:
             candidates = list(self._sessions.values())
@@ -520,11 +587,16 @@ class PrefixBlockStore:
                 continue
             if entry.cache_mode in _ROTATING_CACHE_MODES:
                 continue
-            if entry.acceleration_mode in _ACTIVE_KV_QUANT_MODES:
+            entry_active_kv = _is_active_kv_quant_mode(entry.acceleration_mode)
+            if entry_active_kv != request_active_kv:
                 continue
 
             stored_blocks = _split_blocks(entry.token_ids, bs)
             match_len = _count_matching_blocks(new_blocks, stored_blocks) * bs
+            if entry_active_kv and entry.kv_quant_profile != request_kv_quant_profile:
+                if match_len >= bs:
+                    kv_quant_profile_mismatch = True
+                continue
             if match_len > best_len:
                 best_len = match_len
                 best_entry = entry
@@ -539,18 +611,32 @@ class PrefixBlockStore:
                 model_revision,
                 bs,
                 acceleration_mode=acceleration_mode,
+                kv_quant_profile=request_kv_quant_profile,
             )
             if cold_meta is not None and cold_len > best_len:
                 promoted = self._promote_cold_entry(cold_meta, token_ids, cold_len)
                 if promoted is not None:
                     return promoted
+            if not kv_quant_profile_mismatch:
+                kv_quant_profile_mismatch = self._cold_store.has_kv_quant_profile_mismatch(
+                    token_ids,
+                    model_id,
+                    model_revision,
+                    bs,
+                    acceleration_mode=acceleration_mode,
+                    kv_quant_profile=request_kv_quant_profile,
+                )
 
         if best_entry is None or best_len < bs:
             self.miss_count += 1
             return LCPResult(
                 mode="none",
                 recovered_prefix_tokens=0,
-                fallback_reason="no_reusable_prefix",
+                fallback_reason=(
+                    "kv_quant_profile_mismatch"
+                    if kv_quant_profile_mismatch
+                    else "no_reusable_prefix"
+                ),
                 entry=None,
                 suffix_token_ids=list(token_ids),
             )
@@ -621,6 +707,7 @@ class PrefixBlockStore:
             block_size=meta.block_size,
             total_bytes=live_bytes,
             acceleration_mode=meta.acceleration_mode,
+            kv_quant_profile=meta.kv_quant_profile,
         )
         with self._lock:
             entry = self._store_entry_locked(entry, acquire=True)
@@ -743,6 +830,7 @@ class PrefixBlockStore:
         model_revision = entry.model_revision
         block_size = entry.block_size
         acceleration_mode = entry.acceleration_mode
+        kv_quant_profile = entry.kv_quant_profile
 
         def demote() -> None:
             snapshot = clone_cache_snapshot(snapshot_ref)
@@ -757,6 +845,7 @@ class PrefixBlockStore:
                 model_revision=model_revision,
                 block_size=block_size,
                 acceleration_mode=acceleration_mode,
+                kv_quant_profile=kv_quant_profile,
             )
 
         self._deferred_clear_queue.append(demote)

@@ -49,6 +49,7 @@ def _put(store: PrefixBlockStore, session_id: str, tokens: list[int], **kwargs: 
         block_size=kwargs.get("block_size", 4),
         total_bytes=kwargs.get("total_bytes", 1024),
         acceleration_mode=kwargs.get("acceleration_mode", ""),
+        kv_quant_profile=kwargs.get("kv_quant_profile", ""),
     )
 
 
@@ -102,6 +103,173 @@ def test_cold_store_rejects_active_kv_and_rotating(tmp_path: Path) -> None:
         acceleration_mode="",
     )
     assert cold.entry_count() == 0
+
+
+def test_cold_store_allows_active_kv_when_quant_profile_present(tmp_path: Path) -> None:
+    cold = _make_cold(tmp_path)
+    ok = cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        kv_quant_profile="q4:g64",
+    )
+
+    assert ok is True
+    assert cold.entry_count() == 1
+    meta, matched = cold.match(
+        [1, 2, 3, 4],
+        "m1",
+        "r1",
+        4,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        kv_quant_profile="q4:g64",
+    )
+    assert meta is not None
+    assert matched == 4
+    assert meta.kv_quant_profile == "q4:g64"
+
+
+def test_cold_match_isolates_active_kv_quant_profiles(tmp_path: Path) -> None:
+    cold = _make_cold(tmp_path)
+    assert cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        kv_quant_profile="q4:g64",
+    )
+
+    mismatch, mismatch_len = cold.match(
+        [1, 2, 3, 4],
+        "m1",
+        "r1",
+        4,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        kv_quant_profile="q8:g64",
+    )
+    assert mismatch is None
+    assert mismatch_len == 0
+
+    match, match_len = cold.match(
+        [1, 2, 3, 4],
+        "m1",
+        "r1",
+        4,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        kv_quant_profile="q4:g64",
+    )
+    assert match is not None
+    assert match_len == 4
+
+
+def test_cold_match_baseline_request_skips_active_kv_entry(tmp_path: Path) -> None:
+    cold = _make_cold(tmp_path)
+    assert cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        kv_quant_profile="q4:g64",
+    )
+
+    match, match_len = cold.match([1, 2, 3, 4], "m1", "r1", 4)
+
+    assert match is None
+    assert match_len == 0
+
+
+def test_find_lcp_cold_active_kv_profile_mismatch_returns_precise_reason(tmp_path: Path) -> None:
+    cold = _make_cold(tmp_path)
+    assert cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        kv_quant_profile="q4:g64",
+    )
+    store = PrefixBlockStore(cold_store=cold)
+
+    result = store.find_lcp(
+        [1, 2, 3, 4],
+        "m1",
+        "r1",
+        4,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        kv_quant_profile="q8:g64",
+    )
+
+    assert result.mode == "none"
+    assert result.fallback_reason == "kv_quant_profile_mismatch"
+
+
+def test_cold_kv_quant_profile_mismatch_helper_ignores_non_candidates(tmp_path: Path) -> None:
+    cold = _make_cold(tmp_path)
+    assert cold.store(
+        session_id="model-mismatch",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("model-mismatch"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m2",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        kv_quant_profile="q4:g64",
+    )
+    assert cold.store(
+        session_id="baseline",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("baseline"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+    assert cold.store(
+        session_id="same-profile",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("same-profile"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        kv_quant_profile="q8:g64",
+    )
+
+    assert not cold.has_kv_quant_profile_mismatch(
+        [1, 2, 3],
+        "m1",
+        "r1",
+        4,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        kv_quant_profile="q8:g64",
+    )
+    assert not cold.has_kv_quant_profile_mismatch(
+        [1, 2, 3, 4],
+        "m1",
+        "r1",
+        4,
+        acceleration_mode="ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        kv_quant_profile="q8:g64",
+    )
 
 
 def test_cold_store_serializer_failure_counts_and_leaves_no_entry(tmp_path: Path) -> None:

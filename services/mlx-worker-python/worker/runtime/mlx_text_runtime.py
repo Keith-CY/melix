@@ -216,6 +216,7 @@ class _SessionPrefixCacheContext:
     block_size: int
     cache_memory_budget_bytes: int
     acceleration_mode: str
+    active_kv_quant_profile: str
     cache_mode: str
     force_fallback: bool
 
@@ -257,6 +258,7 @@ def _session_prefix_cache_context(
             default=0,
         ),
         acceleration_mode=str(ext.get("_melix.acceleration_mode", "") or ""),
+        active_kv_quant_profile=str(ext.get("_melix.active_kv_quant_profile", "") or ""),
         cache_mode=cache_mode,
         force_fallback=(
             _truthy_string(os.environ.get("MELIX_ENABLE_TEST_CACHE_HOOKS"))
@@ -1255,6 +1257,7 @@ class AutoMLXBackend:
                             _cache_context.model_revision,
                             _cache_context.block_size,
                             acceleration_mode=_cache_context.acceleration_mode,
+                            kv_quant_profile=_cache_context.active_kv_quant_profile,
                             force_fallback=_cache_context.force_fallback,
                         )
                         _standard_lcp_entry_to_release = _lcp.entry if _lcp is not None else None
@@ -1361,6 +1364,7 @@ class AutoMLXBackend:
                                 block_size=_standard_cache_context.block_size,
                                 total_bytes=_snapshot_bytes,
                                 acceleration_mode=_standard_cache_context.acceleration_mode,
+                                kv_quant_profile=_standard_cache_context.active_kv_quant_profile,
                             )
                 text = getattr(response, "text", "")
                 finish_reason = getattr(response, "finish_reason", None)
@@ -1505,6 +1509,7 @@ class AutoMLXBackend:
                 _cache_context.model_revision,
                 _cache_context.block_size,
                 acceleration_mode=_cache_context.acceleration_mode,
+                kv_quant_profile=_cache_context.active_kv_quant_profile,
                 force_fallback=_cache_context.force_fallback,
             )
 
@@ -1603,6 +1608,7 @@ class AutoMLXBackend:
                             block_size=_cache_context.block_size,
                             total_bytes=_snapshot_bytes,
                             acceleration_mode=_cache_context.acceleration_mode,
+                            kv_quant_profile=_cache_context.active_kv_quant_profile,
                         )
 
             batch_insert_started_at = time.perf_counter()

@@ -55,6 +55,25 @@ def _make_cached_stream(calls: list[dict[str, Any]]):
     return fake_stream_generate
 
 
+def _make_cache_state_stream(calls: list[dict[str, Any]]):
+    def fake_stream_generate(model, tokenizer, prompt, max_tokens, sampler, prompt_cache=None):
+        _ = model, max_tokens, sampler
+        if prompt_cache is not None and isinstance(prompt, list):
+            prompt_cache[0].tokens.extend(int(token) for token in prompt)
+            state_tokens = list(prompt_cache[0].tokens)
+        elif isinstance(prompt, str):
+            state_tokens = tokenizer.encode(prompt, add_special_tokens=True)
+        else:
+            state_tokens = [int(token) for token in prompt]
+        calls.append({"prompt": prompt, "prompt_cache": prompt_cache, "state_tokens": state_tokens})
+        first = chr(ord("A") + (sum(state_tokens) % 26))
+        second = chr(ord("A") + ((sum(state_tokens) + len(state_tokens)) % 26))
+        yield FakeResponse(text=first)
+        yield FakeResponse(text=second, finish_reason="stop", generation_tokens=2)
+
+    return fake_stream_generate
+
+
 def _make_plain_stream(calls: list[dict[str, Any]]):
     def fake_stream_generate(model, tokenizer, prompt, max_tokens, sampler):
         calls.append({"prompt": prompt})
@@ -225,6 +244,122 @@ def test_second_turn_partial_hit_replays_suffix_only() -> None:
     assert entry is not None
     assert entry.token_ids == [ord(ch) for ch in turn_two]
     store.release(entry)
+
+
+def test_active_kv_quantized_session_reuses_when_profiles_match() -> None:
+    calls: list[dict[str, Any]] = []
+    backend = _make_backend(_make_cached_stream(calls))
+    turn_one = "abcdefgh"
+    turn_two = turn_one + "wxyz"
+    ext = {
+        **_ext(),
+        "_melix.acceleration_mode": "ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        "_melix.active_kv_quant_profile": "q4:g64",
+    }
+
+    list(backend.generate_tokens(_loaded_model(), turn_one, _sampling(), Event(), execution_ext=ext))
+    events = list(
+        backend.generate_tokens(_loaded_model(), turn_two, _sampling(), Event(), execution_ext=ext)
+    )
+
+    assert calls[1]["prompt"] == [ord("z")]
+    terminal = events[-1]
+    assert terminal.cache_hit_mode == "partial"
+    assert terminal.cache_hit_tier == "hot"
+    assert terminal.recovered_prefix_tokens == len(turn_one)
+    assert terminal.cache_fallback_reason == ""
+
+
+def test_active_kv_quantized_warm_hit_matches_cold_prefill_greedy_continuation() -> None:
+    calls: list[dict[str, Any]] = []
+    backend = _make_backend(_make_cache_state_stream(calls))
+    turn_one = "abcdefgh"
+    turn_two = turn_one + "wxyz"
+    ext = {
+        **_ext(),
+        "_melix.acceleration_mode": "ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+        "_melix.active_kv_quant_profile": "q4:g64",
+    }
+
+    cold_events = list(
+        backend.generate_tokens(
+            _loaded_model(),
+            turn_two,
+            _sampling(),
+            Event(),
+            execution_ext={**ext, "_melix.session_id": "cold-baseline"},
+        )
+    )
+    cold_output = "".join(event.text for event in cold_events)
+    cold_state_tokens = calls[-1]["state_tokens"]
+    assert cold_events[-1].cache_hit_mode == "none"
+
+    reset_store()
+    calls.clear()
+
+    list(
+        backend.generate_tokens(
+            _loaded_model(),
+            turn_one,
+            _sampling(),
+            Event(),
+            execution_ext={**ext, "_melix.session_id": "warm-hit"},
+        )
+    )
+    warm_events = list(
+        backend.generate_tokens(
+            _loaded_model(),
+            turn_two,
+            _sampling(),
+            Event(),
+            execution_ext={**ext, "_melix.session_id": "warm-hit"},
+        )
+    )
+
+    assert "".join(event.text for event in warm_events) == cold_output
+    assert calls[-1]["state_tokens"] == cold_state_tokens
+    terminal = warm_events[-1]
+    assert terminal.cache_hit_mode == "partial"
+    assert terminal.cache_hit_tier == "hot"
+    assert terminal.recovered_prefix_tokens == len(turn_one)
+    assert terminal.cache_fallback_reason == ""
+
+
+def test_active_kv_quantized_profile_mismatch_falls_back_with_precise_reason() -> None:
+    calls: list[dict[str, Any]] = []
+    backend = _make_backend(_make_cached_stream(calls))
+    turn_one = "abcdefgh"
+    turn_two = turn_one + "wxyz"
+    base_ext = {
+        **_ext(),
+        "_melix.acceleration_mode": "ACCELERATION_MODE_ACTIVE_KV_QUANTIZED",
+    }
+
+    list(
+        backend.generate_tokens(
+            _loaded_model(),
+            turn_one,
+            _sampling(),
+            Event(),
+            execution_ext={**base_ext, "_melix.active_kv_quant_profile": "q4:g64"},
+        )
+    )
+    events = list(
+        backend.generate_tokens(
+            _loaded_model(),
+            turn_two,
+            _sampling(),
+            Event(),
+            execution_ext={**base_ext, "_melix.active_kv_quant_profile": "q8:g64"},
+        )
+    )
+
+    assert calls[1]["prompt"] == [ord("z")]
+    terminal = events[-1]
+    assert terminal.cache_hit_mode == "none"
+    assert terminal.cache_hit_tier is None
+    assert terminal.recovered_prefix_tokens == 0
+    assert terminal.cache_fallback_reason == "kv_quant_profile_mismatch"
 
 
 def test_exact_hit_replays_last_token(monkeypatch: pytest.MonkeyPatch) -> None:
