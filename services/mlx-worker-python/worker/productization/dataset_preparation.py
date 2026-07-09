@@ -1278,28 +1278,28 @@ def _classify_source_kind_name(name: str) -> str | None:
         return None
     last_char = name[-1]
     if last_char == "t":
-        if name[-4:] == ".txt":
+        if name.endswith(".txt"):
             if len(name) >= 8 and name[-8] == "." and name[-7:-4].lower() == "pdf":
                 return "pdf"
             if len(name) >= 9 and name[-9] == "." and name[-8:-4].lower() == "docx":
                 return "docx"
             return "text"
-        if name[-5:] == ".text":
+        if name.endswith(".text"):
             return "text"
     elif last_char == "d":
-        if name[-3:] == ".md":
+        if name.endswith(".md"):
             return "markdown"
     elif last_char == "y":
-        if name[-3:] == ".py":
+        if name.endswith(".py"):
             return "code"
     elif last_char == "l":
-        if name[-6:] == ".jsonl":
+        if name.endswith(".jsonl"):
             return "structured_data"
     elif last_char == "n":
-        if name[-5:] == ".json":
+        if name.endswith(".json"):
             return "structured_data"
     elif last_char == "v":
-        if name[-4:] in (".csv", ".tsv"):
+        if name.endswith((".csv", ".tsv")):
             return "structured_data"
 
     dot_index = name.rfind(".")
@@ -1516,11 +1516,10 @@ def _record(
     normalized_text = text if normalized else _normalize_line_endings(text)
     content_sha256, byte_size = _record_content_digest_and_size(normalized_text)
     record_metadata = dict(metadata) if metadata else {}
-    sha256 = hashlib.sha256
     path_name = path.name
     path_key = str(path).encode("utf-8")
     return {
-        "source_id": sha256(path_key).hexdigest()[:16],
+        "source_id": hashlib.sha256(path_key).hexdigest()[:16],
         "source_uri": path_name,
         "source_kind": source_kind,
         "content_sha256": content_sha256,
