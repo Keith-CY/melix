@@ -210,6 +210,28 @@ Expected effect:
 - leave vector, keyword, whitespace, max-capacity, registry selection, OpenAI
   schema generation, and protobuf config materialization unchanged.
 
+## Follow-up Slice: Local Compute Seed Fast Path
+
+The 2026-07-09 follow-up keeps non-policy agentic tool selection receipts
+unchanged, but seeds the built-in always-available `local_compute` selection
+state directly after the early always-only exits. The selector already requires
+`local_compute` as the sole always-available tool and `max_selected_tools > 1` at
+that point, so this avoids one helper call, membership check, duplicate check,
+and whitespace normalization guard before vector or keyword tools are appended.
+Policy-aware selection keeps the generic helper path because it must still apply
+network/tool policy receipts and denied-tool bookkeeping.
+
+Expected effect:
+
+- reduce `tool-registry-select-name-index-cache`
+  `selector_planning_elapsed_ms_mean` and
+  `current_capacity_planning_elapsed_ms_mean` for non-policy selections that add
+  vector or keyword tools;
+- preserve selected registry identity, selected tool order, selected schema
+  bytes, full schema bytes, and receipt fields;
+- leave policy-aware selection, registry selection, OpenAI schema generation,
+  and protobuf config materialization unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
@@ -218,7 +240,9 @@ Expected effect:
 3. Run the registered probe command locally before and after the slice and
    compare the relevant registered metric (`schema_payload_elapsed_ms_mean` for
    schema-payload slices, `elapsed_ms_mean` for the OpenAI tool payload slice,
-   or `no_keyword_fallback_planning_elapsed_ms_mean` for the no-keyword
-   fallback slice) over repeated samples.
+   `no_keyword_fallback_planning_elapsed_ms_mean` for the no-keyword fallback
+   slice, or `selector_planning_elapsed_ms_mean` and
+   `current_capacity_planning_elapsed_ms_mean` for the local-compute seed slice)
+   over repeated samples.
 4. Push only if local evidence is neutral-to-improved and rely on the GitHub
    PR-scoped performance workflow as the merge gate.
