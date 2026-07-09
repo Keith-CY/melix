@@ -566,6 +566,29 @@ def test_count_tests_preserves_inline_assert_statement_detection() -> None:
     assert code_eval_runner._count_tests("setup(); assert identity(1) == 1") == 1
 
 
+def test_count_tests_plain_assert_lines_skip_ast_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    code_eval_runner._count_tests.cache_clear()
+
+    def fail_parse(*args, **kwargs):
+        raise AssertionError(  # pragma: no cover - regression-only failure path
+            "plain assert-only payloads should count assertion lines without AST parsing"
+        )
+
+    monkeypatch.setattr(code_eval_runner.ast, "parse", fail_parse)
+
+    assert code_eval_runner._count_tests("assert one\n\tassert two\n\nassert three") == 3
+
+
+def test_count_tests_plain_assert_fast_path_defers_mixed_statements() -> None:
+    code_eval_runner._count_tests.cache_clear()
+
+    assert code_eval_runner._count_tests("assert one\nvalue = candidate(1)") == 1
+
+
+def test_plain_assert_line_counter_rejects_identifier_prefix() -> None:
+    assert code_eval_runner._count_plain_assert_statement_lines("assert_valid_name") == 0
+
+
 def test_assert_prescan_handles_boundary_and_literal_edges() -> None:
     assert code_eval_runner._may_contain_assert_statement("# assert only in trailing comment") is False
     assert code_eval_runner._may_contain_assert_statement("reassert = 'value'") is False
