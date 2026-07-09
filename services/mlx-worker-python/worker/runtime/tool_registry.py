@@ -632,22 +632,13 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
                     )
             else:
                 return _build_always_only_tool_selection_result(registry, selection_input)
-    selected_sources: dict[str, str] = {}
-    selected_names: list[str] = []
-    selected_tools: list[dict[str, str]] = []
+    selected_name = "local_compute"
+    selected_sources: dict[str, str] = {selected_name: "always"}
+    selected_names: list[str] = [selected_name]
+    selected_tools: list[dict[str, str]] = [{"tool_id": selected_name, "source": "always"}]
     append_selected_tool = _append_selected_tool
     has_vector_selection = False
     has_keyword_selection = False
-
-    for tool_name in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES:
-        append_selected_tool(
-            selected_names,
-            selected_sources,
-            selected_tools,
-            tool_name,
-            "always",
-            max_selected_tools,
-        )
 
     selection_mode = "fallback"
     fallback_reason = "no_keyword_match"
