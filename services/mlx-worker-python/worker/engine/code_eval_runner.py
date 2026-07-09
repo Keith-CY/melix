@@ -826,22 +826,24 @@ def _summarize_stdio(*, stdout_tail: str, stderr_tail: str) -> str:
 def _sandbox_profile(*, temp_root: Path) -> str:
     static_profile = _sandbox_static_profile_fragments(_sandbox_static_profile_key())
     temp_read_filters = _sandbox_temp_root_read_filters(temp_root)
-    return " ".join(
-        (
-            static_profile.prefix,
-            f"(allow file-read* {static_profile.runtime_read_filters} {temp_read_filters})",
-            f"(allow file-write* (subpath {json.dumps(str(temp_root))}))",
-        )
+    quoted_temp_root = json.dumps(str(temp_root))
+    return (
+        f"{static_profile.prefix} "
+        f"(allow file-read* {static_profile.runtime_read_filters} {temp_read_filters}) "
+        f"(allow file-write* (subpath {quoted_temp_root}))"
     )
 
 
 def _sandbox_temp_root_read_filters(temp_root: Path) -> str:
     temp_root_text = str(temp_root)
-    try:
-        resolved = temp_root.resolve()
-    except OSError:
-        resolved = temp_root
-    resolved_text = str(resolved)
+    if isinstance(temp_root, Path):
+        resolved_text = os.path.realpath(temp_root_text)
+    else:
+        try:
+            resolved = temp_root.resolve()
+        except OSError:
+            resolved = temp_root
+        resolved_text = str(resolved)
     temp_filter = f"(subpath {json.dumps(temp_root_text)})"
     if resolved_text == temp_root_text:
         return temp_filter
