@@ -329,7 +329,7 @@ def _report_matrix_roles(
             metrics=metrics,
             probe_phases=probe_phases if probe_phases is not None else _EMPTY_PROBE_PHASES,
         ):
-            roles.append(role)
+            roles_append(role)
     return roles
 
 
