@@ -818,6 +818,53 @@ def test_tool_registry_worker_tool_config_reuses_cached_serialized_snapshot(
     assert registry.as_worker_tool_config().tools[0].name == "image_crop"
 
 
+def test_agentic_tool_selection_seeds_local_compute_without_append_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appended_tool_names: list[str] = []
+    original_append_selected_tool = tool_registry_module._append_selected_tool
+
+    def tracking_append_selected_tool(
+        selected_names: list[str],
+        selected_sources: dict[str, str],
+        selected_tools: list[dict[str, str]],
+        tool_name: str,
+        source: str,
+        max_selected_tools: int,
+    ) -> bool:
+        appended_tool_names.append(tool_name)
+        return original_append_selected_tool(
+            selected_names,
+            selected_sources,
+            selected_tools,
+            tool_name,
+            source,
+            max_selected_tools,
+        )
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "_append_selected_tool",
+        tracking_append_selected_tool,
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search the local corpus, then calculate the answer.",
+            vector_selected_tool_ids=("text_search",),
+            vector_available=True,
+            max_selected_tools=3,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "vector"},
+    ]
+    assert appended_tool_names == ["text_search"]
+
+
 def test_agentic_tool_selection_preserves_always_available_tools_with_vector_hits() -> None:
     result = select_agentic_tools_for_turn(
         ToolSelectionInput(
