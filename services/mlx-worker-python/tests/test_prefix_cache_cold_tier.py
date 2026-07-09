@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -362,6 +363,122 @@ def test_cold_store_index_reload_drops_orphaned_meta(tmp_path: Path) -> None:
     assert meta is None
     # The orphaned sidecar is removed so restarts stop rescanning it.
     assert list((tmp_path / "cold").glob("*.meta.json")) == []
+
+
+def test_cold_store_index_load_uses_scandir_without_path_glob(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cold = _make_cold(tmp_path)
+    assert cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"ColdPrefixStore index load should use os.scandir, not Path.glob({pattern!r})"
+        )
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+    original_scandir = os.scandir
+    scandir_calls = 0
+
+    def counted_scandir(path: str | os.PathLike[str]):
+        nonlocal scandir_calls
+        scandir_calls += 1
+        return original_scandir(path)
+
+    monkeypatch.setattr("worker.runtime.prefix_block_store.os.scandir", counted_scandir)
+
+    reloaded = ColdPrefixStore(
+        tmp_path / "cold",
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    assert reloaded.entry_count() == 1
+    assert scandir_calls == 1
+
+
+def test_cold_store_index_load_tolerates_scandir_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cold = _make_cold(tmp_path)
+    assert cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+
+    def fail_scandir(path: Path):  # pragma: no cover - regression guard
+        raise OSError(f"scan denied: {path!s}")
+
+    monkeypatch.setattr("worker.runtime.prefix_block_store.os.scandir", fail_scandir)
+
+    reloaded = ColdPrefixStore(
+        tmp_path / "cold",
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    assert reloaded.entry_count() == 0
+
+
+def test_cold_store_index_load_skips_entries_with_metadata_errors(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cold = _make_cold(tmp_path)
+    assert cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+
+    class BadEntry:
+        name = "bad.meta.json"
+        path = str(tmp_path / "cold" / "bad.meta.json")
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            raise OSError("metadata denied")
+
+    original_scandir = os.scandir
+
+    class FakeScandir:
+        def __enter__(self):
+            with original_scandir(tmp_path / "cold") as entries:
+                return [BadEntry(), *list(entries)]
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "worker.runtime.prefix_block_store.os.scandir",
+        lambda path: FakeScandir(),
+    )
+
+    reloaded = ColdPrefixStore(
+        tmp_path / "cold",
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    assert reloaded.entry_count() == 1
 
 
 def test_promotion_accounts_live_bytes_not_file_size(tmp_path: Path) -> None:
