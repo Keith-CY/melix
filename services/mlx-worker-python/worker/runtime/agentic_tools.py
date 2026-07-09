@@ -126,7 +126,7 @@ def admit_agentic_tool_calls(
             )
 
         tool_call_id = str(raw_call.get("id", "") or fallback_call_id)
-        tool_name = str(raw_call.get("name", "")).strip()
+        tool_name = str(raw_call.get("name") or "").strip()
         if not tool_name:
             return _guardrail_rejection_admission(
                 allowed_tools=allowed_tools,
@@ -559,7 +559,7 @@ def _missing_required_arguments(
     return [
         name
         for name in descriptor.required_arguments
-        if str(arguments.get(name, "")).strip() == ""
+        if (value := arguments.get(name)) is None or str(value).strip() == ""
     ]
 
 

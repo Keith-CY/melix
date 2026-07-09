@@ -464,11 +464,29 @@ def test_agentic_tool_guardrail_admission_reports_missing_required_arguments() -
     assert receipt["allowed_next_step"] == "retry_with_required_arguments"
 
 
+def test_agentic_tool_guardrail_admission_treats_none_required_argument_as_missing() -> None:
+    admission = admit_agentic_tool_calls(
+        [{"id": "compute-none", "name": "local_compute", "arguments": {"code": None}}],
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert receipt["failure_class"] == "missing_required_arguments"
+    assert receipt["nudge_type"] == "missing_required_arguments"
+    assert receipt["tool_call_id"] == "compute-none"
+    assert receipt["tool_name"] == "local_compute"
+    assert receipt["missing_required_arguments"] == ["code"]
+
+
 @pytest.mark.parametrize(
     ("raw_call", "expected_call_id", "expected_nudge_type"),
     [
         ("not-a-tool-call", "call-1", "tool_call_object_required"),
         ({"id": "empty-name", "name": " ", "arguments": {}}, "empty-name", "tool_name_required"),
+        ({"id": "none-name", "name": None, "arguments": {}}, "none-name", "tool_name_required"),
         (
             {"id": "none-args", "name": "local_compute", "arguments": None},
             "none-args",
