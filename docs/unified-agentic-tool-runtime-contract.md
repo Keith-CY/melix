@@ -187,6 +187,34 @@ tool that is disabled by policy must be omitted from the selected registry, so
 the deterministic runtime cannot execute it through a later model-emitted tool
 call.
 
+## Tool Guardrail Admission Receipt Contract
+
+Agentic loops should validate model-emitted tool calls before executing any
+adapter. The v1 admission receipt is `melix.agentic_tool_guardrail.v1` and
+records one decision for a candidate tool-call batch.
+
+The receipt includes:
+
+- `outcome = admitted|retry_nudge|terminal_failure`
+- `failure_class`
+- `nudge_type`
+- `attempt_index`
+- `max_retry_nudges`
+- `terminal_after_budget`
+- `tool_call_id`
+- `tool_name`
+- `allowed_tools[]`
+- `missing_required_arguments[]`
+- `allowed_next_step`
+- `corrective_action`
+
+Receipts must not include raw prompt text, raw tool arguments, URLs, workspace
+paths, retrieved content, or observation payloads. Unknown tools, malformed
+tool-call objects, non-object arguments, and missing required arguments should
+produce stable retry-nudge receipts. Callers may still fail closed after the
+configured retry budget is exhausted, but the terminal decision must preserve
+the same sanitized evidence shape.
+
 ## Observation Contract
 
 Every emitted observation must include:

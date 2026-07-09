@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 
 from worker.runtime import agentic_tools as agentic_tools_module
-from worker.runtime.agentic_tools import AgenticToolRuntimeError, _context_list, execute_agentic_tool_calls
+from worker.runtime.agentic_tools import (
+    AgenticToolRuntimeError,
+    _context_list,
+    admit_agentic_tool_calls,
+    execute_agentic_tool_calls,
+)
 from worker.runtime.retrieval_context import (
     project_retrieval_lookup_result as real_project_retrieval_lookup_result,
 )
@@ -302,6 +307,189 @@ def test_agentic_tool_runtime_web_deny_keeps_visit_out_of_execution_allowlist() 
             fixture_context={"pages": {"fixture://page-1": "secret page"}},
             tool_selection=tool_selection,
         )
+
+
+def test_agentic_tool_guardrail_admission_accepts_valid_calls_without_raw_arguments() -> None:
+    admission = admit_agentic_tool_calls(
+        [
+            {
+                "id": "compute-1",
+                "name": "local_compute",
+                "arguments": {"code": "2 + 2"},
+            }
+        ],
+    )
+
+    assert admission.admitted is True
+    assert admission.terminal is False
+    assert admission.normalized_calls == (
+        {"id": "compute-1", "name": "local_compute", "arguments": {"code": "2 + 2"}},
+    )
+    assert admission.receipts == (
+        {
+            "schema_version": "melix.agentic_tool_guardrail.v1",
+            "outcome": "admitted",
+            "failure_class": "",
+            "nudge_type": "",
+            "attempt_index": 1,
+            "max_retry_nudges": 1,
+            "terminal_after_budget": False,
+            "tool_call_id": "",
+            "tool_name": "",
+            "allowed_tools": [
+                "image_crop",
+                "layout_parse",
+                "text_search",
+                "image_search",
+                "skill_lookup",
+                "memory_lookup",
+                "visit",
+                "workspace_file",
+                "local_compute",
+            ],
+            "missing_required_arguments": [],
+            "call_count": 1,
+            "admitted_tool_count": 1,
+            "allowed_next_step": "execute_tools",
+            "corrective_action": "",
+        },
+    )
+    assert "2 + 2" not in json.dumps(admission.receipts, ensure_ascii=False)
+
+
+def test_agentic_tool_guardrail_admission_returns_retry_nudge_for_unknown_tool() -> None:
+    admission = admit_agentic_tool_calls(
+        [
+            {
+                "id": "ghost-1",
+                "name": "ghost_tool",
+                "arguments": {"secret": "do not log this argument"},
+            }
+        ],
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    assert admission.admitted is False
+    assert admission.terminal is False
+    assert admission.normalized_calls == ()
+    assert admission.receipts == (
+        {
+            "schema_version": "melix.agentic_tool_guardrail.v1",
+            "outcome": "retry_nudge",
+            "failure_class": "unknown_tool",
+            "nudge_type": "unknown_tool_name",
+            "attempt_index": 1,
+            "max_retry_nudges": 2,
+            "terminal_after_budget": False,
+            "tool_call_id": "ghost-1",
+            "tool_name": "ghost_tool",
+            "allowed_tools": [
+                "image_crop",
+                "layout_parse",
+                "text_search",
+                "image_search",
+                "skill_lookup",
+                "memory_lookup",
+                "visit",
+                "workspace_file",
+                "local_compute",
+            ],
+            "missing_required_arguments": [],
+            "call_count": 1,
+            "admitted_tool_count": 0,
+            "allowed_next_step": "retry_with_declared_tool",
+            "corrective_action": "Emit a tool call whose name exactly matches one declared tool.",
+        },
+    )
+    receipt_json = json.dumps(admission.receipts, ensure_ascii=False)
+    assert "do not log this argument" not in receipt_json
+
+
+def test_agentic_tool_guardrail_admission_marks_budget_exhaustion() -> None:
+    admission = admit_agentic_tool_calls(
+        [{"id": "ghost-1", "name": "ghost_tool", "arguments": {}}],
+        attempt_index=3,
+        max_retry_nudges=2,
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert admission.terminal is True
+    assert receipt["outcome"] == "terminal_failure"
+    assert receipt["terminal_after_budget"] is True
+    assert receipt["allowed_next_step"] == "stop_with_guardrail_error"
+
+
+def test_agentic_tool_guardrail_admission_rejects_non_object_arguments() -> None:
+    admission = admit_agentic_tool_calls(
+        [
+            {
+                "id": "bad-args",
+                "name": "local_compute",
+                "arguments": ["2 + 2"],
+            }
+        ],
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert receipt["failure_class"] == "invalid_arguments"
+    assert receipt["nudge_type"] == "tool_arguments_object_required"
+    assert receipt["tool_call_id"] == "bad-args"
+    assert receipt["tool_name"] == "local_compute"
+    assert receipt["allowed_next_step"] == "retry_with_object_arguments"
+    assert "2 + 2" not in json.dumps(receipt, ensure_ascii=False)
+
+
+def test_agentic_tool_guardrail_admission_reports_missing_required_arguments() -> None:
+    admission = admit_agentic_tool_calls(
+        [{"id": "compute-missing", "name": "local_compute", "arguments": {}}],
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert receipt["failure_class"] == "missing_required_arguments"
+    assert receipt["nudge_type"] == "missing_required_arguments"
+    assert receipt["tool_call_id"] == "compute-missing"
+    assert receipt["tool_name"] == "local_compute"
+    assert receipt["missing_required_arguments"] == ["code"]
+    assert receipt["allowed_next_step"] == "retry_with_required_arguments"
+
+
+@pytest.mark.parametrize(
+    ("raw_call", "expected_call_id", "expected_nudge_type"),
+    [
+        ("not-a-tool-call", "call-1", "tool_call_object_required"),
+        ({"id": "empty-name", "name": " ", "arguments": {}}, "empty-name", "tool_name_required"),
+        (
+            {"id": "none-args", "name": "local_compute", "arguments": None},
+            "none-args",
+            "missing_required_arguments",
+        ),
+    ],
+)
+def test_agentic_tool_guardrail_admission_covers_malformed_shape_branches(
+    raw_call: object,
+    expected_call_id: str,
+    expected_nudge_type: str,
+) -> None:
+    admission = admit_agentic_tool_calls([raw_call], attempt_index=1, max_retry_nudges=1)
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert admission.terminal is False
+    assert receipt["outcome"] == "retry_nudge"
+    assert receipt["tool_call_id"] == expected_call_id
+    assert receipt["nudge_type"] == expected_nudge_type
+    assert receipt["terminal_after_budget"] is True
 
 
 @pytest.mark.parametrize(("tool_name", "arguments"), _BUILT_IN_TOOL_CALLS)

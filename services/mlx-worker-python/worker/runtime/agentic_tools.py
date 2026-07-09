@@ -34,6 +34,8 @@ from worker.runtime.tool_registry import (
 from worker.runtime.workspace_file_tools import WorkspaceFileTools
 from worker.runtime.workspace_paths import WorkspacePathResolution
 
+AGENTIC_TOOL_GUARDRAIL_RECEIPT_SCHEMA_VERSION = "melix.agentic_tool_guardrail.v1"
+
 
 class AgenticToolRuntimeError(ValueError):
     def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
@@ -82,6 +84,237 @@ class AgenticToolRun:
             "observations": [dict(observation) for observation in self.observations],
             "metrics": dict(self.metrics),
         }
+
+
+@dataclass(frozen=True)
+class AgenticToolGuardrailAdmission:
+    admitted: bool
+    terminal: bool
+    normalized_calls: tuple[dict[str, Any], ...]
+    receipts: tuple[dict[str, Any], ...]
+
+
+def admit_agentic_tool_calls(
+    tool_calls: list[object] | tuple[object, ...] | None,
+    *,
+    registry: ToolRegistry | None = None,
+    attempt_index: int = 1,
+    max_retry_nudges: int = 1,
+) -> AgenticToolGuardrailAdmission:
+    """Validate model-emitted tool calls before any adapter executes."""
+
+    active_registry = registry or agentic_tool_catalog_registry()
+    tool_by_name = {tool.name: tool for tool in active_registry.tools}
+    allowed_tools = list(active_registry.names())
+    raw_calls = tuple(tool_calls or ())
+    normalized_calls: list[dict[str, Any]] = []
+
+    for index, raw_call in enumerate(raw_calls, start=1):
+        fallback_call_id = f"call-{index}"
+        if not isinstance(raw_call, dict):
+            return _guardrail_rejection_admission(
+                allowed_tools=allowed_tools,
+                attempt_index=attempt_index,
+                max_retry_nudges=max_retry_nudges,
+                call_count=len(raw_calls),
+                tool_call_id=fallback_call_id,
+                tool_name="",
+                failure_class="malformed_tool_call",
+                nudge_type="tool_call_object_required",
+                allowed_next_step="retry_with_tool_call_object",
+                corrective_action="Emit each tool call as a JSON object with name and arguments fields.",
+            )
+
+        tool_call_id = str(raw_call.get("id", "") or fallback_call_id)
+        tool_name = str(raw_call.get("name", "")).strip()
+        if not tool_name:
+            return _guardrail_rejection_admission(
+                allowed_tools=allowed_tools,
+                attempt_index=attempt_index,
+                max_retry_nudges=max_retry_nudges,
+                call_count=len(raw_calls),
+                tool_call_id=tool_call_id,
+                tool_name="",
+                failure_class="malformed_tool_call",
+                nudge_type="tool_name_required",
+                allowed_next_step="retry_with_tool_name",
+                corrective_action="Emit a tool call with a non-empty name field.",
+            )
+
+        raw_arguments = raw_call.get("arguments", {})
+        if raw_arguments is None:
+            raw_arguments = {}
+        if not isinstance(raw_arguments, dict):
+            return _guardrail_rejection_admission(
+                allowed_tools=allowed_tools,
+                attempt_index=attempt_index,
+                max_retry_nudges=max_retry_nudges,
+                call_count=len(raw_calls),
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                failure_class="invalid_arguments",
+                nudge_type="tool_arguments_object_required",
+                allowed_next_step="retry_with_object_arguments",
+                corrective_action="Emit tool arguments as a JSON object for the selected tool.",
+            )
+
+        descriptor = tool_by_name.get(tool_name)
+        if descriptor is None:
+            return _guardrail_rejection_admission(
+                allowed_tools=allowed_tools,
+                attempt_index=attempt_index,
+                max_retry_nudges=max_retry_nudges,
+                call_count=len(raw_calls),
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                failure_class="unknown_tool",
+                nudge_type="unknown_tool_name",
+                allowed_next_step="retry_with_declared_tool",
+                corrective_action="Emit a tool call whose name exactly matches one declared tool.",
+            )
+
+        missing = _missing_required_arguments(descriptor, raw_arguments)
+        if missing:
+            return _guardrail_rejection_admission(
+                allowed_tools=allowed_tools,
+                attempt_index=attempt_index,
+                max_retry_nudges=max_retry_nudges,
+                call_count=len(raw_calls),
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                failure_class="missing_required_arguments",
+                nudge_type="missing_required_arguments",
+                missing_required_arguments=missing,
+                allowed_next_step="retry_with_required_arguments",
+                corrective_action=(
+                    "Emit the required arguments for the selected tool before requesting execution."
+                ),
+            )
+
+        normalized_calls.append(
+            {
+                "id": tool_call_id,
+                "name": tool_name,
+                "arguments": dict(raw_arguments),
+            }
+        )
+
+    receipt = _agentic_tool_guardrail_receipt(
+        allowed_tools=allowed_tools,
+        attempt_index=attempt_index,
+        max_retry_nudges=max_retry_nudges,
+        outcome="admitted",
+        failure_class="",
+        nudge_type="",
+        tool_call_id="",
+        tool_name="",
+        missing_required_arguments=(),
+        call_count=len(raw_calls),
+        admitted_tool_count=len(normalized_calls),
+        terminal_after_budget=False,
+        allowed_next_step="execute_tools",
+        corrective_action="",
+    )
+    return AgenticToolGuardrailAdmission(
+        admitted=True,
+        terminal=False,
+        normalized_calls=tuple(normalized_calls),
+        receipts=(receipt,),
+    )
+
+
+def _guardrail_rejection_admission(
+    *,
+    allowed_tools: list[str],
+    attempt_index: int,
+    max_retry_nudges: int,
+    call_count: int,
+    tool_call_id: str,
+    tool_name: str,
+    failure_class: str,
+    nudge_type: str,
+    allowed_next_step: str,
+    corrective_action: str,
+    missing_required_arguments: list[str] | tuple[str, ...] = (),
+) -> AgenticToolGuardrailAdmission:
+    normalized_attempt, normalized_max = _normalized_guardrail_budget(
+        attempt_index=attempt_index,
+        max_retry_nudges=max_retry_nudges,
+    )
+    terminal_without_nudge = normalized_attempt > normalized_max
+    terminal_after_budget = normalized_attempt >= normalized_max
+    outcome = "terminal_failure" if terminal_without_nudge else "retry_nudge"
+    next_step = "stop_with_guardrail_error" if terminal_without_nudge else allowed_next_step
+    receipt = _agentic_tool_guardrail_receipt(
+        allowed_tools=allowed_tools,
+        attempt_index=normalized_attempt,
+        max_retry_nudges=normalized_max,
+        outcome=outcome,
+        failure_class=failure_class,
+        nudge_type=nudge_type,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        missing_required_arguments=missing_required_arguments,
+        call_count=call_count,
+        admitted_tool_count=0,
+        terminal_after_budget=terminal_after_budget,
+        allowed_next_step=next_step,
+        corrective_action=corrective_action,
+    )
+    return AgenticToolGuardrailAdmission(
+        admitted=False,
+        terminal=terminal_without_nudge,
+        normalized_calls=(),
+        receipts=(receipt,),
+    )
+
+
+def _agentic_tool_guardrail_receipt(
+    *,
+    allowed_tools: list[str],
+    attempt_index: int,
+    max_retry_nudges: int,
+    outcome: str,
+    failure_class: str,
+    nudge_type: str,
+    tool_call_id: str,
+    tool_name: str,
+    missing_required_arguments: list[str] | tuple[str, ...],
+    call_count: int,
+    admitted_tool_count: int,
+    terminal_after_budget: bool,
+    allowed_next_step: str,
+    corrective_action: str,
+) -> dict[str, Any]:
+    normalized_attempt, normalized_max = _normalized_guardrail_budget(
+        attempt_index=attempt_index,
+        max_retry_nudges=max_retry_nudges,
+    )
+    return {
+        "schema_version": AGENTIC_TOOL_GUARDRAIL_RECEIPT_SCHEMA_VERSION,
+        "outcome": outcome,
+        "failure_class": failure_class,
+        "nudge_type": nudge_type,
+        "attempt_index": normalized_attempt,
+        "max_retry_nudges": normalized_max,
+        "terminal_after_budget": terminal_after_budget,
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+        "allowed_tools": list(allowed_tools),
+        "missing_required_arguments": list(missing_required_arguments),
+        "call_count": call_count,
+        "admitted_tool_count": admitted_tool_count,
+        "allowed_next_step": allowed_next_step,
+        "corrective_action": corrective_action,
+    }
+
+
+def _normalized_guardrail_budget(
+    *,
+    attempt_index: int,
+    max_retry_nudges: int,
+) -> tuple[int, int]:
+    return max(1, int(attempt_index)), max(0, int(max_retry_nudges))
 
 
 class DeterministicAgenticToolRuntime:
@@ -313,10 +546,21 @@ def _normalize_tool_calls(tool_calls: list[object] | tuple[object, ...] | None) 
 
 
 def _validate_required_arguments(descriptor: ToolDescriptor, arguments: dict[str, Any]) -> None:
-    missing = [name for name in descriptor.required_arguments if str(arguments.get(name, "")).strip() == ""]
+    missing = _missing_required_arguments(descriptor, arguments)
     if missing:
         joined = ", ".join(missing)
         raise AgenticToolRuntimeError(f"Missing required arguments for {descriptor.name}: {joined}")
+
+
+def _missing_required_arguments(
+    descriptor: ToolDescriptor,
+    arguments: dict[str, Any],
+) -> list[str]:
+    return [
+        name
+        for name in descriptor.required_arguments
+        if str(arguments.get(name, "")).strip() == ""
+    ]
 
 
 def _status_override_payload(
