@@ -118,6 +118,41 @@ def test_mlx_library_atom_detection_preserves_mixed_case_without_lowercase_copy(
     ) is True
 
 
+def test_mlx_library_exact_detection_skips_atom_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    from worker.model_ops import hub_catalog
+
+    calls = 0
+    original = hub_catalog._is_mlx_atom
+
+    def counted_is_mlx_atom(value: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(hub_catalog, "_is_mlx_atom", counted_is_mlx_atom)
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {"id": "plain/model", "library_name": "mlx", "tags": ["Text-Generation"]}
+    ) is True
+    assert hub_catalog._is_mlx_compatible(
+        repo_id="plain/model",
+        tags=["Text-Generation"],
+        library_name="MLX",
+        card_data={},
+        lowered_tags={"text-generation"},
+    ) is True
+    assert calls == 0
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation"],
+            "cardData": {"library_name": "MlX"},
+        }
+    ) is True
+    assert calls == 1
+
+
 def test_mlx_repo_id_detection_preserves_case_insensitive_matches() -> None:
     assert _repo_id_contains_mlx("plain/model") is False
     assert _repo_id_contains_mlx("owner/model-mlx-suffix") is True
