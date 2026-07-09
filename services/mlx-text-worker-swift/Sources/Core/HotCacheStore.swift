@@ -497,7 +497,7 @@ actor HotCacheStore {
         stats.supportedModes = CacheModePolicy.supportedModes
         stats.experimentalModes = CacheModePolicy.experimentalModes
         stats.supportsPrefixCache = true
-        stats.supportsPagedCache = true
+        stats.supportsPagedCache = false
         stats.supportsDiskCache = false
         stats.supportsBoundarySnapshots = false
         stats.runtimeCacheFingerprint = runtimeCacheFingerprint

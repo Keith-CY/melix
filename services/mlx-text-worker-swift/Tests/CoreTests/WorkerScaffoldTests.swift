@@ -682,6 +682,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(response.workerFamily, .text)
         XCTAssertEqual(response.workerInstanceID, "swift-text-worker-001")
         XCTAssertTrue(response.capabilities.cache.supportsPrefixCache)
+        XCTAssertFalse(response.capabilities.cache.supportsPagedCache)
         XCTAssertEqual(response.capabilities.cache.kvQuantProfiles, ["turboquant-q4", "q4", "q8"])
         XCTAssertEqual(
             response.capabilities.cache.supportedModes,
@@ -3196,6 +3197,10 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(stored?.requestID, "req-prefill-registry")
         XCTAssertEqual(stored?.blockTableID, result.blockTableID)
         XCTAssertEqual(cacheResponse.stats.blockCount, 1)
+        XCTAssertTrue(cacheResponse.stats.supportsPrefixCache)
+        XCTAssertFalse(cacheResponse.stats.supportsPagedCache)
+        XCTAssertTrue(cacheResponse.snapshot.stats.supportsPrefixCache)
+        XCTAssertFalse(cacheResponse.snapshot.stats.supportsPagedCache)
         XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 1)
         XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.first?.tokenLength, 1)
         XCTAssertEqual(runtimeStats.modelResidentBytes, 0)
