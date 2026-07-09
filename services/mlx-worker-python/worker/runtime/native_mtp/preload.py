@@ -20,10 +20,17 @@ def apply_native_mtp_preload_decision(
 
         native_mtp_module.set_mtp_active(False)
         native_mtp_module.set_mtp_weight_attachment(False)
-        if decision.patchable:
+        patch_allowed = (
+            decision.patchable
+            and decision.enabled
+            and decision.weights_present
+            and decision.refusal_reason == ""
+            and decision.hardware_gate == "admitted"
+        )
+        if patch_allowed:
             native_mtp_module.set_mtp_weight_attachment(decision.weights_present)
             patch_applied = native_mtp_module.apply_native_mtp_patches()
-            active = bool(patch_applied and decision.enabled and decision.weights_present)
+            active = bool(patch_applied)
         native_mtp_module.set_mtp_active(active)
     except Exception as exc:  # pragma: no cover - defensive runtime guard.
         if failure_logger is not None:

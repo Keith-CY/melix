@@ -3125,7 +3125,10 @@ def test_native_mtp_preload_patch_detects_qwen36_mtp_weights(
 
     metadata = maybe_apply_native_mtp_preload_patches(
         str(model_dir),
-        metadata={"melix.native_mtp.enabled": "true"},
+        metadata={
+            "melix.native_mtp.enabled": "true",
+            "melix.native_mtp.device_policy": "force_on",
+        },
     )
 
     assert metadata["melix.native_mtp.compatible"] == "true"
