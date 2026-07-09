@@ -25,9 +25,10 @@ do today, while recognized DeepSeek-V3-style native heads produce a typed
 receipt and refuse runtime activation until a matching model patch exists.
 
 Device policy is evaluated before patch activation. The default policy is
-conservative: existing Qwen behavior remains admitted on unknown or unclassified
-hardware, known lower-end M1/M2 classes are disabled when auto policy is in
-force, and operator metadata can force enable or disable with the override
+conservative: existing Qwen behavior remains admitted on non-Apple unknown or
+unclassified hardware, known lower-end M1/M2 classes are disabled when auto
+policy is in force, Darwin/arm64 hardware that cannot be classified fails
+closed, and operator metadata can force enable or disable with the override
 recorded in the receipt.
 
 Batch-state policy is explicit in the same receipt. This slice does not replace
@@ -49,8 +50,9 @@ it as general batched MTP.
 - Add hardware policy metadata and receipt fields:
   `hardware_gate`, `hardware_policy`, `hardware_policy_reason`,
   `hardware_policy_source`, and `operator_override`.
-- Add a pure device-policy helper with deterministic tests for unknown hardware,
-  M1/M2 auto-disable, and operator force-enable/force-disable metadata.
+- Add a pure device-policy helper with deterministic tests for non-Apple unknown
+  hardware, M1/M2 auto-disable, M3/M4 admission, Darwin/arm64 probe failure, and
+  operator force-enable/force-disable metadata.
 - Add batch-state metadata and receipt fields that distinguish
   `singleton_filter_preserved`, `reconcile_on_extend`, and
   `multi_row_decode_unsupported`.
@@ -95,7 +97,9 @@ Success metrics:
    - operator `melix.native_mtp.device_policy=force_on` and `force_off`
      overriding the auto policy with receipt evidence;
    - injected hardware profiles for M2 and M3/M4 class devices producing the
-     expected auto policy decision.
+     expected auto policy decision;
+   - the production Darwin/arm64 hardware-detection fallback caching sysctl
+     results and failing closed when the chip probe times out.
 2. Write failing batch-policy tests in
    `services/mlx-worker-python/tests/test_native_mtp_capability.py` for the
    pure helpers that report singleton-filter preservation and multi-row decode
@@ -175,21 +179,33 @@ make integration-test
   `4841 passed, 14 skipped, 2 warnings in 184.09s`.
 - `make integration-test` passed:
   `123 passed, 1 skipped in 728.07s`.
+- Review follow-up tests were added for production Darwin/arm64 hardware
+  detection, module-level hardware-profile caching, Darwin/arm64 probe-timeout
+  fail-closed behavior, and the M3/M4 auto-admit branch. The first focused run
+  failed as expected because `_CACHED_HARDWARE_PROFILE` did not exist yet.
+- Review follow-up focused native-MTP and adjacent VLM tests passed:
+  `59 passed, 172 deselected, 2 warnings in 1.01s`.
+- Review follow-up changed-scope coverage passed with aggregate changed-scope
+  coverage at 99 percent.
 
 ## Metrics Report
 
-Changed-scope coverage:
+Changed-scope coverage after review follow-up:
 
 - `services/mlx-worker-python/worker/runtime/native_mtp/capability.py`:
-  95.43 percent.
+  100.00 percent.
 - `services/mlx-worker-python/worker/runtime/native_mtp/preload.py`:
   100.00 percent.
 - `services/mlx-worker-python/worker/runtime/native_mtp/batch_generator.py`:
   100.00 percent.
-- Changed test lines:
+- `services/mlx-worker-python/tests/test_native_mtp_capability.py`:
+  98.61 percent.
+- `services/mlx-worker-python/tests/test_mlx_vlm_runtime.py`:
   100.00 percent.
+- Changed test lines:
+  98.61 percent.
 - Aggregate changed scope:
-  97 percent.
+  99 percent.
 
 Pre-commit performance report:
 

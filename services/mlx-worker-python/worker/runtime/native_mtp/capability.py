@@ -12,6 +12,7 @@ NATIVE_MTP_ENABLED_EXT_KEY = "melix.native_mtp.enabled"
 NATIVE_MTP_DEVICE_POLICY_EXT_KEY = "melix.native_mtp.device_policy"
 NATIVE_MTP_RECEIPT_SCHEMA = "melix.native_mtp.capability.v1"
 NATIVE_MTP_RECEIPT_JSON_KEY = "melix.native_mtp.receipt_json"
+_SYSCTL_TIMEOUT_SECONDS = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +21,9 @@ class NativeMTPHardwareProfile:
     machine: str = ""
     chip_family: str = ""
     model_identifier: str = ""
+
+
+_CACHED_HARDWARE_PROFILE: NativeMTPHardwareProfile | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,12 +275,12 @@ class NativeMTPCapabilityDecision:
             draft_supported=bool(self.compatible and self.source == "native_head" and active),
             effective_depth=self.head_count if active else 0,
             depth_source=self.source if active else "none",
-            cache_shape=self._cache_shape(active=active),
+            cache_shape=self._cache_shape(),
             batch_shape=self.batch_shape,
-            batch_state_policy=self._batch_state_policy(active=active),
-            batch_filter_policy=self._batch_filter_policy(active=active),
-            batch_extend_policy=self._batch_extend_policy(active=active),
-            batch_multi_row_policy=self._batch_multi_row_policy(active=active),
+            batch_state_policy=self._batch_state_policy(),
+            batch_filter_policy=self._batch_filter_policy(),
+            batch_extend_policy=self._batch_extend_policy(),
+            batch_multi_row_policy=self._batch_multi_row_policy(),
             hardware_gate=self.hardware_gate,
             hardware_policy=self.hardware_policy,
             hardware_policy_reason=self.hardware_policy_reason,
@@ -299,7 +303,7 @@ class NativeMTPCapabilityDecision:
             return self.refusal_reason
         if self.patchable and not patch_applied:
             return "patch_failed"
-        return self.refusal_reason
+        return ""
 
     def _resolution(self, *, active: bool, reason: str) -> str:
         if active:
@@ -336,27 +340,27 @@ class NativeMTPCapabilityDecision:
             return reason
         return "not_admitted"
 
-    def _cache_shape(self, *, active: bool) -> str:
+    def _cache_shape(self) -> str:
         if self.source == "native_head" and self.compatible:
             return self.cache_shape
         return "none"
 
-    def _batch_state_policy(self, *, active: bool) -> str:
+    def _batch_state_policy(self) -> str:
         if self.compatible and self.batch_shape == "singleton_only":
             return self.batch_state_policy
         return "none"
 
-    def _batch_filter_policy(self, *, active: bool) -> str:
+    def _batch_filter_policy(self) -> str:
         if self.compatible and self.batch_shape == "singleton_only":
             return self.batch_filter_policy
         return "none"
 
-    def _batch_extend_policy(self, *, active: bool) -> str:
+    def _batch_extend_policy(self) -> str:
         if self.compatible and self.batch_shape == "singleton_only":
             return self.batch_extend_policy
         return "none"
 
-    def _batch_multi_row_policy(self, *, active: bool) -> str:
+    def _batch_multi_row_policy(self) -> str:
         if self.compatible and self.batch_shape == "singleton_only":
             return self.batch_multi_row_policy
         return "none"
@@ -629,6 +633,13 @@ def _resolve_native_mtp_hardware_policy(
             reason="supported_apple_silicon",
             source="auto",
         )
+    if _is_unclassified_apple_silicon(profile):
+        return _NativeMTPHardwareDecision(
+            gate="disabled",
+            policy="auto",
+            reason="unclassified_apple_silicon",
+            source="auto",
+        )
     return _NativeMTPHardwareDecision(
         gate="admitted",
         policy="auto",
@@ -662,16 +673,22 @@ def _coerce_hardware_profile(profile: Any | None) -> NativeMTPHardwareProfile | 
 
 
 def _detect_native_mtp_hardware_profile() -> NativeMTPHardwareProfile:
+    global _CACHED_HARDWARE_PROFILE
+    if _CACHED_HARDWARE_PROFILE is not None:
+        return _CACHED_HARDWARE_PROFILE
+
     system = platform.system()
     machine = platform.machine()
     if system != "Darwin" or machine not in {"arm64", "aarch64"}:
-        return NativeMTPHardwareProfile(system=system, machine=machine)
-    return NativeMTPHardwareProfile(
+        _CACHED_HARDWARE_PROFILE = NativeMTPHardwareProfile(system=system, machine=machine)
+        return _CACHED_HARDWARE_PROFILE
+    _CACHED_HARDWARE_PROFILE = NativeMTPHardwareProfile(
         system=system,
         machine=machine,
         chip_family=_sysctl_string("machdep.cpu.brand_string"),
         model_identifier=_sysctl_string("hw.model"),
     )
+    return _CACHED_HARDWARE_PROFILE
 
 
 def _sysctl_string(name: str) -> str:
@@ -681,7 +698,7 @@ def _sysctl_string(name: str) -> str:
             check=False,
             capture_output=True,
             text=True,
-            timeout=0.1,
+            timeout=_SYSCTL_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -706,6 +723,12 @@ def _is_high_end_apple_silicon(profile: NativeMTPHardwareProfile) -> bool:
     if "m3" in chip or "m4" in chip:
         return True
     return ("m1" in chip or "m2" in chip) and ("max" in chip or "ultra" in chip)
+
+
+def _is_unclassified_apple_silicon(profile: NativeMTPHardwareProfile) -> bool:
+    if profile.system != "Darwin":
+        return False
+    return profile.machine in {"arm64", "aarch64"} and not profile.chip_family
 
 
 def _native_head_refusal_reason(

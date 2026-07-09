@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from worker.runtime.native_mtp import capability as native_mtp_capability
 from worker.runtime.mlx_text_runtime import maybe_apply_native_mtp_text_preload_patches
 from worker.runtime.mlx_vlm_runtime import maybe_apply_native_mtp_preload_patches
 from worker.runtime.native_mtp.capability import (
@@ -490,6 +492,165 @@ def test_registry_device_policy_force_off_refuses_even_capable_qwen(
     assert receipt["operator_override"] == "force_off"
 
 
+def test_registry_device_policy_auto_admits_supported_apple_silicon(
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "qwen-native-head-m4"
+    _write_model(
+        model_dir,
+        config={"model_type": "qwen3_5_text", "mtp_num_hidden_layers": 1},
+        weight_map={"mtp.fc.weight": "mtp.safetensors"},
+    )
+
+    decision = resolve_native_mtp_capability(
+        model_dir,
+        metadata={"melix.native_mtp.enabled": "true"},
+        hardware_profile=SimpleNamespace(
+            system="Darwin",
+            machine="arm64",
+            chip_family="Apple M4 Max",
+            model_identifier="Mac16,5",
+        ),
+    )
+    metadata = decision.to_metadata(patch_applied=True, active=True)
+    receipt = _native_mtp_receipt(metadata)
+
+    assert decision.refusal_reason == ""
+    assert metadata["melix.native_mtp.hardware_gate"] == "admitted"
+    assert metadata["melix.native_mtp.reason"] == ""
+    assert receipt["hardware_policy"] == "auto"
+    assert receipt["hardware_policy_reason"] == "supported_apple_silicon"
+    assert receipt["hardware_policy_source"] == "auto"
+
+
+def test_registry_detects_darwin_arm64_hardware_once_and_caches(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "qwen-native-head-detected-m4"
+    _write_model(
+        model_dir,
+        config={"model_type": "qwen3_5_text", "mtp_num_hidden_layers": 1},
+        weight_map={"mtp.fc.weight": "mtp.safetensors"},
+    )
+    calls: list[str] = []
+
+    def fake_run(
+        command: list[str],
+        *,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: float,
+    ) -> SimpleNamespace:
+        assert check is False
+        assert capture_output is True
+        assert text is True
+        assert timeout == 5
+        calls.append(command[-1])
+        stdout = (
+            "Apple M4 Max\n"
+            if command[-1] == "machdep.cpu.brand_string"
+            else "Mac16,5\n"
+        )
+        return SimpleNamespace(returncode=0, stdout=stdout)
+
+    monkeypatch.setattr(native_mtp_capability, "_CACHED_HARDWARE_PROFILE", None)
+    monkeypatch.setattr(native_mtp_capability.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(native_mtp_capability.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(native_mtp_capability.subprocess, "run", fake_run)
+
+    first = resolve_native_mtp_capability(
+        model_dir,
+        metadata={"melix.native_mtp.enabled": "true"},
+    )
+    second = resolve_native_mtp_capability(
+        model_dir,
+        metadata={"melix.native_mtp.enabled": "true"},
+    )
+
+    assert first.hardware_gate == "admitted"
+    assert first.hardware_policy_reason == "supported_apple_silicon"
+    assert second.hardware_gate == "admitted"
+    assert calls == ["machdep.cpu.brand_string", "hw.model"]
+
+
+def test_registry_detects_non_darwin_hardware_once_and_caches(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "qwen-native-head-linux"
+    _write_model(
+        model_dir,
+        config={"model_type": "qwen3_5_text", "mtp_num_hidden_layers": 1},
+        weight_map={"mtp.fc.weight": "mtp.safetensors"},
+    )
+    calls = 0
+
+    def fake_run(*args: object, **kwargs: object) -> None:
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr(native_mtp_capability, "_CACHED_HARDWARE_PROFILE", None)
+    monkeypatch.setattr(native_mtp_capability.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(native_mtp_capability.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(native_mtp_capability.subprocess, "run", fake_run)
+
+    first = resolve_native_mtp_capability(
+        model_dir,
+        metadata={"melix.native_mtp.enabled": "true"},
+    )
+    second = resolve_native_mtp_capability(
+        model_dir,
+        metadata={"melix.native_mtp.enabled": "true"},
+    )
+
+    assert first.hardware_gate == "admitted"
+    assert first.hardware_policy_reason == "unclassified_device"
+    assert second.hardware_gate == "admitted"
+    assert calls == 0
+
+
+def test_registry_fails_closed_when_darwin_arm64_hardware_probe_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "qwen-native-head-timeout"
+    _write_model(
+        model_dir,
+        config={"model_type": "qwen3_5_text", "mtp_num_hidden_layers": 1},
+        weight_map={"mtp.fc.weight": "mtp.safetensors"},
+    )
+
+    def fake_run(
+        command: list[str],
+        *,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: float,
+    ) -> SimpleNamespace:
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(native_mtp_capability, "_CACHED_HARDWARE_PROFILE", None)
+    monkeypatch.setattr(native_mtp_capability.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(native_mtp_capability.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(native_mtp_capability.subprocess, "run", fake_run)
+
+    decision = resolve_native_mtp_capability(
+        model_dir,
+        metadata={"melix.native_mtp.enabled": "true"},
+    )
+    metadata = decision.to_metadata(patch_applied=False, active=False)
+    receipt = _native_mtp_receipt(metadata)
+
+    assert decision.refusal_reason == "device_policy_disabled"
+    assert metadata["melix.native_mtp.hardware_gate"] == "disabled"
+    assert metadata["melix.native_mtp.reason"] == "device_policy_disabled"
+    assert receipt["hardware_policy_reason"] == "unclassified_apple_silicon"
+    assert receipt["hardware_policy_source"] == "auto"
+
+
 def test_registry_reports_unsupported_enabled_model(tmp_path: Path) -> None:
     model_dir = tmp_path / "unsupported"
     _write_model(
@@ -640,11 +801,14 @@ def test_registry_receipt_supports_empty_fallback_reason() -> None:
     )
 
     metadata = decision.to_metadata(patch_applied=False, active=False, reason="")
+    fallback_metadata = decision.to_metadata(patch_applied=False, active=False)
 
     assert metadata["melix.native_mtp.reason"] == ""
     assert metadata["melix.native_mtp.resolution"] == "fallback"
     assert metadata["melix.native_mtp.receipt.status"] == "fallback"
     assert metadata["melix.native_mtp.receipt.request_gate"] == "not_admitted"
+    assert fallback_metadata["melix.native_mtp.reason"] == ""
+    assert fallback_metadata["melix.native_mtp.receipt.status"] == "fallback"
 
 
 def test_text_preload_routes_through_registry_receipt(
