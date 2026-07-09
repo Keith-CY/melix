@@ -195,6 +195,7 @@ def _write_fake_safetensors_header(path: Path, tensor_names: tuple[str, ...]) ->
         }
         for tensor_name in tensor_names
     }
+    header["__metadata__"] = {"format": "pt"}
     payload = json.dumps(header, sort_keys=True).encode("utf-8")
     path.write_bytes(len(payload).to_bytes(8, "little") + payload)
 
