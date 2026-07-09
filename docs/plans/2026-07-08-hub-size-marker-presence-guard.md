@@ -20,8 +20,8 @@ reports `elapsed_ms_mean` for the size-hint workload.
 
 1. Preserve the existing case-insensitive two-character marker behavior for
    `MO`, `Mo`, `mo`, and `mO` sequences.
-2. Add a cheap single-character presence guard so marker-free text exits before
-   the four pair scans used by the existing helper.
+2. Add cheap single-character presence guards for both `m/M` and `o/O` so
+   marker-free text exits before the four pair scans used by the existing helper.
 3. Keep the existing focused Hub catalog tests as behavior parity coverage.
 4. Run the registered focused tests, changed-scope coverage, and local Linux
    size-hint probe before pushing. CI remains the merge gate for the registered
@@ -33,5 +33,6 @@ reports `elapsed_ms_mean` for the size-hint workload.
 - Changed-scope coverage for `hub_catalog.py`, related tests, registry test, and
   the size-hint probe meets the repository threshold.
 - The local registered probe shows a neutral-to-improved `elapsed_ms_mean`
-  versus the same-worktree `origin/main` baseline.
+  versus the same-worktree `origin/main` baseline, especially for marker-free
+  `m/M`-only text that cannot contain a `mo` marker.
 - The PR-scoped performance workflow completes successfully before merge.
