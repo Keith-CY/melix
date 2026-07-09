@@ -1066,7 +1066,7 @@ def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
 
 
 def _may_contain_model_marker(text: str) -> bool:
-    return ("m" in text or "M" in text) and (
+    return ("m" in text or "M" in text) and ("o" in text or "O" in text) and (
         "MO" in text or "Mo" in text or "mo" in text or "mO" in text
     )
 

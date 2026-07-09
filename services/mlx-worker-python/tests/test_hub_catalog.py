@@ -500,7 +500,7 @@ def test_size_hint_model_marker_scan_preserves_case_insensitive_pairs() -> None:
         "prefix MO suffix",
     ):
         assert hub_catalog_module._may_contain_model_marker(text) is True
-    for text in ("", "m", "M", "metadata only", "adapter notes"):
+    for text in ("", "m", "M", "metadata only", "adapter notes", "massive weights"):
         assert hub_catalog_module._may_contain_model_marker(text) is False
 
 
