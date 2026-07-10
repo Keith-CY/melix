@@ -215,6 +215,16 @@ produce stable retry-nudge receipts. Callers may still fail closed after the
 configured retry budget is exhausted, but the terminal decision must preserve
 the same sanitized evidence shape.
 
+Tool prerequisite checks are part of the same admission boundary. A caller may
+keep completed-step state outside model context and pass it to admission so a
+target tool can require a prior tool before execution. Prerequisites may also
+name argument keys that must match between the completed tool call and the
+target tool call. Admission may compare the raw values in memory, but receipts
+must serialize only the target tool plus, for prerequisite rejections, the
+`required_prior_tool` and `argument_match_keys[]` fields. They must not
+serialize matched argument values or any observation payload from the
+prerequisite tool.
+
 ## Observation Contract
 
 Every emitted observation must include:

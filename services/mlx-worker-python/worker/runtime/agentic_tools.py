@@ -94,10 +94,35 @@ class AgenticToolGuardrailAdmission:
     receipts: tuple[dict[str, Any], ...]
 
 
+@dataclass(frozen=True)
+class AgenticToolPrerequisite:
+    tool_name: str
+    required_tool_name: str
+    argument_match_keys: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        tool_name = self.tool_name.strip()
+        required_tool_name = self.required_tool_name.strip()
+        argument_match_keys = tuple(
+            key.strip() for key in self.argument_match_keys if key.strip()
+        )
+        if not tool_name:
+            raise AgenticToolRuntimeError("Agentic tool prerequisite must include a tool name.")
+        if not required_tool_name:
+            raise AgenticToolRuntimeError(
+                "Agentic tool prerequisite must include a required tool name."
+            )
+        object.__setattr__(self, "tool_name", tool_name)
+        object.__setattr__(self, "required_tool_name", required_tool_name)
+        object.__setattr__(self, "argument_match_keys", argument_match_keys)
+
+
 def admit_agentic_tool_calls(
     tool_calls: list[object] | tuple[object, ...] | None,
     *,
     registry: ToolRegistry | None = None,
+    prerequisites: list[AgenticToolPrerequisite] | tuple[AgenticToolPrerequisite, ...] = (),
+    completed_tool_calls: list[object] | tuple[object, ...] | None = None,
     attempt_index: int = 1,
     max_retry_nudges: int = 1,
 ) -> AgenticToolGuardrailAdmission:
@@ -107,6 +132,8 @@ def admit_agentic_tool_calls(
     tool_by_name = {tool.name: tool for tool in active_registry.tools}
     allowed_tools = list(active_registry.names())
     raw_calls = tuple(tool_calls or ())
+    normalized_prerequisites = tuple(prerequisites or ())
+    completed_calls = tuple(_normalize_completed_tool_calls(completed_tool_calls))
     normalized_calls: list[dict[str, Any]] = []
 
     for index, raw_call in enumerate(raw_calls, start=1):
@@ -191,6 +218,31 @@ def admit_agentic_tool_calls(
                 ),
             )
 
+        unsatisfied_prerequisite = _unsatisfied_tool_prerequisite(
+            tool_name=tool_name,
+            arguments=raw_arguments,
+            prerequisites=normalized_prerequisites,
+            completed_tool_calls=completed_calls,
+        )
+        if unsatisfied_prerequisite is not None:
+            return _guardrail_rejection_admission(
+                allowed_tools=allowed_tools,
+                attempt_index=attempt_index,
+                max_retry_nudges=max_retry_nudges,
+                call_count=len(raw_calls),
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                failure_class="tool_prerequisite_violation",
+                nudge_type="tool_prerequisite_required",
+                allowed_next_step="retry_with_prerequisite_tool",
+                corrective_action=(
+                    "Run the required prerequisite tool with matching arguments before "
+                    "requesting this tool."
+                ),
+                required_prior_tool=unsatisfied_prerequisite.required_tool_name,
+                argument_match_keys=unsatisfied_prerequisite.argument_match_keys,
+            )
+
         normalized_calls.append(
             {
                 "id": tool_call_id,
@@ -236,6 +288,8 @@ def _guardrail_rejection_admission(
     allowed_next_step: str,
     corrective_action: str,
     missing_required_arguments: list[str] | tuple[str, ...] = (),
+    required_prior_tool: str = "",
+    argument_match_keys: list[str] | tuple[str, ...] = (),
 ) -> AgenticToolGuardrailAdmission:
     normalized_attempt, normalized_max = _normalized_guardrail_budget(
         attempt_index=attempt_index,
@@ -260,6 +314,8 @@ def _guardrail_rejection_admission(
         terminal_after_budget=terminal_after_budget,
         allowed_next_step=next_step,
         corrective_action=corrective_action,
+        required_prior_tool=required_prior_tool,
+        argument_match_keys=argument_match_keys,
     )
     return AgenticToolGuardrailAdmission(
         admitted=False,
@@ -285,12 +341,14 @@ def _agentic_tool_guardrail_receipt(
     terminal_after_budget: bool,
     allowed_next_step: str,
     corrective_action: str,
+    required_prior_tool: str = "",
+    argument_match_keys: list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     normalized_attempt, normalized_max = _normalized_guardrail_budget(
         attempt_index=attempt_index,
         max_retry_nudges=max_retry_nudges,
     )
-    return {
+    receipt = {
         "schema_version": AGENTIC_TOOL_GUARDRAIL_RECEIPT_SCHEMA_VERSION,
         "outcome": outcome,
         "failure_class": failure_class,
@@ -307,6 +365,11 @@ def _agentic_tool_guardrail_receipt(
         "allowed_next_step": allowed_next_step,
         "corrective_action": corrective_action,
     }
+    if required_prior_tool:
+        receipt["required_prior_tool"] = required_prior_tool
+    if argument_match_keys:
+        receipt["argument_match_keys"] = list(argument_match_keys)
+    return receipt
 
 
 def _normalized_guardrail_budget(
@@ -543,6 +606,65 @@ def _normalize_tool_calls(tool_calls: list[object] | tuple[object, ...] | None) 
             }
         )
     return normalized
+
+
+def _normalize_completed_tool_calls(
+    tool_calls: list[object] | tuple[object, ...] | None,
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for raw_call in tool_calls or ():
+        if not isinstance(raw_call, dict):
+            continue
+        name = str(raw_call.get("name") or "").strip()
+        raw_arguments = raw_call.get("arguments", {})
+        if raw_arguments is None:
+            raw_arguments = {}
+        if not name or not isinstance(raw_arguments, dict):
+            continue
+        normalized.append({"name": name, "arguments": dict(raw_arguments)})
+    return normalized
+
+
+def _unsatisfied_tool_prerequisite(
+    *,
+    tool_name: str,
+    arguments: dict[str, Any],
+    prerequisites: tuple[AgenticToolPrerequisite, ...],
+    completed_tool_calls: tuple[dict[str, Any], ...],
+) -> AgenticToolPrerequisite | None:
+    for prerequisite in prerequisites:
+        if prerequisite.tool_name != tool_name:
+            continue
+        if not any(
+            _completed_call_satisfies_prerequisite(
+                completed_call=completed_call,
+                target_arguments=arguments,
+                prerequisite=prerequisite,
+            )
+            for completed_call in completed_tool_calls
+        ):
+            return prerequisite
+    return None
+
+
+def _completed_call_satisfies_prerequisite(
+    *,
+    completed_call: dict[str, Any],
+    target_arguments: dict[str, Any],
+    prerequisite: AgenticToolPrerequisite,
+) -> bool:
+    if completed_call.get("name") != prerequisite.required_tool_name:
+        return False
+    completed_arguments = completed_call.get("arguments", {})
+    if not isinstance(completed_arguments, dict):
+        return False
+    for key in prerequisite.argument_match_keys:
+        target_value = target_arguments.get(key)
+        completed_value = completed_arguments.get(key)
+        # None is treated as missing so prerequisite matching never depends on null argument values.
+        if target_value is None or completed_value is None or completed_value != target_value:
+            return False
+    return True
 
 
 def _validate_required_arguments(descriptor: ToolDescriptor, arguments: dict[str, Any]) -> None:
