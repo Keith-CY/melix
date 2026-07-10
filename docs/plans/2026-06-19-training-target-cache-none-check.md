@@ -22,11 +22,12 @@ and `probe_command` entries for:
 ## Optimization
 
 The hot probe prewarms the target-module cache, then repeatedly exercises the
-cache-hit path. Cache values are always immutable tuples; missing entries are
-represented by `None` from `dict.get()`. This slice replaces the generic
-`isinstance(cached_targets, tuple)` guard with a direct `cached_targets is not
-None` check on the cache-hit path, avoiding a repeated runtime type check while
-keeping the cache-miss behavior unchanged.
+cache-hit path. Earlier slices moved canonical cache values to lists and kept the
+fresh-list return contract with `copy()`. This slice narrows the warmed cache-hit
+lookup itself from `dict.get()` plus a nullable sentinel check to direct
+subscription guarded by `KeyError`, so common cache hits avoid the extra
+`None`-handling branch while preserving cache-miss behavior and defensive support
+for older tuple-style cache entries.
 
 ## Verification Plan
 

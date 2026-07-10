@@ -1217,12 +1217,15 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
     if not isinstance(cache, dict):
         cache = {}
         profile[_NORMALIZED_TARGET_MODULES_CACHE_KEY] = cache
-    cached_targets = cache.get(raw_value)
-    if isinstance(cached_targets, list):
-        # Cache stores canonical lists; copy() produces a fresh list per call so
-        # callers can safely mutate without changing shared cache state.
-        return cached_targets.copy()
-    if cached_targets is not None:
+    try:
+        cached_targets = cache[raw_value]
+    except KeyError:
+        pass
+    else:
+        if isinstance(cached_targets, list):
+            # Cache stores canonical lists; copy() produces a fresh list per call so
+            # callers can safely mutate without changing shared cache state.
+            return cached_targets.copy()
         # Accept older tuple-style cache entries defensively for callers that may
         # have seeded custom profiles before this helper was updated.
         return list(cached_targets)
