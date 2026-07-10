@@ -23,8 +23,10 @@ class _CopyCountingConfig(Mapping[str, Any]):
     def __init__(self, payload: Mapping[str, Any]) -> None:
         self._payload = dict(payload)
         self.copy_attempts = 0
+        self.key_accesses = 0
 
     def __getitem__(self, key: str) -> Any:
+        self.key_accesses += 1
         return self._payload[key]
 
     def __iter__(self) -> Iterator[str]:
@@ -149,6 +151,19 @@ def test_detect_text_family_identity_uses_lowercase_model_type_fast_path() -> No
 
     assert detected.architecture == "qwen3_moe"
     assert detected.family_id == "qwen3moe"
+
+
+def test_detect_text_family_identity_reuses_model_type_detection_lookup() -> None:
+    config = _CopyCountingConfig({"model_type": "qwen3_moe"})
+
+    detected = detect_text_family_identity(
+        model_path="models/qwen3-moe-128e",
+        config_payload=config,
+    )
+
+    assert detected.architecture == "qwen3_moe"
+    assert detected.family_id == "qwen3moe"
+    assert config.key_accesses == 1
 
 
 def test_detect_text_family_identity_rejects_unsupported_explicit_override() -> None:

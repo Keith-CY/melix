@@ -55,7 +55,6 @@ def _payload() -> dict[str, Any]:
 def _run_sample(*, iterations: int) -> tuple[float, int, int, int]:
     config = CopyCountingConfig(_payload())
     metadata = {
-        "text_family_id": "qwen3moe",
         "melix.text.attention_profile": "gqa",
         "melix.text.rope_profile": "yarn_interleaved",
         "melix.text.moe.gate_dequant": "true",
