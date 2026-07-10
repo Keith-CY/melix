@@ -28,6 +28,7 @@ _ASCII_AT = ord("@")
 _ASCII_LOWER_D = ord("d")
 _EMPTY_CHANGED_LINES: frozenset[int] = frozenset()
 _DENSE_CHANGED_LINE_SCAN_THRESHOLD = 32
+_SPARSE_SOURCE_LINE_SCAN_THRESHOLD = 8
 
 
 def _is_diff_file_marker(line: str) -> bool:
@@ -238,6 +239,31 @@ def _sorted_line_list_contains(lines: list[int], line_no: int) -> bool:
     return index < len(lines) and lines[index] == line_no
 
 
+def _stripped_source_lines_for_numbers(
+    source_path: Path,
+    line_numbers: list[int],
+) -> dict[int, str]:
+    if len(line_numbers) <= _SPARSE_SOURCE_LINE_SCAN_THRESHOLD:
+        remaining = set(line_numbers)
+        stripped_by_line: dict[int, str] = {}
+        with source_path.open("r", encoding="utf-8") as source_file:
+            for index, line in enumerate(source_file, 1):
+                if index in remaining:
+                    stripped_by_line[index] = line.strip()
+                    remaining.remove(index)
+                    if not remaining:
+                        break
+        return stripped_by_line
+
+    source_lines = source_path.read_text(encoding="utf-8").splitlines()
+    source_line_count = len(source_lines)
+    return {
+        line_no: source_lines[line_no - 1].strip()
+        for line_no in line_numbers
+        if 1 <= line_no <= source_line_count
+    }
+
+
 def _measurable_changed_lines(
     repo_root: Path,
     coverage_payload: dict[str, object],
@@ -305,10 +331,11 @@ def _measurable_changed_lines(
     if not measured_changed:
         return [], [], []
 
-    source_lines = (repo_root / rel_path).read_text(encoding="utf-8").splitlines()
+    sorted_measured_changed = sorted(measured_changed)
+    stripped_source_lines = _stripped_source_lines_for_numbers(repo_root / rel_path, sorted_measured_changed)
     measurable: list[int] = []
-    for line_no in sorted(measured_changed):
-        stripped = source_lines[line_no - 1].strip()
+    for line_no in sorted_measured_changed:
+        stripped = stripped_source_lines.get(line_no)
         if stripped and not stripped.startswith("#"):
             measurable.append(line_no)
     if isinstance(executed_lookup, list) and isinstance(missing_lookup, list):

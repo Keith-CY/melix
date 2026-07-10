@@ -607,6 +607,82 @@ def test_measurable_changed_lines_handles_large_measured_sets_without_union(tmp_
     assert missed == [2]
 
 
+def test_measurable_changed_lines_streams_sparse_source_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 101)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 100, 2)),
+                "missing_lines": list(range(2, 101, 2)),
+            }
+        }
+    }
+    original_open = changed_scope_coverage.Path.open
+    open_calls: list[Path] = []
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("sparse changed-line source filtering should stream target lines")
+
+    def counted_open(self: Path, *args: object, **kwargs: object) -> object:
+        if self == source_path:
+            open_calls.append(self)
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+    monkeypatch.setattr(changed_scope_coverage.Path, "open", counted_open)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {2, 51},
+    )
+
+    assert measurable == [2, 51]
+    assert covered == [51]
+    assert missed == [2]
+    assert open_calls == [source_path]
+
+
+def test_measurable_changed_lines_ignores_out_of_range_source_lines(tmp_path: Path) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 41)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 40, 2)) + [42],
+                "missing_lines": list(range(2, 41, 2)) + [41],
+            }
+        }
+    }
+
+    sparse_measurable, sparse_covered, sparse_missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {2, 41},
+    )
+
+    assert sparse_measurable == [2]
+    assert sparse_covered == []
+    assert sparse_missed == [2]
+
+    dense_measurable, dense_covered, dense_missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        set(range(1, 43)),
+    )
+
+    assert dense_measurable == list(range(1, 41))
+    assert dense_covered == list(range(1, 40, 2))
+    assert dense_missed == list(range(2, 41, 2))
+
+
 def test_measurable_changed_lines_dense_filter_keeps_generic_set_fallback(tmp_path: Path) -> None:
     class GenericChangedSet:
         def __init__(self, values: set[int]) -> None:
@@ -719,10 +795,12 @@ def test_changed_scope_coverage_measured_probe_emits_large_measured_metrics() ->
     assert metrics["measured_lines_per_path"] == 10.0
     assert metrics["sample_count"] == 2.0
     assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["sparse_elapsed_ms_mean"] > 0
     assert metrics["dense_elapsed_ms_mean"] > 0
     assert metrics["allowlist_parse_elapsed_ms_mean"] > 0
     assert metrics["allowlist_parse_count"] == 10000.0
     assert metrics["source_read_calls_mean"] == 0.0
+    assert metrics["sparse_source_read_calls_mean"] == 0.0
     assert metrics["dense_source_read_calls_mean"] == 5.0
 
 
@@ -751,6 +829,10 @@ def test_changed_scope_coverage_measured_probe_rejects_unexpected_allowlist_pars
             rel_path: str,
             changed: set[int],
         ) -> tuple[list[int], list[int], list[int]]:
+            if changed == {1, 2}:
+                return [1, 2], [1], [2]
+            if 1 in changed:
+                return [1, 2, 3, 4], [1, 3], [2, 4]
             return [], [], []
 
         @staticmethod
@@ -767,7 +849,7 @@ def test_changed_scope_coverage_measured_probe_rejects_unexpected_allowlist_pars
         changed_scope_coverage_measured_probe.run_probe(
             tmp_path,
             path_count=1,
-            measured_lines_per_path=2,
+            measured_lines_per_path=4,
             allowlist_parse_count=1,
             samples=1,
         )
@@ -787,6 +869,8 @@ def test_changed_scope_coverage_measured_probe_rejects_incomplete_dense_measurem
             rel_path: str,
             changed: set[int],
         ) -> tuple[list[int], list[int], list[int]]:
+            if changed == {1, 2}:
+                return [1, 2], [1], [2]
             if 1 in changed:
                 return [1], [1], []
             return [], [], []
@@ -805,7 +889,7 @@ def test_changed_scope_coverage_measured_probe_rejects_incomplete_dense_measurem
         changed_scope_coverage_measured_probe.run_probe(
             tmp_path,
             path_count=1,
-            measured_lines_per_path=2,
+            measured_lines_per_path=4,
             allowlist_parse_count=1,
             samples=1,
         )
@@ -825,8 +909,10 @@ def test_changed_scope_coverage_measured_probe_rejects_incomplete_dense_partitio
             rel_path: str,
             changed: set[int],
         ) -> tuple[list[int], list[int], list[int]]:
+            if changed == {1, 2}:
+                return [1, 2], [1], [2]
             if 1 in changed:
-                return [1, 2], [1], []
+                return [1, 2, 3, 4], [1, 3], []
             return [], [], []
 
         @staticmethod
@@ -843,7 +929,7 @@ def test_changed_scope_coverage_measured_probe_rejects_incomplete_dense_partitio
         changed_scope_coverage_measured_probe.run_probe(
             tmp_path,
             path_count=1,
-            measured_lines_per_path=2,
+            measured_lines_per_path=4,
             allowlist_parse_count=1,
             samples=1,
         )
