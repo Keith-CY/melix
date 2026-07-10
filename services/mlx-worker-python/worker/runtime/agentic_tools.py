@@ -615,9 +615,11 @@ def _normalize_completed_tool_calls(
     for raw_call in tool_calls or ():
         if not isinstance(raw_call, dict):
             continue
-        name = str(raw_call.get("name", "")).strip()
+        name = str(raw_call.get("name") or "").strip()
         raw_arguments = raw_call.get("arguments", {})
-        if not name or raw_arguments is None or not isinstance(raw_arguments, dict):
+        if raw_arguments is None:
+            raw_arguments = {}
+        if not name or not isinstance(raw_arguments, dict):
             continue
         normalized.append({"name": name, "arguments": dict(raw_arguments)})
     return normalized

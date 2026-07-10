@@ -596,6 +596,15 @@ def test_agentic_tool_guardrail_admission_accepts_satisfied_prerequisite() -> No
     assert admission.receipts[0]["outcome"] == "admitted"
 
 
+def test_normalize_completed_tool_calls_skips_empty_names_and_normalizes_none_arguments() -> None:
+    assert agentic_tools_module._normalize_completed_tool_calls(
+        (
+            {"name": None, "arguments": {"ticket_id": "T-100"}},
+            {"name": "lookup_ticket", "arguments": None},
+        )
+    ) == [{"name": "lookup_ticket", "arguments": {}}]
+
+
 def test_agentic_tool_prerequisite_normalizes_and_rejects_empty_tool_names() -> None:
     prerequisite = agentic_tools_module.AgenticToolPrerequisite(
         tool_name=" close_ticket ",
@@ -681,6 +690,53 @@ def test_completed_tool_prerequisite_rejects_non_object_completed_arguments() ->
         )
         is False
     )
+
+
+def test_agentic_tool_guardrail_admission_blocks_when_target_argument_is_missing() -> None:
+    ticket_id_argument = ToolArgumentDescriptor(
+        name="ticket_id",
+        json_type="string",
+        description="Ticket identifier.",
+        required=False,
+    )
+    registry = ToolRegistry(
+        (
+            ToolDescriptor(
+                name="lookup_ticket",
+                description="Look up a ticket.",
+                tool_kind="ticket.lookup",
+                observation_kind="ticket_lookup",
+                arguments=(ticket_id_argument,),
+            ),
+            ToolDescriptor(
+                name="close_ticket",
+                description="Close a ticket.",
+                tool_kind="ticket.close",
+                observation_kind="ticket_close",
+                arguments=(ticket_id_argument,),
+            ),
+        )
+    )
+    admission = admit_agentic_tool_calls(
+        [{"id": "close-1", "name": "close_ticket", "arguments": {}}],
+        registry=registry,
+        prerequisites=(
+            agentic_tools_module.AgenticToolPrerequisite(
+                tool_name="close_ticket",
+                required_tool_name="lookup_ticket",
+                argument_match_keys=("ticket_id",),
+            ),
+        ),
+        completed_tool_calls=(
+            {"id": "lookup-1", "name": "lookup_ticket", "arguments": {"ticket_id": "T-100"}},
+        ),
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert receipt["failure_class"] == "tool_prerequisite_violation"
+    assert receipt["argument_match_keys"] == ["ticket_id"]
 
 
 @pytest.mark.parametrize(
