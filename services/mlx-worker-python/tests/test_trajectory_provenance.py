@@ -373,6 +373,41 @@ def test_load_trajectory_provenance_from_snapshot_manifest_fast_paths_clean_text
     }
 
 
+def test_load_trajectory_provenance_from_snapshot_manifest_fast_paths_defaulted_schema_and_split(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_trace_digest": "abc123",
+                "trajectory_quality_metrics": {"reward_coverage_count": 1},
+            }
+        ).encode("utf-8")
+    )
+
+    def fail_strip_text(_value: object) -> str:
+        raise AssertionError(
+            "clean loaded manifests with defaulted schema/split should avoid fallback text stripping"
+        )
+
+    monkeypatch.setattr(trajectory_provenance_module, "_strip_manifest_text", fail_strip_text)
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+        "trajectory_quality_metrics": {"reward_coverage_count": 1},
+    }
+
+
 @pytest.mark.parametrize(
     ("field", "fallback_key", "fallback_value"),
     [
