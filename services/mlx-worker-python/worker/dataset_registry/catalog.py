@@ -649,10 +649,9 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
         if limit == 1:
             with path.open("r", encoding="utf-8") as handle:
                 for raw_line in handle:
-                    line = raw_line.strip()
-                    if not line:
+                    if raw_line.isspace():
                         continue
-                    payload = loads(line)
+                    payload = loads(raw_line)
                     if isinstance(payload, dict):
                         return [payload]
             return []
@@ -660,10 +659,9 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
         append_row = rows.append
         with path.open("r", encoding="utf-8") as handle:
             for raw_line in handle:
-                line = raw_line.strip()
-                if not line:
+                if raw_line.isspace():
                     continue
-                payload = loads(line)
+                payload = loads(raw_line)
                 if isinstance(payload, dict):
                     append_row(payload)
                     if limit is not None and len(rows) >= limit:
