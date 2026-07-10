@@ -1614,19 +1614,68 @@ def test_dataset_catalog_filesystem_error_helpers(
     snapshot_dir.mkdir()
     data_file = snapshot_dir / "train.jsonl"
     data_file.write_text('{"prompt":"ok"}\n', encoding="utf-8")
-    original_stat = Path.stat
+    def fail_path_stat(self: Path, *args: object, **kwargs: object):
+        raise AssertionError(  # pragma: no cover - regression sentinel
+            f"dataset files should reuse scandir stat results, got Path.stat({self!s})"
+        )
 
-    def guarded_stat(self: Path, *args: object, **kwargs: object):
-        if self == data_file:
-            raise OSError("stat failed")
-        return original_stat(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "stat", guarded_stat)
-    assert list(catalog._dataset_files(snapshot_dir)) == []
+    monkeypatch.setattr(Path, "stat", fail_path_stat)
+    assert list(catalog._dataset_files(snapshot_dir)) == [
+        catalog.DatasetFile(
+            relative_path="train.jsonl",
+            size_bytes=len(data_file.read_bytes()),
+            file_format="jsonl",
+        )
+    ]
 
     def raising_scandir(_path):
         raise OSError("scan failed")
 
     monkeypatch.setattr(catalog.os, "scandir", raising_scandir)
+    assert list(catalog._dataset_files(snapshot_dir)) == []
     assert list(catalog._iter_supported_dataset_files(snapshot_dir)) == []
     assert catalog._sorted_child_directories(snapshot_dir) == ()
+
+
+def test_dataset_catalog_dataset_file_stat_records_skip_nonfiles_and_stat_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FakeEntry:
+        def __init__(self, name: str, *, is_file: bool = True, stat_error: bool = False) -> None:
+            self.name = name
+            self.path = str(tmp_path / name)
+            self._is_file = is_file
+            self._stat_error = stat_error
+
+        def is_dir(self) -> bool:
+            return False
+
+        def is_file(self) -> bool:
+            return self._is_file
+
+        def stat(self):
+            if self._stat_error:
+                raise OSError("stat failed")
+            return type("Stat", (), {"st_size": 7})()
+
+    class FakeScandir:
+        def __init__(self, entries: tuple[FakeEntry, ...]) -> None:
+            self._entries = entries
+
+        def __enter__(self) -> tuple[FakeEntry, ...]:
+            return self._entries
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    entries = (
+        FakeEntry("directory.jsonl", is_file=False),
+        FakeEntry("broken.jsonl", stat_error=True),
+        FakeEntry("train.jsonl"),
+    )
+    monkeypatch.setattr(catalog.os, "scandir", lambda _path: FakeScandir(entries))
+
+    assert list(catalog._iter_supported_dataset_file_stat_records(tmp_path)) == [
+        ("train.jsonl", "jsonl", 7)
+    ]
