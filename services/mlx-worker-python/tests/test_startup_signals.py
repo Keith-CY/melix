@@ -254,9 +254,15 @@ def test_read_product_version_reuses_cached_pyproject_path(
     pyproject_path.write_text('[project]\nname = "melix"\nversion = "1.2.3"\n', encoding="utf-8")
     startup_signals_module._PRODUCT_VERSION_CACHE.clear()
     startup_signals_module._PRODUCT_VERSION_PATH_CACHE.clear()
+    startup_signals_module._PRODUCT_VERSION_CACHE_KEY_CACHE.clear()
 
     assert read_product_version(tmp_path) == "1.2.3"
-    assert startup_signals_module._PRODUCT_VERSION_PATH_CACHE[str(tmp_path)] == pyproject_path
+    root_key = str(tmp_path)
+    assert startup_signals_module._PRODUCT_VERSION_PATH_CACHE[root_key] == pyproject_path
+    assert startup_signals_module._PRODUCT_VERSION_CACHE_KEY_CACHE[root_key] == str(pyproject_path)
+    startup_signals_module._PRODUCT_VERSION_CACHE_KEY_CACHE.clear()
+    assert read_product_version(tmp_path) == "1.2.3"
+    assert startup_signals_module._PRODUCT_VERSION_CACHE_KEY_CACHE[root_key] == str(pyproject_path)
 
     def fail_path_join(self: Path, key: str) -> Path:  # pragma: no cover - sentinel
         raise AssertionError("stat-valid product version reads should reuse cached pyproject path")

@@ -2431,11 +2431,15 @@ def _scope_selection_uncached(
     force_all = bool(_FORCE_ALL_EXACT_PATHS & changed_path_set) or _changed_paths_match_force_all_wildcards(
         changed_path_set
     )
-    direct_changed_path_set = changed_path_set - _FORCE_ALL_CONTEXT_ONLY_PATHS
+    direct_changed_paths = tuple(path for path in changed_paths if path not in _FORCE_ALL_CONTEXT_ONLY_PATHS)
     matched_probe_indexes = (
         frozenset()
-        if not direct_changed_path_set
-        else _match_probe_indexes(changed_paths=direct_changed_path_set, probes=probes)
+        if not direct_changed_paths
+        else _match_probe_indexes_for_normalized_paths(
+            changed_path_tuple=direct_changed_paths,
+            changed_path_set=frozenset(direct_changed_paths),
+            probes=probes,
+        )
     )
     matched_probe_indexes = matched_probe_indexes | _force_all_direct_probe_indexes(
         changed_paths=changed_path_set,
@@ -2545,14 +2549,27 @@ def _match_probe_indexes(
     probes: tuple[ProbeDefinition, ...],
 ) -> frozenset[int]:
     changed_path_tuple = tuple(sorted(changed_paths))
+    changed_path_set = (
+        changed_paths
+        if isinstance(changed_paths, (set, frozenset))
+        else frozenset(changed_path_tuple)
+    )
+    return _match_probe_indexes_for_normalized_paths(
+        changed_path_tuple=changed_path_tuple,
+        changed_path_set=changed_path_set,
+        probes=probes,
+    )
+
+
+def _match_probe_indexes_for_normalized_paths(
+    *,
+    changed_path_tuple: tuple[str, ...],
+    changed_path_set: set[str] | frozenset[str],
+    probes: tuple[ProbeDefinition, ...],
+) -> frozenset[int]:
     cache_key = (id(probes), len(probes), changed_path_tuple)
     cached = _MATCH_PROBE_INDEXES_CACHE.get(cache_key)
     if cached is None:
-        changed_path_set = (
-            changed_paths
-            if isinstance(changed_paths, (set, frozenset))
-            else frozenset(changed_path_tuple)
-        )
         cached = _match_probe_indexes_uncached(
             probes=probes,
             changed_paths=changed_path_tuple,
