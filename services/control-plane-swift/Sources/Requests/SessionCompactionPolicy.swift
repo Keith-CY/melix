@@ -92,6 +92,9 @@ struct SessionCompactionPolicy {
         let itemsAfter = retainedItems.count
         let estimatedTokensAfter = sumEstimatedTokens(retainedItems)
         let protectedGroundingItemsAfter = countProtectedGroundingItems(retainedItems)
+        // Planner-only retention keeps protected grounding by construction. Future
+        // summarization paths must update this if grounding can be transformed or dropped.
+        let protectedGroundingPreserved = protectedGroundingItemsBefore == protectedGroundingItemsAfter
         let overBudget = usableContextTokens == 0
             ? estimatedTokensAfter > 0
             : estimatedTokensAfter > usableContextTokens
@@ -126,7 +129,7 @@ struct SessionCompactionPolicy {
             maxHistoryItems: maxHistoryItems,
             protectedGroundingItemsBefore: protectedGroundingItemsBefore,
             protectedGroundingItemsAfter: protectedGroundingItemsAfter,
-            protectedGroundingPreserved: protectedGroundingItemsBefore == protectedGroundingItemsAfter,
+            protectedGroundingPreserved: protectedGroundingPreserved,
             watermarkState: watermarkState(
                 estimatedTokensAfter: estimatedTokensAfter,
                 usableContextTokens: usableContextTokens,
@@ -145,7 +148,8 @@ struct SessionCompactionPolicy {
         guard maxHistoryItems != 0 else {
             return historyItems
         }
-        let limit = min(Int(maxHistoryItems), historyItems.count)
+        // maxHistoryItems bounds ordinary tail history; protected grounding can exceed it.
+        let limit = min(Int(clamping: maxHistoryItems), historyItems.count)
         let tailStartIndex = historyItems.count - limit
         return historyItems.enumerated().compactMap { index, item in
             guard item.protectedGrounding || index >= tailStartIndex else {
