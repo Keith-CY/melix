@@ -544,6 +544,20 @@ def test_report_evidence_gate_target_field_preserves_stringified_presence() -> N
     )
 
 
+def test_report_evidence_gate_target_field_preserves_string_subclass_strip() -> None:
+    class BlankWhenStripped(str):
+        def strip(self, chars: str | None = None) -> str:  # pragma: no cover - regression guard
+            return ""
+
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule={"target_fields": ("adapter_id",)},
+        runs=[],
+        targets=[{"adapter_id": BlankWhenStripped("adapter-a")}],
+        metrics=[],
+        probe_phases=set(),
+    )
+
+
 def test_report_evidence_gate_probe_phase_tuple_rules_reuse_normalized_set() -> None:
     report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
     rule = {"probe_phases": ("runtime_prepare", "model_load", "decode")}

@@ -469,6 +469,14 @@ def _rule_matches_report(
         for target in targets:
             if target_fields_are_disjoint(target):
                 continue
+            if type(target) is dict and len(target) == 1:
+                value = next(iter(target.values()))
+                if isinstance(value, str):
+                    if value.strip():
+                        return True
+                elif str(value).strip():
+                    return True
+                continue
             for field, value in target.items():
                 if field not in target_field_set:
                     continue
