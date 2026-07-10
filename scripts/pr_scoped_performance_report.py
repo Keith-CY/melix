@@ -29,7 +29,7 @@ def _load_results(results_dir: Path) -> list[dict[str, object]]:
     try:
         with os.scandir(results_dir) as entries:
             for entry in entries:
-                if entry.name.endswith(".json"):
+                if entry.name[-5:] == ".json":
                     result_paths_append(entry.path)
     except OSError:
         return []
