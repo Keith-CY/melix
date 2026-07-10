@@ -147,6 +147,11 @@ public struct TextRequestShaper: Sendable {
         let saveBoundarySnapshot: Bool?
     }
 
+    private struct PolicyValue<Value: Sendable>: Sendable {
+        let value: Value
+        let source: String
+    }
+
     private let presets: [String: PresetDefaults]
     private let workflows: [TextWorkflowKind: WorkflowDefaults]
     private let modelThinkingPolicies: [String: MelixMessagesThinkingConfig]
@@ -256,17 +261,33 @@ public struct TextRequestShaper: Sendable {
             modelPolicy: modelOCRPolicy
         )
 
-        let fallbackTemperature = modelOCRPolicy?.temperature
-            ?? modelSamplingPolicy?.temperature
-            ?? gatewayServingDefaults?.temperature
-        let fallbackTopP = modelOCRPolicy?.topP
-            ?? modelSamplingPolicy?.topP
-            ?? gatewayServingDefaults?.topP
-        let fallbackMaxTokens = modelOCRPolicy?.maxTokens
-            ?? modelSamplingPolicy?.maxTokens
-            ?? gatewayServingDefaults?.maxTokens
-        let temperature = request.temperature ?? preset?.temperature ?? fallbackTemperature ?? 0.7
-        let topP = request.topP ?? preset?.topP ?? fallbackTopP ?? 1.0
+        let fallbackTemperature = policyFallback(
+            ocrValue: modelOCRPolicy?.temperature,
+            modelValue: modelSamplingPolicy?.temperature,
+            gatewayValue: gatewayServingDefaults?.temperature
+        )
+        let fallbackTopP = policyFallback(
+            ocrValue: modelOCRPolicy?.topP,
+            modelValue: modelSamplingPolicy?.topP,
+            gatewayValue: gatewayServingDefaults?.topP
+        )
+        let fallbackMaxTokens = policyFallback(
+            ocrValue: modelOCRPolicy?.maxTokens,
+            modelValue: modelSamplingPolicy?.maxTokens,
+            gatewayValue: gatewayServingDefaults?.maxTokens
+        )
+        let temperature = resolvedSamplingValue(
+            requestValue: request.temperature,
+            presetValue: preset?.temperature,
+            fallback: fallbackTemperature,
+            defaultValue: 0.7
+        )
+        let topP = resolvedSamplingValue(
+            requestValue: request.topP,
+            presetValue: preset?.topP,
+            fallback: fallbackTopP,
+            defaultValue: 1.0
+        )
         let outputCap = resolvedOutputCap(
             request: request,
             presetMaxTokens: preset?.maxTokens,
@@ -334,9 +355,12 @@ public struct TextRequestShaper: Sendable {
             messages: sanitizedHistory.messages,
             stream: request.stream,
             includeUsage: request.includeUsage,
-            temperature: temperature,
-            topP: topP,
+            temperature: temperature.value,
+            temperatureSource: temperature.source,
+            topP: topP.value,
+            topPSource: topP.source,
             maxTokens: maxTokens,
+            maxTokensSource: outputCap.policySource,
             requestedMaxTokens: request.maxTokens,
             requestedMaxCompletionTokens: request.maxCompletionTokens,
             outputCapSource: outputCap.source,
@@ -401,28 +425,64 @@ public struct TextRequestShaper: Sendable {
     private func resolvedOutputCap(
         request: NormalizedTextRequest,
         presetMaxTokens: UInt32?,
-        fallbackMaxTokens: UInt32?
-    ) -> (value: UInt32, source: String) {
+        fallbackMaxTokens: PolicyValue<UInt32>?
+    ) -> (value: UInt32, source: String, policySource: String) {
         if let maxTokens = request.maxTokens,
            let maxCompletionTokens = request.maxCompletionTokens {
             return (
                 maxTokens,
-                maxTokens == maxCompletionTokens ? "request_both_equal" : "request_conflict"
+                maxTokens == maxCompletionTokens ? "request_both_equal" : "request_conflict",
+                "request"
             )
         }
         if let maxCompletionTokens = request.maxCompletionTokens {
-            return (maxCompletionTokens, "request_max_completion_tokens")
+            return (maxCompletionTokens, "request_max_completion_tokens", "request")
         }
         if let maxTokens = request.maxTokens {
-            return (maxTokens, "request_max_tokens")
+            return (maxTokens, "request_max_tokens", "request")
         }
         if let presetMaxTokens {
-            return (presetMaxTokens, "preset")
+            return (presetMaxTokens, "preset", "preset")
         }
         if let fallbackMaxTokens {
-            return (fallbackMaxTokens, "policy")
+            return (fallbackMaxTokens.value, "policy", fallbackMaxTokens.source)
         }
-        return (GatewayServingDefaultsStore.defaultMaxTokens, "gateway_default")
+        return (GatewayServingDefaultsStore.defaultMaxTokens, "gateway_default", "gateway_default")
+    }
+
+    private func resolvedSamplingValue<Value: Sendable>(
+        requestValue: Value?,
+        presetValue: Value?,
+        fallback: PolicyValue<Value>?,
+        defaultValue: Value
+    ) -> PolicyValue<Value> {
+        if let requestValue {
+            return PolicyValue(value: requestValue, source: "request")
+        }
+        if let presetValue {
+            return PolicyValue(value: presetValue, source: "preset")
+        }
+        if let fallback {
+            return fallback
+        }
+        return PolicyValue(value: defaultValue, source: "gateway_default")
+    }
+
+    private func policyFallback<Value: Sendable>(
+        ocrValue: Value?,
+        modelValue: Value?,
+        gatewayValue: Value?
+    ) -> PolicyValue<Value>? {
+        if let ocrValue {
+            return PolicyValue(value: ocrValue, source: "model_ocr")
+        }
+        if let modelValue {
+            return PolicyValue(value: modelValue, source: "model")
+        }
+        if let gatewayValue {
+            return PolicyValue(value: gatewayValue, source: "gateway")
+        }
+        return nil
     }
 
     private func resolveOCRPolicy(

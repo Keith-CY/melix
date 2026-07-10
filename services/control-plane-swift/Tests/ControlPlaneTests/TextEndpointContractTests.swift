@@ -2874,6 +2874,77 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.sampling.maxOutputTokens == 512)
     }
 
+    @Test("chat translation emits effective policy receipt for merged sampling template and reasoning policy")
+    func chatTranslationEmitsEffectivePolicyReceiptForMergedSamplingTemplateAndReasoningPolicy() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-effective-policy" })
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["melix.generation_config.temperature"] = "0.2"
+        modelSettings.ext["melix.generation_config.top_p"] = "0.88"
+        modelSettings.ext["melix.generation_config.max_tokens"] = "512"
+        modelSettings.ext["chat_template_kwargs"] = #"{"enable_thinking":true,"tokenize":true}"#
+        modelSettings.ext["chat_template_forced_kwargs"] = #"{"add_generation_prompt":true}"#
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")],
+                reasoningEffort: "medium",
+                temperature: 0.5,
+                seed: 123,
+                chatTemplateKwargs: ChatTemplateRequestConfiguration(
+                    values: [
+                        "chat_template": .string("request-template"),
+                    ]
+                )
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            modelChatTemplatePolicy: try ModelChatTemplatePolicy(modelSettings: modelSettings),
+            modelSamplingPolicy: ModelSamplingPolicy(modelSettings: modelSettings)
+        )
+        let ext = translated.workerRequest.execution.ext
+        let receiptJSON = try #require(ext["melix.effective_policy.receipt_json"])
+        let receipt = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptJSON.utf8)) as? [String: Any]
+        )
+        let sampling = try #require(receipt["sampling"] as? [String: Any])
+        let chatTemplate = try #require(receipt["chat_template"] as? [String: Any])
+        let reasoning = try #require(receipt["reasoning"] as? [String: Any])
+
+        #expect(translated.workerRequest.sampling.temperature == 0.5)
+        #expect(translated.workerRequest.sampling.topP == 0.88)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 512)
+        #expect(ext["melix.generation.output_cap_source"] == "policy")
+        #expect(ext["melix.effective_policy.receipt_schema"] == "melix.text_effective_policy_receipt.v1")
+        #expect(ext["melix.effective_policy.sampling.temperature_source"] == "request")
+        #expect(ext["melix.effective_policy.sampling.top_p_source"] == "model")
+        #expect(ext["melix.effective_policy.sampling.max_tokens_source"] == "model")
+        #expect(ext["melix.effective_policy.sampling.seed_source"] == "request")
+        #expect(ext["melix.effective_policy.chat_template.source"] == "model+request+forced")
+        #expect(ext["melix.effective_policy.chat_template.request_override_applied"] == "true")
+        #expect(ext["melix.effective_policy.chat_template.forced_override_applied"] == "true")
+        #expect(ext["melix.effective_policy.reasoning.mode"] == "enabled")
+        #expect(ext["melix.effective_policy.reasoning.source"] == "template")
+        #expect(ext["melix.effective_policy.effective_config_hash"]?.range(
+            of: #"^[0-9a-f]{64}$"#,
+            options: String.CompareOptions.regularExpression
+        ) != nil)
+        #expect(receipt["schema_version"] as? String == "melix.text_effective_policy_receipt.v1")
+        #expect(sampling["temperature_source"] as? String == "request")
+        #expect(sampling["top_p_source"] as? String == "model")
+        #expect(sampling["max_tokens_source"] as? String == "model")
+        #expect(sampling["seed_source"] as? String == "request")
+        #expect(chatTemplate["source"] as? String == "model+request+forced")
+        #expect(chatTemplate["request_override_applied"] as? Bool == true)
+        #expect(chatTemplate["forced_override_applied"] as? Bool == true)
+        #expect(chatTemplate["forced_keys"] as? [String] == ["add_generation_prompt"])
+        #expect(reasoning["mode"] as? String == "enabled")
+        #expect(reasoning["source"] as? String == "template")
+        #expect(reasoning["effort"] as? String == "medium")
+    }
+
     @Test("chat translation wrapper falls back to gateway serving defaults when no model policy exists")
     func chatTranslationWrapperFallsBackToGatewayServingDefaults() throws {
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-serving-defaults" })
