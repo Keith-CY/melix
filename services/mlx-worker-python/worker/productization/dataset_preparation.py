@@ -51,6 +51,7 @@ _CODE_SOURCE_LANGUAGE_BY_SUFFIX = {
 }
 _SOURCE_KIND_NAME_CACHE_MAX = 4096
 _SOURCE_KIND_BY_NAME: dict[str, str | None] = {}
+_SHA256 = hashlib.sha256
 _MISSING = object()
 
 
@@ -1516,7 +1517,7 @@ def _record(
     normalized_text = text if normalized else _normalize_line_endings(text)
     content_sha256, byte_size = _record_content_digest_and_size(normalized_text)
     record_metadata = dict(metadata) if metadata else {}
-    sha256 = hashlib.sha256
+    sha256 = _SHA256
     path_name = path.name
     path_key = str(path).encode("utf-8")
     return {
@@ -1534,7 +1535,7 @@ def _record(
 @lru_cache(maxsize=4096)
 def _record_content_digest_and_size(normalized_text: str) -> tuple[str, int]:
     normalized_bytes = normalized_text.encode("utf-8")
-    return hashlib.sha256(normalized_bytes).hexdigest(), len(normalized_bytes)
+    return _SHA256(normalized_bytes).hexdigest(), len(normalized_bytes)
 
 
 def _failure_id(reason: str, name: str) -> str:
