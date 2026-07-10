@@ -79,21 +79,64 @@ public struct ModelSamplingPolicy: Sendable, Equatable {
     public let temperature: Double?
     public let topP: Double?
     public let maxTokens: UInt32?
+    public let lookupStatus: String
+    public let canonicalModelID: String
+    public let matchedAlias: String
+    public let sourceURL: String
 
     public init?(
         modelSettings: Melix_Controlplane_V1_ModelSettings
     ) {
+        self.init(
+            modelID: "",
+            modelSettings: modelSettings,
+            catalog: .empty
+        )
+    }
+
+    public init?(
+        modelID: String,
+        modelSettings: Melix_Controlplane_V1_ModelSettings,
+        catalog: TextModelPolicyCatalog = .default
+    ) {
         let temperature = Self.parseDouble(modelSettings.ext["melix.generation_config.temperature"])
         let topP = Self.parseDouble(modelSettings.ext["melix.generation_config.top_p"])
         let maxTokens = Self.parseUInt32(modelSettings.ext["melix.generation_config.max_tokens"])
+        let catalogLookup = catalog.lookup(
+            identities: Self.identityCandidates(
+                modelID: modelID,
+                modelSettings: modelSettings
+            )
+        )
+        let resolvedTemperature = temperature ?? catalogLookup?.sampling.temperature
+        let resolvedTopP = topP ?? catalogLookup?.sampling.topP
+        let resolvedMaxTokens = maxTokens ?? catalogLookup?.sampling.maxTokens
 
-        guard temperature != nil || topP != nil || maxTokens != nil else {
+        guard resolvedTemperature != nil || resolvedTopP != nil || resolvedMaxTokens != nil else {
             return nil
         }
 
-        self.temperature = temperature
-        self.topP = topP
-        self.maxTokens = maxTokens
+        self.temperature = resolvedTemperature
+        self.topP = resolvedTopP
+        self.maxTokens = resolvedMaxTokens
+        self.lookupStatus = "known"
+        self.canonicalModelID = catalogLookup?.canonicalModelID
+            ?? Self.firstNonEmpty([
+                modelID,
+                modelSettings.ext["melix.hf_repo_id"],
+                modelSettings.ext["melix.source_repo"],
+                modelSettings.alias,
+            ])
+        self.matchedAlias = catalogLookup?.matchedAlias
+            ?? Self.firstNonEmpty([
+                modelID,
+                modelSettings.alias,
+                modelSettings.ext["melix.model_path"],
+                modelSettings.ext["melix.hf_repo_id"],
+                modelSettings.ext["melix.source_repo"],
+            ])
+        self.sourceURL = catalogLookup?.sourceURL
+            ?? Self.modelSettingsSourceURL(modelSettings)
     }
 
     private static func parseDouble(_ rawValue: String?) -> Double? {
@@ -108,6 +151,38 @@ public struct ModelSamplingPolicy: Sendable, Equatable {
             return nil
         }
         return UInt32(rawValue)
+    }
+
+    private static func identityCandidates(
+        modelID: String,
+        modelSettings: Melix_Controlplane_V1_ModelSettings
+    ) -> [String] {
+        [
+            modelID,
+            modelSettings.alias,
+            modelSettings.ext["melix.model_path"],
+            modelSettings.ext["melix.hf_repo_id"],
+            modelSettings.ext["melix.source_repo"],
+            modelSettings.ext["melix.source_model_id"],
+        ].compactMap { $0?.nilIfEmpty }
+    }
+
+    private static func firstNonEmpty(_ values: [String?]) -> String {
+        values.compactMap { $0?.nilIfEmpty }.first ?? ""
+    }
+
+    private static func modelSettingsSourceURL(
+        _ modelSettings: Melix_Controlplane_V1_ModelSettings
+    ) -> String {
+        if let source = modelSettings.ext["melix.generation_config.source"]?.nilIfEmpty {
+            return source
+        }
+        if let repoID = modelSettings.ext["melix.hf_repo_id"]?.nilIfEmpty
+            ?? modelSettings.ext["melix.source_repo"]?.nilIfEmpty,
+           repoID.contains("/") {
+            return "https://huggingface.co/\(repoID)"
+        }
+        return ""
     }
 }
 
@@ -293,6 +368,13 @@ public struct TextRequestShaper: Sendable {
             presetMaxTokens: preset?.maxTokens,
             fallbackMaxTokens: fallbackMaxTokens
         )
+        let samplingRequestOverrideApplied = request.temperature != nil
+            || request.topP != nil
+            || request.maxTokens != nil
+            || request.maxCompletionTokens != nil
+        let samplingPolicyLookupStatus = samplingRequestOverrideApplied
+            ? "operator_override"
+            : (modelSamplingPolicy?.lookupStatus ?? "unknown")
         let maxTokens = outputCap.value
         let streamIntervalTokens = gatewayServingDefaults?.streamIntervalTokens ?? 1
         let maxConcurrentRequests = gatewayServingDefaults?.maxConcurrentRequests ?? 4
@@ -361,6 +443,11 @@ public struct TextRequestShaper: Sendable {
             topPSource: topP.source,
             maxTokens: maxTokens,
             maxTokensSource: outputCap.policySource,
+            samplingPolicyLookupStatus: samplingPolicyLookupStatus,
+            samplingPolicyCanonicalModel: modelSamplingPolicy?.canonicalModelID ?? "",
+            samplingPolicyMatchedAlias: modelSamplingPolicy?.matchedAlias ?? "",
+            samplingPolicySourceURL: modelSamplingPolicy?.sourceURL ?? "",
+            samplingRequestOverrideApplied: samplingRequestOverrideApplied,
             requestedMaxTokens: request.maxTokens,
             requestedMaxCompletionTokens: request.maxCompletionTokens,
             outputCapSource: outputCap.source,

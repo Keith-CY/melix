@@ -2947,7 +2947,10 @@ button.primary:active {
             throw HTTPRequestHandlingError.gatewayResponse(validationFailure)
         }
         let modelSamplingPolicy: ModelSamplingPolicy? = if let resolvedModel {
-            ModelSamplingPolicy(modelSettings: resolvedModel.settings)
+            ModelSamplingPolicy(
+                modelID: resolvedModel.modelID,
+                modelSettings: resolvedModel.settings
+            )
         } else {
             nil
         }

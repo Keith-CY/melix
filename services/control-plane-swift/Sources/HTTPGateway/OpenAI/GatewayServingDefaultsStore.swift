@@ -712,7 +712,12 @@ public actor GatewayServingDefaultsStore {
             let requestedMultimodalRoutePolicy = record?.multimodalRoutePolicy ?? defaults.multimodalRoutePolicy
             let requestedSpeculativeRoutePolicy = record?.speculativeRoutePolicy ?? defaults.speculativeRoutePolicy
             let defaultModelID = Self.trimmed(defaultModelIDs[serverSessionID] ?? "")
-            let modelSamplingPolicy = modelSettingsByModelID[defaultModelID].flatMap(ModelSamplingPolicy.init)
+            let modelSamplingPolicy = modelSettingsByModelID[defaultModelID].flatMap {
+                ModelSamplingPolicy(
+                    modelID: defaultModelID,
+                    modelSettings: $0
+                )
+            }
             let modelSettings = modelSettingsByModelID[defaultModelID]
             let effectiveBatchingDefaults = Self.effectiveBatchingDefaults(
                 concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,

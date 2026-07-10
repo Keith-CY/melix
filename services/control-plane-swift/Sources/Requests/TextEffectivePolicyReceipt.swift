@@ -11,6 +11,11 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
     public let topPSource: String
     public let maxTokens: UInt32
     public let maxTokensSource: String
+    public let samplingPolicyLookupStatus: String
+    public let samplingPolicyCanonicalModel: String
+    public let samplingPolicyMatchedAlias: String
+    public let samplingPolicySourceURL: String
+    public let samplingRequestOverrideApplied: Bool
     public let seed: UInt32?
     public let seedSource: String
     public let stopSource: String
@@ -36,6 +41,11 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
             topPSource: shapedRequest.topPSource,
             maxTokens: shapedRequest.maxTokens,
             maxTokensSource: shapedRequest.maxTokensSource,
+            samplingPolicyLookupStatus: shapedRequest.samplingPolicyLookupStatus,
+            samplingPolicyCanonicalModel: shapedRequest.samplingPolicyCanonicalModel,
+            samplingPolicyMatchedAlias: shapedRequest.samplingPolicyMatchedAlias,
+            samplingPolicySourceURL: shapedRequest.samplingPolicySourceURL,
+            samplingRequestOverrideApplied: shapedRequest.samplingRequestOverrideApplied,
             seed: shapedRequest.seed,
             seedSource: seedSource,
             stopSource: shapedRequest.stopSource,
@@ -58,6 +68,11 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
         self.topPSource = shapedRequest.topPSource
         self.maxTokens = shapedRequest.maxTokens
         self.maxTokensSource = shapedRequest.maxTokensSource
+        self.samplingPolicyLookupStatus = shapedRequest.samplingPolicyLookupStatus
+        self.samplingPolicyCanonicalModel = shapedRequest.samplingPolicyCanonicalModel
+        self.samplingPolicyMatchedAlias = shapedRequest.samplingPolicyMatchedAlias
+        self.samplingPolicySourceURL = shapedRequest.samplingPolicySourceURL
+        self.samplingRequestOverrideApplied = shapedRequest.samplingRequestOverrideApplied
         self.seed = shapedRequest.seed
         self.seedSource = seedSource
         self.stopSource = shapedRequest.stopSource
@@ -83,6 +98,11 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
             "melix.effective_policy.sampling.temperature_source": temperatureSource,
             "melix.effective_policy.sampling.top_p_source": topPSource,
             "melix.effective_policy.sampling.max_tokens_source": maxTokensSource,
+            "melix.effective_policy.sampling.policy_lookup_status": samplingPolicyLookupStatus,
+            "melix.effective_policy.sampling.policy_canonical_model": samplingPolicyCanonicalModel,
+            "melix.effective_policy.sampling.policy_matched_alias": samplingPolicyMatchedAlias,
+            "melix.effective_policy.sampling.policy_source_url": samplingPolicySourceURL,
+            "melix.effective_policy.sampling.request_override_applied": samplingRequestOverrideApplied ? "true" : "false",
             "melix.effective_policy.sampling.seed_source": seedSource,
             "melix.effective_policy.chat_template.source": chatTemplateSource,
             "melix.effective_policy.chat_template.request_override_applied": chatTemplateRequestOverrideApplied ? "true" : "false",
@@ -102,6 +122,11 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
         let topPSource: String
         let maxTokens: UInt32
         let maxTokensSource: String
+        let samplingPolicyLookupStatus: String
+        let samplingPolicyCanonicalModel: String
+        let samplingPolicyMatchedAlias: String
+        let samplingPolicySourceURL: String
+        let samplingRequestOverrideApplied: Bool
         let seed: UInt32?
         let seedSource: String
         let stopSource: String
@@ -125,6 +150,11 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
                 topPSource: topPSource,
                 maxTokens: maxTokens,
                 maxTokensSource: maxTokensSource,
+                samplingPolicyLookupStatus: samplingPolicyLookupStatus,
+                samplingPolicyCanonicalModel: samplingPolicyCanonicalModel,
+                samplingPolicyMatchedAlias: samplingPolicyMatchedAlias,
+                samplingPolicySourceURL: samplingPolicySourceURL,
+                samplingRequestOverrideApplied: samplingRequestOverrideApplied,
                 seed: seed,
                 seedSource: seedSource,
                 stopSource: stopSource,
@@ -157,6 +187,11 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
         case topPSource = "top_p_source"
         case maxTokens = "max_tokens"
         case maxTokensSource = "max_tokens_source"
+        case policyLookupStatus = "policy_lookup_status"
+        case policyCanonicalModel = "policy_canonical_model"
+        case policyMatchedAlias = "policy_matched_alias"
+        case policySourceURL = "policy_source_url"
+        case requestOverrideApplied = "request_override_applied"
         case seed
         case seedSource = "seed_source"
         case stopSource = "stop_source"
@@ -187,6 +222,11 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
             topPSource: topPSource,
             maxTokens: maxTokens,
             maxTokensSource: maxTokensSource,
+            samplingPolicyLookupStatus: samplingPolicyLookupStatus,
+            samplingPolicyCanonicalModel: samplingPolicyCanonicalModel,
+            samplingPolicyMatchedAlias: samplingPolicyMatchedAlias,
+            samplingPolicySourceURL: samplingPolicySourceURL,
+            samplingRequestOverrideApplied: samplingRequestOverrideApplied,
             seed: seed,
             seedSource: seedSource,
             stopSource: stopSource,
@@ -213,6 +253,11 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
         topPSource: String,
         maxTokens: UInt32,
         maxTokensSource: String,
+        samplingPolicyLookupStatus: String,
+        samplingPolicyCanonicalModel: String,
+        samplingPolicyMatchedAlias: String,
+        samplingPolicySourceURL: String,
+        samplingRequestOverrideApplied: Bool,
         seed: UInt32?,
         seedSource: String,
         stopSource: String,
@@ -237,6 +282,11 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
         try samplingContainer.encode(topPSource, forKey: .topPSource)
         try samplingContainer.encode(Int(maxTokens), forKey: .maxTokens)
         try samplingContainer.encode(maxTokensSource, forKey: .maxTokensSource)
+        try samplingContainer.encode(samplingPolicyLookupStatus, forKey: .policyLookupStatus)
+        try samplingContainer.encode(samplingPolicyCanonicalModel, forKey: .policyCanonicalModel)
+        try samplingContainer.encode(samplingPolicyMatchedAlias, forKey: .policyMatchedAlias)
+        try samplingContainer.encode(samplingPolicySourceURL, forKey: .policySourceURL)
+        try samplingContainer.encode(samplingRequestOverrideApplied, forKey: .requestOverrideApplied)
         try samplingContainer.encode(seed.map { Int($0) }, forKey: .seed)
         try samplingContainer.encode(seedSource, forKey: .seedSource)
         try samplingContainer.encode(stopSource, forKey: .stopSource)
