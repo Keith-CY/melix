@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -237,6 +238,8 @@ def test_dataset_ingest_record_reuses_normalized_text_digest_cache() -> None:
     assert cache_info.misses == 1
     assert first_record["content_sha256"] == second_record["content_sha256"]
     assert first_record["byte_size"] == second_record["byte_size"] == len(b"hello\n")
+    assert first_record["source_id"] == hashlib.sha256(b"first.txt").hexdigest()[:16]
+    assert second_record["source_id"] == hashlib.sha256(b"second.txt").hexdigest()[:16]
     assert first_record["source_id"] != second_record["source_id"]
 
 
