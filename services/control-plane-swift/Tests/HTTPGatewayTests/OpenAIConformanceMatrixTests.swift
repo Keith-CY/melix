@@ -952,6 +952,68 @@ struct OpenAIConformanceMatrixTests {
         ]))
     }
 
+    @Test("streaming chat heartbeat emits parseable liveness envelope")
+    func streamingChatHeartbeatEmitsParseableLivenessEnvelope() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-stream-heartbeat",
+            events: [
+                makeTokenEvent(requestID: "req-stream-heartbeat", seq: 1, text: "working"),
+                makeHeartbeatEvent(requestID: "req-stream-heartbeat", seq: 2, unixMs: 12_345),
+                makeUsageEvent(requestID: "req-stream-heartbeat", seq: 3, promptTokens: 4, completionTokens: 1),
+                makeCompletedEvent(
+                    requestID: "req-stream-heartbeat",
+                    seq: 4,
+                    finishReason: "stop",
+                    assistantText: "working"
+                ),
+            ]
+        )
+        let response = try await Self.handler(worker: worker).handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    Self.body(extra: #""stream": true, "stream_options": { "include_usage": true }"#).utf8
+                )
+            )
+        )
+        let payload = try await collectConformanceBody(response.body)
+        let records = parseSSERecords(payload)
+        let eventOrder = records.map { $0.event ?? "data" }.joined(separator: ",")
+        let heartbeatRecord = try #require(records.first { $0.event == "heartbeat" })
+        let heartbeatPayload = try #require(
+            try JSONSerialization.jsonObject(with: Data(heartbeatRecord.data.utf8)) as? [String: Any]
+        )
+
+        #expect(response.statusCode == 200)
+        #expect(heartbeatPayload["request_id"] as? String == "req-stream-heartbeat")
+        #expect(heartbeatPayload["unix_ms"] as? Int == 12_345)
+        #expect(records.filter { $0.event == "heartbeat" }.count == 1)
+        #expect(records.filter { $0.event == nil && $0.data.contains(#""unix_ms""#) }.isEmpty)
+        #expect(eventOrder == "data,heartbeat,data,data,data")
+        #expect(orderedConformanceRanges(in: payload, needles: [
+            "\"content\":\"working\"",
+            "event: heartbeat",
+            "\"finish_reason\":\"stop\"",
+            "\"usage\"",
+            "data: [DONE]",
+        ]))
+
+        let report = OpenAIConformanceReport(rows: [
+            OpenAIConformanceRow(
+                field: "worker heartbeat event",
+                route: "/v1/chat/completions -> SSE liveness",
+                expectedBehavior: "worker heartbeat events emit a named, JSON-parseable SSE heartbeat envelope before terminal chunks.",
+                observedStatus: eventOrder == "data,heartbeat,data,data,data" ? .pass : .fail,
+                observedReason: "chunk_order=\(eventOrder)"
+            ),
+        ])
+        #expect(report.summary.passed == 1)
+        #expect(report.summary.failed == 0)
+        #expect(try report.jsonString().contains("\"worker heartbeat event\""))
+    }
+
     @Test("streaming prefill progress stays invisible unless opted in")
     func streamingPrefillProgressStaysInvisibleUnlessOptedIn() async throws {
         func prefillEvents(requestID: String) -> [Melix_Worker_V1_ExecuteEvent] {
