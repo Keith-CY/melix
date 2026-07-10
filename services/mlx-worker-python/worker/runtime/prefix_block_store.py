@@ -339,7 +339,7 @@ class ColdPrefixStore:
         self._loaded = True
         if not self._root.is_dir():
             return
-        meta_paths: list[str] = []
+        meta_paths: list[tuple[str, str]] = []
         snapshot_file_names: set[str] = set()
         try:
             with os.scandir(self._root) as entries:
@@ -349,7 +349,7 @@ class ColdPrefixStore:
                         if entry_name.endswith(".meta.json") and entry.is_file(
                             follow_symlinks=False
                         ):
-                            meta_paths.append(entry.path)
+                            meta_paths.append((entry.path, entry_name))
                         elif entry_name.endswith(".kv.safetensors") and entry.is_file(
                             follow_symlinks=False
                         ):
@@ -361,18 +361,17 @@ class ColdPrefixStore:
         meta_paths.sort()
         precheck_orphan_names = len(snapshot_file_names) < len(meta_paths)
         meta_suffix_length = len(".meta.json")
-        for meta_path_string in meta_paths:
-            meta_path = Path(meta_path_string)
+        for meta_path_string, meta_file_name in meta_paths:
             if precheck_orphan_names:
-                meta_file_name = meta_path.name
                 snapshot_name_from_sidecar = f"{meta_file_name[:-meta_suffix_length]}.kv.safetensors"
                 if snapshot_name_from_sidecar not in snapshot_file_names:
                     # Orphaned sidecar (crash between snapshot write and meta
                     # write, or manual snapshot deletion) — drop it before parsing
                     # JSON so orphan-heavy cold dirs do not pay per-sidecar decode
                     # cost on every restart.
-                    _remove_quietly(meta_path)
+                    _remove_quietly(Path(meta_path_string))
                     continue
+            meta_path = Path(meta_path_string)
             try:
                 with _OPEN(meta_path_string, encoding="utf-8") as meta_file:
                     payload = json.load(meta_file)
