@@ -3096,6 +3096,48 @@ def test_scope_report_empty_direct_paths_skips_probe_matching(monkeypatch: pytes
     assert _coverage_paths_by_probe_id(changed_paths=(), probes=()) == {}
 
 
+def test_scope_selection_reuses_sorted_direct_path_tuple_without_resorting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="alpha",
+            name="Alpha",
+            runner="ubuntu-latest",
+            watch_globs=("services/a.py",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    captured_calls: list[tuple[tuple[str, ...], frozenset[str]]] = []
+
+    def tracked_normalized_match(
+        *,
+        changed_path_tuple: tuple[str, ...],
+        changed_path_set: frozenset[str],
+        probes: tuple[ProbeDefinition, ...],
+    ) -> frozenset[int]:
+        _ = probes
+        captured_calls.append((changed_path_tuple, changed_path_set))
+        return frozenset({0})
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_match_probe_indexes_for_normalized_paths",
+        tracked_normalized_match,
+    )
+
+    pr_scoped_performance_module._scope_selection_uncached(
+        probes=probes,
+        changed_paths=("infra/perf/pr_scoped_probes.json", "services/a.py"),
+    )
+
+    assert captured_calls == [(("services/a.py",), frozenset({"services/a.py"}))]
+
+
 def test_scope_report_large_changed_set_preserves_exact_selection_semantics() -> None:
     changed_files = _build_large_scope_probe_changed_files() + [
         "services/mlx-worker-python/worker/engine/evaluation_core.py",
