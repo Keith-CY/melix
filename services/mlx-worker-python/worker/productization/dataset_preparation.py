@@ -1300,7 +1300,8 @@ def _classify_source_kind_name(name: str) -> str | None:
         if name[-5:] == ".json":
             return "structured_data"
     elif last_char == "v":
-        if name[-4:] in (".csv", ".tsv"):
+        suffix4 = name[-4:]
+        if suffix4 == ".csv" or suffix4 == ".tsv":
             return "structured_data"
 
     dot_index = name.rfind(".")
