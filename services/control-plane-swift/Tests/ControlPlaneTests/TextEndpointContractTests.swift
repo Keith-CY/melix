@@ -78,6 +78,147 @@ struct TextEndpointContractTests {
         )
     }
 
+    @Test("session compaction policy treats max history zero as unlimited")
+    func sessionCompactionPolicyTreatsMaxHistoryZeroAsUnlimited() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-unlimited",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: [
+                SessionHistoryItemEstimate(estimatedTokens: 12),
+                SessionHistoryItemEstimate(estimatedTokens: 8),
+            ],
+            usableContextTokens: 128,
+            maxHistoryItems: 0
+        )
+
+        #expect(plan.historyPolicy == .unlimited)
+        #expect(plan.itemsBefore == 2)
+        #expect(plan.itemsAfter == 2)
+        #expect(plan.estimatedTokensBefore == 20)
+        #expect(plan.estimatedTokensAfter == 20)
+        #expect(plan.compactionRequired == false)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["schema_version"] as? String == "melix.session_compaction_policy_receipt.v1")
+        #expect(receipt["request_id"] as? String == "req-unlimited")
+        #expect(receipt["session_id"] as? String == "session-context")
+        #expect(receipt["model_id"] as? String == "melix-dev-text")
+        #expect(receipt["history_policy"] as? String == "unlimited")
+        #expect(receipt["items_before"] as? Int == 2)
+        #expect(receipt["items_after"] as? Int == 2)
+        #expect(receipt["estimated_tokens_before"] as? Int == 20)
+        #expect(receipt["estimated_tokens_after"] as? Int == 20)
+        #expect(receipt["usable_context_tokens"] as? Int == 128)
+        #expect(receipt["max_history_items"] as? Int == 0)
+        #expect(receipt["watermark_state"] as? String == "within_budget")
+        #expect(receipt["tier_applied"] as? String == "none")
+        #expect(receipt["compaction_required"] as? Bool == false)
+        #expect(plan.extFields["melix.session_compaction.receipt_schema"] == "melix.session_compaction_policy_receipt.v1")
+        #expect(plan.extFields["melix.session_compaction.receipt_count"] == "1")
+    }
+
+    @Test("session compaction policy bounds tail history before request assembly")
+    func sessionCompactionPolicyBoundsTailHistoryBeforeRequestAssembly() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-tail",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: Array(repeating: SessionHistoryItemEstimate(estimatedTokens: 5), count: 200),
+            usableContextTokens: 128,
+            maxHistoryItems: 12
+        )
+
+        #expect(plan.historyPolicy == .boundedTail)
+        #expect(plan.itemsBefore == 200)
+        #expect(plan.itemsAfter == 12)
+        #expect(plan.estimatedTokensBefore == 1_000)
+        #expect(plan.estimatedTokensAfter == 60)
+        #expect(plan.compactionRequired == false)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["history_policy"] as? String == "bounded_tail")
+        #expect(receipt["items_before"] as? Int == 200)
+        #expect(receipt["items_after"] as? Int == 12)
+        #expect(receipt["estimated_tokens_before"] as? Int == 1_000)
+        #expect(receipt["estimated_tokens_after"] as? Int == 60)
+        #expect(receipt["tier_applied"] as? String == "drop_tail_history")
+        #expect(receipt["watermark_state"] as? String == "within_budget")
+    }
+
+    @Test("session compaction policy escalates when bounded tail still exceeds budget")
+    func sessionCompactionPolicyEscalatesWhenBoundedTailStillExceedsBudget() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-compact",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: [
+                SessionHistoryItemEstimate(estimatedTokens: 80),
+                SessionHistoryItemEstimate(estimatedTokens: 80),
+                SessionHistoryItemEstimate(estimatedTokens: 80),
+            ],
+            usableContextTokens: 100,
+            maxHistoryItems: 2
+        )
+
+        #expect(plan.historyPolicy == .compactionRequired)
+        #expect(plan.itemsBefore == 3)
+        #expect(plan.itemsAfter == 2)
+        #expect(plan.estimatedTokensBefore == 240)
+        #expect(plan.estimatedTokensAfter == 160)
+        #expect(plan.compactionRequired == true)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["history_policy"] as? String == "compaction_required")
+        #expect(receipt["items_before"] as? Int == 3)
+        #expect(receipt["items_after"] as? Int == 2)
+        #expect(receipt["estimated_tokens_before"] as? Int == 240)
+        #expect(receipt["estimated_tokens_after"] as? Int == 160)
+        #expect(receipt["tier_applied"] as? String == "requires_compaction")
+        #expect(receipt["watermark_state"] as? String == "overflow")
+        #expect(receipt["compaction_required"] as? Bool == true)
+    }
+
+    @Test("session compaction policy requires compaction when usable context is zero")
+    func sessionCompactionPolicyRequiresCompactionWhenUsableContextIsZero() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-zero-context",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: [
+                SessionHistoryItemEstimate(estimatedTokens: 1),
+            ],
+            usableContextTokens: 0,
+            maxHistoryItems: 0
+        )
+
+        #expect(plan.historyPolicy == .compactionRequired)
+        #expect(plan.itemsBefore == 1)
+        #expect(plan.itemsAfter == 1)
+        #expect(plan.estimatedTokensBefore == 1)
+        #expect(plan.estimatedTokensAfter == 1)
+        #expect(plan.compactionRequired == true)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["history_policy"] as? String == "compaction_required")
+        #expect(receipt["items_before"] as? Int == 1)
+        #expect(receipt["items_after"] as? Int == 1)
+        #expect(receipt["estimated_tokens_before"] as? Int == 1)
+        #expect(receipt["estimated_tokens_after"] as? Int == 1)
+        #expect(receipt["usable_context_tokens"] as? Int == 0)
+        #expect(receipt["tier_applied"] as? String == "requires_compaction")
+        #expect(receipt["watermark_state"] as? String == "overflow")
+        #expect(receipt["compaction_required"] as? Bool == true)
+    }
+
+    private static func firstSessionCompactionReceipt(from plan: SessionCompactionPlan) throws -> [String: Any] {
+        let receiptsJSON = try #require(plan.extFields["melix.session_compaction.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        return try #require(receipts.first)
+    }
+
     @Test("stream options encode include_usage across public contracts")
     func streamOptionsEncodeIncludeUsageAcrossPublicContracts() throws {
         let encoder = JSONEncoder()
