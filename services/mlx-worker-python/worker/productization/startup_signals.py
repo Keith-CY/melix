@@ -30,6 +30,7 @@ _QUOTE_BYTE = 34
 _EQUALS_BYTE = 61
 _PRODUCT_VERSION_CACHE: dict[str, tuple[int, int, str]] = {}
 _PRODUCT_VERSION_PATH_CACHE: dict[str, Path] = {}
+_PRODUCT_VERSION_CACHE_KEY_CACHE: dict[str, str] = {}
 _UPDATE_CHANNEL_CACHE: dict[str, tuple[int, int, str, str]] = {}
 
 
@@ -80,8 +81,14 @@ def read_product_version(repo_root: str | Path) -> str:
     if pyproject_path is None:
         pyproject_path = root / "pyproject.toml"
         _PRODUCT_VERSION_PATH_CACHE[root_text] = pyproject_path
+        cache_key = str(pyproject_path)
+        _PRODUCT_VERSION_CACHE_KEY_CACHE[root_text] = cache_key
+    else:
+        cache_key = _PRODUCT_VERSION_CACHE_KEY_CACHE.get(root_text)
+        if cache_key is None:
+            cache_key = str(pyproject_path)
+            _PRODUCT_VERSION_CACHE_KEY_CACHE[root_text] = cache_key
     stat_result = pyproject_path.stat()
-    cache_key = str(pyproject_path)
     cached = _PRODUCT_VERSION_CACHE.get(cache_key)
     if cached is not None:
         cached_mtime_ns, cached_size, cached_version = cached
