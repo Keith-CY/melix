@@ -659,9 +659,10 @@ def _completed_call_satisfies_prerequisite(
     if not isinstance(completed_arguments, dict):
         return False
     for key in prerequisite.argument_match_keys:
-        if target_arguments.get(key) is None or completed_arguments.get(key) is None:
-            return False
-        if completed_arguments.get(key) != target_arguments.get(key):
+        target_value = target_arguments.get(key)
+        completed_value = completed_arguments.get(key)
+        # None is treated as missing so prerequisite matching never depends on null argument values.
+        if target_value is None or completed_value is None or completed_value != target_value:
             return False
     return True
 
