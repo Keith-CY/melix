@@ -326,20 +326,32 @@ def build_layout_metrics_report(
             if retention_report_path.is_file():
                 retention_reports.append(json.loads(retention_report_path.read_text(encoding="utf-8")))
 
+    retained_byte_size = 0
+    cleanable_byte_size = 0
+    deleted_byte_size = 0
+    retention_decision_count = 0
+    deleted_file_count = 0
+    missing_file_count = 0
+    for report in retention_reports:
+        retained_byte_size += int(report.get("retained_byte_size", 0))  # type: ignore[arg-type]
+        cleanable_byte_size += int(report.get("cleanable_byte_size", 0))  # type: ignore[arg-type]
+        deleted_byte_size += int(report.get("deleted_byte_size", 0))  # type: ignore[arg-type]
+        retention_decision_count += int(report.get("retention_decision_count", 0))  # type: ignore[arg-type]
+        deleted_file_count += int(report.get("deleted_file_count", 0))  # type: ignore[arg-type]
+        missing_file_count += int(report.get("missing_file_count", 0))  # type: ignore[arg-type]
+
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     return {
         "schema_version": EXPORT_TARGET_LAYOUT_METRICS_SCHEMA_VERSION,
         "ok": not errors and all(report.get("ok") is True for report in export_reports),
         "target_count": len(export_reports),
         "layout_materialization_latency_ms": elapsed_ms,
-        "retained_byte_size": sum(int(report.get("retained_byte_size", 0)) for report in retention_reports),
-        "cleanable_byte_size": sum(int(report.get("cleanable_byte_size", 0)) for report in retention_reports),
-        "deleted_byte_size": sum(int(report.get("deleted_byte_size", 0)) for report in retention_reports),
-        "retention_decision_count": sum(
-            int(report.get("retention_decision_count", 0)) for report in retention_reports
-        ),
-        "deleted_file_count": sum(int(report.get("deleted_file_count", 0)) for report in retention_reports),
-        "missing_file_count": sum(int(report.get("missing_file_count", 0)) for report in retention_reports),
+        "retained_byte_size": retained_byte_size,
+        "cleanable_byte_size": cleanable_byte_size,
+        "deleted_byte_size": deleted_byte_size,
+        "retention_decision_count": retention_decision_count,
+        "deleted_file_count": deleted_file_count,
+        "missing_file_count": missing_file_count,
         "errors": errors,
         "reports": export_reports,
     }
