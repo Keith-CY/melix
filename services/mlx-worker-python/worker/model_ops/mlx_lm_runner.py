@@ -33,6 +33,8 @@ from worker.model_ops.training_log_events import parse_training_log_events
 
 _RESULT_PREFIX = "__MELIX_MLX_RESULT__="
 _RESULT_PREFIX_LENGTH = len(_RESULT_PREFIX)
+_RESULT_LINE_PREFIX = "\n" + _RESULT_PREFIX
+_RESULT_CARRIAGE_PREFIX = "\r" + _RESULT_PREFIX
 _RESULT_PAYLOAD_DECODER = json.JSONDecoder()
 # Sentinel tied to mlx-lm's internal error wording. Keep the mlx-lm pin in
 # pyproject.toml tight: any upstream wording change would silently disable the
@@ -599,9 +601,9 @@ class MLXLMRunner:
 
 
 def _extract_structured_result_payload(stdout: str) -> dict[str, object] | None:
-    prefix_index = stdout.rfind("\n" + _RESULT_PREFIX)
+    prefix_index = stdout.rfind(_RESULT_LINE_PREFIX)
     carriage_prefix_index = stdout.rfind(
-        "\r" + _RESULT_PREFIX,
+        _RESULT_CARRIAGE_PREFIX,
         prefix_index + 1 if prefix_index >= 0 else 0,
     )
     if carriage_prefix_index > prefix_index:
