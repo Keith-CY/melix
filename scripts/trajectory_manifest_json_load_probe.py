@@ -36,8 +36,6 @@ def _manifest_payload(component_count: int) -> dict[str, Any]:
         "format": "agentic_tool_trace",
         "source_dataset_id": "agentic-snapshot",
         "version": "2026-05-25",
-        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
-        "trajectory_split": "train",
         "trajectory_trace_digest": "sha256:fixture",
         "trajectory_quality_metrics": {
             "reward_coverage_count": component_count,

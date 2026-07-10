@@ -197,7 +197,9 @@ def _fast_trajectory_provenance_from_snapshot_manifest(
     ):
         return None
     schema_version = manifest_get("trajectory_schema_version")
-    if (
+    if schema_version is None:
+        schema_version = "melix.agentic_tool_trace.v1"
+    elif (
         type(schema_version) is not str
         or schema_version == ""
         or schema_version[0].isspace()
@@ -205,7 +207,9 @@ def _fast_trajectory_provenance_from_snapshot_manifest(
     ):
         return None
     split = manifest_get("trajectory_split")
-    if (
+    if split is None:
+        split = "train"
+    elif (
         type(split) is not str
         or split == ""
         or split[0].isspace()
