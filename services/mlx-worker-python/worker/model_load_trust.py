@@ -189,6 +189,8 @@ def _route_class(
         return request_policy.route_class
     if model_spec.route_class != WORKER_ROUTE_CLASS_UNSPECIFIED:
         return model_spec.route_class
+    if runtime_kind == "text":
+        return WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
     return ROUTE_CLASS_BY_RUNTIME_KIND.get(runtime_kind, WORKER_ROUTE_CLASS_UNSPECIFIED)
 
 

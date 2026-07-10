@@ -544,6 +544,21 @@ def test_route_class_runtime_kind_map_preserves_supported_defaults() -> None:
     assert model_load_trust_module._route_class(model, None, "unknown") == common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED
 
 
+def test_route_class_text_default_skips_runtime_kind_map(monkeypatch: pytest.MonkeyPatch) -> None:
+    model = WorkerModelCatalog.dev_text_model()
+
+    class FailingRouteMap:
+        def get(self, runtime_kind: str, fallback: int) -> int:  # pragma: no cover - regression guard
+            raise AssertionError(f"text route default should not query route map: {runtime_kind}")
+
+    monkeypatch.setattr(model_load_trust_module, "ROUTE_CLASS_BY_RUNTIME_KIND", FailingRouteMap())
+
+    assert (
+        model_load_trust_module._route_class(model, None, "text")
+        == common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
+    )
+
+
 def test_runtime_name_string_fast_path_preserves_exact_value() -> None:
     runtime = NamedRuntime("mlx-lm")
 
