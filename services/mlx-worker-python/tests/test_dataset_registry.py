@@ -487,6 +487,28 @@ def test_dataset_catalog_jsonl_limit_one_returns_first_dict_directly(
     assert catalog._read_rows_from_file(no_dict_path, limit=1) == []
 
 
+def test_dataset_catalog_jsonl_preview_preserves_raw_lines_for_decoder(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    jsonl_path = tmp_path / "data.jsonl"
+    jsonl_path.write_text(
+        "\n   \n  {\"prompt\": \"first\"}\n{\"prompt\": \"second\"}\n",
+        encoding="utf-8",
+    )
+    seen_payloads: list[str] = []
+    original_loads = catalog.json.loads
+
+    def tracking_loads(payload: str) -> object:
+        seen_payloads.append(payload)
+        return original_loads(payload)
+
+    monkeypatch.setattr(catalog.json, "loads", tracking_loads)
+
+    assert catalog._read_rows_from_file(jsonl_path, limit=1) == [{"prompt": "first"}]
+    assert seen_payloads == ['  {"prompt": "first"}\n']
+
+
 def test_dataset_catalog_first_preview_scan_skips_readme_without_rescan(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshot"
     data_dir = snapshot_dir / "data"
