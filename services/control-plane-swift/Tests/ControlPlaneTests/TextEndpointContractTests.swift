@@ -2888,6 +2888,8 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.sampling.temperature == 0.2)
         #expect(translated.workerRequest.sampling.topP == 0.88)
         #expect(translated.workerRequest.sampling.maxOutputTokens == 512)
+        let sampling = try Self.effectivePolicySampling(from: translated.workerRequest)
+        #expect(sampling["policy_lookup_status"] as? String == "unknown")
     }
 
     @Test("chat translation emits effective policy receipt for merged sampling template and reasoning policy")
@@ -3011,6 +3013,32 @@ struct TextEndpointContractTests {
         #expect(sampling["policy_matched_alias"] as? String == "melix-dev-policy-q4.gguf")
         #expect(sampling["policy_source_url"] as? String == sourceURL)
         #expect(sampling["request_override_applied"] as? Bool == false)
+    }
+
+    @Test("text model policy catalog prefers canonical identities over earlier aliases")
+    func textModelPolicyCatalogPrefersCanonicalIdentitiesOverEarlierAliases() throws {
+        let catalog = TextModelPolicyCatalog(entries: [
+            .init(
+                canonicalModelID: "legacy-policy",
+                aliases: ["canonical-policy"],
+                sampling: .init(temperature: 0.11),
+                sourceURL: "https://example.invalid/legacy"
+            ),
+            .init(
+                canonicalModelID: "canonical-policy",
+                aliases: [],
+                sampling: .init(temperature: 0.72, topP: 0.93),
+                sourceURL: "https://example.invalid/canonical"
+            ),
+        ])
+
+        let result = try #require(catalog.lookup(identities: ["canonical-policy"]))
+
+        #expect(result.canonicalModelID == "canonical-policy")
+        #expect(result.matchedAlias == "canonical-policy")
+        #expect(result.sampling.temperature == 0.72)
+        #expect(result.sampling.topP == 0.93)
+        #expect(result.sourceURL == "https://example.invalid/canonical")
     }
 
     @Test("chat translation records operator override while retaining catalog fallback fields")

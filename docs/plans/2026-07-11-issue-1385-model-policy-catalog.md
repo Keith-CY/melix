@@ -15,6 +15,9 @@ lookup visible in the existing effective-policy receipt.
   `TextRequestShaper`.
 - Add effective-policy receipt fields for policy lookup status, canonical model
   identity, matched alias, source URL, and request override state.
+- Treat `policy_lookup_status` as catalog lookup provenance: imported
+  `generation_config` defaults may still provide model sampling values, but they
+  remain `unknown` unless a catalog entry matches.
 - Wire HTTP gateway, XPC chat execution, and serving-default summaries through
   the catalog-aware initializer.
 - Keep the repository default catalog empty for this slice so existing gateway

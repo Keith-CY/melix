@@ -57,16 +57,29 @@ public struct TextModelPolicyCatalog: Sendable, Equatable {
 
     public init(entries: [Entry]) {
         var indexed: [String: LookupResult] = [:]
-        for entry in entries where !entry.canonicalModelID.isEmpty && !entry.sampling.isEmpty {
-            let identities = [entry.canonicalModelID] + entry.aliases
-            for identity in identities {
+        let validEntries = entries.filter { !$0.canonicalModelID.isEmpty && !$0.sampling.isEmpty }
+
+        for entry in validEntries {
+            let result = LookupResult(
+                canonicalModelID: entry.canonicalModelID,
+                matchedAlias: entry.canonicalModelID,
+                sampling: entry.sampling,
+                sourceURL: entry.sourceURL
+            )
+            for key in Self.identityKeys(for: entry.canonicalModelID) where indexed[key] == nil {
+                indexed[key] = result
+            }
+        }
+
+        for entry in validEntries {
+            for alias in entry.aliases {
                 let result = LookupResult(
                     canonicalModelID: entry.canonicalModelID,
-                    matchedAlias: identity,
+                    matchedAlias: alias,
                     sampling: entry.sampling,
                     sourceURL: entry.sourceURL
                 )
-                for key in Self.identityKeys(for: identity) where indexed[key] == nil {
+                for key in Self.identityKeys(for: alias) where indexed[key] == nil {
                     indexed[key] = result
                 }
             }

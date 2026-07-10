@@ -119,7 +119,7 @@ public struct ModelSamplingPolicy: Sendable, Equatable {
         self.temperature = resolvedTemperature
         self.topP = resolvedTopP
         self.maxTokens = resolvedMaxTokens
-        self.lookupStatus = "known"
+        self.lookupStatus = catalogLookup == nil ? "unknown" : "known"
         self.canonicalModelID = catalogLookup?.canonicalModelID
             ?? Self.firstNonEmpty([
                 modelID,
