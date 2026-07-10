@@ -406,25 +406,25 @@ def test_cold_store_index_load_uses_scandir_without_path_glob(
     assert scandir_calls == 1
 
 
-def test_cold_store_index_load_filters_meta_suffix_before_file_stat(
+def test_cold_store_index_load_filters_relevant_suffixes_before_file_stat(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     cold_root = tmp_path / "cold"
     cold_root.mkdir()
 
-    class NonMetaEntry:
-        name = "snapshot.kv.safetensors"
+    class IrrelevantEntry:
+        name = "ignored.tmp"
         path = str(cold_root / name)
 
         def is_file(self, *, follow_symlinks: bool = True) -> bool:
             raise AssertionError(  # pragma: no cover - regression guard
-                "non-metadata entries should skip file stat"
+                "irrelevant entries should skip file stat"
             )
 
     class FakeScandir:
         def __enter__(self):
-            return [NonMetaEntry()]
+            return [IrrelevantEntry()]
 
         def __exit__(self, exc_type, exc, tb) -> None:
             return None
@@ -440,6 +440,41 @@ def test_cold_store_index_load_filters_meta_suffix_before_file_stat(
         deserializer=_fake_deserializer,
     )
     assert reloaded.entry_count() == 0
+
+
+def test_cold_store_index_load_reuses_scandir_snapshot_names(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cold = _make_cold(tmp_path)
+    assert cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+
+    original_is_file = Path.is_file
+
+    def fail_snapshot_path_is_file(self: Path) -> bool:
+        if self.name.endswith(".kv.safetensors"):  # pragma: no cover - regression guard
+            raise AssertionError(
+                "ColdPrefixStore index load should use scandir snapshot names, "
+                "not per-meta Path.is_file() probes"
+            )
+        return original_is_file(self)  # pragma: no cover - defensive fallback
+
+    monkeypatch.setattr(Path, "is_file", fail_snapshot_path_is_file)
+    reloaded = ColdPrefixStore(
+        tmp_path / "cold",
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    assert reloaded.entry_count() == 1
 
 
 def test_cold_store_index_load_tolerates_scandir_failure(

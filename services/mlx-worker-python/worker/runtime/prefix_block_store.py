@@ -340,14 +340,20 @@ class ColdPrefixStore:
         if not self._root.is_dir():
             return
         meta_paths: list[str] = []
+        snapshot_file_names: set[str] = set()
         try:
             with os.scandir(self._root) as entries:
                 for entry in entries:
+                    entry_name = entry.name
                     try:
-                        if entry.name.endswith(".meta.json") and entry.is_file(
+                        if entry_name.endswith(".meta.json") and entry.is_file(
                             follow_symlinks=False
                         ):
                             meta_paths.append(entry.path)
+                        elif entry_name.endswith(".kv.safetensors") and entry.is_file(
+                            follow_symlinks=False
+                        ):
+                            snapshot_file_names.add(entry_name)
                     except OSError:
                         continue
         except OSError:
@@ -359,8 +365,9 @@ class ColdPrefixStore:
                 with _OPEN(meta_path_string, encoding="utf-8") as meta_file:
                     payload = json.load(meta_file)
                 session_id = str(payload["session_id"])
-                snapshot_path = self._root / f"{_session_digest(session_id)}.kv.safetensors"
-                if not snapshot_path.is_file():
+                snapshot_name = f"{_session_digest(session_id)}.kv.safetensors"
+                snapshot_path = self._root / snapshot_name
+                if snapshot_name not in snapshot_file_names:
                     # Orphaned sidecar (crash between snapshot write and meta
                     # write, or manual snapshot deletion) — drop it so restarts
                     # stop rescanning it.
