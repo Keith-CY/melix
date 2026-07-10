@@ -978,16 +978,39 @@ def _build_dataset_snapshot(
 
 
 def _dataset_files(snapshot_dir: Path) -> Iterator[DatasetFile]:
-    for path, relative_path, file_format in _iter_supported_dataset_file_records(snapshot_dir):
-        try:
-            stat_result = path.stat()
-        except OSError:
-            continue
+    for relative_path, file_format, size_bytes in _iter_supported_dataset_file_stat_records(snapshot_dir):
         yield DatasetFile(
             relative_path=relative_path,
-            size_bytes=stat_result.st_size,
+            size_bytes=size_bytes,
             file_format=file_format,
         )
+
+
+def _iter_supported_dataset_file_stat_records(
+    snapshot_dir: Path, relative_prefix: str = ""
+) -> Iterator[tuple[str, str, int]]:
+    try:
+        with os.scandir(os.fspath(snapshot_dir)) as entries:
+            child_entries = sorted(entries, key=lambda entry: entry.name)
+    except OSError:
+        return
+    for entry in child_entries:
+        name = entry.name
+        relative_path = f"{relative_prefix}{name}"
+        try:
+            if entry.is_dir():
+                yield from _iter_supported_dataset_file_stat_records(
+                    Path(entry.path), f"{relative_path}/"
+                )
+                continue
+            if not entry.is_file():
+                continue
+            stat_result = entry.stat()
+        except OSError:
+            continue
+        file_format = _dataset_file_format_name(name)
+        if file_format:
+            yield relative_path, file_format, stat_result.st_size
 
 
 def _iter_supported_dataset_files(snapshot_dir: Path) -> Iterator[Path]:
