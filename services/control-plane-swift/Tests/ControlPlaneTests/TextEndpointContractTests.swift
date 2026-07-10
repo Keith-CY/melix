@@ -298,6 +298,22 @@ struct TextEndpointContractTests {
         return try #require(receipts.first)
     }
 
+    private static func effectivePolicyReceipt(
+        from request: Melix_Worker_V1_GenerateRequest
+    ) throws -> [String: Any] {
+        let receiptJSON = try #require(request.execution.ext["melix.effective_policy.receipt_json"])
+        return try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptJSON.utf8)) as? [String: Any]
+        )
+    }
+
+    private static func effectivePolicySampling(
+        from request: Melix_Worker_V1_GenerateRequest
+    ) throws -> [String: Any] {
+        let receipt = try effectivePolicyReceipt(from: request)
+        return try #require(receipt["sampling"] as? [String: Any])
+    }
+
     @Test("stream options encode include_usage across public contracts")
     func streamOptionsEncodeIncludeUsageAcrossPublicContracts() throws {
         let encoder = JSONEncoder()
@@ -2872,6 +2888,8 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.sampling.temperature == 0.2)
         #expect(translated.workerRequest.sampling.topP == 0.88)
         #expect(translated.workerRequest.sampling.maxOutputTokens == 512)
+        let sampling = try Self.effectivePolicySampling(from: translated.workerRequest)
+        #expect(sampling["policy_lookup_status"] as? String == "unknown")
     }
 
     @Test("chat translation emits effective policy receipt for merged sampling template and reasoning policy")
@@ -2945,6 +2963,128 @@ struct TextEndpointContractTests {
         #expect(reasoning["effort"] as? String == "medium")
     }
 
+    @Test("chat translation uses catalog sampling policy for aliased model identity")
+    func chatTranslationUsesCatalogSamplingPolicyForAliasedModelIdentity() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-policy-catalog" })
+        let sourceURL = "https://github.com/Keith-CY/melix/blob/main/docs/plans/2026-07-11-issue-1385-model-policy-catalog.md"
+        let catalog = TextModelPolicyCatalog(entries: [
+            .init(
+                canonicalModelID: "melix-dev-policy",
+                aliases: ["melix-dev-policy-q4.gguf"],
+                sampling: .init(temperature: 0.42, topP: 0.91, maxTokens: 1_024),
+                sourceURL: sourceURL
+            ),
+        ])
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.alias = "Melix Dev Policy Q4"
+        modelSettings.ext["melix.model_path"] = "/models/melix-dev-policy-q4.gguf"
+        let modelSamplingPolicy = try #require(
+            ModelSamplingPolicy(
+                modelID: "/models/melix-dev-policy-q4.gguf",
+                modelSettings: modelSettings,
+                catalog: catalog
+            )
+        )
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "/models/melix-dev-policy-q4.gguf",
+                messages: [.init(role: "user", content: "Use the catalog policy.")]
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "worker-text",
+            modelSamplingPolicy: modelSamplingPolicy
+        )
+        let ext = translated.workerRequest.execution.ext
+        let sampling = try Self.effectivePolicySampling(from: translated.workerRequest)
+
+        #expect(translated.workerRequest.sampling.temperature == 0.42)
+        #expect(translated.workerRequest.sampling.topP == 0.91)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 1_024)
+        #expect(ext["melix.effective_policy.sampling.policy_lookup_status"] == "known")
+        #expect(ext["melix.effective_policy.sampling.policy_canonical_model"] == "melix-dev-policy")
+        #expect(ext["melix.effective_policy.sampling.policy_matched_alias"] == "melix-dev-policy-q4.gguf")
+        #expect(ext["melix.effective_policy.sampling.policy_source_url"] == sourceURL)
+        #expect(ext["melix.effective_policy.sampling.request_override_applied"] == "false")
+        #expect(sampling["policy_lookup_status"] as? String == "known")
+        #expect(sampling["policy_canonical_model"] as? String == "melix-dev-policy")
+        #expect(sampling["policy_matched_alias"] as? String == "melix-dev-policy-q4.gguf")
+        #expect(sampling["policy_source_url"] as? String == sourceURL)
+        #expect(sampling["request_override_applied"] as? Bool == false)
+    }
+
+    @Test("text model policy catalog prefers canonical identities over earlier aliases")
+    func textModelPolicyCatalogPrefersCanonicalIdentitiesOverEarlierAliases() throws {
+        let catalog = TextModelPolicyCatalog(entries: [
+            .init(
+                canonicalModelID: "legacy-policy",
+                aliases: ["canonical-policy"],
+                sampling: .init(temperature: 0.11),
+                sourceURL: "https://example.invalid/legacy"
+            ),
+            .init(
+                canonicalModelID: "canonical-policy",
+                aliases: [],
+                sampling: .init(temperature: 0.72, topP: 0.93),
+                sourceURL: "https://example.invalid/canonical"
+            ),
+        ])
+
+        let result = try #require(catalog.lookup(identities: ["canonical-policy"]))
+
+        #expect(result.canonicalModelID == "canonical-policy")
+        #expect(result.matchedAlias == "canonical-policy")
+        #expect(result.sampling.temperature == 0.72)
+        #expect(result.sampling.topP == 0.93)
+        #expect(result.sourceURL == "https://example.invalid/canonical")
+    }
+
+    @Test("chat translation records operator override while retaining catalog fallback fields")
+    func chatTranslationRecordsOperatorOverrideWhileRetainingCatalogFallbackFields() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-policy-override" })
+        let catalog = TextModelPolicyCatalog(entries: [
+            .init(
+                canonicalModelID: "melix-dev-policy",
+                aliases: ["melix-dev-policy-q4.gguf"],
+                sampling: .init(temperature: 0.42, topP: 0.91, maxTokens: 1_024),
+                sourceURL: "https://github.com/Keith-CY/melix/blob/main/docs/plans/2026-07-11-issue-1385-model-policy-catalog.md"
+            ),
+        ])
+        let modelSamplingPolicy = try #require(
+            ModelSamplingPolicy(
+                modelID: "melix-dev-policy-q4.gguf",
+                modelSettings: .init(),
+                catalog: catalog
+            )
+        )
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-policy-q4.gguf",
+                messages: [.init(role: "user", content: "Use one request override.")],
+                temperature: 0.64
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "worker-text",
+            modelSamplingPolicy: modelSamplingPolicy
+        )
+        let sampling = try Self.effectivePolicySampling(from: translated.workerRequest)
+
+        #expect(translated.workerRequest.sampling.temperature == 0.64)
+        #expect(translated.workerRequest.sampling.topP == 0.91)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 1_024)
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.temperature_source"] == "request")
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.top_p_source"] == "model")
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.policy_lookup_status"] == "operator_override")
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.request_override_applied"] == "true")
+        #expect(sampling["policy_lookup_status"] as? String == "operator_override")
+        #expect(sampling["request_override_applied"] as? Bool == true)
+    }
+
     @Test("chat translation wrapper falls back to gateway serving defaults when no model policy exists")
     func chatTranslationWrapperFallsBackToGatewayServingDefaults() throws {
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-serving-defaults" })
@@ -2977,6 +3117,11 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.sampling.temperature == 0.35)
         #expect(translated.workerRequest.sampling.topP == 0.92)
         #expect(translated.workerRequest.sampling.maxOutputTokens == 384)
+        let sampling = try Self.effectivePolicySampling(from: translated.workerRequest)
+        #expect(sampling["policy_lookup_status"] as? String == "unknown")
+        #expect(sampling["request_override_applied"] as? Bool == false)
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.policy_lookup_status"] == "unknown")
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.request_override_applied"] == "false")
         #expect(translated.workerRequest.execution.ext["melix.stream.interval_tokens"] == "3")
         #expect(translated.workerRequest.execution.ext["melix.gateway.max_concurrent_requests"] == "5")
         #expect(translated.workerRequest.execution.ext["melix.gateway.concurrent_processing"] == "true")

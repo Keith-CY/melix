@@ -339,6 +339,11 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let topPSource: String
     public let maxTokens: UInt32
     public let maxTokensSource: String
+    public let samplingPolicyLookupStatus: String
+    public let samplingPolicyCanonicalModel: String
+    public let samplingPolicyMatchedAlias: String
+    public let samplingPolicySourceURL: String
+    public let samplingRequestOverrideApplied: Bool
     public let requestedMaxTokens: UInt32?
     public let requestedMaxCompletionTokens: UInt32?
     public let outputCapSource: String
