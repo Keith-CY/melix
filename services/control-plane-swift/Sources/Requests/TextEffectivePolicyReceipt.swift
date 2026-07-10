@@ -1,6 +1,6 @@
 import Foundation
 
-public struct TextEffectivePolicyReceipt: Sendable, Equatable {
+public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
     public static let schemaVersion = "melix.text_effective_policy_receipt.v1"
 
     public let model: String
@@ -27,7 +27,7 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable {
     public init(shapedRequest: ShapedTextRequest) {
         let seedSource = shapedRequest.seed == nil ? "none" : "request"
         let chatTemplate = shapedRequest.chatTemplate
-        let fields = Self.hashFields(
+        let fields = HashPayload(
             model: shapedRequest.model,
             endpoint: shapedRequest.endpoint.rawValue,
             temperature: shapedRequest.temperature,
@@ -73,7 +73,7 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable {
     }
 
     public var jsonString: String {
-        Self.canonicalJSONString(dictionary)
+        Self.canonicalJSONString(self)
     }
 
     public var extFields: [String: String] {
@@ -93,8 +93,92 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable {
         ]
     }
 
-    private var dictionary: [String: Any] {
-        var fields = Self.hashFields(
+    private struct HashPayload: Encodable {
+        let model: String
+        let endpoint: String
+        let temperature: Double
+        let temperatureSource: String
+        let topP: Double
+        let topPSource: String
+        let maxTokens: UInt32
+        let maxTokensSource: String
+        let seed: UInt32?
+        let seedSource: String
+        let stopSource: String
+        let chatTemplateSource: String
+        let chatTemplateEffectiveKwargsHash: String
+        let chatTemplateRequestOverrideApplied: Bool
+        let chatTemplateForcedOverrideApplied: Bool
+        let chatTemplateForcedKeys: [String]
+        let reasoningMode: String
+        let reasoningSource: String
+        let reasoningEffort: String
+
+        func encode(to encoder: Encoder) throws {
+            try TextEffectivePolicyReceipt.encodePayload(
+                to: encoder,
+                model: model,
+                endpoint: endpoint,
+                temperature: temperature,
+                temperatureSource: temperatureSource,
+                topP: topP,
+                topPSource: topPSource,
+                maxTokens: maxTokens,
+                maxTokensSource: maxTokensSource,
+                seed: seed,
+                seedSource: seedSource,
+                stopSource: stopSource,
+                chatTemplateSource: chatTemplateSource,
+                chatTemplateEffectiveKwargsHash: chatTemplateEffectiveKwargsHash,
+                chatTemplateRequestOverrideApplied: chatTemplateRequestOverrideApplied,
+                chatTemplateForcedOverrideApplied: chatTemplateForcedOverrideApplied,
+                chatTemplateForcedKeys: chatTemplateForcedKeys,
+                reasoningMode: reasoningMode,
+                reasoningSource: reasoningSource,
+                reasoningEffort: reasoningEffort
+            )
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case model
+        case endpoint
+        case sampling
+        case chatTemplate = "chat_template"
+        case reasoning
+        case effectiveConfigHash = "effective_config_hash"
+    }
+
+    private enum SamplingCodingKeys: String, CodingKey {
+        case temperature
+        case temperatureSource = "temperature_source"
+        case topP = "top_p"
+        case topPSource = "top_p_source"
+        case maxTokens = "max_tokens"
+        case maxTokensSource = "max_tokens_source"
+        case seed
+        case seedSource = "seed_source"
+        case stopSource = "stop_source"
+    }
+
+    private enum ChatTemplateCodingKeys: String, CodingKey {
+        case source
+        case effectiveKwargsHash = "effective_kwargs_hash"
+        case requestOverrideApplied = "request_override_applied"
+        case forcedOverrideApplied = "forced_override_applied"
+        case forcedKeys = "forced_keys"
+    }
+
+    private enum ReasoningCodingKeys: String, CodingKey {
+        case mode
+        case source
+        case effort
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try Self.encodePayload(
+            to: encoder,
             model: model,
             endpoint: endpoint,
             temperature: temperature,
@@ -115,11 +199,12 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable {
             reasoningSource: reasoningSource,
             reasoningEffort: reasoningEffort
         )
-        fields["effective_config_hash"] = effectiveConfigHash
-        return fields
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(effectiveConfigHash, forKey: .effectiveConfigHash)
     }
 
-    private static func hashFields(
+    private static func encodePayload(
+        to encoder: Encoder,
         model: String,
         endpoint: String,
         temperature: Double,
@@ -139,39 +224,47 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable {
         reasoningMode: String,
         reasoningSource: String,
         reasoningEffort: String
-    ) -> [String: Any] {
-        [
-            "schema_version": Self.schemaVersion,
-            "model": model,
-            "endpoint": endpoint,
-            "sampling": [
-                "temperature": temperature,
-                "temperature_source": temperatureSource,
-                "top_p": topP,
-                "top_p_source": topPSource,
-                "max_tokens": Int(maxTokens),
-                "max_tokens_source": maxTokensSource,
-                "seed": seed.map { Int($0) } as Any? ?? NSNull(),
-                "seed_source": seedSource,
-                "stop_source": stopSource,
-            ] as [String: Any],
-            "chat_template": [
-                "source": chatTemplateSource,
-                "effective_kwargs_hash": chatTemplateEffectiveKwargsHash,
-                "request_override_applied": chatTemplateRequestOverrideApplied,
-                "forced_override_applied": chatTemplateForcedOverrideApplied,
-                "forced_keys": chatTemplateForcedKeys,
-            ] as [String: Any],
-            "reasoning": [
-                "mode": reasoningMode,
-                "source": reasoningSource,
-                "effort": reasoningEffort,
-            ],
-        ]
+    ) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(Self.schemaVersion, forKey: .schemaVersion)
+        try container.encode(model, forKey: .model)
+        try container.encode(endpoint, forKey: .endpoint)
+
+        var samplingContainer = container.nestedContainer(keyedBy: SamplingCodingKeys.self, forKey: .sampling)
+        try samplingContainer.encode(temperature, forKey: .temperature)
+        try samplingContainer.encode(temperatureSource, forKey: .temperatureSource)
+        try samplingContainer.encode(topP, forKey: .topP)
+        try samplingContainer.encode(topPSource, forKey: .topPSource)
+        try samplingContainer.encode(Int(maxTokens), forKey: .maxTokens)
+        try samplingContainer.encode(maxTokensSource, forKey: .maxTokensSource)
+        try samplingContainer.encode(seed.map { Int($0) }, forKey: .seed)
+        try samplingContainer.encode(seedSource, forKey: .seedSource)
+        try samplingContainer.encode(stopSource, forKey: .stopSource)
+
+        var chatTemplateContainer = container.nestedContainer(keyedBy: ChatTemplateCodingKeys.self, forKey: .chatTemplate)
+        try chatTemplateContainer.encode(chatTemplateSource, forKey: .source)
+        try chatTemplateContainer.encode(chatTemplateEffectiveKwargsHash, forKey: .effectiveKwargsHash)
+        try chatTemplateContainer.encode(chatTemplateRequestOverrideApplied, forKey: .requestOverrideApplied)
+        try chatTemplateContainer.encode(chatTemplateForcedOverrideApplied, forKey: .forcedOverrideApplied)
+        try chatTemplateContainer.encode(chatTemplateForcedKeys, forKey: .forcedKeys)
+
+        var reasoningContainer = container.nestedContainer(keyedBy: ReasoningCodingKeys.self, forKey: .reasoning)
+        try reasoningContainer.encode(reasoningMode, forKey: .mode)
+        try reasoningContainer.encode(reasoningSource, forKey: .source)
+        try reasoningContainer.encode(reasoningEffort, forKey: .effort)
     }
 
-    private static func canonicalJSONString(_ object: [String: Any]) -> String {
-        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
-        return String(data: data, encoding: .utf8) ?? "{}"
+    private static func canonicalJSONString<T: Encodable>(_ object: T) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        do {
+            let data = try encoder.encode(object)
+            guard let json = String(data: data, encoding: .utf8) else {
+                preconditionFailure("Text effective policy receipt encoded non-UTF-8 JSON")
+            }
+            return json
+        } catch {
+            preconditionFailure("Text effective policy receipt JSON encoding failed: \(error)")
+        }
     }
 }
