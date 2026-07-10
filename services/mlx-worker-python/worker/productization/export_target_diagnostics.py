@@ -846,6 +846,7 @@ def _diagnoses_from_excerpt(
     source_lines_local = source_lines
     has_diagnosis_marker = _has_diagnosis_marker
     evidence_path_prefix = f"{excerpt_path}#line-"
+    stringify_line_number = str
     remaining_known_code_count = len(_KNOWN_DIAGNOSIS_CODE_SET)
     for index, line_number in line_numbers.items():
         if remaining_known_code_count == 0:
@@ -866,7 +867,7 @@ def _diagnoses_from_excerpt(
                     "matched_pattern_id": fast_pattern.pattern_id,
                     "operator_message": fast_pattern.operator_message,
                     "remediation": fast_pattern.remediation,
-                    "evidence_path": evidence_path_prefix + str(line_number),
+                    "evidence_path": evidence_path_prefix + stringify_line_number(line_number),
                 }
             )
             continue
@@ -890,7 +891,7 @@ def _diagnoses_from_excerpt(
                     "matched_pattern_id": fast_pattern.pattern_id,
                     "operator_message": fast_pattern.operator_message,
                     "remediation": fast_pattern.remediation,
-                    "evidence_path": evidence_path_prefix + str(line_number),
+                    "evidence_path": evidence_path_prefix + stringify_line_number(line_number),
                 }
             )
             continue
@@ -921,7 +922,7 @@ def _diagnoses_from_excerpt(
                     "matched_pattern_id": pattern.pattern_id,
                     "operator_message": pattern.operator_message,
                     "remediation": pattern.remediation,
-                    "evidence_path": evidence_path_prefix + str(line_number),
+                    "evidence_path": evidence_path_prefix + stringify_line_number(line_number),
                 }
             )
             break
@@ -1048,4 +1049,5 @@ def _fixture_failure_checks(index: int) -> list[dict[str, object]]:
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    encoded = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+    path.write_bytes(encoded + b"\n")
