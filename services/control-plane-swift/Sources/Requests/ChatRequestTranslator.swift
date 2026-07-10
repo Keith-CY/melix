@@ -334,8 +334,11 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let stream: Bool
     public let includeUsage: Bool
     public let temperature: Double
+    public let temperatureSource: String
     public let topP: Double
+    public let topPSource: String
     public let maxTokens: UInt32
+    public let maxTokensSource: String
     public let requestedMaxTokens: UInt32?
     public let requestedMaxCompletionTokens: UInt32?
     public let outputCapSource: String
@@ -2839,6 +2842,11 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.ext.merge(
             compatibilityPolicyReceipt.extFields,
             uniquingKeysWith: { _, new in new }
+        )
+        let effectivePolicyReceipt = TextEffectivePolicyReceipt(shapedRequest: shapedRequest)
+        generateRequest.execution.ext.merge(
+            effectivePolicyReceipt.extFields,
+            uniquingKeysWith: { _, receiptValue in receiptValue }
         )
         let promptContextReceipts = PromptContextBoundaryReceipts(
             requestID: requestID,
