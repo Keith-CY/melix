@@ -179,6 +179,38 @@ struct TextEndpointContractTests {
         #expect(receipt["compaction_required"] as? Bool == true)
     }
 
+    @Test("session compaction policy requires compaction when usable context is zero")
+    func sessionCompactionPolicyRequiresCompactionWhenUsableContextIsZero() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-zero-context",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: [
+                SessionHistoryItemEstimate(estimatedTokens: 1),
+            ],
+            usableContextTokens: 0,
+            maxHistoryItems: 0
+        )
+
+        #expect(plan.historyPolicy == .compactionRequired)
+        #expect(plan.itemsBefore == 1)
+        #expect(plan.itemsAfter == 1)
+        #expect(plan.estimatedTokensBefore == 1)
+        #expect(plan.estimatedTokensAfter == 1)
+        #expect(plan.compactionRequired == true)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["history_policy"] as? String == "compaction_required")
+        #expect(receipt["items_before"] as? Int == 1)
+        #expect(receipt["items_after"] as? Int == 1)
+        #expect(receipt["estimated_tokens_before"] as? Int == 1)
+        #expect(receipt["estimated_tokens_after"] as? Int == 1)
+        #expect(receipt["usable_context_tokens"] as? Int == 0)
+        #expect(receipt["tier_applied"] as? String == "requires_compaction")
+        #expect(receipt["watermark_state"] as? String == "overflow")
+        #expect(receipt["compaction_required"] as? Bool == true)
+    }
+
     private static func firstSessionCompactionReceipt(from plan: SessionCompactionPlan) throws -> [String: Any] {
         let receiptsJSON = try #require(plan.extFields["melix.session_compaction.receipts_json"])
         let receipts = try #require(
