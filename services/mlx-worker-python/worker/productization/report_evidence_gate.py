@@ -442,7 +442,8 @@ def _rule_matches_report(
         if metric_prefix_matches_empty:
             return bool(metrics)
         for metric in metrics:
-            metric_value = to_string(metric.get(metric_key, ""))
+            metric_raw = metric.get(metric_key, "")
+            metric_value = metric_raw if type(metric_raw) is str else to_string(metric_raw)
             if (
                 metric_value
                 and metric_value[0] in metric_prefix_initials
