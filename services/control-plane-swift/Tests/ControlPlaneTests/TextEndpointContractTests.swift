@@ -146,6 +146,85 @@ struct TextEndpointContractTests {
         #expect(receipt["watermark_state"] as? String == "within_budget")
     }
 
+    @Test("session compaction policy preserves protected grounding outside bounded tail")
+    func sessionCompactionPolicyPreservesProtectedGroundingOutsideBoundedTail() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-protected-grounding",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: [
+                SessionHistoryItemEstimate(estimatedTokens: 30, protectedGrounding: true),
+                SessionHistoryItemEstimate(estimatedTokens: 10),
+                SessionHistoryItemEstimate(estimatedTokens: 10),
+                SessionHistoryItemEstimate(estimatedTokens: 10),
+                SessionHistoryItemEstimate(estimatedTokens: 10),
+            ],
+            usableContextTokens: 80,
+            maxHistoryItems: 2
+        )
+
+        #expect(plan.historyPolicy == .boundedTail)
+        #expect(plan.itemsBefore == 5)
+        #expect(plan.itemsAfter == 3)
+        #expect(plan.estimatedTokensBefore == 70)
+        #expect(plan.estimatedTokensAfter == 50)
+        #expect(plan.protectedGroundingItemsBefore == 1)
+        #expect(plan.protectedGroundingItemsAfter == 1)
+        #expect(plan.protectedGroundingPreserved == true)
+        #expect(plan.compactionRequired == false)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["history_policy"] as? String == "bounded_tail")
+        #expect(receipt["items_before"] as? Int == 5)
+        #expect(receipt["items_after"] as? Int == 3)
+        #expect(receipt["estimated_tokens_before"] as? Int == 70)
+        #expect(receipt["estimated_tokens_after"] as? Int == 50)
+        #expect(receipt["protected_grounding_items_before"] as? Int == 1)
+        #expect(receipt["protected_grounding_items_after"] as? Int == 1)
+        #expect(receipt["protected_grounding_preserved"] as? Bool == true)
+        #expect(receipt["tier_applied"] as? String == "drop_tail_history")
+        #expect(receipt["watermark_state"] as? String == "within_budget")
+    }
+
+    @Test("session compaction policy requires compaction when protected grounding keeps pressure over budget")
+    func sessionCompactionPolicyRequiresCompactionWhenProtectedGroundingKeepsPressureOverBudget() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-protected-grounding-overflow",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: [
+                SessionHistoryItemEstimate(estimatedTokens: 75, protectedGrounding: true),
+                SessionHistoryItemEstimate(estimatedTokens: 10),
+                SessionHistoryItemEstimate(estimatedTokens: 10),
+            ],
+            usableContextTokens: 80,
+            maxHistoryItems: 1
+        )
+
+        #expect(plan.historyPolicy == .compactionRequired)
+        #expect(plan.itemsBefore == 3)
+        #expect(plan.itemsAfter == 2)
+        #expect(plan.estimatedTokensBefore == 95)
+        #expect(plan.estimatedTokensAfter == 85)
+        #expect(plan.protectedGroundingItemsBefore == 1)
+        #expect(plan.protectedGroundingItemsAfter == 1)
+        #expect(plan.protectedGroundingPreserved == true)
+        #expect(plan.compactionRequired == true)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["history_policy"] as? String == "compaction_required")
+        #expect(receipt["items_before"] as? Int == 3)
+        #expect(receipt["items_after"] as? Int == 2)
+        #expect(receipt["estimated_tokens_before"] as? Int == 95)
+        #expect(receipt["estimated_tokens_after"] as? Int == 85)
+        #expect(receipt["protected_grounding_items_before"] as? Int == 1)
+        #expect(receipt["protected_grounding_items_after"] as? Int == 1)
+        #expect(receipt["protected_grounding_preserved"] as? Bool == true)
+        #expect(receipt["tier_applied"] as? String == "requires_compaction")
+        #expect(receipt["watermark_state"] as? String == "overflow")
+        #expect(receipt["compaction_required"] as? Bool == true)
+    }
+
     @Test("session compaction policy escalates when bounded tail still exceeds budget")
     func sessionCompactionPolicyEscalatesWhenBoundedTailStillExceedsBudget() throws {
         let plan = SessionCompactionPolicy.plan(

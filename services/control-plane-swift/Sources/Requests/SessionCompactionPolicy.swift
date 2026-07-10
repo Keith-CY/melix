@@ -2,6 +2,12 @@ import Foundation
 
 struct SessionHistoryItemEstimate: Sendable, Equatable {
     let estimatedTokens: UInt32
+    let protectedGrounding: Bool
+
+    init(estimatedTokens: UInt32, protectedGrounding: Bool = false) {
+        self.estimatedTokens = estimatedTokens
+        self.protectedGrounding = protectedGrounding
+    }
 }
 
 enum SessionHistoryPolicy: String, Sendable, Equatable {
@@ -23,6 +29,9 @@ struct SessionCompactionPlan: Sendable, Equatable {
     let estimatedTokensAfter: UInt32
     let usableContextTokens: UInt32
     let maxHistoryItems: UInt32
+    let protectedGroundingItemsBefore: Int
+    let protectedGroundingItemsAfter: Int
+    let protectedGroundingPreserved: Bool
     let watermarkState: String
     let tierApplied: String
     let compactionRequired: Bool
@@ -48,6 +57,9 @@ struct SessionCompactionPlan: Sendable, Equatable {
             "estimated_tokens_after": .uint32(estimatedTokensAfter),
             "usable_context_tokens": .uint32(usableContextTokens),
             "max_history_items": .uint32(maxHistoryItems),
+            "protected_grounding_items_before": .int(protectedGroundingItemsBefore),
+            "protected_grounding_items_after": .int(protectedGroundingItemsAfter),
+            "protected_grounding_preserved": .bool(protectedGroundingPreserved),
             "watermark_state": .string(watermarkState),
             "tier_applied": .string(tierApplied),
             "compaction_required": .bool(compactionRequired),
@@ -75,9 +87,14 @@ struct SessionCompactionPolicy {
     ) -> SessionCompactionPlan {
         let itemsBefore = historyItems.count
         let estimatedTokensBefore = sumEstimatedTokens(historyItems)
-        let retainedItems = retainedTailItems(historyItems, maxHistoryItems: maxHistoryItems)
+        let protectedGroundingItemsBefore = countProtectedGroundingItems(historyItems)
+        let retainedItems = retainedPolicyItems(historyItems, maxHistoryItems: maxHistoryItems)
         let itemsAfter = retainedItems.count
         let estimatedTokensAfter = sumEstimatedTokens(retainedItems)
+        let protectedGroundingItemsAfter = countProtectedGroundingItems(retainedItems)
+        // Planner-only retention keeps protected grounding by construction. Future
+        // summarization paths must update this if grounding can be transformed or dropped.
+        let protectedGroundingPreserved = protectedGroundingItemsBefore == protectedGroundingItemsAfter
         let overBudget = usableContextTokens == 0
             ? estimatedTokensAfter > 0
             : estimatedTokensAfter > usableContextTokens
@@ -110,6 +127,9 @@ struct SessionCompactionPolicy {
             estimatedTokensAfter: estimatedTokensAfter,
             usableContextTokens: usableContextTokens,
             maxHistoryItems: maxHistoryItems,
+            protectedGroundingItemsBefore: protectedGroundingItemsBefore,
+            protectedGroundingItemsAfter: protectedGroundingItemsAfter,
+            protectedGroundingPreserved: protectedGroundingPreserved,
             watermarkState: watermarkState(
                 estimatedTokensAfter: estimatedTokensAfter,
                 usableContextTokens: usableContextTokens,
@@ -121,21 +141,34 @@ struct SessionCompactionPolicy {
         )
     }
 
-    private static func retainedTailItems(
+    private static func retainedPolicyItems(
         _ historyItems: [SessionHistoryItemEstimate],
         maxHistoryItems: UInt32
     ) -> [SessionHistoryItemEstimate] {
         guard maxHistoryItems != 0 else {
             return historyItems
         }
-        let limit = min(Int(maxHistoryItems), historyItems.count)
-        return Array(historyItems.suffix(limit))
+        // maxHistoryItems bounds ordinary tail history; protected grounding can exceed it.
+        let limit = min(Int(clamping: maxHistoryItems), historyItems.count)
+        let tailStartIndex = historyItems.count - limit
+        return historyItems.enumerated().compactMap { index, item in
+            guard item.protectedGrounding || index >= tailStartIndex else {
+                return nil
+            }
+            return item
+        }
     }
 
     private static func sumEstimatedTokens(_ historyItems: [SessionHistoryItemEstimate]) -> UInt32 {
         historyItems.reduce(UInt32(0)) { total, item in
             let (value, overflow) = total.addingReportingOverflow(item.estimatedTokens)
             return overflow ? UInt32.max : value
+        }
+    }
+
+    private static func countProtectedGroundingItems(_ historyItems: [SessionHistoryItemEstimate]) -> Int {
+        historyItems.reduce(0) { count, item in
+            item.protectedGrounding ? count + 1 : count
         }
     }
 
