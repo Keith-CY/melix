@@ -247,6 +247,12 @@ target-relative resolution, file read, and source-line extension behavior, but
 avoids repeated protobuf attribute lookups for rows that enter the diagnostic
 source collection path.
 
+A follow-up 2026-07-11 runtime-log predicate slice keeps the same runtime-log
+row eligibility contract while passing the caller's already-read row path into
+`_is_runtime_log_row()`. This avoids a second protobuf `path` attribute lookup
+when the generated, required, and intermediate file rows are scanned for log
+sources, while role and retention-class checks remain unchanged.
+
 Focused verification:
 
 ```bash
