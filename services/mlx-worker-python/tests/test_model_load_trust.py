@@ -559,6 +559,32 @@ def test_route_class_text_default_skips_runtime_kind_map(monkeypatch: pytest.Mon
     )
 
 
+def test_trust_policy_default_source_skips_non_empty_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_dir = tmp_path / "plain-model"
+    model_dir.mkdir()
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = str(model_dir)
+
+    def fail_non_empty(value: str, fallback: str) -> str:  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"default policy source should bypass _non_empty({value!r}, {fallback!r})"
+        )
+
+    monkeypatch.setattr(model_load_trust_module, "_non_empty", fail_non_empty)
+
+    policy = resolve_model_load_trust_policy(
+        model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=RecordingTextBackend(),
+    )
+
+    assert policy.policy_source == "default_safe"
+
+
 def test_runtime_name_string_fast_path_preserves_exact_value() -> None:
     runtime = NamedRuntime("mlx-lm")
 
