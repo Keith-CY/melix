@@ -768,6 +768,230 @@ def test_agentic_tool_guardrail_admission_covers_malformed_shape_branches(
     assert receipt["terminal_after_budget"] is True
 
 
+def test_agentic_tool_healing_accepts_fenced_json_without_raw_arguments() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        '```json\n{"id":"compute-1","name":"local_compute","arguments":{"code":"SECRET + 1"}}\n```',
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    assert decision.healed is True
+    assert decision.terminal is False
+    assert decision.normalized_calls == (
+        {"id": "compute-1", "name": "local_compute", "arguments": {"code": "SECRET + 1"}},
+    )
+    healing_receipt = decision.receipts[0]
+    assert healing_receipt["schema_version"] == "melix.agentic_tool_healing.v1"
+    assert healing_receipt["outcome"] == "healed"
+    assert healing_receipt["source_format"] == "fenced_json_tool_call"
+    assert healing_receipt["healed"] is True
+    assert healing_receipt["nudge_reason"] == ""
+    assert healing_receipt["allowed_next_step"] == "execute_tools"
+    assert "SECRET + 1" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
+def test_agentic_tool_healing_normalizes_provider_function_fragments() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        {
+            "id": "provider-1",
+            "function": {
+                "name": "local_compute",
+                "arguments": "{\"code\":\"SECRET_PROVIDER + 2\"}",
+            },
+        },
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    assert decision.healed is True
+    assert decision.normalized_calls == (
+        {
+            "id": "provider-1",
+            "name": "local_compute",
+            "arguments": {"code": "SECRET_PROVIDER + 2"},
+        },
+    )
+    assert decision.receipts[0]["source_format"] == "provider_tool_fragment"
+    assert "SECRET_PROVIDER" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
+def test_agentic_tool_healing_preserves_invalid_arguments_for_admission_receipt() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        '<tool_code>{"id":"bad-args","name":"local_compute","arguments":["SECRET_LIST_ARG"]}</tool_code>',
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    healing_receipt = decision.receipts[0]
+    admission_receipt = decision.receipts[1]
+
+    assert decision.healed is False
+    assert decision.normalized_calls == ()
+    assert healing_receipt["source_format"] == "minimax_tool_code"
+    assert healing_receipt["nudge_reason"] == "invalid_arguments"
+    assert admission_receipt["schema_version"] == "melix.agentic_tool_guardrail.v1"
+    assert admission_receipt["failure_class"] == "invalid_arguments"
+    assert "SECRET_LIST_ARG" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
+def test_agentic_tool_healing_reports_unknown_tool_without_hiding_admission() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        '<invoke name="ghost_tool"><arguments>{"secret":"SECRET_GHOST"}</arguments></invoke>',
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    assert decision.healed is False
+    assert decision.terminal is False
+    assert decision.receipts[0]["source_format"] == "xml_invoke_tool_call"
+    assert decision.receipts[0]["nudge_reason"] == "unknown_tool"
+    assert decision.receipts[1]["failure_class"] == "unknown_tool"
+    assert "SECRET_GHOST" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
+def test_agentic_tool_healing_rejects_pseudo_tool_text_blob_with_budget() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        '{"content":"please run local_compute({\\"code\\":\\"SECRET_TEXT\\"})"}',
+        attempt_index=3,
+        max_retry_nudges=2,
+    )
+
+    receipt = decision.receipts[0]
+
+    assert decision.healed is False
+    assert decision.terminal is True
+    assert decision.normalized_calls == ()
+    assert receipt["outcome"] == "terminal_failure"
+    assert receipt["source_format"] == "pseudo_tool_text_blob"
+    assert receipt["nudge_reason"] == "tool_call_wire_shape_required"
+    assert receipt["terminal_after_budget"] is True
+    assert receipt["allowed_next_step"] == "stop_with_guardrail_error"
+    assert "SECRET_TEXT" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
+def test_agentic_tool_healing_does_not_drop_malformed_native_call_batch() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        [
+            "not-a-tool-call",
+            {
+                "id": "compute-1",
+                "name": "local_compute",
+                "arguments": {"code": "SECRET_VALID"},
+            },
+        ],
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    healing_receipt = decision.receipts[0]
+    admission_receipt = decision.receipts[1]
+
+    assert decision.healed is False
+    assert decision.normalized_calls == ()
+    assert healing_receipt["source_format"] == "native_tool_calls"
+    assert healing_receipt["nudge_reason"] == "malformed_tool_call"
+    assert admission_receipt["failure_class"] == "malformed_tool_call"
+    assert admission_receipt["tool_call_id"] == "call-1"
+    assert "SECRET_VALID" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_source_format"),
+    [
+        (
+            '[TOOL_CALL]{"id":"bracket-1","name":"local_compute","arguments":{"code":"2 + 2"}}[/TOOL_CALL]',
+            "bracket_tool_call",
+        ),
+        (
+            '<tool_call><name>local_compute</name><arguments>{"code":"2 + 3"}</arguments></tool_call>',
+            "qwen_xml_tool_call",
+        ),
+        (
+            'call:local_compute {"code":"2 + 4"}',
+            "pipe_tool_call",
+        ),
+        (
+            '[{"id":"array-1","name":"local_compute","arguments":{"code":"2 + 5"}}]',
+            "json_tool_call",
+        ),
+        (
+            {
+                "tool_calls": [
+                    {
+                        "id": "nested-1",
+                        "function": {
+                            "name": "local_compute",
+                            "arguments": "{\"code\":\"2 + 6\"}",
+                        },
+                    }
+                ]
+            },
+            "provider_tool_fragment",
+        ),
+    ],
+)
+def test_agentic_tool_healing_accepts_additional_recoverable_formats(
+    response: object,
+    expected_source_format: str,
+) -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(response)
+
+    assert decision.healed is True
+    assert decision.normalized_calls[0]["name"] == "local_compute"
+    assert decision.receipts[0]["source_format"] == expected_source_format
+    assert decision.receipts[0]["allowed_next_step"] == "execute_tools"
+
+
+def test_agentic_tool_healing_missing_arguments_still_uses_admission() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        {"id": "missing-args", "name": "local_compute"},
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    assert decision.healed is False
+    assert decision.receipts[0]["source_format"] == "provider_tool_fragment"
+    assert decision.receipts[0]["nudge_reason"] == "missing_required_arguments"
+    assert decision.receipts[1]["failure_class"] == "missing_required_arguments"
+    assert decision.receipts[1]["missing_required_arguments"] == ["code"]
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_source_format"),
+    [
+        (None, "unsupported_tool_response"),
+        ("", "empty_tool_response"),
+        ([], "empty_tool_response"),
+        ((), "empty_tool_response"),
+        ("assistant text ```json\n{\"name\":\"local_compute\",\"arguments\":{\"code\":\"SECRET\"}}\n```", "unparseable_tool_response"),
+        ("```json\n{\"name\":\"local_compute\",\"arguments\":{\"code\":\"SECRET\"}}", "fenced_json_tool_call"),
+        ("```python\n{\"name\":\"local_compute\",\"arguments\":{\"code\":\"SECRET\"}}\n```", "wrong_envelope_tool_call"),
+        ("```json\n{\"name\":\"local_compute\",\"arguments\":{\"code\":\"SECRET\"}}\n``` trailing", "unparseable_tool_response"),
+        ({"message": "not a tool"}, "provider_tool_fragment"),
+    ],
+)
+def test_agentic_tool_healing_reports_retry_nudges_for_unrecoverable_shapes(
+    response: object,
+    expected_source_format: str,
+) -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        response,
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    receipt = decision.receipts[0]
+
+    assert decision.healed is False
+    assert decision.terminal is False
+    assert decision.normalized_calls == ()
+    assert receipt["outcome"] == "retry_nudge"
+    assert receipt["source_format"] == expected_source_format
+    assert receipt["nudge_reason"] == "tool_call_wire_shape_required"
+    assert receipt["allowed_next_step"] == "retry_with_tool_call_wire_shape"
+    assert "SECRET" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
 @pytest.mark.parametrize(("tool_name", "arguments"), _BUILT_IN_TOOL_CALLS)
 @pytest.mark.parametrize(
     ("override", "expected_status", "expected_failure_stage", "expected_cancelled"),

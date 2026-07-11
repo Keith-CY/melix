@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import json
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
+from worker.runtime import tool_call_rescue
 from worker.runtime.prompt_context import (
     PromptContextSourceEvidence,
     admit_prompt_context_source_evidence,
@@ -35,6 +37,7 @@ from worker.runtime.workspace_file_tools import WorkspaceFileTools
 from worker.runtime.workspace_paths import WorkspacePathResolution
 
 AGENTIC_TOOL_GUARDRAIL_RECEIPT_SCHEMA_VERSION = "melix.agentic_tool_guardrail.v1"
+AGENTIC_TOOL_HEALING_RECEIPT_SCHEMA_VERSION = "melix.agentic_tool_healing.v1"
 
 
 class AgenticToolRuntimeError(ValueError):
@@ -95,6 +98,14 @@ class AgenticToolGuardrailAdmission:
 
 
 @dataclass(frozen=True)
+class AgenticToolHealingDecision:
+    healed: bool
+    terminal: bool
+    normalized_calls: tuple[dict[str, Any], ...]
+    receipts: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
 class AgenticToolPrerequisite:
     tool_name: str
     required_tool_name: str
@@ -115,6 +126,78 @@ class AgenticToolPrerequisite:
         object.__setattr__(self, "tool_name", tool_name)
         object.__setattr__(self, "required_tool_name", required_tool_name)
         object.__setattr__(self, "argument_match_keys", argument_match_keys)
+
+
+def heal_agentic_tool_calls(
+    response: object,
+    *,
+    registry: ToolRegistry | None = None,
+    prerequisites: list[AgenticToolPrerequisite] | tuple[AgenticToolPrerequisite, ...] = (),
+    completed_tool_calls: list[object] | tuple[object, ...] | None = None,
+    attempt_index: int = 1,
+    max_retry_nudges: int = 1,
+) -> AgenticToolHealingDecision:
+    """Recover tool-call-shaped model output, then run normal admission."""
+
+    active_registry = registry or agentic_tool_catalog_registry()
+    recovery = _recover_agentic_tool_call_candidates(response)
+    if not recovery["calls"]:
+        receipt = _agentic_tool_healing_rejection_receipt(
+            source_format=str(recovery["source_format"]),
+            nudge_reason=str(recovery["nudge_reason"] or "tool_call_wire_shape_required"),
+            attempt_index=attempt_index,
+            max_retry_nudges=max_retry_nudges,
+        )
+        return AgenticToolHealingDecision(
+            healed=False,
+            terminal=receipt["outcome"] == "terminal_failure",
+            normalized_calls=(),
+            receipts=(receipt,),
+        )
+
+    admission = admit_agentic_tool_calls(
+        tuple(recovery["calls"]),
+        registry=active_registry,
+        prerequisites=prerequisites,
+        completed_tool_calls=completed_tool_calls,
+        attempt_index=attempt_index,
+        max_retry_nudges=max_retry_nudges,
+    )
+    admission_receipt = admission.receipts[0] if admission.receipts else {}
+    first_call = _first_tool_call_identity(admission.normalized_calls or tuple(recovery["calls"]))
+    nudge_reason = ""
+    if not admission.admitted:
+        nudge_reason = str(
+            admission_receipt.get("failure_class")
+            or admission_receipt.get("nudge_type")
+            or "tool_admission_rejected"
+        )
+    receipt = _agentic_tool_healing_receipt(
+        source_format=str(recovery["source_format"]),
+        healed=admission.admitted,
+        outcome="healed" if admission.admitted else str(admission_receipt.get("outcome", "")),
+        nudge_reason=nudge_reason,
+        attempt_index=int(admission_receipt.get("attempt_index", attempt_index) or attempt_index),
+        max_retry_nudges=int(
+            admission_receipt.get("max_retry_nudges", max_retry_nudges) or max_retry_nudges
+        ),
+        terminal_after_budget=bool(admission_receipt.get("terminal_after_budget", False)),
+        tool_call_id=str(admission_receipt.get("tool_call_id") or first_call["id"]),
+        tool_name=str(admission_receipt.get("tool_name") or first_call["name"]),
+        call_count=len(tuple(recovery["calls"])),
+        admitted_tool_count=len(admission.normalized_calls),
+        allowed_next_step=str(
+            admission_receipt.get("allowed_next_step")
+            or ("execute_tools" if admission.admitted else "retry_with_tool_call_wire_shape")
+        ),
+        corrective_action=str(admission_receipt.get("corrective_action") or ""),
+    )
+    return AgenticToolHealingDecision(
+        healed=admission.admitted,
+        terminal=admission.terminal,
+        normalized_calls=admission.normalized_calls,
+        receipts=(receipt, *admission.receipts),
+    )
 
 
 def admit_agentic_tool_calls(
@@ -273,6 +356,256 @@ def admit_agentic_tool_calls(
         normalized_calls=tuple(normalized_calls),
         receipts=(receipt,),
     )
+
+
+def _recover_agentic_tool_call_candidates(response: object) -> dict[str, object]:
+    if isinstance(response, str):
+        return _recover_agentic_tool_call_candidates_from_text(response)
+    if isinstance(response, dict):
+        return _recover_agentic_tool_call_candidates_from_payload(
+            response,
+            source_format="provider_tool_fragment",
+        )
+    if isinstance(response, (list, tuple)):
+        if not response:
+            return {
+                "source_format": "empty_tool_response",
+                "calls": (),
+                "nudge_reason": "tool_call_wire_shape_required",
+            }
+        return {
+            "source_format": "native_tool_calls",
+            "calls": tuple(
+                _tool_healing_call_from_payload(item) or item for item in response
+            ),
+            "nudge_reason": "",
+        }
+    return {
+        "source_format": "unsupported_tool_response",
+        "calls": (),
+        "nudge_reason": "tool_call_wire_shape_required",
+    }
+
+
+def _recover_agentic_tool_call_candidates_from_text(text: str) -> dict[str, object]:
+    stripped = text.strip()
+    if not stripped:
+        return {
+            "source_format": "empty_tool_response",
+            "calls": (),
+            "nudge_reason": "tool_call_wire_shape_required",
+        }
+
+    rescue = _tool_healing_rescue_payload(stripped)
+    if rescue is not None:
+        source_format, payload = rescue
+        calls = _tool_healing_calls_from_payload(payload)
+        return {
+            "source_format": source_format,
+            "calls": calls,
+            "nudge_reason": "" if calls else "tool_call_wire_shape_required",
+        }
+
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        payload = tool_call_rescue.parse_tool_body(stripped)
+        if payload is None:
+            return {
+                "source_format": "unparseable_tool_response",
+                "calls": (),
+                "nudge_reason": "tool_call_wire_shape_required",
+            }
+        source_format = _source_format_for_plain_tool_body(stripped)
+    else:
+        source_format = "json_tool_call"
+    return _recover_agentic_tool_call_candidates_from_payload(
+        payload,
+        source_format=source_format,
+    )
+
+
+def _recover_agentic_tool_call_candidates_from_payload(
+    payload: object,
+    *,
+    source_format: str,
+) -> dict[str, object]:
+    calls = _tool_healing_calls_from_payload(payload)
+    if calls:
+        return {"source_format": source_format, "calls": calls, "nudge_reason": ""}
+    if isinstance(payload, dict) and "content" in payload:
+        return {
+            "source_format": "pseudo_tool_text_blob",
+            "calls": (),
+            "nudge_reason": "tool_call_wire_shape_required",
+        }
+    return {
+        "source_format": source_format,
+        "calls": (),
+        "nudge_reason": "tool_call_wire_shape_required",
+    }
+
+
+def _tool_healing_rescue_payload(text: str) -> tuple[str, object] | None:
+    rescue_tag = tool_call_rescue.next_rescue_tag(text)
+    if rescue_tag is None:
+        return None
+    tag, index = rescue_tag
+    if text[:index].strip():
+        return None
+    envelope = tool_call_rescue.extract_rescue_envelope(text[index:], tag, final=True)
+    if envelope is None or envelope.consumed_until <= 0:
+        return (_source_format_for_rescue_tag(tag, ""), None)
+    if text[index + envelope.consumed_until :].strip():
+        return None
+    if tag == tool_call_rescue.FENCE_OPEN and tool_call_rescue.is_wrong_envelope_fence_label(
+        envelope.label
+    ):
+        return ("wrong_envelope_tool_call", None)
+    payload = tool_call_rescue.parse_tool_body(envelope.fragment)
+    return (_source_format_for_rescue_tag(tag, envelope.label), payload)
+
+
+def _source_format_for_rescue_tag(tag: str, label: str) -> str:
+    if tag == tool_call_rescue.FENCE_OPEN:
+        return "fenced_json_tool_call"
+    if tag == tool_call_rescue.BRACKET_TOOL_OPEN:
+        return "bracket_tool_call"
+    if tag == tool_call_rescue.XML_INVOKE_OPEN:
+        return "xml_invoke_tool_call"
+    if tag == tool_call_rescue.TOOL_CODE_OPEN:
+        return "minimax_tool_code"
+    return label or "unknown_tool_envelope"
+
+
+def _source_format_for_plain_tool_body(text: str) -> str:
+    if text.startswith("<tool_call"):
+        return "qwen_xml_tool_call"
+    if text.startswith("call:"):
+        return "pipe_tool_call"
+    return "provider_tool_fragment"
+
+
+def _tool_healing_calls_from_payload(payload: object) -> tuple[object, ...]:
+    if isinstance(payload, dict):
+        raw_tool_calls = payload.get("tool_calls")
+        if isinstance(raw_tool_calls, (list, tuple)):
+            calls: list[object] = []
+            for item in raw_tool_calls:
+                call = _tool_healing_call_from_payload(item)
+                calls.append(call or item)
+            return tuple(calls)
+        call = _tool_healing_call_from_payload(payload)
+        return (call,) if call is not None else ()
+    if isinstance(payload, (list, tuple)):
+        calls = []
+        for item in payload:
+            call = _tool_healing_call_from_payload(item)
+            calls.append(call or item)
+        return tuple(calls)
+    return ()
+
+
+def _tool_healing_call_from_payload(payload: object) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    name = tool_call_rescue.tool_payload_name(payload)
+    if not name:
+        return None
+    arguments = tool_call_rescue.tool_payload_arguments(payload)
+    if arguments is tool_call_rescue.MISSING_ARGUMENTS:
+        arguments = {}
+    elif isinstance(arguments, str):
+        coerced_arguments = tool_call_rescue.coerce_tool_arguments(arguments)
+        arguments = coerced_arguments if coerced_arguments is not None else arguments
+    return {
+        "id": str(payload.get("id") or payload.get("call_id") or ""),
+        "name": name,
+        "arguments": arguments,
+    }
+
+
+def _first_tool_call_identity(tool_calls: tuple[object, ...]) -> dict[str, str]:
+    if not tool_calls:
+        return {"id": "", "name": ""}
+    first_call = tool_calls[0]
+    if not isinstance(first_call, dict):
+        return {"id": "", "name": ""}
+    return {
+        "id": str(first_call.get("id") or ""),
+        "name": str(first_call.get("name") or ""),
+    }
+
+
+def _agentic_tool_healing_rejection_receipt(
+    *,
+    source_format: str,
+    nudge_reason: str,
+    attempt_index: int,
+    max_retry_nudges: int,
+) -> dict[str, Any]:
+    normalized_attempt, normalized_max = _normalized_guardrail_budget(
+        attempt_index=attempt_index,
+        max_retry_nudges=max_retry_nudges,
+    )
+    terminal_without_nudge = normalized_attempt > normalized_max
+    return _agentic_tool_healing_receipt(
+        source_format=source_format,
+        healed=False,
+        outcome="terminal_failure" if terminal_without_nudge else "retry_nudge",
+        nudge_reason=nudge_reason,
+        attempt_index=normalized_attempt,
+        max_retry_nudges=normalized_max,
+        terminal_after_budget=normalized_attempt >= normalized_max,
+        tool_call_id="",
+        tool_name="",
+        call_count=0,
+        admitted_tool_count=0,
+        allowed_next_step=(
+            "stop_with_guardrail_error"
+            if terminal_without_nudge
+            else "retry_with_tool_call_wire_shape"
+        ),
+        corrective_action="Emit a tool call in a declared tool-call wire shape.",
+    )
+
+
+def _agentic_tool_healing_receipt(
+    *,
+    source_format: str,
+    healed: bool,
+    outcome: str,
+    nudge_reason: str,
+    attempt_index: int,
+    max_retry_nudges: int,
+    terminal_after_budget: bool,
+    tool_call_id: str,
+    tool_name: str,
+    call_count: int,
+    admitted_tool_count: int,
+    allowed_next_step: str,
+    corrective_action: str,
+) -> dict[str, Any]:
+    normalized_attempt, normalized_max = _normalized_guardrail_budget(
+        attempt_index=attempt_index,
+        max_retry_nudges=max_retry_nudges,
+    )
+    return {
+        "schema_version": AGENTIC_TOOL_HEALING_RECEIPT_SCHEMA_VERSION,
+        "outcome": outcome,
+        "source_format": source_format,
+        "healed": healed,
+        "nudge_reason": nudge_reason,
+        "attempt_index": normalized_attempt,
+        "max_retry_nudges": normalized_max,
+        "terminal_after_budget": terminal_after_budget,
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+        "call_count": call_count,
+        "admitted_tool_count": admitted_tool_count,
+        "allowed_next_step": allowed_next_step,
+        "corrective_action": corrective_action,
+    }
 
 
 def _guardrail_rejection_admission(
