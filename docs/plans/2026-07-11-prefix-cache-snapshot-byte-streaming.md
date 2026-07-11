@@ -1,29 +1,44 @@
-# Prefix cache snapshot byte streaming
+# Prefix Cache Snapshot Byte Streaming Local nbytes Slice
 
-This Python-only performance slice is limited to `estimate_cache_snapshot_bytes()` in `services/mlx-worker-python/worker/runtime/prefix_block_store.py`.
+## Context
+
+The registered PR-scoped probe `prefix-cache-snapshot-byte-streaming` covers
+`services/mlx-worker-python/worker/runtime/prefix_block_store.py` and the
+snapshot byte estimator used by prefix-cache accounting.
+
+The current estimator repeatedly performs the same `nbytes` / `size * itemsize`
+lookup pattern for state, key, and value tensors. This slice keeps behavior
+unchanged while reducing duplicated attribute lookup code in the hot loop.
 
 ## Scope
 
-The prefix-cache hot path estimates resident KV-cache bytes after prompt-cache snapshots are cloned or restored. The previous implementation created an intermediate per-layer tensor list before summing `.nbytes` or `size * itemsize`. This follow-up slice keeps the same supported cache shapes while avoiding repeated runtime construction of the `list | tuple` type-union check inside the streamed state path.
+- Add a tiny local helper for tensor byte extraction in
+  `estimate_cache_snapshot_bytes`.
+- Preserve support for both older `.state` caches and newer `.keys` / `.values`
+  cache shapes.
+- Add focused regression coverage for state sequence fallback tensors so the
+  helper preserves `size * itemsize` behavior.
+- Run the registered test, coverage, and probe commands locally on Linux.
 
-## Registered probe
+## Measurement
 
-The affected path is covered by the registered PR-scoped probe `prefix-cache-snapshot-byte-streaming` in `infra/perf/pr_scoped_probes.json`. The probe includes focused `test_command`, `coverage_command`, and `probe_command` entries and reports:
+Registered probe: `prefix-cache-snapshot-byte-streaming`
 
-- `elapsed_ms_mean`, `elapsed_ms_min`, and `elapsed_ms_p95` for repeated byte-estimation calls over a synthetic multi-layer cache.
-- `peak_bytes_mean` from `tracemalloc`.
-- informational `iteration_count` and `layer_count`.
+Required commands:
 
-The older `prefix-cold-index-scandir` probe remains registered for the same module, but this new probe is the merge-gating performance signal for this byte-estimation slice.
+- Focused tests from the registry entry.
+- Changed-scope coverage from the registry entry.
+- Registered probe command from the registry entry.
 
-## Plan
+Success is accepted only if behavior tests pass, changed-scope coverage remains
+at or above the repository threshold, and the probe reports a clear non-regressive
+or improved elapsed-time result versus the baseline measurement captured before
+this slice.
 
-1. Add direct behavior coverage for state-list, key/value, scalar-state, and missing-layer cache shapes.
-2. Add the registered probe script and PR-scoped registry entry for cache snapshot byte estimation.
-3. Replace the per-layer temporary tensor list with direct streaming accumulation.
-4. Reuse a module-level state-sequence type tuple so the streamed state path does not rebuild `list | tuple` during every layer check.
-5. Run focused tests, changed-scope coverage, and the registered probe locally on Linux.
-6. Use GitHub Actions PR-scoped performance as the final merge gate.
+## Linux Boundary
+
+This is a Python worker path and can be validated locally on Linux. CI remains
+the source of truth for the PR-scoped performance workflow report after push.
 
 ## Follow-up Slice: Deferred Nbytes Coercion
 

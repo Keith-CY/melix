@@ -13895,6 +13895,177 @@ struct OpenAIHandlerTests {
         #expect(metadata["melix.serving.memory_admission.effective_context"] == "2562")
     }
 
+    @Test("gateway session compaction receipt feeds accepted text requests")
+    func gatewaySessionCompactionReceiptFeedsAcceptedTextRequests() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "req-gateway-session-compaction",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "ok"
+            ),
+        ])
+        var model = warmModel()
+        model.maxContext = 128
+        model.settings.ext["melix.session_compaction.max_history_items"] = "2"
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerRegistry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-gateway-session-compaction" })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "max_completion_tokens": 16,
+              "session_id": "session-gateway-compaction",
+              "messages": [
+                { "role": "system", "content": "one" },
+                { "role": "user", "content": "two" },
+                { "role": "assistant", "content": "three" },
+                { "role": "user", "content": "four" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        #expect(response.statusCode == 200)
+        _ = try await jsonPayload(from: response.body)
+        let request = try #require(await workerClient.lastPrefillRequest)
+        let metadata = request.execution.ext
+        let receipt = try firstSessionCompactionReceipt(from: metadata)
+
+        #expect(metadata["melix.gateway.context_window_tokens"] == "128")
+        #expect(metadata["melix.gateway.output_cap_tokens"] == "16")
+        #expect(metadata["melix.session_compaction.receipt_schema"] == "melix.session_compaction_policy_receipt.v1")
+        #expect(metadata["melix.session_compaction.receipt_count"] == "1")
+        #expect(receipt["request_id"] as? String == "req-gateway-session-compaction")
+        #expect(receipt["session_id"] as? String == "session-gateway-compaction")
+        #expect(receipt["model_id"] as? String == "melix-dev-text")
+        #expect(receipt["history_policy"] as? String == "bounded_tail")
+        #expect(receipt["items_before"] as? Int == 4)
+        #expect(receipt["items_after"] as? Int == 2)
+        #expect(receipt["estimated_tokens_before"] as? Int == 5)
+        #expect(receipt["estimated_tokens_after"] as? Int == 3)
+        #expect(receipt["usable_context_tokens"] as? Int == 112)
+        #expect(receipt["max_history_items"] as? Int == 2)
+        #expect(receipt["tier_applied"] as? String == "drop_tail_history")
+        #expect(receipt["compaction_required"] as? Bool == false)
+    }
+
+    @Test("gateway skips session compaction receipt when model context is unknown")
+    func gatewaySkipsSessionCompactionReceiptWhenModelContextIsUnknown() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "req-gateway-session-compaction-no-context",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "ok"
+            ),
+        ])
+        var model = warmModel()
+        model.maxContext = 0
+        model.settings.ext["melix.session_compaction.max_history_items"] = "2"
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerRegistry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-gateway-session-compaction-no-context" })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "session_id": "session-gateway-compaction",
+              "messages": [
+                { "role": "user", "content": "hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        #expect(response.statusCode == 200)
+        _ = try await jsonPayload(from: response.body)
+        let request = try #require(await workerClient.lastPrefillRequest)
+        let metadata = request.execution.ext
+
+        #expect(metadata["melix.session_compaction.receipt_schema"] == nil)
+        #expect(metadata["melix.session_compaction.receipts_json"] == nil)
+    }
+
+    @Test("gateway defaults invalid session compaction history settings to unlimited")
+    func gatewayDefaultsInvalidSessionCompactionHistorySettingsToUnlimited() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "req-gateway-session-compaction-invalid-history",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "ok"
+            ),
+        ])
+        var model = warmModel()
+        model.maxContext = 128
+        model.settings.ext["melix.session_compaction.max_history_items"] = "bad"
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerRegistry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-gateway-session-compaction-invalid-history" })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "max_completion_tokens": 16,
+              "session_id": "session-gateway-compaction-invalid-history",
+              "messages": [
+                { "role": "user", "content": "hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        #expect(response.statusCode == 200)
+        _ = try await jsonPayload(from: response.body)
+        let request = try #require(await workerClient.lastPrefillRequest)
+        let receipt = try firstSessionCompactionReceipt(from: request.execution.ext)
+
+        #expect(receipt["request_id"] as? String == "req-gateway-session-compaction-invalid-history")
+        #expect(receipt["history_policy"] as? String == "unlimited")
+        #expect(receipt["items_before"] as? Int == 1)
+        #expect(receipt["items_after"] as? Int == 1)
+        #expect(receipt["usable_context_tokens"] as? Int == 112)
+        #expect(receipt["max_history_items"] as? Int == 0)
+    }
+
     @Test("chat requests return 409 when the model is not ready")
     func modelNotReadyReturns409() async throws {
         let handler = OpenAIHandler(
@@ -15327,6 +15498,16 @@ private func jsonPayload(from body: HTTPBody) async throws -> [String: Any] {
 
 private func jsonPayload(from data: Data) throws -> [String: Any] {
     return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+}
+
+private func firstSessionCompactionReceipt(
+    from ext: [String: String]
+) throws -> [String: Any] {
+    let receiptsJSON = try #require(ext["melix.session_compaction.receipts_json"])
+    let receipts = try #require(
+        try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+    )
+    return try #require(receipts.first)
 }
 
 private func compatPolicyChatBody(stream: Bool) -> Data? {

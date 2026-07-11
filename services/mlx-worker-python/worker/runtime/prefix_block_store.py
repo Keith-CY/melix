@@ -359,7 +359,6 @@ class ColdPrefixStore:
                         continue
         except OSError:
             return
-        meta_paths.sort()
         precheck_orphan_names = len(snapshot_file_names) < len(meta_paths)
         meta_suffix_length = len(".meta.json")
         for meta_path_string, meta_file_name in meta_paths:
@@ -424,6 +423,19 @@ class ColdPrefixStore:
             _remove_quietly(meta.meta_path)
 
 
+def _tensor_nbytes(tensor: Any) -> Any:
+    nbytes = getattr(tensor, "nbytes", None)
+    if nbytes is not None:
+        return nbytes
+    size = getattr(tensor, "size", None)
+    if size is None:
+        return 0
+    itemsize = getattr(tensor, "itemsize", None)
+    if itemsize is None:
+        return 0
+    return int(size) * int(itemsize)
+
+
 def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
     """Estimate the live in-memory bytes of a prompt-cache layer list.
 
@@ -433,50 +445,24 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
     if not isinstance(cache_snapshot, list):
         return 0
     total = 0
+    tensor_nbytes = _tensor_nbytes
+    sequence_types = _CACHE_STATE_SEQUENCE_TYPES
     for layer_cache in cache_snapshot:
         state = getattr(layer_cache, "state", None)
         if state is not None:
-            if isinstance(state, _CACHE_STATE_SEQUENCE_TYPES):
+            if isinstance(state, sequence_types):
                 for tensor in state:
-                    nbytes = getattr(tensor, "nbytes", None)
-                    if nbytes is None:
-                        size = getattr(tensor, "size", None)
-                        itemsize = getattr(tensor, "itemsize", None)
-                        if size is not None and itemsize is not None:
-                            nbytes = int(size) * int(itemsize)
-                    if nbytes is not None:
-                        total += nbytes
+                    total += tensor_nbytes(tensor)
                 continue
-            nbytes = getattr(state, "nbytes", None)
-            if nbytes is None:
-                size = getattr(state, "size", None)
-                itemsize = getattr(state, "itemsize", None)
-                if size is not None and itemsize is not None:
-                    nbytes = int(size) * int(itemsize)
-            if nbytes is not None:
-                total += nbytes
+            total += tensor_nbytes(state)
             continue
 
         keys = getattr(layer_cache, "keys", None)
         if keys is not None:
-            nbytes = getattr(keys, "nbytes", None)
-            if nbytes is None:
-                size = getattr(keys, "size", None)
-                itemsize = getattr(keys, "itemsize", None)
-                if size is not None and itemsize is not None:
-                    nbytes = int(size) * int(itemsize)
-            if nbytes is not None:
-                total += nbytes
+            total += tensor_nbytes(keys)
         values = getattr(layer_cache, "values", None)
         if values is not None:
-            nbytes = getattr(values, "nbytes", None)
-            if nbytes is None:
-                size = getattr(values, "size", None)
-                itemsize = getattr(values, "itemsize", None)
-                if size is not None and itemsize is not None:
-                    nbytes = int(size) * int(itemsize)
-            if nbytes is not None:
-                total += nbytes
+            total += tensor_nbytes(values)
     return int(total)
 
 

@@ -352,6 +352,33 @@ struct OpenAIConformanceMatrixTests {
         #expect(report.summary.skipped == 1)
     }
 
+    @Test("conformance report rows can carry parser policy fixture metadata")
+    func conformanceReportRowsCanCarryParserPolicyFixtureMetadata() throws {
+        let row = OpenAIConformanceRow(
+            field: "tool_call_parser_policy:qwen3moe:qwen:qwen_xml_tool_call",
+            route: "/v1/chat/completions -> parser policy evidence",
+            expectedBehavior: "parser policy fixtures expose model family, parser mode, tag dialect, and resolved parser receipt evidence.",
+            observedStatus: .pass,
+            observedReason: "parser_policy=resolved",
+            modelFamily: "qwen3moe",
+            parserMode: "qwen",
+            tagDialect: "qwen_xml_tool_call",
+            requestedParser: "qwen",
+            resolvedParser: "qwen",
+            parserFallbackMode: "xml",
+            parserRefusalReason: ""
+        )
+        let reportJSON = try OpenAIConformanceReport(rows: [row]).jsonString()
+
+        #expect(reportJSON.contains(#""model_family":"qwen3moe""#))
+        #expect(reportJSON.contains(#""parser_mode":"qwen""#))
+        #expect(reportJSON.contains(#""tag_dialect":"qwen_xml_tool_call""#))
+        #expect(reportJSON.contains(#""requested_parser":"qwen""#))
+        #expect(reportJSON.contains(#""resolved_parser":"qwen""#))
+        #expect(reportJSON.contains(#""parser_fallback_mode":"xml""#))
+        #expect(reportJSON.contains(#""parser_refusal_reason":"""#))
+    }
+
     @Test("payload model routes to selected served model in active roster")
     func payloadModelRoutesToSelectedServedModelInActiveRoster() async throws {
         var primary = warmConformanceModel(id: "melix-primary")
@@ -1179,6 +1206,106 @@ struct OpenAIConformanceMatrixTests {
         #expect(streamPayload.contains("data: [DONE]"))
     }
 
+    @Test("tool-call parser policy fixtures carry parser and dialect evidence")
+    func toolCallParserPolicyFixturesCarryParserAndDialectEvidence() async throws {
+        struct Fixture: Sendable {
+            let scenario: String
+            let modelFamily: String
+            let parserMode: String
+            let tagDialect: String
+            let stream: Bool
+        }
+
+        let fixtures = [
+            Fixture(
+                scenario: "non_stream_unclosed_tool_call",
+                modelFamily: "qwen3moe",
+                parserMode: "qwen",
+                tagDialect: "qwen_xml_tool_call",
+                stream: false
+            ),
+            Fixture(
+                scenario: "stream_split_tool_call_marker",
+                modelFamily: "qwen3moe",
+                parserMode: "qwen",
+                tagDialect: "qwen_pipe_tool_call",
+                stream: true
+            ),
+        ]
+        var reportRows: [OpenAIConformanceRow] = []
+
+        for fixture in fixtures {
+            let requestID = "req-parser-policy-\(fixture.scenario)"
+            let worker = RecordingConformanceWorker(
+                requestID: requestID,
+                events: parserPolicyEvents(requestID: requestID, stream: fixture.stream)
+            )
+            var model = warmConformanceModel(id: "melix-dev-text")
+            model.settings.ext["text_family_id"] = fixture.modelFamily
+
+            let response = try await Self.handler(worker: worker, model: model).handle(
+                HTTPRequest(
+                    method: .post,
+                    path: "/v1/chat/completions",
+                    headers: ["content-type": "application/json"],
+                    body: Data(Self.body(extra: parserPolicyExtra(stream: fixture.stream, parserMode: fixture.parserMode)).utf8)
+                )
+            )
+            let payload = try await collectConformanceBody(response.body)
+            let request = try #require(await worker.lastGenerateRequest)
+            let ext = request.execution.ext
+
+            #expect(response.statusCode == 200)
+            #expect(ext["melix.tool_parser.mode"] == fixture.parserMode)
+            #expect(ext["melix.tool_parser.source"] == "request")
+            #expect(ext["melix.tool_parser.namespaces"] == "tools.search")
+            #expect(ext["melix.tool_parser.fallback_mode"] == "xml")
+            #expect(ext["melix.compat.requested_parser"] == fixture.parserMode)
+            #expect(ext["melix.compat.resolved_parser"] == fixture.parserMode)
+            #expect(ext["melix.compat.parser_fallback_mode"] == "xml")
+            #expect(ext["melix.compat.parser_refusal_reason"] == "")
+            #expect(payload.contains(#""tool_calls""#) == false)
+            #expect(payload.contains("ghost") == false)
+            expectNoOpenAIWireLeaks(payload)
+
+            let rowPassed = response.statusCode == 200
+                && ext["melix.compat.requested_parser"] == fixture.parserMode
+                && ext["melix.compat.resolved_parser"] == fixture.parserMode
+                && ext["melix.compat.parser_fallback_mode"] == "xml"
+                && !payload.contains(#""tool_calls""#)
+                && !payload.contains("ghost")
+            reportRows.append(
+                OpenAIConformanceRow(
+                    field: "tool_call_parser_policy:\(fixture.modelFamily):\(fixture.parserMode):\(fixture.tagDialect):\(fixture.scenario)",
+                    route: "/v1/chat/completions -> parser policy evidence",
+                    expectedBehavior: "Malformed backend tool-call text is suppressed while parser policy receipts identify the requested and resolved parser.",
+                    observedStatus: rowPassed ? .pass : .fail,
+                    observedReason: "scenario=\(fixture.scenario);status=\(response.statusCode)",
+                    modelFamily: model.settings.ext["text_family_id"],
+                    parserMode: ext["melix.tool_parser.mode"],
+                    tagDialect: fixture.tagDialect,
+                    requestedParser: ext["melix.compat.requested_parser"],
+                    resolvedParser: ext["melix.compat.resolved_parser"],
+                    parserFallbackMode: ext["melix.compat.parser_fallback_mode"],
+                    parserRefusalReason: ext["melix.compat.parser_refusal_reason"]
+                )
+            )
+        }
+
+        let report = OpenAIConformanceReport(rows: reportRows)
+        #expect(report.summary.passed == fixtures.count)
+        #expect(report.summary.failed == 0)
+        let reportJSON = try report.jsonString()
+        #expect(reportJSON.contains(#""model_family":"qwen3moe""#))
+        #expect(reportJSON.contains(#""parser_mode":"qwen""#))
+        #expect(reportJSON.contains(#""tag_dialect":"qwen_xml_tool_call""#))
+        #expect(reportJSON.contains(#""tag_dialect":"qwen_pipe_tool_call""#))
+        #expect(reportJSON.contains(#""requested_parser":"qwen""#))
+        #expect(reportJSON.contains(#""resolved_parser":"qwen""#))
+        #expect(reportJSON.contains(#""parser_fallback_mode":"xml""#))
+        #expect(reportJSON.contains(#""parser_refusal_reason":"""#))
+    }
+
     @Test("legacy function_call codable values normalize into stable tool choices")
     func legacyFunctionCallCodableValuesNormalizeIntoStableToolChoices() throws {
         let decoder = JSONDecoder()
@@ -1444,6 +1571,48 @@ private func orderedConformanceRanges(in payload: String, needles: [String]) -> 
         cursor = range.upperBound
     }
     return true
+}
+
+private func parserPolicyExtra(stream: Bool, parserMode: String) -> String {
+    """
+    "stream": \(stream ? "true" : "false"),
+    "tool_parser": {
+      "mode": "\(parserMode)",
+      "namespaces": ["tools.search"],
+      "xml_fallback": true
+    },
+    "tools": [\(weatherToolJSON)],
+    "tool_choice": "auto"
+    """
+}
+
+private func parserPolicyEvents(requestID: String, stream: Bool) -> [Melix_Worker_V1_ExecuteEvent] {
+    if stream {
+        return [
+            makeTokenEvent(requestID: requestID, seq: 1, text: "Visible before "),
+            makeTokenEvent(requestID: requestID, seq: 2, text: "<|tool_"),
+            makeTokenEvent(
+                requestID: requestID,
+                seq: 3,
+                text: #"call>{"name":"ghost","arguments":{"q":"leak"}}"#
+            ),
+            makeCompletedEvent(
+                requestID: requestID,
+                seq: 4,
+                finishReason: "stop",
+                assistantText: #"Visible before <|tool_call>{"name":"ghost","arguments":{"q":"leak"}}"#
+            ),
+        ]
+    }
+
+    return [
+        makeCompletedEvent(
+            requestID: requestID,
+            seq: 1,
+            finishReason: "stop",
+            assistantText: #"Visible before <tool_call>{"name":"ghost","arguments":{"q":"leak"}}"#
+        ),
+    ]
 }
 
 private func expectNoOpenAIWireLeaks(_ payload: String) {
