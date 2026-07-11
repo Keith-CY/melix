@@ -190,6 +190,9 @@ call.
 Before prompt assembly exposes workflow-selected tools, retrieved procedure
 references, or admin affordances to the model, the runtime must compare those
 prompt-visible tool IDs with the selected registry's callable schema list. The
+selected registry is the execution allowlist for the current request; a full
+agentic tool catalog may also be supplied so known but unselected custom tools
+are reported as missing instead of being counted as invalid affordances. The
 v1 schema-consistency preflight receipt is
 `melix.agentic_tool_schema_consistency.v1` and records:
 

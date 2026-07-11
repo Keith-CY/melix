@@ -534,14 +534,19 @@ def preflight_agentic_tool_schema_consistency(
     affordances: Sequence[Any],
     *,
     registry: ToolRegistry,
+    catalog: ToolRegistry | None = None,
     source: str = "tool_affordance",
 ) -> ToolSchemaConsistencyDecision:
+    if catalog is None:
+        catalog = agentic_tool_catalog_registry()
     callable_tools = registry.names()
     callable_tool_set = set(callable_tools)
-    known_tool_names = callable_tool_set | _BUILTIN_AGENTIC_TOOL_NAME_SET
+    catalog_tools = catalog.names()
+    known_tool_names = callable_tool_set | set(catalog_tools) | _BUILTIN_AGENTIC_TOOL_NAME_SET
     referenced_tools, invalid_affordance_count = _referenced_tool_affordance_names(
         affordances,
         known_tool_names,
+        catalog_tools,
         callable_tools,
     )
     missing_tools = tuple(
@@ -573,6 +578,7 @@ def preflight_agentic_tool_schema_consistency(
 def _referenced_tool_affordance_names(
     affordances: Sequence[Any],
     known_tool_names: set[str] | frozenset[str],
+    catalog_names: tuple[str, ...],
     registry_names: tuple[str, ...],
 ) -> tuple[tuple[str, ...], int]:
     seen_tool_names: set[str] = set()
@@ -585,14 +591,18 @@ def _referenced_tool_affordance_names(
         seen_tool_names.add(tool_name)
     if not seen_tool_names:
         return (), invalid_affordance_count
-    ordered_names = [
-        tool_name for tool_name in SELECTABLE_AGENTIC_TOOL_NAMES if tool_name in seen_tool_names
-    ]
-    ordered_names.extend(
-        tool_name
-        for tool_name in registry_names
-        if tool_name in seen_tool_names and tool_name not in _BUILTIN_AGENTIC_TOOL_NAME_SET
-    )
+    ordered_names: list[str] = []
+    ordered_name_set: set[str] = set()
+    for ordered_source_names in (
+        catalog_names,
+        SELECTABLE_AGENTIC_TOOL_NAMES,
+        registry_names,
+        tuple(sorted(seen_tool_names)),
+    ):
+        for tool_name in ordered_source_names:
+            if tool_name in seen_tool_names and tool_name not in ordered_name_set:
+                ordered_names.append(tool_name)
+                ordered_name_set.add(tool_name)
     return tuple(ordered_names), invalid_affordance_count
 
 

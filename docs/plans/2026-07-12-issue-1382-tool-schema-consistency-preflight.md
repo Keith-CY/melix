@@ -4,7 +4,7 @@
 
 **Goal:** Add a worker-owned preflight that compares prompt-visible or context-referenced tool affordances against the actual callable agentic tool schema list before generation starts, with sanitized receipts for mismatches.
 
-**Architecture:** `worker.runtime.tool_registry` remains the owner for agentic tool schema, index metadata, selection, and policy decisions. This slice adds a pure preflight helper at the same boundary so workflow-selected tools, retrieved procedure references, and injected/admin affordances can be checked against the selected `ToolRegistry.names()` snapshot before the model sees instructions that mention unavailable tools.
+**Architecture:** `worker.runtime.tool_registry` remains the owner for agentic tool schema, index metadata, selection, and policy decisions. This slice adds a pure preflight helper at the same boundary so workflow-selected tools, retrieved procedure references, and injected/admin affordances can be checked against the selected `ToolRegistry.names()` snapshot before the model sees instructions that mention unavailable tools. The selected registry is the current request's callable allowlist; callers may also provide a full `ToolRegistry` catalog so known but unselected custom tools are reported as missing rather than invalid.
 
 **Tech Stack:** Python worker runtime, dataclasses, deterministic tool registry, pytest, coverage.
 
@@ -23,7 +23,7 @@
 This slice covers:
 
 - a worker-owned `ToolSchemaConsistencyDecision` result;
-- a `preflight_agentic_tool_schema_consistency(...)` helper that accepts sanitized tool affordance records and a selected `ToolRegistry`;
+- a `preflight_agentic_tool_schema_consistency(...)` helper that accepts sanitized tool affordance records, a selected callable `ToolRegistry`, and an optional full `ToolRegistry` catalog;
 - a new `melix.agentic_tool_schema_consistency.v1` receipt that snapshots referenced tool ids, callable tool ids, missing tool ids, invalid affordance count, and the allowed next step;
 - tests for a workflow affordance that names a tool absent from the selected schema list, a procedure/viewed-context tool becoming available, a policy-disabled tool referenced by retrieved context, and invalid affordance names being counted without raw text leakage;
 - canonical runtime contract documentation for the preflight receipt.
@@ -82,7 +82,8 @@ Add tests that call the intended public helper before it exists:
 - selected schema only includes `local_compute`; a workflow affordance references `visit`; receipt reports `mismatch`, `missing_tools=["visit"]`, and no raw procedure text;
 - selected schema includes `local_compute` and `visit`; a viewed-procedure affordance references `visit`; receipt reports `consistent`;
 - `allow_web=False` selection omits `visit`; retrieved context references `visit`; receipt reports the policy-disabled mismatch through the callable schema snapshot;
-- invalid affordance values are counted and omitted from the receipt rather than echoed.
+- invalid affordance values are counted and omitted from the receipt rather than echoed;
+- a known custom tool in the supplied full catalog, but absent from the selected callable registry, is reported in `missing_tools` rather than counted as invalid.
 
 - [x] **Step 2: Run focused tests to verify RED**
 
@@ -113,7 +114,7 @@ Accept strings and mapping objects with `tool_id`, `tool_name`, or `name`. Keep 
 
 - [x] **Step 3: Compare against callable schema names**
 
-Use `registry.names()` as the authoritative callable snapshot. Preserve canonical selectable-tool ordering for receipt arrays, dedupe referenced tools, and surface missing canonical tool ids.
+Use `registry.names()` as the authoritative callable snapshot. Use the full catalog, when supplied, as the known-tool universe for distinguishing missing known tools from invalid affordances. Preserve catalog/selectable-tool ordering for receipt arrays, dedupe referenced tools, and surface missing canonical tool ids.
 
 ## Task 3: Document Contract And Verify
 
@@ -135,6 +136,23 @@ Focused verification result:
 ```bash
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_tool_registry.py -q
 # 118 passed
+```
+
+Post-review focused verification result after adding catalog-aware custom-tool
+coverage:
+
+```bash
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_tool_registry.py -q
+# 119 passed
+```
+
+Post-review changed-scope coverage result:
+
+```bash
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --project services/mlx-worker-python --extra mlx coverage run -m pytest -q services/mlx-worker-python/tests/test_tool_registry.py
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 uv run --project services/mlx-worker-python --extra mlx coverage json -o coverage.json
+UV_PYTHON=3.12 uv run python scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/tool_registry.py services/mlx-worker-python/tests/test_tool_registry.py
+# TOTAL 21 0 100%
 ```
 
 Changed-scope coverage result:
@@ -207,3 +225,30 @@ same scalar-copy subprobe against the unchanged head code produced
 showing the `+8.104` ms report delta is within local measurement noise rather
 than an in-scope regression. The commit hook is rerun with
 `MELIX_PRE_COMMIT_ALLOW_PERF_REGRESSION=1` and this explicit rationale.
+
+Post-review pre-commit result before the allowed rerun:
+
+```bash
+.githooks/pre-commit
+# make swift-test: passed
+# make py-test: 4940 passed, 14 skipped, 2 warnings
+# make integration-test: 123 passed, 1 skipped
+# PR-scoped performance report: Status regression
+```
+
+Report path:
+
+```text
+.runtime/pre-commit-performance/20260711-212826-74606c83/report/report.md
+```
+
+The post-review report selected the same five direct/gated probes. The four
+tool-registry probes were `ok` with targeted tests passing and changed-scope
+coverage at 100 percent. The single reported regression was again
+`local-job-followup-scan-scandir` on `scalar_copy_delta_ms`, from `-378.229` to
+`-366.508` ms. The local-job code, tests, probe script, and probe registry are
+unchanged by this slice; scan counters and candidate counts are identical, and
+the local-job probe remains selected only through the shared runtime-contract
+documentation watch list. This remains out-of-scope measurement noise for the
+tool-registry schema-consistency change, so the hook is rerun with the same
+explicit allow reason before committing.
