@@ -534,6 +534,26 @@ def test_scope_report_selects_prefix_cold_index_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/prefix_block_store.py"],
     )
     assert "prefix-cold-index-scandir" in _selected_probe_ids(scope)
+    assert "prefix-cache-snapshot-byte-streaming" in _selected_probe_ids(scope)
+
+
+def test_prefix_cache_snapshot_bytes_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_PREFIX_CACHE_SNAPSHOT_LAYERS", "8")
+    monkeypatch.setenv("MELIX_PREFIX_CACHE_SNAPSHOT_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_PREFIX_CACHE_SNAPSHOT_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/prefix_cache_snapshot_bytes_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["iteration_count"] == 2.0
+    assert metrics["layer_count"] == 8.0
+    assert metrics["peak_bytes_mean"] >= 0.0
+    assert metrics["sample_count"] == 1.0
 
 
 def test_prefix_cold_index_probe_script_emits_metrics(
@@ -4310,6 +4330,7 @@ def test_text_family_config_probe_script_emits_metrics(
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "prefix-cold-index-scandir",
+        "prefix-cache-snapshot-byte-streaming",
         "dataset-registry-limited-read-streaming",
         "dataset-registry-snapshot-inference-single-pass",
         "event-extraction-alignment-accepted-edge-cache",
