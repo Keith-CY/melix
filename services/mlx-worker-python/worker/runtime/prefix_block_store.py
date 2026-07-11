@@ -21,6 +21,7 @@ _DEFAULT_MAX_MEMORY_BYTES = 4 * 1024 ** 3  # 4 GiB
 _DEFAULT_COLD_MAX_BYTES = 8 * 1024 ** 3  # 8 GiB
 _COLD_DIR_ENV = "MELIX_PREFIX_CACHE_COLD_DIR"
 _COLD_MAX_BYTES_ENV = "MELIX_PREFIX_CACHE_COLD_MAX_BYTES"
+_CACHE_STATE_SEQUENCE_TYPES = (list, tuple)
 
 
 def _is_active_kv_quant_mode(acceleration_mode: str) -> bool:
@@ -435,7 +436,7 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
     for layer_cache in cache_snapshot:
         state = getattr(layer_cache, "state", None)
         if state is not None:
-            if isinstance(state, list | tuple):
+            if isinstance(state, _CACHE_STATE_SEQUENCE_TYPES):
                 for tensor in state:
                     nbytes = getattr(tensor, "nbytes", None)
                     if nbytes is None:
