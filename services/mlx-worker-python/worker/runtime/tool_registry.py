@@ -404,8 +404,15 @@ class ToolRegistry:
         tool_by_name = self._tool_by_name
         missing_tool_sentinel = _MISSING_TOOL_SENTINEL
         for name in names:
-            normalized_name = name.strip()
-            if not normalized_name or normalized_name in seen_names:
+            if not name:
+                continue
+            if name[0].isspace() or name[-1].isspace():
+                normalized_name = name.strip()
+                if not normalized_name:
+                    continue
+            else:
+                normalized_name = name
+            if normalized_name in seen_names:
                 continue
             seen_names.add(normalized_name)
             requested_names_list.append(normalized_name)
