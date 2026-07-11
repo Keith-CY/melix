@@ -25,6 +25,23 @@ The older `prefix-cold-index-scandir` probe remains registered for the same modu
 5. Run focused tests, changed-scope coverage, and the registered probe locally on Linux.
 6. Use GitHub Actions PR-scoped performance as the final merge gate.
 
+## Follow-up Slice: Deferred Nbytes Coercion
+
+The 2026-07-11 follow-up keeps `estimate_cache_snapshot_bytes()` behavior and
+supported cache shapes unchanged, but avoids coercing every discovered `.nbytes`
+value through `int()` inside the per-layer loop. The fallback `size * itemsize`
+path still normalizes multiplicands before computing bytes, and the function
+coerces the final sum before returning so callers keep receiving a plain Python
+integer. The hot path for tensor objects that already expose integer `.nbytes`
+therefore removes repeated per-tensor conversion calls.
+
+Expected effect:
+
+- reduce `prefix-cache-snapshot-byte-streaming` `elapsed_ms_mean` and p95 for
+  repeated cache byte estimation;
+- preserve `peak_bytes_mean` and byte-estimate correctness;
+- leave cold-tier indexing, matching, restore, and eviction behavior unchanged.
+
 ## Success criteria
 
 - Behavior remains equivalent for existing `.state`, `.keys/.values`, `.nbytes`, and `size * itemsize` cache shapes.

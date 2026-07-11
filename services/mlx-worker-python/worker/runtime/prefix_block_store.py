@@ -445,7 +445,7 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
                         if size is not None and itemsize is not None:
                             nbytes = int(size) * int(itemsize)
                     if nbytes is not None:
-                        total += int(nbytes)
+                        total += nbytes
                 continue
             nbytes = getattr(state, "nbytes", None)
             if nbytes is None:
@@ -454,7 +454,7 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
                 if size is not None and itemsize is not None:
                     nbytes = int(size) * int(itemsize)
             if nbytes is not None:
-                total += int(nbytes)
+                total += nbytes
             continue
 
         keys = getattr(layer_cache, "keys", None)
@@ -466,7 +466,7 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
                 if size is not None and itemsize is not None:
                     nbytes = int(size) * int(itemsize)
             if nbytes is not None:
-                total += int(nbytes)
+                total += nbytes
         values = getattr(layer_cache, "values", None)
         if values is not None:
             nbytes = getattr(values, "nbytes", None)
@@ -476,8 +476,8 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
                 if size is not None and itemsize is not None:
                     nbytes = int(size) * int(itemsize)
             if nbytes is not None:
-                total += int(nbytes)
-    return total
+                total += nbytes
+    return int(total)
 
 
 def _session_digest(session_id: str) -> str:
