@@ -28,6 +28,39 @@ from worker.productization.probe_policy import ProbeMode, ProbePolicy
 from telemetry_fixtures import fixture_telemetry_collector, guard_production_safe_probe_paths
 
 
+def _effective_policy_receipt() -> dict[str, object]:
+    return {
+        "schema_version": "melix.text_effective_policy_receipt.v1",
+        "effective_config_hash": "eval-policy-hash",
+        "sampling": {
+            "temperature": 0.2,
+            "temperature_source": "catalog",
+            "top_p": 0.88,
+            "top_p_source": "catalog",
+            "max_tokens": 128,
+            "max_tokens_source": "request",
+            "policy_lookup_status": "known",
+            "policy_canonical_model": "melix-eval-policy",
+            "policy_matched_alias": "melix-eval-policy-q4",
+            "policy_source_url": "https://example.invalid/eval-card",
+            "request_override_applied": False,
+            "recommended_sampling_required": True,
+            "seed": 44,
+            "seed_source": "request",
+        },
+        "chat_template": {
+            "source": "model",
+            "effective_kwargs_hash": "eval-template-hash",
+            "request_override_applied": False,
+            "forced_override_applied": True,
+        },
+        "reasoning": {
+            "mode": "disabled",
+            "source": "request",
+        },
+    }
+
+
 def test_write_jsonl_streams_rows_without_building_one_giant_payload(monkeypatch) -> None:
     writes: list[str] = []
 
@@ -325,7 +358,7 @@ def test_persist_result_includes_extra_artifact_paths_in_evidence(tmp_path: Path
         source_repo="HuggingFaceH4/ultrachat_200k",
         suite_id="mmlu",
         dataset_id="mmlu-dev",
-        sample_size=0,
+        sample_size=2,
         scoring_mode="deterministic_accuracy",
         parameters={},
         status="completed",
@@ -337,23 +370,59 @@ def test_persist_result_includes_extra_artifact_paths_in_evidence(tmp_path: Path
         job_id="eval-extra-artifacts",
         suite_id="mmlu",
         dataset_id="mmlu-dev",
-        sample_size=0,
+        sample_size=2,
         primary_score_name="normalized_exact_match",
-        primary_score_value=0.0,
-        extraction_success_count=0,
-        validation_success_count=0,
-        scored_sample_count=0,
+        primary_score_value=1.0,
+        extraction_success_count=2,
+        validation_success_count=2,
+        scored_sample_count=2,
         failure_count=0,
         duration_seconds=0.0,
         metrics={},
         report_path=str(run_root / "evaluation-result.json"),
         units={},
     )
+    default_sample = build_evaluation_sample_record(
+        job_id="eval-extra-artifacts",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_id="sample-1",
+        system="",
+        input_text="Question?",
+        target="Answer",
+        raw_response="Answer",
+        extracted_result="Answer",
+        typed_score=1.0,
+        time_s=0.01,
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
+        task_kind="text-generation",
+    )
+    policy_sample = build_evaluation_sample_record(
+        job_id="eval-extra-artifacts",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_id="sample-2",
+        system="",
+        input_text="Policy question?",
+        target="Policy answer",
+        raw_response="Policy answer",
+        extracted_result="Policy answer",
+        typed_score=1.0,
+        time_s=0.01,
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
+        task_kind="text-generation",
+        effective_policy_receipt=_effective_policy_receipt(),
+    )
 
     persisted = store.persist_result(
         jobs_root=jobs_root,
         job=job,
         result=result,
+        samples=(default_sample, policy_sample),
         extra_artifact_paths={"agentic_judge_audit": audit_path},
     )
 
@@ -361,6 +430,34 @@ def test_persist_result_includes_extra_artifact_paths_in_evidence(tmp_path: Path
     evidence = json.loads(persisted["evidence"].read_text(encoding="utf-8"))
     artifacts_by_role = {artifact["role"]: artifact for artifact in evidence["artifacts"]}
     assert artifacts_by_role["agentic_judge_audit"]["path"] == "agentic-judge-audit.jsonl"
+    sample_payloads = [
+        json.loads(line)
+        for line in persisted["samples_jsonl"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert sample_payloads[0]["sample_id"] == "sample-1"
+    assert sample_payloads[0]["effective_config_hash"] == ""
+    sample_payload = sample_payloads[1]
+    assert sample_payload["effective_policy_schema"] == "melix.text_effective_policy_receipt.v1"
+    assert sample_payload["effective_config_hash"] == "eval-policy-hash"
+    assert sample_payload["sampling_temperature"] == 0.2
+    assert sample_payload["sampling_policy_canonical_model"] == "melix-eval-policy"
+    assert sample_payload["recommended_sampling_required"] is True
+    assert sample_payload["chat_template_forced_override_applied"] is True
+    assert sample_payload["policy_reasoning_mode"] == "disabled"
+    samples_csv_rows = list(csv.DictReader(persisted["samples_csv"].read_text(encoding="utf-8").splitlines()))
+    assert samples_csv_rows[0]["effective_config_hash"] == ""
+    samples_csv_row = samples_csv_rows[1]
+    assert samples_csv_row["effective_config_hash"] == "eval-policy-hash"
+    assert samples_csv_row["sampling_top_p"] == "0.88"
+    assert samples_csv_row["sampling_seed"] == "44"
+    assert samples_csv_row["chat_template_source"] == "model"
+
+    export_bundle = collect_evaluation_artifacts(jobs_root)
+    export_sample_rows = list(csv.DictReader(build_evaluation_samples_csv(export_bundle).splitlines()))
+    assert export_sample_rows[0]["effective_config_hash"] == ""
+    assert export_sample_rows[1]["sampling_policy_source_url"] == "https://example.invalid/eval-card"
+    assert export_sample_rows[1]["chat_template_effective_kwargs_hash"] == "eval-template-hash"
+    assert export_sample_rows[1]["policy_reasoning_source"] == "request"
 
 
 def test_evaluation_store_evidence_policy_uses_full_collector() -> None:

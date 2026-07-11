@@ -35,6 +35,39 @@ class _CountingRow:
         return dict(self.payload)
 
 
+def _effective_policy_receipt() -> dict[str, object]:
+    return {
+        "schema_version": "melix.text_effective_policy_receipt.v1",
+        "effective_config_hash": "policy-hash-123",
+        "sampling": {
+            "temperature": 0.7,
+            "temperature_source": "catalog",
+            "top_p": 0.92,
+            "top_p_source": "catalog",
+            "max_tokens": 256,
+            "max_tokens_source": "request",
+            "policy_lookup_status": "known",
+            "policy_canonical_model": "melix-dev-policy",
+            "policy_matched_alias": "melix-dev-policy-q4",
+            "policy_source_url": "https://example.invalid/model-card",
+            "request_override_applied": True,
+            "recommended_sampling_required": True,
+            "seed": 123,
+            "seed_source": "request",
+        },
+        "chat_template": {
+            "source": "model+request",
+            "effective_kwargs_hash": "template-hash-456",
+            "request_override_applied": True,
+            "forced_override_applied": False,
+        },
+        "reasoning": {
+            "mode": "enabled",
+            "source": "template",
+        },
+    }
+
+
 def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
     tmp_path: Path,
 ) -> None:
@@ -189,6 +222,7 @@ def test_persist_serving_benchmark_writes_request_phase_rows_and_exports(
                 "agentic_tool.observation_count": 1.0,
                 "agentic_tool.observation_emitted_bytes": 64.0,
             },
+            effective_policy_receipt=_effective_policy_receipt(),
             created_at_unix_ms=101,
         ),
         build_serving_benchmark_request_row(
@@ -231,6 +265,14 @@ def test_persist_serving_benchmark_writes_request_phase_rows_and_exports(
     ]
     assert [row["phase"] for row in jsonl_rows] == ["tool_turn", "final_answer"]
     assert jsonl_rows[0]["tool_name"] == "visit"
+    assert jsonl_rows[0]["effective_policy_schema"] == "melix.text_effective_policy_receipt.v1"
+    assert jsonl_rows[0]["effective_config_hash"] == "policy-hash-123"
+    assert jsonl_rows[0]["sampling_temperature"] == 0.7
+    assert jsonl_rows[0]["sampling_policy_lookup_status"] == "known"
+    assert jsonl_rows[0]["sampling_request_override_applied"] is True
+    assert jsonl_rows[0]["recommended_sampling_required"] is True
+    assert jsonl_rows[0]["chat_template_source"] == "model+request"
+    assert jsonl_rows[0]["policy_reasoning_mode"] == "enabled"
     assert jsonl_rows[1]["tool_call_id"] == ""
 
     export_bundle = collect_benchmark_artifacts(jobs_root)
@@ -242,6 +284,10 @@ def test_persist_serving_benchmark_writes_request_phase_rows_and_exports(
     assert request_csv_rows[0]["tool_call_id"] == "visit-1"
     assert request_csv_rows[0]["compare_target_kind"] == "base"
     assert request_csv_rows[0]["base_model_id"] == "melix-dev-text"
+    assert request_csv_rows[0]["effective_config_hash"] == "policy-hash-123"
+    assert request_csv_rows[0]["sampling_top_p"] == "0.92"
+    assert request_csv_rows[0]["sampling_policy_source_url"] == "https://example.invalid/model-card"
+    assert request_csv_rows[0]["chat_template_effective_kwargs_hash"] == "template-hash-456"
     assert request_csv_rows[1]["phase"] == "final_answer"
 
 
@@ -973,6 +1019,7 @@ def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(
             observation_bytes=48,
             fatal_rate=0.0,
             turn_count=2,
+            effective_policy_receipt=_effective_policy_receipt(),
         ),
     )
 
@@ -1001,6 +1048,13 @@ def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(
         for line in persisted["requests_jsonl"].read_text(encoding="utf-8").splitlines()
         if line.strip()
     ] == [request_rows[0].to_dict()]
+    matrix_request_payload = json.loads(
+        persisted["requests_jsonl"].read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert matrix_request_payload["effective_policy_schema"] == "melix.text_effective_policy_receipt.v1"
+    assert matrix_request_payload["sampling_max_tokens"] == 256
+    assert matrix_request_payload["sampling_policy_matched_alias"] == "melix-dev-policy-q4"
+    assert matrix_request_payload["policy_reasoning_source"] == "template"
     assert persisted["requests_jsonl"].read_text(encoding="utf-8").endswith("\n")
     assert "job_id,task_kind,source_repo,model_id,suite_id,context_length" in persisted["summary_csv"].read_text(
         encoding="utf-8"
@@ -1013,6 +1067,10 @@ def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(
     ].read_text(encoding="utf-8")
     assert ",2,12.5,96,0.5,4," in persisted["summary_csv"].read_text(encoding="utf-8")
     assert ",1,6.25,48,0.0,2," in persisted["requests_csv"].read_text(encoding="utf-8")
+    matrix_request_csv_rows = list(csv.DictReader(persisted["requests_csv"].read_text(encoding="utf-8").splitlines()))
+    assert matrix_request_csv_rows[0]["sampling_temperature_source"] == "catalog"
+    assert matrix_request_csv_rows[0]["recommended_sampling_required"] == "True"
+    assert matrix_request_csv_rows[0]["chat_template_request_override_applied"] == "True"
     run_record = json.loads(persisted["run_record"].read_text(encoding="utf-8"))
     assert run_record["schema_version"] == "melix.run_record.v1"
     assert run_record["run_kind"] == "benchmark_matrix"

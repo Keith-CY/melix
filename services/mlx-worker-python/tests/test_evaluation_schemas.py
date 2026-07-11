@@ -9,6 +9,11 @@ from worker.productization.evaluation_schemas import (
     build_evaluation_result_record,
     build_evaluation_sample_record,
 )
+from worker.productization.effective_policy_evidence import empty_effective_policy_evidence
+
+
+def _default_effective_policy_fields() -> dict[str, object]:
+    return empty_effective_policy_evidence()
 
 
 def test_build_dataset_package_manifest_preserves_dataset_identity() -> None:
@@ -166,6 +171,7 @@ def test_build_evaluation_sample_record_preserves_sample_payload() -> None:
         "raw_response_chars": 1,
         "extracted_result_chars": 1,
         "failure_stage": "",
+        **_default_effective_policy_fields(),
         "final_answer": "4",
         "parse_status": "extracted",
     }
@@ -393,6 +399,7 @@ def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -
         "raw_response_chars": 11,
         "extracted_result_chars": 3,
         "failure_stage": "",
+        **_default_effective_policy_fields(),
         "final_answer": "Cat",
         "parse_status": "extracted",
     }

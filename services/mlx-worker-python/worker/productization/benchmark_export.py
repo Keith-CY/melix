@@ -9,6 +9,10 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 
+from worker.productization.effective_policy_evidence import (
+    EFFECTIVE_POLICY_EVIDENCE_FIELDS,
+    empty_effective_policy_evidence,
+)
 from worker.trajectory_provenance import TRAJECTORY_PROVENANCE_CSV_FIELDS
 
 _EXPORT_SCHEMA_VERSION = "melix.benchmark_export.v1"
@@ -1516,6 +1520,7 @@ def _canonical_benchmark_request_columns() -> list[str]:
         "adapter_set_hash",
         "adapter_activation_mode",
         "created_at_unix_ms",
+        *EFFECTIVE_POLICY_EVIDENCE_FIELDS,
         *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 
@@ -1558,6 +1563,7 @@ def _canonical_evaluation_sample_columns() -> list[str]:
         "failure_stage",
         "final_answer",
         "parse_status",
+        *EFFECTIVE_POLICY_EVIDENCE_FIELDS,
         *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 
@@ -1610,6 +1616,10 @@ def _normalized_evaluation_sample_row(row: dict[str, object]) -> dict[str, objec
         "failure_stage": row.get("failure_stage", ""),
         "final_answer": row.get("final_answer", row.get("extracted_result", row.get("predicted", ""))),
         "parse_status": parse_status,
+        **{
+            field_name: row.get(field_name, default_value)
+            for field_name, default_value in empty_effective_policy_evidence().items()
+        },
         **{
             field_name: row.get(field_name, "")
             for field_name in TRAJECTORY_PROVENANCE_CSV_FIELDS
@@ -1722,6 +1732,7 @@ def _canonical_benchmark_matrix_request_columns() -> list[str]:
         "fatal_rate",
         "turn_count",
         "created_at_unix_ms",
+        *EFFECTIVE_POLICY_EVIDENCE_FIELDS,
         *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 

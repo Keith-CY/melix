@@ -4484,6 +4484,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     video_preprocessing_probe = None
     gemma4_weight_presence_probe = None
     worker_registry_probe = None
+    evaluation_store_samples_probe = None
     swift_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
@@ -4509,8 +4510,18 @@ def test_registered_probes_expose_focused_commands() -> None:
             gemma4_weight_presence_probe = probe
         if probe.probe_id == "worker-registry-resident-bytes-accumulator":
             worker_registry_probe = probe
+        if probe.probe_id == "evaluation-store-samples-csv-streaming":
+            evaluation_store_samples_probe = probe
         if probe.probe_id == "swift-cli-json-envelope-encoding":
             swift_probe = probe
+
+    assert evaluation_store_samples_probe is not None
+    evaluation_store_samples_metrics = {
+        metric.key: metric for metric in evaluation_store_samples_probe.metrics
+    }
+    assert evaluation_store_samples_metrics["elapsed_ms_mean"].warn_pct == 20.0
+    assert evaluation_store_samples_metrics["elapsed_ms_mean"].warn_abs == 350.0
+    assert evaluation_store_samples_metrics["peak_bytes_mean"].warn_pct == 5.0
 
     assert worker_registry_probe is not None
     assert "test_worker_registry_reuses_sorted_handles_across_listing_calls" in worker_registry_probe.test_command

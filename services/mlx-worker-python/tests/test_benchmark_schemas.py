@@ -15,6 +15,7 @@ from worker.productization.benchmark_schemas import (
     build_serving_benchmark_job,
     build_serving_benchmark_results,
 )
+from worker.productization.effective_policy_evidence import empty_effective_policy_evidence
 
 
 def _default_speculative_dflash_fields() -> dict[str, object]:
@@ -54,6 +55,10 @@ def _default_agentic_benchmark_fields() -> dict[str, object]:
         "fatal_rate": 0.0,
         "turn_count": 0,
     }
+
+
+def _default_effective_policy_fields() -> dict[str, object]:
+    return empty_effective_policy_evidence()
 
 
 def _default_request_row_fields() -> dict[str, object]:
@@ -734,6 +739,7 @@ def test_serving_benchmark_request_rows_preserve_tool_turn_and_final_answer_phas
         "observation_bytes": 42,
         "fatal_rate": 0.0,
         "turn_count": 2,
+        **_default_effective_policy_fields(),
         "compare_target_kind": "base",
         "base_model_id": "melix-dev-text",
         "adapter_manifest_path": "",
@@ -1116,6 +1122,7 @@ def test_build_benchmark_matrix_job_and_rows_preserve_canonical_fields() -> None
             "feature_guardrail_reason": "disk_streaming_speculative_fanout_cap",
         },
         **_default_agentic_benchmark_fields(),
+        **_default_effective_policy_fields(),
         "created_at_unix_ms": 101,
     }
 
