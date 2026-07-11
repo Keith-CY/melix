@@ -961,6 +961,8 @@ def test_agentic_tool_healing_missing_arguments_still_uses_admission() -> None:
     [
         (None, "unsupported_tool_response"),
         ("", "empty_tool_response"),
+        ([], "empty_tool_response"),
+        ((), "empty_tool_response"),
         ("assistant text ```json\n{\"name\":\"local_compute\",\"arguments\":{\"code\":\"SECRET\"}}\n```", "unparseable_tool_response"),
         ("```json\n{\"name\":\"local_compute\",\"arguments\":{\"code\":\"SECRET\"}}", "fenced_json_tool_call"),
         ("```python\n{\"name\":\"local_compute\",\"arguments\":{\"code\":\"SECRET\"}}\n```", "wrong_envelope_tool_call"),

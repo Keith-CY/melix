@@ -367,14 +367,19 @@ def _recover_agentic_tool_call_candidates(response: object) -> dict[str, object]
             source_format="provider_tool_fragment",
         )
     if isinstance(response, (list, tuple)):
-        if response:
+        if not response:
             return {
-                "source_format": "native_tool_calls",
-                "calls": tuple(
-                    _tool_healing_call_from_payload(item) or item for item in response
-                ),
-                "nudge_reason": "",
+                "source_format": "empty_tool_response",
+                "calls": (),
+                "nudge_reason": "tool_call_wire_shape_required",
             }
+        return {
+            "source_format": "native_tool_calls",
+            "calls": tuple(
+                _tool_healing_call_from_payload(item) or item for item in response
+            ),
+            "nudge_reason": "",
+        }
     return {
         "source_format": "unsupported_tool_response",
         "calls": (),
