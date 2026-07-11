@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -80,7 +81,10 @@ def evaluate_heldout_if_requested(
             "backend": "",
         }
         if include_baseline:
-            receipt.update(_baseline_not_run_fields("adapter_evaluation_not_completed"))
+            # No held-out split exists, so the adapter pass was never attempted;
+            # reuse the receipt's own skip reason instead of implying the
+            # adapter evaluation ran and failed to finish.
+            receipt.update(_baseline_not_run_fields(str(receipt["reason"])))
         return receipt
 
     heldout_request = HeldoutEvaluationRequest(
@@ -188,6 +192,10 @@ def _baseline_comparison_fields(
         if adapter_result.perplexity and adapter_result.perplexity > 0
         else None
     )
+    # A divergent loss overflows math.exp to inf on either pass; inf/inf is
+    # NaN and inf/finite is inf — neither survives strict JSON serialization.
+    if perplexity_ratio is not None and not math.isfinite(perplexity_ratio):
+        perplexity_ratio = None
     return {
         "baseline_status": "completed",
         "baseline_reason": "",

@@ -321,7 +321,11 @@ def test_lora_training_pipeline_records_heldout_baseline_comparison(
     assert receipt["baseline_loss"] == pytest.approx(0.42)
     assert receipt["loss_delta"] == pytest.approx(0.13)
     assert run_record["heldout_baseline_loss"] == pytest.approx(0.42)
+    assert run_record["heldout_baseline_perplexity"] == pytest.approx(math.exp(0.42))
     assert run_record["heldout_loss_delta"] == pytest.approx(0.13)
+    assert run_record["heldout_perplexity_ratio"] == pytest.approx(
+        math.exp(0.42) / math.exp(0.29)
+    )
 
 
 def test_lora_training_pipeline_baseline_failure_keeps_adapter_heldout_metrics(
@@ -423,6 +427,86 @@ def test_heldout_baseline_skipped_when_adapter_evaluation_fails(
     assert manifest["heldout_baseline_reason"] == "adapter_evaluation_not_completed"
     assert manifest["heldout_baseline_loss"] is None
     assert manifest["heldout_loss_delta"] is None
+
+
+def test_heldout_baseline_requested_without_test_split_reuses_skip_reason(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _write_dataset_package(tmp_path / "dataset-baseline-no-split")
+
+    result = LoRATrainingPipeline(runner=DeterministicLoRARunner()).run(
+        job_id="train-heldout-baseline-no-split",
+        request_ext={
+            "operation": "train_lora",
+            "adapter_name": "heldout-baseline-no-split-adapter",
+            "dataset_uri": str(dataset_dir),
+            "max_steps": "0",
+            "heldout_baseline_compare": "true",
+        },
+        source_model=_text_model(family_id="qwen"),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    manifest = result.manifest
+    # No held-out split: the baseline reason mirrors the receipt's own skip
+    # reason instead of implying the adapter evaluation ran and failed.
+    assert manifest["heldout_evaluation_status"] == "skipped"
+    assert manifest["heldout_baseline_status"] == "skipped"
+    assert manifest["heldout_baseline_reason"] == "test_split_not_requested"
+    assert manifest["heldout_baseline_loss"] is None
+    assert manifest["heldout_loss_delta"] is None
+
+
+class InfinitePerplexityBaselineRunner(DeterministicLoRARunner):
+    def evaluate_heldout_native(
+        self,
+        request: HeldoutEvaluationRequest,
+    ) -> HeldoutEvaluationResult:
+        if request.adapter_dir is None:
+            return HeldoutEvaluationResult(
+                loss=800.0,
+                perplexity=float("inf"),
+                sample_count=request.test_sample_count,
+                execution_backend="native",
+            )
+        return super().evaluate_heldout_native(request)
+
+
+def test_heldout_baseline_non_finite_perplexity_ratio_is_dropped(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _heldout_dataset_package(
+        tmp_path, "dataset-inf-baseline-perplexity", "melix-heldout-inf-ppl"
+    )
+
+    result = LoRATrainingPipeline(runner=InfinitePerplexityBaselineRunner()).run(
+        job_id="train-heldout-inf-ppl",
+        request_ext={
+            "operation": "train_lora",
+            "adapter_name": "heldout-inf-ppl-adapter",
+            "dataset_uri": str(dataset_dir),
+            "max_steps": "0",
+            "test_ratio": "0.25",
+            "heldout_baseline_compare": "true",
+        },
+        source_model=_text_model(family_id="qwen"),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    manifest = result.manifest
+    receipt = json.loads(
+        Path(manifest["heldout_evaluation_receipt_path"]).read_text(encoding="utf-8")
+    )
+
+    assert manifest["heldout_baseline_status"] == "completed"
+    assert manifest["heldout_baseline_loss"] == pytest.approx(800.0)
+    assert manifest["heldout_loss_delta"] == pytest.approx(800.0 - 0.29)
+    # inf / finite would serialize as an Infinity token strict JSON decoders
+    # reject; the non-finite ratio is dropped instead.
+    assert receipt["perplexity_ratio"] is None
+    assert manifest["heldout_perplexity_ratio"] is None
 
 
 def test_heldout_evaluation_skipped_reason_preserves_empty_after_formatting(

@@ -439,8 +439,14 @@ class LoraExperimentStore:
             "heldout_baseline_loss": _optional_finite_float(
                 _manifest_optional_float(manifest, "heldout_baseline_loss")
             ),
+            "heldout_baseline_perplexity": _optional_finite_float(
+                _manifest_optional_float(manifest, "heldout_baseline_perplexity")
+            ),
             "heldout_loss_delta": _optional_finite_float(
                 _manifest_optional_float(manifest, "heldout_loss_delta")
+            ),
+            "heldout_perplexity_ratio": _optional_finite_float(
+                _manifest_optional_float(manifest, "heldout_perplexity_ratio")
             ),
             "loss_series_row_count": _int_value(training.get("loss_series_row_count")),
             "loss_series": _list_value(training.get("loss_series")),
