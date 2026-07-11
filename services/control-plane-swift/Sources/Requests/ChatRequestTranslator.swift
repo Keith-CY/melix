@@ -19,6 +19,47 @@ public enum TextWorkflowKind: String, Sendable, Codable, Equatable {
     case backgroundAnalysis = "background_analysis"
 }
 
+public enum RecommendedSamplingPolicyMode: Sendable, Equatable, Codable {
+    case off
+    case strict
+
+    public var requiresKnownPolicy: Bool {
+        self == .strict
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let boolValue = try? container.decode(Bool.self) {
+            self = boolValue ? .strict : .off
+            return
+        }
+        let rawValue = try container.decode(String.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch rawValue {
+        case "", "off", "false", "none", "disabled":
+            self = .off
+        case "strict", "required", "require", "true":
+            self = .strict
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "melix_recommended_sampling must be false, off, true, required, or strict."
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .off:
+            try container.encode("off")
+        case .strict:
+            try container.encode("strict")
+        }
+    }
+}
+
 public struct HarmonyMessageMetadata: Sendable, Equatable {
     public let channel: String?
     public let recipient: String?
@@ -151,6 +192,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     public let mediaPartsSummary: NormalizedMediaPartsSummary
     public let orderedMessagePartsRequired: Bool
     public let legacyImageFallbackInjected: Bool
+    public let recommendedSampling: RecommendedSamplingPolicyMode?
     public let openAICompatibilityReceipts: [String: String]
 
     public init(
@@ -191,6 +233,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         mediaPartsSummary: NormalizedMediaPartsSummary = .init(),
         orderedMessagePartsRequired: Bool = false,
         legacyImageFallbackInjected: Bool = false,
+        recommendedSampling: RecommendedSamplingPolicyMode? = nil,
         openAICompatibilityReceipts: [String: String] = [:]
     ) {
         self.endpoint = endpoint
@@ -232,6 +275,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         self.mediaPartsSummary = mediaPartsSummary
         self.orderedMessagePartsRequired = orderedMessagePartsRequired
         self.legacyImageFallbackInjected = legacyImageFallbackInjected
+        self.recommendedSampling = recommendedSampling
         self.openAICompatibilityReceipts = openAICompatibilityReceipts.filter { key, value in
             !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -303,6 +347,7 @@ public extension NormalizedTextRequest {
             mediaPartsSummary: mediaPartsSummary,
             orderedMessagePartsRequired: orderedMessagePartsRequired,
             legacyImageFallbackInjected: legacyImageFallbackInjected,
+            recommendedSampling: recommendedSampling,
             openAICompatibilityReceipts: openAICompatibilityReceipts
         )
     }
@@ -401,6 +446,7 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let mediaPartsSummary: NormalizedMediaPartsSummary
     public let orderedMessagePartsRequired: Bool
     public let legacyImageFallbackInjected: Bool
+    public let recommendedSamplingRequired: Bool
     public let openAICompatibilityReceipts: [String: String]
 }
 
@@ -734,6 +780,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public let legacyImage: String?
     public let legacyImageURL: String?
     public let legacyImageBase64: String?
+    public let recommendedSampling: RecommendedSamplingPolicyMode?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -777,6 +824,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         case legacyImage = "image"
         case legacyImageURL = "image_url"
         case legacyImageBase64 = "image_base64"
+        case recommendedSampling = "melix_recommended_sampling"
     }
 
     public init(
@@ -819,7 +867,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         chatTemplateKwargs: ChatTemplateRequestConfiguration? = nil,
         legacyImage: String? = nil,
         legacyImageURL: String? = nil,
-        legacyImageBase64: String? = nil
+        legacyImageBase64: String? = nil,
+        recommendedSampling: RecommendedSamplingPolicyMode? = nil
     ) {
         self.model = model
         self.messages = messages
@@ -861,6 +910,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.legacyImage = legacyImage
         self.legacyImageURL = legacyImageURL
         self.legacyImageBase64 = legacyImageBase64
+        self.recommendedSampling = recommendedSampling
     }
 
     public init(from decoder: Decoder) throws {
@@ -911,6 +961,10 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.legacyImage = try container.decodeIfPresent(String.self, forKey: .legacyImage)
         self.legacyImageURL = try container.decodeIfPresent(String.self, forKey: .legacyImageURL)
         self.legacyImageBase64 = try container.decodeIfPresent(String.self, forKey: .legacyImageBase64)
+        self.recommendedSampling = try container.decodeIfPresent(
+            RecommendedSamplingPolicyMode.self,
+            forKey: .recommendedSampling
+        )
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -955,6 +1009,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         try container.encodeIfPresent(legacyImage, forKey: .legacyImage)
         try container.encodeIfPresent(legacyImageURL, forKey: .legacyImageURL)
         try container.encodeIfPresent(legacyImageBase64, forKey: .legacyImageBase64)
+        try container.encodeIfPresent(recommendedSampling, forKey: .recommendedSampling)
     }
 
     public var structuredOutputConfiguration: StructuredOutputConfiguration? {
@@ -2216,6 +2271,7 @@ public struct ChatRequestTranslator: Sendable {
             toolChoice: request.normalizedToolChoice,
             chatTemplate: request.chatTemplateSelection,
             legacyImageFallbackInjected: fallbackInjection.injected,
+            recommendedSampling: request.recommendedSampling,
             openAICompatibilityReceipts: request.compatibilityReceipts
         )
     }
@@ -2282,6 +2338,7 @@ public struct ChatRequestTranslator: Sendable {
             orderedMessagePartsRequired: request.messages.contains(where: { $0.contentParts != nil })
                 || !fallbackInjection.messages.flatMap(\.parts).filter { $0.media.mediaType != .text }.isEmpty,
             legacyImageFallbackInjected: fallbackInjection.injected,
+            recommendedSampling: request.recommendedSampling,
             openAICompatibilityReceipts: request.compatibilityReceipts
         )
     }
@@ -2479,6 +2536,7 @@ public struct ChatRequestTranslator: Sendable {
         mediaPartsSummary: NormalizedMediaPartsSummary? = nil,
         orderedMessagePartsRequired: Bool? = nil,
         legacyImageFallbackInjected: Bool = false,
+        recommendedSampling: RecommendedSamplingPolicyMode? = nil,
         openAICompatibilityReceipts: [String: String] = [:]
     ) -> NormalizedTextRequest {
         let resolvedMediaPartsSummary = mediaPartsSummary
@@ -2523,6 +2581,7 @@ public struct ChatRequestTranslator: Sendable {
             mediaPartsSummary: resolvedMediaPartsSummary,
             orderedMessagePartsRequired: resolvedOrderedMessagePartsRequired,
             legacyImageFallbackInjected: legacyImageFallbackInjected,
+            recommendedSampling: recommendedSampling,
             openAICompatibilityReceipts: openAICompatibilityReceipts
         )
     }

@@ -8272,6 +8272,173 @@ struct OpenAIHandlerTests {
         #expect(request.execution.ext["melix.gateway.paged_cache.disabled_reason"] == "not_configurable")
     }
 
+    @Test("POST /v1/chat/completions rejects strict recommended sampling when policy is unknown")
+    func postChatCompletionsRejectsStrictRecommendedSamplingWhenPolicyIsUnknown() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-http-strict-unknown", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let workerRegistry = WorkerRegistry(defaultTextClient: workerClient)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: workerRegistry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-strict-unknown" }),
+            gatewayServingDefaultsStore: isolatedGatewayServingDefaultsStore(prefix: "melix-strict-unknown")
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "melix_recommended_sampling": "strict",
+              "messages": [
+                { "role": "user", "content": "Require source-backed sampling policy." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "invalid_argument")
+        #expect(error["field"] as? String == "melix_recommended_sampling")
+        #expect(error["phase"] as? String == "sampling_policy_admission")
+        #expect(error["sampling_policy_error"] as? String == "unknown_model_policy")
+        #expect(error["model"] as? String == "melix-dev-text")
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions reports requested model for strict recommended sampling without catalog model")
+    func postChatCompletionsReportsRequestedModelForStrictRecommendedSamplingWithoutCatalogModel() async throws {
+        let catalog = ModelCatalog(seedModels: [])
+        let workerClient = ScriptedWorkerClient(events: [])
+        let workerRegistry = WorkerRegistry(defaultTextClient: workerClient)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: workerRegistry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-strict-missing-model" }),
+            gatewayServingDefaultsStore: isolatedGatewayServingDefaultsStore(prefix: "melix-strict-missing-model")
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "uncatalogued-strict-text",
+              "stream": true,
+              "melix_recommended_sampling": true,
+              "messages": [
+                { "role": "user", "content": "Require source-backed sampling policy." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["sampling_policy_error"] as? String == "unknown_model_policy")
+        #expect(error["model"] as? String == "uncatalogued-strict-text")
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions dispatches strict recommended sampling when catalog policy is known")
+    func postChatCompletionsDispatchesStrictRecommendedSamplingWhenCatalogPolicyIsKnown() async throws {
+        let sourceURL = "https://github.com/Keith-CY/melix/blob/main/docs/plans/2026-07-11-issue-1385-strict-policy-opt-in.md"
+        let policyCatalog = TextModelPolicyCatalog(entries: [
+            .init(
+                canonicalModelID: "melix-dev-text",
+                aliases: ["melix-dev-text-q4.gguf"],
+                sampling: .init(temperature: 0.31, topP: 0.89, maxTokens: 640),
+                sourceURL: sourceURL
+            ),
+        ])
+        var model = warmModel()
+        model.settings.ext["melix.model_path"] = "/models/melix-dev-text-q4.gguf"
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-http-strict-known", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let workerRegistry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: workerRegistry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-strict-known" }),
+            textModelPolicyCatalog: policyCatalog,
+            gatewayServingDefaultsStore: isolatedGatewayServingDefaultsStore(prefix: "melix-strict-known")
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "melix_recommended_sampling": "strict",
+              "messages": [
+                { "role": "user", "content": "Require source-backed sampling policy." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200, Comment(rawValue: payload))
+        #expect(request.sampling.temperature == 0.31)
+        #expect(request.sampling.topP == 0.89)
+        #expect(request.sampling.maxOutputTokens == 640)
+        #expect(request.execution.ext["melix.effective_policy.sampling.policy_lookup_status"] == "known")
+        #expect(request.execution.ext["melix.effective_policy.sampling.policy_canonical_model"] == "melix-dev-text")
+        #expect(request.execution.ext["melix.effective_policy.sampling.policy_matched_alias"] == "melix-dev-text")
+        #expect(request.execution.ext["melix.effective_policy.sampling.policy_source_url"] == sourceURL)
+        #expect(request.execution.ext["melix.effective_policy.sampling.recommended_sampling_required"] == "true")
+    }
+
     @Test("responses requests preserve harmony metadata while keeping standard stream frames")
     func harmonyResponsesRequestsPreserveMetadataAndStreamFrames() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])

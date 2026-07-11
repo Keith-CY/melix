@@ -1029,6 +1029,7 @@ button.primary:active {
     private let translator: ChatRequestTranslator
     private let sseWriter: SSEStreamWriter
     private let mcpToolCatalog: MCPToolCatalog
+    private let textModelPolicyCatalog: TextModelPolicyCatalog
     private let audioAssetManager: AudioAssetManager
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
     private let gatewayConfigStore: GatewayConfigStore
@@ -1057,6 +1058,7 @@ button.primary:active {
         translator: ChatRequestTranslator = ChatRequestTranslator(),
         sseWriter: SSEStreamWriter? = nil,
         mcpToolCatalog: MCPToolCatalog = .empty,
+        textModelPolicyCatalog: TextModelPolicyCatalog = .default,
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
         audioAssetManager: AudioAssetManager = AudioAssetManager(),
         gatewayAccessPolicyStore: GatewayAccessPolicyStore? = nil,
@@ -1085,6 +1087,7 @@ button.primary:active {
         self.translator = translator
         self.sseWriter = sseWriter ?? SSEStreamWriter(metricsStore: metricsStore)
         self.mcpToolCatalog = mcpToolCatalog
+        self.textModelPolicyCatalog = textModelPolicyCatalog
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
         self.gatewayConfigStore = gatewayConfigStore ?? Self.transientGatewayConfigStore(environment: environment)
@@ -2949,10 +2952,18 @@ button.primary:active {
         let modelSamplingPolicy: ModelSamplingPolicy? = if let resolvedModel {
             ModelSamplingPolicy(
                 modelID: resolvedModel.modelID,
-                modelSettings: resolvedModel.settings
+                modelSettings: resolvedModel.settings,
+                catalog: textModelPolicyCatalog
             )
         } else {
             nil
+        }
+        if let admissionFailure = strictRecommendedSamplingAdmissionFailureResponse(
+            normalized: executionRequest,
+            model: resolvedModel,
+            modelSamplingPolicy: modelSamplingPolicy
+        ) {
+            throw HTTPRequestHandlingError.gatewayResponse(admissionFailure)
         }
         if let admissionFailure = promptBudgetAdmissionFailureResponse(
             normalized: executionRequest,
@@ -3921,6 +3932,28 @@ button.primary:active {
         await idleSweepScheduler.schedule(
             servedModelIDs: request.servedModelIDs,
             idleTimeoutSeconds: request.idleTimeoutSeconds
+        )
+    }
+
+    private func strictRecommendedSamplingAdmissionFailureResponse(
+        normalized: NormalizedTextRequest,
+        model: Melix_Controlplane_V1_ModelSummary?,
+        modelSamplingPolicy: ModelSamplingPolicy?
+    ) -> HTTPResponse? {
+        guard normalized.endpoint == .chatCompletions,
+              normalized.recommendedSampling?.requiresKnownPolicy == true,
+              modelSamplingPolicy?.lookupStatus != "known"
+        else {
+            return nil
+        }
+        let resolvedModelID = model?.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let responseModelID = if let resolvedModelID, !resolvedModelID.isEmpty {
+            resolvedModelID
+        } else {
+            normalized.model
+        }
+        return strictRecommendedSamplingUnknownPolicyResponse(
+            modelID: responseModelID
         )
     }
 
@@ -5104,6 +5137,22 @@ button.primary:active {
         jsonResponse(
             statusCode: 400,
             payload: ["error": ["code": "invalid_argument", "message": message]]
+        )
+    }
+
+    private func strictRecommendedSamplingUnknownPolicyResponse(modelID: String) -> HTTPResponse {
+        jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "invalid_argument",
+                    "field": "melix_recommended_sampling",
+                    "phase": "sampling_policy_admission",
+                    "sampling_policy_error": "unknown_model_policy",
+                    "model": modelID,
+                    "message": "Recommended sampling was required, but Melix has no source-backed policy for the selected model.",
+                ],
+            ]
         )
     }
 
