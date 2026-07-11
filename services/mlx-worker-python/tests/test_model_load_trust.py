@@ -108,6 +108,32 @@ def test_worker_rejects_custom_loader_metadata_without_explicit_trust(tmp_path: 
     assert backend.load_calls == []
 
 
+def test_custom_loader_rejection_policy_uses_isolated_cached_template(tmp_path: Path) -> None:
+    model = _custom_loader_text_model(tmp_path)
+    runtime = RecordingTextBackend()
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as first:
+        resolve_model_load_trust_policy(
+            model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=runtime,
+        )
+    first.value.policy.policy_source = "mutated"
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as second:
+        resolve_model_load_trust_policy(
+            model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=runtime,
+        )
+
+    assert second.value.policy is not first.value.policy
+    assert second.value.policy.policy_source == "default_safe"
+    assert second.value.policy.block_reason == "custom_loader_requires_trust_remote_code"
+
+
 def test_worker_trusted_custom_loader_receipt_passes_trust_remote_code(tmp_path: Path) -> None:
     backend = RecordingTextBackend()
     service = WorkerRuntimeService(

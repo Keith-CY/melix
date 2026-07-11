@@ -106,24 +106,31 @@ def resolve_model_load_trust_policy(
     if not _is_trust_applicable(runtime_kind, loader_family, runtime_name, runtime):
         return _not_applicable_policy(requested_mode, route_class, loader_family)
 
-    policy = MODEL_LOAD_TRUST_POLICY()
-    policy.requested_mode = requested_mode
-    if request_policy is None:
-        policy.policy_source = policy_source
-    else:
-        policy.policy_source = _non_empty(
+    resolved_policy_source = policy_source
+    if request_policy is not None:
+        resolved_policy_source = _non_empty(
             getattr(request_policy, "policy_source", ""),
             policy_source,
         )
+    custom_loader_required, detection_source = _detect_custom_loader_requirement(model_spec)
+    if custom_loader_required and requested_mode != MODEL_LOAD_TRUST_TRUST_REMOTE_CODE:
+        raise ModelLoadTrustRejection(
+            _custom_loader_rejection_policy(
+                requested_mode,
+                resolved_policy_source,
+                route_class,
+                loader_family,
+                detection_source,
+            )
+        )
+    policy = MODEL_LOAD_TRUST_POLICY()
+    policy.requested_mode = requested_mode
+    policy.policy_source = resolved_policy_source
     policy.route_class = route_class
     policy.loader_family = loader_family
     policy.effective_mode = requested_mode
-    custom_loader_required, detection_source = _detect_custom_loader_requirement(model_spec)
     policy.custom_loader_required = custom_loader_required
     policy.custom_loader_detection_source = detection_source
-    if custom_loader_required and requested_mode != MODEL_LOAD_TRUST_TRUST_REMOTE_CODE:
-        policy.block_reason = BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST
-        raise ModelLoadTrustRejection(policy)
     return policy
 
 
@@ -166,6 +173,44 @@ def load_kwargs_for_policy(policy: common_pb2.ModelLoadTrustPolicy) -> dict[str,
     if policy.effective_mode != MODEL_LOAD_TRUST_TRUST_REMOTE_CODE:
         return {}
     return {"trust_remote_code": True}
+
+
+def _custom_loader_rejection_policy(
+    requested_mode: int,
+    policy_source: str,
+    route_class: int,
+    loader_family: str,
+    detection_source: str,
+) -> common_pb2.ModelLoadTrustPolicy:
+    return MODEL_LOAD_TRUST_POLICY.FromString(
+        _custom_loader_rejection_policy_bytes(
+            requested_mode,
+            policy_source,
+            route_class,
+            loader_family,
+            detection_source,
+        )
+    )
+
+
+@lru_cache(maxsize=128)
+def _custom_loader_rejection_policy_bytes(
+    requested_mode: int,
+    policy_source: str,
+    route_class: int,
+    loader_family: str,
+    detection_source: str,
+) -> bytes:
+    return MODEL_LOAD_TRUST_POLICY(
+        requested_mode=requested_mode,
+        effective_mode=requested_mode,
+        policy_source=policy_source,
+        custom_loader_required=True,
+        custom_loader_detection_source=detection_source,
+        block_reason=BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST,
+        route_class=route_class,
+        loader_family=loader_family,
+    ).SerializeToString()
 
 
 def _requested_mode(
