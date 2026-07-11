@@ -108,10 +108,13 @@ def resolve_model_load_trust_policy(
 
     policy = MODEL_LOAD_TRUST_POLICY()
     policy.requested_mode = requested_mode
-    policy.policy_source = _non_empty(
-        getattr(request_policy, "policy_source", "") if request_policy is not None else "",
-        policy_source,
-    )
+    if request_policy is None:
+        policy.policy_source = policy_source
+    else:
+        policy.policy_source = _non_empty(
+            getattr(request_policy, "policy_source", ""),
+            policy_source,
+        )
     policy.route_class = route_class
     policy.loader_family = loader_family
     policy.effective_mode = requested_mode
