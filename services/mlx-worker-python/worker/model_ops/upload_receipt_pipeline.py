@@ -198,12 +198,12 @@ def _collect_published_file_list(source_dir: Path) -> list[str]:
     pending: list[tuple[str, str]] = [(source_dir_str, "")]
     published_files: list[str] = []
     while pending:
-        current_dir, relative_dir = pending.pop()
+        current_dir, relative_prefix = pending.pop()
         with os.scandir(current_dir) as entries:
             for entry in entries:
-                relative_path = entry.name if not relative_dir else f"{relative_dir}/{entry.name}"
+                relative_path = relative_prefix + entry.name
                 if entry.is_dir(follow_symlinks=False):
-                    pending.append((entry.path, relative_path))
+                    pending.append((entry.path, relative_path + "/"))
                 elif entry.is_file(follow_symlinks=False):
                     published_files.append(relative_path)
                 elif entry.is_symlink():
