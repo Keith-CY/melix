@@ -309,6 +309,7 @@ def test_load_trajectory_provenance_from_snapshot_manifest_path_uses_direct_open
 
 def test_load_trajectory_provenance_from_snapshot_manifest_keeps_pathlike_support(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class PathLikeManifest:
         def __fspath__(self) -> str:
@@ -327,6 +328,11 @@ def test_load_trajectory_provenance_from_snapshot_manifest_keeps_pathlike_suppor
             }
         ).encode("utf-8")
     )
+
+    def fail_path_read_bytes(_self: Path) -> bytes:
+        raise AssertionError("pathlike manifest paths should not allocate Path.read_bytes")
+
+    monkeypatch.setattr(trajectory_provenance_module, "_PATH_READ_BYTES", fail_path_read_bytes)
 
     assert load_trajectory_provenance_from_snapshot_manifest(PathLikeManifest()) == {
         "trajectory_dataset_id": "agentic-snapshot",

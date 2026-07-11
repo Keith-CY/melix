@@ -11,6 +11,7 @@ from typing import Any
 _JSON_LOADS = json.loads
 _PATH_READ_BYTES = Path.read_bytes
 _OPEN = _builtin_open
+_OS_FSPATH = os.fspath
 _STR = str
 _TYPE = type
 
@@ -347,22 +348,15 @@ def _trajectory_provenance_from_snapshot_manifest(
 def load_trajectory_provenance_from_snapshot_manifest(
     manifest_path: Path | str | os.PathLike[str],
 ) -> dict[str, Any]:
-    read_bytes = _PATH_READ_BYTES
     open_file = _OPEN
     loads = _JSON_LOADS
     extract_provenance = _trajectory_provenance_from_snapshot_manifest
     if type(manifest_path) is str:
         manifest_path_text = manifest_path
-        with open_file(manifest_path, "rb") as manifest_file:
-            payload = loads(manifest_file.read())
-    elif isinstance(manifest_path, Path):
-        manifest_path_text = _STR(manifest_path)
-        with open_file(manifest_path, "rb") as manifest_file:
-            payload = loads(manifest_file.read())
     else:
-        manifest_path = Path(manifest_path)
-        manifest_path_text = _STR(manifest_path)
-        payload = loads(read_bytes(manifest_path))
+        manifest_path_text = _OS_FSPATH(manifest_path)
+    with open_file(manifest_path_text, "rb") as manifest_file:
+        payload = loads(manifest_file.read())
     if type(payload) is dict:
         return extract_provenance(
             payload,
