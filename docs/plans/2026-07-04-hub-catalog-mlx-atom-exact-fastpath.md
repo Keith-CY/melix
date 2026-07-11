@@ -29,6 +29,12 @@ This slice is Python-only and is locally verifiable on Linux with focused pytest
   - `payload_compatibility_elapsed_ms_mean` lower is better
   - `size_hint_calls_mean`, compatibility call counts, checksum, and matched counts preserve behavior.
 
+## 2026-07-11 marker prefilter substring slice
+
+This follow-up Python-only slice stays within `services/mlx-worker-python/worker/model_ops/hub_catalog.py` and the registered `hub-catalog-size-hint-regex-precompile` probe. `_may_contain_model_marker(...)` now checks the four case combinations for the adjacent `mo` marker directly instead of first scanning separately for `m`/`M` and `o`/`O`. Behavior remains conservative for every marker spelling the downstream size-hint parser can match, while avoiding redundant full-string membership scans in Hub readme/description size-hint prefiltering.
+
+Local Linux validation uses the same focused Hub catalog tests, changed-scope coverage command, and registered PR-scoped performance probe. GitHub Actions PR-scoped performance remains the merge gate.
+
 ## Success Metrics
 
 - Focused Hub catalog tests preserve exact and mixed-case MLX marker behavior.
