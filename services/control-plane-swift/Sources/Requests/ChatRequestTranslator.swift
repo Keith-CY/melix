@@ -2691,7 +2691,8 @@ public struct ChatRequestTranslator: Sendable {
         modelOCRPolicy: OCRExecutionPolicy? = nil,
         modelSamplingPolicy: ModelSamplingPolicy? = nil,
         gatewayServingDefaults: GatewayServingDefaultsPolicy? = nil,
-        mcpToolCatalog: MCPToolCatalog = .empty
+        mcpToolCatalog: MCPToolCatalog = .empty,
+        sessionCompactionContext: SessionCompactionRequestContext? = nil
     ) throws -> TranslatedChatRequest {
         let requestID = requestIDGenerator()
         let shapedRequest = requestShaper.shape(
@@ -2835,6 +2836,15 @@ public struct ChatRequestTranslator: Sendable {
             shapedRequest.openAICompatibilityReceipts,
             uniquingKeysWith: { _, new in new }
         )
+        if let sessionCompactionPlan = sessionCompactionContext?.plan(
+            requestID: requestID,
+            messages: shapedRequest.messages
+        ) {
+            generateRequest.execution.ext.merge(
+                sessionCompactionPlan.extFields,
+                uniquingKeysWith: { _, new in new }
+            )
+        }
         if let assistantPrefill = shapedRequest.assistantPrefill {
             generateRequest.execution.ext["melix.assistant_prefill"] = "true"
             generateRequest.execution.ext["melix.assistant_prefill.message_index"] = String(assistantPrefill.messageIndex)

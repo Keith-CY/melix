@@ -3038,7 +3038,13 @@ button.primary:active {
             modelOCRPolicy: modelOCRPolicy,
             modelSamplingPolicy: modelSamplingPolicy,
             gatewayServingDefaults: servingDefaults,
-            mcpToolCatalog: mcpToolCatalog
+            mcpToolCatalog: mcpToolCatalog,
+            sessionCompactionContext: sessionCompactionRequestContext(
+                normalized: admittedExecutionRequest,
+                model: resolvedModel,
+                modelSamplingPolicy: modelSamplingPolicy,
+                gatewayServingDefaults: servingDefaults
+            )
         )
         let responseModelID = executionModelID == originalModelID ? nil : originalModelID
         let responseTranslated = TranslatedChatRequest(
@@ -4035,6 +4041,56 @@ button.primary:active {
         )?.metadata ?? [:]
     }
 
+    private func sessionCompactionRequestContext(
+        normalized: NormalizedTextRequest,
+        model: Melix_Controlplane_V1_ModelSummary?,
+        modelSamplingPolicy: ModelSamplingPolicy?,
+        gatewayServingDefaults: GatewayServingDefaultsPolicy?
+    ) -> SessionCompactionRequestContext? {
+        guard let sessionID = normalized.sessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sessionID.isEmpty
+        else {
+            return nil
+        }
+        let contextWindowTokens = model?.maxContext ?? 0
+        guard contextWindowTokens > 0 else {
+            return nil
+        }
+        let outputCapTokens = promptBudgetOutputCapTokens(
+            normalized: normalized,
+            modelSamplingPolicy: modelSamplingPolicy,
+            gatewayServingDefaults: gatewayServingDefaults,
+            contextWindowTokens: contextWindowTokens
+        )
+        let usableContextTokens = contextWindowTokens > outputCapTokens
+            ? contextWindowTokens - outputCapTokens
+            : 0
+        let modelID = normalizedTextModelID(normalized: normalized, model: model)
+        return SessionCompactionRequestContext(
+            sessionID: sessionID,
+            modelID: modelID,
+            usableContextTokens: usableContextTokens,
+            maxHistoryItems: sessionCompactionMaxHistoryItems(model: model)
+        )
+    }
+
+    private func sessionCompactionMaxHistoryItems(
+        model: Melix_Controlplane_V1_ModelSummary?
+    ) -> UInt32 {
+        parsePositiveUInt32(model?.settings.ext["melix.session_compaction.max_history_items"]) ?? 0
+    }
+
+    private func normalizedTextModelID(
+        normalized: NormalizedTextRequest,
+        model: Melix_Controlplane_V1_ModelSummary?
+    ) -> String {
+        let modelID = model?.modelID.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !modelID.isEmpty {
+            return modelID
+        }
+        return normalized.model.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func promptBudgetOutputCapTokens(
         normalized: NormalizedTextRequest,
         modelSamplingPolicy: ModelSamplingPolicy?,
@@ -4055,6 +4111,17 @@ button.primary:active {
             ?? gatewayServingDefaults?.maxTokens
             ?? GatewayServingDefaultsStore.defaultMaxTokens
         return fallbackOutputCapTokens >= contextWindowTokens ? 0 : fallbackOutputCapTokens
+    }
+
+    private func parsePositiveUInt32(_ rawValue: String?) -> UInt32? {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty,
+              let value = UInt32(rawValue),
+              value > 0
+        else {
+            return nil
+        }
+        return value
     }
 
     private func promptBudgetEstimateSlackTokens(contextWindowTokens: UInt32) -> UInt32 {

@@ -290,8 +290,211 @@ struct TextEndpointContractTests {
         #expect(receipt["compaction_required"] as? Bool == true)
     }
 
+    @Test("chat translation attaches session compaction receipt before worker dispatch")
+    func chatTranslationAttachesSessionCompactionReceiptBeforeWorkerDispatch() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-live-compaction-tail" })
+        let normalized = NormalizedTextRequest(
+            endpoint: .chatCompletions,
+            model: "melix-dev-text",
+            messages: [
+                NormalizedTextMessage(role: "system", content: "one"),
+                NormalizedTextMessage(role: "user", content: "two"),
+                NormalizedTextMessage(role: "assistant", content: "three"),
+                NormalizedTextMessage(role: "user", content: "four"),
+            ],
+            stream: true,
+            temperature: nil,
+            topP: nil,
+            maxTokens: 16,
+            sessionID: "session-live-tail",
+            branchID: nil,
+            parentRequestID: nil,
+            restoreSnapshotID: nil,
+            saveBoundarySnapshot: nil
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            sessionCompactionContext: SessionCompactionRequestContext(
+                sessionID: "session-live-tail",
+                modelID: "melix-dev-text",
+                usableContextTokens: 128,
+                maxHistoryItems: 2
+            )
+        )
+        let ext = translated.workerRequest.execution.ext
+        let receipt = try Self.firstSessionCompactionReceipt(from: translated.workerRequest)
+
+        #expect(ext["melix.session_compaction.receipt_schema"] == "melix.session_compaction_policy_receipt.v1")
+        #expect(ext["melix.session_compaction.receipt_count"] == "1")
+        #expect(receipt["request_id"] as? String == "req-live-compaction-tail")
+        #expect(receipt["session_id"] as? String == "session-live-tail")
+        #expect(receipt["model_id"] as? String == "melix-dev-text")
+        #expect(receipt["history_policy"] as? String == "bounded_tail")
+        #expect(receipt["items_before"] as? Int == 4)
+        #expect(receipt["items_after"] as? Int == 2)
+        #expect(receipt["estimated_tokens_before"] as? Int == 5)
+        #expect(receipt["estimated_tokens_after"] as? Int == 3)
+        #expect(receipt["usable_context_tokens"] as? Int == 128)
+        #expect(receipt["max_history_items"] as? Int == 2)
+        #expect(receipt["tier_applied"] as? String == "drop_tail_history")
+        #expect(receipt["compaction_required"] as? Bool == false)
+    }
+
+    @Test("chat translation marks compaction required when retained session items exceed usable context")
+    func chatTranslationMarksCompactionRequiredWhenRetainedSessionItemsExceedUsableContext() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-live-compaction-required" })
+        let denseMessage = String(repeating: "abcdefghij", count: 20)
+        let normalized = NormalizedTextRequest(
+            endpoint: .chatCompletions,
+            model: "melix-dev-text",
+            messages: [
+                NormalizedTextMessage(role: "user", content: denseMessage),
+                NormalizedTextMessage(role: "assistant", content: denseMessage),
+                NormalizedTextMessage(role: "user", content: denseMessage),
+            ],
+            stream: false,
+            temperature: nil,
+            topP: nil,
+            maxTokens: 16,
+            sessionID: "session-live-overflow",
+            branchID: nil,
+            parentRequestID: nil,
+            restoreSnapshotID: nil,
+            saveBoundarySnapshot: nil
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            sessionCompactionContext: SessionCompactionRequestContext(
+                sessionID: "session-live-overflow",
+                modelID: "melix-dev-text",
+                usableContextTokens: 64,
+                maxHistoryItems: 2
+            )
+        )
+        let receipt = try Self.firstSessionCompactionReceipt(from: translated.workerRequest)
+
+        #expect(receipt["request_id"] as? String == "req-live-compaction-required")
+        #expect(receipt["history_policy"] as? String == "compaction_required")
+        #expect(receipt["items_before"] as? Int == 3)
+        #expect(receipt["items_after"] as? Int == 2)
+        #expect(receipt["estimated_tokens_before"] as? Int == 150)
+        #expect(receipt["estimated_tokens_after"] as? Int == 100)
+        #expect(receipt["usable_context_tokens"] as? Int == 64)
+        #expect(receipt["watermark_state"] as? String == "overflow")
+        #expect(receipt["tier_applied"] as? String == "requires_compaction")
+        #expect(receipt["compaction_required"] as? Bool == true)
+    }
+
+    @Test("chat translation skips session compaction receipt without resolved session context")
+    func chatTranslationSkipsSessionCompactionReceiptWithoutResolvedSessionContext() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-live-compaction-skipped" })
+        let normalized = NormalizedTextRequest(
+            endpoint: .chatCompletions,
+            model: "melix-dev-text",
+            messages: [
+                NormalizedTextMessage(role: "user", content: "hello"),
+            ],
+            stream: true,
+            temperature: nil,
+            topP: nil,
+            maxTokens: 16,
+            sessionID: "session-live",
+            branchID: nil,
+            parentRequestID: nil,
+            restoreSnapshotID: nil,
+            saveBoundarySnapshot: nil
+        )
+
+        let blankSession = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            sessionCompactionContext: SessionCompactionRequestContext(
+                sessionID: "  ",
+                modelID: "melix-dev-text",
+                usableContextTokens: 128,
+                maxHistoryItems: 2
+            )
+        )
+        let blankModel = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            sessionCompactionContext: SessionCompactionRequestContext(
+                sessionID: "session-live",
+                modelID: "  ",
+                usableContextTokens: 128,
+                maxHistoryItems: 2
+            )
+        )
+
+        #expect(blankSession.workerRequest.execution.ext["melix.session_compaction.receipt_schema"] == nil)
+        #expect(blankSession.workerRequest.execution.ext["melix.session_compaction.receipts_json"] == nil)
+        #expect(blankModel.workerRequest.execution.ext["melix.session_compaction.receipt_schema"] == nil)
+        #expect(blankModel.workerRequest.execution.ext["melix.session_compaction.receipts_json"] == nil)
+    }
+
+    @Test("chat translation estimates media and empty parts in session compaction receipts")
+    func chatTranslationEstimatesMediaAndEmptyPartsInSessionCompactionReceipts() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-live-compaction-media" })
+        let emptyPart = Melix_Worker_V1_MessagePart()
+        var imagePart = Melix_Worker_V1_MessagePart()
+        imagePart.media.mediaType = .image
+        imagePart.imageUri = "file:///tmp/image.png"
+        var videoPart = Melix_Worker_V1_MessagePart()
+        videoPart.media.mediaType = .video
+        videoPart.videoUri = "file:///tmp/video.mp4"
+        let normalized = NormalizedTextRequest(
+            endpoint: .chatCompletions,
+            model: "melix-dev-text",
+            messages: [
+                NormalizedTextMessage(role: "system", parts: [emptyPart]),
+                NormalizedTextMessage(role: "user", parts: [imagePart]),
+                NormalizedTextMessage(role: "user", parts: [videoPart]),
+            ],
+            stream: true,
+            temperature: nil,
+            topP: nil,
+            maxTokens: 16,
+            sessionID: "session-live-media",
+            branchID: nil,
+            parentRequestID: nil,
+            restoreSnapshotID: nil,
+            saveBoundarySnapshot: nil
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            sessionCompactionContext: SessionCompactionRequestContext(
+                sessionID: "session-live-media",
+                modelID: "melix-dev-text",
+                usableContextTokens: 2_048,
+                maxHistoryItems: 0
+            )
+        )
+        let receipt = try Self.firstSessionCompactionReceipt(from: translated.workerRequest)
+
+        #expect(emptyPart.part == nil)
+        #expect(receipt["history_policy"] as? String == "unlimited")
+        #expect(receipt["items_before"] as? Int == 3)
+        #expect(receipt["items_after"] as? Int == 3)
+        #expect(receipt["estimated_tokens_before"] as? Int == 1_281)
+        #expect(receipt["estimated_tokens_after"] as? Int == 1_281)
+        #expect(receipt["max_history_items"] as? Int == 0)
+    }
+
     private static func firstSessionCompactionReceipt(from plan: SessionCompactionPlan) throws -> [String: Any] {
         let receiptsJSON = try #require(plan.extFields["melix.session_compaction.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        return try #require(receipts.first)
+    }
+
+    private static func firstSessionCompactionReceipt(
+        from request: Melix_Worker_V1_GenerateRequest
+    ) throws -> [String: Any] {
+        let receiptsJSON = try #require(request.execution.ext["melix.session_compaction.receipts_json"])
         let receipts = try #require(
             try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
         )

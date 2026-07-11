@@ -1,4 +1,99 @@
 import Foundation
+import MelixWorkerProtocol
+
+public struct SessionCompactionRequestContext: Sendable, Equatable {
+    public let sessionID: String
+    public let modelID: String
+    public let usableContextTokens: UInt32
+    public let maxHistoryItems: UInt32
+    public let warningWatermarkPercent: UInt32
+    public let criticalWatermarkPercent: UInt32
+
+    public init(
+        sessionID: String,
+        modelID: String,
+        usableContextTokens: UInt32,
+        maxHistoryItems: UInt32,
+        warningWatermarkPercent: UInt32 = 65,
+        criticalWatermarkPercent: UInt32 = 80
+    ) {
+        self.sessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.modelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.usableContextTokens = usableContextTokens
+        self.maxHistoryItems = maxHistoryItems
+        self.warningWatermarkPercent = warningWatermarkPercent
+        self.criticalWatermarkPercent = criticalWatermarkPercent
+    }
+
+    func plan(
+        requestID: String,
+        messages: [NormalizedTextMessage]
+    ) -> SessionCompactionPlan? {
+        guard !sessionID.isEmpty, !modelID.isEmpty else {
+            return nil
+        }
+        return SessionCompactionPolicy.plan(
+            requestID: requestID,
+            sessionID: sessionID,
+            modelID: modelID,
+            historyItems: Self.historyItems(for: messages),
+            usableContextTokens: usableContextTokens,
+            maxHistoryItems: maxHistoryItems,
+            warningWatermarkPercent: warningWatermarkPercent,
+            criticalWatermarkPercent: criticalWatermarkPercent
+        )
+    }
+
+    private static func historyItems(
+        for messages: [NormalizedTextMessage]
+    ) -> [SessionHistoryItemEstimate] {
+        messages.map { message in
+            let estimatedTokens = estimatedTokens(for: message)
+            return SessionHistoryItemEstimate(
+                estimatedTokens: estimatedTokens == 0 ? 1 : estimatedTokens
+            )
+        }
+    }
+
+    private static func estimatedTokens(for message: NormalizedTextMessage) -> UInt32 {
+        message.parts.reduce(tokenCount(in: message.name ?? "")) { partial, part in
+            switch part.part {
+            case .text(let text):
+                return addingClamped(partial, tokenCount(in: text))
+            case .imageUri, .imageBytes, .audioUri, .audioBytes:
+                return addingClamped(partial, 256)
+            case .videoUri, .videoBytes:
+                return addingClamped(partial, 1_024)
+            case nil:
+                return partial
+            }
+        }
+    }
+
+    private static func tokenCount(in text: String) -> UInt32 {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return 0
+        }
+        var whitespaceEstimate = 0
+        var isInsideWord = false
+        for character in trimmed {
+            if character.isWhitespace {
+                isInsideWord = false
+            } else if !isInsideWord {
+                whitespaceEstimate += 1
+                isInsideWord = true
+            }
+        }
+        let byteEstimate = max(1, (trimmed.utf8.count + 3) / 4)
+        return UInt32(min(Int(UInt32.max), max(whitespaceEstimate, byteEstimate)))
+    }
+
+    private static func addingClamped(_ lhs: UInt32, _ rhs: UInt32) -> UInt32 {
+        let (value, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? UInt32.max : value
+    }
+}
 
 struct SessionHistoryItemEstimate: Sendable, Equatable {
     let estimatedTokens: UInt32
