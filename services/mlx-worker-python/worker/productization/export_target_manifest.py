@@ -198,18 +198,23 @@ def _validate_manifest(manifest: export_target_manifest_pb2.ExportTargetManifest
         errors.append("activation_mode must be specified")
 
     seen_file_paths: set[str] = set()
-    errors.extend(
-        _validate_file_rows("generated_files", manifest.generated_files, seen_file_paths)
+    _append_file_row_errors(
+        errors,
+        "generated_files",
+        manifest.generated_files,
+        seen_file_paths,
     )
-    errors.extend(
-        _validate_file_rows("required_files", manifest.required_files, seen_file_paths)
+    _append_file_row_errors(
+        errors,
+        "required_files",
+        manifest.required_files,
+        seen_file_paths,
     )
-    errors.extend(
-        _validate_file_rows(
-            "intermediate_files",
-            manifest.intermediate_files,
-            seen_file_paths,
-        )
+    _append_file_row_errors(
+        errors,
+        "intermediate_files",
+        manifest.intermediate_files,
+        seen_file_paths,
     )
     if not manifest.generated_files:
         errors.append("generated_files must not be empty")
@@ -225,12 +230,12 @@ def _validate_manifest(manifest: export_target_manifest_pb2.ExportTargetManifest
     return errors
 
 
-def _validate_file_rows(
+def _append_file_row_errors(
+    errors: list[str],
     field_name: str,
     rows: list[export_target_manifest_pb2.ExportTargetFile],
     seen_paths: set[str],
-) -> list[str]:
-    errors: list[str] = []
+) -> None:
     for index, row in enumerate(rows):
         prefix = f"{field_name}[{index}]"
         if not row.path:
@@ -254,7 +259,6 @@ def _validate_file_rows(
             errors.append(f"{prefix}.source_provenance is required")
         if row.redaction_class == export_target_manifest_pb2.EXPORT_REDACTION_CLASS_UNSPECIFIED:
             errors.append(f"{prefix}.redaction_class must be specified")
-    return errors
 
 
 def _validate_runtime_requirements(
