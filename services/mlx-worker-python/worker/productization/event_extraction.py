@@ -2888,18 +2888,21 @@ def _coerce_string_list(value: object) -> list[str]:
 
 def _parse_response_json(response_text: str) -> dict[str, object]:
     response_length = len(response_text)
+    raw_decode = _JSON_RAW_DECODE
+    has_only_trailing_whitespace = _has_only_trailing_whitespace
+    has_only_optional_closing_fence = _has_only_optional_closing_fence
     if response_length and response_text[0] == "{":
-        parsed, end_index = _JSON_RAW_DECODE(response_text, 0)
-        if not _has_only_trailing_whitespace(response_text, end_index, response_length):
+        parsed, end_index = raw_decode(response_text, 0)
+        if not has_only_trailing_whitespace(response_text, end_index, response_length):
             raise json.JSONDecodeError("Extra data", response_text, end_index)
         return parsed
 
     if response_length and response_text[0] == "`" and response_text.startswith(_JSON_FENCE_PREFIX):
-        parsed, end_index = _JSON_RAW_DECODE(
+        parsed, end_index = raw_decode(
             response_text,
             _JSON_FENCE_PREFIX_LENGTH,
         )
-        if not _has_only_optional_closing_fence(response_text, end_index, response_length):
+        if not has_only_optional_closing_fence(response_text, end_index, response_length):
             raise json.JSONDecodeError("Extra data", response_text, end_index)
         if not isinstance(parsed, dict):
             raise ValueError("LLM response must be a JSON object")
@@ -2908,17 +2911,17 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
     response_start = _skip_json_whitespace(response_text, 0, response_length)
 
     if response_start < response_length and response_text[response_start] == "{":
-        parsed, end_index = _JSON_RAW_DECODE(response_text, response_start)
-        if not _has_only_trailing_whitespace(response_text, end_index, response_length):
+        parsed, end_index = raw_decode(response_text, response_start)
+        if not has_only_trailing_whitespace(response_text, end_index, response_length):
             raise json.JSONDecodeError("Extra data", response_text, end_index)
         return parsed
 
     if response_text.startswith(_JSON_FENCE_PREFIX, response_start):
-        parsed, end_index = _JSON_RAW_DECODE(
+        parsed, end_index = raw_decode(
             response_text,
             response_start + _JSON_FENCE_PREFIX_LENGTH,
         )
-        if not _has_only_optional_closing_fence(response_text, end_index, response_length):
+        if not has_only_optional_closing_fence(response_text, end_index, response_length):
             raise json.JSONDecodeError("Extra data", response_text, end_index)
         if not isinstance(parsed, dict):
             raise ValueError("LLM response must be a JSON object")
@@ -2927,14 +2930,14 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
     if response_text.startswith("```", response_start):
         newline_index = response_text.find("\n", response_start)
         if newline_index >= 0:
-            parsed, end_index = _JSON_RAW_DECODE(response_text, newline_index + 1)
-            if not _has_only_optional_closing_fence(response_text, end_index, response_length):
+            parsed, end_index = raw_decode(response_text, newline_index + 1)
+            if not has_only_optional_closing_fence(response_text, end_index, response_length):
                 raise json.JSONDecodeError("Extra data", response_text, end_index)
             if not isinstance(parsed, dict):
                 raise ValueError("LLM response must be a JSON object")
             return parsed
-    parsed, end_index = _JSON_RAW_DECODE(response_text, response_start)
-    if not _has_only_trailing_whitespace(response_text, end_index, response_length):
+    parsed, end_index = raw_decode(response_text, response_start)
+    if not has_only_trailing_whitespace(response_text, end_index, response_length):
         raise json.JSONDecodeError("Extra data", response_text, end_index)
     if not isinstance(parsed, dict):
         raise ValueError("LLM response must be a JSON object")
