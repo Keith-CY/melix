@@ -39,3 +39,27 @@ this slice.
 
 This is a Python worker path and can be validated locally on Linux. CI remains
 the source of truth for the PR-scoped performance workflow report after push.
+
+## Follow-up Slice: Deferred Nbytes Coercion
+
+The 2026-07-11 follow-up keeps `estimate_cache_snapshot_bytes()` behavior and
+supported cache shapes unchanged, but avoids coercing every discovered `.nbytes`
+value through `int()` inside the per-layer loop. The fallback `size * itemsize`
+path still normalizes multiplicands before computing bytes, and the function
+coerces the final sum before returning so callers keep receiving a plain Python
+integer. The hot path for tensor objects that already expose integer `.nbytes`
+therefore removes repeated per-tensor conversion calls.
+
+Expected effect:
+
+- reduce `prefix-cache-snapshot-byte-streaming` `elapsed_ms_mean` and p95 for
+  repeated cache byte estimation;
+- preserve `peak_bytes_mean` and byte-estimate correctness;
+- leave cold-tier indexing, matching, restore, and eviction behavior unchanged.
+
+## Success criteria
+
+- Behavior remains equivalent for existing `.state`, `.keys/.values`, `.nbytes`, and `size * itemsize` cache shapes.
+- Changed-scope coverage for touched Python paths is at least 95%.
+- The local registered probe shows lower elapsed time for the synthetic cache byte-estimation workload.
+- GitHub Actions and the PR-scoped performance workflow complete successfully before merge.

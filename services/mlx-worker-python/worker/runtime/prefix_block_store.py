@@ -423,10 +423,10 @@ class ColdPrefixStore:
             _remove_quietly(meta.meta_path)
 
 
-def _tensor_nbytes(tensor: Any) -> int:
+def _tensor_nbytes(tensor: Any) -> Any:
     nbytes = getattr(tensor, "nbytes", None)
     if nbytes is not None:
-        return int(nbytes)
+        return nbytes
     size = getattr(tensor, "size", None)
     if size is None:
         return 0
@@ -463,7 +463,7 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
         values = getattr(layer_cache, "values", None)
         if values is not None:
             total += tensor_nbytes(values)
-    return total
+    return int(total)
 
 
 def _session_digest(session_id: str) -> str:
