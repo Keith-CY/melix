@@ -372,6 +372,7 @@ public struct TextRequestShaper: Sendable {
             || request.topP != nil
             || request.maxTokens != nil
             || request.maxCompletionTokens != nil
+        let recommendedSamplingRequired = request.recommendedSampling?.requiresKnownPolicy == true
         let samplingPolicyLookupStatus = samplingRequestOverrideApplied
             ? "operator_override"
             : (modelSamplingPolicy?.lookupStatus ?? "unknown")
@@ -505,6 +506,7 @@ public struct TextRequestShaper: Sendable {
             mediaPartsSummary: request.mediaPartsSummary,
             orderedMessagePartsRequired: request.orderedMessagePartsRequired,
             legacyImageFallbackInjected: request.legacyImageFallbackInjected,
+            recommendedSamplingRequired: recommendedSamplingRequired,
             openAICompatibilityReceipts: request.openAICompatibilityReceipts
         )
     }

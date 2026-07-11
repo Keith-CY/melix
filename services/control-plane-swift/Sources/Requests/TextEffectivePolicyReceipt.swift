@@ -16,6 +16,7 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
     public let samplingPolicyMatchedAlias: String
     public let samplingPolicySourceURL: String
     public let samplingRequestOverrideApplied: Bool
+    public let recommendedSamplingRequired: Bool
     public let seed: UInt32?
     public let seedSource: String
     public let stopSource: String
@@ -46,6 +47,7 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
             samplingPolicyMatchedAlias: shapedRequest.samplingPolicyMatchedAlias,
             samplingPolicySourceURL: shapedRequest.samplingPolicySourceURL,
             samplingRequestOverrideApplied: shapedRequest.samplingRequestOverrideApplied,
+            recommendedSamplingRequired: shapedRequest.recommendedSamplingRequired,
             seed: shapedRequest.seed,
             seedSource: seedSource,
             stopSource: shapedRequest.stopSource,
@@ -73,6 +75,7 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
         self.samplingPolicyMatchedAlias = shapedRequest.samplingPolicyMatchedAlias
         self.samplingPolicySourceURL = shapedRequest.samplingPolicySourceURL
         self.samplingRequestOverrideApplied = shapedRequest.samplingRequestOverrideApplied
+        self.recommendedSamplingRequired = shapedRequest.recommendedSamplingRequired
         self.seed = shapedRequest.seed
         self.seedSource = seedSource
         self.stopSource = shapedRequest.stopSource
@@ -103,6 +106,7 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
             "melix.effective_policy.sampling.policy_matched_alias": samplingPolicyMatchedAlias,
             "melix.effective_policy.sampling.policy_source_url": samplingPolicySourceURL,
             "melix.effective_policy.sampling.request_override_applied": samplingRequestOverrideApplied ? "true" : "false",
+            "melix.effective_policy.sampling.recommended_sampling_required": recommendedSamplingRequired ? "true" : "false",
             "melix.effective_policy.sampling.seed_source": seedSource,
             "melix.effective_policy.chat_template.source": chatTemplateSource,
             "melix.effective_policy.chat_template.request_override_applied": chatTemplateRequestOverrideApplied ? "true" : "false",
@@ -127,6 +131,7 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
         let samplingPolicyMatchedAlias: String
         let samplingPolicySourceURL: String
         let samplingRequestOverrideApplied: Bool
+        let recommendedSamplingRequired: Bool
         let seed: UInt32?
         let seedSource: String
         let stopSource: String
@@ -155,6 +160,7 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
                 samplingPolicyMatchedAlias: samplingPolicyMatchedAlias,
                 samplingPolicySourceURL: samplingPolicySourceURL,
                 samplingRequestOverrideApplied: samplingRequestOverrideApplied,
+                recommendedSamplingRequired: recommendedSamplingRequired,
                 seed: seed,
                 seedSource: seedSource,
                 stopSource: stopSource,
@@ -192,6 +198,7 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
         case policyMatchedAlias = "policy_matched_alias"
         case policySourceURL = "policy_source_url"
         case requestOverrideApplied = "request_override_applied"
+        case recommendedSamplingRequired = "recommended_sampling_required"
         case seed
         case seedSource = "seed_source"
         case stopSource = "stop_source"
@@ -227,6 +234,7 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
             samplingPolicyMatchedAlias: samplingPolicyMatchedAlias,
             samplingPolicySourceURL: samplingPolicySourceURL,
             samplingRequestOverrideApplied: samplingRequestOverrideApplied,
+            recommendedSamplingRequired: recommendedSamplingRequired,
             seed: seed,
             seedSource: seedSource,
             stopSource: stopSource,
@@ -258,6 +266,7 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
         samplingPolicyMatchedAlias: String,
         samplingPolicySourceURL: String,
         samplingRequestOverrideApplied: Bool,
+        recommendedSamplingRequired: Bool,
         seed: UInt32?,
         seedSource: String,
         stopSource: String,
@@ -287,6 +296,7 @@ public struct TextEffectivePolicyReceipt: Sendable, Equatable, Encodable {
         try samplingContainer.encode(samplingPolicyMatchedAlias, forKey: .policyMatchedAlias)
         try samplingContainer.encode(samplingPolicySourceURL, forKey: .policySourceURL)
         try samplingContainer.encode(samplingRequestOverrideApplied, forKey: .requestOverrideApplied)
+        try samplingContainer.encode(recommendedSamplingRequired, forKey: .recommendedSamplingRequired)
         try samplingContainer.encode(seed.map { Int($0) }, forKey: .seed)
         try samplingContainer.encode(seedSource, forKey: .seedSource)
         try samplingContainer.encode(stopSource, forKey: .stopSource)

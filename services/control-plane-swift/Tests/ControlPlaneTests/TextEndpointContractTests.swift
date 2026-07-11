@@ -3085,6 +3085,85 @@ struct TextEndpointContractTests {
         #expect(sampling["request_override_applied"] as? Bool == true)
     }
 
+    @Test("chat translation records strict recommended sampling opt-in in effective policy receipts")
+    func chatTranslationRecordsStrictRecommendedSamplingOptIn() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-policy-strict" })
+        let sourceURL = "https://github.com/Keith-CY/melix/blob/main/docs/plans/2026-07-11-issue-1385-strict-policy-opt-in.md"
+        let catalog = TextModelPolicyCatalog(entries: [
+            .init(
+                canonicalModelID: "melix-dev-policy",
+                aliases: ["melix-dev-policy-q4.gguf"],
+                sampling: .init(temperature: 0.42, topP: 0.91, maxTokens: 1_024),
+                sourceURL: sourceURL
+            ),
+        ])
+        let modelSamplingPolicy = try #require(
+            ModelSamplingPolicy(
+                modelID: "melix-dev-policy-q4.gguf",
+                modelSettings: .init(),
+                catalog: catalog
+            )
+        )
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-policy-q4.gguf",
+                messages: [.init(role: "user", content: "Require the catalog policy.")],
+                recommendedSampling: .strict
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "worker-text",
+            modelSamplingPolicy: modelSamplingPolicy
+        )
+        let sampling = try Self.effectivePolicySampling(from: translated.workerRequest)
+
+        #expect(normalized.recommendedSampling == .strict)
+        #expect(translated.workerRequest.sampling.temperature == 0.42)
+        #expect(translated.workerRequest.sampling.topP == 0.91)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 1_024)
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.policy_lookup_status"] == "known")
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.recommended_sampling_required"] == "true")
+        #expect(sampling["policy_lookup_status"] as? String == "known")
+        #expect(sampling["recommended_sampling_required"] as? Bool == true)
+    }
+
+    @Test("recommended sampling request mode decodes boolean string and invalid values")
+    func recommendedSamplingRequestModeDecodesBooleanStringAndInvalidValues() throws {
+        struct Envelope: Codable, Equatable {
+            let mode: RecommendedSamplingPolicyMode
+        }
+
+        let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
+
+        #expect(
+            try decoder.decode(Envelope.self, from: Data(#"{"mode":true}"#.utf8)).mode == .strict
+        )
+        #expect(
+            try decoder.decode(Envelope.self, from: Data(#"{"mode":false}"#.utf8)).mode == .off
+        )
+        #expect(
+            try decoder.decode(Envelope.self, from: Data(#"{"mode":"required"}"#.utf8)).mode == .strict
+        )
+        #expect(
+            try decoder.decode(Envelope.self, from: Data(#"{"mode":"disabled"}"#.utf8)).mode == .off
+        )
+        #expect(throws: DecodingError.self) {
+            try decoder.decode(Envelope.self, from: Data(#"{"mode":"maybe"}"#.utf8))
+        }
+
+        #expect(
+            try String(data: encoder.encode(Envelope(mode: .strict)), encoding: .utf8)?
+                .contains(#""mode":"strict""#) == true
+        )
+        #expect(
+            try String(data: encoder.encode(Envelope(mode: .off)), encoding: .utf8)?
+                .contains(#""mode":"off""#) == true
+        )
+    }
+
     @Test("chat translation wrapper falls back to gateway serving defaults when no model policy exists")
     func chatTranslationWrapperFallsBackToGatewayServingDefaults() throws {
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-serving-defaults" })
