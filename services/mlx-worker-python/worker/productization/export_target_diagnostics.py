@@ -501,7 +501,7 @@ def _collect_source_lines(
     for rows in (manifest.generated_files, manifest.required_files, manifest.intermediate_files):
         for row in rows:
             row_path = row.path
-            if not _is_runtime_log_row(row, row_path):
+            if not _is_runtime_log_row(row):
                 continue
             if row_path in seen_paths:
                 continue
@@ -548,11 +548,11 @@ def _collect_source_lines(
     return lines
 
 
-def _is_runtime_log_row(row: export_target_manifest_pb2.ExportTargetFile, row_path: str) -> bool:
+def _is_runtime_log_row(row: export_target_manifest_pb2.ExportTargetFile) -> bool:
     return (
         row.role == export_target_manifest_pb2.EXPORT_TARGET_FILE_ROLE_RUNTIME_LOG
         or row.retention_class == export_target_manifest_pb2.EXPORT_RETENTION_CLASS_RUNTIME_LOG
-        or row_path.startswith("logs/")
+        or row.path.startswith("logs/")
     )
 
 
