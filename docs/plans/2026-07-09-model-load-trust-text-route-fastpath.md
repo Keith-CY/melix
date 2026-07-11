@@ -20,6 +20,13 @@ path, `_requested_mode` already produced the fallback policy source, while
 explicit request policies still use `_non_empty` so blank request sources fall
 back exactly as before.
 
+The follow-up rejection-policy template slice keeps the same registered probe and
+moves repeated custom-loader rejection policy construction behind a cached
+serialized protobuf template keyed by the policy fields. Each rejection still
+receives a fresh mutable `ModelLoadTrustPolicy` parsed from the cached bytes, so
+callers cannot mutate the cached template while hot repeated rejection paths avoid
+rebuilding identical protobuf fields one by one.
+
 ## Validation
 
 - Focused model-load trust tests cover default route-class behavior and add a
