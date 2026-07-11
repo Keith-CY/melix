@@ -239,6 +239,14 @@ excerpt scan. Exact-text, fast-phrase, and regex fallback matches now append the
 line number to that bound prefix instead of formatting the full evidence path in
 each matched branch.
 
+A follow-up 2026-07-11 source collection row-path reuse slice keeps runtime-log
+row collection and failure-check source semantics unchanged while reading
+`row.path` once per manifest row inside `_collect_source_lines()`. The manifest
+row loop still uses the same runtime-log predicate, duplicate suppression,
+target-relative resolution, file read, and source-line extension behavior, but
+avoids repeated protobuf attribute lookups for rows that enter the diagnostic
+source collection path.
+
 Focused verification:
 
 ```bash
