@@ -23,8 +23,10 @@ class _CopyCountingConfig(Mapping[str, Any]):
     def __init__(self, payload: Mapping[str, Any]) -> None:
         self._payload = dict(payload)
         self.copy_attempts = 0
+        self.key_accesses = 0
 
     def __getitem__(self, key: str) -> Any:
+        self.key_accesses += 1
         return self._payload[key]
 
     def __iter__(self) -> Iterator[str]:
@@ -117,6 +119,28 @@ def test_detect_text_family_identity_prefers_explicit_supported_override() -> No
     assert detected.source == "explicit_override"
 
 
+def test_detect_text_family_identity_explicit_override_preserves_architecture_fallbacks() -> None:
+    from_architecture = detect_text_family_identity(
+        model_path="models/unknown-text-model",
+        config_payload={"architectures": [None, "Qwen3MoeForCausalLM"]},
+        explicit_family_id="qwen3moe",
+    )
+    from_nested_model_type = detect_text_family_identity(
+        model_path="models/unknown-text-model",
+        config_payload={"text_config": {"model_type": "Mistral4"}},
+        explicit_family_id="qwen3moe",
+    )
+    from_family_default = detect_text_family_identity(
+        model_path="models/unknown-text-model",
+        config_payload={"architectures": "not-a-list", "text_config": []},
+        explicit_family_id="qwen3moe",
+    )
+
+    assert from_architecture.architecture == "qwen3moeforcausallm"
+    assert from_nested_model_type.architecture == "mistral4"
+    assert from_family_default.architecture == "qwen3_moe"
+
+
 def test_detect_text_family_identity_uses_exact_explicit_family_fast_path() -> None:
     class NoNormalizeFamily(str):
         def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
@@ -149,6 +173,19 @@ def test_detect_text_family_identity_uses_lowercase_model_type_fast_path() -> No
 
     assert detected.architecture == "qwen3_moe"
     assert detected.family_id == "qwen3moe"
+
+
+def test_detect_text_family_identity_reuses_model_type_detection_lookup() -> None:
+    config = _CopyCountingConfig({"model_type": "qwen3_moe"})
+
+    detected = detect_text_family_identity(
+        model_path="models/qwen3-moe-128e",
+        config_payload=config,
+    )
+
+    assert detected.architecture == "qwen3_moe"
+    assert detected.family_id == "qwen3moe"
+    assert config.key_accesses == 1
 
 
 def test_detect_text_family_identity_rejects_unsupported_explicit_override() -> None:
