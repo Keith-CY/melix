@@ -77,6 +77,27 @@ public struct TextCompatibilityPolicyReceipt: Codable, Sendable, Equatable {
         self.effectiveConfigHash = effectiveConfigHash
     }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        compatSurface = try container.decode(String.self, forKey: .compatSurface)
+        streamMode = try container.decode(String.self, forKey: .streamMode)
+        reasoningMode = try container.decode(String.self, forKey: .reasoningMode)
+        reasoningSource = try container.decode(String.self, forKey: .reasoningSource)
+        reasoningEffort = try container.decode(String.self, forKey: .reasoningEffort)
+        toolParserMode = try container.decode(String.self, forKey: .toolParserMode)
+        toolParserSource = try container.decode(String.self, forKey: .toolParserSource)
+        requestedParser = try container.decodeIfPresent(String.self, forKey: .requestedParser) ?? "none"
+        resolvedParser = try container.decodeIfPresent(String.self, forKey: .resolvedParser) ?? "none"
+        parserFallbackMode = try container.decodeIfPresent(String.self, forKey: .parserFallbackMode) ?? ""
+        parserRefusalReason = try container.decodeIfPresent(String.self, forKey: .parserRefusalReason) ?? ""
+        toolNamespaces = try container.decode([String].self, forKey: .toolNamespaces)
+        toolChoiceRequested = try container.decode(String.self, forKey: .toolChoiceRequested)
+        toolChoiceResolved = try container.decode(String.self, forKey: .toolChoiceResolved)
+        structuredOutputMode = try container.decode(String.self, forKey: .structuredOutputMode)
+        outputModalities = try container.decode([String].self, forKey: .outputModalities)
+        effectiveConfigHash = try container.decode(String.self, forKey: .effectiveConfigHash)
+    }
+
     public init(shapedRequest: ShapedTextRequest) {
         let fields = Self.hashFields(shapedRequest: shapedRequest)
         let effectiveConfigHash = cacheScopeHash(Self.canonicalJSONString(fields))

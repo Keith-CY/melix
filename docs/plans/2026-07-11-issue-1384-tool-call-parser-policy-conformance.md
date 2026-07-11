@@ -261,6 +261,18 @@ Expected: scoped performance report status is `ok` with zero in-scope regression
 
 Actual: `.githooks/pre-commit` passed. Performance report status was `ok` with 0 regressions, 0 context regressions, 0 verification failures, and no selected probes for this change set. Report path: `.runtime/pre-commit-performance/20260711-105700-4d3915c0/report/report.md`.
 
+- [x] **Step 5: Review follow-up legacy receipt decoding**
+
+After PR review identified that new non-optional parser policy receipt fields would break decoding for older receipt JSON payloads:
+
+- Added `compatibilityPolicyReceiptsDecodeLegacyPayloadsWithoutParserPolicyFields`.
+- Confirmed the RED failure was `DecodingError.keyNotFound` for `requested_parser`.
+- Added a custom `TextCompatibilityPolicyReceipt.init(from:)` that defaults missing parser policy fields to `requested_parser=none`, `resolved_parser=none`, `parser_fallback_mode=""`, and `parser_refusal_reason=""`.
+- Re-ran the focused legacy decode test: passed.
+- Re-ran the focused suite: `OpenAIConformanceMatrixTests|ToolParserRegistryTests` passed with 55 tests.
+- Re-ran focused coverage and changed-line coverage: `TOTAL 100.00% 50/50`.
+- The final pre-commit performance report for the amended PR branch is recorded in the PR evidence.
+
 ## Known Deferred Work
 
 - Worker-side parser recovery and retry/nudge behavior remain part of broader #1384/#1382 follow-up work.

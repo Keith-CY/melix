@@ -278,6 +278,38 @@ struct ToolParserRegistryTests {
         #expect(Set(receiptObject.keys) == compatReceiptFieldNames())
     }
 
+    @Test("compatibility policy receipts decode legacy payloads without parser policy fields")
+    func compatibilityPolicyReceiptsDecodeLegacyPayloadsWithoutParserPolicyFields() throws {
+        let payload = Data(
+            """
+            {
+              "compat_surface": "openai.chat.completions",
+              "stream_mode": "non_stream",
+              "reasoning_mode": "disabled",
+              "reasoning_source": "default",
+              "reasoning_effort": "",
+              "tool_parser_mode": "none",
+              "tool_parser_source": "none",
+              "tool_namespaces": [],
+              "tool_choice_requested": "",
+              "tool_choice_resolved": "none",
+              "structured_output_mode": "text",
+              "output_modalities": ["text"],
+              "effective_config_hash": "legacy-hash"
+            }
+            """.utf8
+        )
+
+        let receipt = try JSONDecoder().decode(TextCompatibilityPolicyReceipt.self, from: payload)
+
+        #expect(receipt.requestedParser == "none")
+        #expect(receipt.resolvedParser == "none")
+        #expect(receipt.parserFallbackMode == "")
+        #expect(receipt.parserRefusalReason == "")
+        #expect(receipt.compatSurface == "openai.chat.completions")
+        #expect(receipt.effectiveConfigHash == "legacy-hash")
+    }
+
     @Test("translated text requests attach prompt context boundary receipts")
     func translatedTextRequestsAttachPromptContextBoundaryReceipts() throws {
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-prompt-context" })
