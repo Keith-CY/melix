@@ -56,6 +56,7 @@ _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH = {
 _COVERAGE_PERCENT_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+)%")
 _TEXT_FILE_SUFFIXES = {".md", ".py", ".json", ".txt", ".yaml", ".yml"}
 _COMMAND_HEARTBEAT_SECONDS = 30.0
+_OS_STAT = os.stat
 _MATCH_PROBE_INDEXES_CACHE: dict[tuple[int, int, tuple[str, ...]], frozenset[int]] = {}
 _PROBE_ID_INDEX_CACHE: dict[tuple[int, int], dict[str, int]] = {}
 _PROBE_SCOPE_DICT_CACHE: dict[tuple[int, str], dict[str, object]] = {}
@@ -218,7 +219,7 @@ def _load_probe_registry_uncached(
 
 def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
     cache_key = _probe_registry_cache_key(path)
-    stat_result = os.stat(cache_key)
+    stat_result = _OS_STAT(cache_key)
     cached = _PROBE_REGISTRY_CACHE.get(cache_key)
     if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
         return cached[2]
@@ -233,7 +234,7 @@ def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
 
 def load_probe_registry_for_scope(path: str | Path) -> tuple[ProbeDefinition, ...]:
     cache_key = _probe_registry_cache_key(path)
-    stat_result = os.stat(cache_key)
+    stat_result = _OS_STAT(cache_key)
     return _load_probe_registry_for_scope_cached(
         cache_key,
         stat_result.st_mtime_ns,
