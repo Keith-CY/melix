@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from worker.productization.effective_policy_evidence import (
+    effective_policy_evidence_from_receipt,
+    empty_effective_policy_evidence,
+)
 from worker.trajectory_provenance import append_trajectory_provenance
 
 
@@ -12,6 +16,7 @@ _EVALUATION_SAMPLE_SCHEMA_VERSION = "melix.evaluation_sample.v2"
 _EVALUATION_COMPARE_JOB_SCHEMA_VERSION = "melix.evaluation_compare_job.v2"
 _EVALUATION_COMPARE_SUMMARY_SCHEMA_VERSION = "melix.evaluation_compare_summary.v2"
 _EVALUATION_COMPARE_SAMPLE_SCHEMA_VERSION = "melix.evaluation_compare_sample.v2"
+_EMPTY_EFFECTIVE_POLICY_EVIDENCE = empty_effective_policy_evidence()
 
 
 @dataclass(frozen=True)
@@ -197,6 +202,7 @@ class EvaluationSample:
     agentic_tool_calls: tuple[dict[str, object], ...] = ()
     agentic_tool_observations: tuple[dict[str, object], ...] = ()
     agentic_tool_metrics: dict[str, float] | None = None
+    effective_policy_evidence: dict[str, object] | None = None
     trajectory_provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
@@ -251,6 +257,7 @@ class EvaluationSample:
             ]
         if self.agentic_tool_metrics:
             payload["agentic_tool_metrics"] = dict(self.agentic_tool_metrics)
+        payload.update(self.effective_policy_evidence or _EMPTY_EFFECTIVE_POLICY_EVIDENCE)
         append_trajectory_provenance(payload, self.trajectory_provenance)
         if self.category_label:
             payload["category_label"] = self.category_label
@@ -705,6 +712,7 @@ def build_evaluation_sample_record(
     agentic_tool_calls: tuple[dict[str, object], ...] = (),
     agentic_tool_observations: tuple[dict[str, object], ...] = (),
     agentic_tool_metrics: dict[str, float] | None = None,
+    effective_policy_receipt: dict[str, object] | None = None,
     trajectory_provenance: dict[str, object] | None = None,
 ) -> EvaluationSample:
     return EvaluationSample(
@@ -758,6 +766,11 @@ def build_evaluation_sample_record(
         agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
         agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
         agentic_tool_metrics=dict(agentic_tool_metrics or {}),
+        effective_policy_evidence=(
+            effective_policy_evidence_from_receipt(effective_policy_receipt)
+            if effective_policy_receipt is not None
+            else None
+        ),
         trajectory_provenance=dict(trajectory_provenance or {}),
     )
 
