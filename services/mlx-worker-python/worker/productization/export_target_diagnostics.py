@@ -500,17 +500,18 @@ def _collect_source_lines(
 
     for rows in (manifest.generated_files, manifest.required_files, manifest.intermediate_files):
         for row in rows:
+            row_path = row.path
             if not _is_runtime_log_row(row):
                 continue
-            if row.path in seen_paths:
+            if row_path in seen_paths:
                 continue
-            seen_paths.add(row.path)
-            path = _target_relative_path(layout, row.path)
+            seen_paths.add(row_path)
+            path = _target_relative_path(layout, row_path)
             if not path.is_file():
                 continue
             with path.open("rb") as source:
                 text = source.read(source_read_bytes).decode("utf-8", errors="replace")
-            _extend_source_lines(lines, row.path, text)
+            _extend_source_lines(lines, row_path, text)
 
     for check in failure_checks:
         if isinstance(check, Mapping):
