@@ -215,6 +215,37 @@ produce stable retry-nudge receipts. Callers may still fail closed after the
 configured retry budget is exhausted, but the terminal decision must preserve
 the same sanitized evidence shape.
 
+Tool healing runs before admission when an agent loop receives model output
+that may contain a recoverable tool-call wire shape instead of canonical tool
+calls. The v1 healing receipt is `melix.agentic_tool_healing.v1` and records the
+pre-admission recovery decision for fenced JSON tool calls, XML-style tool
+tags, provider-style fragments, and pseudo-tool text blobs.
+
+The receipt includes:
+
+- `outcome = healed|retry_nudge|terminal_failure`
+- `source_format`
+- `healed`
+- `nudge_reason`
+- `attempt_index`
+- `max_retry_nudges`
+- `terminal_after_budget`
+- `tool_call_id`
+- `tool_name`
+- `call_count`
+- `admitted_tool_count`
+- `allowed_next_step`
+- `corrective_action`
+
+Healing receipts must not include raw model output, raw prompt text, raw tool
+arguments, URLs, workspace paths, retrieved content, observation payloads, or
+account identifiers. A healed response must still pass through normal guardrail
+admission before any adapter executes. If healing recovers a candidate with an
+unknown tool, missing required arguments, non-object arguments, or an
+unsatisfied prerequisite, the healing receipt should point at the admission
+failure class through `nudge_reason` and keep the detailed failure in the
+paired `melix.agentic_tool_guardrail.v1` receipt.
+
 Tool prerequisite checks are part of the same admission boundary. A caller may
 keep completed-step state outside model context and pass it to admission so a
 target tool can require a prior tool before execution. Prerequisites may also
