@@ -33,24 +33,40 @@ def _env_int(name: str, default: int, minimum: int) -> int:
     return max(minimum, value)
 
 
+def _manifest_paths(root: Path = FIXTURE_ROOT) -> list[Path]:
+    paths: list[Path] = []
+    try:
+        entries = os.scandir(root)
+    except FileNotFoundError:
+        return paths
+    with entries:
+        for entry in entries:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            manifest_path = Path(entry.path) / "export-target-manifest.json"
+            if manifest_path.is_file():
+                paths.append(manifest_path)
+    paths.sort()
+    return paths
+
+
 def main() -> int:
-    manifests = sorted(FIXTURE_ROOT.glob("*/export-target-manifest.json"))
+    manifests = _manifest_paths(FIXTURE_ROOT)
     iterations = _env_int("MELIX_RUNTIME_EXPORT_MANIFEST_PROBE_ITERATIONS", 250, 1)
     samples = _env_int("MELIX_RUNTIME_EXPORT_MANIFEST_PROBE_SAMPLES", 5, 1)
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
     schema_errors = 0
+    fixture_count = len(manifests)
     manifest_bytes = sum(path.stat().st_size for path in manifests)
+    validate_manifest = validate_export_target_manifest_file
 
     for _ in range(samples):
         tracemalloc.start()
         started = time.perf_counter()
         for _index in range(iterations):
             for path in manifests:
-                report = validate_export_target_manifest_file(
-                    path,
-                    fixture_count=len(manifests),
-                )
+                report = validate_manifest(path, fixture_count=fixture_count)
                 schema_errors += report.schema_error_count
                 if not report.ok:
                     raise SystemExit(f"export target manifest fixture failed validation: {path}")

@@ -576,6 +576,29 @@ def test_export_target_manifest_metrics_cli_guard_runs_with_explicit_manifest(
     assert payload["fixture_count"] == 1
 
 
+def test_export_target_manifest_metrics_report_uses_scandir_without_path_glob(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"_default_manifest_paths() should use os.scandir, not Path.glob({pattern!r})"
+        )
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    assert len(export_target_manifest_metrics_report._default_manifest_paths()) == 4
+
+
+def test_export_target_manifest_metrics_report_missing_fixture_root_returns_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_root = tmp_path / "missing"
+    monkeypatch.setattr(export_target_manifest_metrics_report, "DEFAULT_FIXTURE_ROOT", missing_root)
+
+    assert export_target_manifest_metrics_report._default_manifest_paths() == []
+
+
 def test_runtime_export_manifest_validation_probe_env_int_falls_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -583,6 +606,28 @@ def test_runtime_export_manifest_validation_probe_env_int_falls_back(
     probe_script = runpy.run_path(str(ROOT / "scripts/runtime_export_manifest_validation_probe.py"))
 
     assert probe_script["_env_int"]("MELIX_RUNTIME_EXPORT_MANIFEST_PROBE_ITERATIONS", 250, 1) == 250
+
+
+def test_runtime_export_manifest_validation_probe_uses_scandir_without_path_glob(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"_manifest_paths() should use os.scandir, not Path.glob({pattern!r})"
+        )
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+    probe_script = runpy.run_path(str(ROOT / "scripts/runtime_export_manifest_validation_probe.py"))
+
+    assert len(probe_script["_manifest_paths"]()) == 4
+
+
+def test_runtime_export_manifest_validation_probe_missing_fixture_root_returns_empty(
+    tmp_path: Path,
+) -> None:
+    probe_script = runpy.run_path(str(ROOT / "scripts/runtime_export_manifest_validation_probe.py"))
+
+    assert probe_script["_manifest_paths"](tmp_path / "missing") == []
 
 
 def test_runtime_export_manifest_validation_probe_fails_invalid_fixture(
