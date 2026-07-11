@@ -4,7 +4,7 @@ This Python-only performance slice is limited to `estimate_cache_snapshot_bytes(
 
 ## Scope
 
-The prefix-cache hot path estimates resident KV-cache bytes after prompt-cache snapshots are cloned or restored. The previous implementation created an intermediate per-layer tensor list before summing `.nbytes` or `size * itemsize`. This slice keeps the same supported cache shapes while streaming each layer's state, keys, and values directly into the byte accumulator.
+The prefix-cache hot path estimates resident KV-cache bytes after prompt-cache snapshots are cloned or restored. The previous implementation created an intermediate per-layer tensor list before summing `.nbytes` or `size * itemsize`. This follow-up slice keeps the same supported cache shapes while avoiding repeated runtime construction of the `list | tuple` type-union check inside the streamed state path.
 
 ## Registered probe
 
@@ -21,8 +21,9 @@ The older `prefix-cold-index-scandir` probe remains registered for the same modu
 1. Add direct behavior coverage for state-list, key/value, scalar-state, and missing-layer cache shapes.
 2. Add the registered probe script and PR-scoped registry entry for cache snapshot byte estimation.
 3. Replace the per-layer temporary tensor list with direct streaming accumulation.
-4. Run focused tests, changed-scope coverage, and the registered probe locally on Linux.
-5. Use GitHub Actions PR-scoped performance as the final merge gate.
+4. Reuse a module-level state-sequence type tuple so the streamed state path does not rebuild `list | tuple` during every layer check.
+5. Run focused tests, changed-scope coverage, and the registered probe locally on Linux.
+6. Use GitHub Actions PR-scoped performance as the final merge gate.
 
 ## Success criteria
 
