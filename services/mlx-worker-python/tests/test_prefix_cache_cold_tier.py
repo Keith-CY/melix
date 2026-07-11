@@ -65,6 +65,18 @@ def test_estimate_cache_snapshot_bytes_sums_state_and_key_value_layers() -> None
     )
 
 
+def test_estimate_cache_snapshot_bytes_ignores_tensors_without_byte_shape() -> None:
+    class TensorWithoutBytes:
+        size = 4
+
+    cache_snapshot = [
+        SimpleNamespace(state=[TensorWithoutBytes(), SimpleNamespace(itemsize=8)]),
+        SimpleNamespace(keys=TensorWithoutBytes(), values=SimpleNamespace(itemsize=8)),
+    ]
+
+    assert estimate_cache_snapshot_bytes(cache_snapshot) == 0
+
+
 def _put(store: PrefixBlockStore, session_id: str, tokens: list[int], **kwargs: Any) -> None:
     store.put(
         session_id=session_id,

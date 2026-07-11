@@ -5264,7 +5264,7 @@ def test_build_scope_report_reuses_scope_cached_registry_without_double_stat(
         return original_os_stat(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "stat", fail_path_stat)
-    monkeypatch.setattr(os, "stat", tracked_os_stat)
+    monkeypatch.setattr(pr_scoped_performance_module, "_OS_STAT", tracked_os_stat)
 
     try:
         first = build_scope_report(
