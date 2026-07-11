@@ -187,6 +187,30 @@ tool that is disabled by policy must be omitted from the selected registry, so
 the deterministic runtime cannot execute it through a later model-emitted tool
 call.
 
+Before prompt assembly exposes workflow-selected tools, retrieved procedure
+references, or admin affordances to the model, the runtime must compare those
+prompt-visible tool IDs with the selected registry's callable schema list. The
+v1 schema-consistency preflight receipt is
+`melix.agentic_tool_schema_consistency.v1` and records:
+
+- `outcome = consistent|mismatch`
+- `source`
+- `referenced_tools[]`
+- `callable_tools[]`
+- `missing_tools[]`
+- `invalid_affordance_count`
+- `checked_affordance_count`
+- `allowed_next_step`
+- `corrective_action`
+
+Schema-consistency receipts must not include raw prompt text, retrieved text,
+procedure bodies, URLs, workspace paths, tool arguments, observation payloads,
+or account identifiers. When `missing_tools[]` is non-empty, prompt assembly
+must strip the unavailable affordances or block generation with a diagnostic
+before the model can be instructed to call a tool absent from the callable
+schema list. Policy-disabled tools are surfaced through the same mechanism
+because the selected registry is the execution allowlist.
+
 ## Tool Guardrail Admission Receipt Contract
 
 Agentic loops should validate model-emitted tool calls before executing any

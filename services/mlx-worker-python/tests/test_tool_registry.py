@@ -117,6 +117,134 @@ def test_workspace_file_integration_intent_routes_schema_without_greeting_bleed(
     assert greeting.registry.names() == ("local_compute",)
 
 
+def test_tool_schema_consistency_preflight_reports_missing_workflow_tool_without_raw_text() -> None:
+    registry = tool_registry_module.agentic_tool_catalog_registry().select(("local_compute",))
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        (
+            {
+                "tool_name": "visit",
+                "source": "workflow_selected",
+                "procedure_text": "SECRET_PROCEDURE says to visit https://example.com",
+            },
+        ),
+        registry=registry,
+        source="workflow_selected",
+    )
+
+    assert decision.consistent is False
+    assert decision.referenced_tools == ("visit",)
+    assert decision.missing_tools == ("visit",)
+    assert decision.receipt == {
+        "schema_version": "melix.agentic_tool_schema_consistency.v1",
+        "toolset_version": tool_registry_module.BUILTIN_TOOLSET_VERSION,
+        "outcome": "mismatch",
+        "source": "workflow_selected",
+        "referenced_tools": ["visit"],
+        "callable_tools": ["local_compute"],
+        "missing_tools": ["visit"],
+        "invalid_affordance_count": 0,
+        "checked_affordance_count": 1,
+        "allowed_next_step": "strip_missing_affordances",
+        "corrective_action": "remove_unavailable_tool_affordances",
+    }
+    assert "SECRET_PROCEDURE" not in json.dumps(decision.receipt, ensure_ascii=False)
+    assert "https://example.com" not in json.dumps(decision.receipt, ensure_ascii=False)
+
+
+def test_tool_schema_consistency_preflight_accepts_viewed_procedure_tool() -> None:
+    registry = tool_registry_module.agentic_tool_catalog_registry().select(
+        ("local_compute", "visit")
+    )
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        ({"tool_id": "visit", "source": "viewed_procedure"},),
+        registry=registry,
+        source="viewed_procedure",
+    )
+
+    assert decision.consistent is True
+    assert decision.referenced_tools == ("visit",)
+    assert decision.missing_tools == ()
+    assert decision.receipt["outcome"] == "consistent"
+    assert decision.receipt["callable_tools"] == ["local_compute", "visit"]
+    assert decision.receipt["allowed_next_step"] == "assemble_prompt"
+    assert decision.receipt["corrective_action"] == ""
+
+
+def test_tool_schema_consistency_preflight_reports_policy_disabled_context_tool() -> None:
+    selection = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Visit https://example.com/docs and summarize the page.",
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=False,
+        )
+    )
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        ({"tool_id": "visit", "source": "retrieved_context"},),
+        registry=selection.registry,
+        source="retrieved_context",
+    )
+
+    assert selection.registry.names() == ("local_compute",)
+    assert decision.consistent is False
+    assert decision.missing_tools == ("visit",)
+    assert decision.receipt["outcome"] == "mismatch"
+    assert decision.receipt["source"] == "retrieved_context"
+    assert decision.receipt["missing_tools"] == ["visit"]
+    assert decision.receipt["callable_tools"] == ["local_compute"]
+
+
+def test_tool_schema_consistency_preflight_counts_invalid_affordances_without_echoing() -> None:
+    registry = tool_registry_module.agentic_tool_catalog_registry().select(("local_compute",))
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        (
+            " local_compute ",
+            "visit; SECRET_INLINE",
+            {"tool_name": "bad tool SECRET_MAPPING"},
+            {"name": ""},
+        ),
+        registry=registry,
+        source="retrieved_context",
+    )
+
+    receipt_text = json.dumps(decision.receipt, ensure_ascii=False)
+
+    assert decision.consistent is True
+    assert decision.referenced_tools == ("local_compute",)
+    assert decision.missing_tools == ()
+    assert decision.receipt["invalid_affordance_count"] == 3
+    assert decision.receipt["checked_affordance_count"] == 4
+    assert "SECRET_INLINE" not in receipt_text
+    assert "SECRET_MAPPING" not in receipt_text
+
+
+def test_tool_schema_consistency_preflight_sanitizes_empty_invalid_batch_and_source() -> None:
+    registry = tool_registry_module.agentic_tool_catalog_registry().select(("local_compute",))
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        (
+            {"tool_id": 42},
+            object(),
+        ),
+        registry=registry,
+        source="bad source SECRET_SOURCE",
+    )
+
+    receipt_text = json.dumps(decision.receipt, ensure_ascii=False)
+
+    assert decision.consistent is True
+    assert decision.referenced_tools == ()
+    assert decision.missing_tools == ()
+    assert decision.receipt["source"] == "unspecified"
+    assert decision.receipt["invalid_affordance_count"] == 2
+    assert decision.receipt["checked_affordance_count"] == 2
+    assert "SECRET_SOURCE" not in receipt_text
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
