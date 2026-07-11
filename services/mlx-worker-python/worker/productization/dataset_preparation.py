@@ -52,7 +52,6 @@ _CODE_SOURCE_LANGUAGE_BY_SUFFIX = {
 _SOURCE_KIND_NAME_CACHE_MAX = 4096
 _SOURCE_KIND_BY_NAME: dict[str, str | None] = {}
 _SHA256 = hashlib.sha256
-_MISSING = object()
 
 
 def preflight_workspace(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -1871,11 +1870,9 @@ def _append_rows_output_lengths(
     append = lengths.append
     len_ = len
     str_ = str
-    missing = _MISSING
     output_length_total = 0
     for row in rows:
-        completion = row.get("completion", missing)
-        if completion is missing:
+        if "completion" not in row:
             messages = row.get("messages", [])
             if not isinstance(messages, list):
                 append(0)
@@ -1896,6 +1893,7 @@ def _append_rows_output_lengths(
             append(total)
             output_length_total += total
         else:
+            completion = row["completion"]
             if type(completion) is str:
                 length = len_(completion)
             else:
