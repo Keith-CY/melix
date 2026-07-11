@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from worker.runtime.prefix_block_store import (
     ColdPrefixStore,
     PrefixBlockStore,
+    estimate_cache_snapshot_bytes,
 )
 
 
@@ -37,6 +39,30 @@ def _make_cold(tmp_path: Path, **kwargs: Any) -> ColdPrefixStore:
 def _make_snapshot(value: str = "snapshot") -> list[dict[str, str]]:
     # List-shaped like a prompt-cache layer list; restore() requires a list.
     return [{"data": value}]
+
+
+def test_estimate_cache_snapshot_bytes_sums_state_and_key_value_layers() -> None:
+    class TensorWithNbytes:
+        def __init__(self, nbytes: int) -> None:
+            self.nbytes = nbytes
+
+    class TensorWithSize:
+        size = 7
+        itemsize = 8
+
+    cache_snapshot = [
+        SimpleNamespace(state=[TensorWithNbytes(10), TensorWithSize()]),
+        SimpleNamespace(keys=TensorWithNbytes(20), values=TensorWithSize()),
+        SimpleNamespace(state=TensorWithNbytes(30)),
+        SimpleNamespace(state=TensorWithSize()),
+        SimpleNamespace(keys=TensorWithSize(), values=TensorWithNbytes(40)),
+        SimpleNamespace(),
+    ]
+
+    assert (
+        estimate_cache_snapshot_bytes(cache_snapshot)
+        == 10 + 56 + 20 + 56 + 30 + 56 + 56 + 40
+    )
 
 
 def _put(store: PrefixBlockStore, session_id: str, tokens: list[int], **kwargs: Any) -> None:

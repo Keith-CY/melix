@@ -433,25 +433,45 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
         return 0
     total = 0
     for layer_cache in cache_snapshot:
-        tensors: list[Any] = []
         state = getattr(layer_cache, "state", None)
         if state is not None:
             if isinstance(state, list | tuple):
-                tensors.extend(state)
-            else:
-                tensors.append(state)
-        else:
-            keys = getattr(layer_cache, "keys", None)
-            values = getattr(layer_cache, "values", None)
-            if keys is not None:
-                tensors.append(keys)
-            if values is not None:
-                tensors.append(values)
-        for tensor in tensors:
-            nbytes = getattr(tensor, "nbytes", None)
+                for tensor in state:
+                    nbytes = getattr(tensor, "nbytes", None)
+                    if nbytes is None:
+                        size = getattr(tensor, "size", None)
+                        itemsize = getattr(tensor, "itemsize", None)
+                        if size is not None and itemsize is not None:
+                            nbytes = int(size) * int(itemsize)
+                    if nbytes is not None:
+                        total += int(nbytes)
+                continue
+            nbytes = getattr(state, "nbytes", None)
             if nbytes is None:
-                size = getattr(tensor, "size", None)
-                itemsize = getattr(tensor, "itemsize", None)
+                size = getattr(state, "size", None)
+                itemsize = getattr(state, "itemsize", None)
+                if size is not None and itemsize is not None:
+                    nbytes = int(size) * int(itemsize)
+            if nbytes is not None:
+                total += int(nbytes)
+            continue
+
+        keys = getattr(layer_cache, "keys", None)
+        if keys is not None:
+            nbytes = getattr(keys, "nbytes", None)
+            if nbytes is None:
+                size = getattr(keys, "size", None)
+                itemsize = getattr(keys, "itemsize", None)
+                if size is not None and itemsize is not None:
+                    nbytes = int(size) * int(itemsize)
+            if nbytes is not None:
+                total += int(nbytes)
+        values = getattr(layer_cache, "values", None)
+        if values is not None:
+            nbytes = getattr(values, "nbytes", None)
+            if nbytes is None:
+                size = getattr(values, "size", None)
+                itemsize = getattr(values, "itemsize", None)
                 if size is not None and itemsize is not None:
                     nbytes = int(size) * int(itemsize)
             if nbytes is not None:
