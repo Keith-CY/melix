@@ -8,6 +8,10 @@ public struct TextCompatibilityPolicyReceipt: Codable, Sendable, Equatable {
     public let reasoningEffort: String
     public let toolParserMode: String
     public let toolParserSource: String
+    public let requestedParser: String
+    public let resolvedParser: String
+    public let parserFallbackMode: String
+    public let parserRefusalReason: String
     public let toolNamespaces: [String]
     public let toolChoiceRequested: String
     public let toolChoiceResolved: String
@@ -23,6 +27,10 @@ public struct TextCompatibilityPolicyReceipt: Codable, Sendable, Equatable {
         case reasoningEffort = "reasoning_effort"
         case toolParserMode = "tool_parser_mode"
         case toolParserSource = "tool_parser_source"
+        case requestedParser = "requested_parser"
+        case resolvedParser = "resolved_parser"
+        case parserFallbackMode = "parser_fallback_mode"
+        case parserRefusalReason = "parser_refusal_reason"
         case toolNamespaces = "tool_namespaces"
         case toolChoiceRequested = "tool_choice_requested"
         case toolChoiceResolved = "tool_choice_resolved"
@@ -39,6 +47,10 @@ public struct TextCompatibilityPolicyReceipt: Codable, Sendable, Equatable {
         reasoningEffort: String,
         toolParserMode: String,
         toolParserSource: String,
+        requestedParser: String,
+        resolvedParser: String,
+        parserFallbackMode: String,
+        parserRefusalReason: String,
         toolNamespaces: [String],
         toolChoiceRequested: String,
         toolChoiceResolved: String,
@@ -53,6 +65,10 @@ public struct TextCompatibilityPolicyReceipt: Codable, Sendable, Equatable {
         self.reasoningEffort = reasoningEffort
         self.toolParserMode = toolParserMode
         self.toolParserSource = toolParserSource
+        self.requestedParser = requestedParser
+        self.resolvedParser = resolvedParser
+        self.parserFallbackMode = parserFallbackMode
+        self.parserRefusalReason = parserRefusalReason
         self.toolNamespaces = toolNamespaces
         self.toolChoiceRequested = toolChoiceRequested
         self.toolChoiceResolved = toolChoiceResolved
@@ -72,6 +88,10 @@ public struct TextCompatibilityPolicyReceipt: Codable, Sendable, Equatable {
             reasoningEffort: fields["reasoning_effort"] as? String ?? "",
             toolParserMode: fields["tool_parser_mode"] as? String ?? "",
             toolParserSource: fields["tool_parser_source"] as? String ?? "",
+            requestedParser: fields["requested_parser"] as? String ?? "",
+            resolvedParser: fields["resolved_parser"] as? String ?? "",
+            parserFallbackMode: fields["parser_fallback_mode"] as? String ?? "",
+            parserRefusalReason: fields["parser_refusal_reason"] as? String ?? "",
             toolNamespaces: fields["tool_namespaces"] as? [String] ?? [],
             toolChoiceRequested: fields["tool_choice_requested"] as? String ?? "",
             toolChoiceResolved: fields["tool_choice_resolved"] as? String ?? "",
@@ -94,6 +114,10 @@ public struct TextCompatibilityPolicyReceipt: Codable, Sendable, Equatable {
             "melix.compat.reasoning_effort": reasoningEffort,
             "melix.compat.tool_parser_mode": toolParserMode,
             "melix.compat.tool_parser_source": toolParserSource,
+            "melix.compat.requested_parser": requestedParser,
+            "melix.compat.resolved_parser": resolvedParser,
+            "melix.compat.parser_fallback_mode": parserFallbackMode,
+            "melix.compat.parser_refusal_reason": parserRefusalReason,
             "melix.compat.tool_namespaces": toolNamespaces.joined(separator: ","),
             "melix.compat.tool_choice_requested": toolChoiceRequested,
             "melix.compat.tool_choice_resolved": toolChoiceResolved,
@@ -113,6 +137,10 @@ public struct TextCompatibilityPolicyReceipt: Codable, Sendable, Equatable {
             "reasoning_effort": reasoningEffort,
             "tool_parser_mode": toolParserMode,
             "tool_parser_source": toolParserSource,
+            "requested_parser": requestedParser,
+            "resolved_parser": resolvedParser,
+            "parser_fallback_mode": parserFallbackMode,
+            "parser_refusal_reason": parserRefusalReason,
             "tool_namespaces": toolNamespaces,
             "tool_choice_requested": toolChoiceRequested,
             "tool_choice_resolved": toolChoiceResolved,
@@ -124,6 +152,12 @@ public struct TextCompatibilityPolicyReceipt: Codable, Sendable, Equatable {
 
     private static func hashFields(shapedRequest: ShapedTextRequest) -> [String: Any] {
         let toolChoiceRequested = shapedRequest.toolChoice ?? ""
+        let requestedParser = if let toolParser = shapedRequest.toolParser,
+                                 toolParser.source == "request" {
+            toolParser.mode.rawValue
+        } else {
+            "none"
+        }
         return [
             "compat_surface": compatSurface(for: shapedRequest.endpoint),
             "stream_mode": shapedRequest.stream ? "stream" : "non_stream",
@@ -132,6 +166,10 @@ public struct TextCompatibilityPolicyReceipt: Codable, Sendable, Equatable {
             "reasoning_effort": shapedRequest.reasoningEffort ?? "",
             "tool_parser_mode": shapedRequest.toolParser?.mode.rawValue ?? "none",
             "tool_parser_source": shapedRequest.toolParser?.source ?? "none",
+            "requested_parser": requestedParser,
+            "resolved_parser": shapedRequest.toolParser?.mode.rawValue ?? "none",
+            "parser_fallback_mode": shapedRequest.toolParser?.fallbackMode?.rawValue ?? "",
+            "parser_refusal_reason": shapedRequest.toolParserSuppressedReason ?? "",
             "tool_namespaces": shapedRequest.toolParser?.namespaces ?? [],
             "tool_choice_requested": toolChoiceRequested,
             "tool_choice_resolved": resolvedToolChoice(requested: toolChoiceRequested, hasTools: !shapedRequest.tools.isEmpty),

@@ -258,6 +258,10 @@ struct ToolParserRegistryTests {
         #expect(ext["melix.compat.reasoning_effort"] == "low")
         #expect(ext["melix.compat.tool_parser_mode"] == "qwen")
         #expect(ext["melix.compat.tool_parser_source"] == "request")
+        #expect(ext["melix.compat.requested_parser"] == "qwen")
+        #expect(ext["melix.compat.resolved_parser"] == "qwen")
+        #expect(ext["melix.compat.parser_fallback_mode"] == "")
+        #expect(ext["melix.compat.parser_refusal_reason"] == "")
         #expect(ext["melix.compat.tool_namespaces"] == "tools.search")
         #expect(ext["melix.compat.tool_choice_requested"] == "required")
         #expect(ext["melix.compat.tool_choice_resolved"] == "required")
@@ -265,6 +269,10 @@ struct ToolParserRegistryTests {
         #expect(ext["melix.compat.output_modalities"] == "text")
         #expect(ext["melix.compat.effective_config_hash"]?.isEmpty == false)
         #expect(receipt.contains(#""compat_surface":"openai.chat.completions""#))
+        #expect(receipt.contains(#""requested_parser":"qwen""#))
+        #expect(receipt.contains(#""resolved_parser":"qwen""#))
+        #expect(receipt.contains(#""parser_fallback_mode":"""#))
+        #expect(receipt.contains(#""parser_refusal_reason":"""#))
         #expect(receipt.contains(#""tool_namespaces":["tools.search"]"#))
         #expect(receipt.contains(#""effective_config_hash":"\#(ext["melix.compat.effective_config_hash"] ?? "")""#))
         #expect(Set(receiptObject.keys) == compatReceiptFieldNames())
@@ -1312,6 +1320,10 @@ struct ToolParserRegistryTests {
             "reasoning_effort",
             "tool_parser_mode",
             "tool_parser_source",
+            "requested_parser",
+            "resolved_parser",
+            "parser_fallback_mode",
+            "parser_refusal_reason",
             "tool_namespaces",
             "tool_choice_requested",
             "tool_choice_resolved",
