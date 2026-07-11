@@ -509,6 +509,37 @@ def test_dataset_catalog_jsonl_preview_preserves_raw_lines_for_decoder(
     assert seen_payloads == ['  {"prompt": "first"}\n']
 
 
+def test_dataset_catalog_limit_one_preview_returns_first_file_rows_directly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    snapshot_dir.mkdir()
+    first_path = snapshot_dir / "train.jsonl"
+    expected_rows = [{"prompt": "first"}]
+
+    def fail_limited_iter(*_args: object, **_kwargs: object):
+        raise AssertionError(  # pragma: no cover
+            "limit=1 preview should use the first-file fast path"
+        )
+        yield first_path  # pragma: no cover
+
+    monkeypatch.setattr(catalog, "_iter_limited_preview_dataset_files", fail_limited_iter)
+    monkeypatch.setattr(catalog, "_first_supported_dataset_file", lambda _path: first_path)
+    monkeypatch.setattr(
+        catalog,
+        "_read_rows_from_file",
+        lambda path, *, limit=None: expected_rows if path == first_path and limit == 1 else [],
+    )
+
+    rows = catalog.read_hf_dataset_snapshot_rows(snapshot_dir, limit=1)
+
+    assert rows is expected_rows
+
+    monkeypatch.setattr(catalog, "_first_supported_dataset_file", lambda _path: None)
+    assert catalog.read_hf_dataset_snapshot_rows(snapshot_dir, limit=1) == []
+
+
 def test_dataset_catalog_first_preview_scan_skips_readme_without_rescan(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshot"
     data_dir = snapshot_dir / "data"
