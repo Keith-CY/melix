@@ -2351,6 +2351,9 @@ def test_upload_receipt_pipeline_collect_published_file_list_uses_scandir_stack(
     nested_root = source_root / "nested"
     nested_root.mkdir()
     (nested_root / "config.json").write_text("{}", encoding="utf-8")
+    shard_root = nested_root / "shard"
+    shard_root.mkdir()
+    (shard_root / "part-0001.safetensors").write_text("weights", encoding="utf-8")
 
     def fail_os_walk(*args, **kwargs):
         raise AssertionError("published file collection should avoid os.walk")  # pragma: no cover
@@ -2359,6 +2362,7 @@ def test_upload_receipt_pipeline_collect_published_file_list_uses_scandir_stack(
 
     assert UploadReceiptPipeline._collect_published_file_list(source_root) == [
         "nested/config.json",
+        "nested/shard/part-0001.safetensors",
         "weights.bin",
     ]
 
