@@ -359,7 +359,6 @@ class ColdPrefixStore:
                         continue
         except OSError:
             return
-        meta_paths.sort()
         precheck_orphan_names = len(snapshot_file_names) < len(meta_paths)
         meta_suffix_length = len(".meta.json")
         for meta_path_string, meta_file_name in meta_paths:
