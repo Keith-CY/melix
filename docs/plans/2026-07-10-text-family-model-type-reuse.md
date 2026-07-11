@@ -17,6 +17,8 @@ The affected path is covered by the registered PR-scoped performance probe `text
 
 `detect_text_family_identity()` now reuses the normalized top-level `model_type` discovered while resolving the architecture instead of calling a second helper that reads the same mapping key again. The fallback paths for architecture-list detection, nested `text_config.model_type`, explicit family overrides, and directory-name inference remain unchanged.
 
+The direct `_detected_architecture()` helper remains specialized for explicit-family resolution so existing metadata-override probe workloads do not pay tuple construction overhead from the no-override helper.
+
 ## Validation Plan
 
 1. Add a focused regression test proving top-level `model_type` detection performs one mapping key access.
@@ -27,4 +29,4 @@ The affected path is covered by the registered PR-scoped performance probe `text
 
 ## Metrics
 
-Success is measured by lower `config_key_accesses_mean` and non-regressing `elapsed_ms_mean` in `scripts/text_family_config_probe.py` while keeping `config_copy_calls_mean == 0`. This slice has no Swift runtime effect.
+Success is measured by preserving `config_key_accesses_mean`, keeping `config_copy_calls_mean == 0`, and avoiding `elapsed_ms_mean` regression in `scripts/text_family_config_probe.py`; the focused regression test covers the one-lookup no-override fast path directly. This slice has no Swift runtime effect.

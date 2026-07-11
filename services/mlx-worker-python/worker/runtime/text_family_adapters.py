@@ -306,8 +306,21 @@ def resolve_text_family_config(
 
 
 def _detected_architecture(config_payload: Mapping[str, Any] | None) -> str:
-    architecture, _ = _detected_architecture_and_model_type(config_payload)
-    return architecture
+    config_payload = _config_mapping(config_payload)
+    model_type = _string(config_payload.get("model_type"))
+    if model_type:
+        return _lowercase_model_name(model_type)
+    architectures = config_payload.get("architectures")
+    if isinstance(architectures, list):
+        for item in architectures:
+            if isinstance(item, str) and item.strip():
+                return _lowercase_model_name(item.strip())
+    text_config = config_payload.get("text_config")
+    if isinstance(text_config, Mapping):
+        nested_model_type = _string(text_config.get("model_type"))
+        if nested_model_type:
+            return _lowercase_model_name(nested_model_type)
+    return ""
 
 
 def _detected_architecture_and_model_type(config_payload: Mapping[str, Any] | None) -> tuple[str, str]:

@@ -119,6 +119,28 @@ def test_detect_text_family_identity_prefers_explicit_supported_override() -> No
     assert detected.source == "explicit_override"
 
 
+def test_detect_text_family_identity_explicit_override_preserves_architecture_fallbacks() -> None:
+    from_architecture = detect_text_family_identity(
+        model_path="models/unknown-text-model",
+        config_payload={"architectures": [None, "Qwen3MoeForCausalLM"]},
+        explicit_family_id="qwen3moe",
+    )
+    from_nested_model_type = detect_text_family_identity(
+        model_path="models/unknown-text-model",
+        config_payload={"text_config": {"model_type": "Mistral4"}},
+        explicit_family_id="qwen3moe",
+    )
+    from_family_default = detect_text_family_identity(
+        model_path="models/unknown-text-model",
+        config_payload={"architectures": "not-a-list", "text_config": []},
+        explicit_family_id="qwen3moe",
+    )
+
+    assert from_architecture.architecture == "qwen3moeforcausallm"
+    assert from_nested_model_type.architecture == "mistral4"
+    assert from_family_default.architecture == "qwen3_moe"
+
+
 def test_detect_text_family_identity_uses_exact_explicit_family_fast_path() -> None:
     class NoNormalizeFamily(str):
         def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
