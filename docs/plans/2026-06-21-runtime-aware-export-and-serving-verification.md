@@ -224,10 +224,17 @@ already read for protobuf JSON parsing instead of issuing a second filesystem
 stat call on every validation. Its metrics pass should accumulate generated,
 required, and evidence byte totals while iterating each manifest file section
 once instead of materializing a combined file-row tuple solely to count evidence
-bytes. Repeated validation policy gates should also reuse module-level enum
-membership constants for derived-model activation modes, runtime-binary-required
-target types, load-check-required target types, and the GGUF runtime-unavailable
-waiver instead of constructing short-lived sets on every manifest validation.
+bytes. The 2026-07 file-row append slice keeps generated, required, and
+intermediate file-row validation semantics unchanged while appending directly
+into the manifest-level error accumulator instead of allocating three short-lived
+per-section error lists and extending them back into the same accumulator. The
+affected path remains covered by the registered PR-scoped performance probe
+`runtime-export-manifest-validation`, including focused `test_command`,
+`coverage_command`, and `probe_command` entries. Repeated validation policy gates
+should also reuse module-level enum membership constants for derived-model
+activation modes, runtime-binary-required target types, load-check-required
+target types, and the GGUF runtime-unavailable waiver instead of constructing
+short-lived sets on every manifest validation.
 
 ### Export Plan Receipt
 
