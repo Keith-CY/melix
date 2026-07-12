@@ -687,20 +687,21 @@ class EngineCore:
                     compat_policy_receipt_json = ""
                     compat_effective_config_hash = ""
                     allowed_tools_receipt_json = _DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
-                generated_tool_call_delta_count_text = str(generated_tool_call_delta_count)
+                parser_metric_text = _parser_metric_text
+                generated_tool_call_delta_count_text = parser_metric_text(generated_tool_call_delta_count)
                 if token_route_receipt is not None:
                     token_route_receipt_json = token_route_receipt.to_json()
                 parser_metrics["resolved_stop_token_count"] = resolved_stop_token_count
                 parser_metrics["response_history_normalized_count"] = response_history_normalized_count
-                parser_metrics["native_tool_exemplar_injected_count"] = "0"
+                parser_metrics["native_tool_exemplar_injected_count"] = _METRIC_ZERO_TEXT
                 parser_metrics["reasoning_flag_source"] = reasoning.mode_source or "unspecified"
                 parser_metrics["compat_policy_receipt_json"] = compat_policy_receipt_json
                 parser_metrics["compat_effective_config_hash"] = compat_effective_config_hash
                 parser_metrics["turn_boundary_stop_reason"] = turn_boundary_stop_reason or finish_reason
-                parser_metrics["generated_reasoning_delta_count"] = "0"
+                parser_metrics["generated_reasoning_delta_count"] = _METRIC_ZERO_TEXT
                 parser_metrics["generated_tool_call_delta_count"] = generated_tool_call_delta_count_text
-                parser_metrics["annotation_delta_count"] = str(annotation_delta_count)
-                parser_metrics["tool_result_delta_count"] = str(tool_result_delta_count)
+                parser_metrics["annotation_delta_count"] = parser_metric_text(annotation_delta_count)
+                parser_metrics["tool_result_delta_count"] = parser_metric_text(tool_result_delta_count)
                 parser_metrics["token_route_receipt_json"] = token_route_receipt_json
                 parser_metrics["allowed_tools_receipt_json"] = allowed_tools_receipt_json
             else:
