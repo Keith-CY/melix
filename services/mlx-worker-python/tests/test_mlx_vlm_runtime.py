@@ -2873,6 +2873,7 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
             "language_model.mtp.layers.4.weight": "mtp-missing.safetensors",
             "language_model.mtp.layers.5.weight": "nested/mtp-00002.safetensors",
             "language_model.mtp.layers.5.duplicate_weight": "nested/mtp-00002.safetensors",
+            "language_model.mtp.layers.6.weight": "nested/model-mtp-00003.safetensors",
             "language_model.layers.0.weight": "ignored-mtp.safetensors",
         }
     }

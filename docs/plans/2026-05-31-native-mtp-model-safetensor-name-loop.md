@@ -18,6 +18,8 @@ The probe is extended to measure the model safetensor listing path directly agai
 
 2026-06-19 probe-gating note: the shared registered probe keeps `weight_load_new_mean_ms` as the gated shard-load timing metric, but treats `weight_load_delta_ms` as informational. That delta is derived from the historical and optimized helpers within one probe run, so cross-run comparisons can flag noise in an unrelated helper as a PR regression even when the optimized weight-load mean remains neutral or improved.
 
+2026-07-12 follow-up slice: `_extra_mtp_safetensor_file_paths()` now short-circuits top-level `model*.safetensors` sidecar candidates before scanning for `os.sep`. Nested `*/model*.safetensors` candidates still use the basename check and remain excluded, preserving the historical base-shard elision semantics while reducing string scans for noisy index maps with many duplicate base-model MTP entries.
+
 ## Verification plan
 
 ```bash
