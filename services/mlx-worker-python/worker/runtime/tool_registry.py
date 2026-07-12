@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, cast
@@ -48,6 +49,9 @@ _KeywordHintRule = tuple[str, bool]
 _KeywordHintRuleSet = tuple[str, tuple[str, ...], tuple[str, ...]]
 
 TOOL_REGISTRY_SCHEMA_VERSION = "melix.agentic_tool_registry.v1"
+TOOL_SCHEMA_CONSISTENCY_RECEIPT_SCHEMA_VERSION = (
+    "melix.agentic_tool_schema_consistency.v1"
+)
 BUILTIN_TOOLSET_VERSION = "melix.agentic_tools.builtin.v1"
 DEFAULT_TOOL_PARSER = "qwen"
 DEFAULT_TOOL_PARSER_CONTRACT_VERSION = "melix.tool_parser.qwen.v1"
@@ -228,6 +232,15 @@ class ToolSelectionInput:
 class ToolSelectionResult:
     registry: ToolRegistry
     receipt: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSchemaConsistencyDecision:
+    consistent: bool
+    receipt: dict[str, Any]
+    referenced_tools: tuple[str, ...]
+    callable_tools: tuple[str, ...]
+    missing_tools: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,6 +528,111 @@ def agentic_tool_catalog_registry() -> ToolRegistry:
 
 def agentic_tool_index_metadata() -> dict[str, ToolIndexMetadata]:
     return dict(_BUILTIN_TOOL_INDEX_METADATA)
+
+
+def preflight_agentic_tool_schema_consistency(
+    affordances: Sequence[Any],
+    *,
+    registry: ToolRegistry,
+    catalog: ToolRegistry | None = None,
+    source: str = "tool_affordance",
+) -> ToolSchemaConsistencyDecision:
+    if catalog is None:
+        catalog = agentic_tool_catalog_registry()
+    callable_tools = registry.names()
+    callable_tool_set = set(callable_tools)
+    catalog_tools = catalog.names()
+    known_tool_names = callable_tool_set | set(catalog_tools) | _BUILTIN_AGENTIC_TOOL_NAME_SET
+    referenced_tools, invalid_affordance_count = _referenced_tool_affordance_names(
+        affordances,
+        known_tool_names,
+        catalog_tools,
+        callable_tools,
+    )
+    missing_tools = tuple(
+        tool_name for tool_name in referenced_tools if tool_name not in callable_tool_set
+    )
+    consistent = not missing_tools
+    receipt = {
+        "schema_version": TOOL_SCHEMA_CONSISTENCY_RECEIPT_SCHEMA_VERSION,
+        "toolset_version": BUILTIN_TOOLSET_VERSION,
+        "outcome": "consistent" if consistent else "mismatch",
+        "source": _safe_tool_affordance_source(source),
+        "referenced_tools": list(referenced_tools),
+        "callable_tools": list(callable_tools),
+        "missing_tools": list(missing_tools),
+        "invalid_affordance_count": invalid_affordance_count,
+        "checked_affordance_count": len(affordances),
+        "allowed_next_step": "assemble_prompt" if consistent else "strip_missing_affordances",
+        "corrective_action": "" if consistent else "remove_unavailable_tool_affordances",
+    }
+    return ToolSchemaConsistencyDecision(
+        consistent=consistent,
+        receipt=receipt,
+        referenced_tools=referenced_tools,
+        callable_tools=callable_tools,
+        missing_tools=missing_tools,
+    )
+
+
+def _referenced_tool_affordance_names(
+    affordances: Sequence[Any],
+    known_tool_names: set[str] | frozenset[str],
+    catalog_names: tuple[str, ...],
+    registry_names: tuple[str, ...],
+) -> tuple[tuple[str, ...], int]:
+    seen_tool_names: set[str] = set()
+    invalid_affordance_count = 0
+    for affordance in affordances:
+        tool_name = _tool_affordance_name(affordance)
+        if tool_name is None or tool_name not in known_tool_names:
+            invalid_affordance_count += 1
+            continue
+        seen_tool_names.add(tool_name)
+    if not seen_tool_names:
+        return (), invalid_affordance_count
+    ordered_names: list[str] = []
+    ordered_name_set: set[str] = set()
+    for ordered_source_names in (
+        catalog_names,
+        SELECTABLE_AGENTIC_TOOL_NAMES,
+        registry_names,
+        tuple(sorted(seen_tool_names)),
+    ):
+        for tool_name in ordered_source_names:
+            if tool_name in seen_tool_names and tool_name not in ordered_name_set:
+                ordered_names.append(tool_name)
+                ordered_name_set.add(tool_name)
+    return tuple(ordered_names), invalid_affordance_count
+
+
+def _tool_affordance_name(affordance: Any) -> str | None:
+    if isinstance(affordance, str):
+        return _normalized_tool_affordance_name(affordance)
+    if isinstance(affordance, Mapping):
+        for key in ("tool_id", "tool_name", "name"):
+            raw_value = affordance.get(key)
+            if isinstance(raw_value, str):
+                return _normalized_tool_affordance_name(raw_value)
+            if raw_value is not None:
+                return None
+    return None
+
+
+def _normalized_tool_affordance_name(raw_name: str) -> str | None:
+    normalized_name = raw_name.strip()
+    if not normalized_name:
+        return None
+    if not _TOOL_NAME_RE.fullmatch(normalized_name):
+        return None
+    return normalized_name
+
+
+def _safe_tool_affordance_source(source: str) -> str:
+    normalized_source = source.strip()
+    if _TOOL_NAME_RE.fullmatch(normalized_source):
+        return normalized_source
+    return "unspecified"
 
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
@@ -1360,17 +1478,20 @@ __all__ = [
     "NETWORK_CAPABLE_AGENTIC_TOOL_NAMES",
     "SELECTABLE_AGENTIC_TOOL_NAMES",
     "TOOL_REGISTRY_SCHEMA_VERSION",
+    "TOOL_SCHEMA_CONSISTENCY_RECEIPT_SCHEMA_VERSION",
     "ToolArgumentDescriptor",
     "ToolDescriptor",
     "ToolRegistry",
     "ToolRegistryError",
     "ToolIndexMetadata",
     "ToolRegistryMetrics",
+    "ToolSchemaConsistencyDecision",
     "ToolSelectionInput",
     "ToolSelectionResult",
     "agentic_tool_index_metadata",
     "agentic_tool_catalog_registry",
     "built_in_tool_config",
     "built_in_tool_registry",
+    "preflight_agentic_tool_schema_consistency",
     "select_agentic_tools_for_turn",
 ]
