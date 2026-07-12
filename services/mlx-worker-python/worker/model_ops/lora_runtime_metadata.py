@@ -329,9 +329,12 @@ def _processor_resume_mode(base_model_dir: Path) -> str:
     base_model_path = os.fspath(base_model_dir)
     join = os.path.join
     isfile = os.path.isfile
-    for filename, resume_mode in _PROCESSOR_RESUME_FILENAMES:
-        if isfile(join(base_model_path, filename)):
-            return resume_mode
+    if isfile(join(base_model_path, "processor_config.json")):
+        return "processor_config"
+    if isfile(join(base_model_path, "preprocessor_config.json")):
+        return "preprocessor_config"
+    if isfile(join(base_model_path, "tokenizer_config.json")):
+        return "tokenizer_only"
     return "missing"
 
 
