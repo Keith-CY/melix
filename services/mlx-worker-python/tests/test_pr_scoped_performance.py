@@ -479,7 +479,9 @@ def test_lora_aux_modules_sidecar_delta_metrics_are_informational() -> None:
     probe = next(probe for probe in probes if probe.probe_id == "lora-aux-modules-scandir")
     directions = {metric.key: metric.direction for metric in probe.metrics}
 
+    assert directions["processor_resume_baseline_elapsed_ms_mean"] == "informational"
     assert directions["processor_resume_delta_ms"] == "informational"
+    assert directions["quantized_kind_baseline_elapsed_ms_mean"] == "informational"
     assert directions["quantized_kind_delta_ms"] == "informational"
 
 

@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 from typing import Any, Mapping
 
 from packages.protocol.python.worker.v1 import common_pb2
@@ -33,6 +32,7 @@ _AUXILIARY_MODULE_PATTERNS = (
 _AUXILIARY_MODULE_PREFIXES = tuple(
     pattern.removesuffix("*.py") for pattern in _AUXILIARY_MODULE_PATTERNS
 )
+_AUXILIARY_MODULE_PREFIX_CHARS = "mctp"
 _PROCESSOR_RESUME_FILENAMES = (
     ("processor_config.json", "processor_config"),
     ("preprocessor_config.json", "preprocessor_config"),
@@ -40,10 +40,6 @@ _PROCESSOR_RESUME_FILENAMES = (
 )
 
 _QUANTIZED_KIND_ORDER = ("4bit", "8bit", "q4", "q8", "optiq")
-_QUANTIZED_KIND_PATTERNS = tuple(
-    (kind, re.compile(rf"(?<![a-z0-9]){re.escape(kind)}(?![a-z0-9])"))
-    for kind in _QUANTIZED_KIND_ORDER
-)
 
 
 ADAPTER_RUNTIME_EXT_KEY_MAP: tuple[tuple[str, str], ...] = (
@@ -340,19 +336,14 @@ def _processor_resume_mode(base_model_dir: Path) -> str:
 
 def _aux_modules_restored(base_model_dir: Path) -> bool:
     auxiliary_prefixes = _AUXILIARY_MODULE_PREFIXES
+    auxiliary_prefix_chars = _AUXILIARY_MODULE_PREFIX_CHARS
     scandir = os.scandir
     try:
         with scandir(base_model_dir) as entries:
             for entry in entries:
                 name = entry.name
-                first_char = name[0]
                 if (
-                    (
-                        first_char == "m"
-                        or first_char == "c"
-                        or first_char == "t"
-                        or first_char == "p"
-                    )
+                    name[0] in auxiliary_prefix_chars
                     and name.endswith(".py")
                     and name.startswith(auxiliary_prefixes)
                 ):
@@ -425,20 +416,39 @@ def _str_value(raw_value: Any) -> str:
 
 
 def _quantized_kind_from_text(raw_value: str) -> str:
-    # The boundary regex already treats leading/trailing whitespace as a
-    # non-alphanumeric delimiter, so avoid an extra full-string strip in this
-    # hot parser loop. Check already-lowercase tokens before allocating a lower
-    # copy; model/profile identifiers in this path are commonly lowercase.
-    for kind, pattern in _QUANTIZED_KIND_PATTERNS:
-        if kind in raw_value and pattern.search(raw_value):
+    # The token boundary only needs ASCII [a-z0-9] checks; avoid regex dispatch
+    # in this hot parser loop while preserving the same delimiter semantics.
+    for kind in _QUANTIZED_KIND_ORDER:
+        if kind in raw_value and _contains_quantized_kind_token(raw_value, kind):
             return kind
     normalized = raw_value.lower()
     if normalized == raw_value:
         return "unknown"
-    for kind, pattern in _QUANTIZED_KIND_PATTERNS:
-        if kind in normalized and pattern.search(normalized):
+    for kind in _QUANTIZED_KIND_ORDER:
+        if kind in normalized and _contains_quantized_kind_token(normalized, kind):
             return kind
     return "unknown"
+
+
+def _contains_quantized_kind_token(value: str, kind: str) -> bool:
+    start = 0
+    kind_length = len(kind)
+    value_length = len(value)
+    while True:
+        index = value.find(kind, start)
+        if index < 0:
+            return False
+        end = index + kind_length
+        if (
+            (index == 0 or not _is_lower_ascii_alnum(value[index - 1]))
+            and (end == value_length or not _is_lower_ascii_alnum(value[end]))
+        ):
+            return True
+        start = index + 1
+
+
+def _is_lower_ascii_alnum(char: str) -> bool:
+    return "a" <= char <= "z" or "0" <= char <= "9"
 
 
 def _quantized_target_module_guard_status(
