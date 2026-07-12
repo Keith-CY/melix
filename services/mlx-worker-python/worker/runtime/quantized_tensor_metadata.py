@@ -131,9 +131,8 @@ def quantized_tensor_metadata_from_safetensor_headers(
 ) -> QuantizedTensorMetadata:
     tensor_to_shard: dict[str, str] = {}
     for raw_path in shard_paths:
-        path = Path(raw_path)
         shard_name = os.fspath(raw_path)
-        for tensor_name in _safetensors_header_tensor_names(path):
+        for tensor_name in _safetensors_header_tensor_names(shard_name):
             tensor_to_shard[tensor_name] = shard_name
     if not tensor_to_shard:
         return EMPTY_QUANTIZED_TENSOR_METADATA
@@ -272,9 +271,9 @@ def _native_multimodal_high_precision_module(prefix: str) -> bool:
     return False
 
 
-def _safetensors_header_tensor_names(path: Path) -> tuple[str, ...]:
+def _safetensors_header_tensor_names(path: str | os.PathLike[str]) -> tuple[str, ...]:
     try:
-        with path.open("rb") as handle:
+        with open(path, "rb") as handle:
             header_size_raw = handle.read(8)
             if len(header_size_raw) != 8:
                 return ()
