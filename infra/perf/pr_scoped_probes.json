@@ -5689,8 +5689,7 @@
       {
         "key": "processor_resume_baseline_elapsed_ms_mean",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "processor_resume_optimized_elapsed_ms_mean",
@@ -5712,8 +5711,7 @@
       {
         "key": "quantized_kind_baseline_elapsed_ms_mean",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "quantized_kind_optimized_elapsed_ms_mean",

@@ -32,6 +32,10 @@ Required local Linux validation:
 - Changed-scope coverage for the LoRA metadata path and registered probe tests.
 - `scripts/lora_aux_modules_scandir_probe.py` through the registered
   `command_json` probe path.
+- The processor-resume and quantized-kind baseline-only sidecar timings remain
+  reported as informational metrics so unrelated baseline noise does not gate
+  this auxiliary-prefix direct probe; the optimized sidecar timings and primary
+  auxiliary scan metrics remain tracked.
 
 ## Expected Impact
 
