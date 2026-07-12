@@ -28,7 +28,6 @@ _ORD_OBJECT_START = ord("{")
 _ORD_OBJECT_END = ord("}")
 _ASSERT_PRECEDING_BOUNDARIES = frozenset("\n\r;:")
 _ASSERT_LINE_SPACING = frozenset(" \t")
-_NONBLANK_SPLITLINES_MIN_CHARS = 262_144
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,9 +379,6 @@ def _count_assert_nodes(
 
 
 def _count_nonblank_test_lines(test_code: str) -> int:
-    if type(test_code) is str and len(test_code) >= _NONBLANK_SPLITLINES_MIN_CHARS:
-        return sum(1 for line in test_code.splitlines() if line.strip())
-
     count = 0
     line_has_content = False
     if test_code.isascii():
