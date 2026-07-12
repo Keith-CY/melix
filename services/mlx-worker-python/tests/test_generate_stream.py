@@ -23,6 +23,7 @@ from worker.runtime.multimodal_attention_policy import (
     MultimodalPrefillAttentionBudgetExceeded,
     choose_attention_prefill_policy,
 )
+from worker.runtime.structured_output_constraints import StructuredOutputConstraintError
 
 
 class StreamingFakeBackend:
@@ -562,6 +563,32 @@ class AttentionBudgetFailingRuntime:
             preprocess_input_bytes=0,
             preprocess_peak_memory_bytes=0,
             first_token_latency_ms=0.0,
+        )
+
+
+class RuntimeStructuredOutputFailingRuntime:
+    runtime_name = "fake-structured-output-runtime"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        _ = model_spec
+        return 0
+
+    def render_prompt(self, messages, loaded_model=None, template_kwargs=None, execution_ext=None):
+        _ = (messages, loaded_model, template_kwargs, execution_ext)
+        return "structured output prompt"
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+        _ = (loaded_model, prompt, sampling, cancel_event, execution_ext)
+        raise StructuredOutputConstraintError(
+            "json_object constraints require sampler logits processor support.",
+            details={
+                "mode": "json_object",
+                "enforcement": "sampler",
+                "reason": "logits_processors_unsupported",
+            },
         )
 
 
@@ -1739,6 +1766,77 @@ def test_generate_stream_preserves_explicit_tool_parser_with_structured_json_mod
     assert completed.parser_metrics["stream_parser_request_context_mode"] == "tool_parser"
     assert completed.parser_metrics["tool_call_markup_leak_count"] == "0"
     assert completed.parser_metrics["reasoning_leak_count"] == "0"
+
+
+def test_generate_rejects_schema_backed_json_schema_when_sampler_cannot_enforce() -> None:
+    _, inference_service, model_handle = build_services()
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-json-schema-unsupported"),
+            model_handle=model_handle,
+            ext={
+                "melix.structured_output.mode": "json_schema",
+                "melix.structured_output.schema_name": "answer",
+                "melix.structured_output.schema_json": '{"type":"object","required":["answer"]}',
+                "melix.structured_output.strict": "true",
+            },
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Return an answer object.")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    error = next(event.error.error for event in events if event.HasField("error"))
+    assert error.code == "unsupported_structured_output"
+    assert error.details["mode"] == "json_schema"
+    assert error.details["enforcement"] == "sampler"
+    assert error.details["reason"] == "json_schema_grammar_unavailable"
+    assert not any(event.HasField("completed") for event in events)
+
+
+def test_generate_reports_runtime_structured_output_constraint_error() -> None:
+    registry = WorkerRegistry(
+        runtime=RuntimeStructuredOutputFailingRuntime(),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-runtime-structured-output-error"),
+            model_handle=load_response.model_handle,
+            ext={"melix.structured_output.mode": "json_object"},
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Return a JSON object.")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    error = next(event.error.error for event in events if event.HasField("error"))
+    assert error.code == "unsupported_structured_output"
+    assert error.message == "json_object constraints require sampler logits processor support."
+    assert error.details["mode"] == "json_object"
+    assert error.details["enforcement"] == "sampler"
+    assert error.details["reason"] == "logits_processors_unsupported"
+    assert not any(event.HasField("completed") for event in events)
 
 
 def test_generate_stream_normalizes_tool_calls_to_declared_openai_tool_names() -> None:

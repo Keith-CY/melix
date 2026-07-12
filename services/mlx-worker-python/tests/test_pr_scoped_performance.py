@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import builtins
 from dataclasses import replace
 import gc
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -1281,11 +1283,122 @@ def test_scope_report_selects_mlx_text_stop_kwarg_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_text_runtime.py"],
     )
 
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert _selected_probe_ids(scope) == [
         "mlx-text-stop-kwarg-signature-cache",
         "mlx-text-stop-filter-prefix-cache",
+        "structured-output-json-object-constraint-cache",
     ]
+
+
+def test_scope_report_selects_structured_output_constraint_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/runtime/structured_output_constraints.py"
+        ],
+    )
+
+    assert scope["selected_count"] == 1
+    assert _selected_probe_ids(scope) == ["structured-output-json-object-constraint-cache"]
+
+
+def test_structured_output_constraint_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_REPO_ROOT", str(REPO_ROOT))
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_VOCAB_SIZE", "64")
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_MASK_ITERATIONS", "4")
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_SAMPLES", "1")
+
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/structured_output_constraint_probe.py"))
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["implementation_available"] == 1.0
+    assert metrics["build_first_decode_calls_mean"] == 64.0
+    assert metrics["build_second_decode_calls_mean"] == 0.0
+    assert metrics["cached_mask_elapsed_ms_mean"] >= 0.0
+    assert metrics["initial_allowed_count_mean"] >= 1.0
+
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_FORCE_FALLBACK", "1")
+    assert probe_script["main"]() == 0
+
+    fallback_metrics = json.loads(capsys.readouterr().out)
+    assert fallback_metrics["implementation_available"] == 0.0
+    assert fallback_metrics["build_first_decode_calls_mean"] == 64.0
+    assert fallback_metrics["build_second_decode_calls_mean"] == 64.0
+
+    probe_tokenizer = probe_script["ProbeTokenizer"](32)
+    assert probe_tokenizer.get_vocab()["{"] == 0
+    assert probe_script["_fallback_builder"]({}, probe_tokenizer) == []
+    assert probe_script["_uncached_tokenizer_vocabulary"](object()) == {}
+    assert probe_script["_env_int"]("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", 4, 2) == 4
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", "1")
+    assert probe_script["_env_int"]("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", 4, 2) == 2
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", "bad")
+    assert probe_script["_env_int"]("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", 4, 2) == 4
+
+    class ScalarTokenList:
+        def tolist(self) -> int:
+            return 7
+
+    assert probe_script["_token_ids"](7) == [7]
+    assert probe_script["_token_ids"](ScalarTokenList()) == [7]
+    assert probe_script["_token_ids"]([[1, 2]]) == [1, 2]
+    with pytest.raises(ValueError, match="single-sequence"):
+        probe_script["_token_ids"]([[1, 2], [3, 4]])
+
+    mx = probe_script["_mx"]()
+    fallback_processors = probe_script["_fallback_builder"](
+        {"melix.structured_output.mode": "json_object"},
+        probe_tokenizer,
+    )
+    fallback_processor = fallback_processors[0]
+    logits = mx.zeros((1, 32))
+    fallback_processor(mx.array([30]), logits)
+    fallback_processor(mx.array([30, 0]), logits)
+    fallback_processor(mx.array([30, 0, 1]), logits)
+    fallback_processor(mx.array([30, 0, 1, 31]), logits)
+    invalid = fallback_processor(mx.array([30, 0, 1, 31, 2]), logits)
+    assert int(mx.sum(mx.isfinite(invalid)).item()) == 0
+
+
+def test_structured_output_constraint_probe_uses_fake_mx_when_mlx_import_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/structured_output_constraint_probe.py"))
+    monkeypatch.delitem(sys.modules, "mlx", raising=False)
+    monkeypatch.delitem(sys.modules, "mlx.core", raising=False)
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "mlx.core":
+            raise ImportError("libmlx.so: cannot open shared object file")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert fake_import("json") is json
+    mx = probe_script["_mx"]()
+    values = mx.array([0.0, -math.inf, 2.0])
+
+    assert int(mx.sum(mx.isfinite(values)).item()) == 2
+    assert mx.array(mx.array([1.0, 2.0])).tolist() == [1.0, 2.0]
+    assert mx.array([[1.0, 2.0]])[0].tolist() == [1.0, 2.0]
+    assert (mx.array([1.0]) + 2.0).tolist() == [3.0]
+    assert (2.0 + mx.array([1.0])).tolist() == [3.0]
+    assert mx.array([1.0]).__radd__(mx.array([2.0])).tolist() == [3.0]
+    assert mx.array([[1.0, 2.0]]).reshape((2,)).tolist() == [1.0, 2.0]
+    assert mx.array([]).shape == (0,)
+    assert mx.zeros((2,)).tolist() == [0.0, 0.0]
+    assert mx.zeros((1, 2)).tolist() == [[0.0, 0.0]]
+    with pytest.raises(ValueError):
+        mx.array([1.0]).reshape((2, 2))
+    with pytest.raises(ValueError):
+        mx.zeros((1, 1, 1))
 
 
 def test_mlx_text_stop_filter_probe_script_emits_metrics(
@@ -4470,6 +4583,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "model-ops-bundle-artifact-byte-accounting",
         "statistical-evidence-bootstrap-single-sort",
         "statistical-evidence-category-breakdown-single-pass",
+        "structured-output-json-object-constraint-cache",
         "text-family-config-copy-elision",
         "response-only-boundary-slotted-records",
         "tool-registry-schema-bytes-cache",

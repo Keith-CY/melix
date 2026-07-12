@@ -22,6 +22,11 @@ from worker.runtime.mlx_text_runtime import resolve_text_stop_contract
 from worker.runtime.multimodal_attention_policy import MultimodalPrefillAttentionBudgetExceeded
 from worker.runtime.runtime_utils import callable_accepts_kwarg as _callable_accepts_kwarg
 from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
+from worker.runtime.structured_output_constraints import (
+    StructuredOutputConstraintError,
+    json_schema_constraint_error,
+    structured_output_requested,
+)
 from worker.runtime.token_route_receipt import (
     TokenRouteReceipt,
     inactive_token_route_receipt_json,
@@ -352,6 +357,18 @@ class EngineCore:
                     ),
                 )
                 return
+
+        if structured_output_requested(execution_ext) and (
+            schema_error := json_schema_constraint_error(execution_ext)
+        ):
+            yield self._error_event(
+                request_id,
+                1,
+                schema_error.code,
+                str(schema_error),
+                details=schema_error.details,
+            )
+            return
 
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         generate_tokens = runtime.generate_tokens
@@ -761,6 +778,14 @@ class EngineCore:
                 ),
             )
         except MultimodalPrefillAttentionBudgetExceeded as exc:
+            yield self._error_event(
+                request_id,
+                allocate_seq(),
+                exc.code,
+                str(exc),
+                details=exc.details,
+            )
+        except StructuredOutputConstraintError as exc:
             yield self._error_event(
                 request_id,
                 allocate_seq(),

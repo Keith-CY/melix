@@ -19,6 +19,7 @@ from worker.runtime import runtime_utils
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.mlx_text_runtime import RuntimeUnavailableError, resolve_text_stop_contract
+from worker.runtime.structured_output_constraints import StructuredOutputConstraintError
 
 
 def _install_fake_mlx_core(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
@@ -64,6 +65,26 @@ class FakeGenerationResponse:
         self.generation_tps = generation_tps
         self.peak_memory = peak_memory
         self.finish_reason = finish_reason
+
+
+class StructuredOutputTokenizer(FakeTokenizer):
+    eos_token_id = 5
+
+    _id_to_text = {
+        0: "{",
+        1: "}",
+        2: '"answer"',
+        3: ":",
+        4: '"ok"',
+        5: "</s>",
+    }
+
+    def get_vocab(self) -> dict[str, int]:
+        return {text: token_id for token_id, text in self._id_to_text.items()}
+
+    def decode(self, token_ids, skip_special_tokens: bool = False) -> str:
+        _ = skip_special_tokens
+        return "".join(self._id_to_text[int(token_id)] for token_id in token_ids)
 
 
 def test_runtime_uses_chat_template_when_runtime_model_exposes_tokenizer() -> None:
@@ -246,6 +267,157 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].speculative_draft_model_configured is True
     assert chunks[-1].dflash_enabled is True
     assert chunks[-1].dflash_rollback_count == 2
+
+
+def test_auto_backend_skips_structured_processor_builder_without_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_load(model_source: str, **kwargs):
+        _ = model_source, kwargs
+        return object(), FakeTokenizer()
+
+    def fake_stream_generate(model, tokenizer, prompt: str, max_tokens: int, sampler, *, stop=None):
+        _ = model, tokenizer, prompt, max_tokens, sampler, stop
+        yield FakeGenerationResponse(
+            text="ok",
+            prompt_tokens=1,
+            generation_tokens=1,
+            finish_reason="stop",
+        )
+
+    processor_builder = Mock(return_value=[])
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "build_structured_output_logits_processors",
+        processor_builder,
+    )
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=lambda **kwargs: "sampler",
+    )
+    loaded_model = backend.load_model(WorkerModelCatalog.dev_text_model())
+
+    chunks = list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            Event(),
+            execution_ext={"_melix.session_id": ""},
+        )
+    )
+
+    assert [chunk.text for chunk in chunks] == ["ok"]
+    processor_builder.assert_not_called()
+
+
+def test_auto_backend_passes_json_object_logits_processor_to_stream_generate() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        _ = model_source, kwargs
+        return object(), StructuredOutputTokenizer()
+
+    def fake_stream_generate(
+        model,
+        tokenizer,
+        prompt: str,
+        max_tokens: int,
+        sampler,
+        *,
+        logits_processors=None,
+    ):
+        _ = model, tokenizer, prompt, max_tokens, sampler
+        seen["logits_processors"] = logits_processors
+        yield FakeGenerationResponse(
+            text="{}",
+            prompt_tokens=1,
+            generation_tokens=1,
+            finish_reason="stop",
+        )
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=lambda **kwargs: "sampler",
+    )
+    loaded_model = backend.load_model(WorkerModelCatalog.dev_text_model())
+
+    chunks = list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            Event(),
+            execution_ext={"melix.structured_output.mode": "json_object"},
+        )
+    )
+
+    assert [chunk.text for chunk in chunks] == ["{}"]
+    processors = seen["logits_processors"]
+    assert isinstance(processors, list)
+    assert len(processors) == 1
+
+
+def test_auto_backend_passes_json_object_logits_processor_to_session_stream_generate() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        _ = model_source, kwargs
+        return object(), StructuredOutputTokenizer()
+
+    def fake_stream_generate(
+        model,
+        tokenizer,
+        prompt: str,
+        *,
+        max_tokens: int,
+        sampler,
+        prompt_cache=None,
+        logits_processors=None,
+        **kwargs,
+    ):
+        _ = model, tokenizer, max_tokens, sampler, kwargs
+        seen["prompt"] = prompt
+        seen["prompt_cache"] = prompt_cache
+        seen["logits_processors"] = logits_processors
+        yield FakeGenerationResponse(
+            text="{}",
+            prompt_tokens=1,
+            generation_tokens=1,
+            finish_reason="stop",
+        )
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=lambda **kwargs: "sampler",
+    )
+    loaded_model = backend.load_model(WorkerModelCatalog.dev_text_model())
+
+    chunks = list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            Event(),
+            execution_ext={
+                "melix.structured_output.mode": "json_object",
+                "_melix.session_id": "session-structured",
+                "_melix.model_id": "model",
+                "_melix.model_revision": "rev",
+            },
+        )
+    )
+
+    assert [chunk.text for chunk in chunks] == ["{}"]
+    assert chunks[-1].cache_fallback_reason == "tokenizer_encode_unavailable"
+    assert seen["prompt"] == "prompt"
+    assert seen["prompt_cache"] is None
+    processors = seen["logits_processors"]
+    assert isinstance(processors, list)
+    assert len(processors) == 1
 
 
 def test_auto_backend_uses_batch_generator_for_native_mtp_text_models(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -575,6 +747,248 @@ def test_auto_backend_uses_batch_generator_for_native_mtp_text_models(monkeypatc
     assert seen["closed"] == 1
 
 
+def test_auto_backend_passes_json_object_logits_processor_to_native_batch_insert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_core = _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_lm_cache(monkeypatch, fake_core)
+    seen: dict[str, object] = {}
+
+    class FakeDetokenizer:
+        def __init__(self) -> None:
+            self.tokens: list[int] = []
+            self.last_segment = "{}"
+
+        def reset(self) -> None:
+            self.tokens = []
+
+        def add_token(self, token: int) -> None:
+            self.tokens.append(token)
+
+        def finalize(self) -> None:
+            pass
+
+    class NativeStructuredTokenizer(StructuredOutputTokenizer):
+        eos_token = "</s>"
+        detokenizer = FakeDetokenizer()
+
+        def encode(self, prompt: str, add_special_tokens: bool = True):
+            _ = prompt, add_special_tokens
+            return [0]
+
+    class FakeBatchGenerator:
+        stream = None
+
+        def __init__(self, model, **kwargs) -> None:
+            _ = model, kwargs
+            self._used = False
+
+        def insert(
+            self,
+            prompts,
+            max_tokens=None,
+            caches=None,
+            all_tokens=None,
+            samplers=None,
+            logits_processors=None,
+        ):
+            _ = prompts, max_tokens, caches, all_tokens, samplers
+            seen["logits_processors"] = logits_processors
+            return [77]
+
+        def next_generated(self):
+            if self._used:
+                return []
+            self._used = True
+            return [SimpleNamespace(uid=77, token=1, finish_reason="stop")]
+
+        def remove(self, uids) -> None:
+            _ = uids
+
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_load_mlx_batch_generator_class",
+        lambda: FakeBatchGenerator,
+    )
+
+    def fake_prefill(
+        model,
+        prompt_tokens,
+        *,
+        prefill_step_size,
+        stream,
+        restore_cache=None,
+        restore_token_count=0,
+    ):
+        _ = model, prefill_step_size, stream, restore_cache, restore_token_count
+        return ["prompt-cache"], [int(prompt_tokens[-1])], list(prompt_tokens[:-1])
+
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_native_mtp_prefill_prompt_cache",
+        fake_prefill,
+    )
+    monkeypatch.setattr(mlx_text_runtime_module, "_clone_cache_snapshot", lambda cache: None)
+    monkeypatch.setattr(mlx_text_runtime_module, "_estimate_cache_bytes", lambda cache: 0)
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "maybe_apply_native_mtp_text_preload_patches",
+        lambda _model_path, *, metadata: {
+            "melix.native_mtp.enabled": "true",
+            "melix.native_mtp.compatible": "true",
+            "melix.native_mtp.weights_present": "true",
+            "melix.native_mtp.weight_count": "1",
+            "melix.native_mtp.patch_applied": "true",
+            "melix.native_mtp.active": "true",
+            "melix.native_mtp.reason": "",
+        },
+    )
+    monkeypatch.setattr(mlx_text_runtime_module, "_mlx_peak_memory_gb", lambda _mx: 0.0)
+
+    model = SimpleNamespace(
+        mtp=object(),
+        mtp_forward=lambda *_args, **_kwargs: None,
+        _melix_native_mtp_active=True,
+    )
+    backend = AutoMLXBackend(
+        load_fn=lambda _model_source, **_kwargs: (model, NativeStructuredTokenizer()),
+        stream_generate_fn=lambda *_args, **_kwargs: iter(()),
+        sampler_factory=lambda **_kwargs: "sampler",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model()
+    model_spec.ext["melix.native_mtp.enabled"] = "true"
+    model_spec.ext["melix.native_mtp.active"] = "true"
+    model_spec.ext["melix.native_mtp.patch_applied"] = "true"
+    model_spec.ext["melix.native_mtp.compatible"] = "true"
+    loaded_model = backend.load_model(model_spec)
+
+    list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            Event(),
+            execution_ext={"melix.structured_output.mode": "json_object"},
+        )
+    )
+
+    processors_by_sequence = seen["logits_processors"]
+    assert isinstance(processors_by_sequence, list)
+    assert len(processors_by_sequence) == 1
+    assert isinstance(processors_by_sequence[0], list)
+    assert len(processors_by_sequence[0]) == 1
+
+
+def test_auto_backend_fails_closed_when_native_batch_insert_rejects_logits_processors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_core = _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_lm_cache(monkeypatch, fake_core)
+
+    class FakeDetokenizer:
+        def reset(self) -> None:
+            pass
+
+    class NativeStructuredTokenizer(StructuredOutputTokenizer):
+        eos_token = "</s>"
+        detokenizer = FakeDetokenizer()
+
+        def encode(self, prompt: str, add_special_tokens: bool = True):
+            _ = prompt, add_special_tokens
+            return [0]
+
+    class FakeBatchGenerator:
+        stream = None
+
+        def __init__(self, model, **kwargs) -> None:
+            _ = model, kwargs
+
+        def insert(  # pragma: no cover
+            self, prompts, max_tokens=None, caches=None, all_tokens=None, samplers=None
+        ):
+            _ = prompts, max_tokens, caches, all_tokens, samplers
+            raise AssertionError("structured-output guard should reject before insert")
+
+        def next_generated(self):  # pragma: no cover
+            return []
+
+        def remove(self, uids) -> None:  # pragma: no cover
+            _ = uids
+
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_load_mlx_batch_generator_class",
+        lambda: FakeBatchGenerator,
+    )
+
+    def fake_prefill(
+        model,
+        prompt_tokens,
+        *,
+        prefill_step_size,
+        stream,
+        restore_cache=None,
+        restore_token_count=0,
+    ):
+        _ = model, prefill_step_size, stream, restore_cache, restore_token_count
+        return ["prompt-cache"], [int(prompt_tokens[-1])], list(prompt_tokens[:-1])
+
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_native_mtp_prefill_prompt_cache",
+        fake_prefill,
+    )
+    monkeypatch.setattr(mlx_text_runtime_module, "_clone_cache_snapshot", lambda cache: None)
+    monkeypatch.setattr(mlx_text_runtime_module, "_estimate_cache_bytes", lambda cache: 0)
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "maybe_apply_native_mtp_text_preload_patches",
+        lambda _model_path, *, metadata: {
+            "melix.native_mtp.enabled": "true",
+            "melix.native_mtp.compatible": "true",
+            "melix.native_mtp.weights_present": "true",
+            "melix.native_mtp.weight_count": "1",
+            "melix.native_mtp.patch_applied": "true",
+            "melix.native_mtp.active": "true",
+            "melix.native_mtp.reason": "",
+        },
+    )
+
+    model = SimpleNamespace(
+        mtp=object(),
+        mtp_forward=lambda *_args, **_kwargs: None,
+        _melix_native_mtp_active=True,
+    )
+    backend = AutoMLXBackend(
+        load_fn=lambda _model_source, **_kwargs: (model, NativeStructuredTokenizer()),
+        stream_generate_fn=lambda *_args, **_kwargs: iter(()),
+        sampler_factory=lambda **_kwargs: "sampler",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model()
+    model_spec.ext["melix.native_mtp.enabled"] = "true"
+    model_spec.ext["melix.native_mtp.active"] = "true"
+    model_spec.ext["melix.native_mtp.patch_applied"] = "true"
+    model_spec.ext["melix.native_mtp.compatible"] = "true"
+    loaded_model = backend.load_model(model_spec)
+
+    with pytest.raises(StructuredOutputConstraintError) as error:
+        list(
+            backend.generate_tokens(
+                loaded_model,
+                "prompt",
+                common_pb2.SamplingConfig(max_output_tokens=2),
+                Event(),
+                execution_ext={"melix.structured_output.mode": "json_object"},
+            )
+        )
+
+    assert error.value.details == {
+        "mode": "json_object",
+        "enforcement": "sampler",
+        "reason": "logits_processors_unsupported",
+    }
+
+
 def test_native_mtp_text_patch_adds_qwen35_methods() -> None:
     import worker.runtime.native_mtp.qwen35_model as qwen35_model
 
@@ -686,6 +1100,34 @@ def test_native_mtp_batch_generator_eligibility_uses_text_model_melix_flag() -> 
     )
 
     assert batch_generator._is_mtp_eligible(gen_batch) is True
+
+
+def test_native_mtp_batch_generator_eligibility_rejects_grammar_processors() -> None:
+    from worker.runtime.native_mtp import batch_generator
+    from worker.runtime.structured_output_constraints import build_structured_output_logits_processors
+
+    if not batch_generator.apply():
+        pytest.skip("mlx-lm BatchGenerator patch is unavailable")
+
+    class MtpTextModel:
+        def __init__(self) -> None:
+            self.mtp = object()
+            self._melix_native_mtp_active = True
+
+        def mtp_forward(self, *_args):
+            return None
+
+    processors = build_structured_output_logits_processors(
+        {"melix.structured_output.mode": "json_object"},
+        StructuredOutputTokenizer(),
+    )
+    gen_batch = SimpleNamespace(
+        model=MtpTextModel(),
+        uids=[1],
+        logits_processors=[processors],
+    )
+
+    assert batch_generator._is_mtp_eligible(gen_batch) is False
 
 
 def test_native_mtp_response_stats_are_terminal_only() -> None:
