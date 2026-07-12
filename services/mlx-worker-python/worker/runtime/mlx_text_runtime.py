@@ -28,6 +28,10 @@ from worker.runtime.runtime_utils import (
     first_declared_kwarg as _first_declared_kwarg,
     installed_package_version as _installed_package_version,
 )
+from worker.runtime.structured_output_constraints import (
+    StructuredOutputConstraintError,
+    build_structured_output_logits_processors,
+)
 from worker.runtime.text_family_adapters import resolve_text_family_config
 
 
@@ -961,6 +965,7 @@ class AutoMLXBackend:
     ) -> None:
         self._stream_stop_kwarg = ""
         self._stream_accepts_prompt_cache = False
+        self._stream_accepts_logits_processors = False
         self._sampler_penalty_kwargs: tuple[str, ...] = ()
         self._prompt_cache_factory = prompt_cache_factory
         if load_fn is not None and stream_generate_fn is not None and sampler_factory is not None:
@@ -971,6 +976,10 @@ class AutoMLXBackend:
             self._sampler_factory = sampler_factory
             self._stream_stop_kwarg = _first_declared_kwarg(stream_generate_fn, _STREAM_STOP_KWARG_NAMES)
             self._stream_accepts_prompt_cache = _callable_accepts_kwarg(stream_generate_fn, "prompt_cache")
+            self._stream_accepts_logits_processors = _callable_accepts_kwarg(
+                stream_generate_fn,
+                "logits_processors",
+            )
             self._sampler_penalty_kwargs = _declared_kwargs(sampler_factory, _SAMPLER_PENALTY_KWARG_NAMES)
             self.runtime_name = "mlx-lm"
             return
@@ -1004,6 +1013,10 @@ class AutoMLXBackend:
             self._sampler_factory = make_sampler
             self._stream_stop_kwarg = _first_declared_kwarg(stream_generate, _STREAM_STOP_KWARG_NAMES)
             self._stream_accepts_prompt_cache = _callable_accepts_kwarg(stream_generate, "prompt_cache")
+            self._stream_accepts_logits_processors = _callable_accepts_kwarg(
+                stream_generate,
+                "logits_processors",
+            )
             self._sampler_penalty_kwargs = _declared_kwargs(make_sampler, _SAMPLER_PENALTY_KWARG_NAMES)
 
     def load_model(self, model_spec, *, trust_remote_code: bool = False) -> dict[str, Any]:
@@ -1128,6 +1141,10 @@ class AutoMLXBackend:
             execution_ext,
             self._stream_stop_kwarg,
         )
+        structured_logits_processors = build_structured_output_logits_processors(
+            execution_ext,
+            loaded_model["tokenizer"],
+        )
 
         if loaded_model.get(_NATIVE_MTP_TEXT_ACTIVE_FIELD) is True:
             yield from self._generate_native_mtp_batch_tokens(
@@ -1137,18 +1154,32 @@ class AutoMLXBackend:
                 max_tokens=max_tokens,
                 cancel_event=cancel_event,
                 execution_ext=execution_ext,
+                logits_processors=structured_logits_processors,
             )
             return
 
+        if structured_logits_processors and not self._stream_accepts_logits_processors:
+            raise StructuredOutputConstraintError(
+                "mlx-lm stream_generate cannot accept structured-output logits processors.",
+                details={
+                    "mode": "json_object",
+                    "enforcement": "sampler",
+                    "reason": "logits_processors_unsupported",
+                },
+            )
+
         if not execution_ext or not str(execution_ext.get("_melix.session_id", "") or "").strip():
             cumulative_raw_text = ""
+            stream_call_kwargs = dict(stream_kwargs)
+            if structured_logits_processors:
+                stream_call_kwargs["logits_processors"] = structured_logits_processors
             for response in self._stream_generate_fn(
                 loaded_model["model"],
                 loaded_model["tokenizer"],
                 prompt,
                 max_tokens=max_tokens,
                 sampler=sampler,
-                **stream_kwargs,
+                **stream_call_kwargs,
             ):
                 if cancel_event.is_set():
                     return
@@ -1219,6 +1250,8 @@ class AutoMLXBackend:
         cumulative_raw_text = ""
         stream_prompt: str | list[int] = prompt
         stream_call_kwargs = dict(stream_kwargs)
+        if structured_logits_processors:
+            stream_call_kwargs["logits_processors"] = structured_logits_processors
         _standard_prefix_store: Any = None
         _standard_lcp_entry_to_release: Any = None
         _standard_cache_hit_mode: str | None = None
@@ -1461,6 +1494,7 @@ class AutoMLXBackend:
         max_tokens: int,
         cancel_event,
         execution_ext: dict[str, str] | None = None,
+        logits_processors: list[Any] | None = None,
     ) -> Iterable[RuntimeTokenEvent]:
         try:
             import mlx.core as mx
@@ -1612,12 +1646,16 @@ class AutoMLXBackend:
                         )
 
             batch_insert_started_at = time.perf_counter()
+            insert_kwargs: dict[str, Any] = {}
+            if logits_processors:
+                insert_kwargs["logits_processors"] = [logits_processors]
             inserted = batch_generator.insert(
                 [last_token],
                 max_tokens=[max_tokens],
                 caches=[prompt_cache],
                 all_tokens=[cached_tokens],
                 samplers=[sampler],
+                **insert_kwargs,
             )
             batch_insert_ms = (time.perf_counter() - batch_insert_started_at) * 1000.0
             insert_ms = (time.perf_counter() - insert_started_at) * 1000.0
