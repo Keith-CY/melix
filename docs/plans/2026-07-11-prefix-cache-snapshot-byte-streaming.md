@@ -63,3 +63,15 @@ Expected effect:
 - Changed-scope coverage for touched Python paths is at least 95%.
 - The local registered probe shows lower elapsed time for the synthetic cache byte-estimation workload.
 - GitHub Actions and the PR-scoped performance workflow complete successfully before merge.
+
+## Follow-up Slice: State Pair Unroll
+
+The 2026-07-12 follow-up keeps the same registered probe and targets the common
+two-tensor `.state` cache shape. `estimate_cache_snapshot_bytes()` now unrolls
+length-2 state sequences before falling back to the generic loop, preserving the
+existing behavior for empty, one-item, and longer state sequences while reducing
+iterator overhead in the synthetic and MLX prompt-cache hot path.
+
+Success is accepted only after the local focused test command, changed-scope
+coverage command, and registered probe all pass, and after the PR-scoped CI
+probe validates the same registry entry.
