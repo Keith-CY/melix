@@ -64,10 +64,10 @@ The PR-scoped performance workflow must select and complete
 ## Follow-up: parser helper local bindings
 
 This follow-up slice keeps the same parsing behavior and registered probe while
-binding the shared raw decoder and trailer validators once at the start of
-`_parse_response_json(...)`. That removes repeated global lookups across the
-direct-object, leading-whitespace object, fenced-json, and generic fallback paths
-without changing the existing raw-decode fast paths or JSON error behavior.
+binding the shared raw decoder and trailer validators once after the direct
+object fast path in `_parse_response_json(...)`. That removes repeated global
+lookups across the leading-whitespace object, fenced-json, and generic fallback
+paths while preserving the direct-object path's minimal work before raw decode.
 
 The existing focused tests cover direct object parsing, leading whitespace,
 fenced payloads, trailing-text rejection, non-object rejection, and the sentinel
