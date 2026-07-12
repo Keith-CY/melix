@@ -451,6 +451,9 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
         state = getattr(layer_cache, "state", None)
         if state is not None:
             if isinstance(state, sequence_types):
+                if len(state) == 2:
+                    total += tensor_nbytes(state[0]) + tensor_nbytes(state[1])
+                    continue
                 for tensor in state:
                     total += tensor_nbytes(tensor)
                 continue
