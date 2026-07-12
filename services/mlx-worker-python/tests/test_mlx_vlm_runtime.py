@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 from threading import Barrier
@@ -2453,6 +2454,29 @@ def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
         "scales": str(shard_b),
     }
     assert cross_shard_quantized_metadata_fixup_count(header_metadata) == 1
+
+
+def test_quantized_tensor_metadata_reads_string_shard_paths_without_path_open(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    shard_path = tmp_path / "model-00001.safetensors"
+    _write_fake_safetensors_header(
+        shard_path,
+        ("language_model.layers.1.q_proj.weight",),
+    )
+
+    def fail_path_open(self: Path, *args, **kwargs):  # pragma: no cover - regression guard
+        raise AssertionError("safetensors header reads should use direct open(path), not Path.open()")
+
+    monkeypatch.setattr(Path, "open", fail_path_open)
+
+    metadata = quantized_tensor_metadata_from_safetensor_headers([os.fspath(shard_path)])
+
+    assert metadata.tensor_to_shard == {
+        "language_model.layers.1.q_proj.weight": os.fspath(shard_path)
+    }
+
 
     mutable_source = {
         "language_model.layers.2.q_proj.scales": "model-00001.safetensors"
