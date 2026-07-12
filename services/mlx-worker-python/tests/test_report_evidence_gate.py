@@ -750,6 +750,29 @@ def test_report_evidence_gate_probe_phases_scans_buckets_without_dict_list(
     assert phases == {"runtime_prepare", "model_load", "decode", "42"}
 
 
+def test_report_evidence_gate_probe_phases_preserves_clean_string_fast_path() -> None:
+    phases = report_evidence_gate_module._probe_phases(
+        {
+            "probe_summary": {
+                "baseline": {
+                    "slowest_phases": [
+                        {"phase": "runtime_prepare"},
+                        {"phase": " model_load "},
+                    ]
+                },
+                "candidate": {
+                    "failed_phases": [
+                        {"phase": "decode"},
+                        {"phase": 42},
+                    ]
+                },
+            }
+        }
+    )
+
+    assert phases == {"runtime_prepare", "model_load", "decode", "42"}
+
+
 def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
     run_kinds = ["evaluation"]
     rule = {"run_kinds": run_kinds}
