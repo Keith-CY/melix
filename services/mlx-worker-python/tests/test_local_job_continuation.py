@@ -1429,6 +1429,36 @@ def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
     assert scandir_calls == [os.fspath(tmp_path)]
 
 
+def test_store_scan_followup_candidates_skips_live_evidence_lookup_when_absent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+
+    def fail_missing_live_evidence(job_id: str):  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"scan_followup_candidates() should pass None directly without fallback lookup for {job_id}"
+        )
+
+    monkeypatch.setattr(
+        local_job_continuation_module,
+        "_missing_live_evidence",
+        fail_missing_live_evidence,
+    )
+
+    scan = store.scan_followup_candidates()
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == ["ready"]
+
+
 def test_store_scan_followup_candidates_filters_suffix_before_file_stat(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

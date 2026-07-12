@@ -356,9 +356,7 @@ class LocalJobContinuationStore:
         candidates: list[LocalJobContinuationFollowupCandidate] = []
         receipts: list[dict[str, Any]] = []
         live_evidence_get = (
-            live_evidence_by_job_id.get
-            if live_evidence_by_job_id is not None
-            else _missing_live_evidence
+            live_evidence_by_job_id.get if live_evidence_by_job_id is not None else None
         )
         root_fspath = self._root_fspath
         try:
@@ -386,9 +384,10 @@ class LocalJobContinuationStore:
         unreadable_record_receipt = _unreadable_record_scan_receipt
         for job_id in record_job_ids:
             try:
+                live_evidence = None if live_evidence_get is None else live_evidence_get(job_id)
                 reconciliation = reconcile_record(
                     job_id,
-                    live_evidence=live_evidence_get(job_id),
+                    live_evidence=live_evidence,
                 )
             except LocalJobContinuationStoreError as exc:
                 receipts_append(exc.receipt)
