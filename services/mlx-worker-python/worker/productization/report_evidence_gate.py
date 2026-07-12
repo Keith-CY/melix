@@ -631,7 +631,13 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
             for row in rows:
                 if not isinstance(row, dict):
                     continue
-                phase = to_string(row.get("phase", "")).strip()
+                phase_raw = row.get("phase", "")
+                if type(phase_raw) is str:
+                    if phase_raw in phases:
+                        continue
+                    phase = phase_raw.strip()
+                else:
+                    phase = to_string(phase_raw).strip()
                 if phase:
                     phases_add(phase)
     return phases
