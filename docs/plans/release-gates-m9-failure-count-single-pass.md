@@ -22,6 +22,7 @@ This slice is Python-only and can be verified on Linux with focused pytest, chan
 - Replace the suffix-based post-processing loop over `section_failures` with a counted section evaluator that returns missing and threshold-failure counts alongside the ordered failure strings.
 - Preserve failure ordering, metric names, and summary values exactly while avoiding failure-string suffix scans in `evaluate_m9_release_evidence(...)`.
 - Follow-up slice: keep flat metric-key lookup as the fast path and short-circuit dotted nested lookup when the first segment is absent from the metrics map. This preserves nested metric compatibility while avoiding `split(".")` list allocation for flat M9 policy misses.
+- 2026-07-12 follow-up slice: cache prefixed nested-root availability once per section in `_evaluate_section_metrics_with_counts(...)`. M9 rules usually pass fully qualified flat metric names under a shared `m9.<section>.` prefix; this keeps nested-metric fallback compatibility while avoiding repeated root membership checks for every missing flat key in the section.
 
 ## Probe definition
 

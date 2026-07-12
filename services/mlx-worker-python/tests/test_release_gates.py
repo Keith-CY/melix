@@ -1162,6 +1162,68 @@ def test_evaluate_section_metrics_counts_failure_types_without_suffix_scan() -> 
     ) == ["m9.mcp.above_max=2.00 exceeded maximum 1.00"]
 
 
+def test_evaluate_section_metrics_checks_prefixed_nested_root_once() -> None:
+    class RootCountingMetrics(dict[str, object]):
+        root_checks = 0
+
+        def __contains__(self, key: object) -> bool:
+            if key == "m9":
+                type(self).root_checks += 1
+            return super().__contains__(key)
+
+    metrics = RootCountingMetrics(
+        {
+            "m9.mcp.present": 1.0,
+        }
+    )
+
+    failures, missing_count, failed_threshold_count = (
+        release_gates_module._evaluate_section_metrics_with_counts(
+            metrics,
+            {
+                "m9.mcp.present": {"min": 1.0},
+                "m9.mcp.missing_a": {"min": 1.0},
+                "m9.mcp.missing_b": {"min": 1.0},
+            },
+            prefix="m9.mcp.",
+        )
+    )
+
+    assert failures == [
+        "m9.mcp.m9.mcp.missing_a is missing",
+        "m9.mcp.m9.mcp.missing_b is missing",
+    ]
+    assert missing_count == 2
+    assert failed_threshold_count == 0
+    assert metrics.root_checks == 1
+
+
+def test_evaluate_section_metrics_preserves_nested_lookup_for_unprefixed_rule_names() -> None:
+    failures, missing_count, failed_threshold_count = (
+        release_gates_module._evaluate_section_metrics_with_counts(
+            {"mcp": {"nested": 1.0}},
+            {"mcp.nested": {"min": 1.0}},
+            prefix="m9.mcp.",
+        )
+    )
+
+    assert failures == []
+    assert missing_count == 0
+    assert failed_threshold_count == 0
+
+    prefixed_failures, prefixed_missing_count, prefixed_failed_threshold_count = (
+        release_gates_module._evaluate_section_metrics_with_counts(
+            {"m9": {"mcp": {"nested": 1.0}}},
+            {"m9.mcp.nested": {"min": 1.0}},
+            prefix="m9.mcp.",
+        )
+    )
+
+    assert prefixed_failures == []
+    assert prefixed_missing_count == 0
+    assert prefixed_failed_threshold_count == 0
+
+
 def test_evaluate_section_metrics_preserves_non_string_rule_key_lookup() -> None:
     failures, missing_count, failed_threshold_count = (
         release_gates_module._evaluate_section_metrics_with_counts(
