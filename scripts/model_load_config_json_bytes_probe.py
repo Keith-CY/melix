@@ -60,6 +60,19 @@ def _write_config(model_dir: Path, *, padding_bytes: int) -> None:
     (model_dir / "config.json").write_bytes(json.dumps(payload).encode("utf-8"))
 
 
+def _write_plain_executable_model(model_dir: Path, *, padding_bytes: int) -> None:
+    payload = {
+        "architectures": ["LlamaForCausalLM"],
+        "model_type": "llama",
+        "padding": "x" * padding_bytes,
+    }
+    (model_dir / "config.json").write_bytes(json.dumps(payload).encode("utf-8"))
+    (model_dir / "configuration_melix_demo.py").write_text(
+        "class MelixDemoConfig: pass\n",
+        encoding="utf-8",
+    )
+
+
 def _run_sample(model, iterations: int) -> tuple[float, int, int]:
     runtime = _TrustRuntime()
     rejection_count = 0
@@ -84,6 +97,30 @@ def _run_sample(model, iterations: int) -> tuple[float, int, int]:
     return elapsed_ms, peak_bytes, rejection_count
 
 
+def _run_executable_sample(model, iterations: int) -> tuple[float, int, int]:
+    runtime = _TrustRuntime()
+    rejection_count = 0
+    started = time.perf_counter()
+    tracemalloc.start()
+    for _ in range(iterations):
+        try:
+            resolve_model_load_trust_policy(
+                model,
+                request_policy=None,
+                runtime_kind="text",
+                runtime=runtime,
+            )
+        except ModelLoadTrustRejection as exc:
+            if exc.policy.custom_loader_detection_source == "model_files:configuration_melix_demo.py":
+                rejection_count += 1
+            else:  # pragma: no cover - defensive guard for malformed probe setup.
+                raise
+    _, peak_bytes = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    return elapsed_ms, peak_bytes, rejection_count
+
+
 def main() -> int:
     samples = _sample_count()
     iterations = _iterations()
@@ -91,17 +128,32 @@ def main() -> int:
     elapsed_values: list[float] = []
     peak_values: list[int] = []
     rejection_values: list[int] = []
+    executable_elapsed_values: list[float] = []
+    executable_peak_values: list[int] = []
+    executable_rejection_values: list[int] = []
 
     with tempfile.TemporaryDirectory() as tmp:
         model_dir = Path(tmp) / "custom-loader-model"
         model_dir.mkdir()
         _write_config(model_dir, padding_bytes=padding_bytes)
         model = _model_spec(model_dir)
+        executable_model_dir = Path(tmp) / "single-executable-model"
+        executable_model_dir.mkdir()
+        _write_plain_executable_model(executable_model_dir, padding_bytes=padding_bytes)
+        executable_model = _model_spec(executable_model_dir)
         for _ in range(samples):
             elapsed_ms, peak_bytes, rejection_count = _run_sample(model, iterations)
             elapsed_values.append(elapsed_ms)
             peak_values.append(peak_bytes)
             rejection_values.append(rejection_count)
+            (
+                executable_elapsed_ms,
+                executable_peak_bytes,
+                executable_rejection_count,
+            ) = _run_executable_sample(executable_model, iterations)
+            executable_elapsed_values.append(executable_elapsed_ms)
+            executable_peak_values.append(executable_peak_bytes)
+            executable_rejection_values.append(executable_rejection_count)
 
     metrics = {
         "elapsed_ms_mean": statistics.fmean(elapsed_values),
@@ -111,6 +163,9 @@ def main() -> int:
         "iterations": iterations,
         "config_padding_bytes": padding_bytes,
         "rejections_mean": statistics.fmean(rejection_values),
+        "executable_elapsed_ms_mean": statistics.fmean(executable_elapsed_values),
+        "executable_peak_bytes_mean": statistics.fmean(executable_peak_values),
+        "executable_rejections_mean": statistics.fmean(executable_rejection_values),
     }
     print(json.dumps(metrics, sort_keys=True))
     return 0
