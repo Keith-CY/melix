@@ -117,9 +117,9 @@ class GrammarConstraintProcessor:
                     "enforcement": "sampler",
                     "reason": "tokenizer_vocab_unavailable",
                 },
-            )
+        )
         self._id_to_text = vocabulary
-        self._eos_token_ids = _tokenizer_eos_token_ids(tokenizer)
+        self._eos_token_ids = _tokenizer_eos_token_ids(tokenizer, vocabulary)
         self._base_token_count: int | None = None
         self._applied_generated_count = 0
         self._state: _JSONPrefixState | None = _INITIAL_JSON_OBJECT_STATE
@@ -200,16 +200,16 @@ def _token_ids(tokens: Any) -> list[int]:
             return [int(tokens)]
     if not isinstance(values, list):
         return [int(values)]
-    flattened: list[int] = []
-    for value in values:
-        if isinstance(value, list):
-            flattened.extend(int(item) for item in value)
-        else:
-            flattened.append(int(value))
-    return flattened
+    if any(isinstance(value, list) for value in values):
+        if len(values) > 1:
+            raise ValueError(
+                "GrammarConstraintProcessor only supports single-sequence inputs (batch size 1)."
+            )
+        values = values[0]
+    return [int(value) for value in values]
 
 
-def _tokenizer_eos_token_ids(tokenizer: Any) -> frozenset[int]:
+def _tokenizer_eos_token_ids(tokenizer: Any, vocabulary: dict[int, str]) -> frozenset[int]:
     cached = getattr(tokenizer, _TOKENIZER_EOS_CACHE_ATTR, None)
     if isinstance(cached, frozenset):
         return cached
@@ -226,6 +226,12 @@ def _tokenizer_eos_token_ids(tokenizer: Any) -> frozenset[int]:
             for item in raw:
                 if isinstance(item, int):
                     values.append(item)
+    if not values:
+        eos_token = getattr(tokenizer, "eos_token", None)
+        if isinstance(eos_token, str):
+            values.extend(
+                token_id for token_id, text in vocabulary.items() if text == eos_token
+            )
     eos_token_ids = frozenset(values)
     try:
         setattr(tokenizer, _TOKENIZER_EOS_CACHE_ATTR, eos_token_ids)

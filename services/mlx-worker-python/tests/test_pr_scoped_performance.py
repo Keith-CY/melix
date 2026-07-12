@@ -1283,10 +1283,11 @@ def test_scope_report_selects_mlx_text_stop_kwarg_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_text_runtime.py"],
     )
 
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert _selected_probe_ids(scope) == [
         "mlx-text-stop-kwarg-signature-cache",
         "mlx-text-stop-filter-prefix-cache",
+        "structured-output-json-object-constraint-cache",
     ]
 
 
@@ -1345,7 +1346,9 @@ def test_structured_output_constraint_probe_script_emits_metrics(
 
     assert probe_script["_token_ids"](7) == [7]
     assert probe_script["_token_ids"](ScalarTokenList()) == [7]
-    assert probe_script["_token_ids"]([[1, 2], 3]) == [1, 2, 3]
+    assert probe_script["_token_ids"]([[1, 2]]) == [1, 2]
+    with pytest.raises(ValueError, match="single-sequence"):
+        probe_script["_token_ids"]([[1, 2], [3, 4]])
 
     mx = probe_script["_mx"]()
     fallback_processors = probe_script["_fallback_builder"](

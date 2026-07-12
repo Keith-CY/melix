@@ -19,6 +19,7 @@ from worker.runtime import runtime_utils
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.mlx_text_runtime import RuntimeUnavailableError, resolve_text_stop_contract
+from worker.runtime.structured_output_constraints import StructuredOutputConstraintError
 
 
 def _install_fake_mlx_core(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
@@ -773,6 +774,116 @@ def test_auto_backend_passes_json_object_logits_processor_to_native_batch_insert
     assert len(processors_by_sequence) == 1
     assert isinstance(processors_by_sequence[0], list)
     assert len(processors_by_sequence[0]) == 1
+
+
+def test_auto_backend_fails_closed_when_native_batch_insert_rejects_logits_processors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_core = _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_lm_cache(monkeypatch, fake_core)
+
+    class FakeDetokenizer:
+        def reset(self) -> None:
+            pass
+
+    class NativeStructuredTokenizer(StructuredOutputTokenizer):
+        eos_token = "</s>"
+        detokenizer = FakeDetokenizer()
+
+        def encode(self, prompt: str, add_special_tokens: bool = True):
+            _ = prompt, add_special_tokens
+            return [0]
+
+    class FakeBatchGenerator:
+        stream = None
+
+        def __init__(self, model, **kwargs) -> None:
+            _ = model, kwargs
+
+        def insert(  # pragma: no cover
+            self, prompts, max_tokens=None, caches=None, all_tokens=None, samplers=None
+        ):
+            _ = prompts, max_tokens, caches, all_tokens, samplers
+            raise AssertionError("structured-output guard should reject before insert")
+
+        def next_generated(self):  # pragma: no cover
+            return []
+
+        def remove(self, uids) -> None:  # pragma: no cover
+            _ = uids
+
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_load_mlx_batch_generator_class",
+        lambda: FakeBatchGenerator,
+    )
+
+    def fake_prefill(
+        model,
+        prompt_tokens,
+        *,
+        prefill_step_size,
+        stream,
+        restore_cache=None,
+        restore_token_count=0,
+    ):
+        _ = model, prefill_step_size, stream, restore_cache, restore_token_count
+        return ["prompt-cache"], [int(prompt_tokens[-1])], list(prompt_tokens[:-1])
+
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_native_mtp_prefill_prompt_cache",
+        fake_prefill,
+    )
+    monkeypatch.setattr(mlx_text_runtime_module, "_clone_cache_snapshot", lambda cache: None)
+    monkeypatch.setattr(mlx_text_runtime_module, "_estimate_cache_bytes", lambda cache: 0)
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "maybe_apply_native_mtp_text_preload_patches",
+        lambda _model_path, *, metadata: {
+            "melix.native_mtp.enabled": "true",
+            "melix.native_mtp.compatible": "true",
+            "melix.native_mtp.weights_present": "true",
+            "melix.native_mtp.weight_count": "1",
+            "melix.native_mtp.patch_applied": "true",
+            "melix.native_mtp.active": "true",
+            "melix.native_mtp.reason": "",
+        },
+    )
+
+    model = SimpleNamespace(
+        mtp=object(),
+        mtp_forward=lambda *_args, **_kwargs: None,
+        _melix_native_mtp_active=True,
+    )
+    backend = AutoMLXBackend(
+        load_fn=lambda _model_source, **_kwargs: (model, NativeStructuredTokenizer()),
+        stream_generate_fn=lambda *_args, **_kwargs: iter(()),
+        sampler_factory=lambda **_kwargs: "sampler",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model()
+    model_spec.ext["melix.native_mtp.enabled"] = "true"
+    model_spec.ext["melix.native_mtp.active"] = "true"
+    model_spec.ext["melix.native_mtp.patch_applied"] = "true"
+    model_spec.ext["melix.native_mtp.compatible"] = "true"
+    loaded_model = backend.load_model(model_spec)
+
+    with pytest.raises(StructuredOutputConstraintError) as error:
+        list(
+            backend.generate_tokens(
+                loaded_model,
+                "prompt",
+                common_pb2.SamplingConfig(max_output_tokens=2),
+                Event(),
+                execution_ext={"melix.structured_output.mode": "json_object"},
+            )
+        )
+
+    assert error.value.details == {
+        "mode": "json_object",
+        "enforcement": "sampler",
+        "reason": "logits_processors_unsupported",
+    }
 
 
 def test_native_mtp_text_patch_adds_qwen35_methods() -> None:

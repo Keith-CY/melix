@@ -1648,6 +1648,15 @@ class AutoMLXBackend:
             batch_insert_started_at = time.perf_counter()
             insert_kwargs: dict[str, Any] = {}
             if logits_processors:
+                if not _callable_accepts_kwarg(batch_generator.insert, "logits_processors"):
+                    raise StructuredOutputConstraintError(
+                        "mlx-lm BatchGenerator cannot accept structured-output logits processors.",
+                        details={
+                            "mode": "json_object",
+                            "enforcement": "sampler",
+                            "reason": "logits_processors_unsupported",
+                        },
+                    )
                 insert_kwargs["logits_processors"] = [logits_processors]
             inserted = batch_generator.insert(
                 [last_token],

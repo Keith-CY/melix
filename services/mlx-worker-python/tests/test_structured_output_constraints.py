@@ -222,7 +222,9 @@ def test_json_object_logits_processor_accepts_eos_after_complete_object(mx) -> N
 
 def test_token_helpers_cover_fallback_shapes() -> None:
     assert constraints._token_ids(7) == [7]
-    assert constraints._token_ids([[1, 2], 3]) == [1, 2, 3]
+    assert constraints._token_ids([[1, 2]]) == [1, 2]
+    with pytest.raises(ValueError, match="single-sequence"):
+        constraints._token_ids([[1, 2], [3, 4]])
     assert constraints._replace_top(constraints._INITIAL_JSON_OBJECT_STATE, "value") is None
     assert constraints._close_container(constraints._INITIAL_JSON_OBJECT_STATE) is None
     assert constraints._complete_value(
@@ -260,6 +262,22 @@ def test_tokenizer_fallbacks_and_errors() -> None:
         DecodeFallbackTokenizer(),
     )
     assert len(processors) == 1
+
+    class EOSTokenFallbackTokenizer:
+        eos_token = "</s>"
+
+        def get_vocab(self) -> dict[str, int]:
+            return {"{": 0, "}": 1, "</s>": 5}
+
+        def decode(self, token_ids, skip_special_tokens: bool = False) -> str:
+            _ = skip_special_tokens
+            return {0: "{", 1: "}", 5: "</s>"}.get(int(token_ids[0]), "")
+
+    eos_fallback_processors = build_structured_output_logits_processors(
+        {"melix.structured_output.mode": "json_object"},
+        EOSTokenFallbackTokenizer(),
+    )
+    assert eos_fallback_processors[0]._eos_token_ids == frozenset({5})
 
     class LenFallbackTokenizer:
         def get_vocab(self) -> dict[str, int]:

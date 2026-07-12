@@ -24,6 +24,7 @@
 
 - `json_object` requests reaching `AutoMLXBackend.generate_tokens()` pass a JSON-object constraint processor to `stream_generate`.
 - Native text `BatchGenerator.insert()` receives the same per-sequence processor list for constrained JSON-object requests.
+- Native text `BatchGenerator.insert()` fails closed with `StructuredOutputConstraintError` when the installed `mlx-lm` API cannot accept `logits_processors`.
 - The native MTP patch continues to avoid MTP when grammar processors are active.
 - Worker `Generate` returns a typed error for schema-backed `json_schema` requests instead of rendering a prompt and generating unconstrained text.
 - Structured-output parser metrics still identify JSON-only requests as `structured_json`.
@@ -46,11 +47,11 @@
    - request-mode normalization from `ExecutionMetadata.ext`;
    - typed `StructuredOutputConstraintError`;
    - JSON-object prefix automaton and logits processor;
-   - tokenizer vocabulary decoding and EOS handling.
+   - tokenizer vocabulary decoding, EOS handling, and single-sequence input guards.
 3. Wire `AutoMLXBackend`:
    - cache whether `stream_generate` accepts `logits_processors`;
    - pass processors on the standard no-session and session paths;
-   - pass processors into native text `BatchGenerator.insert`.
+   - pass processors into native text `BatchGenerator.insert` only when the installed API accepts them.
 4. Wire `EngineCore` typed refusal:
    - fail closed before prompt rendering for schema-backed `json_schema`;
    - include details for `mode`, `enforcement`, and `reason`.

@@ -259,13 +259,13 @@ def _token_ids(tokens: Any) -> list[int]:
             return [int(tokens)]
     if not isinstance(values, list):
         return [int(values)]
-    flattened: list[int] = []
-    for value in values:
-        if isinstance(value, list):
-            flattened.extend(int(item) for item in value)
-        else:
-            flattened.append(int(value))
-    return flattened
+    if any(isinstance(value, list) for value in values):
+        if len(values) > 1:
+            raise ValueError(
+                "GrammarConstraintProcessor only supports single-sequence inputs (batch size 1)."
+            )
+        values = values[0]
+    return [int(value) for value in values]
 
 
 def _uncached_tokenizer_vocabulary(tokenizer: Any) -> dict[int, str]:
