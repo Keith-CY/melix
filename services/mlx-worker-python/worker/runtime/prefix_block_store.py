@@ -433,7 +433,7 @@ def _tensor_nbytes(tensor: Any) -> Any:
     itemsize = getattr(tensor, "itemsize", None)
     if itemsize is None:
         return 0
-    return int(size) * int(itemsize)
+    return size * itemsize
 
 
 def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
