@@ -121,6 +121,16 @@ def test_mode_normalization_and_json_schema_errors() -> None:
     ) == "text"
     assert constraints.normalize_structured_output_mode(None) == ""
     assert constraints.normalize_structured_output_mode(object()) == ""
+    assert not constraints.structured_output_requested(None)
+    assert not constraints.structured_output_requested({})
+    assert not constraints.structured_output_requested({"_melix.session_id": "probe"})
+    assert not constraints.structured_output_requested(
+        {"melix.structured_output.mode": "plain_text"}
+    )
+    assert constraints.structured_output_requested({"melix.structured_output.mode": "json"})
+    assert constraints.structured_output_requested(
+        {"melix.structured_output.mode": "json_schema"}
+    )
     assert constraints.json_schema_constraint_error(
         {"melix.structured_output.mode": "json_schema"}
     ) is None

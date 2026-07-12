@@ -59,6 +59,11 @@ def normalize_structured_output_mode(execution_ext: object) -> str:
     return raw_mode
 
 
+def structured_output_requested(execution_ext: object) -> bool:
+    mode = normalize_structured_output_mode(execution_ext)
+    return bool(mode and mode != "text")
+
+
 def schema_backed_json_schema_requested(execution_ext: object) -> bool:
     return (
         normalize_structured_output_mode(execution_ext) == "json_schema"

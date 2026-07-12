@@ -31,6 +31,7 @@ from worker.runtime.runtime_utils import (
 from worker.runtime.structured_output_constraints import (
     StructuredOutputConstraintError,
     build_structured_output_logits_processors,
+    structured_output_requested,
 )
 from worker.runtime.text_family_adapters import resolve_text_family_config
 
@@ -1141,9 +1142,13 @@ class AutoMLXBackend:
             execution_ext,
             self._stream_stop_kwarg,
         )
-        structured_logits_processors = build_structured_output_logits_processors(
-            execution_ext,
-            loaded_model["tokenizer"],
+        structured_logits_processors = (
+            build_structured_output_logits_processors(
+                execution_ext,
+                loaded_model["tokenizer"],
+            )
+            if structured_output_requested(execution_ext)
+            else []
         )
 
         if loaded_model.get(_NATIVE_MTP_TEXT_ACTIVE_FIELD) is True:
@@ -1170,9 +1175,11 @@ class AutoMLXBackend:
 
         if not execution_ext or not str(execution_ext.get("_melix.session_id", "") or "").strip():
             cumulative_raw_text = ""
-            stream_call_kwargs = dict(stream_kwargs)
             if structured_logits_processors:
+                stream_call_kwargs = dict(stream_kwargs)
                 stream_call_kwargs["logits_processors"] = structured_logits_processors
+            else:
+                stream_call_kwargs = stream_kwargs
             for response in self._stream_generate_fn(
                 loaded_model["model"],
                 loaded_model["tokenizer"],
@@ -1249,9 +1256,11 @@ class AutoMLXBackend:
 
         cumulative_raw_text = ""
         stream_prompt: str | list[int] = prompt
-        stream_call_kwargs = dict(stream_kwargs)
         if structured_logits_processors:
+            stream_call_kwargs = dict(stream_kwargs)
             stream_call_kwargs["logits_processors"] = structured_logits_processors
+        else:
+            stream_call_kwargs = stream_kwargs
         _standard_prefix_store: Any = None
         _standard_lcp_entry_to_release: Any = None
         _standard_cache_hit_mode: str | None = None

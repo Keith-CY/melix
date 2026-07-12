@@ -269,6 +269,49 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].dflash_rollback_count == 2
 
 
+def test_auto_backend_skips_structured_processor_builder_without_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_load(model_source: str, **kwargs):
+        _ = model_source, kwargs
+        return object(), FakeTokenizer()
+
+    def fake_stream_generate(model, tokenizer, prompt: str, max_tokens: int, sampler, *, stop=None):
+        _ = model, tokenizer, prompt, max_tokens, sampler, stop
+        yield FakeGenerationResponse(
+            text="ok",
+            prompt_tokens=1,
+            generation_tokens=1,
+            finish_reason="stop",
+        )
+
+    processor_builder = Mock(return_value=[])
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "build_structured_output_logits_processors",
+        processor_builder,
+    )
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=lambda **kwargs: "sampler",
+    )
+    loaded_model = backend.load_model(WorkerModelCatalog.dev_text_model())
+
+    chunks = list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            Event(),
+            execution_ext={"_melix.session_id": ""},
+        )
+    )
+
+    assert [chunk.text for chunk in chunks] == ["ok"]
+    processor_builder.assert_not_called()
+
+
 def test_auto_backend_passes_json_object_logits_processor_to_stream_generate() -> None:
     seen: dict[str, object] = {}
 
@@ -312,6 +355,66 @@ def test_auto_backend_passes_json_object_logits_processor_to_stream_generate() -
     )
 
     assert [chunk.text for chunk in chunks] == ["{}"]
+    processors = seen["logits_processors"]
+    assert isinstance(processors, list)
+    assert len(processors) == 1
+
+
+def test_auto_backend_passes_json_object_logits_processor_to_session_stream_generate() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        _ = model_source, kwargs
+        return object(), StructuredOutputTokenizer()
+
+    def fake_stream_generate(
+        model,
+        tokenizer,
+        prompt: str,
+        *,
+        max_tokens: int,
+        sampler,
+        prompt_cache=None,
+        logits_processors=None,
+        **kwargs,
+    ):
+        _ = model, tokenizer, max_tokens, sampler, kwargs
+        seen["prompt"] = prompt
+        seen["prompt_cache"] = prompt_cache
+        seen["logits_processors"] = logits_processors
+        yield FakeGenerationResponse(
+            text="{}",
+            prompt_tokens=1,
+            generation_tokens=1,
+            finish_reason="stop",
+        )
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=lambda **kwargs: "sampler",
+    )
+    loaded_model = backend.load_model(WorkerModelCatalog.dev_text_model())
+
+    chunks = list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            Event(),
+            execution_ext={
+                "melix.structured_output.mode": "json_object",
+                "_melix.session_id": "session-structured",
+                "_melix.model_id": "model",
+                "_melix.model_revision": "rev",
+            },
+        )
+    )
+
+    assert [chunk.text for chunk in chunks] == ["{}"]
+    assert chunks[-1].cache_fallback_reason == "tokenizer_encode_unavailable"
+    assert seen["prompt"] == "prompt"
+    assert seen["prompt_cache"] is None
     processors = seen["logits_processors"]
     assert isinstance(processors, list)
     assert len(processors) == 1

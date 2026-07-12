@@ -25,6 +25,7 @@ from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragme
 from worker.runtime.structured_output_constraints import (
     StructuredOutputConstraintError,
     json_schema_constraint_error,
+    structured_output_requested,
 )
 from worker.runtime.token_route_receipt import (
     TokenRouteReceipt,
@@ -357,7 +358,9 @@ class EngineCore:
                 )
                 return
 
-        if schema_error := json_schema_constraint_error(execution_ext):
+        if structured_output_requested(execution_ext) and (
+            schema_error := json_schema_constraint_error(execution_ext)
+        ):
             yield self._error_event(
                 request_id,
                 1,
