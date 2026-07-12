@@ -360,6 +360,67 @@ def test_auto_backend_passes_json_object_logits_processor_to_stream_generate() -
     assert len(processors) == 1
 
 
+def test_auto_backend_passes_json_schema_logits_processor_to_stream_generate() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_load(model_source: str, **kwargs):
+        _ = model_source, kwargs
+        return object(), StructuredOutputTokenizer()
+
+    def fake_stream_generate(
+        model,
+        tokenizer,
+        prompt: str,
+        max_tokens: int,
+        sampler,
+        *,
+        logits_processors=None,
+    ):
+        _ = model, tokenizer, prompt, max_tokens, sampler
+        seen["logits_processors"] = logits_processors
+        yield FakeGenerationResponse(
+            text='{"answer":"ok"}',
+            prompt_tokens=1,
+            generation_tokens=1,
+            finish_reason="stop",
+        )
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=lambda **kwargs: "sampler",
+    )
+    loaded_model = backend.load_model(WorkerModelCatalog.dev_text_model())
+
+    chunks = list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=8),
+            Event(),
+            execution_ext={
+                "melix.structured_output.mode": "json_schema",
+                "melix.structured_output.schema_json": json.dumps(
+                    {
+                        "type": "object",
+                        "required": ["answer"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "answer": {"type": "string", "const": "ok"},
+                        },
+                    },
+                    separators=(",", ":"),
+                ),
+            },
+        )
+    )
+
+    assert [chunk.text for chunk in chunks] == ['{"answer":"ok"}']
+    processors = seen["logits_processors"]
+    assert isinstance(processors, list)
+    assert len(processors) == 1
+
+
 def test_auto_backend_passes_json_object_logits_processor_to_session_stream_generate() -> None:
     seen: dict[str, object] = {}
 

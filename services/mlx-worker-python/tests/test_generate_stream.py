@@ -592,6 +592,35 @@ class RuntimeStructuredOutputFailingRuntime:
         )
 
 
+class RuntimeStructuredOutputAcceptingRuntime:
+    runtime_name = "fake-structured-output-accepting-runtime"
+
+    def __init__(self) -> None:
+        self.seen_execution_ext: dict[str, str] | None = None
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        _ = model_spec
+        return 0
+
+    def render_prompt(self, messages, loaded_model=None, template_kwargs=None, execution_ext=None):
+        _ = (messages, loaded_model, template_kwargs, execution_ext)
+        return "structured output prompt"
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+        _ = (loaded_model, prompt, sampling, cancel_event)
+        self.seen_execution_ext = dict(execution_ext or {})
+        yield RuntimeTokenEvent(
+            text='{"answer":"ok"}',
+            raw_text='{"answer":"ok"}',
+            prompt_tokens=1,
+            completion_tokens=1,
+            finish_reason="stop",
+        )
+
+
 def build_services():
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=StreamingFakeBackend()),
@@ -1768,7 +1797,7 @@ def test_generate_stream_preserves_explicit_tool_parser_with_structured_json_mod
     assert completed.parser_metrics["reasoning_leak_count"] == "0"
 
 
-def test_generate_rejects_schema_backed_json_schema_when_sampler_cannot_enforce() -> None:
+def test_generate_rejects_unsupported_schema_backed_json_schema() -> None:
     _, inference_service, model_handle = build_services()
     request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
@@ -1777,7 +1806,9 @@ def test_generate_rejects_schema_backed_json_schema_when_sampler_cannot_enforce(
             ext={
                 "melix.structured_output.mode": "json_schema",
                 "melix.structured_output.schema_name": "answer",
-                "melix.structured_output.schema_json": '{"type":"object","required":["answer"]}',
+                "melix.structured_output.schema_json": (
+                    '{"type":"object","patternProperties":{"^x-":{"type":"string"}}}'
+                ),
                 "melix.structured_output.strict": "true",
             },
         ),
@@ -1797,8 +1828,55 @@ def test_generate_rejects_schema_backed_json_schema_when_sampler_cannot_enforce(
     assert error.code == "unsupported_structured_output"
     assert error.details["mode"] == "json_schema"
     assert error.details["enforcement"] == "sampler"
-    assert error.details["reason"] == "json_schema_grammar_unavailable"
+    assert error.details["reason"] == "json_schema_unsupported_keyword"
+    assert error.details["keyword"] == "patternProperties"
     assert not any(event.HasField("completed") for event in events)
+
+
+def test_generate_allows_supported_schema_backed_json_schema_to_runtime() -> None:
+    runtime = RuntimeStructuredOutputAcceptingRuntime()
+    registry = WorkerRegistry(
+        runtime=runtime,
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-json-schema-supported"),
+            model_handle=load_response.model_handle,
+            ext={
+                "melix.structured_output.mode": "json_schema",
+                "melix.structured_output.schema_name": "answer",
+                "melix.structured_output.schema_json": (
+                    '{"type":"object","required":["answer"],'
+                    '"additionalProperties":false,'
+                    '"properties":{"answer":{"type":"string","const":"ok"}}}'
+                ),
+                "melix.structured_output.strict": "true",
+            },
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Return an answer object.")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    completed = next(event.completed for event in events if event.HasField("completed"))
+    assert completed.assistant_text == '{"answer":"ok"}'
+    assert runtime.seen_execution_ext is not None
+    assert runtime.seen_execution_ext["melix.structured_output.mode"] == "json_schema"
+    assert not any(event.HasField("error") for event in events)
 
 
 def test_generate_reports_runtime_structured_output_constraint_error() -> None:

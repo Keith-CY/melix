@@ -1321,6 +1321,11 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     assert metrics["build_second_decode_calls_mean"] == 0.0
     assert metrics["cached_mask_elapsed_ms_mean"] >= 0.0
     assert metrics["initial_allowed_count_mean"] >= 1.0
+    assert metrics["schema_available"] == 1.0
+    assert metrics["schema_build_first_decode_calls_mean"] == 64.0
+    assert metrics["schema_build_second_decode_calls_mean"] == 0.0
+    assert metrics["schema_cached_mask_elapsed_ms_mean"] >= 0.0
+    assert metrics["schema_initial_allowed_count_mean"] >= 1.0
 
     monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_FORCE_FALLBACK", "1")
     assert probe_script["main"]() == 0
@@ -1329,6 +1334,7 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     assert fallback_metrics["implementation_available"] == 0.0
     assert fallback_metrics["build_first_decode_calls_mean"] == 64.0
     assert fallback_metrics["build_second_decode_calls_mean"] == 64.0
+    assert fallback_metrics["schema_available"] == 0.0
 
     probe_tokenizer = probe_script["ProbeTokenizer"](32)
     assert probe_tokenizer.get_vocab()["{"] == 0
@@ -4600,6 +4606,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     worker_registry_probe = None
     evaluation_store_samples_probe = None
     swift_probe = None
+    structured_output_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
         assert probe.coverage_command
@@ -4628,6 +4635,8 @@ def test_registered_probes_expose_focused_commands() -> None:
             evaluation_store_samples_probe = probe
         if probe.probe_id == "swift-cli-json-envelope-encoding":
             swift_probe = probe
+        if probe.probe_id == "structured-output-json-object-constraint-cache":
+            structured_output_probe = probe
 
     assert evaluation_store_samples_probe is not None
     evaluation_store_samples_metrics = {
@@ -4647,6 +4656,15 @@ def test_registered_probes_expose_focused_commands() -> None:
     }
     assert worker_registry_metrics["elapsed_ms_mean"].warn_abs == 0.001
     assert worker_registry_metrics["request_stats_elapsed_ms_mean"].warn_abs == 0.001
+
+    assert structured_output_probe is not None
+    structured_output_metrics = {
+        metric.key: metric for metric in structured_output_probe.metrics
+    }
+    assert structured_output_metrics["build_second_elapsed_ms_mean"].direction == "lower_is_better"
+    assert structured_output_metrics["schema_build_second_decode_calls_mean"].direction == "lower_is_better"
+    assert structured_output_metrics["schema_build_second_decode_calls_mean"].warn_abs == 0.0
+    assert structured_output_metrics["schema_build_second_elapsed_ms_mean"].direction == "informational"
 
     assert registry_probe is not None
     assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.test_command

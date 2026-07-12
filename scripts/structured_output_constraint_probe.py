@@ -370,6 +370,110 @@ def _run_sample(
     }
 
 
+def _schema_ext() -> dict[str, str]:
+    return {
+        "melix.structured_output.mode": "json_schema",
+        "melix.structured_output.schema_json": json.dumps(
+            {
+                "type": "object",
+                "required": ["answer"],
+                "additionalProperties": False,
+                "properties": {
+                    "answer": {"type": "string", "const": "ok"},
+                },
+            },
+            separators=(",", ":"),
+        ),
+    }
+
+
+def _schema_unavailable_metrics() -> dict[str, float]:
+    return {
+        "schema_available": 0.0,
+        "schema_build_first_elapsed_ms": 0.0,
+        "schema_build_second_elapsed_ms": 0.0,
+        "schema_build_first_decode_calls": 0.0,
+        "schema_build_second_decode_calls": 0.0,
+        "schema_cached_mask_elapsed_ms": 0.0,
+        "schema_peak_bytes": 0.0,
+        "schema_initial_allowed_count": 0.0,
+        "schema_complete_allowed_count": 0.0,
+    }
+
+
+def _run_schema_sample(
+    build_processors: Callable[[object, Any], list[Any]],
+    *,
+    vocab_size: int,
+    mask_iterations: int,
+) -> dict[str, float]:
+    mx = _mx()
+    tokenizer = ProbeTokenizer(vocab_size)
+    ext = _schema_ext()
+    prompt_token_id = vocab_size - 2
+    logits = mx.zeros((1, vocab_size))
+
+    tracemalloc.start()
+    first_started = time.perf_counter()
+    try:
+        first_processors = build_processors(ext, tokenizer)
+    except Exception:
+        tracemalloc.stop()
+        return _schema_unavailable_metrics()
+    first_build_elapsed_ms = (time.perf_counter() - first_started) * 1000.0
+    first_decode_calls = tokenizer.decode_calls
+
+    second_started = time.perf_counter()
+    try:
+        second_processors = build_processors(ext, tokenizer)
+    except Exception:
+        tracemalloc.stop()
+        return _schema_unavailable_metrics()
+    second_build_elapsed_ms = (time.perf_counter() - second_started) * 1000.0
+    second_decode_calls = tokenizer.decode_calls - first_decode_calls
+
+    if len(first_processors) != 1 or len(second_processors) != 1:
+        tracemalloc.stop()
+        return _schema_unavailable_metrics()
+
+    processor = second_processors[0]
+    initial = processor(mx.array([prompt_token_id]), logits)
+    after_open_object = processor(mx.array([prompt_token_id, 0]), logits)
+    after_value = processor(mx.array([prompt_token_id, 0, 2, 3, 4]), logits)
+    after_complete_object = processor(mx.array([prompt_token_id, 0, 2, 3, 4, 1]), logits)
+    if not math.isfinite(float(initial[0, 0])):
+        raise RuntimeError("initial JSON-schema mask rejected the object-open token")
+    if math.isfinite(float(initial[0, 2])):
+        raise RuntimeError("initial JSON-schema mask allowed a property key before object-open")
+    if not math.isfinite(float(after_open_object[0, 2])):
+        raise RuntimeError("object-open JSON-schema mask rejected required property key")
+    if math.isfinite(float(after_open_object[0, 1])):
+        raise RuntimeError("object-open JSON-schema mask allowed close before required key")
+    if not math.isfinite(float(after_value[0, 1])):
+        raise RuntimeError("post-value JSON-schema mask rejected object close")
+    if not math.isfinite(float(after_complete_object[0, vocab_size - 1])):
+        raise RuntimeError("complete JSON-schema mask rejected EOS")
+
+    mask_started = time.perf_counter()
+    for _ in range(mask_iterations):
+        processor(mx.array([prompt_token_id, 0, 2, 3, 4, 1]), logits)
+    cached_mask_elapsed_ms = (time.perf_counter() - mask_started) * 1000.0
+
+    _, peak_bytes = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    return {
+        "schema_available": 1.0,
+        "schema_build_first_elapsed_ms": first_build_elapsed_ms,
+        "schema_build_second_elapsed_ms": second_build_elapsed_ms,
+        "schema_build_first_decode_calls": float(first_decode_calls),
+        "schema_build_second_decode_calls": float(second_decode_calls),
+        "schema_cached_mask_elapsed_ms": cached_mask_elapsed_ms,
+        "schema_peak_bytes": float(peak_bytes),
+        "schema_initial_allowed_count": float(_finite_count(initial)),
+        "schema_complete_allowed_count": float(_finite_count(after_complete_object)),
+    }
+
+
 def main() -> int:
     vocab_size = _env_int("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_VOCAB_SIZE", 2048, 32)
     mask_iterations = _env_int("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_MASK_ITERATIONS", 5000, 1)
@@ -384,9 +488,20 @@ def main() -> int:
         )
         for _ in range(sample_count)
     ]
+    schema_samples = [
+        _run_schema_sample(
+            build_processors,
+            vocab_size=vocab_size,
+            mask_iterations=mask_iterations,
+        )
+        for _ in range(sample_count)
+    ]
 
     def mean(key: str) -> float:
         return statistics.fmean(sample[key] for sample in samples)
+
+    def schema_mean(key: str) -> float:
+        return statistics.fmean(sample[key] for sample in schema_samples)
 
     print(
         json.dumps(
@@ -400,6 +515,29 @@ def main() -> int:
                 "peak_bytes_mean": mean("peak_bytes"),
                 "initial_allowed_count_mean": mean("initial_allowed_count"),
                 "complete_allowed_count_mean": mean("complete_allowed_count"),
+                "schema_available": schema_mean("schema_available"),
+                "schema_build_first_elapsed_ms_mean": schema_mean(
+                    "schema_build_first_elapsed_ms"
+                ),
+                "schema_build_second_elapsed_ms_mean": schema_mean(
+                    "schema_build_second_elapsed_ms"
+                ),
+                "schema_build_first_decode_calls_mean": schema_mean(
+                    "schema_build_first_decode_calls"
+                ),
+                "schema_build_second_decode_calls_mean": schema_mean(
+                    "schema_build_second_decode_calls"
+                ),
+                "schema_cached_mask_elapsed_ms_mean": schema_mean(
+                    "schema_cached_mask_elapsed_ms"
+                ),
+                "schema_peak_bytes_mean": schema_mean("schema_peak_bytes"),
+                "schema_initial_allowed_count_mean": schema_mean(
+                    "schema_initial_allowed_count"
+                ),
+                "schema_complete_allowed_count_mean": schema_mean(
+                    "schema_complete_allowed_count"
+                ),
                 "vocab_size": float(vocab_size),
                 "mask_iterations": float(mask_iterations),
                 "sample_count": float(sample_count),
