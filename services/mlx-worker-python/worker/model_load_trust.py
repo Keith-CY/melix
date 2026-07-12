@@ -33,6 +33,7 @@ _JSON_LOADS = json.loads
 _OS_STAT = os.stat
 _OS_SCANDIR = os.scandir
 _STAT_ISREG = stat.S_ISREG
+_STAT_ISDIR = stat.S_ISDIR
 EXECUTABLE_MODEL_FILE_PREFIXES = (
     "configuration",
     "feature_extraction",
@@ -340,9 +341,29 @@ def _detect_executable_model_files(model_spec: common_pb2.ModelSpec) -> tuple[st
     if not model_path:
         return ()
     if model_path[0] == "~":
-        scan_path: str | os.PathLike[str] = Path(model_path).expanduser()
+        scan_path = str(Path(model_path).expanduser())
     else:
         scan_path = model_path
+    try:
+        directory_stat = _OS_STAT(scan_path)
+    except OSError:
+        return ()
+    if not _STAT_ISDIR(directory_stat.st_mode):
+        return ()
+    return _detect_executable_model_files_for_stat(
+        scan_path,
+        directory_stat.st_mtime_ns,
+        directory_stat.st_size,
+    )
+
+
+@lru_cache(maxsize=128)
+def _detect_executable_model_files_for_stat(
+    scan_path: str,
+    mtime_ns: int,
+    size: int,
+) -> tuple[str, ...]:
+    _ = (mtime_ns, size)
     is_executable_model_file_entry = _is_executable_model_file_entry
     try:
         with _OS_SCANDIR(scan_path) as entries:
