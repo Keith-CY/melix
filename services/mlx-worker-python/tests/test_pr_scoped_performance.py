@@ -4664,6 +4664,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         metric.key: metric for metric in structured_output_probe.metrics
     }
     assert structured_output_metrics["build_second_elapsed_ms_mean"].direction == "lower_is_better"
+    assert structured_output_metrics["build_second_elapsed_ms_mean"].warn_abs == 0.05
     assert structured_output_metrics["schema_build_second_decode_calls_mean"].direction == "lower_is_better"
     assert structured_output_metrics["schema_build_second_decode_calls_mean"].warn_abs == 0.0
     assert structured_output_metrics["schema_build_second_elapsed_ms_mean"].direction == "informational"

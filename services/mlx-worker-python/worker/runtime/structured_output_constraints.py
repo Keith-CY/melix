@@ -639,8 +639,7 @@ def _schema_properties(raw_schema: dict[str, object], *, pointer: str) -> tuple[
             keyword="properties",
             pointer=pointer,
         )
-    properties: list[_SchemaProperty] = []
-    for name, child_schema in sorted(raw_properties.items()):
+    for name in raw_properties:
         if not isinstance(name, str):
             raise _schema_error(
                 "response_format json_schema property names must be strings.",
@@ -648,6 +647,8 @@ def _schema_properties(raw_schema: dict[str, object], *, pointer: str) -> tuple[
                 keyword="properties",
                 pointer=pointer,
             )
+    properties: list[_SchemaProperty] = []
+    for name, child_schema in sorted(raw_properties.items()):
         properties.append(
             _SchemaProperty(
                 name=name,
@@ -991,14 +992,19 @@ def _schema_consume_unicode_char(
     if char not in _JSON_HEX:
         return None
     remaining = state.unicode_remaining - 1
+    next_text = f"{state.string_text}{char}"
     if remaining <= 0:
-        # Keep escaped unicode key/value text broad. Supported property names in Melix schemas
-        # are emitted directly by the gateway, so escaped-key matching is intentionally refused
-        # unless the object allows additional properties.
-        if state.string_role == "key" and not _schema_top_frame(state).node.additional:
+        decoded_char = chr(int(next_text[-4:], 16))
+        decoded_text = f"{next_text[:-4]}{decoded_char}"
+        if state.string_role == "key" and not _schema_key_prefix_allowed(state, decoded_text):
             return None
-        return _schema_replace_mode(state, mode="string", unicode_remaining=0)
-    return _schema_replace_mode(state, unicode_remaining=remaining)
+        return _schema_replace_mode(
+            state,
+            mode="string",
+            string_text=decoded_text,
+            unicode_remaining=0,
+        )
+    return _schema_replace_mode(state, unicode_remaining=remaining, string_text=next_text)
 
 
 def _schema_consume_literal_char(

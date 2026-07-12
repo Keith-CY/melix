@@ -243,6 +243,7 @@ def test_json_schema_prefix_accepts_supported_complex_shapes() -> None:
         ' { "arr" : [ 1 , 2 ] , "count" : -1.2e+0 , "flag" : true , '
         '"maybe" : null , "extra" : { "x" : "a\\n" } } \n',
         '{"arr":[0],"count":3,"flag":false,"maybe":"a\\u0041","extra":{}}',
+        '{"\\u0061rr":[1],"count":0,"flag":true,"maybe":null,"extra":{}}',
     ]
 
     for text in examples:
@@ -251,6 +252,48 @@ def test_json_schema_prefix_accepts_supported_complex_shapes() -> None:
         assert constraints._schema_is_complete(state), text
         assert constraints._schema_transition_char(state, " ") is not None
         assert constraints._schema_transition_char(state, "x") is None
+
+
+def test_json_schema_prefix_decodes_unicode_escape_keys() -> None:
+    schema = {
+        "type": "object",
+        "required": ["aA"],
+        "additionalProperties": False,
+        "properties": {
+            "aA": {"type": "string"},
+        },
+    }
+
+    state = constraints._schema_transition_text(
+        _compiled_schema_state(schema),
+        '{"a\\u0041":"x"}',
+    )
+
+    assert state is not None
+    assert constraints._schema_is_complete(state)
+    assert constraints._schema_transition_text(
+        _compiled_schema_state({"type": "object", "additionalProperties": {"type": "string"}}),
+        '{"aA":"x","a\\u0041":"y"}',
+    ) is None
+
+
+def test_json_schema_prefix_decodes_unicode_escape_values() -> None:
+    string_node = constraints._SchemaNode(types=("string",))
+    state = constraints._SchemaPrefixState(
+        root_node=string_node,
+        mode="string",
+        string_role="value",
+        value_node=string_node,
+        string_text="a",
+    )
+
+    for char in "\\u0041":
+        next_state = constraints._schema_transition_char(state, char)
+        assert next_state is not None
+        state = next_state
+
+    assert state.mode == "string"
+    assert state.string_text == "aA"
 
 
 @pytest.mark.parametrize(
@@ -267,7 +310,6 @@ def test_json_schema_prefix_accepts_supported_complex_shapes() -> None:
         '{"arr":[1],"count":0,"flag":truX,"maybe":null,"extra":{}}',
         '{"arr":[1],"count":0,"flag":true,"maybe":null,"extra":{},"bad":0}',
         '{"arr":[1],"arr":[2],"count":0,"flag":true,"maybe":null,"extra":{}}',
-        '{"\\u0061rr":[1],"count":0,"flag":true,"maybe":null,"extra":{}}',
     ],
 )
 def test_json_schema_prefix_rejects_invalid_complex_shapes(text: str) -> None:
@@ -569,7 +611,7 @@ def test_json_schema_compiler_rejects_unsupported_and_invalid_shapes(
 
 def test_json_schema_properties_reject_non_string_internal_names() -> None:
     with pytest.raises(StructuredOutputConstraintError) as error:
-        constraints._schema_properties({"properties": {1: {}}}, pointer="")
+        constraints._schema_properties({"properties": {1: {}, "a": {}}}, pointer="")
 
     assert error.value.details["reason"] == "json_schema_invalid"
     assert error.value.details["keyword"] == "properties"

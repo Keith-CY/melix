@@ -409,7 +409,8 @@
         "key": "build_second_elapsed_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "warn_pct": 5.0,
+        "warn_abs": 0.05
       },
       {
         "key": "schema_build_second_elapsed_ms_mean",
