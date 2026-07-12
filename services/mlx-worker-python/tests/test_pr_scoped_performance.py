@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import builtins
 from dataclasses import replace
 import gc
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -1345,8 +1347,7 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     assert probe_script["_token_ids"](ScalarTokenList()) == [7]
     assert probe_script["_token_ids"]([[1, 2], 3]) == [1, 2, 3]
 
-    import mlx.core as mx
-
+    mx = probe_script["_mx"]()
     fallback_processors = probe_script["_fallback_builder"](
         {"melix.structured_output.mode": "json_object"},
         probe_tokenizer,
@@ -1359,6 +1360,42 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     fallback_processor(mx.array([30, 0, 1, 31]), logits)
     invalid = fallback_processor(mx.array([30, 0, 1, 31, 2]), logits)
     assert int(mx.sum(mx.isfinite(invalid)).item()) == 0
+
+
+def test_structured_output_constraint_probe_uses_fake_mx_when_mlx_import_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/structured_output_constraint_probe.py"))
+    monkeypatch.delitem(sys.modules, "mlx", raising=False)
+    monkeypatch.delitem(sys.modules, "mlx.core", raising=False)
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "mlx.core":
+            raise ImportError("libmlx.so: cannot open shared object file")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert fake_import("json") is json
+    mx = probe_script["_mx"]()
+    values = mx.array([0.0, -math.inf, 2.0])
+
+    assert int(mx.sum(mx.isfinite(values)).item()) == 2
+    assert mx.array(mx.array([1.0, 2.0])).tolist() == [1.0, 2.0]
+    assert mx.array([[1.0, 2.0]])[0].tolist() == [1.0, 2.0]
+    assert (mx.array([1.0]) + 2.0).tolist() == [3.0]
+    assert (2.0 + mx.array([1.0])).tolist() == [3.0]
+    assert mx.array([1.0]).__radd__(mx.array([2.0])).tolist() == [3.0]
+    assert mx.array([[1.0, 2.0]]).reshape((2,)).tolist() == [1.0, 2.0]
+    assert mx.array([]).shape == (0,)
+    assert mx.zeros((2,)).tolist() == [0.0, 0.0]
+    assert mx.zeros((1, 2)).tolist() == [[0.0, 0.0]]
+    with pytest.raises(ValueError):
+        mx.array([1.0]).reshape((2, 2))
+    with pytest.raises(ValueError):
+        mx.zeros((1, 1, 1))
 
 
 def test_mlx_text_stop_filter_probe_script_emits_metrics(

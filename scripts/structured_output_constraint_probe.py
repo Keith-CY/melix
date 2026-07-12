@@ -10,6 +10,7 @@ import statistics
 import sys
 import time
 import tracemalloc
+import types
 from typing import Any
 
 
@@ -23,6 +24,134 @@ WORKER_ROOT = ROOT / "services/mlx-worker-python"
 for candidate in (ROOT, WORKER_ROOT):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))  # pragma: no cover - script bootstrap
+
+
+class _FakeMLXScalar:
+    def __init__(self, value: float) -> None:
+        self._value = float(value)
+
+    def item(self) -> float:
+        return self._value
+
+
+class _FakeMLXArray:
+    def __init__(self, values: Any) -> None:
+        if isinstance(values, _FakeMLXArray):
+            values = values.tolist()
+        self._values = self._copy_values(values)
+        self.shape = self._shape(self._values)
+
+    def __getitem__(self, item: Any) -> Any:
+        value = self._values
+        if isinstance(item, tuple):
+            for part in item:
+                value = value[part]
+        else:
+            value = value[item]
+        if isinstance(value, list):
+            return _FakeMLXArray(value)
+        return value
+
+    def __add__(self, other: Any) -> "_FakeMLXArray":
+        other_values = other.tolist() if hasattr(other, "tolist") else other
+        return _FakeMLXArray(self._add_values(self._values, other_values))
+
+    def __radd__(self, other: Any) -> "_FakeMLXArray":
+        other_values = other.tolist() if hasattr(other, "tolist") else other
+        return _FakeMLXArray(self._add_values(other_values, self._values))
+
+    def reshape(self, shape: tuple[int, ...]) -> "_FakeMLXArray":
+        flat = self._flatten(self._values)
+        if len(shape) == 2 and shape[0] == 1 and shape[1] == len(flat):
+            return _FakeMLXArray([flat])
+        if len(shape) == 1 and shape[0] == len(flat):
+            return _FakeMLXArray(flat)
+        raise ValueError(f"unsupported fake MLX reshape: {shape!r}")
+
+    def tolist(self) -> Any:
+        return self._copy_values(self._values)
+
+    @classmethod
+    def _copy_values(cls, values: Any) -> Any:
+        if isinstance(values, list):
+            return [cls._copy_values(value) for value in values]
+        return values
+
+    @classmethod
+    def _shape(cls, values: Any) -> tuple[int, ...]:
+        if not isinstance(values, list):
+            return ()
+        if not values:
+            return (0,)
+        return (len(values),) + cls._shape(values[0])
+
+    @classmethod
+    def _flatten(cls, values: Any) -> list[Any]:
+        if isinstance(values, list):
+            flattened: list[Any] = []
+            for value in values:
+                flattened.extend(cls._flatten(value))
+            return flattened
+        return [values]
+
+    @classmethod
+    def _add_values(cls, left: Any, right: Any) -> Any:
+        if isinstance(left, list) and isinstance(right, list):
+            return [
+                cls._add_values(left_value, right_value)
+                for left_value, right_value in zip(left, right, strict=True)
+            ]
+        if isinstance(left, list):
+            return [cls._add_values(value, right) for value in left]
+        if isinstance(right, list):
+            return [cls._add_values(left, value) for value in right]
+        return float(left) + float(right)
+
+
+def _fake_zeros(shape: tuple[int, ...]) -> _FakeMLXArray:
+    if len(shape) == 1:
+        return _FakeMLXArray([0.0 for _ in range(shape[0])])
+    if len(shape) == 2:
+        return _FakeMLXArray([[0.0 for _ in range(shape[1])] for _ in range(shape[0])])
+    raise ValueError(f"unsupported fake MLX zeros shape: {shape!r}")
+
+
+def _fake_isfinite(values: Any) -> _FakeMLXArray:
+    raw = values.tolist() if hasattr(values, "tolist") else values
+
+    def convert(value: Any) -> Any:
+        if isinstance(value, list):
+            return [convert(item) for item in value]
+        return 1.0 if math.isfinite(float(value)) else 0.0
+
+    return _FakeMLXArray(convert(raw))
+
+
+def _fake_sum(values: Any) -> _FakeMLXScalar:
+    raw = values.tolist() if hasattr(values, "tolist") else values
+    return _FakeMLXScalar(sum(float(value) for value in _FakeMLXArray._flatten(raw)))
+
+
+def _install_fake_mlx_core() -> types.ModuleType:
+    fake_mlx = types.ModuleType("mlx")
+    fake_core = types.ModuleType("mlx.core")
+    fake_core.array = lambda values, *args, **kwargs: _FakeMLXArray(values)
+    fake_core.zeros = lambda shape, *args, **kwargs: _fake_zeros(tuple(shape))
+    fake_core.isfinite = _fake_isfinite
+    fake_core.sum = _fake_sum
+    fake_mlx.core = fake_core
+    sys.modules["mlx"] = fake_mlx
+    sys.modules["mlx.core"] = fake_core
+    return fake_core
+
+
+def _mx() -> types.ModuleType:
+    try:
+        import mlx.core as mx
+
+        return mx
+    except ImportError:
+        return _install_fake_mlx_core()
 
 
 class ProbeTokenizer:
@@ -98,8 +227,7 @@ class _FallbackGrammarConstraintProcessor:
         if cached is not None:
             return cached
 
-        import mlx.core as mx
-
+        mx = _mx()
         values = [
             0.0 if self._token_allowed(state, token_id) else -math.inf
             for token_id in range(vocab_size)
@@ -180,8 +308,7 @@ def _env_int(name: str, default: int, minimum: int) -> int:
 
 
 def _finite_count(values: Any) -> int:
-    import mlx.core as mx
-
+    mx = _mx()
     return int(mx.sum(mx.isfinite(values)).item())
 
 
@@ -191,8 +318,7 @@ def _run_sample(
     vocab_size: int,
     mask_iterations: int,
 ) -> dict[str, float]:
-    import mlx.core as mx
-
+    mx = _mx()
     tokenizer = ProbeTokenizer(vocab_size)
     ext = {"melix.structured_output.mode": "json_object"}
     prompt_token_id = vocab_size - 2

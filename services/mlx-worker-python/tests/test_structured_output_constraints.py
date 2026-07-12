@@ -1,15 +1,37 @@
 from __future__ import annotations
 
 import math
+import sys
 
-import mlx.core as mx
 import pytest
 
+from scripts import structured_output_constraint_probe as probe_script
 from worker.runtime import structured_output_constraints as constraints
 from worker.runtime.structured_output_constraints import (
     StructuredOutputConstraintError,
     build_structured_output_logits_processors,
 )
+
+
+_MISSING = object()
+
+
+@pytest.fixture
+def mx():
+    original_mlx = sys.modules.get("mlx", _MISSING)
+    original_mlx_core = sys.modules.get("mlx.core", _MISSING)
+    fake_core = probe_script._install_fake_mlx_core()
+    try:
+        yield fake_core
+    finally:
+        if original_mlx is _MISSING:
+            sys.modules.pop("mlx", None)
+        else:
+            sys.modules["mlx"] = original_mlx
+        if original_mlx_core is _MISSING:
+            sys.modules.pop("mlx.core", None)
+        else:
+            sys.modules["mlx.core"] = original_mlx_core
 
 
 class JSONConstraintTokenizer:
@@ -36,7 +58,7 @@ class JSONConstraintTokenizer:
         return "".join(self._id_to_text[int(token_id)] for token_id in token_ids)
 
 
-def test_json_object_logits_processor_masks_invalid_prefix_tokens() -> None:
+def test_json_object_logits_processor_masks_invalid_prefix_tokens(mx) -> None:
     processors = build_structured_output_logits_processors(
         {"melix.structured_output.mode": "json_object"},
         JSONConstraintTokenizer(),
@@ -165,7 +187,7 @@ def test_json_prefix_rejects_invalid_json_object_prefixes(text: str) -> None:
     assert constraints._transition_text(constraints._INITIAL_JSON_OBJECT_STATE, text) is None
 
 
-def test_json_object_logits_processor_masks_invalid_state_and_1d_logits() -> None:
+def test_json_object_logits_processor_masks_invalid_state_and_1d_logits(mx) -> None:
     processors = build_structured_output_logits_processors(
         {"melix.structured_output.mode": "json_object"},
         JSONConstraintTokenizer(),
@@ -183,7 +205,7 @@ def test_json_object_logits_processor_masks_invalid_state_and_1d_logits() -> Non
     assert all(not math.isfinite(float(value)) for value in still_invalid.tolist())
 
 
-def test_json_object_logits_processor_accepts_eos_after_complete_object() -> None:
+def test_json_object_logits_processor_accepts_eos_after_complete_object(mx) -> None:
     processors = build_structured_output_logits_processors(
         {"melix.structured_output.mode": "json_object"},
         JSONConstraintTokenizer(),
