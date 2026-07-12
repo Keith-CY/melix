@@ -75,3 +75,15 @@ iterator overhead in the synthetic and MLX prompt-cache hot path.
 Success is accepted only after the local focused test command, changed-scope
 coverage command, and registered probe all pass, and after the PR-scoped CI
 probe validates the same registry entry.
+
+## Follow-up Slice: Deferred Fallback Multiplication Coercion
+
+The next 2026-07-12 follow-up keeps the same registered probe and narrows to the
+`size * itemsize` fallback in `_tensor_nbytes()`. The hot fallback path now
+multiplies the exposed numeric attributes directly and leaves the public
+`estimate_cache_snapshot_bytes()` return coercion in place, preserving caller
+behavior while avoiding per-tensor `int()` coercions inside the loop.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
