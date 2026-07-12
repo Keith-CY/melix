@@ -293,9 +293,14 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     receipts_append = receipts.append
     user_payload_update = user_payload.update
     dict_copy = dict.copy
+    strip_text = str.strip
+    str_type = str
+    dict_type = dict
+    bool_type = bool
+    type_of = type
 
     for record in records:
-        if type(record) is not dict and not isinstance(record, Mapping):
+        if type_of(record) is not dict_type and not isinstance(record, Mapping):
             store_refusal_receipts_append(
                 store_record_refusal(
                     source_field="record",
@@ -319,7 +324,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             )
             continue
 
-        if type(record) is dict:
+        if type_of(record) is dict_type:
             try:
                 source_id = record["source_id"]
                 payload = record["payload"]
@@ -337,19 +342,19 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                 reason = record_get("reason", "")
                 corrective_action = record_get("corrective_action", "")
             if (
-                type(source_id) is str
-                and type(payload) is dict
-                and type(owner_scope_checked) is bool
-                and type(segment_id) is str
-                and type(source_field) is str
-                and type(reason) is str
-                and type(corrective_action) is str
+                type_of(source_id) is str_type
+                and type_of(payload) is dict_type
+                and type_of(owner_scope_checked) is bool_type
+                and type_of(segment_id) is str_type
+                and type_of(source_field) is str_type
+                and type_of(reason) is str_type
+                and type_of(corrective_action) is str_type
             ):
-                normalized_source_id = source_id.strip()
-                normalized_segment_id = segment_id.strip()
-                normalized_source_field = source_field.strip()
-                normalized_reason = reason.strip()
-                normalized_corrective_action = corrective_action.strip()
+                normalized_source_id = strip_text(source_id)
+                normalized_segment_id = strip_text(segment_id)
+                normalized_source_field = strip_text(source_field)
+                normalized_reason = strip_text(reason)
+                normalized_corrective_action = strip_text(corrective_action)
                 if (
                     normalized_source_id
                     and normalized_segment_id
