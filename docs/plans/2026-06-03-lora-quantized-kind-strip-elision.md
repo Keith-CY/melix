@@ -19,9 +19,13 @@ No registry change is required for this slice.
 
 The behavior remains unchanged for whitespace-padded values and embedded suffix false positives; the focused regression test now asserts a whitespace-padded `q8` marker still resolves correctly.
 
+### 2026-07-12 ASCII boundary follow-up
+
+This follow-up keeps the same Python-only boundary and registered `lora-aux-modules-scandir` probe. The quantized-kind parser only needs the existing `(?<![a-z0-9])... (?![a-z0-9])` delimiter semantics, so it now uses direct `str.find()` plus ASCII lower-alphanumeric boundary checks instead of dispatching through compiled regex searches for each candidate kind. Behavior remains unchanged for lowercase, uppercase, whitespace-padded, hyphen-delimited, and non-ASCII-delimited markers, while substring false positives such as `not-a-q4suffix` remain rejected.
+
 ## Verification plan
 
-Run the registered focused tests, changed-scope coverage command, and the registered local probe on Linux before opening the PR. The PR-scoped performance workflow remains the merge gate for the registered probe result in CI.
+Run the registered focused tests, changed-scope coverage command, and the registered local probe on Linux before opening the PR. For the ASCII boundary follow-up, compare the registered probe against `origin/main` locally; the PR-scoped performance workflow remains the merge gate for the registered probe result in CI.
 
 ## Expected metrics
 
