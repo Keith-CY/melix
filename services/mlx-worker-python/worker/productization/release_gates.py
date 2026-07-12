@@ -2176,13 +2176,24 @@ def _evaluate_section_metrics_with_counts(
     missing = _MISSING
     values_get = values.get
     metric_value = _metric_value
+    prefix_root = ""
+    prefix_root_present = False
+    if prefix:
+        prefix_first_dot = prefix.find(".")
+        if prefix_first_dot != -1:
+            prefix_root = prefix[:prefix_first_dot]
+            prefix_root_present = prefix_root in values
     for name, rule in rules.items():
         if type(name) is str:
             value = values_get(name, missing)
             if value is missing:
-                first_dot = name.find(".")
-                if first_dot != -1 and name[:first_dot] in values:
-                    value = metric_value(values, name)
+                if prefix_root and name.startswith(prefix):
+                    if prefix_root_present:
+                        value = metric_value(values, name)
+                else:
+                    first_dot = name.find(".")
+                    if first_dot != -1 and name[:first_dot] in values:
+                        value = metric_value(values, name)
         else:
             value = metric_value(values, str(name))
         if value is missing:
