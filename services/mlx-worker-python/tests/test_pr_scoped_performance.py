@@ -4905,6 +4905,7 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         metric["key"]: metric for metric in by_id["model-load-config-json-bytes"]["metrics"]
     }
     assert model_load_config_metrics["elapsed_ms_mean"]["warn_abs"] == 1.0
+    assert model_load_config_metrics["executable_elapsed_ms_mean"]["warn_abs"] == 0.5
 
 
 def test_scope_report_selects_probe_policy_overhead_probe() -> None:
@@ -7914,5 +7915,8 @@ def test_model_load_config_json_bytes_probe_script_emits_metrics(
     assert metrics["iterations"] == 10
     assert metrics["config_padding_bytes"] == 128
     assert metrics["rejections_mean"] == 10
+    assert metrics["executable_rejections_mean"] == 10
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["executable_elapsed_ms_mean"] > 0
+    assert metrics["executable_peak_bytes_mean"] > 0

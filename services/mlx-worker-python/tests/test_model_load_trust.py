@@ -784,6 +784,56 @@ def test_trust_policy_treats_missing_config_json_as_absent(tmp_path: Path) -> No
     assert exc_info.value.policy.custom_loader_detection_source == "model_files:configuration_melix_demo.py"
 
 
+def test_trust_policy_single_executable_model_file_skips_sort(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable_model_dir = tmp_path / "single-executable-file-model"
+    executable_model_dir.mkdir()
+    (executable_model_dir / "configuration_melix_demo.py").write_text(
+        "class MelixDemoConfig: pass\n",
+        encoding="utf-8",
+    )
+    executable_model = WorkerModelCatalog.dev_text_model()
+    executable_model.model_path = str(executable_model_dir)
+
+    def fail_sorted(values):  # pragma: no cover - only runs on regression.
+        raise AssertionError(f"single executable file should not sort {values!r}")
+
+    monkeypatch.setattr(model_load_trust_module, "sorted", fail_sorted, raising=False)
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+        resolve_model_load_trust_policy(
+            executable_model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=RecordingTextBackend(),
+        )
+
+    assert exc_info.value.policy.custom_loader_required is True
+    assert exc_info.value.policy.custom_loader_detection_source == "model_files:configuration_melix_demo.py"
+
+
+def test_trust_policy_multiple_executable_model_files_stay_sorted(tmp_path: Path) -> None:
+    executable_model_dir = tmp_path / "multiple-executable-file-model"
+    executable_model_dir.mkdir()
+    (executable_model_dir / "modeling_z_demo.py").write_text(
+        "class ZModel: pass\n",
+        encoding="utf-8",
+    )
+    (executable_model_dir / "configuration_a_demo.py").write_text(
+        "class AConfig: pass\n",
+        encoding="utf-8",
+    )
+    executable_model = WorkerModelCatalog.dev_text_model()
+    executable_model.model_path = str(executable_model_dir)
+
+    assert model_load_trust_module._detect_executable_model_files(executable_model) == (
+        "configuration_a_demo.py",
+        "modeling_z_demo.py",
+    )
+
+
 def test_trust_policy_treats_blank_model_path_as_absent(tmp_path: Path) -> None:
     model = WorkerModelCatalog.dev_text_model()
     model.model_path = "  "

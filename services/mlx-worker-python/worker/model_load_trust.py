@@ -346,13 +346,14 @@ def _detect_executable_model_files(model_spec: common_pb2.ModelSpec) -> tuple[st
     is_executable_model_file_entry = _is_executable_model_file_entry
     try:
         with _OS_SCANDIR(scan_path) as entries:
-            return tuple(
-                sorted(
-                    entry.name
-                    for entry in entries
-                    if is_executable_model_file_entry(entry)
-                )
-            )
+            executable_file_names: list[str] = []
+            append_name = executable_file_names.append
+            for entry in entries:
+                if is_executable_model_file_entry(entry):
+                    append_name(entry.name)
+            if len(executable_file_names) > 1:
+                executable_file_names.sort()
+            return tuple(executable_file_names)
     except OSError:
         return ()
 
