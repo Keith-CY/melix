@@ -92,7 +92,7 @@ def _copy_json_dict(value: dict[str, Any]) -> dict[str, Any]:
     for item in value.values():
         if value_type(item) not in immutable_types:
             return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
-    return value.copy()
+    return {**value}
 
 
 def _copy_trajectory_provenance_value(value: Any) -> Any:

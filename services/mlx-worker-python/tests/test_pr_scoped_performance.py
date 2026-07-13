@@ -742,6 +742,9 @@ def test_trajectory_provenance_copy_elision_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["iteration_count"] == 10.0
     assert metrics["component_count"] == 4.0
+    assert metrics["scalar_dict_baseline_elapsed_ms_mean"] >= 0.0
+    assert metrics["scalar_dict_elapsed_ms_mean"] >= 0.0
+    assert metrics["scalar_dict_speedup"] >= 0.0
 
 
 def test_trajectory_manifest_json_load_probe_script_emits_metrics(

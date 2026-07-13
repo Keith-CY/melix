@@ -66,3 +66,14 @@ seven-item lists, immediately fall back to recursive copying after the unrolled
 check to preserve container isolation without a second scalar scan. The
 registered `trajectory-provenance-copy-elision` probe remains the local Linux and
 CI validation gate for this small Python-only slice.
+
+## 2026-07-13 follow-up: flat scalar dict unpack copy
+
+This follow-up remains limited to `worker.trajectory_provenance._copy_json_dict`.
+Flat scalar dictionaries, including the common `agentic_sft_token_metrics`
+payload, now use dict-unpack copying after the existing scalar scan instead of
+calling `dict.copy()`. This preserves copy isolation, exact-key iteration order,
+and nested-container fallback behavior while shaving a small amount of overhead
+from the scalar token-metrics copy path. The registered probe now reports
+`scalar_dict_*` metrics for the focused dict-copy micro path in addition to the
+existing full-provenance and scalar-list guardrails.
