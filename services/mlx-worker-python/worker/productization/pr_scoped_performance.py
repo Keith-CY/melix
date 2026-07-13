@@ -2421,13 +2421,20 @@ def _scope_selection_uncached(
     force_all = bool(_FORCE_ALL_EXACT_PATHS & changed_path_set) or _changed_paths_match_force_all_wildcards(
         changed_path_set
     )
-    direct_changed_paths = tuple(path for path in changed_paths if path not in _FORCE_ALL_CONTEXT_ONLY_PATHS)
+    if _FORCE_ALL_CONTEXT_ONLY_PATHS.isdisjoint(changed_path_set):
+        direct_changed_paths = changed_paths
+        direct_changed_path_set = changed_path_set
+    else:
+        direct_changed_paths = tuple(
+            path for path in changed_paths if path not in _FORCE_ALL_CONTEXT_ONLY_PATHS
+        )
+        direct_changed_path_set = frozenset(direct_changed_paths)
     matched_probe_indexes = (
         frozenset()
         if not direct_changed_paths
         else _match_probe_indexes_for_normalized_paths(
             changed_path_tuple=direct_changed_paths,
-            changed_path_set=frozenset(direct_changed_paths),
+            changed_path_set=direct_changed_path_set,
             probes=probes,
         )
     )
