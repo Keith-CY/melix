@@ -75,26 +75,15 @@ def _log_progress(message: str) -> None:
 
 
 def _summarize_command(command: str, *, max_length: int = 180) -> str:
-    command_length = len(command)
-    start_index = 0
-    while start_index < command_length and command[start_index].isspace():
-        start_index += 1
-    if start_index >= command_length:
+    summary = command.lstrip().rstrip()
+    if not summary:
         return "<empty command>"
 
-    end_index = command_length - 1
-    while end_index > start_index and command[end_index].isspace():
-        end_index -= 1
-    end_index += 1
-
-    newline_index = command.find("\n", start_index, end_index)
+    newline_index = summary.find("\n")
     if newline_index < 0:
-        summary = command[start_index:end_index]
+        summary = summary.rstrip()
     else:
-        line_end = newline_index
-        while line_end > start_index and command[line_end - 1].isspace():
-            line_end -= 1
-        summary = command[start_index:line_end] + " ..."
+        summary = summary[:newline_index].rstrip() + " ..."
     if len(summary) > max_length:
         if max_length <= 0:
             return ""
