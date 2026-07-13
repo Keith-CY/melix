@@ -20,8 +20,15 @@ if str(WORKER_ROOT) not in sys.path:
 from worker.trajectory_provenance import normalize_trajectory_provenance  # noqa: E402
 
 try:  # noqa: E402
-    from worker.trajectory_provenance import _copy_json_list, _copy_trajectory_provenance_value
+    from worker.trajectory_provenance import (
+        _copy_json_dict,
+        _copy_json_list,
+        _copy_trajectory_provenance_value,
+    )
 except ImportError:  # base checkout before this slice added the helper
+    def _copy_json_dict(value: dict[str, Any]) -> dict[str, Any]:
+        return copy.deepcopy(value)
+
     def _copy_json_list(value: list[Any]) -> list[Any]:
         return copy.deepcopy(value)
 
@@ -118,6 +125,14 @@ def _baseline_scalar_list_copy(value: list[Any]) -> list[Any]:
     return value.copy()
 
 
+def _baseline_scalar_dict_copy(value: dict[str, Any]) -> dict[str, Any]:
+    immutable_types = (str, int, float, bool, type(None))
+    for item in value.values():
+        if type(item) not in immutable_types:
+            return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
+    return value.copy()
+
+
 def _measure_scalar_list_copy(
     func: Callable[[list[Any]], list[Any]],
     value: list[Any],
@@ -131,6 +146,22 @@ def _measure_scalar_list_copy(
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     if checksum != len(value) * iterations:
         raise RuntimeError("scalar-list probe checksum mismatch")
+    return elapsed_ms
+
+
+def _measure_scalar_dict_copy(
+    func: Callable[[dict[str, Any]], dict[str, Any]],
+    value: dict[str, Any],
+    iterations: int,
+) -> float:
+    start = time.perf_counter()
+    checksum = 0
+    for _ in range(iterations):
+        copied = func(value)
+        checksum += len(copied)
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    if checksum != len(value) * iterations:
+        raise RuntimeError("scalar-dict probe checksum mismatch")
     return elapsed_ms
 
 
@@ -150,12 +181,15 @@ def main() -> int:
     optimized_peak: list[float] = []
     scalar_baseline_ms: list[float] = []
     scalar_optimized_ms: list[float] = []
+    scalar_dict_baseline_ms: list[float] = []
+    scalar_dict_optimized_ms: list[float] = []
 
     copied = _copy_trajectory_provenance_value(provenance["trajectory_quality_metrics"])
     if copied is provenance["trajectory_quality_metrics"] or copied["components"] is provenance["trajectory_quality_metrics"]["components"]:
         raise RuntimeError("optimized copy did not isolate nested containers")
 
     scalar_values = ["agentic", "trajectory", "quality", 3, True, None, 0.75]
+    scalar_dict_values = provenance["agentic_sft_token_metrics"]
 
     for _ in range(samples):
         elapsed, peak = _measure(_baseline_normalize, provenance, iterations)
@@ -170,6 +204,12 @@ def main() -> int:
         scalar_optimized_ms.append(
             _measure_scalar_list_copy(_copy_json_list, scalar_values, iterations)
         )
+        scalar_dict_baseline_ms.append(
+            _measure_scalar_dict_copy(_baseline_scalar_dict_copy, scalar_dict_values, iterations)
+        )
+        scalar_dict_optimized_ms.append(
+            _measure_scalar_dict_copy(_copy_json_dict, scalar_dict_values, iterations)
+        )
 
     baseline_mean = _mean(baseline_ms)
     optimized_mean = _mean(optimized_ms)
@@ -177,6 +217,8 @@ def main() -> int:
     speedup = baseline_mean / optimized_mean if optimized_mean > 0 else 0.0
     scalar_baseline_mean = _mean(scalar_baseline_ms)
     scalar_optimized_mean = _mean(scalar_optimized_ms)
+    scalar_dict_baseline_mean = _mean(scalar_dict_baseline_ms)
+    scalar_dict_optimized_mean = _mean(scalar_dict_optimized_ms)
     result = {
         "baseline_elapsed_ms_mean": baseline_mean,
         "optimized_elapsed_ms_mean": optimized_mean,
@@ -191,6 +233,12 @@ def main() -> int:
         "scalar_list_delta_ms": scalar_optimized_mean - scalar_baseline_mean,
         "scalar_list_speedup": scalar_baseline_mean / scalar_optimized_mean
         if scalar_optimized_mean > 0
+        else 0.0,
+        "scalar_dict_baseline_elapsed_ms_mean": scalar_dict_baseline_mean,
+        "scalar_dict_elapsed_ms_mean": scalar_dict_optimized_mean,
+        "scalar_dict_delta_ms": scalar_dict_optimized_mean - scalar_dict_baseline_mean,
+        "scalar_dict_speedup": scalar_dict_baseline_mean / scalar_dict_optimized_mean
+        if scalar_dict_optimized_mean > 0
         else 0.0,
         "sample_count": float(samples),
         "iteration_count": float(iterations),

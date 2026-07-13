@@ -864,6 +864,32 @@ def test_copy_json_dict_copies_flat_scalar_dicts_without_recursive_calls(
     assert copied is not source
 
 
+def test_copy_json_dict_uses_unpack_copy_for_flat_scalar_dicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {"trace_tokens": 12, "tool_call_tokens": 3, "passed": True}
+
+    class CopyBlockedDict(dict[str, object]):
+        def copy(self) -> dict[str, object]:  # pragma: no cover - only runs on regression
+            raise AssertionError("scalar-dict fast path should avoid dict.copy()")
+
+    def fail_recursive_copy(value: object) -> object:
+        raise AssertionError(f"unexpected recursive copy for scalar dict value {value!r}")
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        fail_recursive_copy,
+    )
+
+    copied = trajectory_provenance_module._copy_json_dict(CopyBlockedDict(source))
+
+    assert copied == source
+    assert copied is not source
+    assert type(copied) is dict
+    assert list(copied) == list(source)
+
+
 def test_copy_json_dict_still_copies_nested_mutable_items() -> None:
     source = {"reward_coverage_count": 1, "components": [{"name": "format"}]}
 
