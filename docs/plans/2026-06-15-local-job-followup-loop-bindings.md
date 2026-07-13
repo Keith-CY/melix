@@ -45,6 +45,12 @@ This Python-only follow-up keeps the same registered `local-job-followup-scan-sc
 
 The focused regression guard covers dict/list/tuple subclasses to prove the fallback branch still deep-copies nested mutable payloads. The registered scalar-copy probe remains the local and CI metric source for the copy helper slice. No record schema, reconciliation, claim, prompt-context admission, scan ordering, or receipt payload fields change.
 
+## 2026-07-13 follow-up: exact list-of-dicts copy fast path
+
+This Python-only follow-up keeps the same registered `local-job-followup-scan-scandir` probe and narrows `_copy_json_like_value(...)` for the exact-list branch used by projected local-job follow-up payloads. Exact lists now build the destination list with a local `append` binding and copy exact dict items inline when their values are JSON scalars, avoiding one recursive helper call per list item in the common `items: [{...}, ...]` completion-summary shape. Non-scalar nested values still route through `_copy_json_like_value(...)`, and list subclasses still use the existing subclass-aware fallback branch.
+
+The existing scalar/container regression guards cover mutation isolation for the exact list/dict shape and subclass preservation. No record schema, reconciliation, claim, prompt-context admission, scan ordering, or receipt payload fields change.
+
 ## Linux validation boundary
 
 This is a Python-only slice and is locally verifiable on Linux. No Swift runtime behavior changes are included.
