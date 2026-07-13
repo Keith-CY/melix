@@ -857,6 +857,7 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
             "summary": scalar_payload,
             "items": [scalar_payload],
             "triple": ("a", scalar_payload, 3),
+            "mixed": ["leaf", {"nested": [scalar_payload]}, ("tuple-leaf",)],
         }
     )
 
@@ -864,6 +865,7 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
         "summary": scalar_payload,
         "items": [scalar_payload],
         "triple": ("a", scalar_payload, 3),
+        "mixed": ["leaf", {"nested": [scalar_payload]}, ("tuple-leaf",)],
     }
     assert copied is not scalar_payload
     assert copied["summary"] is not scalar_payload

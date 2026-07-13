@@ -1001,7 +1001,36 @@ def _copy_json_like_value(value: Any) -> Any:
                 copied[key] = _copy_json_like_value(nested)
         return copied
     if value_type is list:
-        return [_copy_json_like_value(item) for item in value]
+        copied_list: list[Any] = []
+        append = copied_list.append
+        for item in value:
+            item_type = type(item)
+            if (
+                item_type is str
+                or item_type is int
+                or item_type is float
+                or item_type is bool
+                or item is None
+            ):
+                append(item)
+            elif item_type is dict:
+                copied_item: dict[Any, Any] = {}
+                for key, nested in item.items():
+                    nested_type = type(nested)
+                    if (
+                        nested_type is str
+                        or nested_type is int
+                        or nested_type is float
+                        or nested_type is bool
+                        or nested is None
+                    ):
+                        copied_item[key] = nested
+                    else:
+                        copied_item[key] = _copy_json_like_value(nested)
+                append(copied_item)
+            else:
+                append(_copy_json_like_value(item))
+        return copied_list
     if value_type is tuple:
         if len(value) == 2:
             return (_copy_json_like_value(value[0]), _copy_json_like_value(value[1]))
