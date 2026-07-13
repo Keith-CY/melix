@@ -169,10 +169,10 @@ def _paired_bootstrap_interval(
     sample_size = len(outcomes)
     inverse_sample_size = 1.0 / sample_size
     choices = sampler.choices
-    replicates: list[float] = []
-    append_replicate = replicates.append
-    for _ in range(bootstrap_iterations):
-        append_replicate(sum(choices(outcomes, k=sample_size)) * inverse_sample_size)
+    replicates = [
+        sum(choices(outcomes, k=sample_size)) * inverse_sample_size
+        for _ in range(bootstrap_iterations)
+    ]
 
     alpha = (1.0 - confidence_level) / 2.0
     replicates.sort()
