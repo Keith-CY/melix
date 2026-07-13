@@ -240,9 +240,10 @@ def aggregate_response_only_boundaries(
             sample_count += 1
     else:
         iterator = iter(boundaries)
-        for entry in iterator:
-            offset = entry.assistant_offset
-            total_tokens = entry.total_tokens
+        first_entry = next(iterator, None)
+        if first_entry is not None:
+            offset = first_entry.assistant_offset
+            total_tokens = first_entry.total_tokens
             response_tokens = total_tokens - offset
             if response_tokens < 0:
                 response_tokens = 0
@@ -253,7 +254,6 @@ def aggregate_response_only_boundaries(
             response_tokens_max = response_tokens
             total_offset = offset
             total_response_tokens = response_tokens
-            break
         for entry in iterator:
             offset = entry.assistant_offset
             total_tokens = entry.total_tokens
