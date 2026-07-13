@@ -4114,7 +4114,7 @@ class EvaluationCore:
     def _answers_match(*, expected: str, predicted: str) -> bool:
         if expected == predicted and predicted:
             return True
-        if not predicted.strip():
+        if not predicted or not predicted.strip():
             return False
         normalized_expected = EvaluationCore._normalized_answer(expected)
         normalized_predicted = EvaluationCore._normalized_answer(predicted)
