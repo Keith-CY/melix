@@ -425,3 +425,21 @@ def test_aggregate_response_only_boundaries_without_limit_updates_running_bounds
     assert agg.trainable_response_token_count == 12
     assert agg.truncated_response_sample_count == 0
     assert agg.fully_truncated_response_sample_count == 0
+
+
+def test_aggregate_response_only_boundaries_consumes_single_pass_iterator() -> None:
+    def _boundaries() -> Any:
+        yield ResponseOnlyBoundary(assistant_offset=5, total_tokens=9)
+        yield ResponseOnlyBoundary(assistant_offset=3, total_tokens=11)
+        yield ResponseOnlyBoundary(assistant_offset=13, total_tokens=12)
+
+    agg = aggregate_response_only_boundaries(_boundaries(), max_seq_length=None)
+
+    assert agg.sample_count == 3
+    assert agg.boundary_min == 3
+    assert agg.boundary_max == 13
+    assert agg.boundary_mean == pytest.approx(7)
+    assert agg.response_tokens_min == 0
+    assert agg.response_tokens_max == 8
+    assert agg.response_tokens_mean == pytest.approx(4)
+    assert agg.trainable_response_token_count == 12

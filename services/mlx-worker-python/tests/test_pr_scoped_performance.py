@@ -1636,7 +1636,9 @@ def test_scope_report_selects_response_only_boundary_slots_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "response-only-boundary-slotted-records"
 
 
-def test_response_only_boundary_slots_probe_script_emits_metrics() -> None:
+def test_response_only_boundary_slots_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     probe = next(
         probe
         for probe in load_probe_registry(REGISTRY_PATH)
@@ -1647,8 +1649,21 @@ def test_response_only_boundary_slots_probe_script_emits_metrics() -> None:
 
     assert metrics["construction_elapsed_ms_mean"] > 0
     assert metrics["aggregation_elapsed_ms_mean"] > 0
+    assert metrics["aggregation_no_limit_elapsed_ms_mean"] > 0
     assert metrics["instance_dict_count_mean"] == 0.0
     assert metrics["boundary_count"] == 50000.0
+
+    monkeypatch.setenv("MELIX_RESPONSE_BOUNDARY_SLOT_PROBE_COUNT", "100")
+    monkeypatch.setenv("MELIX_RESPONSE_BOUNDARY_SLOT_PROBE_SAMPLES", "1")
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/response_only_boundary_slots_probe.py"),
+            run_name="__main__",
+        )
+    assert exc_info.value.code == 0
+    runpy_metrics = json.loads(capsys.readouterr().out)
+    assert runpy_metrics["aggregation_no_limit_elapsed_ms_mean"] > 0
+    assert runpy_metrics["boundary_count"] == 100.0
 
 
 def test_scope_report_selects_quantization_qat_source_scan_probe() -> None:
