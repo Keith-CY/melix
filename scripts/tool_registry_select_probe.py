@@ -51,7 +51,20 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     no_keyword_fallback_selected_schema_bytes_samples: list[float] = []
     whitespace_turn_planning_elapsed_samples: list[float] = []
     whitespace_turn_selected_schema_bytes_samples: list[float] = []
+    schema_consistency_preflight_elapsed_samples: list[float] = []
+    schema_consistency_missing_tool_samples: list[float] = []
     checksum = 0
+    preflight_registry = registry.select(("text_search", "visit", "local_compute"))
+    preflight_affordances = (
+        {"tool_id": "text_search", "source": "workflow_selected"},
+        {"tool_name": "visit", "source": "viewed_procedure"},
+        {"name": "image_search", "source": "retrieved_context"},
+        {"tool_id": "local_compute", "source": "workflow_selected"},
+        {"tool_name": "layout_parse", "source": "retrieved_context"},
+        {"name": "memory_lookup", "source": "viewed_procedure"},
+        {"tool_id": "skill_lookup", "source": "viewed_procedure"},
+        {"tool_id": "workspace_file", "source": "workflow_selected"},
+    ) * 4
 
     for _ in range(sample_count):
         full_list_self_count = 0
@@ -233,6 +246,24 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         )
         checksum += whitespace_turn_schema_bytes
 
+        preflight_missing_tool_count = 0
+        preflight_started = time.perf_counter()
+        for _index in range(selector_iterations):
+            decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+                preflight_affordances,
+                registry=preflight_registry,
+                catalog=registry,
+                source="pr_scoped_probe",
+            )
+            preflight_missing_tool_count += len(decision.missing_tools)
+        schema_consistency_preflight_elapsed_samples.append(
+            (time.perf_counter() - preflight_started) * 1000.0
+        )
+        schema_consistency_missing_tool_samples.append(
+            float(preflight_missing_tool_count / selector_iterations)
+        )
+        checksum += preflight_missing_tool_count
+
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
         "select_calls_mean": float(iterations),
@@ -281,6 +312,12 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         ),
         "whitespace_turn_selected_schema_bytes_mean": statistics.fmean(
             whitespace_turn_selected_schema_bytes_samples
+        ),
+        "schema_consistency_preflight_elapsed_ms_mean": statistics.fmean(
+            schema_consistency_preflight_elapsed_samples
+        ),
+        "schema_consistency_missing_tools_mean": statistics.fmean(
+            schema_consistency_missing_tool_samples
         ),
         "checksum": float(checksum),
         "iterations": float(iterations),

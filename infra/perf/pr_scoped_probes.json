@@ -5188,6 +5188,17 @@
         "key": "whitespace_turn_selected_schema_bytes_mean",
         "unit": "bytes",
         "direction": "informational"
+      },
+      {
+        "key": "schema_consistency_preflight_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "schema_consistency_missing_tools_mean",
+        "unit": "tools",
+        "direction": "informational"
       }
     ]
   },
