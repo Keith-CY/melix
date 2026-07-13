@@ -295,7 +295,7 @@ class LocalJobContinuationStore:
         if result.receipt.get("reason") != "followup_claimed":
             saved = self.save_record(result.record, expected_revision=record.revision)
             return LocalJobContinuationFollowupClaim(
-                reconciliation=replace(result, record=saved),
+                reconciliation=_reconciliation_with_record(result, saved),
                 prompt_context=PromptContextAdmission(
                     user_payload={},
                     untrusted_context_receipts=[],
@@ -344,7 +344,7 @@ class LocalJobContinuationStore:
 
         saved = self.save_record(result.record, expected_revision=record.revision)
         return LocalJobContinuationFollowupClaim(
-            reconciliation=replace(result, record=saved),
+            reconciliation=_reconciliation_with_record(result, saved),
             prompt_context=prompt_context,
         )
 
@@ -842,11 +842,7 @@ def claim_local_job_followup(
             ),
         )
 
-    claimed = replace(
-        record,
-        followup_status="in_progress",
-        followup_session_id=normalized_followup_session_id,
-    )
+    claimed = _record_with_followup_claim(record, normalized_followup_session_id)
     return LocalJobContinuationReconciliation(
         record=claimed,
         receipt=_receipt(
@@ -864,6 +860,38 @@ def claim_local_job_followup(
             followup_session_id=claimed.followup_session_id,
             prompt_context_receipts=_local_job_followup_prompt_context_receipts(claimed),
         ),
+    )
+
+
+def _reconciliation_with_record(
+    reconciliation: LocalJobContinuationReconciliation,
+    record: LocalJobContinuationRecord,
+) -> LocalJobContinuationReconciliation:
+    return LocalJobContinuationReconciliation(
+        record=record,
+        receipt=reconciliation.receipt,
+    )
+
+
+def _record_with_followup_claim(
+    record: LocalJobContinuationRecord,
+    followup_session_id: str,
+) -> LocalJobContinuationRecord:
+    return LocalJobContinuationRecord(
+        job_id=record.job_id,
+        command=record.command,
+        cwd=record.cwd,
+        log_path=record.log_path,
+        session_id=record.session_id,
+        status=record.status,
+        exit_status=record.exit_status,
+        timeout_seconds=record.timeout_seconds,
+        followup_status="in_progress",
+        followup_session_id=followup_session_id,
+        followed_up_at=record.followed_up_at,
+        success_marker_path=record.success_marker_path,
+        artifact_paths=record.artifact_paths,
+        revision=record.revision,
     )
 
 

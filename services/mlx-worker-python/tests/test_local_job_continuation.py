@@ -365,6 +365,29 @@ def test_store_claim_followup_marks_completed_job_in_progress_once(tmp_path: Pat
     assert store.load_record("job-7") == claimed.record
 
 
+def test_claim_local_job_followup_uses_direct_record_copy_for_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_replace(*args: object, **kwargs: object) -> object:  # pragma: no cover
+        raise AssertionError("claim path should avoid dataclasses.replace overhead")
+
+    monkeypatch.setattr(local_job_continuation_module, "replace", fail_replace)
+
+    claimed = local_job_continuation_module.claim_local_job_followup(
+        _record(
+            status="completed",
+            exit_status=0,
+            success_marker_path="/workspace/.runtime/jobs/job-7.success",
+        ),
+        followup_session_id=" followup-session-7 ",
+    )
+
+    assert claimed.record.followup_status == "in_progress"
+    assert claimed.record.followup_session_id == "followup-session-7"
+    assert claimed.record.status == "completed"
+    assert claimed.receipt["reason"] == "followup_claimed"
+
+
 def test_store_claim_followup_emits_redacted_background_prompt_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
