@@ -51,6 +51,12 @@ This Python-only follow-up keeps the same registered `local-job-followup-scan-sc
 
 The existing scalar/container regression guards cover mutation isolation for the exact list/dict shape and subclass preservation. No record schema, reconciliation, claim, prompt-context admission, scan ordering, or receipt payload fields change.
 
+## 2026-07-13 follow-up: JSON suffix slice filter
+
+This Python-only follow-up keeps the same registered `local-job-followup-scan-scandir` probe and narrows the flat-store filename filter in `scan_followup_candidates(...)`. The scan now uses a length guard plus direct suffix slicing for `.json` detection instead of calling `str.endswith(...)` for every directory entry. JSON-named files, JSON-named directories, short filenames, non-record suffixes, no-follow file checks, record ordering, and receipt semantics remain unchanged.
+
+The registered scan probe remains the local and CI metric source for this slice. No record schema, reconciliation, claim, prompt-context admission, scan ordering, or receipt payload fields change.
+
 ## Linux validation boundary
 
 This is a Python-only slice and is locally verifiable on Linux. No Swift runtime behavior changes are included.
