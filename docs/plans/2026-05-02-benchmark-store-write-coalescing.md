@@ -67,3 +67,17 @@ git diff --check
 - Changed-scope automated coverage is at least 95%.
 - Local probe reports concrete metrics and shows the optimized path is not worse for the measured hot path.
 - Existing scoped CI probe `benchmark-store-matrix-streaming` can validate the same path in PR CI.
+
+## Follow-up Slice: Compact Inline Matrix Row Emission
+
+The 2026-07-13 follow-up keeps row ordering and artifact schema unchanged but
+narrows the benchmark-matrix JSONL/CSV hot loop. `_write_jsonl_and_csv()` now
+uses a compact JSON encoder for JSONL rows and emits CSV rows inline with a
+locally bound `writerow()` and field-name tuple. This avoids generator frame
+overhead and reduces JSONL bytes written for the large request-row artifact while
+preserving one `to_dict()` and one JSONL write per row.
+
+Success is accepted only if the focused benchmark-store tests, changed-scope
+coverage, and local registered probe pass with non-regressive or improved
+`elapsed_ms_mean` and peak memory, and if the PR-scoped CI probe completes
+successfully before merge.
