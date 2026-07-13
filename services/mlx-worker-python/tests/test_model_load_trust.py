@@ -60,6 +60,52 @@ def test_requested_mode_reuses_valid_mode_membership_for_sources() -> None:
     )
 
 
+def test_common_text_default_policy_uses_direct_resolution_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "plain-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(json.dumps({"model_type": "llama"}), encoding="utf-8")
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = str(model_dir)
+
+    fail_slow_requested_mode = Mock(
+        side_effect=AssertionError("common text default policy should not call _requested_mode")
+    )
+    fail_slow_loader_family = Mock(
+        side_effect=AssertionError("common text default policy should not call _loader_family")
+    )
+
+    monkeypatch.setattr(model_load_trust_module, "_requested_mode", fail_slow_requested_mode)
+    monkeypatch.setattr(model_load_trust_module, "_loader_family", fail_slow_loader_family)
+
+    policy = resolve_model_load_trust_policy(
+        model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=RecordingTextBackend(),
+    )
+
+    assert policy.requested_mode == common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE
+    assert policy.policy_source == "default_safe"
+    assert policy.route_class == common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
+    assert policy.loader_family == "mlx-lm"
+    assert policy.custom_loader_required is False
+    assert policy.custom_loader_detection_source == "config_json"
+
+    non_applicable_policy = resolve_model_load_trust_policy(
+        model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=NonApplicableTextBackend(),
+    )
+
+    assert non_applicable_policy.effective_mode == common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+    assert non_applicable_policy.route_class == common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
+    assert non_applicable_policy.loader_family == "fake-mlx"
+
+
 def test_worker_rejects_custom_loader_metadata_without_explicit_trust(tmp_path: Path) -> None:
     backend = RecordingTextBackend()
     service = WorkerRuntimeService(

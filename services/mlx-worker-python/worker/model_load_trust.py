@@ -95,6 +95,36 @@ def resolve_model_load_trust_policy(
     runtime: Any,
 ) -> common_pb2.ModelLoadTrustPolicy:
     runtime_name = _runtime_name(runtime)
+    if request_policy is None and runtime_kind == "text":
+        route_class = model_spec.route_class
+        if route_class == WORKER_ROUTE_CLASS_UNSPECIFIED:
+            route_class = WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
+            requested_mode = MODEL_LOAD_TRUST_DEFAULT_SAFE
+            policy_source = DEFAULT_SAFE_SOURCE
+            if not model_spec.HasField("settings"):
+                loader_family = runtime_name or "mlx-lm"
+                if not _is_trust_applicable(runtime_kind, loader_family, runtime_name, runtime):
+                    return _not_applicable_policy(requested_mode, route_class, loader_family)
+                custom_loader_required, detection_source = _detect_custom_loader_requirement(model_spec)
+                if custom_loader_required:
+                    raise ModelLoadTrustRejection(
+                        _custom_loader_rejection_policy(
+                            requested_mode,
+                            policy_source,
+                            route_class,
+                            loader_family,
+                            detection_source,
+                        )
+                    )
+                policy = MODEL_LOAD_TRUST_POLICY()
+                policy.requested_mode = requested_mode
+                policy.policy_source = policy_source
+                policy.route_class = route_class
+                policy.loader_family = loader_family
+                policy.effective_mode = requested_mode
+                policy.custom_loader_required = custom_loader_required
+                policy.custom_loader_detection_source = detection_source
+                return policy
     requested_mode, policy_source = _requested_mode(model_spec, request_policy)
     route_class = _route_class(model_spec, request_policy, runtime_kind)
     loader_family = _loader_family(
