@@ -195,21 +195,30 @@ def _line_ranges_may_overlap(
         return False
     if len(changed) == 1:
         changed_line = next(iter(changed))
+        if executed_lines and missing_lines:
+            executed_first = executed_lines[0]
+            executed_last = executed_lines[-1]
+            missing_first = missing_lines[0]
+            missing_last = missing_lines[-1]
+            if executed_first <= executed_last and missing_first <= missing_last:
+                first_line = executed_first if executed_first < missing_first else missing_first
+                last_line = executed_last if executed_last > missing_last else missing_last
+                return first_line <= changed_line <= last_line
         if executed_lines:
             first_line = executed_lines[0]
             last_line = executed_lines[-1]
-            if first_line > last_line:
-                first_line = min(executed_lines)
-                last_line = max(executed_lines)
-            if first_line <= changed_line <= last_line:
+            if first_line <= last_line:
+                if first_line <= changed_line <= last_line:
+                    return True
+            elif min(executed_lines) <= changed_line <= max(executed_lines):
                 return True
         if missing_lines:
             first_line = missing_lines[0]
             last_line = missing_lines[-1]
-            if first_line > last_line:
-                first_line = min(missing_lines)
-                last_line = max(missing_lines)
-            if first_line <= changed_line <= last_line:
+            if first_line <= last_line:
+                if first_line <= changed_line <= last_line:
+                    return True
+            elif min(missing_lines) <= changed_line <= max(missing_lines):
                 return True
         return False
 
