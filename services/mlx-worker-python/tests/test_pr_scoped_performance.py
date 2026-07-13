@@ -3323,6 +3323,20 @@ def test_scope_selection_reuses_full_path_set_when_no_context_only_paths(
         tracked_normalized_match,
     )
 
+    def fail_direct_probe_scan(
+        *,
+        changed_paths: frozenset[str],
+        probes: tuple[ProbeDefinition, ...],
+    ) -> frozenset[int]:  # pragma: no cover - sentinel
+        _ = (changed_paths, probes)
+        raise AssertionError("disjoint direct probe paths should skip direct probe scan")
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_force_all_direct_probe_indexes",
+        fail_direct_probe_scan,
+    )
+
     pr_scoped_performance_module._scope_selection_uncached(
         probes=probes,
         changed_paths=changed_paths,
