@@ -369,7 +369,7 @@ class ColdPrefixStore:
                     # write, or manual snapshot deletion) — drop it before parsing
                     # JSON so orphan-heavy cold dirs do not pay per-sidecar decode
                     # cost on every restart.
-                    _remove_quietly(Path(meta_path_string))
+                    _remove_path_string_quietly(meta_path_string)
                     continue
             meta_path = Path(meta_path_string)
             try:
@@ -476,6 +476,15 @@ def _session_digest(session_id: str) -> str:
 def _remove_quietly(path: Path) -> None:
     try:
         path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _remove_path_string_quietly(path: str) -> None:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
     except OSError:
         pass
 

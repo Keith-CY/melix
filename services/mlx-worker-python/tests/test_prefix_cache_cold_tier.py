@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import worker.runtime.prefix_block_store as prefix_block_store
 from worker.runtime.prefix_block_store import (
     ColdPrefixStore,
     PrefixBlockStore,
@@ -430,6 +431,58 @@ def test_cold_store_index_reload_skips_json_decode_for_filename_orphans(
     second = _make_cold(tmp_path)
     assert second.entry_count() == 0
     assert list((tmp_path / "cold").glob("*.meta.json")) == []
+
+
+def test_cold_store_index_reload_unlinks_filename_orphans_by_path_string(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    first = _make_cold(tmp_path)
+    first.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+    snapshot_files = list((tmp_path / "cold").glob("*.kv.safetensors"))
+    assert len(snapshot_files) == 1
+    snapshot_files[0].unlink()
+    removed_path_strings: list[str] = []
+
+    def counted_string_unlink(path: str) -> None:
+        assert type(path) is str
+        removed_path_strings.append(path)
+        os.unlink(path)
+
+    monkeypatch.setattr(
+        prefix_block_store,
+        "_remove_path_string_quietly",
+        counted_string_unlink,
+    )
+
+    second = _make_cold(tmp_path)
+    assert second.entry_count() == 0
+    assert len(removed_path_strings) == 1
+    assert removed_path_strings[0].endswith(".meta.json")
+    assert list((tmp_path / "cold").glob("*.meta.json")) == []
+
+
+def test_remove_path_string_quietly_tolerates_missing_and_denied_paths(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing.meta.json"
+    prefix_block_store._remove_path_string_quietly(str(missing))
+
+    def raise_os_error(path: str) -> None:
+        raise OSError(f"denied: {path}")
+
+    monkeypatch.setattr(prefix_block_store.os, "unlink", raise_os_error)
+    prefix_block_store._remove_path_string_quietly(str(tmp_path / "denied.meta.json"))
 
 
 def test_cold_store_index_load_uses_scandir_without_path_glob(
