@@ -53,6 +53,7 @@ _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH = {
         }
     ),
 }
+_FORCE_ALL_DIRECT_EXACT_PATHS = frozenset(_FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH)
 _COVERAGE_PERCENT_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+)%")
 _TEXT_FILE_SUFFIXES = {".md", ".py", ".json", ".txt", ".yaml", ".yml"}
 _COMMAND_HEARTBEAT_SECONDS = 30.0
@@ -2438,10 +2439,11 @@ def _scope_selection_uncached(
             probes=probes,
         )
     )
-    matched_probe_indexes = matched_probe_indexes | _force_all_direct_probe_indexes(
-        changed_paths=changed_path_set,
-        probes=probes,
-    )
+    if not _FORCE_ALL_DIRECT_EXACT_PATHS.isdisjoint(changed_path_set):
+        matched_probe_indexes = matched_probe_indexes | _force_all_direct_probe_indexes(
+            changed_paths=changed_path_set,
+            probes=probes,
+        )
     matched_probe_index_tuple = tuple(sorted(matched_probe_indexes))
     matched_probe_entries = tuple(probes[index] for index in matched_probe_index_tuple)
     if force_all:
