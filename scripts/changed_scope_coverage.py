@@ -105,7 +105,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
                 new_line += 1
             continue
         first_char = line[0]
-        if first_char == ascii_lower_d and line.startswith(header_prefix):
+        if first_char == ascii_lower_d and line[:header_prefix_len] == header_prefix:
             separator_index = line.find(header_separator, header_prefix_len)
             add_changed_line = None
             if separator_index >= 0:
