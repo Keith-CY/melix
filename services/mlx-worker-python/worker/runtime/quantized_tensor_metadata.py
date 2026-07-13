@@ -31,7 +31,7 @@ class QuantizedTensorMetadata:
         return self._tensor_names
 
     def has_tensor(self, tensor_name: str) -> bool:
-        return tensor_name in self.tensor_to_shard
+        return tensor_name in self._tensor_names
 
     def shard_for(self, tensor_name: str) -> str:
         return self.tensor_to_shard.get(tensor_name, "")
@@ -193,7 +193,7 @@ def quantized_scales_present(
     weights: Mapping[str, object],
 ) -> bool:
     scales_key = f"{prefix}.scales"
-    if metadata.has_tensor(scales_key):
+    if scales_key in metadata._tensor_names:
         return True
     if not weights:
         return False

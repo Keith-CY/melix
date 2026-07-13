@@ -2513,6 +2513,11 @@ class _CountingEmptyWeights(dict[str, object]):
         return super().__contains__(key)
 
 
+class _UnexpectedTensorMapping(dict[str, str]):
+    def __contains__(self, key: object) -> bool:  # pragma: no cover - regression guard
+        raise AssertionError("hot tensor membership should use the cached tensor-name set")
+
+
 class _StringifiedOnce:
     def __init__(self, value: str) -> None:
         self.value = value
@@ -2551,8 +2556,14 @@ def test_quantized_scales_present_skips_empty_weight_lookup() -> None:
     metadata = QuantizedTensorMetadata(
         {"language_model.layers.0.q_proj.scales": "model-00001.safetensors"}
     )
+    object.__setattr__(
+        metadata,
+        "tensor_to_shard",
+        _UnexpectedTensorMapping(metadata.tensor_to_shard),
+    )
     empty_weights = _CountingEmptyWeights()
 
+    assert metadata.has_tensor("language_model.layers.0.q_proj.scales") is True
     assert (
         quantized_scales_present(
             "language_model.layers.0.q_proj",
