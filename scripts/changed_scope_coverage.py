@@ -239,29 +239,33 @@ def _sorted_line_list_contains(lines: list[int], line_no: int) -> bool:
     return index < len(lines) and lines[index] == line_no
 
 
-def _stripped_source_lines_for_numbers(
+def _measurable_non_comment_lines(
     source_path: Path,
     line_numbers: list[int],
-) -> dict[int, str]:
+) -> list[int]:
+    measurable: list[int] = []
+    append_measurable = measurable.append
     if len(line_numbers) <= _SPARSE_SOURCE_LINE_SCAN_THRESHOLD:
         remaining = set(line_numbers)
-        stripped_by_line: dict[int, str] = {}
         with source_path.open("r", encoding="utf-8") as source_file:
             for index, line in enumerate(source_file, 1):
                 if index in remaining:
-                    stripped_by_line[index] = line.strip()
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#"):
+                        append_measurable(index)
                     remaining.remove(index)
                     if not remaining:
                         break
-        return stripped_by_line
+        return measurable
 
     source_lines = source_path.read_text(encoding="utf-8").splitlines()
     source_line_count = len(source_lines)
-    return {
-        line_no: source_lines[line_no - 1].strip()
-        for line_no in line_numbers
-        if 1 <= line_no <= source_line_count
-    }
+    for line_no in line_numbers:
+        if 1 <= line_no <= source_line_count:
+            stripped = source_lines[line_no - 1].strip()
+            if stripped and not stripped.startswith("#"):
+                append_measurable(line_no)
+    return measurable
 
 
 def _measurable_changed_lines(
@@ -332,12 +336,9 @@ def _measurable_changed_lines(
         return [], [], []
 
     sorted_measured_changed = sorted(measured_changed)
-    stripped_source_lines = _stripped_source_lines_for_numbers(repo_root / rel_path, sorted_measured_changed)
-    measurable: list[int] = []
-    for line_no in sorted_measured_changed:
-        stripped = stripped_source_lines.get(line_no)
-        if stripped and not stripped.startswith("#"):
-            measurable.append(line_no)
+    measurable = _measurable_non_comment_lines(
+        repo_root / rel_path, sorted_measured_changed
+    )
     if isinstance(executed_lookup, list) and isinstance(missing_lookup, list):
         covered = [
             line_no
