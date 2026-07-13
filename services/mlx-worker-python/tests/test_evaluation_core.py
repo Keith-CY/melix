@@ -3496,6 +3496,21 @@ def test_answers_match_exact_nonempty_short_circuit_skips_normalization(
     assert EvaluationCore._answers_match(expected="", predicted="") is False
 
 
+def test_answers_match_empty_prediction_skips_strip_and_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class EmptyPrediction(str):
+        def strip(self, chars: str | None = None) -> str:  # pragma: no cover - must not be called
+            raise AssertionError("empty prediction should return before strip")
+
+    def fail_normalize(value: str) -> str:  # pragma: no cover - must not be called
+        raise AssertionError(f"empty prediction should skip normalization: {value!r}")
+
+    monkeypatch.setattr(EvaluationCore, "_normalized_answer", staticmethod(fail_normalize))
+
+    assert EvaluationCore._answers_match(expected="Paris", predicted=EmptyPrediction("")) is False
+
+
 def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.MonkeyPatch) -> None:
     numeric_calls = 0
     option_calls = 0
