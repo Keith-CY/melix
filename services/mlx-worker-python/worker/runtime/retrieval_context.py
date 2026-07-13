@@ -21,6 +21,7 @@ from worker.runtime.untrusted_context import (
 RetrievalContextKind = Literal["retrieved_document", "retrieved_image"]
 
 _MISSING_LOOKUP_RECORDS = object()
+_RETRIEVAL_CONTEXT_KINDS = frozenset({"retrieved_document", "retrieved_image"})
 
 
 class RetrievalContextAdmissionError(ValueError):
@@ -141,9 +142,11 @@ def project_retrieval_contexts(
     dict_type = dict
     bool_type = bool
     strip_text = str.strip
+    type_of = type
+    retrieval_context_kinds = _RETRIEVAL_CONTEXT_KINDS
 
     for entry in entries:
-        if type(entry) is entry_type:
+        if type_of(entry) is entry_type:
             context_kind = entry.context_kind
             source_id = entry.source_id
             payload = entry.payload
@@ -153,7 +156,7 @@ def project_retrieval_contexts(
             reason = entry.reason
             corrective_action = entry.corrective_action
             if (
-                context_kind in ("retrieved_document", "retrieved_image")
+                context_kind in retrieval_context_kinds
                 and isinstance_of(source_id, str_type)
                 and isinstance_of(payload, dict_type)
                 and isinstance_of(owner_scope_checked, bool_type)
@@ -298,6 +301,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     dict_type = dict
     bool_type = bool
     type_of = type
+    retrieval_context_kinds = _RETRIEVAL_CONTEXT_KINDS
 
     for record in records:
         if type_of(record) is not dict_type and not isinstance(record, Mapping):
@@ -312,7 +316,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
 
         record_get: Any = record.get
         context_kind = record_get("context_kind")
-        if context_kind not in ("retrieved_document", "retrieved_image"):
+        if context_kind not in retrieval_context_kinds:
             source_id = store_record_source_id(record)
             refusal_context_kind = store_record_refusal_context_kind(source_id)
             store_refusal_receipts_append(
