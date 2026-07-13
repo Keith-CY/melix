@@ -834,6 +834,55 @@ def test_trust_policy_multiple_executable_model_files_stay_sorted(tmp_path: Path
     )
 
 
+def test_trust_policy_caches_executable_model_files_by_directory_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_load_trust_module._detect_executable_model_files_for_stat.cache_clear()
+    executable_model_dir = tmp_path / "cached-executable-file-model"
+    executable_model_dir.mkdir()
+    (executable_model_dir / "modeling_melix_demo.py").write_text(
+        "class MelixDemoModel: pass\n",
+        encoding="utf-8",
+    )
+    executable_model = WorkerModelCatalog.dev_text_model()
+    executable_model.model_path = str(executable_model_dir)
+    scandir_calls = 0
+    original_scandir = model_load_trust_module._OS_SCANDIR
+
+    def counted_scandir(path: str):
+        nonlocal scandir_calls
+        scandir_calls += 1
+        return original_scandir(path)
+
+    monkeypatch.setattr(model_load_trust_module, "_OS_SCANDIR", counted_scandir)
+
+    assert model_load_trust_module._detect_executable_model_files(executable_model) == (
+        "modeling_melix_demo.py",
+    )
+    assert model_load_trust_module._detect_executable_model_files(executable_model) == (
+        "modeling_melix_demo.py",
+    )
+    assert scandir_calls == 1
+
+    file_model = WorkerModelCatalog.dev_text_model()
+    file_model.model_path = str(executable_model_dir / "modeling_melix_demo.py")
+    assert model_load_trust_module._detect_executable_model_files(file_model) == ()
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tilde_model_dir = tmp_path / "tilde-executable-model"
+    tilde_model_dir.mkdir()
+    (tilde_model_dir / "configuration_melix_demo.py").write_text(
+        "class MelixDemoConfig: pass\n",
+        encoding="utf-8",
+    )
+    tilde_model = WorkerModelCatalog.dev_text_model()
+    tilde_model.model_path = "~/tilde-executable-model"
+    assert model_load_trust_module._detect_executable_model_files(tilde_model) == (
+        "configuration_melix_demo.py",
+    )
+
+
 def test_trust_policy_treats_blank_model_path_as_absent(tmp_path: Path) -> None:
     model = WorkerModelCatalog.dev_text_model()
     model.model_path = "  "
