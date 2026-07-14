@@ -1545,6 +1545,18 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
                     {"chunk": 8},
                     {"window": 9},
                 ),
+                "ten_labels": (
+                    "retrieved",
+                    {"kind": "document"},
+                    {"bucket": 1},
+                    {"source": "local"},
+                    {"shard": 4},
+                    {"page": 2},
+                    {"section": 7},
+                    {"chunk": 8},
+                    {"window": 9},
+                    {"span": 10},
+                ),
                 "six_scores": [
                     3,
                     4,
@@ -1582,6 +1594,18 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
                     {"section": 7},
                     {"chunk": 8},
                     {"window": 9},
+                ],
+                "ten_scores": [
+                    3,
+                    4,
+                    {"rank": 0},
+                    {"score": 0.9},
+                    {"shard": 2},
+                    {"page": 2},
+                    {"section": 7},
+                    {"chunk": 8},
+                    {"window": 9},
+                    {"span": 10},
                 ],
                 "long_scores": [3, 4, {"rank": 0}, {"score": 0.9}, {"shard": 2}],
                 "quad_scores": [3, 4, {"rank": 0}, {"score": 0.9}],
@@ -1677,6 +1701,18 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
         is not payload["retrieved_context"]["metadata"]["nine_labels"][1]
     )
     assert (
+        copied["retrieved_context"]["metadata"]["ten_labels"]
+        == payload["retrieved_context"]["metadata"]["ten_labels"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["ten_labels"]
+        is not payload["retrieved_context"]["metadata"]["ten_labels"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["ten_labels"][1]
+        is not payload["retrieved_context"]["metadata"]["ten_labels"][1]
+    )
+    assert (
         copied["retrieved_context"]["metadata"]["six_scores"]
         == payload["retrieved_context"]["metadata"]["six_scores"]
     )
@@ -1723,6 +1759,18 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
     assert (
         copied["retrieved_context"]["metadata"]["nine_scores"][2]
         is not payload["retrieved_context"]["metadata"]["nine_scores"][2]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["ten_scores"]
+        == payload["retrieved_context"]["metadata"]["ten_scores"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["ten_scores"]
+        is not payload["retrieved_context"]["metadata"]["ten_scores"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["ten_scores"][2]
+        is not payload["retrieved_context"]["metadata"]["ten_scores"][2]
     )
     assert (
         copied["retrieved_context"]["metadata"]["long_scores"]
