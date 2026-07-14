@@ -1021,6 +1021,25 @@ def test_load_report_payload_reads_json_bytes(
     assert load_report_payload(report_path) == {"schema_version": "fixture", "value": 3}
 
 
+def test_load_report_payload_uses_module_local_json_loads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_path = tmp_path / "report.json"
+    report_path.write_bytes(b'{"schema_version":"fixture","value":3}')
+    calls: list[bytes] = []
+    original_loads = report_evidence_gate_module._JSON_LOADS
+
+    def tracked_loads(payload: bytes) -> object:
+        calls.append(payload)
+        return original_loads(payload)
+
+    monkeypatch.setattr(report_evidence_gate_module, "_JSON_LOADS", tracked_loads)
+
+    assert load_report_payload(report_path) == {"schema_version": "fixture", "value": 3}
+    assert calls == [b'{"schema_version":"fixture","value":3}']
+
+
 def test_report_evidence_gate_script_handles_errors_and_failed_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
