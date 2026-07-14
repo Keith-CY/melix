@@ -771,12 +771,17 @@ struct MelixCLIRunnerTests {
     @Test("json metric placeholders sanitize scalar names without changing token shape")
     func jsonMetricPlaceholdersSanitizeScalarNamesWithoutChangingTokenShape() {
         let placeholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.json_encode-ms")
+        let jsonEncodePlaceholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.json_encode_ms")
         let unicodePlaceholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.測試-ms")
 
         #expect(placeholder.token.hasPrefix("__MELIX_METRIC_melix_cli_json_encode_ms_"))
         #expect(placeholder.token.hasSuffix("__"))
         #expect(placeholder.jsonLiteral == "\"\(placeholder.token)\"")
         #expect(placeholder.jsonLiteralData == Data(placeholder.jsonLiteral.utf8))
+        #expect(jsonEncodePlaceholder.token.hasPrefix("__MELIX_METRIC_melix_cli_json_encode_ms_"))
+        #expect(jsonEncodePlaceholder.token.hasSuffix("__"))
+        #expect(jsonEncodePlaceholder.jsonLiteral == "\"\(jsonEncodePlaceholder.token)\"")
+        #expect(jsonEncodePlaceholder.jsonLiteralData == Data(jsonEncodePlaceholder.jsonLiteral.utf8))
         #expect(unicodePlaceholder.token.hasPrefix("__MELIX_METRIC_melix_cli_測試_ms_"))
     }
 
