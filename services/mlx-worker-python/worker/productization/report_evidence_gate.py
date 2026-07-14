@@ -10,6 +10,7 @@ from worker.productization.benchmark_evaluation_report import validate_report_pa
 
 REPORT_EVIDENCE_GATE_SCHEMA_VERSION = "melix.report_evidence_gate.v1"
 _EMPTY_PROBE_PHASES: frozenset[str] = frozenset()
+_JSON_LOADS = json.loads
 
 DEFAULT_RELEASE_EVIDENCE_MATRIX: dict[str, dict[str, object]] = {
     "serving_benchmark": {
@@ -35,7 +36,7 @@ DEFAULT_RELEASE_EVIDENCE_MATRIX: dict[str, dict[str, object]] = {
 def load_report_payload(path: str | Path) -> dict[str, object]:
     report_path = Path(path)
     try:
-        payload = json.loads(report_path.read_bytes())
+        payload = _JSON_LOADS(report_path.read_bytes())
     except json.JSONDecodeError as exc:
         raise ValueError(f"report JSON could not be decoded: {report_path}") from exc
     if not isinstance(payload, dict):
