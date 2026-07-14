@@ -466,7 +466,7 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
         values = getattr(layer_cache, "values", None)
         if values is not None:
             total += tensor_nbytes(values)
-    return int(total)
+    return total if type(total) is int else int(total)
 
 
 def _session_digest(session_id: str) -> str:
