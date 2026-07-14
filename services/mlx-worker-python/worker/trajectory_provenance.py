@@ -358,6 +358,76 @@ def load_trajectory_provenance_from_snapshot_manifest(
     with open_file(manifest_path_text, "rb") as manifest_file:
         payload = loads(manifest_file.read())
     if type(payload) is dict:
+        manifest_get = payload.get
+        if manifest_get("format") == "agentic_tool_trace":
+            dataset_id = manifest_get("source_dataset_id")
+            dataset_version = manifest_get("version")
+            trace_digest = manifest_get("trajectory_trace_digest")
+            if (
+                type(dataset_id) is str
+                and dataset_id != ""
+                and not dataset_id[0].isspace()
+                and not dataset_id[-1].isspace()
+                and type(dataset_version) is str
+                and dataset_version != ""
+                and not dataset_version[0].isspace()
+                and not dataset_version[-1].isspace()
+                and type(trace_digest) is str
+                and trace_digest != ""
+                and not trace_digest[0].isspace()
+                and not trace_digest[-1].isspace()
+            ):
+                schema_version = manifest_get("trajectory_schema_version")
+                if schema_version is None:
+                    schema_version = "melix.agentic_tool_trace.v1"
+                elif (
+                    type(schema_version) is not str
+                    or schema_version == ""
+                    or schema_version[0].isspace()
+                    or schema_version[-1].isspace()
+                ):
+                    schema_version = None
+                split = manifest_get("trajectory_split")
+                if split is None:
+                    split = "train"
+                elif (
+                    type(split) is not str
+                    or split == ""
+                    or split[0].isspace()
+                    or split[-1].isspace()
+                ):
+                    split = None
+                if schema_version is not None and split is not None:
+                    provenance: dict[str, Any] = {
+                        "trajectory_dataset_id": dataset_id,
+                        "trajectory_dataset_version": dataset_version,
+                        "trajectory_schema_version": schema_version,
+                        "trajectory_snapshot_manifest_path": manifest_path_text,
+                        "trajectory_split": split,
+                        "trajectory_trace_digest": trace_digest,
+                    }
+                    trajectory_toolset_version = manifest_get("trajectory_toolset_version")
+                    if trajectory_toolset_version is not None and trajectory_toolset_version != "":
+                        provenance["trajectory_toolset_version"] = trajectory_toolset_version
+                    trajectory_registry_schema_version = manifest_get("trajectory_registry_schema_version")
+                    if trajectory_registry_schema_version is not None and trajectory_registry_schema_version != "":
+                        provenance["trajectory_registry_schema_version"] = trajectory_registry_schema_version
+                    trajectory_reward_policy_id = manifest_get("trajectory_reward_policy_id")
+                    if trajectory_reward_policy_id is not None and trajectory_reward_policy_id != "":
+                        provenance["trajectory_reward_policy_id"] = trajectory_reward_policy_id
+                    trajectory_leakage_policy_id = manifest_get("trajectory_leakage_policy_id")
+                    if trajectory_leakage_policy_id is not None and trajectory_leakage_policy_id != "":
+                        provenance["trajectory_leakage_policy_id"] = trajectory_leakage_policy_id
+                    source_package_path = manifest_get("source_package_path")
+                    if source_package_path is not None and source_package_path != "":
+                        provenance["trajectory_package_path"] = source_package_path
+                    trajectory_quality_metrics = manifest_get("trajectory_quality_metrics")
+                    if trajectory_quality_metrics is not None and trajectory_quality_metrics != "":
+                        provenance["trajectory_quality_metrics"] = trajectory_quality_metrics
+                    agentic_sft_token_metrics = manifest_get("agentic_sft_token_metrics")
+                    if agentic_sft_token_metrics is not None and agentic_sft_token_metrics != "":
+                        provenance["agentic_sft_token_metrics"] = agentic_sft_token_metrics
+                    return provenance
         return extract_provenance(
             payload,
             snapshot_manifest_path=manifest_path_text,
