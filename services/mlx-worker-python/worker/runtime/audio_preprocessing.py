@@ -44,16 +44,17 @@ def prepare_audio_input(request, *, read_uri_bytes: bool = True) -> PreparedAudi
         source_kind = "inline"
         reference = "inline:audio"
     elif request.audio_uri:
-        path = _path_from_uri(request.audio_uri)
         try:
             if read_uri_bytes:
+                path = _path_from_uri(request.audio_uri)
+                local_path = os.fspath(path)
                 bytes_data = path.read_bytes()
             else:
+                local_path = _local_path_from_uri(request.audio_uri)
                 bytes_data = b""
-                input_bytes = path.stat().st_size
+                input_bytes = os.stat(local_path).st_size
         except OSError as exc:
             raise AudioPreprocessError(f"Missing local audio input: {request.audio_uri}") from exc
-        local_path = os.fspath(path)
         source_kind = "uri"
         reference = request.audio_uri
         if not format_name:
@@ -85,6 +86,13 @@ def prepare_audio_input(request, *, read_uri_bytes: bool = True) -> PreparedAudi
 
 
 def _path_from_uri(uri: str) -> Path:
+    return Path(_local_path_from_uri(uri))
+
+
+def _local_path_from_uri(uri: str) -> str:
+    if uri.startswith("file:///"):
+        path_part = uri[7:]
+        return path_part if "%" not in path_part else unquote(path_part)
     if uri.startswith("file://"):
         path_part = uri[7:]
         if path_part.startswith("localhost/"):
@@ -92,11 +100,11 @@ def _path_from_uri(uri: str) -> Path:
         elif not path_part.startswith("/"):
             parsed = urlparse(uri)
             path_part = parsed.path
-        return Path(path_part if "%" not in path_part else unquote(path_part))
+        return path_part if "%" not in path_part else unquote(path_part)
     if "://" not in uri:
-        return Path(uri)
+        return uri
     parsed = urlparse(uri)
     if parsed.scheme != "file":
         raise AudioPreprocessError(f"Unsupported audio URI scheme: {parsed.scheme}")
     parsed_path = parsed.path
-    return Path(parsed_path if "%" not in parsed_path else unquote(parsed_path))
+    return parsed_path if "%" not in parsed_path else unquote(parsed_path)
