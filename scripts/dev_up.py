@@ -508,7 +508,7 @@ def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
                     ):
                         continue
 
-                    metadata_path = ancestor / entry_name / "METADATA"
+                    metadata_path = Path(entry.path) / "METADATA"
                     try:
                         version = _read_dist_info_metadata_version(metadata_path)
                     except OSError:
