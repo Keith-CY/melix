@@ -87,3 +87,17 @@ behavior while avoiding per-tensor `int()` coercions inside the loop.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Final Int Coercion Fast Path
+
+The 2026-07-14 follow-up keeps the same registered probe and narrows to the
+final public return coercion in `estimate_cache_snapshot_bytes()`. The estimator
+still returns a plain integer for callers, but the common path already accumulates
+plain `int` byte counts from `.nbytes` and `size * itemsize` tensors. This slice
+therefore skips the redundant `int(total)` constructor when the accumulator is
+already exactly `int`, while preserving the fallback coercion for unusual numeric
+tensor metadata that produces a non-`int` total.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.

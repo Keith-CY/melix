@@ -78,6 +78,16 @@ def test_estimate_cache_snapshot_bytes_ignores_tensors_without_byte_shape() -> N
     assert estimate_cache_snapshot_bytes(cache_snapshot) == 0
 
 
+def test_estimate_cache_snapshot_bytes_coerces_non_int_totals() -> None:
+    class TensorWithFloatNbytes:
+        nbytes = 12.9
+
+    observed = estimate_cache_snapshot_bytes([SimpleNamespace(state=TensorWithFloatNbytes())])
+
+    assert observed == 12
+    assert type(observed) is int
+
+
 def _put(store: PrefixBlockStore, session_id: str, tokens: list[int], **kwargs: Any) -> None:
     store.put(
         session_id=session_id,
