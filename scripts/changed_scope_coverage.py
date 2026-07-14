@@ -26,6 +26,7 @@ _ASCII_PLUS = ord("+")
 _ASCII_MINUS = ord("-")
 _ASCII_AT = ord("@")
 _ASCII_LOWER_D = ord("d")
+_DIFF_PARSER_ACCEPTS_BYTES = True
 _EMPTY_CHANGED_LINES: frozenset[int] = frozenset()
 _DENSE_CHANGED_LINE_SCAN_THRESHOLD = 32
 _SPARSE_SOURCE_LINE_SCAN_THRESHOLD = 8
@@ -84,7 +85,7 @@ def _parse_hunk_new_start(line: str) -> int | None:
     return _parse_hunk_new_start_from_digit(line, new_range_index + 2)
 
 
-def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
+def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
     changed_by_path: dict[str, set[int]] = {}
     changed_by_path_setdefault = changed_by_path.setdefault
     header_prefix = _DIFF_HEADER_PREFIX_BYTES
@@ -99,7 +100,8 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     ascii_lower_d = _ASCII_LOWER_D
     add_changed_line = None
     new_line: int | None = None
-    for line in diff_text.encode().splitlines():
+    diff_bytes = diff_text if isinstance(diff_text, bytes) else diff_text.encode()
+    for line in diff_bytes.split(b"\n"):
         if not line:
             if add_changed_line is not None and new_line is not None:
                 new_line += 1
@@ -140,7 +142,6 @@ def _changed_lines_by_path(repo_root: Path, rel_paths: list[str]) -> dict[str, s
     proc = subprocess.run(
         ["git", "diff", "--unified=0", "--", *rel_paths],
         cwd=repo_root,
-        text=True,
         capture_output=True,
         check=True,
     )

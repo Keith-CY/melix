@@ -93,6 +93,20 @@ def test_parse_changed_lines_handles_multiple_files_and_hunks() -> None:
     assert changed_scope_coverage._parse_changed_lines(diff_text + "\n") == changed
 
 
+def test_parse_changed_lines_accepts_git_diff_bytes() -> None:
+    diff_text = "\n".join(
+        [
+            "diff --git a/foo.py b/foo.py",
+            "--- a/foo.py",
+            "+++ b/foo.py",
+            "@@ -0,0 +2 @@",
+            "+alpha",
+        ]
+    )
+
+    assert changed_scope_coverage._parse_changed_lines(diff_text.encode()) == {"foo.py": {2}}
+
+
 def test_parse_hunk_new_start_uses_delimiters_for_counted_and_single_line_ranges() -> None:
     assert changed_scope_coverage._parse_hunk_new_start("@@ -0,0 +3,2 @@") == 3
     assert changed_scope_coverage._parse_hunk_new_start("@@ -10 +12 @@") == 12
@@ -132,9 +146,10 @@ def test_changed_lines_by_path_uses_one_batched_git_diff(monkeypatch, tmp_path: 
         ]
     )
 
-    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[bytes]:
         observed_commands.append(command)
-        return subprocess.CompletedProcess(command, 0, stdout=diff_text, stderr="")
+        assert kwargs.get("text") is None
+        return subprocess.CompletedProcess(command, 0, stdout=diff_text.encode(), stderr=b"")
 
     monkeypatch.setattr(changed_scope_coverage.subprocess, "run", fake_run)
 
