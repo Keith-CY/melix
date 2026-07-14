@@ -613,7 +613,7 @@ def project_retrieval_lookup_result(
         has_lookup_metadata
         and (
             not has_records
-            or not isinstance(lookup_records, list)
+            or records_type is not list
         )
         and len(refusal_receipts) == 1
         and not prompt_user_payload
