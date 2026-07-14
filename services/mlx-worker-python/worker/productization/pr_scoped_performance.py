@@ -256,7 +256,8 @@ def build_scope_report(
     changed_files: list[str],
 ) -> dict[str, object]:
     probes = load_probe_registry_for_scope(registry_path)
-    changed_path_set = {path for path in changed_files if path}
+    changed_path_set = set(changed_files)
+    changed_path_set.discard("")
     changed_paths = tuple(sorted(changed_path_set))
     force_all, matched_probe_ids, selected_probes = _scope_selection(
         probes=probes,
