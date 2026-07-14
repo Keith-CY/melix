@@ -951,6 +951,7 @@ def test_load_training_dataset_package_respects_sample_limit_after_skipping_blan
     )
     (package_path / "samples.jsonl").write_text(
         "\n"
+        "   \t\n"
         '{"text": "alpha"}\n'
         "\n"
         '{"text": "beta"}\n',

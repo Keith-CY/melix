@@ -155,11 +155,10 @@ def _iter_dataset_package_jsonl_rows(
     json_decode_error = json.JSONDecodeError
     with path.open("r", encoding="utf-8") as handle:
         for line_number, raw_line in enumerate(handle, start=1):
-            line = raw_line.strip()
-            if not line:
+            if raw_line.isspace():
                 continue
             try:
-                payload = json_loads(line)
+                payload = json_loads(raw_line)
             except json_decode_error as exc:
                 raise ModelOperationError(
                     code="invalid_dataset_package",
