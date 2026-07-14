@@ -101,3 +101,17 @@ tensor metadata that produces a non-`int` total.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: State Branch Flattening
+
+The next 2026-07-14 follow-up keeps the same registered probe and narrows to the
+per-layer branch layout in `estimate_cache_snapshot_bytes()`. The estimator now
+binds `getattr` once and handles the `.state is None` keys/values path as the
+first branch, then handles state sequences and scalar state objects without the
+extra `continue` jumps. This preserves the existing `.state`, `.keys/.values`,
+`.nbytes`, and `size * itemsize` behavior while trimming interpreter dispatch in
+the repeated snapshot byte-estimation loop.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
