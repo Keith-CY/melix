@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+import os
 from pathlib import Path
 from unittest.mock import Mock
 import wave
@@ -249,6 +250,25 @@ def test_audio_preprocessing_prepared_input_uses_slots(tmp_path: Path) -> None:
     assert prepared.decoded_text() == "slot optimized audio"
 
 
+def test_audio_preprocessing_file_uri_fast_path_skips_urlparse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"fast path audio")
+    urlparse_spy = Mock(side_effect=AssertionError("file:/// URI should not call urlparse"))
+
+    monkeypatch.setattr("worker.runtime.audio_preprocessing.urlparse", urlparse_spy)
+
+    prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri(), format="wav"),
+        read_uri_bytes=False,
+    )
+
+    assert prepared.local_path == str(audio_path)
+    assert prepared.preprocess_input_bytes == len(b"fast path audio")
+    assert urlparse_spy.call_count == 0
+
+
 def test_audio_preprocessing_zero_copy_uri_skips_exists_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -256,15 +276,15 @@ def test_audio_preprocessing_zero_copy_uri_skips_exists_probe(
     audio_path.write_bytes(b"zero copy audio")
     stat_calls = 0
     exists_spy = Mock(return_value=True)
-    original_stat = Path.stat
+    original_os_stat = os.stat
 
-    def counted_stat(self: Path):
+    def counted_os_stat(path, *args, **kwargs):
         nonlocal stat_calls
-        if self == audio_path:
+        if path == os.fspath(audio_path):
             stat_calls += 1
-        return original_stat(self)
+        return original_os_stat(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "stat", counted_stat)
+    monkeypatch.setattr(os, "stat", counted_os_stat)
     monkeypatch.setattr(Path, "exists", exists_spy)
 
     prepared = prepare_audio_input(
