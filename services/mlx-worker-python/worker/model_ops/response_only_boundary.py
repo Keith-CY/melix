@@ -239,35 +239,26 @@ def aggregate_response_only_boundaries(
                 fully_truncated_response_sample_count += 1
             sample_count += 1
     else:
-        iterator = iter(boundaries)
-        first_entry = next(iterator, None)
-        if first_entry is not None:
-            offset = first_entry.assistant_offset
-            total_tokens = first_entry.total_tokens
-            response_tokens = total_tokens - offset
-            if response_tokens < 0:
-                response_tokens = 0
-            sample_count = 1
-            boundary_min = offset
-            boundary_max = offset
-            response_tokens_min = response_tokens
-            response_tokens_max = response_tokens
-            total_offset = offset
-            total_response_tokens = response_tokens
-        for entry in iterator:
+        for entry in boundaries:
             offset = entry.assistant_offset
             total_tokens = entry.total_tokens
             response_tokens = total_tokens - offset
             if response_tokens < 0:
                 response_tokens = 0
-            if offset < boundary_min:
+            if sample_count == 0:
                 boundary_min = offset
-            if offset > boundary_max:
                 boundary_max = offset
-            if response_tokens < response_tokens_min:
                 response_tokens_min = response_tokens
-            if response_tokens > response_tokens_max:
                 response_tokens_max = response_tokens
+            else:
+                if offset < boundary_min:
+                    boundary_min = offset
+                if offset > boundary_max:
+                    boundary_max = offset
+                if response_tokens < response_tokens_min:
+                    response_tokens_min = response_tokens
+                if response_tokens > response_tokens_max:
+                    response_tokens_max = response_tokens
             total_offset += offset
             total_response_tokens += response_tokens
             sample_count += 1

@@ -15,6 +15,15 @@ When there is no truncation limit, trainable response-token bounds and totals ar
 - Compute only response-token bounds/totals in the hot loop.
 - After the loop, mirror those values into the trainable response-token aggregate fields.
 
+## 2026-07-14 follow-up: no-limit single-loop fast path
+
+The original seed-from-first-entry no-limit branch removed the per-row empty check,
+but local Linux probe runs showed the extra `iter(...)`/`next(...)` setup and split
+first-row path were slower for the registered tuple workload than a single tight
+loop with one predictable `sample_count == 0` branch. This follow-up keeps the
+truncation-limit branch unchanged and restores one no-limit aggregation loop that
+mirrors response-token bounds into trainable response-token fields after the pass.
+
 ## Validation
 
 The registered PR-scoped probe `response-only-boundary-slotted-records` covers this path and includes focused tests, changed-scope coverage, and `scripts/response_only_boundary_slots_probe.py` metrics.
