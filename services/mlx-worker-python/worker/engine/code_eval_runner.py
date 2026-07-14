@@ -779,8 +779,10 @@ def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:
         if read_size == 0:
             return "", size
         if size > read_limit:
-            os.lseek(fd, -read_limit, os.SEEK_END)
-        return os.read(fd, read_size).decode("utf-8", errors="replace").strip(), size
+            payload = os.pread(fd, read_size, size - read_size)
+        else:
+            payload = os.read(fd, read_size)
+        return payload.decode("utf-8", errors="replace").strip(), size
     except OSError:
         return "", 0
     finally:

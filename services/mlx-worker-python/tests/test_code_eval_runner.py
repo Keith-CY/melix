@@ -676,6 +676,20 @@ def test_read_limited_stdio_ignores_close_errors(
     assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
 
 
+def test_read_limited_stdio_reads_oversized_tail_without_lseek(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_path = tmp_path / "output.txt"
+    output_path.write_text("0123456789abcdef", encoding="utf-8")
+
+    def fail_lseek(*args: object, **kwargs: object) -> int:  # pragma: no cover - sentinel
+        raise AssertionError("oversized stdio tail reads should use positional pread")
+
+    monkeypatch.setattr(code_eval_runner.os, "lseek", fail_lseek)
+
+    assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
+
+
 def test_output_limit_reuses_limited_stdio_sizes(monkeypatch) -> None:
     monkeypatch.setattr(code_eval_runner.shutil, "which", lambda _: "/usr/bin/sandbox-exec")
     read_paths: list[str] = []
