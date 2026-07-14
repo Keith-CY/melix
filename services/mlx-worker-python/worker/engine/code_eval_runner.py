@@ -308,7 +308,7 @@ def _count_plain_assert_statement_lines(test_code: str) -> int:
                 return 0
             after_index = cursor + 6
             after = test_code[after_index] if after_index < end else "\n"
-            if after == "_" or after.isalnum():
+            if after == "_" or (after != " " and after != "\t" and after.isalnum()):
                 return 0
             count += 1
         if newline_index < 0:

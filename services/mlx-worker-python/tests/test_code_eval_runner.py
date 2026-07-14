@@ -589,6 +589,10 @@ def test_plain_assert_line_counter_rejects_identifier_prefix() -> None:
     assert code_eval_runner._count_plain_assert_statement_lines("assert_valid_name") == 0
 
 
+def test_plain_assert_line_counter_accepts_common_space_and_tab_boundaries() -> None:
+    assert code_eval_runner._count_plain_assert_statement_lines("assert one\nassert\ttwo") == 2
+
+
 def test_assert_prescan_handles_boundary_and_literal_edges() -> None:
     assert code_eval_runner._may_contain_assert_statement("# assert only in trailing comment") is False
     assert code_eval_runner._may_contain_assert_statement("reassert = 'value'") is False
