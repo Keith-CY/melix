@@ -534,6 +534,33 @@ def test_classify_startup_failure_reports_host_port_conflict(tmp_path: Path) -> 
     assert "Address already in use" in report.log_excerpt
 
 
+def test_classify_startup_failure_plain_log_path_skips_expanduser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    control_plane_stderr = tmp_path / "control-plane.stderr.log"
+    control_plane_stderr.write_text("fatal error: boot failed\n", encoding="utf-8")
+
+    def fail_expanduser(self: Path) -> Path:
+        raise AssertionError(  # pragma: no cover
+            f"plain startup log path should not expanduser: {self}"
+        )
+
+    monkeypatch.setattr(Path, "expanduser", fail_expanduser)
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+            "control_plane_stderr_path": str(control_plane_stderr),
+        },
+        error_text="handshake failed",
+    )
+
+    assert report.classification == "control_plane_crash"
+    assert report.log_excerpt == "fatal error: boot failed"
+
+
 def test_startup_failure_report_uses_slots_without_changing_dict_payload(tmp_path: Path) -> None:
     control_plane_stderr = tmp_path / "control-plane.stderr.log"
     control_plane_stderr.write_text("fatal error: boot failed\n", encoding="utf-8")
