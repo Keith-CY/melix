@@ -826,6 +826,9 @@ def test_quantized_tensor_metadata_prepass_probe_script_emits_metrics(
     assert metrics["tensor_names_access_peak_bytes_mean"] >= 0.0
     assert metrics["header_tensor_count"] == 18.0
     assert metrics["cross_shard_pair_count"] == 6.0
+    assert metrics["cross_shard_fixup_count"] == 12.0
+    assert metrics["cross_shard_fixup_elapsed_ms_mean"] >= 0.0
+    assert metrics["cross_shard_fixup_peak_bytes_mean"] >= 0.0
     assert metrics["matched_decision_count"] == 12.0
     assert metrics["pair_count"] == 6.0
     assert metrics["shard_count"] == 3.0
@@ -865,6 +868,7 @@ def test_quantized_tensor_metadata_prepass_probe_base_fallback(
     assert metrics["metadata_tensor_count"] == 12.0
     assert metrics["header_tensor_count"] == 12.0
     assert metrics["cross_shard_pair_count"] == 4.0
+    assert metrics["cross_shard_fixup_count"] == 8.0
     assert metrics["matched_decision_count"] == 8.0
     assert metrics["high_precision_decision_count"] == 6.0
     assert probe_script["main"]() == 0
