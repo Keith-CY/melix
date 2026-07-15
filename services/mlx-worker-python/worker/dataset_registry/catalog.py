@@ -46,16 +46,19 @@ _DEFAULT_CONFIG_FIRST_PARTS = frozenset(
 _JSON_LIMITED_PREVIEW_CHUNK_CHARS = 16 * 1024
 
 
-def _is_supported_dataset_file_name(name: str) -> bool:
+def _is_supported_dataset_file_name(
+    name: str,
+    supported_suffixes: Mapping[str, str] = _SUPPORTED_DATASET_SUFFIXES,
+) -> bool:
     dot_index = name.rfind(".")
     if dot_index <= 0 or dot_index == len(name) - 1:
         return False
     suffix = name[dot_index:]
-    if suffix in _SUPPORTED_DATASET_SUFFIXES:
+    if suffix in supported_suffixes:
         return True
     if suffix.islower():
         return False
-    return suffix.lower() in _SUPPORTED_DATASET_SUFFIXES
+    return suffix.lower() in supported_suffixes
 
 
 @dataclass(frozen=True, slots=True)
