@@ -30,6 +30,9 @@ _DIFF_PARSER_ACCEPTS_BYTES = True
 _EMPTY_CHANGED_LINES: frozenset[int] = frozenset()
 _DENSE_CHANGED_LINE_SCAN_THRESHOLD = 32
 _SPARSE_SOURCE_LINE_SCAN_THRESHOLD = 8
+_ALLOWLIST_CACHE_MISS = object()
+_ALLOWLIST_LAST_RAW = ""
+_ALLOWLIST_LAST_RESULT: frozenset[str] | None | object = _ALLOWLIST_CACHE_MISS
 
 
 def _is_diff_file_marker(line: str) -> bool:
@@ -175,8 +178,15 @@ def _coverage_path_allowlist_from_raw(raw_value: str) -> frozenset[str] | None:
 
 
 def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
+    global _ALLOWLIST_LAST_RAW, _ALLOWLIST_LAST_RESULT
+
     raw_value = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "").strip()
-    return _coverage_path_allowlist_from_raw(raw_value)
+    if raw_value == _ALLOWLIST_LAST_RAW and _ALLOWLIST_LAST_RESULT is not _ALLOWLIST_CACHE_MISS:
+        return _ALLOWLIST_LAST_RESULT  # type: ignore[return-value]
+    allowlist = _coverage_path_allowlist_from_raw(raw_value)
+    _ALLOWLIST_LAST_RAW = raw_value
+    _ALLOWLIST_LAST_RESULT = allowlist
+    return allowlist
 
 
 def _filter_coverage_paths(paths: list[str], allowlist: frozenset[str] | None) -> list[str]:

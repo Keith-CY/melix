@@ -60,6 +60,13 @@ SINGLETON_PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_singleton_
 @pytest.fixture(autouse=True)
 def clear_probe_coverage_path_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", raising=False)
+    changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
+    setattr(changed_scope_coverage, "_ALLOWLIST_LAST_RAW", "")
+    setattr(
+        changed_scope_coverage,
+        "_ALLOWLIST_LAST_RESULT",
+        changed_scope_coverage._ALLOWLIST_CACHE_MISS,
+    )
 
 
 def test_parse_changed_lines_handles_multiple_files_and_hunks() -> None:
@@ -311,6 +318,28 @@ def test_coverage_path_allowlist_reuses_cached_raw_payload_parse(monkeypatch) ->
         return original_loads(*args, **kwargs)
 
     monkeypatch.setattr(changed_scope_coverage.json, "loads", counted_loads)
+    payload = '["direct.py", "context.py"]'
+
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": payload}
+    ) == {"direct.py", "context.py"}
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": payload}
+    ) == {"direct.py", "context.py"}
+    assert calls == 1
+
+
+def test_coverage_path_allowlist_reuses_last_raw_payload_without_lru_entry(monkeypatch) -> None:
+    changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
+    calls = 0
+    original_from_raw = changed_scope_coverage._coverage_path_allowlist_from_raw
+
+    def counted_from_raw(raw_value: str) -> frozenset[str] | None:
+        nonlocal calls
+        calls += 1
+        return original_from_raw(raw_value)
+
+    monkeypatch.setattr(changed_scope_coverage, "_coverage_path_allowlist_from_raw", counted_from_raw)
     payload = '["direct.py", "context.py"]'
 
     assert changed_scope_coverage._coverage_path_allowlist(
