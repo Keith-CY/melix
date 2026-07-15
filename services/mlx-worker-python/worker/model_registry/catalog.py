@@ -92,6 +92,7 @@ _GEMMA4_QAT_SIZE_NAMES = {
 _GEMMA4_QAT_DRAFT_COMPANION_RECOVERY_HINT = (
     "Download or select a compatible Gemma 4 QAT draft companion."
 )
+_JSON_LOADS = json.loads
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,7 +387,7 @@ def _load_json_dict_file(
                 return cached_payload
 
     try:
-        payload = json.loads(path.read_bytes())
+        payload = _JSON_LOADS(path.read_bytes())
     except (OSError, json.JSONDecodeError):
         payload = {}
 
