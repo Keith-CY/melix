@@ -5392,6 +5392,27 @@ def test_load_probe_registry_rejects_invalid_payloads(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="non-empty list"):
         load_probe_registry(invalid_metrics)
 
+    mixed_metrics = tmp_path / "mixed-metrics.json"
+    mixed_metrics.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "demo",
+                    "name": "Demo",
+                    "probe_impl": "command_json",
+                    "probe_command": "python3 -c \"import json; print(json.dumps({'elapsed_ms_mean': 1.0}))\"",
+                    "metrics": [
+                        "ignored",
+                        {"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"},
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    probes = load_probe_registry(mixed_metrics)
+    assert [metric.key for metric in probes[0].metrics] == ["elapsed_ms_mean"]
+
 
 def test_load_probe_registry_reuses_cached_payload_when_file_is_unchanged(
     monkeypatch: pytest.MonkeyPatch,
