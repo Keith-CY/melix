@@ -74,8 +74,9 @@ class DeterministicEmbeddingRuntime:
         if cycle_length:
             if cycle_length == 1:
                 vector = embed_text(backend, inputs[0], dimensions)
+                copy_vector = vector.copy
                 vectors = [vector]
-                vectors.extend(vector.copy() for _ in range(input_count - 1))
+                vectors.extend(copy_vector() for _ in range(input_count - 1))
                 return vectors
             for text in inputs[:cycle_length]:
                 vector = embed_text(backend, text, dimensions)
