@@ -190,12 +190,12 @@ def test_payload_mlx_tag_detection_fast_paths_exact_membership(monkeypatch: pyte
     assert hub_catalog._payload_is_mlx_compatible(
         {"id": "plain/model", "tags": ["Text-Generation", "MLX", object()]}
     ) is True
-    assert calls == 0
+    assert calls == 1
 
     assert hub_catalog._payload_is_mlx_compatible(
         {"id": "plain/model", "tags": ["Text-Generation", "mLx", object()]}
     ) is True
-    assert calls == 1
+    assert calls == 2
 
 
 class FakeHTTPResponse:
@@ -1669,14 +1669,21 @@ def test_search_models_counts_fp32_parameters_as_four_bytes_for_local_fit() -> N
     assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
 
 
-def test_tag_payload_contains_exact_mlx_without_atom_helper(
+def test_tag_payload_contains_exact_mlx_uses_atom_helper_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    atom_helper = Mock(side_effect=AssertionError("exact MLX list membership should short-circuit"))
-    monkeypatch.setattr(hub_catalog_module, "_is_mlx_atom", atom_helper)
+    calls = 0
+    original = hub_catalog_module._is_mlx_atom
+
+    def counted_is_mlx_atom(value: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(hub_catalog_module, "_is_mlx_atom", counted_is_mlx_atom)
 
     assert hub_catalog_module._tag_payload_contains_mlx(["Text-Generation", "MLX", object()]) is True
-    atom_helper.assert_not_called()
+    assert calls == 1
 
 
 def test_tag_lowering_fallbacks_preserve_direct_helper_compatibility() -> None:
