@@ -63,3 +63,16 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
   --head-repo "$PWD" \
   --output /tmp/startup-signals-tail-window-probe.json
 ```
+
+## Follow-up Slice: Direct Open Tail Reader
+
+The 2026-07-15 follow-up keeps the same registered probe and narrows to
+`_read_last_nonempty_line()`, which is called for each startup log inspected by
+`_log_excerpt()`. The tail reader now uses a module-local builtins `open` binding
+instead of `Path.open()`, preserving `Path` inputs, missing-file fallback, chunked
+backward scanning, and decode semantics while avoiding a bound-method lookup in
+the repeated log-tail hot path.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower tail/classification elapsed metrics, and
+if the PR-scoped CI probe completes successfully before merge.

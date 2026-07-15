@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
+from builtins import open as _OPEN
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -592,7 +593,7 @@ def _log_excerpt(*paths: object) -> str:
 
 
 def _read_last_nonempty_line(path: Path, *, chunk_size: int = 8192) -> str:
-    with path.open("rb") as handle:
+    with _OPEN(path, "rb") as handle:
         handle.seek(0, 2)
         line_start, payload_end = _seek_last_nonempty_line_bounds(handle, chunk_size=chunk_size)
         if payload_end == 0:
