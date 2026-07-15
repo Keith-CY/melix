@@ -1142,10 +1142,11 @@ class RequestStreamAssembler:
             return [self._with_token_count(deltas[0], token_count)]
 
         weights = [self._estimated_delta_token_count(delta) for delta in deltas]
-        if sum(weights) > token_count:
+        total_weight = sum(weights)
+        if total_weight > token_count:
             weights = self._compress_delta_token_counts(weights, token_count)
-        elif sum(weights) < token_count:
-            weights = self._distribute_extra_delta_tokens(deltas, weights, token_count - sum(weights))
+        elif total_weight < token_count:
+            weights = self._distribute_extra_delta_tokens(deltas, weights, token_count - total_weight)
 
         return [self._with_token_count(delta, count) for delta, count in zip(deltas, weights)]
 

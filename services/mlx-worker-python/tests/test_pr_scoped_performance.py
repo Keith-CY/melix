@@ -3936,6 +3936,7 @@ def test_stream_assembler_token_bytes_probe_script_emits_metrics(
 ) -> None:
     monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_BYTES_EVENTS", "8")
     monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_BYTES_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_ANNOTATION_ITERATIONS", "2")
 
     runpy.run_path(
         str(REPO_ROOT / "scripts/stream_assembler_token_bytes_probe.py"),
@@ -3954,6 +3955,10 @@ def test_stream_assembler_token_bytes_probe_script_emits_metrics(
     assert metrics["delta_token_count_speedup"] > 0
     assert metrics["delta_token_count_text_count"] == 4096.0
     assert metrics["delta_token_count_checksum"] > 0
+    assert metrics["token_count_annotation_ms_mean"] >= 0
+    assert metrics["token_count_annotation_iterations"] == 2.0
+    assert metrics["token_count_annotation_delta_count"] == 192.0
+    assert metrics["token_count_annotation_checksum"] > 0
 
 
 def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
