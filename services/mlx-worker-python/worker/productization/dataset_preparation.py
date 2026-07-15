@@ -1869,6 +1869,7 @@ def _append_rows_output_lengths(
     append = lengths.append
     len_ = len
     str_ = str
+    dict_ = dict
     output_length_total = 0
     for row in rows:
         if "completion" not in row:
@@ -1878,7 +1879,7 @@ def _append_rows_output_lengths(
                 continue
             total = 0
             for item in messages:
-                if type(item) is dict:
+                if type(item) is dict_:
                     content = item.get("content", "")
                 else:
                     try:
