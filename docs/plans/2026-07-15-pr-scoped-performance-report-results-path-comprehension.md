@@ -16,11 +16,16 @@ probe `pr-scoped-performance-report-results-scandir` in
 
 ## Optimization
 
-Keep the existing `os.scandir()` traversal and binary `json.loads()` parsing,
-but collect sorted JSON result paths directly from a list comprehension passed to
-`sorted(...)`. This removes the explicit temporary append binding and post-build
-in-place sort while preserving deterministic path order, ignored non-JSON files,
-missing-directory behavior, and dictionary-only payload loading.
+Keep the existing `os.scandir()` traversal and binary `json.loads()` parsing.
+The first slice collected sorted JSON result paths directly from a list
+comprehension passed to `sorted(...)`, removing the explicit temporary append
+binding and post-build in-place sort.
+
+This follow-up slice sorts the filtered `DirEntry` objects by `entry.name` and
+opens each entry through `entry.path`. That avoids building a separate list of
+full path strings before sorting while preserving deterministic result-name
+order, ignored non-JSON files, missing-directory behavior, and dictionary-only
+payload loading.
 
 ## Verification
 
