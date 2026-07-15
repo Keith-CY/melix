@@ -716,10 +716,16 @@ def _has_secret_redaction_marker(text: str) -> bool:
 
 
 def _has_private_text_line_marker(text: str) -> bool:
-    stripped = text.lstrip()
-    if not stripped:
+    if not text:
         return False
-    first = stripped[0]
+    first = text[0]
+    if first > " ":
+        stripped = text
+    else:
+        stripped = text.lstrip()
+        if not stripped:
+            return False
+        first = stripped[0]
     if first == "p" or first == "P":
         if len(stripped) < 2:
             return False

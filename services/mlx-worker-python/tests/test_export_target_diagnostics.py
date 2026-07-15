@@ -190,7 +190,9 @@ def test_export_target_diagnostics_identity_marker_fast_path_matches_markers(
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("plain runtime status", False),
+        ("ordinary runtime status", False),
+        ("", False),
+        ("   ", False),
         ("p", False),
         ("R", False),
         ("  prompt: private customer prompt", True),
