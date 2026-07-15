@@ -554,7 +554,9 @@ def _supported_scan_entry_records(
         name = entry.name
         if name <= after:
             continue
-        if name not in _README_NAMES and _is_supported_dataset_file_name(name):
+        is_readme = name in _README_NAMES
+        is_supported = False if is_readme else _is_supported_dataset_file_name(name)
+        if is_supported:
             try:
                 if entry.is_file(follow_symlinks=False):
                     yield name, entry.path, False, True
@@ -568,7 +570,7 @@ def _supported_scan_entry_records(
                 continue
         except OSError:
             continue
-        if name in _README_NAMES or not _is_supported_dataset_file_name(name):
+        if is_readme or not is_supported:
             continue
 
 
