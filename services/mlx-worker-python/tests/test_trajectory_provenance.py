@@ -943,6 +943,69 @@ def test_copy_json_dict_still_copies_nested_mutable_items() -> None:
     assert copied["components"][0] is not source["components"][0]
 
 
+def test_copy_trajectory_provenance_value_uses_bound_type_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {"reward_coverage_count": 1, "components": [{"name": "format"}]}
+    calls: list[object] = []
+
+    def tracked_type(value: object) -> type[object]:
+        calls.append(value)
+        return type(value)
+
+    monkeypatch.setattr(trajectory_provenance_module, "_TYPE", tracked_type)
+
+    copied = trajectory_provenance_module._copy_trajectory_provenance_value(source)
+
+    assert copied == source
+    assert copied is not source
+    assert copied["components"] is not source["components"]
+    assert calls[0] is source
+
+
+def test_copy_trajectory_provenance_value_fast_paths_component_dicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {
+        "name": "component-1",
+        "score": 0.75,
+        "passed": True,
+        "labels": ("agentic", "trajectory", "1"),
+    }
+
+    def fail_recursive_copy(value: object) -> object:  # pragma: no cover - regression guard
+        raise AssertionError(f"unexpected recursive component copy for {value!r}")
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        fail_recursive_copy,
+    )
+
+    copied = _copy_trajectory_provenance_value(source)
+
+    assert copied == source
+    assert copied is not source
+    assert copied["labels"] is source["labels"]
+    assert list(copied) == list(source)
+
+
+def test_copy_trajectory_provenance_value_component_fast_path_keeps_mutable_labels_isolated() -> None:
+    source = {
+        "name": "component-1",
+        "score": 0.75,
+        "passed": True,
+        "labels": ("agentic", ["mutable"]),
+    }
+
+    copied = _copy_trajectory_provenance_value(source)
+
+    assert copied == source
+    assert copied is not source
+    assert copied["labels"] is not source["labels"]
+    assert copied["labels"][1] is not source["labels"][1]
+
+
 def test_copy_trajectory_provenance_value_falls_back_for_custom_mutables() -> None:
     class CustomMutable:
         def __init__(self, value: int) -> None:
