@@ -115,16 +115,30 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
                     and _TYPE(passed) in _JSON_IMMUTABLE_TYPE_SET
                     and _TYPE(labels) is tuple
                 ):
-                    for label in labels:
-                        if _TYPE(label) not in _JSON_IMMUTABLE_TYPE_SET:
-                            break
+                    if len(labels) == 3:
+                        label_0, label_1, label_2 = labels
+                        if (
+                            _TYPE(label_0) in _JSON_IMMUTABLE_TYPE_SET
+                            and _TYPE(label_1) in _JSON_IMMUTABLE_TYPE_SET
+                            and _TYPE(label_2) in _JSON_IMMUTABLE_TYPE_SET
+                        ):
+                            return {
+                                "name": name,
+                                "score": score,
+                                "passed": passed,
+                                "labels": labels,
+                            }
                     else:
-                        return {
-                            "name": name,
-                            "score": score,
-                            "passed": passed,
-                            "labels": labels,
-                        }
+                        for label in labels:
+                            if _TYPE(label) not in _JSON_IMMUTABLE_TYPE_SET:
+                                break
+                        else:
+                            return {
+                                "name": name,
+                                "score": score,
+                                "passed": passed,
+                                "labels": labels,
+                            }
         return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
     if value_type is list:
         return _copy_json_list(value)
