@@ -496,16 +496,12 @@ def _is_mlx_atom(value: str) -> bool:
 def _tag_payload_contains_mlx(value: Any) -> bool:
     if type(value) is list:
         for item in value:
-            if type(item) is str and (
-                item == "MLX" or item == "mlx" or (len(item) == 3 and _is_mlx_atom(item))
-            ):
+            if type(item) is str and len(item) == 3 and _is_mlx_atom(item):
                 return True
         return False
     if isinstance(value, list):
         for item in value:
-            if isinstance(item, str) and (
-                item == "MLX" or item == "mlx" or (len(item) == 3 and _is_mlx_atom(item))
-            ):
+            if isinstance(item, str) and len(item) == 3 and _is_mlx_atom(item):
                 return True
         return False
     if isinstance(value, str):
@@ -563,9 +559,7 @@ def _base_models(value: Any) -> list[str]:
 
 
 def _repo_id_contains_mlx(repo_id: str) -> bool:
-    return "mlx" in repo_id or (
-        ("M" in repo_id or "L" in repo_id or "X" in repo_id) and "mlx" in repo_id.lower()
-    )
+    return "mlx" in repo_id.lower()
 
 
 def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
