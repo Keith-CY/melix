@@ -497,6 +497,19 @@ def test_scope_report_selects_trajectory_provenance_copy_elision_probe() -> None
     ]
 
 
+def test_trajectory_provenance_copy_elision_sidecar_speedups_are_informational() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "trajectory-provenance-copy-elision"
+    )
+    directions = {metric.key: metric.direction for metric in probe.metrics}
+
+    assert directions["speedup"] == "higher_is_better"
+    assert directions["scalar_list_speedup"] == "informational"
+    assert directions["scalar_dict_speedup"] == "informational"
+
+
 def test_scope_report_selects_native_mtp_loader_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,

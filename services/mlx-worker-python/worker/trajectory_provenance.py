@@ -44,7 +44,6 @@ TRAJECTORY_PROVENANCE_CSV_FIELDS = TRAJECTORY_PROVENANCE_FIELDS
 
 _JSON_IMMUTABLE_TYPES = (str, int, float, bool, type(None))
 _JSON_IMMUTABLE_TYPE_SET = frozenset(_JSON_IMMUTABLE_TYPES)
-_TRAJECTORY_COMPONENT_KEYS = ("name", "score", "passed", "labels")
 
 
 def _is_clean_manifest_text(value: Any) -> bool:
@@ -101,27 +100,31 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
     if value_type in _JSON_IMMUTABLE_TYPE_SET:
         return value
     if value_type is dict:
-        if len(value) == 4 and tuple(value) == _TRAJECTORY_COMPONENT_KEYS:
-            name = value["name"]
-            score = value["score"]
-            passed = value["passed"]
-            labels = value["labels"]
-            if (
-                _TYPE(name) in _JSON_IMMUTABLE_TYPE_SET
-                and _TYPE(score) in _JSON_IMMUTABLE_TYPE_SET
-                and _TYPE(passed) in _JSON_IMMUTABLE_TYPE_SET
-                and _TYPE(labels) is tuple
-            ):
-                for label in labels:
-                    if _TYPE(label) not in _JSON_IMMUTABLE_TYPE_SET:
-                        break
-                else:
-                    return {
-                        "name": name,
-                        "score": score,
-                        "passed": passed,
-                        "labels": labels,
-                    }
+        if len(value) == 4:
+            try:
+                name = value["name"]
+                score = value["score"]
+                passed = value["passed"]
+                labels = value["labels"]
+            except KeyError:
+                pass
+            else:
+                if (
+                    _TYPE(name) in _JSON_IMMUTABLE_TYPE_SET
+                    and _TYPE(score) in _JSON_IMMUTABLE_TYPE_SET
+                    and _TYPE(passed) in _JSON_IMMUTABLE_TYPE_SET
+                    and _TYPE(labels) is tuple
+                ):
+                    for label in labels:
+                        if _TYPE(label) not in _JSON_IMMUTABLE_TYPE_SET:
+                            break
+                    else:
+                        return {
+                            "name": name,
+                            "score": score,
+                            "passed": passed,
+                            "labels": labels,
+                        }
         return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
     if value_type is list:
         return _copy_json_list(value)
