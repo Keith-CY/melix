@@ -93,12 +93,15 @@ _FINDING_SEVERITY_METRIC_KEYS = {
     "evidence_gap": "closure_audit.evidence_gap_count",
     "deferred_work": "closure_audit.deferred_work_count",
 }
+_FINDING_SEVERITY_ZERO_METRICS = {
+    metric_key: 0.0 for metric_key in _FINDING_SEVERITY_METRIC_KEYS.values()
+}
 _UNRESOLVED_FINDING_SEVERITIES = frozenset(
     ("blocker", "evidence_gap", "deferred_work")
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ClosureAuditFinding:
     finding_id: str
     severity: str
@@ -122,7 +125,7 @@ class ClosureAuditFinding:
         return payload
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ClosureAuditReport:
     schema_version: str
     created_at_unix_ms: int
@@ -330,7 +333,7 @@ def build_closure_audit(
 def _finding_metrics_and_unresolved_summaries(
     ordered_findings: tuple[ClosureAuditFinding, ...],
 ) -> tuple[dict[str, float], list[str]]:
-    metrics = {metric_key: 0.0 for metric_key in _FINDING_SEVERITY_METRIC_KEYS.values()}
+    metrics = _FINDING_SEVERITY_ZERO_METRICS.copy()
     unresolved_findings: list[str] = []
     for finding in ordered_findings:
         metric_key = _FINDING_SEVERITY_METRIC_KEYS.get(finding.severity)

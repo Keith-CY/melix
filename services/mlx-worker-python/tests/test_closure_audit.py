@@ -10,6 +10,7 @@ import pytest
 from worker.productization import closure_audit as closure_audit_module
 from worker.productization.closure_audit import (
     ClosureAuditFinding,
+    ClosureAuditReport,
     build_closure_audit,
     render_closure_audit_json,
 )
@@ -38,6 +39,28 @@ def test_build_closure_audit_classifies_accepted_risk_and_deferred_work(
     emitted = render_closure_audit_json(report)
     assert emitted == render_closure_audit_json(report)
     assert json.loads(emitted) == payload
+
+
+def test_closure_audit_records_use_slots_without_instance_dict() -> None:
+    finding = ClosureAuditFinding(
+        finding_id="risk",
+        severity="accepted_risk",
+        category="scope_constraint",
+        summary="Risk summary",
+        evidence_sources=("docs/scope.md",),
+        probe_coverage=(),
+    )
+    report = ClosureAuditReport(
+        schema_version="melix.closure_audit.v1",
+        created_at_unix_ms=1,
+        repo_root="/tmp/repo",
+        findings=(finding,),
+        metrics={"closure_audit.accepted_risk_count": 1.0},
+        summary={"top_unresolved_findings": []},
+    )
+
+    assert hasattr(finding, "__dict__") is False
+    assert hasattr(report, "__dict__") is False
 
 
 def test_finding_metrics_and_unresolved_summaries_share_single_pass() -> None:
