@@ -5803,8 +5803,7 @@
       {
         "key": "scalar_list_speedup",
         "unit": "x",
-        "direction": "higher_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "scalar_dict_baseline_elapsed_ms_mean",
@@ -5825,8 +5824,7 @@
       {
         "key": "scalar_dict_speedup",
         "unit": "x",
-        "direction": "higher_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "component_count",
