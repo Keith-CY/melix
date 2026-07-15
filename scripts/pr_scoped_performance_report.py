@@ -24,16 +24,11 @@ from worker.productization.pr_scoped_performance import (  # noqa: E402
 
 def _load_results(results_dir: Path) -> list[dict[str, object]]:
     results: list[dict[str, object]] = []
-    result_paths: list[str] = []
-    result_paths_append = result_paths.append
     try:
         with os.scandir(results_dir) as entries:
-            for entry in entries:
-                if entry.name.endswith(".json"):
-                    result_paths_append(entry.path)
+            result_paths = sorted([entry.path for entry in entries if entry.name.endswith(".json")])
     except OSError:
         return []
-    result_paths.sort()
     results_append = results.append
     json_loads = json.loads
     open_file = _OPEN
