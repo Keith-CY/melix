@@ -576,7 +576,8 @@ def _log_excerpt(*paths: object) -> str:
     for path in paths:
         if not path:
             continue
-        resolved = Path(str(path)).expanduser()
+        path_text = str(path)
+        resolved = Path(path_text) if path_text[:1] != "~" else Path(path_text).expanduser()
         try:
             excerpt = _read_last_nonempty_line(resolved)
         except OSError:
