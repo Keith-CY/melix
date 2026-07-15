@@ -1161,13 +1161,14 @@ _DATASET_VERSION_LIST_STRING_SORT_KEY = itemgetter("created_at", "version_id")
 
 
 def _iter_dataset_version_manifest_paths(versions_root: Path) -> Iterable[str]:
+    scandir = os.scandir
+    manifest_suffix = "/dataset-version.json"
     try:
-        with os.scandir(versions_root) as entries:
+        with scandir(os.fspath(versions_root)) as entries:
             for entry in entries:
                 if not entry.is_dir(follow_symlinks=False):
                     continue
-                manifest_path = f"{entry.path}/dataset-version.json"
-                yield manifest_path
+                yield entry.path + manifest_suffix
     except OSError:
         return
 
