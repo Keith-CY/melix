@@ -247,6 +247,13 @@ target-relative resolution, file read, and source-line extension behavior, but
 avoids repeated protobuf attribute lookups for rows that enter the diagnostic
 source collection path.
 
+A follow-up 2026-07-15 private-line marker direct-text slice keeps the redaction
+contract unchanged while avoiding `lstrip()` on the common unindented runtime-log
+line path. `_has_private_text_line_marker()` now inspects the first character
+directly when it is already non-whitespace, and only falls back to the existing
+left-strip behavior for indented or blank lines. Prompt/response labels,
+case-insensitive branches, and private-preview redaction semantics stay the same.
+
 Focused verification:
 
 ```bash
