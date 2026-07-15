@@ -963,14 +963,22 @@ def test_copy_trajectory_provenance_value_uses_bound_type_dispatch(
     assert calls[0] is source
 
 
+@pytest.mark.parametrize(
+    "labels",
+    [
+        ("agentic", "trajectory", "1"),
+        ("agentic", "trajectory", "quality", "1"),
+    ],
+)
 def test_copy_trajectory_provenance_value_fast_paths_component_dicts(
+    labels: tuple[str, ...],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = {
         "name": "component-1",
         "score": 0.75,
         "passed": True,
-        "labels": ("agentic", "trajectory", "1"),
+        "labels": labels,
     }
 
     def fail_recursive_copy(value: object) -> object:  # pragma: no cover - regression guard

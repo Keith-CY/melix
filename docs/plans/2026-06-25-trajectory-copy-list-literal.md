@@ -88,3 +88,14 @@ with the same key order while safely reusing the immutable labels tuple; mutable
 labels or non-standard component shapes still fall back to the existing recursive
 copy path. The registered `trajectory-provenance-copy-elision` probe remains the
 local Linux and CI validation gate for this small Python-only slice.
+
+## 2026-07-15 follow-up: three-label component tuple fast path
+
+This follow-up remains limited to the component-dict fast path inside
+`worker.trajectory_provenance._copy_trajectory_provenance_value`. The registered
+probe fixture uses the common three-label component tuple shape, so this slice
+unrolls that exact scalar-label guard before falling back to the existing generic
+tuple scan for other scalar label counts. It preserves the same fresh-dict copy
+semantics, immutable-label tuple reuse, and mutable-label fallback behavior while
+reducing per-component iterator overhead in the registered
+`trajectory-provenance-copy-elision` probe.
