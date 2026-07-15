@@ -1007,7 +1007,8 @@ def _copy_untrusted_context_receipts(
 
 
 def _copy_json_like_value(value: Any) -> Any:
-    value_type = type(value)
+    value_type_of = type
+    value_type = value_type_of(value)
     if (
         value_type is str
         or value_type is int
@@ -1019,7 +1020,7 @@ def _copy_json_like_value(value: Any) -> Any:
     if value_type is dict:
         copied: dict[Any, Any] = {}
         for key, nested in value.items():
-            nested_type = type(nested)
+            nested_type = value_type_of(nested)
             if (
                 nested_type is str
                 or nested_type is int
@@ -1035,7 +1036,7 @@ def _copy_json_like_value(value: Any) -> Any:
         copied_list: list[Any] = []
         append = copied_list.append
         for item in value:
-            item_type = type(item)
+            item_type = value_type_of(item)
             if (
                 item_type is str
                 or item_type is int
@@ -1047,7 +1048,7 @@ def _copy_json_like_value(value: Any) -> Any:
             elif item_type is dict:
                 copied_item: dict[Any, Any] = {}
                 for key, nested in item.items():
-                    nested_type = type(nested)
+                    nested_type = value_type_of(nested)
                     if (
                         nested_type is str
                         or nested_type is int
