@@ -77,3 +77,14 @@ and nested-container fallback behavior while shaving a small amount of overhead
 from the scalar token-metrics copy path. The registered probe now reports
 `scalar_dict_*` metrics for the focused dict-copy micro path in addition to the
 existing full-provenance and scalar-list guardrails.
+
+## 2026-07-15 follow-up: component dict fast path
+
+This follow-up remains limited to `worker.trajectory_provenance._copy_trajectory_provenance_value`.
+The recursive copier now fast-paths the common exact trajectory quality component
+dictionary shape (`name`, `score`, `passed`, `labels`) when all values are JSON
+scalars and `labels` is a scalar tuple. The fast path returns a fresh plain dict
+with the same key order while safely reusing the immutable labels tuple; mutable
+labels or non-standard component shapes still fall back to the existing recursive
+copy path. The registered `trajectory-provenance-copy-elision` probe remains the
+local Linux and CI validation gate for this small Python-only slice.
