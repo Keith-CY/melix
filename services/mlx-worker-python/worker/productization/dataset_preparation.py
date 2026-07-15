@@ -1185,10 +1185,17 @@ def _iter_source_records(
         upload_cap_bytes=upload_cap_bytes,
         source_cap_bytes=source_cap_bytes,
     )
+    operator_failures_append = operator_failures.append
+    source_kind_for_path = _source_kind
+    read_source_text = _read_source_text
+    structured_records = _structured_records
+    normalize_line_endings = _normalize_line_endings
+    metadata_for_path = _metadata_for_path
+    record = _record
     for path in paths:
-        source_kind = _source_kind(path)
+        source_kind = source_kind_for_path(path)
         if source_kind is None:
-            operator_failures.append(
+            operator_failures_append(
                 {
                     "id": _failure_id("unsupported-source", path.name),
                     "code": "DATASET_INGEST_UNSUPPORTED_SOURCE",
@@ -1198,9 +1205,9 @@ def _iter_source_records(
                 }
             )
             continue
-        text = _read_source_text(path, cap_bytes=read_cap_bytes)
+        text = read_source_text(path, cap_bytes=read_cap_bytes)
         if not text or text.isspace():
-            operator_failures.append(
+            operator_failures_append(
                 {
                     "id": _failure_id("empty-source", path.name),
                     "code": "DATASET_INGEST_EMPTY_SOURCE",
@@ -1211,14 +1218,14 @@ def _iter_source_records(
             )
             continue
         if source_kind == "structured_data":
-            yield from _structured_records(path, text, operator_failures)
+            yield from structured_records(path, text, operator_failures)
         else:
-            normalized_text = _normalize_line_endings(text)
-            yield _record(
+            normalized_text = normalize_line_endings(text)
+            yield record(
                 path=path,
                 source_kind=source_kind,
                 text=normalized_text,
-                metadata=_metadata_for_path(path, source_kind),
+                metadata=metadata_for_path(path, source_kind),
                 normalized=True,
             )
 
