@@ -250,19 +250,18 @@ def _loader_family(
     *,
     runtime_name: str,
 ) -> str:
-    requested_family = (
-        str(getattr(request_policy, "loader_family", "") or "").strip()
-        if request_policy is not None
-        else ""
-    )
-    if requested_family:
-        return requested_family
+    if request_policy is not None:
+        requested_family = str(
+            getattr(request_policy, "loader_family", "") or ""
+        ).strip()
+        if requested_family:
+            return requested_family
+    if runtime_kind == "text":
+        return runtime_name or "mlx-lm"
     if runtime_kind == "vlm":
         return model_spec.ext.get("melix.vlm.backend_id", "").strip() or str(
             runtime_name or "mlx_vlm"
         )
-    if runtime_kind == "text":
-        return runtime_name or "mlx-lm"
     return runtime_name or runtime_kind
 
 

@@ -27,6 +27,12 @@ receives a fresh mutable `ModelLoadTrustPolicy` parsed from the cached bytes, so
 callers cannot mutate the cached template while hot repeated rejection paths avoid
 rebuilding identical protobuf fields one by one.
 
+This loader-family follow-up slice keeps the same registered probe and moves the
+common text/default path ahead of request-policy loader-family normalization. An
+explicit request loader family still takes precedence, while default text policy
+resolution now avoids the unused request lookup/coercion branch before returning
+the runtime name.
+
 ## Validation
 
 - Focused model-load trust tests cover default route-class behavior and add a

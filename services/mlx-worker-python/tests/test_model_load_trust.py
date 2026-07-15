@@ -343,6 +343,38 @@ def test_trust_policy_falls_back_to_vlm_loader_family_without_runtime_contract(t
     assert policy.loader_family == "mlx-vlm"
 
 
+def test_loader_family_text_default_bypasses_request_policy_lookup() -> None:
+    model = WorkerModelCatalog.dev_text_model()
+
+    assert (
+        model_load_trust_module._loader_family(
+            model,
+            None,
+            "text",
+            runtime_name="mlx-lm",
+        )
+        == "mlx-lm"
+    )
+    assert (
+        model_load_trust_module._loader_family(
+            model,
+            None,
+            "text",
+            runtime_name="",
+        )
+        == "mlx-lm"
+    )
+    assert (
+        model_load_trust_module._loader_family(
+            model,
+            common_pb2.ModelLoadTrustPolicy(loader_family=" custom-loader "),
+            "text",
+            runtime_name="mlx-lm",
+        )
+        == "custom-loader"
+    )
+
+
 def test_trust_policy_common_loader_fast_path_skips_normalized_membership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
