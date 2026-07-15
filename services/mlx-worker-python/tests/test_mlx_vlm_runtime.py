@@ -2456,6 +2456,48 @@ def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
     assert cross_shard_quantized_metadata_fixup_count(header_metadata) == 1
 
 
+def test_cross_shard_quantized_metadata_fixup_count_avoids_shard_dict_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = QuantizedTensorMetadata(
+        {
+            "language_model.layers.0.q_proj.weight": "model-00001.safetensors",
+            "language_model.layers.0.q_proj.scales": "model-00002.safetensors",
+            "language_model.layers.1.q_proj.weight": "model-00003.safetensors",
+            "language_model.layers.1.q_proj.scales": "model-00003.safetensors",
+            "language_model.layers.2.q_proj.weight": "model-00004.safetensors",
+        }
+    )
+
+    def fail_quantized_tensor_shards(
+        self: QuantizedTensorMetadata,
+        prefix: str,
+    ) -> dict[str, str]:  # pragma: no cover - regression guard
+        raise AssertionError(
+            "cross-shard counting should read the shard mapping directly, "
+            "not allocate a per-prefix shard dict"
+        )
+
+    monkeypatch.setattr(
+        QuantizedTensorMetadata,
+        "quantized_tensor_shards",
+        fail_quantized_tensor_shards,
+    )
+
+    assert cross_shard_quantized_metadata_fixup_count(metadata) == 1
+
+    scales_heavy_metadata = QuantizedTensorMetadata(
+        {
+            "language_model.layers.3.q_proj.scales": "model-00005.safetensors",
+            "language_model.layers.4.q_proj.weight": "model-00006.safetensors",
+            "language_model.layers.4.q_proj.scales": "model-00007.safetensors",
+            "language_model.layers.5.q_proj.scales": "model-00008.safetensors",
+        }
+    )
+
+    assert cross_shard_quantized_metadata_fixup_count(scales_heavy_metadata) == 1
+
+
 def test_quantized_tensor_metadata_reads_string_shard_paths_without_path_open(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

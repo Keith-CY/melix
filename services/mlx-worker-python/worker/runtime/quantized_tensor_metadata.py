@@ -171,19 +171,25 @@ def quantized_tensor_metadata_from_model_dir(
 def cross_shard_quantized_metadata_fixup_count(
     metadata: QuantizedTensorMetadata,
 ) -> int:
-    prefixes: set[str] = set()
-    for tensor_name in metadata.tensor_to_shard:
+    weights: dict[str, str] = {}
+    scales: dict[str, str] = {}
+    for tensor_name, shard_name in metadata.tensor_to_shard.items():
         if tensor_name.endswith(".weight"):
-            prefixes.add(tensor_name[: -len(".weight")])
+            weights[tensor_name[: -len(".weight")]] = shard_name
         elif tensor_name.endswith(".scales"):
-            prefixes.add(tensor_name[: -len(".scales")])
+            scales[tensor_name[: -len(".scales")]] = shard_name
 
-    count = 0
-    for prefix in prefixes:
-        shards = metadata.quantized_tensor_shards(prefix)
-        if shards.get("weight") and shards.get("scales") and shards["weight"] != shards["scales"]:
-            count += 1
-    return count
+    if len(weights) < len(scales):
+        return sum(
+            1
+            for prefix, weight_shard in weights.items()
+            if (scales_shard := scales.get(prefix, "")) and weight_shard != scales_shard
+        )
+    return sum(
+        1
+        for prefix, scales_shard in scales.items()
+        if (weight_shard := weights.get(prefix, "")) and weight_shard != scales_shard
+    )
 
 
 def quantized_scales_present(
