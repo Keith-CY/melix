@@ -214,15 +214,22 @@ def test_load_json_dict_file_reads_json_bytes_without_text_decode(
     target.write_bytes(b'{"model_type":"qwen3","library_name":"mlx"}\n')
     json_cache: dict[Path, tuple[int, int, dict[str, object]]] = {}
     read_bytes_calls: list[Path] = []
+    loads_calls: list[bytes] = []
     original_read_bytes = Path.read_bytes
+    original_loads = catalog_module._JSON_LOADS
 
     def tracking_read_bytes(self: Path) -> bytes:
         if self == target:
             read_bytes_calls.append(self)
         return original_read_bytes(self)
 
+    def tracking_loads(payload: bytes):
+        loads_calls.append(payload)
+        return original_loads(payload)
+
     monkeypatch.setattr(Path, "read_text", pytest.fail)
     monkeypatch.setattr(Path, "read_bytes", tracking_read_bytes)
+    monkeypatch.setattr(catalog_module, "_JSON_LOADS", tracking_loads)
 
     assert _load_json_dict_file(target, json_cache=json_cache) == {
         "model_type": "qwen3",
@@ -233,6 +240,7 @@ def test_load_json_dict_file_reads_json_bytes_without_text_decode(
         "library_name": "mlx",
     }
     assert read_bytes_calls == [target]
+    assert loads_calls == [b'{"model_type":"qwen3","library_name":"mlx"}\n']
 
 
 
