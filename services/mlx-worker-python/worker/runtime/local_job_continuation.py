@@ -400,7 +400,17 @@ class LocalJobContinuationStore:
                 continue
             if reconciliation is None:
                 continue
-            receipt = candidate_receipt(reconciliation.record)
+            completion_evidence_available = reconciliation.receipt.get(
+                "completion_evidence_available"
+            )
+            receipt = candidate_receipt(
+                reconciliation.record,
+                evidence_available=(
+                    completion_evidence_available
+                    if type(completion_evidence_available) is bool
+                    else None
+                ),
+            )
             reason = receipt["reason"]
             # Scan-level follow-up state wins for ready or already-claimed records.
             # Otherwise surface reconciliation changes before the generic scan result.
@@ -1136,8 +1146,11 @@ def _receipt(
 
 def _followup_candidate_scan_receipt(
     record: LocalJobContinuationRecord,
+    *,
+    evidence_available: bool | None = None,
 ) -> dict[str, Any]:
-    evidence_available = _has_completion_evidence(record)
+    if evidence_available is None:
+        evidence_available = _has_completion_evidence(record)
     if record.followup_status in {"pending", "in_progress", "completed"}:
         return _receipt(
             job_id=record.job_id,

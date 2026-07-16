@@ -1396,6 +1396,46 @@ def test_store_scan_followup_candidates_reconciles_and_filters_ready_records(
     assert refusal_projection_store.load_record("projection-refusal") == refusal_ready
 
 
+def test_store_scan_followup_candidates_reuses_reconciliation_evidence_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evidence_checks = 0
+    original_has_completion_evidence = local_job_continuation_module._has_completion_evidence
+
+    def counting_has_completion_evidence(
+        record: LocalJobContinuationRecord,
+        live_evidence: LocalJobLiveEvidence | None = None,
+    ) -> bool:
+        nonlocal evidence_checks
+        evidence_checks += 1
+        return original_has_completion_evidence(record, live_evidence)
+
+    monkeypatch.setattr(
+        local_job_continuation_module,
+        "_has_completion_evidence",
+        counting_has_completion_evidence,
+    )
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(_record(job_id="live-done", status="completed", exit_status=0))
+
+    scan = store.scan_followup_candidates(
+        live_evidence_by_job_id={
+            "live-done": LocalJobLiveEvidence(
+                session_id="session-7",
+                active=False,
+                progress_excerpt="done",
+                artifact_paths=("/workspace/out/live-done.json",),
+            ),
+        }
+    )
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == ["live-done"]
+    assert scan.receipts[0]["reason"] == "followup_candidate_ready"
+    assert scan.receipts[0]["completion_evidence_available"] is True
+    assert evidence_checks == 1
+
+
 def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

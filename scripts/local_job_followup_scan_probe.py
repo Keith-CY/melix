@@ -263,6 +263,55 @@ def run_claim_copy_probe(*, iterations: int = 200_000, samples: int = 5) -> dict
     }
 
 
+def _measure_candidate_receipt_helper(
+    helper,
+    record: LocalJobContinuationRecord,
+    iterations: int,
+) -> float:
+    checksum = 0
+    started = time.perf_counter()
+    for _ in range(iterations):
+        receipt = helper(record)
+        checksum += receipt["completion_evidence_available"] is True
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    if checksum != iterations:  # pragma: no cover - probe corruption guard
+        raise RuntimeError(f"unexpected candidate-receipt checksum: {checksum}")
+    return elapsed_ms
+
+
+def _baseline_candidate_receipt(record: LocalJobContinuationRecord) -> dict[str, object]:
+    return target._followup_candidate_scan_receipt(record)
+
+
+def _optimized_candidate_receipt(record: LocalJobContinuationRecord) -> dict[str, object]:
+    return target._followup_candidate_scan_receipt(record, evidence_available=True)
+
+
+def run_candidate_receipt_probe(
+    *, iterations: int = 200_000, samples: int = 5
+) -> dict[str, float]:
+    record = _ready_record("job-candidate-receipt")
+    baseline_samples = [
+        _measure_candidate_receipt_helper(_baseline_candidate_receipt, record, iterations)
+        for _ in range(samples)
+    ]
+    optimized_samples = [
+        _measure_candidate_receipt_helper(_optimized_candidate_receipt, record, iterations)
+        for _ in range(samples)
+    ]
+    baseline_mean = statistics.fmean(baseline_samples)
+    optimized_mean = statistics.fmean(optimized_samples)
+    return {
+        "candidate_receipt_baseline_elapsed_ms_mean": round(baseline_mean, 6),
+        "candidate_receipt_optimized_elapsed_ms_mean": round(optimized_mean, 6),
+        "candidate_receipt_delta_ms": round(optimized_mean - baseline_mean, 6),
+        "candidate_receipt_speedup": round(baseline_mean / optimized_mean, 6)
+        if optimized_mean
+        else 0.0,
+        "candidate_receipt_iterations": float(iterations),
+    }
+
+
 def main() -> int:
     record_count = int(os.environ.get("MELIX_LOCAL_JOB_SCAN_RECORDS", "500"))
     samples = int(os.environ.get("MELIX_LOCAL_JOB_SCAN_SAMPLES", "5"))
@@ -275,6 +324,9 @@ def main() -> int:
     claim_copy_iterations = int(
         os.environ.get("MELIX_LOCAL_JOB_CLAIM_COPY_ITERATIONS", "200000")
     )
+    candidate_receipt_iterations = int(
+        os.environ.get("MELIX_LOCAL_JOB_CANDIDATE_RECEIPT_ITERATIONS", "200000")
+    )
     metrics = run_probe(record_count=record_count, samples=samples)
     metrics.update(
         run_projection_probe(record_count=projection_record_count, samples=samples)
@@ -284,6 +336,11 @@ def main() -> int:
     )
     metrics.update(
         run_claim_copy_probe(iterations=claim_copy_iterations, samples=samples)
+    )
+    metrics.update(
+        run_candidate_receipt_probe(
+            iterations=candidate_receipt_iterations, samples=samples
+        )
     )
     print(json.dumps(metrics, sort_keys=True))
     return 0
