@@ -1068,6 +1068,51 @@ def test_load_payload_file_reads_payload_bytes_without_text_decode() -> None:
         payload_path.read_text()
 
 
+def test_load_payload_file_uses_os_read_for_real_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_bytes(json.dumps({"runtime_status": "ok", "tests_total": 3}).encode("utf-8"))
+
+    def fail_read_bytes(self: Path) -> bytes:  # pragma: no cover
+        raise AssertionError("real payload path should use fd-based byte loading")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
+
+    assert code_eval_runner._load_payload_file(payload_path) == {
+        "runtime_status": "ok",
+        "tests_total": 3,
+    }
+
+
+def test_read_payload_file_bytes_handles_fallback_and_fd_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingFallbackPath:
+        def read_bytes(self) -> bytes:
+            raise OSError("fallback read failed")
+
+    assert (
+        code_eval_runner._read_payload_file_bytes(cast(Path, FailingFallbackPath()))
+        is None
+    )
+
+    monkeypatch.setattr(code_eval_runner.os, "open", lambda *_args, **_kwargs: 123)
+
+    def fail_fstat(_fd: int) -> object:
+        raise OSError("fstat failed")
+
+    monkeypatch.setattr(code_eval_runner.os, "fstat", fail_fstat)
+    assert code_eval_runner._read_payload_file_bytes(Path("payload.json")) is None
+
+    def fail_close(_fd: int) -> None:
+        raise OSError("close failed")
+
+    monkeypatch.setattr(code_eval_runner.os, "close", fail_close)
+    assert code_eval_runner._read_payload_file_bytes(Path("payload.json")) is None
+
+
 def test_load_payload_file_fast_path_extracts_runner_fields_without_metadata_parse() -> None:
     payload_path = _BytesOnlyPayloadPath(
         json.dumps(
