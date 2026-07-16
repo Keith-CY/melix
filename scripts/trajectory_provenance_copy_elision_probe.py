@@ -17,7 +17,10 @@ WORKER_ROOT = REPO_ROOT / "services" / "mlx-worker-python"
 if str(WORKER_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKER_ROOT))
 
-from worker.trajectory_provenance import normalize_trajectory_provenance  # noqa: E402
+from worker.trajectory_provenance import (  # noqa: E402
+    adapter_manifest_trajectory_provenance,
+    normalize_trajectory_provenance,
+)
 
 try:  # noqa: E402
     from worker.trajectory_provenance import (
@@ -102,6 +105,35 @@ def _baseline_normalize(provenance: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _baseline_adapter_manifest_trajectory_provenance(
+    provenance: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = _baseline_normalize(provenance)
+    if not normalized:
+        return {}
+    payload = dict(normalized)
+    payload["trajectory_provenance_field_count"] = len(normalized)
+    payload["trajectory_reward_policy_present"] = bool(
+        normalized.get("trajectory_reward_policy_id")
+    )
+    token_metrics = normalized.get("agentic_sft_token_metrics")
+    if isinstance(token_metrics, dict):
+        aliases: dict[str, Any] = {}
+        estimator = str(token_metrics.get("estimator", "")).strip()
+        if estimator:
+            aliases["training.agentic_sft.token_estimator"] = estimator
+        for source_key, alias_key in (
+            ("source_trace_count", "training.agentic_sft.source_trace_count"),
+            ("trace_tokens", "training.agentic_sft.trace_tokens"),
+            ("tool_call_tokens", "training.agentic_sft.tool_call_tokens"),
+            ("observation_tokens", "training.agentic_sft.observation_tokens"),
+            ("final_answer_tokens", "training.agentic_sft.final_answer_tokens"),
+        ):
+            aliases[alias_key] = int(token_metrics.get(source_key, 0) or 0)
+        payload.update(aliases)
+    return payload
+
+
 def _measure(func: Callable[[dict[str, Any]], dict[str, Any]], provenance: dict[str, Any], iterations: int) -> tuple[float, int]:
     tracemalloc.start()
     start = time.perf_counter()
@@ -165,6 +197,22 @@ def _measure_scalar_dict_copy(
     return elapsed_ms
 
 
+def _measure_adapter_manifest(
+    func: Callable[[dict[str, Any]], dict[str, Any]],
+    provenance: dict[str, Any],
+    iterations: int,
+) -> float:
+    start = time.perf_counter()
+    checksum = 0
+    for _ in range(iterations):
+        payload = func(provenance)
+        checksum += payload["training.agentic_sft.trace_tokens"]
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    if checksum != provenance["agentic_sft_token_metrics"]["trace_tokens"] * iterations:
+        raise RuntimeError("adapter-manifest probe checksum mismatch")
+    return elapsed_ms
+
+
 def _mean(values: list[float]) -> float:
     return float(statistics.fmean(values)) if values else 0.0
 
@@ -183,6 +231,8 @@ def main() -> int:
     scalar_optimized_ms: list[float] = []
     scalar_dict_baseline_ms: list[float] = []
     scalar_dict_optimized_ms: list[float] = []
+    adapter_manifest_baseline_ms: list[float] = []
+    adapter_manifest_optimized_ms: list[float] = []
 
     copied = _copy_trajectory_provenance_value(provenance["trajectory_quality_metrics"])
     if copied is provenance["trajectory_quality_metrics"] or copied["components"] is provenance["trajectory_quality_metrics"]["components"]:
@@ -210,6 +260,20 @@ def main() -> int:
         scalar_dict_optimized_ms.append(
             _measure_scalar_dict_copy(_copy_json_dict, scalar_dict_values, iterations)
         )
+        adapter_manifest_baseline_ms.append(
+            _measure_adapter_manifest(
+                _baseline_adapter_manifest_trajectory_provenance,
+                provenance,
+                iterations,
+            )
+        )
+        adapter_manifest_optimized_ms.append(
+            _measure_adapter_manifest(
+                adapter_manifest_trajectory_provenance,
+                provenance,
+                iterations,
+            )
+        )
 
     baseline_mean = _mean(baseline_ms)
     optimized_mean = _mean(optimized_ms)
@@ -219,6 +283,8 @@ def main() -> int:
     scalar_optimized_mean = _mean(scalar_optimized_ms)
     scalar_dict_baseline_mean = _mean(scalar_dict_baseline_ms)
     scalar_dict_optimized_mean = _mean(scalar_dict_optimized_ms)
+    adapter_manifest_baseline_mean = _mean(adapter_manifest_baseline_ms)
+    adapter_manifest_optimized_mean = _mean(adapter_manifest_optimized_ms)
     result = {
         "baseline_elapsed_ms_mean": baseline_mean,
         "optimized_elapsed_ms_mean": optimized_mean,
@@ -239,6 +305,14 @@ def main() -> int:
         "scalar_dict_delta_ms": scalar_dict_optimized_mean - scalar_dict_baseline_mean,
         "scalar_dict_speedup": scalar_dict_baseline_mean / scalar_dict_optimized_mean
         if scalar_dict_optimized_mean > 0
+        else 0.0,
+        "adapter_manifest_baseline_elapsed_ms_mean": adapter_manifest_baseline_mean,
+        "adapter_manifest_elapsed_ms_mean": adapter_manifest_optimized_mean,
+        "adapter_manifest_delta_ms": adapter_manifest_optimized_mean
+        - adapter_manifest_baseline_mean,
+        "adapter_manifest_speedup": adapter_manifest_baseline_mean
+        / adapter_manifest_optimized_mean
+        if adapter_manifest_optimized_mean > 0
         else 0.0,
         "sample_count": float(samples),
         "iteration_count": float(iterations),

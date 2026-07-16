@@ -13,6 +13,7 @@ _PATH_READ_BYTES = Path.read_bytes
 _OPEN = _builtin_open
 _OS_FSPATH = os.fspath
 _STR = str
+_INT = int
 _TYPE = type
 
 
@@ -573,16 +574,42 @@ def alignment_metrics_trajectory_provenance(
 
 
 def _agentic_sft_token_metric_aliases(metrics: Mapping[str, Any]) -> dict[str, Any]:
-    aliases: dict[str, Any] = {}
-    estimator = str(metrics.get("estimator", "")).strip()
+    metrics_get = metrics.get
+    int_value = _INT
+    estimator = _STR(metrics_get("estimator", "")).strip()
     if estimator:
-        aliases["training.agentic_sft.token_estimator"] = estimator
-    for source_key, alias_key in (
-        ("source_trace_count", "training.agentic_sft.source_trace_count"),
-        ("trace_tokens", "training.agentic_sft.trace_tokens"),
-        ("tool_call_tokens", "training.agentic_sft.tool_call_tokens"),
-        ("observation_tokens", "training.agentic_sft.observation_tokens"),
-        ("final_answer_tokens", "training.agentic_sft.final_answer_tokens"),
-    ):
-        aliases[alias_key] = int(metrics.get(source_key, 0) or 0)
-    return aliases
+        return {
+            "training.agentic_sft.token_estimator": estimator,
+            "training.agentic_sft.source_trace_count": int_value(
+                metrics_get("source_trace_count", 0) or 0
+            ),
+            "training.agentic_sft.trace_tokens": int_value(
+                metrics_get("trace_tokens", 0) or 0
+            ),
+            "training.agentic_sft.tool_call_tokens": int_value(
+                metrics_get("tool_call_tokens", 0) or 0
+            ),
+            "training.agentic_sft.observation_tokens": int_value(
+                metrics_get("observation_tokens", 0) or 0
+            ),
+            "training.agentic_sft.final_answer_tokens": int_value(
+                metrics_get("final_answer_tokens", 0) or 0
+            ),
+        }
+    return {
+        "training.agentic_sft.source_trace_count": int_value(
+            metrics_get("source_trace_count", 0) or 0
+        ),
+        "training.agentic_sft.trace_tokens": int_value(
+            metrics_get("trace_tokens", 0) or 0
+        ),
+        "training.agentic_sft.tool_call_tokens": int_value(
+            metrics_get("tool_call_tokens", 0) or 0
+        ),
+        "training.agentic_sft.observation_tokens": int_value(
+            metrics_get("observation_tokens", 0) or 0
+        ),
+        "training.agentic_sft.final_answer_tokens": int_value(
+            metrics_get("final_answer_tokens", 0) or 0
+        ),
+    }

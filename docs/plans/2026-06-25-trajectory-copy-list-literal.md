@@ -110,3 +110,15 @@ exact shape; six-key non-token dictionaries and nested mutable values still use
 the existing fallback path so copy isolation stays unchanged outside the token
 metrics fixture. The registered `trajectory-provenance-copy-elision` probe remains
 the local Linux and CI validation gate for this small Python-only slice.
+
+## 2026-07-16 follow-up: adapter token metric alias literal fast path
+
+This follow-up remains limited to `adapter_manifest_trajectory_provenance(...)`
+token metric alias materialization in `worker.trajectory_provenance`. The
+`agentic_sft_token_metrics` alias helper now binds the metrics getter and integer
+coercion once, then emits the common alias payload with direct dict literals
+instead of allocating and iterating over a per-call source-to-alias tuple. Alias
+key order, estimator trimming/omission, and zero defaults stay unchanged. The
+registered `trajectory-provenance-copy-elision` probe now reports
+`adapter_manifest_*` sidecar metrics for this focused alias path while continuing
+to gate the broader provenance copy behavior locally and in CI.
