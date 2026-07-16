@@ -995,6 +995,48 @@ def test_copy_json_dict_falls_back_for_six_key_non_token_metrics() -> None:
     assert list(copied) == list(source)
 
 
+def test_adapter_manifest_trajectory_provenance_emits_ordered_token_metric_aliases() -> None:
+    payload = adapter_manifest_trajectory_provenance(
+        {
+            "trajectory_dataset_id": "agentic-snapshot",
+            "agentic_sft_token_metrics": {
+                "estimator": " fixture-tokenizer ",
+                "source_trace_count": "64",
+                "trace_tokens": 2368,
+                "tool_call_tokens": 704,
+                "observation_tokens": 832,
+                "final_answer_tokens": 320,
+            },
+        }
+    )
+
+    alias_keys = [key for key in payload if key.startswith("training.agentic_sft.")]
+    assert alias_keys == [
+        "training.agentic_sft.token_estimator",
+        "training.agentic_sft.source_trace_count",
+        "training.agentic_sft.trace_tokens",
+        "training.agentic_sft.tool_call_tokens",
+        "training.agentic_sft.observation_tokens",
+        "training.agentic_sft.final_answer_tokens",
+    ]
+    assert payload["training.agentic_sft.token_estimator"] == "fixture-tokenizer"
+    assert payload["training.agentic_sft.source_trace_count"] == 64
+
+
+def test_adapter_manifest_trajectory_provenance_omits_blank_token_estimator() -> None:
+    payload = adapter_manifest_trajectory_provenance(
+        {
+            "trajectory_dataset_id": "agentic-snapshot",
+            "agentic_sft_token_metrics": {"estimator": "", "trace_tokens": 12},
+        }
+    )
+
+    assert "training.agentic_sft.token_estimator" not in payload
+    assert payload["training.agentic_sft.source_trace_count"] == 0
+    assert payload["training.agentic_sft.trace_tokens"] == 12
+    assert payload["training.agentic_sft.tool_call_tokens"] == 0
+
+
 def test_copy_json_dict_still_copies_nested_mutable_items() -> None:
     source = {"reward_coverage_count": 1, "components": [{"name": "format"}]}
 

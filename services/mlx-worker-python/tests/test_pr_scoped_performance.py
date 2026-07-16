@@ -508,6 +508,7 @@ def test_trajectory_provenance_copy_elision_sidecar_speedups_are_informational()
     assert directions["speedup"] == "higher_is_better"
     assert directions["scalar_list_speedup"] == "informational"
     assert directions["scalar_dict_speedup"] == "informational"
+    assert directions["adapter_manifest_speedup"] == "informational"
 
 
 def test_scope_report_selects_native_mtp_loader_probe() -> None:
@@ -758,6 +759,9 @@ def test_trajectory_provenance_copy_elision_probe_script_emits_metrics(
     assert metrics["scalar_dict_baseline_elapsed_ms_mean"] >= 0.0
     assert metrics["scalar_dict_elapsed_ms_mean"] >= 0.0
     assert metrics["scalar_dict_speedup"] >= 0.0
+    assert metrics["adapter_manifest_baseline_elapsed_ms_mean"] >= 0.0
+    assert metrics["adapter_manifest_elapsed_ms_mean"] >= 0.0
+    assert metrics["adapter_manifest_speedup"] >= 0.0
 
 
 def test_trajectory_manifest_json_load_probe_script_emits_metrics(
