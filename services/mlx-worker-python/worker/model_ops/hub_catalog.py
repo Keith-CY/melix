@@ -889,26 +889,24 @@ def _size_hint_from_marked_text(text: str) -> int:
 
 
 def _direct_size_hint_from_text(text: str) -> int:
-    if len(text) >= 4 and text[-3].isspace():
-        unit_suffix = ord(text[-1])
-        if unit_suffix == 66 or unit_suffix == 98:  # B or b
-            unit_initial = ord(text[-2])
-            if unit_initial == 77 or unit_initial == 109:  # M or m
-                multiplier = _SIZE_HINT_MB
-            elif unit_initial == 71 or unit_initial == 103:  # G or g
-                multiplier = _SIZE_HINT_GB
-            elif unit_initial == 75 or unit_initial == 107:  # K or k
-                multiplier = _SIZE_HINT_KB
-            else:
-                multiplier = 0
-            if multiplier:
-                value_text = text[:-3]
-                if value_text.isdecimal():
-                    return int(value_text) * multiplier
-                try:
-                    return int(float(value_text) * multiplier)
-                except ValueError:
-                    return 0
+    if len(text) >= 4:
+        unit_suffix = text[-3:]
+        if unit_suffix == " MB" or unit_suffix == " mb":
+            multiplier = _SIZE_HINT_MB
+        elif unit_suffix == " GB" or unit_suffix == " gb":
+            multiplier = _SIZE_HINT_GB
+        elif unit_suffix == " KB" or unit_suffix == " kb":
+            multiplier = _SIZE_HINT_KB
+        else:
+            multiplier = 0
+        if multiplier:
+            value_text = text[:-3]
+            if value_text.isdecimal():
+                return int(value_text) * multiplier
+            try:
+                return int(float(value_text) * multiplier)
+            except ValueError:
+                return 0
 
     text_length = len(text)
     value_start = 0

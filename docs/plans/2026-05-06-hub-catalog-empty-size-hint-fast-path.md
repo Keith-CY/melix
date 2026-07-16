@@ -25,6 +25,16 @@ The probe builds synthetic Hub catalog size-hint payloads and exercises both dir
 
 This follow-up Python-only slice stays within `services/mlx-worker-python/worker/model_ops/hub_catalog.py` and the registered `hub-catalog-size-hint-regex-precompile` PR-scoped probe. It narrows `_tag_payload_contains_mlx(...)` by checking exact `"MLX"` / `"mlx"` list membership before falling back to per-item mixed-case atom checks. Behavior remains identical for exact tags, mixed-case tags, list subclasses, string payloads, and non-string tag payloads; the slice only avoids repeated Python-level tag iteration in the common exact-tag Hub compatibility path.
 
+## 2026-07-16 common suffix direct size-hint slice
+
+This follow-up Python-only slice keeps the same registered probe and narrows to
+`_direct_size_hint_from_text(...)`. The common Hub model-size strings use a
+single ASCII space followed by uppercase or lowercase `KB` / `MB` / `GB`, so the
+direct parser now checks that three-character suffix first. Mixed-case units,
+tab-separated units, trailing whitespace, and other uncommon valid formats still
+fall through to the existing full scanner, preserving parser behavior while
+reducing work for the repeated common-card/readme size-hint probe workload.
+
 ## Success Metrics
 
 - Focused Hub catalog tests pass.
