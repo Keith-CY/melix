@@ -601,6 +601,16 @@ def test_assert_prescan_handles_boundary_and_literal_edges() -> None:
     assert code_eval_runner._may_contain_assert_statement("if ready: assert value") is True
 
 
+def test_assert_prescan_absent_token_uses_single_find_pass() -> None:
+    class NoContainsString(str):
+        def __contains__(self, value: object) -> bool:  # pragma: no cover - sentinel
+            raise AssertionError("assert prescan should avoid a separate containment scan")
+
+    test_code = NoContainsString("setup()\nrun_case(identity)\n")
+
+    assert code_eval_runner._may_contain_assert_statement(test_code) is False
+
+
 def test_count_tests_syntax_error_fallback_uses_nonblank_line_counter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
