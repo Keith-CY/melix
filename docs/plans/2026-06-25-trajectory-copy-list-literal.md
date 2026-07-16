@@ -99,3 +99,14 @@ tuple scan for other scalar label counts. It preserves the same fresh-dict copy
 semantics, immutable-label tuple reuse, and mutable-label fallback behavior while
 reducing per-component iterator overhead in the registered
 `trajectory-provenance-copy-elision` probe.
+
+## 2026-07-16 follow-up: token metrics dict literal fast path
+
+This follow-up remains limited to `worker.trajectory_provenance._copy_json_dict`.
+The common `agentic_sft_token_metrics` dictionary shape now uses an unrolled
+scalar guard and fresh dict literal before falling back to the generic flat-scalar
+dict copy. The fast path emits the canonical token-metrics field order for that
+exact shape; six-key non-token dictionaries and nested mutable values still use
+the existing fallback path so copy isolation stays unchanged outside the token
+metrics fixture. The registered `trajectory-provenance-copy-elision` probe remains
+the local Linux and CI validation gate for this small Python-only slice.

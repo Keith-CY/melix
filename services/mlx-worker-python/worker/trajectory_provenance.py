@@ -44,6 +44,14 @@ TRAJECTORY_PROVENANCE_CSV_FIELDS = TRAJECTORY_PROVENANCE_FIELDS
 
 _JSON_IMMUTABLE_TYPES = (str, int, float, bool, type(None))
 _JSON_IMMUTABLE_TYPE_SET = frozenset(_JSON_IMMUTABLE_TYPES)
+_AGENTIC_SFT_TOKEN_METRIC_FIELDS = (
+    "estimator",
+    "source_trace_count",
+    "trace_tokens",
+    "tool_call_tokens",
+    "observation_tokens",
+    "final_answer_tokens",
+)
 
 
 def _is_clean_manifest_text(value: Any) -> bool:
@@ -89,6 +97,33 @@ def _copy_json_tuple(value: tuple[Any, ...]) -> tuple[Any, ...]:
 def _copy_json_dict(value: dict[str, Any]) -> dict[str, Any]:
     immutable_types = _JSON_IMMUTABLE_TYPE_SET
     value_type = _TYPE
+    if len(value) == 6:
+        try:
+            estimator = value["estimator"]
+            source_trace_count = value["source_trace_count"]
+            trace_tokens = value["trace_tokens"]
+            tool_call_tokens = value["tool_call_tokens"]
+            observation_tokens = value["observation_tokens"]
+            final_answer_tokens = value["final_answer_tokens"]
+        except KeyError:
+            pass
+        else:
+            if (
+                value_type(estimator) in immutable_types
+                and value_type(source_trace_count) in immutable_types
+                and value_type(trace_tokens) in immutable_types
+                and value_type(tool_call_tokens) in immutable_types
+                and value_type(observation_tokens) in immutable_types
+                and value_type(final_answer_tokens) in immutable_types
+            ):
+                return {
+                    "estimator": estimator,
+                    "source_trace_count": source_trace_count,
+                    "trace_tokens": trace_tokens,
+                    "tool_call_tokens": tool_call_tokens,
+                    "observation_tokens": observation_tokens,
+                    "final_answer_tokens": final_answer_tokens,
+                }
     for item in value.values():
         if value_type(item) not in immutable_types:
             return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}

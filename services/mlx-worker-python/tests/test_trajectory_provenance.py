@@ -932,6 +932,69 @@ def test_copy_json_dict_uses_unpack_copy_for_flat_scalar_dicts(
     assert list(copied) == list(source)
 
 
+def test_copy_json_dict_fast_paths_ordered_agentic_sft_token_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": 64,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    def fail_recursive_copy(value: object) -> object:  # pragma: no cover - regression guard
+        raise AssertionError(f"unexpected recursive token metrics copy for {value!r}")
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        fail_recursive_copy,
+    )
+
+    copied = trajectory_provenance_module._copy_json_dict(source)
+
+    assert copied == source
+    assert copied is not source
+    assert type(copied) is dict
+    assert list(copied) == list(source)
+
+
+def test_copy_json_dict_normalizes_token_metric_order() -> None:
+    source = {
+        "trace_tokens": 2368,
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": 64,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    copied = trajectory_provenance_module._copy_json_dict(source)
+
+    assert copied == source
+    assert copied is not source
+    assert list(copied) == list(trajectory_provenance_module._AGENTIC_SFT_TOKEN_METRIC_FIELDS)
+
+
+def test_copy_json_dict_falls_back_for_six_key_non_token_metrics() -> None:
+    source = {
+        "trace_tokens": 12,
+        "tool_call_tokens": 3,
+        "observation_tokens": 4,
+        "final_answer_tokens": 5,
+        "passed": True,
+        "score": 0.75,
+    }
+
+    copied = trajectory_provenance_module._copy_json_dict(source)
+
+    assert copied == source
+    assert copied is not source
+    assert list(copied) == list(source)
+
+
 def test_copy_json_dict_still_copies_nested_mutable_items() -> None:
     source = {"reward_coverage_count": 1, "components": [{"name": "format"}]}
 
