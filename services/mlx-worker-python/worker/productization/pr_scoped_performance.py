@@ -2468,7 +2468,7 @@ def _coverage_paths_by_probe_id(
 ) -> dict[str, tuple[str, ...]]:
     if not changed_paths:
         return {}
-    exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
+    exact_path_to_probe_indexes, wildcard_glob_matchers, _wildcard_matcher_buckets = _probe_match_indexes(probes)
     selected_probe_indexes: frozenset[int] | None = None
     if selected_probe_ids is not None and len(selected_probe_ids) < len(probes):
         probe_id_to_index = _probe_id_to_index(probes)
@@ -2590,7 +2590,7 @@ def _match_probe_indexes_uncached(
     changed_paths: tuple[str, ...],
     changed_path_set: set[str] | frozenset[str],
 ) -> frozenset[int]:
-    exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
+    exact_path_to_probe_indexes, wildcard_glob_matchers, wildcard_matcher_buckets = _probe_match_indexes(probes)
     matched_probe_indexes: set[int] = set()
     matched_probe_indexes_update = matched_probe_indexes.update
     exact_path_to_probe_indexes_get = exact_path_to_probe_indexes.get
@@ -2598,12 +2598,15 @@ def _match_probe_indexes_uncached(
         matched_probe_indexes_update(exact_path_to_probe_indexes_get(path, ()))
     if not wildcard_glob_matchers:
         return frozenset(matched_probe_indexes)
+    unbucketed_matchers = wildcard_matcher_buckets.get("", ())
     for path in changed_paths:
-        for prefix, pattern, probe_indexes in wildcard_glob_matchers:
-            if prefix and not path.startswith(prefix):
-                continue
-            if pattern.match(path) is not None:
-                matched_probe_indexes_update(probe_indexes)
+        path_matchers = wildcard_matcher_buckets.get(_path_bucket_key(path), ())
+        for matchers in (unbucketed_matchers, path_matchers):
+            for prefix, pattern, probe_indexes in matchers:
+                if prefix and not path.startswith(prefix):
+                    continue
+                if pattern.match(path) is not None:
+                    matched_probe_indexes_update(probe_indexes)
     return frozenset(matched_probe_indexes)
 
 
@@ -2673,7 +2676,11 @@ def _probe_watch_glob_matchers(
 @lru_cache(maxsize=None)
 def _probe_match_indexes(
     probes: tuple[ProbeDefinition, ...],
-) -> tuple[dict[str, tuple[int, ...]], tuple[tuple[str, re.Pattern[str], tuple[int, ...]], ...]]:
+) -> tuple[
+    dict[str, tuple[int, ...]],
+    tuple[tuple[str, re.Pattern[str], tuple[int, ...]], ...],
+    dict[str, tuple[tuple[str, re.Pattern[str], tuple[int, ...]], ...]],
+]:
     exact_path_to_probe_indexes: dict[str, list[int]] = {}
     wildcard_glob_to_probe_indexes: dict[str, list[int]] = {}
     for probe_index, probe in enumerate(probes):
@@ -2686,10 +2693,31 @@ def _probe_match_indexes(
         (_glob_literal_prefix(glob), _compiled_glob_pattern(glob), tuple(probe_indexes))
         for glob, probe_indexes in wildcard_glob_to_probe_indexes.items()
     )
+    wildcard_matcher_bucket_lists: dict[str, list[tuple[str, re.Pattern[str], tuple[int, ...]]]] = {}
+    for matcher in wildcard_glob_matchers:
+        wildcard_matcher_bucket_lists.setdefault(_matcher_bucket_key(matcher[0]), []).append(matcher)
     return (
         {path: tuple(probe_indexes) for path, probe_indexes in exact_path_to_probe_indexes.items()},
         wildcard_glob_matchers,
+        {
+            bucket_key: tuple(matchers)
+            for bucket_key, matchers in wildcard_matcher_bucket_lists.items()
+        },
     )
+
+
+def _matcher_bucket_key(prefix: str) -> str:
+    slash_index = prefix.find("/")
+    if slash_index <= 0:
+        return ""
+    return prefix[: slash_index + 1]
+
+
+def _path_bucket_key(path: str) -> str:
+    slash_index = path.find("/")
+    if slash_index == -1:
+        return path
+    return path[: slash_index + 1]
 
 
 @lru_cache(maxsize=None)
