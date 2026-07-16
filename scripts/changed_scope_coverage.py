@@ -180,7 +180,10 @@ def _coverage_path_allowlist_from_raw(raw_value: str) -> frozenset[str] | None:
 def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
     global _ALLOWLIST_LAST_RAW, _ALLOWLIST_LAST_RESULT
 
-    raw_value = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "").strip()
+    raw_value = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "")
+    if raw_value == _ALLOWLIST_LAST_RAW and _ALLOWLIST_LAST_RESULT is not _ALLOWLIST_CACHE_MISS:
+        return _ALLOWLIST_LAST_RESULT  # type: ignore[return-value]
+    raw_value = raw_value.strip()
     if raw_value == _ALLOWLIST_LAST_RAW and _ALLOWLIST_LAST_RESULT is not _ALLOWLIST_CACHE_MISS:
         return _ALLOWLIST_LAST_RESULT  # type: ignore[return-value]
     allowlist = _coverage_path_allowlist_from_raw(raw_value)
