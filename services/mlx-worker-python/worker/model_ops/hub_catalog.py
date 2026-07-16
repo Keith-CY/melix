@@ -559,6 +559,8 @@ def _base_models(value: Any) -> list[str]:
 
 
 def _repo_id_contains_mlx(repo_id: str) -> bool:
+    if "mlx" in repo_id:
+        return True
     return "mlx" in repo_id.lower()
 
 
