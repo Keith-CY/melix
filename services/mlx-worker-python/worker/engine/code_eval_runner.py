@@ -540,6 +540,7 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
 def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object] | None:
     payload: dict[str, object] = {}
     field_value_start = _compact_json_field_value_start_for_token
+    reverse_field_value_start = _compact_json_field_value_start_for_token_reverse
     extract_int_and_end = _extract_json_int_field_value_and_end
     payload_startswith = payload_bytes.startswith
 
@@ -551,53 +552,57 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
         return None
     payload["failure_detail"] = ""
 
-    runtime_start = field_value_start(
+    timeout_start = reverse_field_value_start(
         payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"],
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"],
         start=failure_start + 2,
     )
-    if runtime_start is None or not payload_startswith(b'"ok"', runtime_start):
+    if timeout_start is None or not payload_startswith(b'"ok"', timeout_start):
         return None
-    payload["runtime_status"] = "ok"
 
-    test_start = field_value_start(
-        payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"],
-        start=runtime_start + 4,
-    )
-    if test_start is None or not payload_startswith(b'"passed"', test_start):
-        return None
-    payload["test_status"] = "passed"
-
-    passed_start = field_value_start(
-        payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"],
-        start=test_start + 8,
-    )
-    passed_result = extract_int_and_end(payload_bytes, passed_start)
-    if passed_result is None:
-        return None
-    tests_passed, passed_end = passed_result
-    payload["tests_passed"] = tests_passed
-
-    total_start = field_value_start(
+    total_start = reverse_field_value_start(
         payload_bytes,
         _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"],
-        start=passed_end,
+        start=failure_start + 2,
+        end=timeout_start,
     )
     total_result = extract_int_and_end(payload_bytes, total_start)
     if total_result is None:
         return None
-    tests_total, total_end = total_result
-    payload["tests_total"] = tests_total
+    tests_total, _total_end = total_result
 
-    timeout_start = field_value_start(
+    passed_start = reverse_field_value_start(
         payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"],
-        start=total_end,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"],
+        start=failure_start + 2,
+        end=total_start,
     )
-    if timeout_start is None or not payload_startswith(b'"ok"', timeout_start):
+    passed_result = extract_int_and_end(payload_bytes, passed_start)
+    if passed_result is None:
         return None
+    tests_passed, _passed_end = passed_result
+
+    test_start = reverse_field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"],
+        start=failure_start + 2,
+        end=passed_start,
+    )
+    if test_start is None or not payload_startswith(b'"passed"', test_start):
+        return None
+
+    runtime_start = reverse_field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"],
+        start=failure_start + 2,
+        end=test_start,
+    )
+    if runtime_start is None or not payload_startswith(b'"ok"', runtime_start):
+        return None
+    payload["runtime_status"] = "ok"
+    payload["test_status"] = "passed"
+    payload["tests_passed"] = tests_passed
+    payload["tests_total"] = tests_total
     payload["timeout_status"] = "ok"
 
     return payload
@@ -610,6 +615,26 @@ def _compact_json_field_value_start_for_token(
     start: int = 0,
 ) -> int | None:
     key_index = payload_bytes.find(key_token, start)
+    if key_index < 0:
+        return None
+    value_start = key_index + len(key_token) + 1
+    if (
+        value_start >= len(payload_bytes)
+        or payload_bytes[value_start - 1] != _ORD_COLON
+        or payload_bytes[value_start] in _JSON_PAYLOAD_WHITESPACE
+    ):
+        return _json_field_value_start_for_token(payload_bytes, key_token, start=key_index)
+    return value_start
+
+
+def _compact_json_field_value_start_for_token_reverse(
+    payload_bytes: bytes,
+    key_token: bytes,
+    *,
+    start: int = 0,
+    end: int | None = None,
+) -> int | None:
+    key_index = payload_bytes.rfind(key_token, start, len(payload_bytes) if end is None else end)
     if key_index < 0:
         return None
     value_start = key_index + len(key_token) + 1
