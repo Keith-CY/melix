@@ -3534,6 +3534,84 @@ def test_match_probe_indexes_skips_prefix_misses_before_regex(monkeypatch: pytes
     assert match_calls == []
 
 
+def test_match_probe_indexes_buckets_wildcards_by_top_level_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="services-probe",
+            name="Services probe",
+            runner="ubuntu-latest",
+            watch_globs=("services/mlx-worker-python/**/*.py",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+        ProbeDefinition(
+            probe_id="docs-probe",
+            name="Docs probe",
+            runner="ubuntu-latest",
+            watch_globs=("docs/**/*.md",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+        ProbeDefinition(
+            probe_id="unbucketed-probe",
+            name="Unbucketed probe",
+            runner="ubuntu-latest",
+            watch_globs=("*.md",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    regex_calls: list[str] = []
+    original_compile = pr_scoped_performance_module._compiled_glob_pattern
+
+    class TrackingPattern:
+        def __init__(self, glob: str) -> None:
+            self.glob = glob
+            self.pattern = original_compile(glob)
+
+        def match(self, path: str):
+            regex_calls.append(f"{self.glob}:{path}")
+            return self.pattern.match(path)
+
+    pr_scoped_performance_module._probe_match_indexes.cache_clear()
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_compiled_glob_pattern",
+        lambda glob: TrackingPattern(glob),
+    )
+    try:
+        matched = _match_probe_indexes(
+            changed_paths=(
+                "docs/notes/perf.md",
+                "README.md",
+                "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+            ),
+            probes=probes,
+        )
+    finally:
+        pr_scoped_performance_module._probe_match_indexes.cache_clear()
+
+    assert matched == {0, 1, 2}
+    assert regex_calls == [
+        "*.md:README.md",
+        "*.md:docs/notes/perf.md",
+        "docs/**/*.md:docs/notes/perf.md",
+        "*.md:services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+        "services/mlx-worker-python/**/*.py:services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+    ]
+
+
 def test_compiled_glob_pattern_reuses_cached_regex(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _compiled_glob_pattern("services/*.py") is _compiled_glob_pattern("services/*.py")
 
