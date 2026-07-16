@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import pytest
 
@@ -483,6 +484,26 @@ def test_tool_registry_empty_selection_reuses_cached_registry() -> None:
     assert selected.metrics().required_argument_count == 0
     assert registry.select(()) is selected
     assert registry.select([]) is selected
+
+
+def test_tool_registry_empty_selection_uses_direct_cache_slot() -> None:
+    registry = ToolRegistry(built_in_tool_registry().tools)
+    selected = registry.select([])
+
+    class LookupBlockedCache:
+        def get(
+            self,
+            key: tuple[str, ...],
+            default: ToolRegistry | None = None,
+        ) -> ToolRegistry | None:
+            raise AssertionError("empty selection should use the direct cache slot")
+
+    registry._selection_cache = cast(
+        dict[tuple[str, ...], ToolRegistry], LookupBlockedCache()
+    )
+
+    assert registry.select([]) is selected
+    assert registry.select(()) is selected
 
 
 def test_tool_registry_empty_selection_openai_tools_returns_fresh_empty_list() -> None:
