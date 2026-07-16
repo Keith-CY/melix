@@ -16,6 +16,19 @@ The affected path is covered by the registered PR-scoped probe `model-load-confi
 
 The 2026-06-21 follow-up keeps the same registered probe and narrows the optimization to the hot plain-path config lookup. `_read_model_config()` now checks the first and last character of the already-normalized non-empty `model_path` instead of calling `str.startswith("~")` and `str.endswith(os.sep)`. This preserves tilde expansion and plain-path behavior while shaving method-call overhead from repeated trust-policy resolution.
 
+## Follow-up Slice: Stat-Size Bounded Read
+
+The 2026-07-16 follow-up keeps the same registered probe and narrows to
+`_read_model_config_for_stat()`. The caller already passes the `config.json`
+size from the preceding `os.stat()` cache key, so the config reader now calls
+`handle.read(size)` instead of an unbounded `handle.read()`. This preserves the
+same bytes payload and JSON semantics for regular files while giving the file
+object an exact read bound in the hot custom-loader detection path.
+
+Success is accepted only if the focused registry tests, changed-scope coverage,
+and local registered Linux probe pass with lower elapsed-time metrics, and if
+the PR-scoped CI probe completes successfully before merge.
+
 ## Verification Plan
 
 1. Add regression coverage proving the trust policy reads `config.json` through `Path.read_bytes()` without using `Path.read_text()`.

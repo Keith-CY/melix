@@ -469,11 +469,11 @@ def _read_model_config_for_stat(
     mtime_ns: int,
     size: int,
 ) -> dict[str, Any] | None:
-    _ = (mtime_ns, size)
+    _ = mtime_ns
     loads = _JSON_LOADS
     try:
         with _OPEN(config_path, "rb") as handle:
-            payload = loads(handle.read())
+            payload = loads(handle.read(size))
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
