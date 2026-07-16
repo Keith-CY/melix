@@ -407,9 +407,8 @@ def _load_payload_file(
     _loads=_JSON_LOADS,
     _decode_error=_JSON_DECODE_ERROR,
 ) -> dict[str, object] | None:
-    try:
-        payload_bytes = payload_path.read_bytes()
-    except OSError:
+    payload_bytes = _read_payload_file_bytes(payload_path)
+    if payload_bytes is None:
         return None
 
     fast_payload = _extract_code_eval_payload_fields(payload_bytes)
@@ -423,6 +422,29 @@ def _load_payload_file(
     if not isinstance(payload, dict):
         return None
     return payload
+
+
+def _read_payload_file_bytes(payload_path: Path) -> bytes | None:
+    try:
+        fd = os.open(payload_path, os.O_RDONLY)
+    except TypeError:
+        try:
+            return payload_path.read_bytes()
+        except OSError:
+            return None
+    except OSError:
+        return None
+
+    try:
+        size = os.fstat(fd).st_size
+        return os.read(fd, size) if size > 0 else b""
+    except OSError:
+        return None
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 _CODE_EVAL_PAYLOAD_STRING_KEYS = (
