@@ -221,12 +221,12 @@ def test_dataset_quality_output_lengths_preserve_completion_and_message_semantic
     assert _sample_output_length_stats([], []) == (0, 0, 0)
 
 
-def test_dataset_quality_completion_rows_use_key_presence_fast_path() -> None:
+def test_dataset_quality_completion_rows_use_get_sentinel_fast_path() -> None:
     class CompletionRow(dict[str, object]):
-        def get(self, key: str, default: object = None) -> object:  # pragma: no cover - regression tripwire
+        def __contains__(self, key: object) -> bool:  # pragma: no cover - regression tripwire
             if key == "completion":  # pragma: no cover - regression tripwire
-                raise AssertionError("completion rows should not call get() for completion")
-            return super().get(key, default)  # pragma: no cover - regression tripwire
+                raise AssertionError("completion rows should use a sentinel get() instead of a contains lookup")
+            return super().__contains__(key)  # pragma: no cover - regression tripwire
 
     row = CompletionRow({"completion": "hello"})
 
