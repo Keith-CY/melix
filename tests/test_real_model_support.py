@@ -11,6 +11,7 @@ from scripts.real_model_support import (
     REAL_SMALL_TEXT_MODEL_PATH_ENV,
     _descriptor_runtime_model_path,
     _has_recognized_model_weight_files,
+    _huggingface_cache_root,
     build_runtime_model_preflight,
     resolve_real_small_text_model_path,
     resolve_real_small_text_model_source,
@@ -219,6 +220,26 @@ def test_real_small_model_source_ignores_missing_managed_candidate(tmp_path: Pat
     assert source.live is True
     assert source.local_model_path == ""
     assert source.source_resolution_mode == "hub_fallback"
+
+def test_hf_cache_root_skips_resolve_for_absolute_home(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+
+    def fail_resolve(self: Path, *args, **kwargs):  # pragma: no cover - regression sentinel
+        raise AssertionError("absolute HOME should not need cache-root Path.resolve()")
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+
+    assert _huggingface_cache_root({"HOME": str(home)}) == (
+        home / ".cache" / "huggingface" / "hub"
+    )
+
+
+def test_hf_cache_root_preserves_relative_home_resolution(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    assert _huggingface_cache_root({"HOME": "relative-home"}) == (
+        tmp_path / "relative-home" / ".cache" / "huggingface" / "hub"
+    )
 
 
 def test_real_small_model_source_can_fallback_to_last_hf_cache_snapshot(tmp_path: Path) -> None:

@@ -342,7 +342,10 @@ def _hf_cache_snapshot_fallback(
 
 def _huggingface_cache_root(environment: Mapping[str, str]) -> Path:
     home = environment.get("HOME", "").strip()
-    return ((Path(home).expanduser() if home else Path.home()) / ".cache" / "huggingface" / "hub").resolve()
+    home_path = Path(home).expanduser() if home else Path.home()
+    if not home_path.is_absolute():
+        home_path = home_path.resolve()
+    return home_path / ".cache" / "huggingface" / "hub"
 
 
 def _resolved_optional_path(path: str) -> Path | None:
