@@ -963,6 +963,28 @@ def _direct_size_hint_from_text(text: str) -> int:
         return 0
 
 
+def _direct_size_hint_from_span(text: str, value_start: int, value_end: int) -> int:
+    if value_end - value_start >= 4:
+        unit_suffix = text[value_end - 3 : value_end]
+        if unit_suffix == " MB" or unit_suffix == " mb":
+            multiplier = _SIZE_HINT_MB
+        elif unit_suffix == " GB" or unit_suffix == " gb":
+            multiplier = _SIZE_HINT_GB
+        elif unit_suffix == " KB" or unit_suffix == " kb":
+            multiplier = _SIZE_HINT_KB
+        else:
+            multiplier = 0
+        if multiplier:
+            value_text = text[value_start : value_end - 3]
+            if value_text.isdecimal():
+                return int(value_text) * multiplier
+            try:
+                return int(float(value_text) * multiplier)
+            except ValueError:
+                return 0
+    return _direct_size_hint_from_text(text[value_start:value_end])
+
+
 @lru_cache(maxsize=4096)
 def _direct_card_size_hint_from_text(text: str) -> int:
     stripped_text = _strip_model_size_label(text)
@@ -974,7 +996,7 @@ def _direct_card_size_hint_from_text(text: str) -> int:
 def _direct_size_hint_from_line(text: str, value_start: int) -> int:
     newline_index = text.find("\n", value_start)
     if newline_index >= 0:
-        return _direct_size_hint_from_text(text[value_start:newline_index])
+        return _direct_size_hint_from_span(text, value_start, newline_index)
     value_end = value_start
     text_length = len(text)
     while (
@@ -982,7 +1004,7 @@ def _direct_size_hint_from_line(text: str, value_start: int) -> int:
         and text[value_end] not in "\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
     ):
         value_end += 1
-    return _direct_size_hint_from_text(text[value_start:value_end])
+    return _direct_size_hint_from_span(text, value_start, value_end)
 
 
 @lru_cache(maxsize=4096)

@@ -46,3 +46,15 @@ reducing work for the repeated common-card/readme size-hint probe workload.
 1. Add module-level byte multiplier constants and reuse them in `_direct_size_hint_from_text(...)` and `_size_hint_from_text(...)`.
 2. Extend the focused size-hint parser test to cover KB, fractional MB, and GB through both direct and regex-backed paths.
 3. Run focused pytest, changed-scope coverage, `git diff --check`, and the registered local probe before opening the PR.
+
+## 2026-07-16 explicit-line span parse slice
+
+This follow-up Python-only slice keeps the same registered probe and narrows to
+`_direct_size_hint_from_line(...)`, which is used by direct explicit Hub card and
+README size-hint parsing. Common size-hint lines that end with a single ASCII
+space plus `KB` / `MB` / `GB` or lowercase variants now parse directly from the
+original text span instead of slicing a temporary line string before delegating to
+`_direct_size_hint_from_text(...)`. Uncommon valid formats, including mixed-case
+units, tab-separated units, and trailing whitespace, still fall back to the
+existing full direct parser on the sliced span, preserving behavior while reducing
+allocation and dispatch in the repeated registered size-hint workload.

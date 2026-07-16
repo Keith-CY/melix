@@ -626,7 +626,26 @@ def test_direct_size_hint_fast_paths_cache_repeated_text(monkeypatch: pytest.Mon
             == 12 * MB
         )
 
-    assert direct_calls == ["12 MB", "12 MB"]
+    assert direct_calls == ["12 MB"]
+
+
+def test_direct_size_hint_from_line_parses_common_suffix_without_text_slice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    direct_parser = Mock(side_effect=AssertionError("common suffix should parse from span"))
+    monkeypatch.setattr(hub_catalog_module, "_direct_size_hint_from_text", direct_parser)
+
+    text = "README\nModel size: 1.5 GB\nother metadata"
+
+    assert hub_catalog_module._direct_size_hint_from_line(text, text.index("1.5")) == int(
+        1.5 * GB
+    )
+    separator_text = "prefix Model size: 2 MB\u2028other metadata"
+    assert hub_catalog_module._direct_size_hint_from_line(
+        separator_text, separator_text.index("2")
+    ) == 2 * MB
+    assert hub_catalog_module._direct_size_hint_from_span("bad MB", 0, 6) == 0
+    direct_parser.assert_not_called()
 
 
 def test_weight_or_config_file_preserves_case_insensitive_matches() -> None:
