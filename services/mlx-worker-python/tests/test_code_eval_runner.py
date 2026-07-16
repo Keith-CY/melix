@@ -1164,6 +1164,42 @@ def test_sorted_payload_fast_path_uses_compact_field_offsets(monkeypatch) -> Non
     }
 
 
+def test_sorted_payload_fast_path_skips_reserved_metadata_keys() -> None:
+    payload_path = _BytesOnlyPayloadPath(
+        json.dumps(
+            {
+                "failure_detail": "",
+                "metadata": {
+                    "runtime_status": "metadata should not be parsed",
+                    "test_status": "metadata should not be parsed",
+                    "tests_passed": "metadata should not be parsed",
+                    "tests_total": "metadata should not be parsed",
+                    "timeout_status": "metadata should not be parsed",
+                },
+                "runtime_status": "ok",
+                "test_status": "passed",
+                "tests_passed": 7,
+                "tests_total": 7,
+                "timeout_status": "ok",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+
+    def fail_json_loads(*_args: object, **_kwargs: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError("reserved metadata keys should not force full JSON parsing")
+
+    assert code_eval_runner._load_payload_file(cast(Path, payload_path), _loads=fail_json_loads) == {
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 7,
+        "tests_total": 7,
+        "timeout_status": "ok",
+    }
+
+
 def test_compact_field_offset_fallback_reuses_known_key_index(monkeypatch) -> None:
     payload = b'{"metadata":{},"runtime_status" : "ok"}'
     key_token = b'"runtime_status"'

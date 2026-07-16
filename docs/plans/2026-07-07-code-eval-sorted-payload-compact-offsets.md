@@ -6,11 +6,12 @@ This Python-only performance slice is limited to the sorted code-evaluation
 payload fast path in `services/mlx-worker-python/worker/engine/code_eval_runner.py`.
 
 The existing sorted payload extractor already avoids full `json.loads(...)` for
-successful probe-style payloads. This slice keeps the same accepted field order
-and values, emits runner payload JSON without insignificant whitespace, and lets
-compact JSON (`"key":value` with no whitespace after the colon) compute each
-field value offset directly before falling back to the existing
-whitespace-tolerant scanner for non-compact payloads.
+successful probe-style payloads. This follow-up slice keeps the same accepted
+field order and values, then searches the compact sorted suffix from the end of
+the payload back toward the already-validated `failure_detail` prefix. That keeps
+large `metadata` objects and any metadata-owned reserved key names off the hot
+path before falling back to the existing whitespace-tolerant scanner for
+non-compact payloads.
 
 ## Registered probe
 
