@@ -268,6 +268,7 @@ class ToolIndexMetadata:
 
 class ToolRegistry:
     __slots__ = (
+        "_empty_selection",
         "_metrics",
         "_openai_tool_templates",
         "_parser",
@@ -313,6 +314,7 @@ class ToolRegistry:
             for tool in self._tools
         )
         self._selection_cache: dict[tuple[str, ...], ToolRegistry] = {}
+        self._empty_selection: ToolRegistry | None = None
         self._worker_tool_config_bytes: bytes = b""
         self._worker_tool_config_template: common_pb2.ToolConfig | None = None
         self._metrics = ToolRegistryMetrics(
@@ -333,7 +335,7 @@ class ToolRegistry:
 
     def select(self, names: list[str] | tuple[str, ...]) -> ToolRegistry:
         if not names:
-            cached_selection = self._selection_cache.get(())
+            cached_selection = self._empty_selection
             if cached_selection is not None:
                 return cached_selection
             selection = ToolRegistry(
@@ -343,6 +345,7 @@ class ToolRegistry:
                 parser=self._parser,
                 parser_contract_version=self._parser_contract_version,
             )
+            self._empty_selection = selection
             self._selection_cache[()] = selection
             return selection
         if isinstance(names, tuple):
