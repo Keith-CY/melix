@@ -351,6 +351,28 @@ def test_coverage_path_allowlist_reuses_last_raw_payload_without_lru_entry(monke
     assert calls == 1
 
 
+def test_coverage_path_allowlist_normalizes_whitespace_before_cache_compare(monkeypatch) -> None:
+    changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
+    calls = 0
+    original_from_raw = changed_scope_coverage._coverage_path_allowlist_from_raw
+
+    def counted_from_raw(raw_value: str) -> frozenset[str] | None:
+        nonlocal calls
+        calls += 1
+        return original_from_raw(raw_value)
+
+    monkeypatch.setattr(changed_scope_coverage, "_coverage_path_allowlist_from_raw", counted_from_raw)
+    payload = '["direct.py", "context.py"]'
+
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": payload}
+    ) == {"direct.py", "context.py"}
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": f"  {payload}\n"}
+    ) == {"direct.py", "context.py"}
+    assert calls == 1
+
+
 def test_coverage_path_allowlist_escaped_string_uses_json_decoder() -> None:
     assert changed_scope_coverage._coverage_path_allowlist(
         {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": '"pkg/\\u0064irect.py"'}
