@@ -7697,7 +7697,7 @@ def test_report_script_preserves_exact_sticky_comment_body_on_markdown_stdout(
 
 
 
-def test_scope_cli_loads_changed_files_with_binary_json_read(
+def test_scope_cli_loads_changed_files_reuses_path_input_for_binary_json_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -7711,7 +7711,14 @@ def test_scope_cli_loads_changed_files_with_binary_json_read(
 
     monkeypatch.setattr(scope_script["Path"], "read_text", fail_read_text)
 
+    loaded = load_changed_files(changed_files_path)
+    assert loaded == ["scripts/pr_scoped_performance_scope.py"]
+    loaded.append("mutated.py")
     assert load_changed_files(changed_files_path) == ["scripts/pr_scoped_performance_scope.py"]
+    assert load_changed_files(str(changed_files_path)) == ["scripts/pr_scoped_performance_scope.py"]
+
+    changed_files_path.write_text(json.dumps(["scripts/changed_scope_coverage.py", "extra.py"]), encoding="utf-8")
+    assert load_changed_files(changed_files_path) == ["scripts/changed_scope_coverage.py", "extra.py"]
 
     changed_files_path.write_text(json.dumps({"not": "a list"}), encoding="utf-8")
     with pytest.raises(ValueError, match="changed files payload must be a JSON list"):
