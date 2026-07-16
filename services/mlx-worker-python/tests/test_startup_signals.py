@@ -640,6 +640,26 @@ def test_classify_startup_failure_skips_log_reads_when_error_text_reports_port_c
     assert read_paths == []
 
 
+def test_classify_startup_failure_skips_log_excerpt_helpers_without_log_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_log_excerpt(*paths: object) -> str:  # pragma: no cover - sentinel
+        raise AssertionError(f"empty startup manifests should not scan log paths: {paths}")
+
+    monkeypatch.setattr(startup_signals_module, "_log_excerpt", fail_log_excerpt)
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+        },
+        error_text="handshake timed out",
+    )
+
+    assert report.classification == "startup_hang"
+    assert report.log_excerpt == "handshake timed out"
+
+
 def test_classify_startup_failure_skips_logs_when_error_text_reports_control_plane_crash(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

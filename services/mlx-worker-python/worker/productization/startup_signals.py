@@ -480,9 +480,34 @@ def classify_startup_failure(
         classification = ""
 
     if not classification:
+        control_plane_stderr_path = manifest.get("control_plane_stderr_path")
+        control_plane_stdout_path = manifest.get("control_plane_stdout_path")
+        python_worker_stderr_path = manifest.get("python_worker_stderr_path")
+        swift_text_worker_stderr_path = manifest.get("swift_text_worker_stderr_path")
+        python_worker_stdout_path = manifest.get("python_worker_stdout_path")
+        swift_text_worker_stdout_path = manifest.get("swift_text_worker_stdout_path")
+
+        if not (
+            control_plane_stderr_path
+            or control_plane_stdout_path
+            or python_worker_stderr_path
+            or swift_text_worker_stderr_path
+            or python_worker_stdout_path
+            or swift_text_worker_stdout_path
+        ):
+            return StartupFailureReport(
+                classification="startup_hang",
+                summary=f"Melix startup timed out before {ready_probe_url} became ready.",
+                detail="Inspect the startup logs and ready probe path to determine whether the services hung or never launched.",
+                http_port=http_port,
+                ready_probe_url=ready_probe_url,
+                primary_log_path=primary_log_path,
+                log_excerpt=error_text,
+            )
+
         control_plane_excerpt = _log_excerpt(
-            manifest.get("control_plane_stderr_path"),
-            manifest.get("control_plane_stdout_path"),
+            control_plane_stderr_path,
+            control_plane_stdout_path,
         )
 
         if control_plane_excerpt:
@@ -512,10 +537,10 @@ def classify_startup_failure(
             classification = "control_plane_crash"
         else:
             worker_excerpt_value = _log_excerpt(
-                manifest.get("python_worker_stderr_path"),
-                manifest.get("swift_text_worker_stderr_path"),
-                manifest.get("python_worker_stdout_path"),
-                manifest.get("swift_text_worker_stdout_path"),
+                python_worker_stderr_path,
+                swift_text_worker_stderr_path,
+                python_worker_stdout_path,
+                swift_text_worker_stdout_path,
             )
             worker_crash = bool(worker_excerpt_value) and _contains_any(
                 worker_excerpt_value.lower(), CRASH_PATTERNS
