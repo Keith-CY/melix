@@ -496,12 +496,16 @@ def _is_mlx_atom(value: str) -> bool:
 def _tag_payload_contains_mlx(value: Any) -> bool:
     if type(value) is list:
         for item in value:
-            if type(item) is str and len(item) == 3 and _is_mlx_atom(item):
+            if type(item) is str and len(item) == 3 and (
+                item == "mlx" or item == "MLX" or _is_mlx_atom(item)
+            ):
                 return True
         return False
     if isinstance(value, list):
         for item in value:
-            if isinstance(item, str) and len(item) == 3 and _is_mlx_atom(item):
+            if isinstance(item, str) and len(item) == 3 and (
+                item == "mlx" or item == "MLX" or _is_mlx_atom(item)
+            ):
                 return True
         return False
     if isinstance(value, str):
