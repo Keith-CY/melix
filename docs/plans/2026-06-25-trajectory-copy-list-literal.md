@@ -122,3 +122,15 @@ key order, estimator trimming/omission, and zero defaults stay unchanged. The
 registered `trajectory-provenance-copy-elision` probe now reports
 `adapter_manifest_*` sidecar metrics for this focused alias path while continuing
 to gate the broader provenance copy behavior locally and in CI.
+
+## 2026-07-17 follow-up: component list-label fast path
+
+This follow-up remains limited to the component-dict fast path inside
+`worker.trajectory_provenance._copy_trajectory_provenance_value`. Some trajectory
+quality component payloads carry `labels` as a mutable JSON list rather than the
+previously optimized immutable tuple. The copier now detects exact-list labels
+with scalar members, returns a fresh list copy for isolation, and continues to
+fall back to the recursive path for nested mutable labels. The registered
+`trajectory-provenance-copy-elision` probe fixture now uses list labels so the
+PR-scoped probe validates this list-label component path locally on Linux and in
+CI.

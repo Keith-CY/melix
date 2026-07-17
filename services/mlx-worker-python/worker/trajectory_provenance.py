@@ -149,6 +149,36 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
                     _TYPE(name) in _JSON_IMMUTABLE_TYPE_SET
                     and _TYPE(score) in _JSON_IMMUTABLE_TYPE_SET
                     and _TYPE(passed) in _JSON_IMMUTABLE_TYPE_SET
+                    and _TYPE(labels) is list
+                ):
+                    if len(labels) == 3:
+                        label_0, label_1, label_2 = labels
+                        if (
+                            _TYPE(label_0) in _JSON_IMMUTABLE_TYPE_SET
+                            and _TYPE(label_1) in _JSON_IMMUTABLE_TYPE_SET
+                            and _TYPE(label_2) in _JSON_IMMUTABLE_TYPE_SET
+                        ):
+                            return {
+                                "name": name,
+                                "score": score,
+                                "passed": passed,
+                                "labels": [label_0, label_1, label_2],
+                            }
+                    else:
+                        for label in labels:
+                            if _TYPE(label) not in _JSON_IMMUTABLE_TYPE_SET:
+                                break
+                        else:
+                            return {
+                                "name": name,
+                                "score": score,
+                                "passed": passed,
+                                "labels": [*labels],
+                            }
+                if (
+                    _TYPE(name) in _JSON_IMMUTABLE_TYPE_SET
+                    and _TYPE(score) in _JSON_IMMUTABLE_TYPE_SET
+                    and _TYPE(passed) in _JSON_IMMUTABLE_TYPE_SET
                     and _TYPE(labels) is tuple
                 ):
                     if len(labels) == 3:

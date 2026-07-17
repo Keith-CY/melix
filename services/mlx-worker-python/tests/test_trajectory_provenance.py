@@ -694,6 +694,54 @@ def test_load_snapshot_manifest_reuses_fresh_json_nested_fields(
     }
 
 
+def test_copy_trajectory_component_with_list_labels_uses_fast_isolated_copy() -> None:
+    component = {
+        "name": "format",
+        "score": 1.0,
+        "passed": True,
+        "labels": ["agentic", "trajectory", "quality"],
+    }
+
+    copied = _copy_trajectory_provenance_value(component)
+
+    assert copied == component
+    assert copied is not component
+    assert copied["labels"] is not component["labels"]
+    component["labels"].append("mutated")
+    assert copied["labels"] == ["agentic", "trajectory", "quality"]
+
+
+def test_copy_trajectory_component_with_variable_list_labels_uses_fast_copy() -> None:
+    component = {
+        "name": "format",
+        "score": 1.0,
+        "passed": True,
+        "labels": ["agentic", "trajectory"],
+    }
+
+    copied = _copy_trajectory_provenance_value(component)
+
+    assert copied == component
+    assert copied is not component
+    assert copied["labels"] is not component["labels"]
+
+
+def test_copy_trajectory_component_with_nested_list_labels_falls_back() -> None:
+    component = {
+        "name": "format",
+        "score": 1.0,
+        "passed": True,
+        "labels": ["agentic", ["nested"]],
+    }
+
+    copied = _copy_trajectory_provenance_value(component)
+
+    assert copied == component
+    assert copied is not component
+    assert copied["labels"] is not component["labels"]
+    assert copied["labels"][1] is not component["labels"][1]
+
+
 def test_normalize_trajectory_provenance_copies_nested_json_containers() -> None:
     source = {
         "trajectory_quality_metrics": {
