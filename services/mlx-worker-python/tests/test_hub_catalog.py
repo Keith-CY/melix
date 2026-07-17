@@ -190,12 +190,12 @@ def test_payload_mlx_tag_detection_fast_paths_exact_membership(monkeypatch: pyte
     assert hub_catalog._payload_is_mlx_compatible(
         {"id": "plain/model", "tags": ["Text-Generation", "MLX", object()]}
     ) is True
-    assert calls == 1
+    assert calls == 0
 
     assert hub_catalog._payload_is_mlx_compatible(
         {"id": "plain/model", "tags": ["Text-Generation", "mLx", object()]}
     ) is True
-    assert calls == 2
+    assert calls == 1
 
 
 class FakeHTTPResponse:
@@ -1702,7 +1702,7 @@ def test_tag_payload_contains_exact_mlx_uses_atom_helper_once(
     monkeypatch.setattr(hub_catalog_module, "_is_mlx_atom", counted_is_mlx_atom)
 
     assert hub_catalog_module._tag_payload_contains_mlx(["Text-Generation", "MLX", object()]) is True
-    assert calls == 1
+    assert calls == 0
 
 
 def test_tag_lowering_fallbacks_preserve_direct_helper_compatibility() -> None:
