@@ -4646,6 +4646,18 @@
         "warn_pct": 0.0
       },
       {
+        "key": "fallback_native_parser_calls_per_request",
+        "unit": "calls/request",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "fallback_native_parser_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
         "key": "elapsed_ms_mean",
         "unit": "ms",
         "direction": "informational"

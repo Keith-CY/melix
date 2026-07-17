@@ -127,25 +127,27 @@ def _apply_prompt_context_receipt_metrics(parser_metrics: dict[str, str], execut
             parser_metrics[metric_key] = value
 
 
-def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str, str]:
+def _runtime_token_event_has_native_parser_metrics(event: RuntimeTokenEvent | None) -> bool:
     if event is None:
-        return {}
-
-    t = event.native_mtp_timings
-    has_timing = t is not None
-    has_speculative = (
-        event.speculative_accepted_tokens is not None
+        return False
+    return (
+        event.native_mtp_timings is not None
+        or event.speculative_accepted_tokens is not None
         or event.speculative_rejected_tokens is not None
         or event.speculative_target_verify_ms is not None
-    )
-    has_cache = (
-        event.cache_hit_mode is not None
+        or event.cache_hit_mode is not None
         or event.recovered_prefix_tokens is not None
         or event.cache_fallback_reason is not None
         or event.cache_hit_tier is not None
     )
-    if not has_timing and not has_speculative and not has_cache:
+
+
+def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str, str]:
+    if not _runtime_token_event_has_native_parser_metrics(event):
         return {}
+
+    assert event is not None
+    t = event.native_mtp_timings
 
     metric_fields: dict[str, object] = {
         "text_batch_generator_speculative_cycle_count_total": t.cycle_count if t else None,
@@ -662,7 +664,7 @@ class EngineCore:
                 parser_metrics = {key: _parser_metric_text(value) for key, value in assembled.metrics.items()}
             else:
                 parser_metrics = {}
-            if last_token_event is not None:
+            if _runtime_token_event_has_native_parser_metrics(last_token_event):
                 parser_metrics.update(_text_native_mtp_parser_metrics(last_token_event))
             resolved_stop_token_count = str(stop_contract.resolved_stop_token_count)
             if plain_text_fast_path:

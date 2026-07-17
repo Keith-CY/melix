@@ -693,6 +693,26 @@ def generate_usage_request(model_handle: str, *, return_usage: bool) -> inferenc
     )
 
 
+def test_generate_plain_token_skips_native_metric_parser(monkeypatch) -> None:
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    inference_service, model_handle = build_usage_counting_services(runtime)
+    native_parser_calls = 0
+    original_parser = engine_core_module._text_native_mtp_parser_metrics
+
+    def counted_native_parser(event):  # pragma: no cover - regression guard should stay unused.
+        nonlocal native_parser_calls
+        native_parser_calls += 1  # pragma: no cover
+        return original_parser(event)  # pragma: no cover
+
+    monkeypatch.setattr(engine_core_module, "_text_native_mtp_parser_metrics", counted_native_parser)
+
+    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None))
+
+    completed = next(event.completed for event in events if event.HasField("completed"))
+    assert completed.finish_reason == "stop"
+    assert native_parser_calls == 0
+
+
 def test_generate_without_usage_skips_prompt_token_count_fallback(monkeypatch) -> None:
     runtime = UsageCountingRuntime(prompt_tokens=0)
     inference_service, model_handle = build_usage_counting_services(runtime)
