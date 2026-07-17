@@ -28,6 +28,16 @@ path construction removed from the scan loop.
 4. Run the registered local test command, changed-scope coverage, and registered
    PR-scoped performance probe on Linux; GitHub Actions remains the merge gate.
 
+## 2026-07-17 follow-up: scandir entry-path traversal
+
+This follow-up keeps the same Python-only scanner boundary and registered
+`model-registry-plain-local-manifest-stat-elision` probe. The scanner now stores
+`os.DirEntry.path` while collecting child directories and converts that path text
+into `Path` objects when pushing traversal stack entries. HF cache repository
+detection uses the same entry-path text. This preserves descriptor detection,
+root pruning, HF cache detection, and traversal ordering while eliminating the
+remaining root-child `Path.__truediv__` joins measured by the probe.
+
 ## Verification commands
 
 The full focused test, coverage, and probe commands live in the registered probe

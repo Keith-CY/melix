@@ -6896,7 +6896,7 @@ def test_model_registry_catalog_probe_command_emits_metrics(monkeypatch: pytest.
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["root_plain_child_path_joins_mean"] == 800.0
+    assert metrics["root_plain_child_path_joins_mean"] == 0.0
     assert metrics["plain_scan_count_mean"] == metrics["model_count"] == 400.0
     assert metrics["manifest_count_mean"] == 400.0
     assert metrics["sample_count"] == 5.0
@@ -6906,7 +6906,7 @@ def test_model_registry_catalog_probe_command_emits_metrics(monkeypatch: pytest.
     script_globals = runpy.run_path(str(REPO_ROOT / "scripts/model_registry_plain_child_path_probe.py"), run_name="melix_probe_under_test")
     assert script_globals["main"]() == 0
     direct_metrics = json.loads(capsys.readouterr().out)
-    assert direct_metrics["root_plain_child_path_joins_mean"] == 6.0
+    assert direct_metrics["root_plain_child_path_joins_mean"] == 0.0
     assert direct_metrics["plain_scan_count_mean"] == direct_metrics["manifest_count_mean"] == 3.0
 
 
