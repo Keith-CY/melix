@@ -294,6 +294,10 @@ def _count_plain_assert_statement_lines(test_code: str) -> int:
     mixed statements, inline asserts, comments, and multiline assertions.
     """
 
+    unindented_count = _count_unindented_space_assert_lines(test_code)
+    if unindented_count is not None:
+        return unindented_count
+
     count = 0
     start = 0
     text_length = len(test_code)
@@ -315,6 +319,25 @@ def _count_plain_assert_statement_lines(test_code: str) -> int:
             break
         start = newline_index + 1
     return count
+
+
+def _count_unindented_space_assert_lines(test_code: str) -> int | None:
+    if not test_code.startswith("assert "):
+        return None
+
+    count = 1
+    start = 0
+    text_length = len(test_code)
+    while True:
+        newline_index = test_code.find("\n", start)
+        if newline_index < 0:
+            return count
+        start = newline_index + 1
+        if start >= text_length:
+            return count
+        if not test_code.startswith("assert ", start):
+            return None
+        count += 1
 
 
 def _may_contain_assert_statement(test_code: str) -> bool:
