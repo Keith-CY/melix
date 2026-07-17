@@ -282,6 +282,27 @@ def test_extract_final_result_text_fallback_skips_fence_scan_without_marker(
     assert outcome.extracted_result == "Paris"
 
 
+def test_extract_final_result_text_fallback_skips_answer_scan_without_prefix_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _NoAnswerScanPattern:
+        def finditer(self, raw_response: str) -> object:  # pragma: no cover - sentinel
+            raise AssertionError(
+                "text fallback should not run answer-prefix extraction without a prefix marker"
+            )
+
+    monkeypatch.setattr(evaluation_final_result_module, "_TEXT_ANSWER_PATTERN", _NoAnswerScanPattern())
+
+    outcome = extract_final_result(
+        raw_response="reasoning mentions a final paragraph but has no answer prefix\n\n  Paris  ",
+        result_kind="text",
+        extraction_mode="heuristic_final",
+    )
+
+    assert outcome.extraction_status == "extracted"
+    assert outcome.extracted_result == "Paris"
+
+
 def test_last_nonblank_text_line_handles_trailing_whitespace_and_empty_input() -> None:
     assert _last_nonblank_text_line("draft\n  Paris  \n\t  ") == "Paris"
     assert _last_nonblank_text_line("  \n\t\n  ") == ""
