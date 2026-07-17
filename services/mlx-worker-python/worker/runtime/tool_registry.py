@@ -1045,6 +1045,14 @@ def _build_always_only_tool_selection_result(
         registry_metrics = _AGENTIC_TOOL_CATALOG_METRICS
         selected_metrics = _ALWAYS_ONLY_TOOL_METRICS
         dropped_tool_count = _ALWAYS_ONLY_DROPPED_TOOL_COUNT
+        if (
+            tool_policy_receipt is None
+            and fallback_reason == "no_keyword_match"
+            and not selection_input.vector_available
+        ):
+            receipt = _ALWAYS_ONLY_RECEIPT_BASE.copy()
+            receipt["selected_tools"] = [_ALWAYS_ONLY_SELECTED_TOOL_RECEIPT.copy()]
+            return ToolSelectionResult(registry=selected_registry, receipt=receipt)
     else:
         selected_registry = registry.select((selected_name,))
         registry_metrics = registry.metrics()
@@ -1470,6 +1478,18 @@ _ALWAYS_ONLY_DROPPED_TOOL_COUNT = max(
     0,
     _AGENTIC_TOOL_CATALOG_METRICS.tool_count - _ALWAYS_ONLY_TOOL_METRICS.tool_count,
 )
+_ALWAYS_ONLY_SELECTED_TOOL_RECEIPT = {"tool_id": "local_compute", "source": "always"}
+_ALWAYS_ONLY_RECEIPT_BASE: dict[str, Any] = {
+    "schema_version": "melix.agentic_tool_selection.v1",
+    "toolset_version": BUILTIN_TOOLSET_VERSION,
+    "selection_mode": "fallback",
+    "vector_available": False,
+    "fallback_reason": "no_keyword_match",
+    "selected_tools": [],
+    "dropped_tool_count": _ALWAYS_ONLY_DROPPED_TOOL_COUNT,
+    "full_schema_bytes": _AGENTIC_TOOL_CATALOG_METRICS.schema_bytes,
+    "selected_schema_bytes": _ALWAYS_ONLY_TOOL_METRICS.schema_bytes,
+}
 _BUILTIN_TOOL_CONFIG_REGISTRY = ToolRegistry(_BUILTIN_AGENTIC_TOOLS)
 _BUILTIN_TOOL_CONFIG_NAMES_LIST = list(BUILTIN_AGENTIC_TOOL_NAMES)
 _BUILTIN_TOOL_CONFIG_BYTES = (
