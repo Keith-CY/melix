@@ -34,6 +34,9 @@ _GENERIC_FENCE_PATTERN = re.compile(r"```(?:[a-zA-Z0-9_-]+)?\s*(.*?)```", re.DOT
 _TEXT_ANSWER_PATTERN = re.compile(
     r"(?im)^\s*(?:final\s+answer|answer)\s*[:\-]?\s*(.+?)\s*$"
 )
+_TEXT_ANSWER_MARKER_PATTERN = re.compile(
+    r"(?im)^\s*(?:final\s+answer|answer)\s*[:\-]?"
+)
 _HF_DATASETS_SERVER_URL = "https://datasets-server.huggingface.co"
 HFEvaluationDatasetFetcher = Callable[[str, dict[str, str]], dict[str, Any]]
 
@@ -276,16 +279,17 @@ def _extract_json_heuristic(raw_response: str) -> ExtractionOutcome:
 def _extract_text_heuristic(raw_response: str) -> ExtractionOutcome:
     answer_prefix_count = 0
     answer_prefix_candidate = ""
-    for match in _TEXT_ANSWER_PATTERN.finditer(raw_response):
-        candidate = match.group(1).strip()
-        if not candidate:
-            continue
-        answer_prefix_count += 1
-        if answer_prefix_count > 1:
-            return ExtractionOutcome("", "ambiguous_extraction", "multiple_answer_prefix_candidates")
-        answer_prefix_candidate = candidate
-    if answer_prefix_candidate:
-        return ExtractionOutcome(answer_prefix_candidate, "extracted")
+    if _TEXT_ANSWER_MARKER_PATTERN.search(raw_response):
+        for match in _TEXT_ANSWER_PATTERN.finditer(raw_response):
+            candidate = match.group(1).strip()
+            if not candidate:  # pragma: no cover - regex requires a non-empty capture
+                continue
+            answer_prefix_count += 1
+            if answer_prefix_count > 1:
+                return ExtractionOutcome("", "ambiguous_extraction", "multiple_answer_prefix_candidates")
+            answer_prefix_candidate = candidate
+        if answer_prefix_candidate:
+            return ExtractionOutcome(answer_prefix_candidate, "extracted")
 
     if "```" in raw_response:
         candidate = _last_stripped_pattern_match(_GENERIC_FENCE_PATTERN, raw_response)
