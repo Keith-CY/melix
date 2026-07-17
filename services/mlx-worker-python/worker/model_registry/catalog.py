@@ -3989,8 +3989,8 @@ class WorkerModelCatalog:
                                 has_model_weight_files = True
                                 continue
                             if entry.is_dir():
-                                child_path = current / entry_name
                                 if current == resolved_root and entry_name.startswith("models--"):
+                                    child_path = current / entry_name
                                     if _hf_cache_repo_id(child_path) is not None:
                                         hf_cache_repo_dirs.append(child_path)
                                         continue
