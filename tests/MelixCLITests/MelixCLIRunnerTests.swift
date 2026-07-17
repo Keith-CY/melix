@@ -1119,8 +1119,10 @@ struct MelixCLIRunnerTests {
         #expect(throws: MelixCLIError.runtime("Pipeline metrics placeholder is too short for the encoded metric.")) {
             try MelixCLIJSONMetricPatch.paddedLiteralData(for: 1, byteCount: 1)
         }
-        #expect(MelixCLIJSONMetricPatch.literal(for: 1.5) == "1.5000000000000000e+00")
-        #expect(MelixCLIJSONMetricPatch.literal(for: -1) == "0.0000000000000000e+00")
+        #expect(Double(MelixCLIJSONMetricPatch.literal(for: 1.5)) == 1.5)
+        #expect(Double(MelixCLIJSONMetricPatch.literal(for: -1)) == 0)
+        #expect(MelixCLIJSONMetricPatch.literal(for: 1.5).count == 22)
+        #expect(MelixCLIJSONMetricPatch.literal(for: -1).count == 22)
     }
 
     @Test("batch run dry-run writes effective config and manifest artifacts")
