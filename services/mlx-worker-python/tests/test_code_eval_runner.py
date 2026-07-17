@@ -593,6 +593,15 @@ def test_plain_assert_line_counter_accepts_common_space_and_tab_boundaries() -> 
     assert code_eval_runner._count_plain_assert_statement_lines("assert one\nassert\ttwo") == 2
 
 
+def test_plain_assert_line_counter_fast_paths_unindented_space_asserts() -> None:
+    assert code_eval_runner._count_unindented_space_assert_lines(
+        "assert one\nassert two\nassert three\n"
+    ) == 3
+    assert code_eval_runner._count_unindented_space_assert_lines(
+        "assert one\n\tassert two"
+    ) is None
+
+
 def test_assert_prescan_handles_boundary_and_literal_edges() -> None:
     assert code_eval_runner._may_contain_assert_statement("# assert only in trailing comment") is False
     assert code_eval_runner._may_contain_assert_statement("reassert = 'value'") is False
