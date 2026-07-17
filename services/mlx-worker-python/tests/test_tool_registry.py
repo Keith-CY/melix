@@ -1293,6 +1293,32 @@ def test_agentic_tool_selection_no_keyword_fallback_reuses_always_only_cache(
     ]
 
 
+def test_agentic_tool_selection_always_only_receipts_are_isolated() -> None:
+    first_result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer the researcher briefly about cropland.",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+    first_result.receipt["selected_tools"][0]["tool_id"] = "mutated"
+    first_result.receipt["selected_tools"].append(
+        {"tool_id": "mutated", "source": "test"}
+    )
+
+    second_result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer the researcher briefly about cropland.",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert second_result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"}
+    ]
+
+
 def test_agentic_tool_selection_always_only_supports_custom_registry() -> None:
     registry = ToolRegistry(tool_registry_module.agentic_tool_catalog_registry().tools)
 
