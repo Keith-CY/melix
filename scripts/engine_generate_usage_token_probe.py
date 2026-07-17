@@ -14,6 +14,7 @@ sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(repo_root / "services/mlx-worker-python"))
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
+import worker.engine.engine_core as engine_core_module
 from worker.engine.request_state import RequestState
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
@@ -147,10 +148,19 @@ def _run_no_usage_sample(*, request_count: int, prompt_words: int, sample: int) 
     return (time.perf_counter() - start) * 1000.0, runtime.prompt_token_count_calls, append_count, token_count
 
 
-def _run_fallback_sample(*, request_count: int, prompt_words: int, sample: int) -> tuple[float, float, int]:
+def _run_fallback_sample(*, request_count: int, prompt_words: int, sample: int) -> tuple[float, float, int, int]:
     runtime = FallbackRuntime(prompt_words=prompt_words)
     inference_service, model_handle = _load_services(runtime)
     prompt_tokens = 0
+    native_parser_calls = 0
+    original_native_parser = engine_core_module._text_native_mtp_parser_metrics
+
+    def counting_native_parser(event):  # pragma: no cover - current head should bypass this guard.
+        nonlocal native_parser_calls
+        native_parser_calls += 1  # pragma: no cover
+        return original_native_parser(event)  # pragma: no cover
+
+    engine_core_module._text_native_mtp_parser_metrics = counting_native_parser
     tracemalloc.start()
     start = time.perf_counter()
     try:
@@ -164,11 +174,12 @@ def _run_fallback_sample(*, request_count: int, prompt_words: int, sample: int) 
             usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
             prompt_tokens = int(usage.prompt_tokens)
     finally:
+        engine_core_module._text_native_mtp_parser_metrics = original_native_parser
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
     if prompt_tokens != prompt_words:
         raise SystemExit(f"unexpected fallback prompt tokens: {prompt_tokens} != {prompt_words}")  # pragma: no cover
-    return (time.perf_counter() - start) * 1000.0, float(peak), prompt_tokens
+    return (time.perf_counter() - start) * 1000.0, float(peak), prompt_tokens, native_parser_calls
 
 
 def run_probe() -> dict[str, float | int | str]:
@@ -182,6 +193,7 @@ def run_probe() -> dict[str, float | int | str]:
     token_events: list[int] = []
     fallback_elapsed_ms: list[float] = []
     fallback_peak_bytes: list[float] = []
+    fallback_native_parser_calls: list[int] = []
 
     for sample in range(samples):
         elapsed, calls, appends, tokens = _run_no_usage_sample(
@@ -194,13 +206,14 @@ def run_probe() -> dict[str, float | int | str]:
         append_counts.append(appends)
         token_events.append(tokens)
 
-        fallback_elapsed, fallback_peak, _ = _run_fallback_sample(
+        fallback_elapsed, fallback_peak, _, native_parser_calls = _run_fallback_sample(
             request_count=fallback_request_count,
             prompt_words=prompt_words,
             sample=sample,
         )
         fallback_elapsed_ms.append(fallback_elapsed)
         fallback_peak_bytes.append(fallback_peak)
+        fallback_native_parser_calls.append(native_parser_calls)
 
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_ms),
@@ -211,6 +224,9 @@ def run_probe() -> dict[str, float | int | str]:
         "request_state_append_calls_per_request": statistics.fmean(append_counts) / request_count,
         "token_events_mean": statistics.fmean(token_events),
         "fallback_elapsed_ms_mean": statistics.fmean(fallback_elapsed_ms),
+        "fallback_native_parser_calls_mean": statistics.fmean(fallback_native_parser_calls),
+        "fallback_native_parser_calls_per_request": statistics.fmean(fallback_native_parser_calls)
+        / fallback_request_count,
         "fallback_peak_bytes_mean": statistics.fmean(fallback_peak_bytes),
         "fallback_request_count": fallback_request_count,
         "request_count": request_count,

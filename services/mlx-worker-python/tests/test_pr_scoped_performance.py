@@ -7829,6 +7829,8 @@ def test_engine_generate_usage_token_probe_script_emits_metrics(
     assert metrics["request_state_append_calls_per_request"] == 0
     assert metrics["token_events_mean"] == 3
     assert metrics["fallback_request_count"] == 2
+    assert metrics["fallback_native_parser_calls_mean"] == 0
+    assert metrics["fallback_native_parser_calls_per_request"] == 0
     assert metrics["fallback_elapsed_ms_mean"] > 0
     assert metrics["fallback_peak_bytes_mean"] > 0
 
