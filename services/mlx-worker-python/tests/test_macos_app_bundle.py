@@ -1265,8 +1265,12 @@ def test_iter_nested_macho_signing_targets_uses_scandir_without_os_walk_or_path_
     def fail_os_walk(*args: object, **kwargs: object):  # pragma: no cover - regression guard
         raise AssertionError("_iter_nested_macho_signing_targets() should use os.scandir() directly")
 
+    def fail_sorted(iterable, *args: object, **kwargs: object):  # pragma: no cover - regression guard
+        raise AssertionError("_iter_nested_macho_signing_targets() should stream unsorted scandir entries")
+
     monkeypatch.setattr(Path, "rglob", fail_rglob)
     monkeypatch.setattr(macos_app_bundle_module.os, "walk", fail_os_walk)
+    monkeypatch.setattr(macos_app_bundle_module, "sorted", fail_sorted, raising=False)
 
     assert _iter_nested_macho_signing_targets(app_path) == [
         launcher,

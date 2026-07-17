@@ -574,22 +574,21 @@ def _iter_nested_macho_signing_targets(app_path: Path) -> list[Path]:
     while stack:
         current = stack.pop()
         try:
-            with os.scandir(current) as iterator:
-                entries = sorted(iterator, key=lambda entry: entry.name)
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                            continue
+                        if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                            continue
+                    except OSError:
+                        continue
+                    path = Path(entry.path)
+                    if _is_macho_file(path):
+                        targets.append(path)
         except OSError:
             continue
-        for entry in reversed(entries):
-            try:
-                if entry.is_dir(follow_symlinks=False):
-                    stack.append(Path(entry.path))
-                    continue
-                if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
-                    continue
-            except OSError:
-                continue
-            path = Path(entry.path)
-            if _is_macho_file(path):
-                targets.append(path)
     targets.sort(key=lambda candidate: candidate.as_posix())
     return targets
 
