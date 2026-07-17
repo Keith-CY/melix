@@ -607,6 +607,44 @@ def test_cold_store_index_load_reuses_scandir_snapshot_names(
     assert reloaded.entry_count() == 1
 
 
+def test_cold_store_index_load_reads_metadata_as_json_bytes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cold = _make_cold(tmp_path)
+    assert cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+
+    def fail_json_load(*args, **kwargs):  # pragma: no cover - regression guard
+        raise AssertionError("ColdPrefixStore index load should avoid json.load")
+
+    original_loads = json.loads
+    loads_payload_types: list[type] = []
+
+    def counted_json_loads(payload, *args, **kwargs):
+        loads_payload_types.append(type(payload))
+        return original_loads(payload, *args, **kwargs)
+
+    monkeypatch.setattr("worker.runtime.prefix_block_store.json.load", fail_json_load)
+    monkeypatch.setattr("worker.runtime.prefix_block_store.json.loads", counted_json_loads)
+
+    reloaded = ColdPrefixStore(
+        tmp_path / "cold",
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    assert reloaded.entry_count() == 1
+    assert loads_payload_types == [bytes]
+
+
 def test_cold_store_index_load_tolerates_scandir_failure(
     monkeypatch,
     tmp_path: Path,
