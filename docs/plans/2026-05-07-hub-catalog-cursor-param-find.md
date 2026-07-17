@@ -28,3 +28,7 @@ Use the existing registered probe `hub-catalog-next-cursor-fast-parse` in `infra
 - Changed-scope coverage for touched executable Python lines is at least 95%.
 - Local base-vs-head probe reports lower `elapsed_ms_mean` without checksum drift.
 - The PR-scoped performance workflow runs the registered probe successfully before merge.
+
+## 2026-07-17 ampersand cursor fast path
+
+This follow-up Python-only slice keeps the same registered `hub-catalog-next-cursor-fast-parse` probe and narrows to `_next_cursor_from_link(...)`. The common Hugging Face next-link URL places `cursor` after earlier query parameters (`...&cursor=...`), so the parser now checks the query-start `cursor=` case once and otherwise searches directly for the bounded `&cursor=` parameter. This removes the repeated generic `cursor=` substring scan and previous-character boundary check in the common path while preserving exact query-parameter behavior for `cursor` at query start, `notcursor`/`mycursor`, fragment boundaries, and encoded cursor decoding.

@@ -34,6 +34,8 @@ _EXPLICIT_SIZE_HINT_SEARCH = _EXPLICIT_SIZE_HINT_RE.search
 _NEXT_LINK_REL_MARKER = 'rel="next"'
 _CURSOR_QUERY_KEY = "cursor="
 _CURSOR_QUERY_KEY_LEN = len(_CURSOR_QUERY_KEY)
+_CURSOR_QUERY_PARAM = "&cursor="
+_CURSOR_QUERY_PARAM_LEN = len(_CURSOR_QUERY_PARAM)
 _URL_HEX_DIGITS = {
     "0": 0,
     "1": 1,
@@ -372,17 +374,22 @@ def _next_cursor_from_link(link_header: str) -> str:
         query_end = link_header.find("#", url_content_start, url_end)
         if query_end < 0:
             query_end = url_end
-        cursor_start = link_header.find(_CURSOR_QUERY_KEY, url_content_start, query_end)
-        while cursor_start >= 0:
-            previous_char = link_header[cursor_start - 1] if cursor_start > url_content_start else ""
-            if previous_char == "?" or previous_char == "&":
-                value_start = cursor_start + _CURSOR_QUERY_KEY_LEN
-                value_end = link_header.find("&", value_start, query_end)
-                if value_end < 0:
-                    value_end = query_end
-                return _unquote_plus_ascii_cursor(link_header[value_start:value_end])
-            cursor_start = link_header.find(_CURSOR_QUERY_KEY, cursor_start + _CURSOR_QUERY_KEY_LEN, query_end)
-        return ""
+        query_start = link_header.find("?", url_content_start, query_end)
+        if query_start < 0:
+            return ""
+        value_start = query_start + 1
+        if link_header.startswith(_CURSOR_QUERY_KEY, value_start, query_end):
+            value_start += _CURSOR_QUERY_KEY_LEN
+        else:
+            cursor_start = link_header.find(_CURSOR_QUERY_PARAM, value_start, query_end)
+            if cursor_start < 0:
+                return ""
+            value_start = cursor_start + _CURSOR_QUERY_PARAM_LEN
+
+        value_end = link_header.find("&", value_start, query_end)
+        if value_end < 0:
+            value_end = query_end
+        return _unquote_plus_ascii_cursor(link_header[value_start:value_end])
 
 
 def _cursor_query_value(url: str, start: int, end: int) -> str:
