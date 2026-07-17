@@ -58,3 +58,16 @@ original text span instead of slicing a temporary line string before delegating 
 units, tab-separated units, and trailing whitespace, still fall back to the
 existing full direct parser on the sliced span, preserving behavior while reducing
 allocation and dispatch in the repeated registered size-hint workload.
+
+## 2026-07-17 uppercase cursor decode slice
+
+This follow-up Python-only slice keeps registered probe coverage through
+`hub-catalog-next-cursor-fast-parse` and narrows to
+`_unquote_plus_ascii_cursor(...)`, which decodes Hub pagination cursors extracted
+from the `Link` header. The common Hugging Face cursor encoding observed by the
+registered probe uses uppercase `%2F` and `%2B` escapes, so the decoder now tries
+those replacements first and returns before the lowercase escape pass when the
+cursor is fully decoded. Lowercase escapes, Unicode percent escapes, malformed
+percent sequences, and plus-to-space decoding still fall through to the existing
+lowercase or general decoding paths, preserving cursor behavior while reducing
+string replacement work for the common uppercase cursor path.
