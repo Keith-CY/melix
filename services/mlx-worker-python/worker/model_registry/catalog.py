@@ -3961,7 +3961,7 @@ class WorkerModelCatalog:
                 continue
             try:
                 with os.scandir(os.fspath(current)) as entries:
-                    child_names: list[str] = []
+                    child_entries: list[tuple[str, str]] = []
                     has_manifest = False
                     has_config = False
                     has_generation_config = False
@@ -3989,12 +3989,13 @@ class WorkerModelCatalog:
                                 has_model_weight_files = True
                                 continue
                             if entry.is_dir():
+                                entry_path = entry.path
                                 if current == resolved_root and entry_name.startswith("models--"):
-                                    child_path = current / entry_name
+                                    child_path = Path(entry_path)
                                     if _hf_cache_repo_id(child_path) is not None:
                                         hf_cache_repo_dirs.append(child_path)
                                         continue
-                                child_names.append(entry_name)
+                                child_entries.append((entry_name, entry_path))
                         except OSError:
                             continue
             except OSError:
@@ -4012,8 +4013,8 @@ class WorkerModelCatalog:
                     )
                 )
                 continue
-            child_names.sort(reverse=True)
-            stack.extend(current / name for name in child_names)
+            child_entries.sort(reverse=True)
+            stack.extend(Path(entry_path) for _name, entry_path in child_entries)
         return tuple(manifest_paths), tuple(plain_local_model_dirs), tuple(sorted(hf_cache_repo_dirs))
 
     @staticmethod

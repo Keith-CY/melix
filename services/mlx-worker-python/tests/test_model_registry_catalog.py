@@ -1165,7 +1165,7 @@ def test_registry_root_tree_defers_plain_child_path_construction_until_stack_pus
     assert manifest_paths == ()
     assert hf_cache_repo_dirs == ()
     assert [scan.model_dir for scan in plain_scans] == expected_dirs
-    assert plain_root_child_joins == 3
+    assert plain_root_child_joins == 0
 
 
 
