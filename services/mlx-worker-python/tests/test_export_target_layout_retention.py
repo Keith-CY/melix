@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import runpy
 import sys
@@ -90,6 +91,32 @@ def test_materialize_export_target_layout_writes_reports_and_placeholder_files(
     assert report["retained_byte_size"] == retention_payload["retained_byte_size"]
     assert report["cleanable_byte_size"] == retention_payload["cleanable_byte_size"]
     assert report["retention_decision_count"] == retention_payload["retention_decision_count"]
+
+
+def test_layout_retention_report_default_manifests_use_single_scandir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_manifests = sorted(FIXTURE_ROOT.glob("*/export-target-manifest.json"))
+    glob_calls: list[str] = []
+    scandir_calls: list[str] = []
+    original_scandir = os.scandir
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression sentinel
+        glob_calls.append(f"{self}:{pattern}")
+        raise AssertionError("default export layout manifest discovery should use os.scandir")
+
+    def counting_scandir(path: str | os.PathLike[str]):
+        scandir_calls.append(os.fspath(path))
+        return original_scandir(path)
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+    monkeypatch.setattr(export_target_layout_retention_report.os, "scandir", counting_scandir)
+
+    manifests = export_target_layout_retention_report._default_manifest_paths()
+
+    assert glob_calls == []
+    assert scandir_calls == [os.fspath(export_target_layout_retention_report.DEFAULT_FIXTURE_ROOT)]
+    assert manifests == expected_manifests
 
 
 def test_materialize_export_target_layout_allows_manifest_already_at_layout_path(

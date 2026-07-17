@@ -34,8 +34,31 @@ def _env_int(name: str, default: int, minimum: int) -> int:
     return max(minimum, value)
 
 
+def _manifest_paths_for_fixture_root(root: Path) -> list[Path]:
+    manifest_paths: list[str] = []
+    manifest_paths_append = manifest_paths.append
+    manifest_name = "export-target-manifest.json"
+    root_path = os.fspath(root)
+    try:
+        with os.scandir(root_path) as entries:
+            for entry in entries:
+                try:
+                    if not entry.is_dir(follow_symlinks=False):
+                        continue
+                except OSError:  # pragma: no cover - disappearing fixture race guard
+                    continue
+                manifest_path = os.path.join(entry.path, manifest_name)
+                if os.path.isfile(manifest_path):
+                    manifest_paths_append(manifest_path)
+    except OSError:  # pragma: no cover - missing fixture root guard
+        return []
+    manifest_paths.sort()
+    path_cls = Path
+    return [path_cls(path) for path in manifest_paths]
+
+
 def main() -> int:
-    manifests = sorted(FIXTURE_ROOT.glob("*/export-target-manifest.json"))
+    manifests = _manifest_paths_for_fixture_root(FIXTURE_ROOT)
     iterations = _env_int("MELIX_RUNTIME_EXPORT_LAYOUT_PROBE_ITERATIONS", 40, 1)
     samples = _env_int("MELIX_RUNTIME_EXPORT_LAYOUT_PROBE_SAMPLES", 5, 1)
     elapsed_samples: list[float] = []

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 import tempfile
@@ -28,7 +29,30 @@ DEFAULT_FIXTURE_ROOT = (
 
 
 def _default_manifest_paths() -> list[Path]:
-    return sorted(DEFAULT_FIXTURE_ROOT.glob("*/export-target-manifest.json"))
+    return _manifest_paths_for_fixture_root(DEFAULT_FIXTURE_ROOT)
+
+
+def _manifest_paths_for_fixture_root(root: Path) -> list[Path]:
+    manifest_paths: list[str] = []
+    manifest_paths_append = manifest_paths.append
+    manifest_name = "export-target-manifest.json"
+    root_path = os.fspath(root)
+    try:
+        with os.scandir(root_path) as entries:
+            for entry in entries:
+                try:
+                    if not entry.is_dir(follow_symlinks=False):
+                        continue
+                except OSError:  # pragma: no cover - disappearing fixture race guard
+                    continue
+                manifest_path = os.path.join(entry.path, manifest_name)
+                if os.path.isfile(manifest_path):
+                    manifest_paths_append(manifest_path)
+    except OSError:  # pragma: no cover - missing fixture root guard
+        return []
+    manifest_paths.sort()
+    path_cls = Path
+    return [path_cls(path) for path in manifest_paths]
 
 
 def build_report(

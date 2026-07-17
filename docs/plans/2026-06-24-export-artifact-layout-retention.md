@@ -87,6 +87,12 @@ reusing that resolved root for manifest rows and evidence files. This avoids
 repeated target-root resolution during layout materialization without relaxing
 per-file path normalization or target-root containment checks.
 
+A follow-up 2026-07-17 report bootstrap slice discovers the fixed fixture
+manifest set with one `os.scandir()` pass instead of `Path.glob()` expansion in
+the layout retention report and registered probe. The runtime export layout and
+retention decisions are unchanged; only the report/probe fixture bootstrap path
+avoids glob object allocation before calling `build_layout_metrics_report`.
+
 ## Verification
 
 Focused verification:
