@@ -36,3 +36,18 @@ The projection loops avoid repeated two-value literal membership checks and a
 global `type` lookup on the exact-entry path. Expected gains are small but should
 be visible in the registered probe's `optimized_elapsed_ms_mean`, with store and
 lookup sub-metrics remaining directionally neutral or improved.
+
+## Follow-up Slice: Direct Context Kind Comparison
+
+The 2026-07-17 follow-up keeps the same registered probe and narrows to the two
+valid retrieval context-kind checks in the exact `RetrievalContextEntry` and
+exact dict store-record hot paths. The previous slice hoisted the two valid
+literals into a local frozenset; this slice replaces that membership lookup with
+explicit string comparisons for the same two accepted values. Malformed kinds
+still fall through to the existing refusal/admission paths, and receipt contents
+remain unchanged.
+
+Success is accepted only if the focused retrieval context tests, changed-scope
+coverage, and the registered Linux probe pass locally with lower
+`optimized_elapsed_ms_mean`, and if the PR-scoped CI probe completes successfully
+before merge.
