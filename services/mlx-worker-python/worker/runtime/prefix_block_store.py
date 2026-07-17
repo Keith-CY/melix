@@ -373,8 +373,8 @@ class ColdPrefixStore:
                     continue
             meta_path = Path(meta_path_string)
             try:
-                with _OPEN(meta_path_string, encoding="utf-8") as meta_file:
-                    payload = json.load(meta_file)
+                with _OPEN(meta_path_string, "rb") as meta_file:
+                    payload = json.loads(meta_file.read())
                 session_id = str(payload["session_id"])
                 snapshot_name = f"{_session_digest(session_id)}.kv.safetensors"
                 snapshot_path = self._root / snapshot_name
