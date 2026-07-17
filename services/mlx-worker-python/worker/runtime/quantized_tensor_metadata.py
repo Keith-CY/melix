@@ -300,6 +300,10 @@ def _safetensors_header_tensor_names(path: str | os.PathLike[str]) -> tuple[str,
     for key in header:
         if key == "__metadata__":
             continue
+        if isinstance(key, str):
+            if key:
+                append_tensor_name(key)
+            continue
         tensor_name = str(key)
         if tensor_name:
             append_tensor_name(tensor_name)
