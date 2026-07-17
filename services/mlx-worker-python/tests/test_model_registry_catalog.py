@@ -1136,6 +1136,39 @@ def test_registry_root_tree_skips_hf_prune_relative_probe_for_plain_dirs(
 
 
 
+def test_registry_root_tree_defers_plain_child_path_construction_until_stack_push(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    expected_dirs = []
+    for index in range(3):
+        config_dir = root / f"plain-model-{index}"
+        expected_dirs.append(config_dir.resolve())
+        _write_model_config(config_dir, {"model_type": "qwen3"})
+        _write_weights(config_dir)
+
+    resolved_root = root.resolve()
+    original_truediv = Path.__truediv__
+    plain_root_child_joins = 0
+
+    def tracking_truediv(self: Path, key: str) -> Path:
+        nonlocal plain_root_child_joins
+        if self == resolved_root and key.startswith("plain-model-"):
+            plain_root_child_joins += 1
+        return original_truediv(self, key)
+
+    monkeypatch.setattr(Path, "__truediv__", tracking_truediv)
+
+    manifest_paths, plain_scans, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
+
+    assert manifest_paths == ()
+    assert hf_cache_repo_dirs == ()
+    assert [scan.model_dir for scan in plain_scans] == expected_dirs
+    assert plain_root_child_joins == 3
+
+
+
 def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
