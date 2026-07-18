@@ -52,7 +52,7 @@ def _compatibility_payload(index: int) -> tuple[dict[str, Any], bool]:
         }, True
     if mode == 2:
         return {
-            "id": "owner/model-mlx-suffix",
+            "id": "owner/model-MLX-suffix",
             "tags": ["Text-Generation", object()],
             "library_name": "transformers",
             "cardData": {},

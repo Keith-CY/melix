@@ -71,3 +71,14 @@ cursor is fully decoded. Lowercase escapes, Unicode percent escapes, malformed
 percent sequences, and plus-to-space decoding still fall through to the existing
 lowercase or general decoding paths, preserving cursor behavior while reducing
 string replacement work for the common uppercase cursor path.
+
+## 2026-07-18 uppercase repo-id marker slice
+
+This follow-up Python-only slice keeps registered probe coverage through
+`hub-catalog-size-hint-regex-precompile` and narrows to
+`_repo_id_contains_mlx(...)`. Hub-compatible repository ids commonly include an
+uppercase `MLX` suffix, so the repo-id compatibility check now tests that marker
+directly before falling back to the lowercase-copy path for less common mixed-case
+spellings. The registered compatibility probe now exercises the uppercase suffix
+case directly while existing tests continue to cover lowercase, uppercase, and
+negative repo ids.
