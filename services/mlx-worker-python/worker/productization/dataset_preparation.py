@@ -52,6 +52,7 @@ _CODE_SOURCE_LANGUAGE_BY_SUFFIX = {
 _SOURCE_KIND_NAME_CACHE_MAX = 4096
 _SOURCE_KIND_BY_NAME: dict[str, str | None] = {}
 _SHA256 = hashlib.sha256
+_OS_FSPATH = os.fspath
 _MISSING = object()
 
 
@@ -1527,7 +1528,7 @@ def _record(
     content_sha256, byte_size = _record_content_digest_and_size(normalized_text)
     record_metadata = dict(metadata) if metadata else {}
     sha256 = _SHA256
-    path_key = str(path).encode("utf-8")
+    path_key = _OS_FSPATH(path).encode("utf-8")
     return {
         "source_id": sha256(path_key).hexdigest()[:16],
         "source_uri": path.name,
