@@ -560,7 +560,6 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
 
 
 def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object] | None:
-    payload: dict[str, object] = {}
     field_value_start = _compact_json_field_value_start_for_token
     reverse_field_value_start = _compact_json_field_value_start_for_token_reverse
     extract_int_and_end = _extract_json_int_field_value_and_end
@@ -572,7 +571,6 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
     )
     if failure_start is None or not payload_startswith(b'""', failure_start):
         return None
-    payload["failure_detail"] = ""
 
     timeout_start = reverse_field_value_start(
         payload_bytes,
@@ -621,13 +619,14 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
     )
     if runtime_start is None or not payload_startswith(b'"ok"', runtime_start):
         return None
-    payload["runtime_status"] = "ok"
-    payload["test_status"] = "passed"
-    payload["tests_passed"] = tests_passed
-    payload["tests_total"] = tests_total
-    payload["timeout_status"] = "ok"
-
-    return payload
+    return {
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": tests_passed,
+        "tests_total": tests_total,
+        "timeout_status": "ok",
+    }
 
 
 def _compact_json_field_value_start_for_token(
