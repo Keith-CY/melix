@@ -1074,9 +1074,10 @@ def _copy_json_like_value(value: Any) -> Any:
                 append(_copy_json_like_value(item))
         return copied_list
     if value_type is tuple:
-        if len(value) == 2:
+        value_len = len(value)
+        if value_len == 2:
             return (_copy_json_like_value(value[0]), _copy_json_like_value(value[1]))
-        if len(value) == 3:
+        if value_len == 3:
             return (
                 _copy_json_like_value(value[0]),
                 _copy_json_like_value(value[1]),
