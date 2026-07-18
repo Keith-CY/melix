@@ -91,6 +91,66 @@ def test_json_typed_score_short_circuits_exact_root_match_before_child_iteration
         _json_typed_score(expected=expected, actual={"answer": {"value": 0}}, ignored_paths=())
 
 
+def test_schema_free_json_scoring_reuses_identity_cache_before_hashing_ignored_paths() -> None:
+    class _HashCountingTuple(tuple[str, ...]):
+        hash_count = 0
+
+        def __hash__(self) -> int:
+            type(self).hash_count += 1
+            return super().__hash__()
+
+    ignored_paths = _HashCountingTuple(("metadata",))
+    profile = EvaluationProfileDefinition(
+        profile_type="final_result",
+        result_kind="json",
+        extraction_mode="strict_full_response",
+        scoring_mode="json_field_match",
+        threshold=1.0,
+        ignored_paths=ignored_paths,
+    )
+    target = '{"answer":"Paris","metadata":{"confidence":0.9}}'
+    extracted = '{"answer":"Paris","metadata":{"confidence":0.1}}'
+
+    evaluation_final_result_module._schema_free_score_identity_cache.clear()
+    evaluation_final_result_module._cached_schema_free_json_scoring_outcome.cache_clear()
+    evaluation_final_result_module._ignored_paths_for_profile.cache_clear()
+
+    first = score_final_result(
+        extracted_result=extracted,
+        target=target,
+        profile=profile,
+    )
+    initial_hash_count = _HashCountingTuple.hash_count
+    second = score_final_result(
+        extracted_result=extracted,
+        target=target,
+        profile=profile,
+    )
+
+    assert first == second == evaluation_final_result_module.ScoringOutcome(
+        typed_score=1.0,
+        validation_status="validated",
+    )
+    assert initial_hash_count > 0
+    assert _HashCountingTuple.hash_count == initial_hash_count
+
+
+def test_schema_free_json_scoring_identity_cache_stays_bounded() -> None:
+    evaluation_final_result_module._schema_free_score_identity_cache.clear()
+    evaluation_final_result_module._cached_schema_free_json_scoring_outcome.cache_clear()
+    ignored_paths: tuple[str, ...] = ()
+    for index in range(evaluation_final_result_module._SCHEMA_FREE_SCORE_IDENTITY_CACHE_LIMIT + 1):
+        evaluation_final_result_module._schema_free_json_scoring_outcome(
+            target=f'{{"answer":{index}}}',
+            extracted_result=f'{{"answer":{index}}}',
+            ignored_paths=ignored_paths,
+        )
+
+    assert len(evaluation_final_result_module._schema_free_score_identity_cache) == 1
+    evaluation_final_result_module._schema_free_score_identity_cache.clear()
+    evaluation_final_result_module._cached_schema_free_json_scoring_outcome.cache_clear()
+
+
 def test_write_jsonl_rows_streams_each_row_without_joining_the_full_payload(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -407,6 +467,7 @@ def test_score_final_result_reuses_cached_parsed_json_payloads(monkeypatch: pyte
 
 
 def test_score_final_result_reuses_cached_schema_free_json_outcomes() -> None:
+    evaluation_final_result_module._schema_free_score_identity_cache.clear()
     evaluation_final_result_module._cached_schema_free_json_scoring_outcome.cache_clear()
     evaluation_final_result_module._ignored_paths_for_profile.cache_clear()
     target = json.dumps(
@@ -440,7 +501,9 @@ def test_score_final_result_reuses_cached_schema_free_json_outcomes() -> None:
         validation_status="validated",
     )
     assert first is second
-    assert evaluation_final_result_module._cached_schema_free_json_scoring_outcome.cache_info().hits >= 1
+    assert len(evaluation_final_result_module._schema_free_score_identity_cache) == 1
+    assert evaluation_final_result_module._cached_schema_free_json_scoring_outcome.cache_info().hits == 0
+    evaluation_final_result_module._schema_free_score_identity_cache.clear()
     evaluation_final_result_module._cached_schema_free_json_scoring_outcome.cache_clear()
     evaluation_final_result_module._ignored_paths_for_profile.cache_clear()
 

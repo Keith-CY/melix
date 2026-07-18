@@ -38,7 +38,10 @@ _TEXT_ANSWER_MARKER_PATTERN = re.compile(
     r"(?im)^\s*(?:final\s+answer|answer)\s*[:\-]?"
 )
 _HF_DATASETS_SERVER_URL = "https://datasets-server.huggingface.co"
+_SCHEMA_FREE_SCORE_IDENTITY_CACHE_LIMIT = 32
 HFEvaluationDatasetFetcher = Callable[[str, dict[str, str]], dict[str, Any]]
+_SchemaFreeScoreCacheEntry = tuple[str, str, tuple[str, ...], "ScoringOutcome"]
+_schema_free_score_identity_cache: dict[tuple[int, int, int], _SchemaFreeScoreCacheEntry] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,7 +325,7 @@ def _score_json_result(
     output_schema = profile.output_schema
     if not output_schema:
         try:
-            return _cached_schema_free_json_scoring_outcome(
+            return _schema_free_json_scoring_outcome(
                 target=target,
                 extracted_result=extracted_result,
                 ignored_paths=profile.ignored_paths,
@@ -357,6 +360,39 @@ def _loads_json_payload(payload: str) -> Any:
 @lru_cache(maxsize=128)
 def _ignored_paths_for_profile(profile_ignored_paths: tuple[str, ...]) -> frozenset[str]:
     return _DEFAULT_IGNORED_PATHS | frozenset(profile_ignored_paths)
+
+
+def _schema_free_json_scoring_outcome(
+    *,
+    target: str,
+    extracted_result: str,
+    ignored_paths: tuple[str, ...],
+) -> ScoringOutcome:
+    cache_key = (id(target), id(extracted_result), id(ignored_paths))
+    cache_entry = _schema_free_score_identity_cache.get(cache_key)
+    if cache_entry is not None:
+        cached_target, cached_extracted_result, cached_ignored_paths, cached_outcome = cache_entry
+        if (
+            cached_target is target
+            and cached_extracted_result is extracted_result
+            and cached_ignored_paths is ignored_paths
+        ):
+            return cached_outcome
+
+    outcome = _cached_schema_free_json_scoring_outcome(
+        target=target,
+        extracted_result=extracted_result,
+        ignored_paths=ignored_paths,
+    )
+    if len(_schema_free_score_identity_cache) >= _SCHEMA_FREE_SCORE_IDENTITY_CACHE_LIMIT:
+        _schema_free_score_identity_cache.clear()
+    _schema_free_score_identity_cache[cache_key] = (
+        target,
+        extracted_result,
+        ignored_paths,
+        outcome,
+    )
+    return outcome
 
 
 @lru_cache(maxsize=128)
