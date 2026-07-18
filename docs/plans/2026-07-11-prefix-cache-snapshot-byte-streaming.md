@@ -115,3 +115,18 @@ the repeated snapshot byte-estimation loop.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Pair-State Unpack Fast Path
+
+The 2026-07-18 follow-up keeps the same registered probe and narrows to the
+common two-tensor `.state` cache sequence. Instead of checking `len(state) == 2`
+and then indexing the pair, `estimate_cache_snapshot_bytes()` now attempts a
+pair unpack, sums the two tensors directly on success, and falls back to the
+existing generic loop for empty, singleton, or longer list/tuple state sequences.
+This preserves the supported `.state`, `.keys/.values`, `.nbytes`, and
+`size * itemsize` behaviors while avoiding repeated length and subscript work in
+the pair-state hot path.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.

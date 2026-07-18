@@ -458,11 +458,13 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
             if values is not None:
                 total += tensor_nbytes(values)
         elif isinstance(state, sequence_types):
-            if len(state) == 2:
-                total += tensor_nbytes(state[0]) + tensor_nbytes(state[1])
-            else:
+            try:
+                first_state, second_state = state
+            except ValueError:
                 for tensor in state:
                     total += tensor_nbytes(tensor)
+            else:
+                total += tensor_nbytes(first_state) + tensor_nbytes(second_state)
         else:
             total += tensor_nbytes(state)
     return total if type(total) is int else int(total)
