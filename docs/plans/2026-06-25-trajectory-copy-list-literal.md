@@ -134,3 +134,15 @@ fall back to the recursive path for nested mutable labels. The registered
 `trajectory-provenance-copy-elision` probe fixture now uses list labels so the
 PR-scoped probe validates this list-label component path locally on Linux and in
 CI.
+
+## 2026-07-18 follow-up: quality metrics dict fast path
+
+This follow-up remains limited to
+`worker.trajectory_provenance._copy_trajectory_provenance_value`. The common
+`trajectory_quality_metrics` payload shape (`reward_coverage_count` plus a
+`components` list) now skips the generic dict/list discovery scans and emits a
+fresh canonical dict while copying each component through the existing component
+fast path. Nested mutable component labels remain isolated, and non-standard
+quality metric payloads still fall back through the generic recursive copier. The
+registered `trajectory-provenance-copy-elision` probe remains the local Linux and
+CI validation gate for this small Python-only slice.
