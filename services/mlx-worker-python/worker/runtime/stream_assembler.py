@@ -1454,13 +1454,8 @@ class RequestStreamAssembler:
     @staticmethod
     @lru_cache(maxsize=16)
     def _pipe_channel_name(header: str) -> str:
-        stripped = header.strip()
-        if not stripped:
-            return ""
-        for index, character in enumerate(stripped):
-            if character.isspace():
-                return stripped[:index].lower()
-        return stripped.lower()
+        parts = header.strip().split(None, 1)
+        return parts[0].lower() if parts else ""
 
     @classmethod
     def _legacy_pipe_channel_header_body(cls, header: str, channel_name: str) -> str | None:
