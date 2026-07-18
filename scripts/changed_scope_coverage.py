@@ -28,6 +28,9 @@ _ASCII_AT = ord("@")
 _ASCII_LOWER_D = ord("d")
 _DIFF_PARSER_ACCEPTS_BYTES = True
 _EMPTY_CHANGED_LINES: frozenset[int] = frozenset()
+# Internal read-only sentinel for empty changed-scope results; callers only iterate
+# or measure lengths, so the hot no-op path can avoid repeated list allocation.
+_EMPTY_MEASURABLE_CHANGED_LINES_RESULT: tuple[list[int], list[int], list[int]] = ([], [], [])
 _DENSE_CHANGED_LINE_SCAN_THRESHOLD = 32
 _SPARSE_SOURCE_LINE_SCAN_THRESHOLD = 8
 _ALLOWLIST_CACHE_MISS = object()
@@ -299,7 +302,7 @@ def _measurable_changed_lines(
     changed: Set[int],
 ) -> tuple[list[int], list[int], list[int]]:
     if not changed:
-        return [], [], []
+        return _EMPTY_MEASURABLE_CHANGED_LINES_RESULT
 
     entry = coverage_payload["files"][rel_path]
     executed_lines = entry["executed_lines"]
@@ -308,7 +311,7 @@ def _measurable_changed_lines(
         executed_line = executed_lines[0]
         missing_line = missing_lines[0]
         if executed_line not in changed and missing_line not in changed:
-            return [], [], []
+            return _EMPTY_MEASURABLE_CHANGED_LINES_RESULT
         measured_changed = [
             line_no
             for line_no in changed
@@ -318,7 +321,7 @@ def _measurable_changed_lines(
         missing_lookup = (missing_line,)
     else:
         if not _line_ranges_may_overlap(changed, executed_lines, missing_lines):
-            return [], [], []
+            return _EMPTY_MEASURABLE_CHANGED_LINES_RESULT
         if executed_lines and executed_lines[0] > executed_lines[-1]:
             executed_lookup = set(executed_lines)
         else:
@@ -357,7 +360,7 @@ def _measurable_changed_lines(
                 if line_no in executed_lookup or line_no in missing_lookup
             ]
     if not measured_changed:
-        return [], [], []
+        return _EMPTY_MEASURABLE_CHANGED_LINES_RESULT
 
     sorted_measured_changed = sorted(measured_changed)
     measurable = _measurable_non_comment_lines(

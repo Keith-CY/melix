@@ -649,6 +649,28 @@ def test_measurable_changed_lines_skips_empty_measured_lines(monkeypatch, tmp_pa
     assert missed == []
 
 
+def test_measurable_changed_lines_reuses_empty_result_after_overlap_without_intersection(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    coverage_payload = {"files": {"foo.py": {"executed_lines": [1, 10], "missing_lines": []}}}
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("source file should not be read without measured changed lines")
+
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    result = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {5},
+    )
+
+    assert result == ([], [], [])
+    assert result is changed_scope_coverage._EMPTY_MEASURABLE_CHANGED_LINES_RESULT
+
+
 def test_measurable_changed_lines_handles_large_measured_sets_without_union(tmp_path: Path) -> None:
     source_path = tmp_path / "foo.py"
     source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 101)), encoding="utf-8")
