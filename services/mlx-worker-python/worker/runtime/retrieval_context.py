@@ -301,8 +301,10 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     bool_type = bool
     type_of = type
 
+    mapping_type = Mapping
     for record in records:
-        if type_of(record) is not dict_type and not isinstance(record, Mapping):
+        record_is_dict = type_of(record) is dict_type
+        if not record_is_dict and not isinstance(record, mapping_type):
             store_refusal_receipts_append(
                 store_record_refusal(
                     source_field="record",
@@ -326,7 +328,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             )
             continue
 
-        if type_of(record) is dict_type:
+        if record_is_dict:
             try:
                 source_id = record["source_id"]
                 payload = record["payload"]
