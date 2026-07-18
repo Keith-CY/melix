@@ -902,6 +902,27 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
     assert scalar_payload["text"] == scalar_text
 
 
+def test_copy_json_like_value_exact_scalar_tuple_avoids_recursive_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = local_job_continuation_module._copy_json_like_value
+    dispatch_count = 0
+
+    def counted_copy(value: object) -> object:
+        nonlocal dispatch_count
+        dispatch_count += 1
+        return original(value)
+
+    monkeypatch.setattr(local_job_continuation_module, "_copy_json_like_value", counted_copy)
+
+    copied = counted_copy(("status", 7, True))
+    copied_pair = counted_copy(("id", None))
+
+    assert copied == ("status", 7, True)
+    assert copied_pair == ("id", None)
+    assert dispatch_count == 2
+
+
 class _CopyDict(dict):
     pass
 

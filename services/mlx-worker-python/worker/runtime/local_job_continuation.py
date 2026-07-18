@@ -1076,12 +1076,63 @@ def _copy_json_like_value(value: Any) -> Any:
     if value_type is tuple:
         value_len = len(value)
         if value_len == 2:
-            return (_copy_json_like_value(value[0]), _copy_json_like_value(value[1]))
+            first = value[0]
+            second = value[1]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+            ):
+                return (first, second)
+            return (_copy_json_like_value(first), _copy_json_like_value(second))
         if value_len == 3:
+            first = value[0]
+            second = value[1]
+            third = value[2]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            third_type = value_type_of(third)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+                and (
+                    third_type is str
+                    or third_type is int
+                    or third_type is float
+                    or third_type is bool
+                    or third is None
+                )
+            ):
+                return (first, second, third)
             return (
-                _copy_json_like_value(value[0]),
-                _copy_json_like_value(value[1]),
-                _copy_json_like_value(value[2]),
+                _copy_json_like_value(first),
+                _copy_json_like_value(second),
+                _copy_json_like_value(third),
             )
         return tuple(_copy_json_like_value(item) for item in value)
     if isinstance(value, dict):
