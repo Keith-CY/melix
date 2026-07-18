@@ -136,7 +136,8 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
     if value_type in _JSON_IMMUTABLE_TYPE_SET:
         return value
     if value_type is dict:
-        if len(value) == 4:
+        value_len = len(value)
+        if value_len == 4:
             try:
                 name = value["name"]
                 score = value["score"]
@@ -205,6 +206,24 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
                                 "passed": passed,
                                 "labels": labels,
                             }
+        if value_len == 2:
+            try:
+                reward_coverage_count = value["reward_coverage_count"]
+                components = value["components"]
+            except KeyError:
+                pass
+            else:
+                if (
+                    _TYPE(reward_coverage_count) in _JSON_IMMUTABLE_TYPE_SET
+                    and _TYPE(components) is list
+                ):
+                    return {
+                        "reward_coverage_count": reward_coverage_count,
+                        "components": [
+                            _copy_trajectory_provenance_value(component)
+                            for component in components
+                        ],
+                    }
         return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
     if value_type is list:
         return _copy_json_list(value)

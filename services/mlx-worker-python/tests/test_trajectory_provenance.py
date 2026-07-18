@@ -1116,6 +1116,35 @@ def test_copy_trajectory_provenance_value_uses_bound_type_dispatch(
     assert calls[0] is source
 
 
+def test_copy_trajectory_provenance_value_fast_paths_quality_metrics_dict() -> None:
+    source = {
+        "reward_coverage_count": 2,
+        "components": [
+            {
+                "name": "format",
+                "score": 0.75,
+                "passed": True,
+                "labels": ["agentic", "trajectory", "quality"],
+            },
+            {
+                "name": "safety",
+                "score": 1.0,
+                "passed": True,
+                "labels": ["agentic", "safe", "ready"],
+            },
+        ],
+    }
+
+    copied = _copy_trajectory_provenance_value(source)
+
+    assert copied == source
+    assert copied is not source
+    assert list(copied) == list(source)
+    assert copied["components"] is not source["components"]
+    assert copied["components"][0] is not source["components"][0]
+    assert copied["components"][0]["labels"] is not source["components"][0]["labels"]
+
+
 @pytest.mark.parametrize(
     "labels",
     [
