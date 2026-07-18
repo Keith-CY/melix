@@ -631,6 +631,47 @@ def test_has_recognized_model_weight_files_preserves_uppercase_suffix_fallback(t
     assert _has_recognized_model_weight_files(model_dir) is True
 
 
+def test_has_recognized_model_weight_files_prefilters_names_before_stat(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "weights"
+    model_dir.mkdir()
+
+    class _Entry:
+        def __init__(self, name: str, is_file: bool) -> None:
+            self.name = name
+            self._is_file = is_file
+            self.is_file_calls = 0
+
+        def is_file(self) -> bool:
+            self.is_file_calls += 1
+            if self.name.startswith("metadata-"):
+                raise AssertionError("irrelevant entries should skip is_file")
+            return self._is_file
+
+    irrelevant_entries = [_Entry(f"metadata-{index:05d}.json", True) for index in range(100)]
+    weight_entry = _Entry("weights-00001.safetensors", True)
+    entries = [*irrelevant_entries, weight_entry]
+
+    class _Scandir:
+        def __enter__(self):
+            return iter(entries)
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def fake_scandir(path: Path):
+        assert path == model_dir
+        return _Scandir()
+
+    monkeypatch.setattr(real_model_support_module.os, "scandir", fake_scandir)
+
+    assert _has_recognized_model_weight_files(model_dir) is True
+    assert weight_entry.is_file_calls == 1
+    assert all(entry.is_file_calls == 0 for entry in irrelevant_entries)
+
+
 def test_has_recognized_model_weight_files_does_not_recurse_into_subdirectories(tmp_path: Path) -> None:
     model_dir = tmp_path / "weights"
     model_dir.mkdir()
