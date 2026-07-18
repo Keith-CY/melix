@@ -365,16 +365,15 @@ def _has_recognized_model_weight_files(path: Path) -> bool:
             return True
     with os.scandir(path) as entries:
         for entry in entries:
-            try:
-                if not entry.is_file():
+            name = entry.name
+            if name not in _REAL_MODEL_WEIGHT_FILENAMES and not name.endswith(
+                _REAL_MODEL_WEIGHT_SUFFIXES
+            ):
+                if name.islower() or not name.lower().endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
                     continue
+            try:
+                if entry.is_file():
+                    return True
             except OSError:
                 continue
-            name = entry.name
-            if name in _REAL_MODEL_WEIGHT_FILENAMES:
-                return True
-            if name.endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
-                return True
-            if not name.islower() and name.lower().endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
-                return True
     return False
