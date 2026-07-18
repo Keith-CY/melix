@@ -390,6 +390,7 @@ def _is_executable_model_file_entry(entry: os.DirEntry[str]) -> bool:
         return False
 
 
+@lru_cache(maxsize=128)
 def _model_files_detection_source(file_names: tuple[str, ...]) -> str:
     return "model_files:" + ",".join(file_names)
 
