@@ -846,6 +846,16 @@ def test_trust_policy_single_executable_model_file_skips_sort(
     assert exc_info.value.policy.custom_loader_detection_source == "model_files:configuration_melix_demo.py"
 
 
+def test_trust_policy_caches_model_file_detection_source() -> None:
+    source_cache = model_load_trust_module._model_files_detection_source
+    source_cache.cache_clear()
+    file_names = ("configuration_melix_demo.py",)
+
+    assert source_cache(file_names) == "model_files:configuration_melix_demo.py"
+    assert source_cache(file_names) == "model_files:configuration_melix_demo.py"
+    assert source_cache.cache_info().hits == 1
+
+
 def test_trust_policy_multiple_executable_model_files_stay_sorted(tmp_path: Path) -> None:
     executable_model_dir = tmp_path / "multiple-executable-file-model"
     executable_model_dir.mkdir()
