@@ -418,15 +418,30 @@ def _str_value(raw_value: Any) -> str:
 def _quantized_kind_from_text(raw_value: str) -> str:
     # The token boundary only needs ASCII [a-z0-9] checks; avoid regex dispatch
     # in this hot parser loop while preserving the same delimiter semantics.
-    for kind in _QUANTIZED_KIND_ORDER:
-        if kind in raw_value and _contains_quantized_kind_token(raw_value, kind):
-            return kind
+    contains_kind_token = _contains_quantized_kind_token
+    if "4bit" in raw_value and contains_kind_token(raw_value, "4bit"):
+        return "4bit"
+    if "8bit" in raw_value and contains_kind_token(raw_value, "8bit"):
+        return "8bit"
+    if "q4" in raw_value and contains_kind_token(raw_value, "q4"):
+        return "q4"
+    if "q8" in raw_value and contains_kind_token(raw_value, "q8"):
+        return "q8"
+    if "optiq" in raw_value and contains_kind_token(raw_value, "optiq"):
+        return "optiq"
     normalized = raw_value.lower()
     if normalized == raw_value:
         return "unknown"
-    for kind in _QUANTIZED_KIND_ORDER:
-        if kind in normalized and _contains_quantized_kind_token(normalized, kind):
-            return kind
+    if "4bit" in normalized and contains_kind_token(normalized, "4bit"):
+        return "4bit"
+    if "8bit" in normalized and contains_kind_token(normalized, "8bit"):
+        return "8bit"
+    if "q4" in normalized and contains_kind_token(normalized, "q4"):
+        return "q4"
+    if "q8" in normalized and contains_kind_token(normalized, "q8"):
+        return "q8"
+    if "optiq" in normalized and contains_kind_token(normalized, "optiq"):
+        return "optiq"
     return "unknown"
 
 
@@ -439,16 +454,18 @@ def _contains_quantized_kind_token(value: str, kind: str) -> bool:
         if index < 0:
             return False
         end = index + kind_length
-        if (
-            (index == 0 or not _is_lower_ascii_alnum(value[index - 1]))
-            and (end == value_length or not _is_lower_ascii_alnum(value[end]))
-        ):
-            return True
+        if index == 0:
+            left_boundary = True
+        else:
+            char = value[index - 1]
+            left_boundary = not ("a" <= char <= "z" or "0" <= char <= "9")
+        if left_boundary:
+            if end == value_length:
+                return True
+            char = value[end]
+            if not ("a" <= char <= "z" or "0" <= char <= "9"):
+                return True
         start = index + 1
-
-
-def _is_lower_ascii_alnum(char: str) -> bool:
-    return "a" <= char <= "z" or "0" <= char <= "9"
 
 
 def _quantized_target_module_guard_status(

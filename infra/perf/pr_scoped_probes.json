@@ -5656,6 +5656,7 @@
       "services/mlx-worker-python/tests/test_lora_training_receipts.py",
       "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
       "scripts/lora_aux_modules_scandir_probe.py",
+      "docs/plans/2026-06-03-lora-quantized-kind-strip-elision.md",
       "docs/plans/2026-07-12-lora-processor-resume-direct-checks.md",
       "docs/plans/2026-07-12-lora-aux-prefix-char-membership.md"
     ],
