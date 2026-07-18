@@ -3496,6 +3496,17 @@ def test_answers_match_exact_nonempty_short_circuit_skips_normalization(
     assert EvaluationCore._answers_match(expected="", predicted="") is False
 
 
+def test_answers_match_stripped_exact_short_circuit_skips_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_normalize(value: str) -> str:  # pragma: no cover - must not be called
+        raise AssertionError(f"stripped exact answer match should skip normalization: {value!r}")
+
+    monkeypatch.setattr(EvaluationCore, "_normalized_answer", staticmethod(fail_normalize))
+
+    assert EvaluationCore._answers_match(expected="Paris", predicted="  Paris\n") is True
+
+
 def test_answers_match_empty_prediction_skips_strip_and_normalization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3509,6 +3520,7 @@ def test_answers_match_empty_prediction_skips_strip_and_normalization(
     monkeypatch.setattr(EvaluationCore, "_normalized_answer", staticmethod(fail_normalize))
 
     assert EvaluationCore._answers_match(expected="Paris", predicted=EmptyPrediction("")) is False
+    assert EvaluationCore._answers_match(expected="Paris", predicted="  \t\n") is False
 
 
 def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.MonkeyPatch) -> None:
