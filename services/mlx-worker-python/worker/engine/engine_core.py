@@ -397,6 +397,7 @@ class EngineCore:
         effective_sampling = self._sampling_with_resolved_stop(sampling, stop_contract.sequences)
         prompt_tokens_default: int | None = None
         track_usage = bool(request.return_usage)
+        prompt_token_counter = getattr(runtime, "prompt_token_count", None) if track_usage else None
         completion_token_count = 0
         finalized_prompt_tokens: int = 0
         finalized_completion_tokens: int = 0
@@ -627,8 +628,8 @@ class EngineCore:
                 else:
                     if prompt_tokens_default is None:
                         prompt_tokens_default = int(
-                            runtime.prompt_token_count(prompt)
-                            if hasattr(runtime, "prompt_token_count")
+                            prompt_token_counter(prompt)
+                            if prompt_token_counter is not None
                             else _whitespace_token_count(prompt)
                         )
                     prompt_tokens = prompt_tokens_default
