@@ -1249,28 +1249,11 @@ def test_compact_field_offset_fallback_reuses_known_key_index(monkeypatch) -> No
     payload = b'{"metadata":{},"runtime_status" : "ok"}'
     key_token = b'"runtime_status"'
     original_start = payload.find(b'{}')
-    expected_key_index = payload.find(key_token, original_start)
-    starts: list[int] = []
-    original_generic_scanner = code_eval_runner._json_field_value_start_for_token
 
-    def tracking_generic_scanner(
-        payload_bytes: bytes,
-        tracked_key_token: bytes,
-        *,
-        start: int = 0,
-    ) -> int | None:
-        starts.append(start)
-        return original_generic_scanner(
-            payload_bytes,
-            tracked_key_token,
-            start=start,
-        )
+    def fail_generic_scanner(*_args: object, **_kwargs: object) -> int | None:  # pragma: no cover
+        raise AssertionError("known compact key index should skip a second find")
 
-    monkeypatch.setattr(
-        code_eval_runner,
-        "_json_field_value_start_for_token",
-        tracking_generic_scanner,
-    )
+    monkeypatch.setattr(code_eval_runner, "_json_field_value_start_for_token", fail_generic_scanner)
 
     assert (
         code_eval_runner._compact_json_field_value_start_for_token(
@@ -1280,7 +1263,23 @@ def test_compact_field_offset_fallback_reuses_known_key_index(monkeypatch) -> No
         )
         == payload.find(b'"ok"')
     )
-    assert starts == [expected_key_index]
+    assert (
+        code_eval_runner._compact_json_field_value_start_for_token_reverse(
+            payload,
+            key_token,
+            start=original_start,
+        )
+        == payload.find(b'"ok"')
+    )
+
+
+def test_json_field_value_start_after_key_index_handles_whitespace_edges() -> None:
+    payload = b'{"runtime_status" : "ok", "tests_total": 2}'
+    cursor = payload.find(b'"runtime_status"') + len(b'"runtime_status"')
+
+    assert code_eval_runner._json_field_value_start_after_key_index(payload, cursor) == payload.find(b'"ok"')
+    assert code_eval_runner._json_field_value_start_after_key_index(b'{"runtime_status" "ok"}', cursor) is None
+    assert code_eval_runner._json_field_value_start_after_key_index(b'{"runtime_status": ', cursor) is None
 
 
 def test_sorted_payload_fast_path_returns_none_for_missing_or_malformed_fields() -> None:
