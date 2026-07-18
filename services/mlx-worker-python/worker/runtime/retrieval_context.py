@@ -22,6 +22,8 @@ RetrievalContextKind = Literal["retrieved_document", "retrieved_image"]
 
 _MISSING_LOOKUP_RECORDS = object()
 _RETRIEVAL_CONTEXT_KINDS = frozenset({"retrieved_document", "retrieved_image"})
+_PUBLIC_SOURCE_PREFIX = "source:"
+_PUBLIC_SOURCE_PREFIX_LENGTH = len(_PUBLIC_SOURCE_PREFIX)
 
 
 class RetrievalContextAdmissionError(ValueError):
@@ -143,6 +145,8 @@ def project_retrieval_contexts(
     bool_type = bool
     strip_text = str.strip
     type_of = type
+    public_source_prefix = _PUBLIC_SOURCE_PREFIX
+    public_source_prefix_length = _PUBLIC_SOURCE_PREFIX_LENGTH
 
     for entry in entries:
         if type_of(entry) is entry_type:
@@ -176,7 +180,16 @@ def project_retrieval_contexts(
                     and normalized_reason
                     and normalized_corrective_action
                 ):
-                    if is_public_source_id(normalized_source_id):
+                    if normalized_source_id.startswith(public_source_prefix):
+                        source_suffix = normalized_source_id[public_source_prefix_length:]
+                        source_is_public = (
+                            source_suffix.isdigit() and len(normalized_source_id) <= 96
+                        )
+                        if not source_is_public:
+                            source_is_public = is_public_source_id(normalized_source_id)
+                    else:
+                        source_is_public = is_public_source_id(normalized_source_id)
+                    if source_is_public:
                         receipt = build_public_context_receipt(
                             segment_id=normalized_segment_id,
                             source_type=context_kind,
@@ -300,6 +313,8 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     dict_type = dict
     bool_type = bool
     type_of = type
+    public_source_prefix = _PUBLIC_SOURCE_PREFIX
+    public_source_prefix_length = _PUBLIC_SOURCE_PREFIX_LENGTH
 
     for record in records:
         if type_of(record) is not dict_type and not isinstance(record, Mapping):
@@ -364,7 +379,16 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                     and normalized_reason
                     and normalized_corrective_action
                 ):
-                    if is_public_source_id(normalized_source_id):
+                    if normalized_source_id.startswith(public_source_prefix):
+                        source_suffix = normalized_source_id[public_source_prefix_length:]
+                        source_is_public = (
+                            source_suffix.isdigit() and len(normalized_source_id) <= 96
+                        )
+                        if not source_is_public:
+                            source_is_public = is_public_source_id(normalized_source_id)
+                    else:
+                        source_is_public = is_public_source_id(normalized_source_id)
+                    if source_is_public:
                         receipt = build_public_context_receipt(
                             segment_id=normalized_segment_id,
                             source_type=context_kind,
