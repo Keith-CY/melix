@@ -39,3 +39,19 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
 
 GitHub Actions PR-scoped performance remains the final registered probe
 validation source before merge.
+
+## 2026-07-18 Follow-up: whitespace fallback known-index reuse
+
+This follow-up Python-only slice stays within the same sorted code-evaluation
+payload fast path and registered `code-eval-payload-json-bytes` probe. Compact
+field lookup already knows the matched key index before detecting whitespace
+around the colon; the fallback now resumes value-start parsing from that known
+cursor instead of invoking the generic token scanner and repeating the same
+`bytes.find(...)` lookup. Behavior is unchanged for compact payloads,
+whitespace-tolerant payloads, malformed payloads, and reserved metadata-key
+fallbacks.
+
+Expected metrics are lower `elapsed_ms_mean` in
+`scripts/code_eval_payload_json_probe.py` for the default JSON payload workload;
+`peak_bytes_mean` should remain stable because the change only removes redundant
+search work.
