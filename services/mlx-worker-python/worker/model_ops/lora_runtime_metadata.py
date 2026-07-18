@@ -344,6 +344,7 @@ def _aux_modules_restored(base_model_dir: Path) -> bool:
                 name = entry.name
                 if (
                     name[0] in auxiliary_prefix_chars
+                    and name[-1] == "y"
                     and name.endswith(".py")
                     and name.startswith(auxiliary_prefixes)
                 ):
