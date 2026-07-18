@@ -20,6 +20,8 @@ The probe is extended to measure the model safetensor listing path directly agai
 
 2026-07-12 follow-up slice: `_extra_mtp_safetensor_file_paths()` now short-circuits top-level `model*.safetensors` sidecar candidates before scanning for `os.sep`. Nested `*/model*.safetensors` candidates still use the basename check and remain excluded, preserving the historical base-shard elision semantics while reducing string scans for noisy index maps with many duplicate base-model MTP entries.
 
+2026-07-18 follow-up slice: `_is_mtp_weight_key()` now keeps the exact `str` fast path on two direct prefix checks instead of the tuple-prefix form. The behavior for `str` subclasses and custom key objects remains unchanged through the existing compatibility branches, while direct callers scanning JSON-decoded string keys avoid the tuple dispatch overhead measured by the registered probe's `key_*` metrics.
+
 ## Verification plan
 
 ```bash
