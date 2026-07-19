@@ -1180,15 +1180,20 @@ class RequestStreamAssembler:
         if remaining <= 0:
             return compressed[:token_count] + [0 for _ in weights[token_count:]]
         extras = [max(weight - 1, 0) for weight in weights]
-        while remaining > 0 and any(extras):
-            for index, extra in enumerate(extras):
-                if remaining <= 0:
-                    break
-                if extra <= 0:
-                    continue
-                compressed[index] += 1
-                extras[index] -= 1
-                remaining -= 1
+        active_indexes = [index for index, extra in enumerate(extras) if extra > 0]
+        while remaining > 0 and active_indexes:
+            full_rounds = remaining // len(active_indexes)
+            if full_rounds <= 0:
+                for index in active_indexes[:remaining]:
+                    compressed[index] += 1
+                break
+
+            rounds = min(full_rounds, min(extras[index] for index in active_indexes))
+            for index in active_indexes:
+                compressed[index] += rounds
+                extras[index] -= rounds
+            remaining -= rounds * len(active_indexes)
+            active_indexes = [index for index in active_indexes if extras[index] > 0]
         return compressed
 
     @staticmethod

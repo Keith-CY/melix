@@ -4019,6 +4019,7 @@ def test_stream_assembler_token_bytes_probe_script_emits_metrics(
     monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_BYTES_EVENTS", "8")
     monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_BYTES_SAMPLES", "1")
     monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_ANNOTATION_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_COMPRESSION_ITERATIONS", "2")
 
     runpy.run_path(
         str(REPO_ROOT / "scripts/stream_assembler_token_bytes_probe.py"),
@@ -4041,6 +4042,31 @@ def test_stream_assembler_token_bytes_probe_script_emits_metrics(
     assert metrics["token_count_annotation_iterations"] == 2.0
     assert metrics["token_count_annotation_delta_count"] == 192.0
     assert metrics["token_count_annotation_checksum"] > 0
+    assert metrics["token_count_compression_ms_mean"] >= 0
+    assert metrics["token_count_compression_iterations"] == 2.0
+    assert metrics["token_count_compression_delta_count"] == 192.0
+    assert metrics["token_count_compression_checksum"] > 0
+
+
+def test_stream_assembler_token_compression_probe_rejects_bad_totals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "stream_assembler_token_bytes_probe_under_test",
+        REPO_ROOT / "scripts/stream_assembler_token_bytes_probe.py",
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def bad_compress(weights: list[int], token_count: int) -> list[int]:
+        return [1 for _ in weights]
+
+    monkeypatch.setattr(module.RequestStreamAssembler, "_compress_delta_token_counts", bad_compress)
+
+    with pytest.raises(SystemExit, match="compressed token counts diverged"):
+        module._measure_token_count_compression(1)
 
 
 def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(

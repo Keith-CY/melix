@@ -92,6 +92,36 @@ def _measure_token_count_annotation(sample_count: int) -> dict[str, float]:
     }
 
 
+def _measure_token_count_compression(sample_count: int) -> dict[str, float]:
+    weights = [
+        384 if index % 3 == 0 else 128 if index % 3 == 1 else 1
+        for index in range(192)
+    ]
+    target_token_count = 8192
+    iterations = int(
+        os.environ.get("MELIX_STREAM_ASSEMBLER_TOKEN_COMPRESSION_ITERATIONS", "10000")
+    )
+    expected = RequestStreamAssembler._compress_delta_token_counts(weights, target_token_count)
+    if sum(expected) != min(sum(weights), target_token_count):
+        raise SystemExit("compressed token counts diverged from the requested total")
+    elapsed: list[float] = []
+    checksum = 0
+
+    for _ in range(sample_count):
+        started = time.perf_counter()
+        for _index in range(iterations):
+            compressed = RequestStreamAssembler._compress_delta_token_counts(weights, target_token_count)
+            checksum += compressed[-1]
+        elapsed.append((time.perf_counter() - started) * 1000.0)
+
+    return {
+        "token_count_compression_ms_mean": statistics.fmean(elapsed),
+        "token_count_compression_iterations": float(iterations),
+        "token_count_compression_delta_count": float(len(weights)),
+        "token_count_compression_checksum": float(checksum),
+    }
+
+
 def _measure(sample_count: int | None = None, token_event_count: int | None = None) -> dict[str, float]:
     if sample_count is None:
         sample_count = int(os.environ.get("MELIX_STREAM_ASSEMBLER_TOKEN_BYTES_SAMPLES", "5"))
@@ -141,6 +171,7 @@ def _measure(sample_count: int | None = None, token_event_count: int | None = No
     }
     metrics.update(_measure_delta_token_count(sample_count))
     metrics.update(_measure_token_count_annotation(sample_count))
+    metrics.update(_measure_token_count_compression(sample_count))
     return metrics
 
 

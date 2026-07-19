@@ -932,6 +932,20 @@ def test_extra_delta_token_distribution_uses_round_robin_batches() -> None:
     assert adjusted == [5, 1, 4, 1, 4, 1]
 
 
+def test_compress_delta_token_counts_uses_round_batches() -> None:
+    weights = [400, 1, 250, 4]
+
+    compressed = RequestStreamAssembler._compress_delta_token_counts(weights, 600)
+
+    assert compressed == [345, 1, 250, 4]
+    assert sum(compressed) == 600
+
+    saturated = RequestStreamAssembler._compress_delta_token_counts(weights, 655)
+
+    assert saturated == weights
+    assert sum(saturated) == sum(weights)
+
+
 def test_plain_token_metadata_keeps_fast_path_and_metrics(monkeypatch) -> None:
     assembler = RequestStreamAssembler(
         request_id="req-no-marker-token-fast-path",
