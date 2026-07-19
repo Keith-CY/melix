@@ -915,6 +915,23 @@ def test_plain_buffer_without_tag_marker_flushes_without_structural_scans(monkey
     assert completed.metrics["stream_short_reply_flush_count"] == 0
 
 
+def test_extra_delta_token_distribution_uses_round_robin_batches() -> None:
+    deltas = [
+        AssemblyDelta(reasoning_text=f"thought {index}")
+        if index % 2 == 0
+        else AssemblyDelta(content_text=f"visible {index}")
+        for index in range(6)
+    ]
+
+    adjusted = RequestStreamAssembler._distribute_extra_delta_tokens(
+        deltas,
+        [1, 1, 1, 1, 1, 1],
+        10,
+    )
+
+    assert adjusted == [5, 1, 4, 1, 4, 1]
+
+
 def test_plain_token_metadata_keeps_fast_path_and_metrics(monkeypatch) -> None:
     assembler = RequestStreamAssembler(
         request_id="req-no-marker-token-fast-path",

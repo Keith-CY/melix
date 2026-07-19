@@ -1203,12 +1203,12 @@ class RequestStreamAssembler:
         ] or [
             index for index, delta in enumerate(deltas) if delta.reasoning_text
         ] or list(range(len(deltas)))
-        cursor = 0
-        while extra_tokens > 0:
-            index = priority_indexes[cursor % len(priority_indexes)]
+        full_rounds, remainder = divmod(extra_tokens, len(priority_indexes))
+        if full_rounds:
+            for index in priority_indexes:
+                adjusted[index] += full_rounds
+        for index in priority_indexes[:remainder]:
             adjusted[index] += 1
-            extra_tokens -= 1
-            cursor += 1
         return adjusted
 
     def _recover_unclosed_reasoning_body(self, body: str) -> tuple[str, str]:
