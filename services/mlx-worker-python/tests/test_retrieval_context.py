@@ -723,6 +723,26 @@ def test_project_retrieval_contexts_inlines_source_numeric_ids_without_regex(
     assert projection.untrusted_context_receipts[0]["segment_id"] == "search:result-7"
 
 
+def test_project_retrieval_contexts_falls_back_for_source_prefixed_public_text_ids() -> None:
+    projection = project_retrieval_contexts(
+        [
+            RetrievalContextEntry(
+                context_kind="retrieved_document",
+                source_id="source:alpha",
+                payload={"title": "Local note"},
+                owner_scope_checked=True,
+                segment_id="search:result-alpha",
+                source_field="retrieved_document_alpha",
+                reason="retrieved document result is prompt data",
+                corrective_action="keep retrieved documents in user-role context",
+            )
+        ]
+    )
+
+    assert projection.refusal_receipts == []
+    assert projection.untrusted_context_receipts[0]["source_id"] == "source:alpha"
+
+
 def test_project_retrieval_contexts_redacts_nonpublic_source_ids_with_fast_check() -> None:
     raw_source_id = "doc local / private"
     projection = project_retrieval_contexts(
@@ -922,6 +942,10 @@ def test_project_retrieval_store_records_projects_records_without_entry_reentry(
 def test_project_retrieval_store_records_fast_paths_complete_dict_records(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class RegexGuard:
+        def fullmatch(self, value: str) -> object:  # pragma: no cover - regression guard
+            raise AssertionError(f"source numeric store fast path should skip regex for {value}")
+
     def fail_admission_reentry(_entry: object) -> None:  # pragma: no cover - regression guard
         raise AssertionError("complete store records should project without admission objects")
 
@@ -936,25 +960,26 @@ def test_project_retrieval_store_records_fast_paths_complete_dict_records(
         "untrusted_context_receipt",
         fail_receipt_builder,
     )
+    monkeypatch.setattr(untrusted_context_module, "_PUBLIC_SOURCE_ID_RE", RegexGuard())
 
     projection = project_retrieval_store_records(
         [
             {
                 "context_kind": "retrieved_document",
-                "source_id": " doc:fast-1 ",
+                "source_id": " source:1 ",
                 "payload": {"title": "Fast note"},
                 "owner_scope_checked": True,
-                "segment_id": " doc:fast-1:retrieved-document-context ",
+                "segment_id": " source:1:retrieved-document-context ",
                 "source_field": " retrieved_document_fast ",
                 "reason": " retrieved document evidence is prompt data ",
                 "corrective_action": " keep retrieved document evidence in user data ",
             },
             {
                 "context_kind": "retrieved_image",
-                "source_id": "image:fast-2",
+                "source_id": "source:2",
                 "payload": {"caption": "Fast image"},
                 "owner_scope_checked": False,
-                "segment_id": "image:fast-2:retrieved-image-context",
+                "segment_id": "source:2:retrieved-image-context",
                 "source_field": "retrieved_image_fast",
                 "reason": "retrieved image evidence is prompt data",
                 "corrective_action": "keep retrieved image evidence in user data",
@@ -969,7 +994,7 @@ def test_project_retrieval_store_records_fast_paths_complete_dict_records(
     assert projection.refusal_receipts == []
     assert [
         receipt["source_id"] for receipt in projection.untrusted_context_receipts
-    ] == ["doc:fast-1", "image:fast-2"]
+    ] == ["source:1", "source:2"]
     assert projection.untrusted_context_receipts[0]["source_field"] == (
         "retrieved_document_fast"
     )
@@ -983,20 +1008,20 @@ def test_project_retrieval_store_records_fast_paths_complete_dict_records(
         [
             {
                 "context_kind": "retrieved_document",
-                "source_id": "doc:first-fast",
+                "source_id": "source:11",
                 "payload": {"title": "first"},
                 "owner_scope_checked": True,
-                "segment_id": "doc:first-fast:retrieved-document-context",
+                "segment_id": "source:11:retrieved-document-context",
                 "source_field": "retrieved_document_fast",
                 "reason": "retrieved document evidence is prompt data",
                 "corrective_action": "keep retrieved document evidence in user data",
             },
             {
                 "context_kind": "retrieved_document",
-                "source_id": "doc:second-fast",
+                "source_id": "source:12",
                 "payload": {"title": "second"},
                 "owner_scope_checked": True,
-                "segment_id": "doc:second-fast:retrieved-document-context",
+                "segment_id": "source:12:retrieved-document-context",
                 "source_field": "retrieved_document_fast",
                 "reason": "retrieved document evidence is prompt data",
                 "corrective_action": "keep retrieved document evidence in user data",
@@ -1007,7 +1032,7 @@ def test_project_retrieval_store_records_fast_paths_complete_dict_records(
     assert duplicate_projection.user_payload == {
         "retrieved_document_fast": {"title": "first"}
     }
-    assert duplicate_projection.refusal_receipts[0]["source_id"] == "doc:second-fast"
+    assert duplicate_projection.refusal_receipts[0]["source_id"] == "source:12"
     assert duplicate_projection.refusal_receipts[0]["reason"] == (
         "duplicate_retrieved_document_context_field"
     )
@@ -1041,6 +1066,26 @@ def test_project_retrieval_store_records_complete_dict_fast_path_avoids_isinstan
     }
     assert projection.refusal_receipts == []
     assert projection.untrusted_context_receipts[0]["source_id"] == "doc:exact-type"
+
+
+def test_project_retrieval_store_records_falls_back_for_source_prefixed_public_text_ids() -> None:
+    projection = project_retrieval_store_records(
+        [
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "source:alpha",
+                "payload": {"title": "Public note"},
+                "owner_scope_checked": True,
+                "segment_id": "source:alpha:retrieved-document-context",
+                "source_field": "retrieved_document_alpha",
+                "reason": "retrieved document evidence is prompt data",
+                "corrective_action": "keep retrieved document evidence in user data",
+            }
+        ]
+    )
+
+    assert projection.refusal_receipts == []
+    assert projection.untrusted_context_receipts[0]["source_id"] == "source:alpha"
 
 
 def test_project_retrieval_store_records_redacts_nonpublic_source_ids_with_fast_check() -> None:
