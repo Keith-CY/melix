@@ -597,7 +597,9 @@ def adapter_manifest_trajectory_provenance(
         normalized.get("trajectory_reward_policy_id")
     )
     token_metrics = normalized.get("agentic_sft_token_metrics")
-    if isinstance(token_metrics, Mapping):
+    if type(token_metrics) is dict:
+        payload.update(_agentic_sft_token_metric_aliases(token_metrics))
+    elif isinstance(token_metrics, Mapping):
         payload.update(_agentic_sft_token_metric_aliases(token_metrics))
     return payload
 
@@ -623,8 +625,70 @@ def alignment_metrics_trajectory_provenance(
 
 
 def _agentic_sft_token_metric_aliases(metrics: Mapping[str, Any]) -> dict[str, Any]:
-    metrics_get = metrics.get
     int_value = _INT
+    if type(metrics) is dict and len(metrics) == 6:
+        try:
+            estimator = metrics["estimator"]
+            source_trace_count = metrics["source_trace_count"]
+            trace_tokens = metrics["trace_tokens"]
+            tool_call_tokens = metrics["tool_call_tokens"]
+            observation_tokens = metrics["observation_tokens"]
+            final_answer_tokens = metrics["final_answer_tokens"]
+        except KeyError:
+            pass
+        else:
+            if type(estimator) is str:
+                if estimator and not estimator[0].isspace() and not estimator[-1].isspace():
+                    return {
+                        "training.agentic_sft.token_estimator": estimator,
+                        "training.agentic_sft.source_trace_count": int_value(
+                            source_trace_count or 0
+                        ),
+                        "training.agentic_sft.trace_tokens": int_value(trace_tokens or 0),
+                        "training.agentic_sft.tool_call_tokens": int_value(
+                            tool_call_tokens or 0
+                        ),
+                        "training.agentic_sft.observation_tokens": int_value(
+                            observation_tokens or 0
+                        ),
+                        "training.agentic_sft.final_answer_tokens": int_value(
+                            final_answer_tokens or 0
+                        ),
+                    }
+                estimator_text = estimator.strip()
+            else:
+                estimator_text = _STR(estimator).strip()
+            if estimator_text:
+                return {
+                    "training.agentic_sft.token_estimator": estimator_text,
+                    "training.agentic_sft.source_trace_count": int_value(
+                        source_trace_count or 0
+                    ),
+                    "training.agentic_sft.trace_tokens": int_value(trace_tokens or 0),
+                    "training.agentic_sft.tool_call_tokens": int_value(
+                        tool_call_tokens or 0
+                    ),
+                    "training.agentic_sft.observation_tokens": int_value(
+                        observation_tokens or 0
+                    ),
+                    "training.agentic_sft.final_answer_tokens": int_value(
+                        final_answer_tokens or 0
+                    ),
+                }
+            return {
+                "training.agentic_sft.source_trace_count": int_value(
+                    source_trace_count or 0
+                ),
+                "training.agentic_sft.trace_tokens": int_value(trace_tokens or 0),
+                "training.agentic_sft.tool_call_tokens": int_value(tool_call_tokens or 0),
+                "training.agentic_sft.observation_tokens": int_value(
+                    observation_tokens or 0
+                ),
+                "training.agentic_sft.final_answer_tokens": int_value(
+                    final_answer_tokens or 0
+                ),
+            }
+    metrics_get = metrics.get
     estimator = _STR(metrics_get("estimator", "")).strip()
     if estimator:
         return {
