@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+import bisect
 import fnmatch
 import gc
 import os
@@ -69,6 +70,13 @@ _SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE: dict[
     tuple[int, int, tuple[str, ...]],
     tuple[dict[str, object], ...],
 ] = {}
+
+
+@lru_cache(maxsize=32)
+def _normalized_changed_paths(changed_files: tuple[str, ...]) -> tuple[str, ...]:
+    changed_path_set = set(changed_files)
+    changed_path_set.discard("")
+    return tuple(sorted(changed_path_set))
 
 
 def _log_progress(message: str) -> None:
@@ -261,9 +269,7 @@ def build_scope_report(
     changed_files: list[str],
 ) -> dict[str, object]:
     probes = load_probe_registry_for_scope(registry_path)
-    changed_path_set = set(changed_files)
-    changed_path_set.discard("")
-    changed_paths = tuple(sorted(changed_path_set))
+    changed_paths = _normalized_changed_paths(tuple(changed_files))
     force_all, matched_probe_ids, selected_probes = _scope_selection(
         probes=probes,
         changed_paths=changed_paths,
@@ -2426,7 +2432,7 @@ def _scope_selection_uncached(
 ) -> tuple[bool, tuple[str, ...], tuple[dict[str, object], ...]]:
     changed_path_set = frozenset(changed_paths)
     force_all = bool(_FORCE_ALL_EXACT_PATHS & changed_path_set) or _changed_paths_match_force_all_wildcards(
-        changed_path_set
+        changed_paths
     )
     if _FORCE_ALL_CONTEXT_ONLY_PATHS.isdisjoint(changed_path_set):
         direct_changed_paths = changed_paths
@@ -2761,14 +2767,26 @@ def _path_matches_force_all(path: str) -> bool:
     )
 
 
-def _changed_paths_match_force_all_wildcards(changed_paths: set[str]) -> bool:
+def _changed_paths_match_force_all_wildcards(changed_paths: set[str] | tuple[str, ...] | list[str]) -> bool:
     matchers = _force_all_wildcard_matchers()
     if not matchers:
         return False
-    matches_any_compiled_glob = _matches_any_compiled_glob
-    for path in changed_paths:
-        if matches_any_compiled_glob(path, matchers):
-            return True
+    if not isinstance(changed_paths, tuple):
+        changed_paths = tuple(sorted(changed_paths))
+    for prefix, pattern in matchers:
+        if prefix:
+            index = bisect.bisect_left(changed_paths, prefix)
+            while index < len(changed_paths):
+                path = changed_paths[index]
+                if not path.startswith(prefix):
+                    break
+                if pattern.match(path) is not None:
+                    return True
+                index += 1
+            continue
+        for path in changed_paths:
+            if pattern.match(path) is not None:
+                return True
     return False
 
 
