@@ -996,6 +996,15 @@ def test_report_evidence_gate_covers_invalid_payload_and_edge_summaries(tmp_path
     subclass_rows: list[object] = [DictRow({"phase": "subclass"}), {"phase": "plain"}]
     assert report_evidence_gate_module._dict_list(subclass_rows) is subclass_rows
 
+    class RowList(list[object]):
+        pass
+
+    subclass_list = RowList([{"phase": "plain"}, DictRow({"phase": "subclass"})])
+    assert report_evidence_gate_module._dict_list(subclass_list) is subclass_list
+    assert report_evidence_gate_module._dict_list(RowList([subclass_list[0], "skip"])) == [
+        subclass_list[0]
+    ]
+
     markdown = render_pr_evidence_markdown(
         {
             **gate,
