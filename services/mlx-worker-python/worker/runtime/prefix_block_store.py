@@ -361,6 +361,14 @@ class ColdPrefixStore:
             return
         precheck_orphan_names = len(snapshot_file_names) < len(meta_paths)
         meta_suffix_length = len(".meta.json")
+        root = self._root
+        index = self._index
+        session_digest = _session_digest
+        normalize_kv_quant_profile = _normalize_kv_quant_profile
+        entry_meta_cls = ColdEntryMeta
+        remove_path_string_quietly = _remove_path_string_quietly
+        open_file = _OPEN
+        json_loads = json.loads
         for meta_path_string, meta_file_name in meta_paths:
             if precheck_orphan_names:
                 snapshot_name_from_sidecar = f"{meta_file_name[:-meta_suffix_length]}.kv.safetensors"
@@ -369,44 +377,44 @@ class ColdPrefixStore:
                     # write, or manual snapshot deletion) — drop it before parsing
                     # JSON so orphan-heavy cold dirs do not pay per-sidecar decode
                     # cost on every restart.
-                    _remove_path_string_quietly(meta_path_string)
+                    remove_path_string_quietly(meta_path_string)
                     continue
-            meta_path = Path(meta_path_string)
             try:
-                with _OPEN(meta_path_string, "rb") as meta_file:
-                    payload = json.loads(meta_file.read())
+                with open_file(meta_path_string, "rb") as meta_file:
+                    payload = json_loads(meta_file.read())
+                payload_get = payload.get
                 session_id = str(payload["session_id"])
-                snapshot_name = f"{_session_digest(session_id)}.kv.safetensors"
-                snapshot_path = self._root / snapshot_name
+                snapshot_name = f"{session_digest(session_id)}.kv.safetensors"
                 if snapshot_name not in snapshot_file_names:
                     # Orphaned sidecar (crash between snapshot write and meta
                     # write, or manual snapshot deletion) — drop it so restarts
                     # stop rescanning it.
-                    _remove_quietly(meta_path)
+                    remove_path_string_quietly(meta_path_string)
                     continue
                 raw_token_ids = payload["token_ids"]
                 if raw_token_ids and type(raw_token_ids[0]) is int:
                     token_ids = list(raw_token_ids)
                 else:
                     token_ids = [int(t) for t in raw_token_ids]
-                self._index[session_id] = ColdEntryMeta(
+                meta_path = Path(meta_path_string)
+                index[session_id] = entry_meta_cls(
                     session_id=session_id,
                     token_ids=token_ids,
-                    cache_mode=str(payload.get("cache_mode", "")),
-                    model_id=str(payload.get("model_id", "")),
-                    model_revision=str(payload.get("model_revision", "")),
-                    block_size=max(1, int(payload.get("block_size", 1))),
-                    total_bytes=int(payload.get("total_bytes", 0)),
-                    acceleration_mode=str(payload.get("acceleration_mode", "")),
-                    kv_quant_profile=_normalize_kv_quant_profile(
-                        str(payload.get("kv_quant_profile", ""))
+                    cache_mode=str(payload_get("cache_mode", "")),
+                    model_id=str(payload_get("model_id", "")),
+                    model_revision=str(payload_get("model_revision", "")),
+                    block_size=max(1, int(payload_get("block_size", 1))),
+                    total_bytes=int(payload_get("total_bytes", 0)),
+                    acceleration_mode=str(payload_get("acceleration_mode", "")),
+                    kv_quant_profile=normalize_kv_quant_profile(
+                        str(payload_get("kv_quant_profile", ""))
                     ),
-                    stored_at=float(payload.get("stored_at", 0.0)),
-                    snapshot_path=snapshot_path,
+                    stored_at=float(payload_get("stored_at", 0.0)),
+                    snapshot_path=root / snapshot_name,
                     meta_path=meta_path,
                 )
             except Exception:
-                _remove_quietly(meta_path)
+                remove_path_string_quietly(meta_path_string)
 
     def _evict_over_budget_locked(self, keep_session_id: str) -> None:
         if self._max_bytes <= 0:

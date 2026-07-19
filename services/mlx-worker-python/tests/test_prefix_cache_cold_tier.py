@@ -688,6 +688,83 @@ def test_cold_store_index_load_preserves_string_token_id_coercion(tmp_path: Path
     assert matched == 4
 
 
+def test_cold_store_index_load_removes_post_decode_orphans_by_path_string(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cold_root = tmp_path / "cold"
+    cold_root.mkdir()
+    sidecar_digest = prefix_block_store._session_digest("sidecar")
+    missing_digest = prefix_block_store._session_digest("missing-session")
+    meta_path = cold_root / f"{sidecar_digest}.meta.json"
+    meta_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.prefix_cache_cold_entry.v1",
+                "session_id": "missing-session",
+                "token_ids": [1, 2, 3, 4],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (cold_root / f"{sidecar_digest}.kv.safetensors").write_bytes(b"snapshot")
+    removed_path_strings: list[str] = []
+
+    def counted_string_unlink(path: str) -> None:
+        assert type(path) is str
+        removed_path_strings.append(path)
+        os.unlink(path)
+
+    monkeypatch.setattr(
+        prefix_block_store,
+        "_remove_path_string_quietly",
+        counted_string_unlink,
+    )
+
+    reloaded = ColdPrefixStore(
+        cold_root,
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    assert reloaded.entry_count() == 0
+    assert removed_path_strings == [str(meta_path)]
+    assert not meta_path.exists()
+    assert not (cold_root / f"{missing_digest}.kv.safetensors").exists()
+
+
+def test_cold_store_index_load_removes_bad_json_by_path_string(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cold_root = tmp_path / "cold"
+    cold_root.mkdir()
+    digest = prefix_block_store._session_digest("bad-json")
+    meta_path = cold_root / f"{digest}.meta.json"
+    meta_path.write_text("{bad-json", encoding="utf-8")
+    (cold_root / f"{digest}.kv.safetensors").write_bytes(b"snapshot")
+    removed_path_strings: list[str] = []
+
+    def counted_string_unlink(path: str) -> None:
+        assert type(path) is str
+        removed_path_strings.append(path)
+        os.unlink(path)
+
+    monkeypatch.setattr(
+        prefix_block_store,
+        "_remove_path_string_quietly",
+        counted_string_unlink,
+    )
+
+    reloaded = ColdPrefixStore(
+        cold_root,
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    assert reloaded.entry_count() == 0
+    assert removed_path_strings == [str(meta_path)]
+    assert not meta_path.exists()
+
+
 def test_cold_store_index_load_tolerates_scandir_failure(
     monkeypatch,
     tmp_path: Path,
