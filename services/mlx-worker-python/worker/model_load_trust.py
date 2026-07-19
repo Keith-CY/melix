@@ -306,7 +306,10 @@ def _is_trust_applicable(
 def _runtime_name(runtime: Any) -> str:
     if runtime is None:
         return ""
-    runtime_name = getattr(runtime, "runtime_name", "")
+    try:
+        runtime_name = runtime.runtime_name
+    except AttributeError:
+        return ""
     if type(runtime_name) is str:
         return runtime_name
     if not runtime_name:

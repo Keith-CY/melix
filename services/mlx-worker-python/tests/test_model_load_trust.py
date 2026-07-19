@@ -31,6 +31,23 @@ class RecordingTextBackend:
         return 4096
 
 
+def test_runtime_name_preserves_missing_falsey_and_non_string_values() -> None:
+    class MissingRuntimeName:
+        pass
+
+    class FalseyRuntimeName:
+        runtime_name = 0
+
+    class NumericRuntimeName:
+        runtime_name = 123
+
+    assert model_load_trust_module._runtime_name(None) == ""
+    assert model_load_trust_module._runtime_name(MissingRuntimeName()) == ""
+    assert model_load_trust_module._runtime_name(FalseyRuntimeName()) == ""
+    assert model_load_trust_module._runtime_name(NumericRuntimeName()) == "123"
+    assert model_load_trust_module._runtime_name(RecordingTextBackend()) == "mlx-lm"
+
+
 def test_trust_policy_non_empty_source_fast_path_preserves_blank_fallback() -> None:
     assert model_load_trust_module._non_empty("request", "fallback") == "request"
     assert model_load_trust_module._non_empty("", "fallback") == "fallback"
