@@ -32,11 +32,12 @@ def _load_json_payload(path: Path) -> dict[str, Any]:
 
 
 def _is_mtp_weight_key(key: Any) -> bool:
+    prefixes = _MTP_WEIGHT_KEY_PREFIXES
     if type(key) is str:
-        return key.startswith("language_model.mtp.") or key.startswith("mtp.")
+        return key.startswith(prefixes)
     if isinstance(key, str):
-        return key.startswith(_MTP_WEIGHT_KEY_PREFIXES)
-    return str(key).startswith(_MTP_WEIGHT_KEY_PREFIXES)
+        return key.startswith(prefixes)
+    return str(key).startswith(prefixes)
 
 
 def _model_safetensor_files(model_path: Path) -> list[str]:
