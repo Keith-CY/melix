@@ -63,6 +63,7 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
 def measure(*, directory_count: int, files_per_directory: int, samples: int) -> dict[str, float]:
     elapsed_ms: list[float] = []
     source_kind_elapsed_ms: list[float] = []
+    read_elapsed_ms: list[float] = []
     record_elapsed_ms: list[float] = []
     file_counts: list[float] = []
     with tempfile.TemporaryDirectory(prefix="melix-dataset-source-records-probe-") as tmp:
@@ -109,6 +110,11 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
                 if source_kinds != expected_kinds:
                     raise RuntimeError("source kind classification changed")
                 started = time.perf_counter()
+                source_texts = [dataset_preparation._read_source_text(path) for path in paths]
+                read_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+                if source_texts[0] != "Melix source row\n" or source_texts[-1] != "Melix source row\n":
+                    raise RuntimeError("source text reading changed")  # pragma: no cover - guard only.
+                started = time.perf_counter()
                 records = [
                     dataset_preparation._record(
                         path=path,
@@ -135,6 +141,9 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
         "source_kind_elapsed_ms_mean": statistics.fmean(source_kind_elapsed_ms),
         "source_kind_elapsed_ms_min": min(source_kind_elapsed_ms),
         "source_kind_elapsed_ms_p95": sorted(source_kind_elapsed_ms)[int((len(source_kind_elapsed_ms) - 1) * 0.95)],
+        "read_elapsed_ms_mean": statistics.fmean(read_elapsed_ms),
+        "read_elapsed_ms_min": min(read_elapsed_ms),
+        "read_elapsed_ms_p95": sorted(read_elapsed_ms)[int((len(read_elapsed_ms) - 1) * 0.95)],
         "record_elapsed_ms_mean": statistics.fmean(record_elapsed_ms),
         "record_elapsed_ms_min": min(record_elapsed_ms),
         "record_elapsed_ms_p95": sorted(record_elapsed_ms)[int((len(record_elapsed_ms) - 1) * 0.95)],

@@ -1239,12 +1239,13 @@ def _source_read_cap_bytes(*, upload_cap_bytes: int, source_cap_bytes: int) -> i
 
 
 def _read_source_text(path: Path, *, cap_bytes: int = 0) -> str:
+    raw_path = os.fspath(path)
     if cap_bytes <= 0:
-        with path.open("rb") as handle:
+        with open(raw_path, "rb") as handle:
             return handle.read().decode("utf-8")
     chunks: list[bytes] = []
     observed = 0
-    with path.open("rb") as handle:
+    with open(raw_path, "rb") as handle:
         while True:
             chunk = handle.read(64 * 1024)
             if not chunk:
