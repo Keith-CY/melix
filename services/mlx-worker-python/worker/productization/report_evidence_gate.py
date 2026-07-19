@@ -646,13 +646,14 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
 
 def _dict_list(value: object) -> list[dict[str, object]]:
     dict_type = dict
+    list_type = list
     is_dict = isinstance
-    if type(value) is list:
+    if type(value) is list_type:
         for item in value:
             if type(item) is not dict_type and not is_dict(item, dict_type):
                 return [item for item in value if is_dict(item, dict_type)]
         return cast(list[dict[str, object]], value)
-    if not isinstance(value, list):
+    if not is_dict(value, list_type):
         return []
     for item in value:
         if type(item) is not dict_type and not is_dict(item, dict_type):
