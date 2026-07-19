@@ -231,7 +231,7 @@ def test_parse_response_json_object_fast_paths_skip_json_loads(monkeypatch) -> N
 
     monkeypatch.setattr(event_extraction_module, "_JSON_LOADS", fail_json_loads)
 
-    assert event_extraction_module._parse_response_json('{"events": []}  ') == {"events": []}
+    assert event_extraction_module._parse_response_json('{"events": []}\n  ') == {"events": []}
     assert event_extraction_module._parse_response_json('  {"events": []}  ') == {"events": []}
 
 

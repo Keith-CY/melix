@@ -2962,6 +2962,13 @@ def _has_only_optional_closing_fence(response_text: str, start: int, response_le
 def _has_only_trailing_whitespace(response_text: str, start: int, response_length: int) -> bool:
     if start == response_length:
         return True
+    if (
+        start + 3 == response_length
+        and response_text[start] == "\n"
+        and response_text[start + 1] == " "
+        and response_text[start + 2] == " "
+    ):
+        return True
     return _skip_json_whitespace(response_text, start, response_length) == response_length
 
 
