@@ -3161,25 +3161,42 @@ def test_changed_paths_force_all_wildcards_short_circuits_on_match(
 ) -> None:
     match_calls: list[str] = []
 
+    class TrackingPattern:
+        def match(self, path: str) -> object | None:
+            match_calls.append(path)
+            return object() if path.startswith("scripts/pr_scoped_performance_") or path.endswith("report.py") else None
+
     monkeypatch.setattr(
         pr_scoped_performance_module,
         "_force_all_wildcard_matchers",
-        lambda: (("scripts/", re.compile(r"scripts/pr_scoped_performance_.*\.py")),),
+        lambda: (("scripts/", TrackingPattern()),),
     )
-
-    def tracked_match(path: str, matchers: tuple[tuple[str, re.Pattern[str]], ...]) -> bool:
-        match_calls.append(path)
-        return path.startswith("scripts/pr_scoped_performance_")
-
-    monkeypatch.setattr(pr_scoped_performance_module, "_matches_any_compiled_glob", tracked_match)
 
     assert (
         pr_scoped_performance_module._changed_paths_match_force_all_wildcards(
-            ["scripts/pr_scoped_performance_report.py", "docs/late.md"]  # type: ignore[arg-type]
+            ["docs/early.md", "scripts/other.py", "services/late.py"]
+        )
+        is False
+    )
+    assert match_calls == ["scripts/other.py"]
+    match_calls.clear()
+
+    assert (
+        pr_scoped_performance_module._changed_paths_match_force_all_wildcards(
+            ("docs/early.md", "scripts/pr_scoped_performance_report.py", "services/late.py")
         )
         is True
     )
     assert match_calls == ["scripts/pr_scoped_performance_report.py"]
+    match_calls.clear()
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_force_all_wildcard_matchers",
+        lambda: (("", TrackingPattern()),),
+    )
+    assert pr_scoped_performance_module._changed_paths_match_force_all_wildcards(("docs/report.py",)) is True
+    assert match_calls == ["docs/report.py"]
 
 
 def test_matches_any_glob_uses_explicit_short_circuit(monkeypatch: pytest.MonkeyPatch) -> None:
