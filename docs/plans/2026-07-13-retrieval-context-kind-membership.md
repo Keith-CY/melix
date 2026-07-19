@@ -51,3 +51,18 @@ Success is accepted only if the focused retrieval context tests, changed-scope
 coverage, and the registered Linux probe pass locally with lower
 `optimized_elapsed_ms_mean`, and if the PR-scoped CI probe completes successfully
 before merge.
+
+## Follow-up Slice: Public Source Prefix Slice Comparison
+
+The 2026-07-19 follow-up keeps the same registered probe and narrows to the
+`source:` public-id fast path used by exact `RetrievalContextEntry` objects and
+exact dict store records. The previous implementation used
+`normalized_source_id.startswith(public_source_prefix)` before slicing the numeric
+suffix; this slice uses a fixed-length prefix slice comparison instead, reusing
+the already-bound prefix length and preserving the same fallback to
+`_is_public_source_id()` for non-numeric or non-prefixed public source ids.
+
+Success is accepted only if the focused retrieval context tests,
+changed-scope coverage, and the registered Linux probe pass locally with lower
+`optimized_elapsed_ms_mean`, and if the PR-scoped CI probe completes successfully
+before merge.
