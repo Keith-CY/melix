@@ -23,3 +23,17 @@ The affected path is covered by the registered PR-scoped performance probe `pref
 - Focused cold-prefix tests pass, including a regression guard proving reload uses byte payloads and does not call `json.load()` for valid metadata.
 - Changed-scope coverage for touched Python/test/probe/registry files remains at or above 95%.
 - Local registered probe should keep `path_glob_calls_mean=0` and `scandir_calls_mean=1`, reduce `json_load_calls_mean` to `0`, and improve or stay stable on `elapsed_ms_mean`; CI remains the merge-gate source of truth for the registered probe report.
+
+## Follow-up: Token id list fast path
+
+The 2026-07-19 follow-up keeps the same registered probe and stays inside
+`ColdPrefixStore._ensure_loaded_locked()`. Metadata written by `ColdPrefixStore.store()`
+already serializes `token_ids` as JSON integer arrays, so cold-index reload can
+copy that common all-int list directly instead of coercing each token through
+`int()` on every valid sidecar. The fallback path still coerces non-int metadata
+values so manually edited or older string-token sidecars preserve existing
+behavior.
+
+Success remains the same: focused cold-prefix tests, changed-scope coverage, and
+the registered Linux probe must pass locally, and the PR-scoped CI probe remains
+the merge gate.

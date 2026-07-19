@@ -384,9 +384,14 @@ class ColdPrefixStore:
                     # stop rescanning it.
                     _remove_quietly(meta_path)
                     continue
+                raw_token_ids = payload["token_ids"]
+                if raw_token_ids and type(raw_token_ids[0]) is int:
+                    token_ids = list(raw_token_ids)
+                else:
+                    token_ids = [int(t) for t in raw_token_ids]
                 self._index[session_id] = ColdEntryMeta(
                     session_id=session_id,
-                    token_ids=[int(t) for t in payload["token_ids"]],
+                    token_ids=token_ids,
                     cache_mode=str(payload.get("cache_mode", "")),
                     model_id=str(payload.get("model_id", "")),
                     model_revision=str(payload.get("model_revision", "")),
