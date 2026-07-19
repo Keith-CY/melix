@@ -659,6 +659,35 @@ def test_cold_store_index_load_reads_metadata_as_json_bytes(
     assert loads_payload_types == [bytes]
 
 
+def test_cold_store_index_load_preserves_string_token_id_coercion(tmp_path: Path) -> None:
+    cold = _make_cold(tmp_path)
+    assert cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+    meta_path = tmp_path / "cold" / f"{prefix_block_store._session_digest('s1')}.meta.json"
+    payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    payload["token_ids"] = ["1", "2", "3", "4"]
+    meta_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    reloaded = ColdPrefixStore(
+        tmp_path / "cold",
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    meta, matched = reloaded.match([1, 2, 3, 4], "m1", "r1", 4)
+
+    assert meta is not None
+    assert meta.token_ids == [1, 2, 3, 4]
+    assert matched == 4
+
+
 def test_cold_store_index_load_tolerates_scandir_failure(
     monkeypatch,
     tmp_path: Path,
