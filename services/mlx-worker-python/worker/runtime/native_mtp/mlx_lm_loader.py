@@ -108,7 +108,11 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
             seen_add(file_name_text)
             continue
         separator_index = str_rfind(file_name_text, path_sep)
-        if separator_index >= 0 and str_startswith(file_name_text[separator_index + 1 :], model_prefix):
+        if separator_index >= 0 and str_startswith(
+            file_name_text,
+            model_prefix,
+            separator_index + 1,
+        ):
             seen_add(file_name_text)
             continue
         seen_add(file_name_text)
