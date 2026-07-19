@@ -301,17 +301,21 @@ def _report_matrix_roles(
     roles: list[str] = []
     roles_append = roles.append
     runs = _dict_list(report.get("runs"))
-    targets = _dict_list(report.get("targets"))
-    metrics = _dict_list(report.get("metrics"))
+    targets: list[dict[str, object]] | None = None
+    metrics: list[dict[str, object]] | None = None
     run_kind_values: set[str] | None = None
     probe_phases: set[str] | None = None
-    run_kind_only_rule = _run_kind_only_rule
     run_kind_rule_matches = _run_kind_rule_matches
     for role, rule in matrix.items():
-        if run_kind_only_rule(rule):
+        rule_get = rule.get
+        run_kinds = rule_get("run_kinds")
+        if run_kinds and not (
+            rule_get("metric_prefixes")
+            or rule_get("target_fields")
+            or rule_get("probe_phases")
+        ):
             if run_kind_values is None:
                 run_kind_values = _report_run_kind_values(runs)
-            run_kinds = rule.get("run_kinds", ())
             if isinstance(run_kinds, tuple) and len(run_kinds) == 1:
                 run_kind = run_kinds[0]
                 if run_kind in run_kind_values or (
@@ -321,6 +325,10 @@ def _report_matrix_roles(
             elif run_kind_rule_matches(run_kinds, run_kind_values):
                 roles_append(role)
             continue
+        if targets is None:
+            targets = _dict_list(report.get("targets"))
+        if metrics is None:
+            metrics = _dict_list(report.get("metrics"))
         if rule.get("probe_phases") and probe_phases is None:
             probe_phases = _probe_phases(report)
         if _rule_matches_report(
