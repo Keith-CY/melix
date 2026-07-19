@@ -587,7 +587,8 @@ def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:
     rows: list[tuple[float, int, str, dict[str, object]]] = []
     row_index = 0
     row_count = 0
-    rows_push = heapq.heappush
+    heap_ready = False
+    rows_append = rows.append
     rows_replace = heapq.heapreplace
     for side in ("baseline", "candidate"):
         side_summary = probe_summary.get(side)
@@ -609,12 +610,16 @@ def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:
             else:
                 duration_ms = 0.0
             if row_count < 5:
-                rows_push(rows, (duration_ms, -row_index, side, row))
+                rows_append((duration_ms, -row_index, side, row))
                 row_count += 1
-            elif duration_ms >= rows[0][0]:
-                item = (duration_ms, -row_index, side, row)
-                if item > rows[0]:
-                    rows_replace(rows, item)
+            else:
+                if not heap_ready:
+                    heapq.heapify(rows)
+                    heap_ready = True
+                if duration_ms >= rows[0][0]:
+                    item = (duration_ms, -row_index, side, row)
+                    if item > rows[0]:
+                        rows_replace(rows, item)
             row_index += 1
     rows.sort(reverse=True)
     return [{"side": side, **row} for _duration_ms, _row_order, side, row in rows]
