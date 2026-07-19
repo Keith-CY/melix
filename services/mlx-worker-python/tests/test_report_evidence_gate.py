@@ -690,6 +690,64 @@ def test_report_matrix_roles_reuses_run_kind_value_set_for_run_kind_only_rules(
     assert calls == 1
 
 
+def test_report_matrix_roles_lazily_loads_targets_and_metrics_for_run_kind_only_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    original_dict_list = report_evidence_gate_module._dict_list
+
+    def count_dict_list(value: object) -> list[dict[str, object]]:
+        calls.append(value)
+        return original_dict_list(value)
+
+    monkeypatch.setattr(report_evidence_gate_module, "_dict_list", count_dict_list)
+
+    roles = report_evidence_gate_module._report_matrix_roles(
+        {
+            "runs": [{"run_kind": "serving_benchmark"}],
+            "targets": [{"adapter_id": "adapter-a"}],
+            "metrics": [{"metric": "adapter.loss"}],
+        },
+        {"serving": {"run_kinds": ("serving_benchmark",)}},
+    )
+
+    assert roles == ["serving"]
+    assert calls == [[{"run_kind": "serving_benchmark"}]]
+
+
+def test_report_matrix_roles_materializes_targets_and_metrics_for_mixed_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    original_dict_list = report_evidence_gate_module._dict_list
+
+    def count_dict_list(value: object) -> list[dict[str, object]]:
+        calls.append(value)
+        return original_dict_list(value)
+
+    monkeypatch.setattr(report_evidence_gate_module, "_dict_list", count_dict_list)
+
+    roles = report_evidence_gate_module._report_matrix_roles(
+        {
+            "runs": [{"run_kind": "serving_benchmark"}],
+            "targets": [{"adapter_id": "adapter-a"}],
+            "metrics": [{"metric": "adapter.loss"}],
+        },
+        {
+            "serving": {"run_kinds": ("serving_benchmark",)},
+            "adapter_metric": {"metric_prefixes": ("adapter.",)},
+            "adapter_target": {"target_fields": ("adapter_id",)},
+        },
+    )
+
+    assert roles == ["serving", "adapter_metric", "adapter_target"]
+    assert calls == [
+        [{"run_kind": "serving_benchmark"}],
+        [{"adapter_id": "adapter-a"}],
+        [{"metric": "adapter.loss"}],
+    ]
+
+
 def test_report_matrix_roles_scans_probe_phases_once_for_phase_rules(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
