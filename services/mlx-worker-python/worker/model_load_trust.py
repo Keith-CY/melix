@@ -183,8 +183,9 @@ def _custom_loader_rejection_policy(
     loader_family: str,
     detection_source: str,
 ) -> common_pb2.ModelLoadTrustPolicy:
-    return MODEL_LOAD_TRUST_POLICY.FromString(
-        _custom_loader_rejection_policy_bytes(
+    policy = MODEL_LOAD_TRUST_POLICY()
+    policy.CopyFrom(
+        _custom_loader_rejection_policy_template(
             requested_mode,
             policy_source,
             route_class,
@@ -192,16 +193,17 @@ def _custom_loader_rejection_policy(
             detection_source,
         )
     )
+    return policy
 
 
 @lru_cache(maxsize=128)
-def _custom_loader_rejection_policy_bytes(
+def _custom_loader_rejection_policy_template(
     requested_mode: int,
     policy_source: str,
     route_class: int,
     loader_family: str,
     detection_source: str,
-) -> bytes:
+) -> common_pb2.ModelLoadTrustPolicy:
     return MODEL_LOAD_TRUST_POLICY(
         requested_mode=requested_mode,
         effective_mode=requested_mode,
@@ -211,7 +213,7 @@ def _custom_loader_rejection_policy_bytes(
         block_reason=BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST,
         route_class=route_class,
         loader_family=loader_family,
-    ).SerializeToString()
+    )
 
 
 def _requested_mode(

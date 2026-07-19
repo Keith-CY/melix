@@ -22,8 +22,8 @@ back exactly as before.
 
 The follow-up rejection-policy template slice keeps the same registered probe and
 moves repeated custom-loader rejection policy construction behind a cached
-serialized protobuf template keyed by the policy fields. Each rejection still
-receives a fresh mutable `ModelLoadTrustPolicy` parsed from the cached bytes, so
+protobuf template keyed by the policy fields. Each rejection still receives a
+fresh mutable `ModelLoadTrustPolicy` populated from the cached template, so
 callers cannot mutate the cached template while hot repeated rejection paths avoid
 rebuilding identical protobuf fields one by one.
 
