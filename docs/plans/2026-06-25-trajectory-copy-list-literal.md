@@ -146,3 +146,16 @@ fast path. Nested mutable component labels remain isolated, and non-standard
 quality metric payloads still fall back through the generic recursive copier. The
 registered `trajectory-provenance-copy-elision` probe remains the local Linux and
 CI validation gate for this small Python-only slice.
+
+## 2026-07-19 follow-up: clean token estimator alias fast path
+
+This follow-up remains limited to `_agentic_sft_token_metric_aliases(...)` inside
+`worker.trajectory_provenance`. The common exact `agentic_sft_token_metrics` dict
+shape now reads the six expected fields directly and, when the estimator is an
+already-clean string, returns the alias payload without calling the generic string
+coercion/strip path; `adapter_manifest_trajectory_provenance(...)` also bypasses
+the generic `Mapping` check for exact dict token metrics. Whitespace trimming,
+blank-estimator omission, integer coercion, fallback behavior for partial/custom
+mappings, and alias key order stay unchanged. The registered
+`trajectory-provenance-copy-elision` probe remains the local Linux and CI
+validation gate for this small Python-only slice.

@@ -1085,6 +1085,79 @@ def test_adapter_manifest_trajectory_provenance_omits_blank_token_estimator() ->
     assert payload["training.agentic_sft.tool_call_tokens"] == 0
 
 
+def test_agentic_token_metric_aliases_fast_path_keeps_clean_estimator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics = {
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": 64,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    def fail_string_coerce(value: object) -> str:  # pragma: no cover - regression guard
+        raise AssertionError(f"unexpected estimator coercion for {value!r}")
+
+    monkeypatch.setattr(trajectory_provenance_module, "_STR", fail_string_coerce)
+
+    aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(metrics)
+
+    assert aliases == {
+        "training.agentic_sft.token_estimator": "fixture-tokenizer",
+        "training.agentic_sft.source_trace_count": 64,
+        "training.agentic_sft.trace_tokens": 2368,
+        "training.agentic_sft.tool_call_tokens": 704,
+        "training.agentic_sft.observation_tokens": 832,
+        "training.agentic_sft.final_answer_tokens": 320,
+    }
+
+
+def test_agentic_token_metric_aliases_fast_path_trims_and_omits_estimators() -> None:
+    metrics = {
+        "estimator": " fixture-tokenizer ",
+        "source_trace_count": 64,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(metrics)
+
+    assert aliases["training.agentic_sft.token_estimator"] == "fixture-tokenizer"
+    metrics["estimator"] = "   "
+    blank_aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(metrics)
+    assert "training.agentic_sft.token_estimator" not in blank_aliases
+    assert blank_aliases["training.agentic_sft.trace_tokens"] == 2368
+
+
+def test_agentic_token_metric_aliases_falls_back_for_partial_exact_dict() -> None:
+    metrics = {
+        "estimator": 123,
+        "source_trace_count": 64,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(metrics)
+
+    assert aliases["training.agentic_sft.token_estimator"] == "123"
+    assert aliases["training.agentic_sft.final_answer_tokens"] == 320
+
+    partial_metrics: dict[str, object] = dict(metrics)
+    partial_metrics.pop("final_answer_tokens")
+    partial_metrics["extra"] = "forces-key-error-fallback"
+    fallback_aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(
+        partial_metrics
+    )
+    assert fallback_aliases["training.agentic_sft.token_estimator"] == "123"
+    assert fallback_aliases["training.agentic_sft.final_answer_tokens"] == 0
+
+
 def test_copy_json_dict_still_copies_nested_mutable_items() -> None:
     source = {"reward_coverage_count": 1, "components": [{"name": "format"}]}
 
