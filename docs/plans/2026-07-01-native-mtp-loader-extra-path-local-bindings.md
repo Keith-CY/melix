@@ -39,3 +39,17 @@ JSON-emitting performance probe script.
 This slice changes Python worker code only. Linux local validation covers the
 Python regression tests, changed-scope coverage, and registered probe command.
 No Swift/macOS runtime effect is claimed for this slice.
+
+## Follow-up Slice: Nested Base Shard Prefix Check
+
+The 2026-07-19 follow-up keeps the same registered probe and narrows to nested
+base-shard filtering inside `_extra_mtp_safetensor_file_paths(...)`. The sidecar
+scanner already rejects top-level and nested `model*.safetensors` base shards
+before path existence checks. This slice preserves that behavior but checks the
+nested basename with `str.startswith(..., start)` instead of slicing the basename
+segment first, avoiding a short string allocation for repeated nested base-shard
+references in large native-MTP weight maps.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with non-regressive or improved elapsed time, and if
+the PR-scoped CI probe completes successfully before merge.
