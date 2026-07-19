@@ -121,14 +121,14 @@ def test_dataset_ingest_unbounded_source_reader_uses_single_binary_read(
 
     counting_file = CountingBinaryFile()
 
-    def counted_open(path: Path, mode: str = "r", *args: object, **kwargs: object) -> CountingBinaryFile:
-        assert path == source_path
+    def counted_open(path: str | os.PathLike[str], mode: str = "r", *args: object, **kwargs: object) -> CountingBinaryFile:
+        assert os.fspath(path) == os.fspath(source_path)
         assert mode == "rb"
         assert args == ()
         assert kwargs == {}
         return counting_file
 
-    monkeypatch.setattr(Path, "open", counted_open)
+    monkeypatch.setattr(dataset_preparation_module, "open", counted_open, raising=False)
 
     assert _read_source_text(source_path) == "hello\nworld\n"
     assert counting_file.read_calls == 1
