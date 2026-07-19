@@ -180,7 +180,7 @@ def project_retrieval_contexts(
                     and normalized_reason
                     and normalized_corrective_action
                 ):
-                    if normalized_source_id.startswith(public_source_prefix):
+                    if normalized_source_id[:public_source_prefix_length] == public_source_prefix:
                         source_suffix = normalized_source_id[public_source_prefix_length:]
                         source_is_public = (
                             source_suffix.isdigit() and len(normalized_source_id) <= 96
@@ -381,7 +381,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                     and normalized_reason
                     and normalized_corrective_action
                 ):
-                    if normalized_source_id.startswith(public_source_prefix):
+                    if normalized_source_id[:public_source_prefix_length] == public_source_prefix:
                         source_suffix = normalized_source_id[public_source_prefix_length:]
                         source_is_public = (
                             source_suffix.isdigit() and len(normalized_source_id) <= 96
