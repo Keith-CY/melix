@@ -82,7 +82,6 @@ def build_category_breakdown(
     rows: tuple[dict[str, object], ...],
 ) -> dict[str, dict[str, object]]:
     category_totals: dict[str, list[int]] = {}
-    category_totals_get = category_totals.get
     string_type = str
     value_type = type
     is_instance = isinstance
@@ -99,8 +98,9 @@ def build_category_breakdown(
             category_label = string_type(raw_category_label).strip()
         if not category_label:
             continue
-        totals = category_totals_get(category_label)
-        if totals is None:
+        try:
+            totals = category_totals[category_label]
+        except KeyError:
             totals = [0, 0, 0]
             category_totals[category_label] = totals
         totals[0] += 1
