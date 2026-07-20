@@ -23,6 +23,13 @@ basename through `os.path.splitext(...)` and `os.path.basename(...)`. This keeps
 `_path_from_uri(...)` semantics unchanged and preserves the existing local URI
 zero-copy contract.
 
+The 2026-07-20 follow-up keeps the same registered probe and narrows only the
+optional suffix extraction path. `prepare_audio_input(...)` now derives the
+format suffix from the local path string with a bounded `str.rfind(".")` /
+separator check instead of dispatching through `os.path.splitext(...)` for each
+local URI. Hidden-file and trailing-dot paths still produce an empty suffix and
+therefore retain the existing `"wav"` fallback.
+
 ## Verification Plan
 
 ```bash
