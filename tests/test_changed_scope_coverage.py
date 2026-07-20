@@ -818,6 +818,38 @@ def test_measurable_changed_lines_uses_dense_membership_scan(
     assert missed == list(range(2, 81, 2))
 
 
+def test_measurable_changed_lines_dense_sets_skip_range_bounds_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 81)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 80, 2)),
+                "missing_lines": list(range(2, 81, 2)),
+            }
+        }
+    }
+
+    def fail_range_overlap(*args: object, **kwargs: object) -> bool:  # pragma: no cover
+        raise AssertionError("dense changed sets should intersect measured lines before range bounds scans")
+
+    monkeypatch.setattr(changed_scope_coverage, "_line_ranges_may_overlap", fail_range_overlap)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        set(range(1, 81)),
+    )
+
+    assert measurable == list(range(1, 81))
+    assert covered == list(range(1, 80, 2))
+    assert missed == list(range(2, 81, 2))
+
+
 def test_measurable_changed_lines_keeps_reversed_coverage_fallback(tmp_path: Path) -> None:
     source_path = tmp_path / "foo.py"
     source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 6)), encoding="utf-8")
