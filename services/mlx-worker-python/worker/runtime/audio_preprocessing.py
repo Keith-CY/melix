@@ -58,7 +58,7 @@ def prepare_audio_input(request, *, read_uri_bytes: bool = True) -> PreparedAudi
         source_kind = "uri"
         reference = request.audio_uri
         if not format_name:
-            format_name = os.path.splitext(local_path)[1].lstrip(".")
+            format_name = _suffix_format_from_path(local_path)
         if not filename:
             filename = os.path.basename(local_path)
     else:
@@ -83,6 +83,16 @@ def prepare_audio_input(request, *, read_uri_bytes: bool = True) -> PreparedAudi
         preprocess_input_bytes=input_bytes,
         preprocess_peak_memory_bytes=input_bytes,
     )
+
+
+def _suffix_format_from_path(local_path: str) -> str:
+    dot_index = local_path.rfind(".")
+    if dot_index < 0 or dot_index == len(local_path) - 1:
+        return ""
+    slash_index = local_path.rfind(os.sep)
+    if dot_index <= slash_index + 1:
+        return ""
+    return local_path[dot_index + 1 :]
 
 
 def _path_from_uri(uri: str) -> Path:

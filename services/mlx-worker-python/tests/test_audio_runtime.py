@@ -300,6 +300,42 @@ def test_audio_preprocessing_zero_copy_uri_skips_exists_probe(
     assert stat_calls == 1
 
 
+def test_audio_preprocessing_derives_uri_suffix_without_splitext(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio_path = tmp_path / "sample.raw"
+    audio_path.write_bytes(b"suffix fast path")
+
+    splitext_spy = Mock(side_effect=AssertionError("format suffix should use rfind fast path"))
+    monkeypatch.setattr(os.path, "splitext", splitext_spy)
+
+    prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri()),
+        read_uri_bytes=False,
+    )
+
+    assert prepared.format == "raw"
+    assert prepared.filename == "sample.raw"
+    assert prepared.preprocess_input_bytes == len(b"suffix fast path")
+    assert splitext_spy.call_count == 0
+
+    hidden_path = tmp_path / ".hidden"
+    hidden_path.write_bytes(b"hidden audio")
+    hidden_prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=hidden_path.as_uri()),
+        read_uri_bytes=False,
+    )
+    assert hidden_prepared.format == "wav"
+
+    trailing_dot_path = tmp_path / "sample."
+    trailing_dot_path.write_bytes(b"trailing dot audio")
+    trailing_dot_prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=trailing_dot_path.as_uri()),
+        read_uri_bytes=False,
+    )
+    assert trailing_dot_prepared.format == "wav"
+
+
 def test_audio_preprocessing_rejects_missing_and_unsupported_inputs(tmp_path: Path) -> None:
     missing_path = tmp_path / "missing.wav"
 
