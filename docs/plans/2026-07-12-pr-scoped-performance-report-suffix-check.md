@@ -28,3 +28,22 @@ The probe creates 2,000 JSON result files plus a non-JSON file and measures `_lo
 ## Expected Impact
 
 The registered probe should report lower or stable `elapsed_ms_mean` / `elapsed_ms_min` for report result loading by avoiding one short-lived string allocation per scanned directory entry.
+
+## Follow-up Slice: Fixed-Length JSON Suffix Slice
+
+The 2026-07-20 follow-up keeps the same registered probe and narrows to the
+same result-directory filter. The result loader only accepts the literal
+five-character `.json` suffix, so this slice uses a fixed-width tail comparison
+(`entry.name[-5:] == ".json"`) instead of the generic `str.endswith()` helper in
+the per-entry scan loop.
+
+This preserves accepted filenames, `os.scandir()` traversal, deterministic path
+sorting, binary JSON reads, non-dict filtering, and missing-directory behavior.
+The decision is measurement-gated because this reverses the earlier allocation
+hypothesis: on the registered Linux probe, the fixed-width slice comparison was
+faster than the current `endswith()` path for the synthetic 2,000-result report
+workload.
+
+Success is accepted only if the focused registered tests, changed-scope coverage,
+and registered local Linux probe pass, and if the PR-scoped performance CI probe
+completes successfully before merge.

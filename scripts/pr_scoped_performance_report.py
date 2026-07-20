@@ -29,7 +29,7 @@ def _load_results(results_dir: Path) -> list[dict[str, object]]:
             result_paths: list[str] = []
             append_path = result_paths.append
             for entry in entries:
-                if entry.name.endswith(".json"):
+                if entry.name[-5:] == ".json":
                     append_path(entry.path)
     except OSError:
         return []
