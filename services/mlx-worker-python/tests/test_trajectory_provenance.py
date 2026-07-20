@@ -1114,6 +1114,50 @@ def test_agentic_token_metric_aliases_fast_path_keeps_clean_estimator(
     }
 
 
+def test_agentic_token_metric_aliases_fast_path_reuses_exact_ints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics = {
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": 64,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    def fail_int_coerce(value: object) -> int:  # pragma: no cover - regression guard
+        raise AssertionError(f"unexpected token metric int coercion for {value!r}")
+
+    monkeypatch.setattr(trajectory_provenance_module, "_INT", fail_int_coerce)
+
+    aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(metrics)
+
+    assert aliases == {
+        "training.agentic_sft.token_estimator": "fixture-tokenizer",
+        "training.agentic_sft.source_trace_count": 64,
+        "training.agentic_sft.trace_tokens": 2368,
+        "training.agentic_sft.tool_call_tokens": 704,
+        "training.agentic_sft.observation_tokens": 832,
+        "training.agentic_sft.final_answer_tokens": 320,
+    }
+
+
+def test_agentic_token_metric_aliases_exact_int_fast_path_preserves_bool_coercion() -> None:
+    metrics = {
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": True,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(metrics)
+
+    assert aliases["training.agentic_sft.source_trace_count"] == 1
+
+
 def test_agentic_token_metric_aliases_fast_path_trims_and_omits_estimators() -> None:
     metrics = {
         "estimator": " fixture-tokenizer ",
