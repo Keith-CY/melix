@@ -303,11 +303,12 @@ def _fast_trajectory_provenance_from_snapshot_manifest(
     snapshot_manifest_path: str | None,
 ) -> dict[str, Any] | None:
     manifest_get = manifest.get
+    value_type = _TYPE
     if manifest_get("format") != "agentic_tool_trace":
         return None
     dataset_id = manifest_get("source_dataset_id")
     if (
-        type(dataset_id) is not str
+        value_type(dataset_id) is not str
         or dataset_id == ""
         or dataset_id[0].isspace()
         or dataset_id[-1].isspace()
@@ -315,7 +316,7 @@ def _fast_trajectory_provenance_from_snapshot_manifest(
         return None
     dataset_version = manifest_get("version")
     if (
-        type(dataset_version) is not str
+        value_type(dataset_version) is not str
         or dataset_version == ""
         or dataset_version[0].isspace()
         or dataset_version[-1].isspace()
@@ -325,7 +326,7 @@ def _fast_trajectory_provenance_from_snapshot_manifest(
     if schema_version is None:
         schema_version = "melix.agentic_tool_trace.v1"
     elif (
-        type(schema_version) is not str
+        value_type(schema_version) is not str
         or schema_version == ""
         or schema_version[0].isspace()
         or schema_version[-1].isspace()
@@ -335,7 +336,7 @@ def _fast_trajectory_provenance_from_snapshot_manifest(
     if split is None:
         split = "train"
     elif (
-        type(split) is not str
+        value_type(split) is not str
         or split == ""
         or split[0].isspace()
         or split[-1].isspace()
@@ -343,7 +344,7 @@ def _fast_trajectory_provenance_from_snapshot_manifest(
         return None
     trace_digest = manifest_get("trajectory_trace_digest")
     if (
-        type(trace_digest) is not str
+        value_type(trace_digest) is not str
         or trace_digest == ""
         or trace_digest[0].isspace()
         or trace_digest[-1].isspace()
@@ -484,19 +485,20 @@ def load_trajectory_provenance_from_snapshot_manifest(
     if type(payload) is dict:
         manifest_get = payload.get
         if manifest_get("format") == "agentic_tool_trace":
+            value_type = _TYPE
             dataset_id = manifest_get("source_dataset_id")
             dataset_version = manifest_get("version")
             trace_digest = manifest_get("trajectory_trace_digest")
             if (
-                type(dataset_id) is str
+                value_type(dataset_id) is str
                 and dataset_id != ""
                 and not dataset_id[0].isspace()
                 and not dataset_id[-1].isspace()
-                and type(dataset_version) is str
+                and value_type(dataset_version) is str
                 and dataset_version != ""
                 and not dataset_version[0].isspace()
                 and not dataset_version[-1].isspace()
-                and type(trace_digest) is str
+                and value_type(trace_digest) is str
                 and trace_digest != ""
                 and not trace_digest[0].isspace()
                 and not trace_digest[-1].isspace()
@@ -505,7 +507,7 @@ def load_trajectory_provenance_from_snapshot_manifest(
                 if schema_version is None:
                     schema_version = "melix.agentic_tool_trace.v1"
                 elif (
-                    type(schema_version) is not str
+                    value_type(schema_version) is not str
                     or schema_version == ""
                     or schema_version[0].isspace()
                     or schema_version[-1].isspace()
@@ -515,7 +517,7 @@ def load_trajectory_provenance_from_snapshot_manifest(
                 if split is None:
                     split = "train"
                 elif (
-                    type(split) is not str
+                    value_type(split) is not str
                     or split == ""
                     or split[0].isspace()
                     or split[-1].isspace()
