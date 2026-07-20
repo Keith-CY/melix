@@ -893,10 +893,32 @@ def test_trust_policy_multiple_executable_model_files_stay_sorted(tmp_path: Path
     )
 
 
+def test_trust_policy_caches_executable_scan_path_by_model_path(tmp_path: Path) -> None:
+    executable_model_dir = tmp_path / "cached-executable-scan-path-model"
+    executable_model_dir.mkdir()
+    executable_model = WorkerModelCatalog.dev_text_model()
+    executable_model.model_path = str(executable_model_dir)
+    path_cache = model_load_trust_module._model_executable_scan_path_for_model_path
+    path_cache.cache_clear()
+
+    assert model_load_trust_module._model_executable_scan_path(executable_model) == str(
+        executable_model_dir
+    )
+    assert model_load_trust_module._model_executable_scan_path(executable_model) == str(
+        executable_model_dir
+    )
+    executable_model.model_path = f"  {executable_model_dir}  "
+    assert model_load_trust_module._model_executable_scan_path(executable_model) == str(
+        executable_model_dir
+    )
+    assert path_cache.cache_info().hits == 2
+
+
 def test_trust_policy_caches_executable_model_files_by_directory_stat(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_load_trust_module._model_executable_scan_path_for_model_path.cache_clear()
     model_load_trust_module._detect_executable_model_files_for_stat.cache_clear()
     executable_model_dir = tmp_path / "cached-executable-file-model"
     executable_model_dir.mkdir()

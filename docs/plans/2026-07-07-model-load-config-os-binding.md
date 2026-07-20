@@ -32,6 +32,12 @@ This follow-up Python-only slice keeps the same `services/mlx-worker-python/work
 
 Expected metrics are lower `elapsed_ms_mean` and `executable_elapsed_ms_mean` in `scripts/model_load_config_json_bytes_probe.py`; config/executable rejection counts must remain unchanged.
 
+## 2026-07-20 Executable Scan Path Cache Follow-up Slice
+
+This follow-up Python-only slice keeps the same `services/mlx-worker-python/worker/model_load_trust.py` boundary and the registered `model-load-config-json-bytes` probe. The executable-model fallback now resolves the directory scan path through a small cached helper mirroring the config-path fast path: plain string model paths avoid repeated `str(...).strip()` and `Path.expanduser()` checks, while tilde paths still expand before directory stat and scandir. Behavior remains identical; the slice only removes repeated path normalization overhead from repeated trust-policy checks.
+
+Expected metrics are lower `executable_elapsed_ms_mean` in `scripts/model_load_config_json_bytes_probe.py`; config/executable rejection counts must remain unchanged.
+
 ## Verification Plan
 
 Run locally on Linux before PR:

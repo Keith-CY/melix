@@ -341,13 +341,9 @@ def _detect_custom_loader_requirement(model_spec: common_pb2.ModelSpec) -> tuple
 
 
 def _detect_executable_model_files(model_spec: common_pb2.ModelSpec) -> tuple[str, ...]:
-    model_path = str(model_spec.model_path or "").strip()
-    if not model_path:
+    scan_path = _model_executable_scan_path(model_spec)
+    if not scan_path:
         return ()
-    if model_path[0] == "~":
-        scan_path = str(Path(model_path).expanduser())
-    else:
-        scan_path = model_path
     try:
         directory_stat = _OS_STAT(scan_path)
     except OSError:
@@ -359,6 +355,26 @@ def _detect_executable_model_files(model_spec: common_pb2.ModelSpec) -> tuple[st
         directory_stat.st_mtime_ns,
         directory_stat.st_size,
     )
+
+
+def _model_executable_scan_path(model_spec: common_pb2.ModelSpec) -> str:
+    model_path_value = model_spec.model_path
+    if type(model_path_value) is str:
+        if not model_path_value:
+            return ""
+        if not model_path_value[0].isspace() and not model_path_value[-1].isspace():
+            return _model_executable_scan_path_for_model_path(model_path_value)
+    model_path = str(model_path_value or "").strip()
+    if not model_path:
+        return ""
+    return _model_executable_scan_path_for_model_path(model_path)
+
+
+@lru_cache(maxsize=128)
+def _model_executable_scan_path_for_model_path(model_path: str) -> str:
+    if model_path[0] == "~":
+        return str(Path(model_path).expanduser())
+    return model_path
 
 
 @lru_cache(maxsize=128)
