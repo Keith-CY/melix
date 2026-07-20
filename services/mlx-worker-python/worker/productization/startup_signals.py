@@ -179,19 +179,19 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
         else Path(channel_path).expanduser().resolve()
     )
     stat_result = resolved_channel_path.stat()
+    stat_mtime_ns = stat_result.st_mtime_ns
+    stat_size = stat_result.st_size
     channel_path_text = str(resolved_channel_path)
     stat_cache_key = (channel_path_text, installed_version)
     stat_cached = _UPDATE_CHECK_RESULT_STAT_CACHE.get(stat_cache_key)
     if stat_cached is not None:
         cached_mtime_ns, cached_size, cached_result = stat_cached
-        if (
-            cached_mtime_ns == stat_result.st_mtime_ns
-            and cached_size == stat_result.st_size
-        ):
+        if cached_mtime_ns == stat_mtime_ns and cached_size == stat_size:
             return cached_result
     latest_version, channel = _read_update_channel_version(
         resolved_channel_path,
-        stat_result=stat_result,
+        stat_mtime_ns=stat_mtime_ns,
+        stat_size=stat_size,
         cache_key=channel_path_text,
     )
     cache_key = (channel_path_text, installed_version, latest_version, channel)
@@ -209,8 +209,8 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
             )
             _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
             _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
-                stat_result.st_mtime_ns,
-                stat_result.st_size,
+                stat_mtime_ns,
+                stat_size,
                 result,
             )
             return result
@@ -225,8 +225,8 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
         )
         _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
         _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
-            stat_result.st_mtime_ns,
-            stat_result.st_size,
+            stat_mtime_ns,
+            stat_size,
             result,
         )
         return result
@@ -241,8 +241,8 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
     )
     _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
     _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
-        stat_result.st_mtime_ns,
-        stat_result.st_size,
+        stat_mtime_ns,
+        stat_size,
         result,
     )
     return result
@@ -251,20 +251,21 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
 def _read_update_channel_version(
     channel_path: Path,
     *,
-    stat_result: Any,
+    stat_mtime_ns: int,
+    stat_size: int,
     cache_key: str,
 ) -> tuple[str, str]:
     cached = _UPDATE_CHANNEL_CACHE.get(cache_key)
     if cached is not None:
         cached_mtime_ns, cached_size, cached_latest_version, cached_channel = cached
-        if cached_mtime_ns == stat_result.st_mtime_ns and cached_size == stat_result.st_size:
+        if cached_mtime_ns == stat_mtime_ns and cached_size == stat_size:
             return cached_latest_version, cached_channel
     payload = json.loads(channel_path.read_bytes())
     latest_version = str(payload.get("latest_version", "")).strip()
     channel = str(payload.get("channel", "stable")).strip() or "stable"
     _UPDATE_CHANNEL_CACHE[cache_key] = (
-        stat_result.st_mtime_ns,
-        stat_result.st_size,
+        stat_mtime_ns,
+        stat_size,
         latest_version,
         channel,
     )
