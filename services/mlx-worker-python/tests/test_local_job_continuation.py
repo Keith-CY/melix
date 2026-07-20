@@ -1515,6 +1515,59 @@ def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
     assert scandir_calls == [os.fspath(tmp_path)]
 
 
+def test_store_scan_followup_candidates_uses_scanned_entry_path_without_rejoin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+
+    def fail_rejoin(job_id: str) -> str:  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"scan_followup_candidates() should reuse the scanned path for {job_id}"
+        )
+
+    monkeypatch.setattr(store, "_record_path_text", fail_rejoin)
+
+    scan = store.scan_followup_candidates()
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == ["ready"]
+
+
+def test_store_scan_followup_candidates_tolerates_scanned_path_deleted_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    missing_path = tmp_path / "ready.json"
+
+    class MissingEntry:
+        name = "ready.json"
+        path = os.fspath(missing_path)
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
+            return True
+
+    monkeypatch.setattr(
+        local_job_continuation_module.os,
+        "scandir",
+        lambda path: iter((MissingEntry(),)),
+    )
+
+    scan = store.scan_followup_candidates()
+
+    assert scan.candidates == ()
+    assert scan.receipts == ()
+
+
 def test_store_scan_followup_candidates_skips_live_evidence_lookup_when_absent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
