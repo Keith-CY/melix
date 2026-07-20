@@ -27,7 +27,9 @@ For dense `set`/`frozenset` inputs and sorted measured coverage lists, this slic
 intersects the measured lists first and skips the separate range-bounds scan.
 If the intersections are empty, the function returns without reading source; if
 not, the existing measurable-line filtering and covered/missed partitioning stay
-unchanged.
+unchanged. The singleton changed-line path keeps its own direct measured-bounds
+fast path so the dense guard does not add overhead to the registered singleton
+range probe.
 
 ## Validation plan
 

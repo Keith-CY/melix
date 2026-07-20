@@ -320,13 +320,35 @@ def _measurable_changed_lines(
         executed_lookup = executed_lines
         missing_lookup = missing_lines
         changed_count = len(changed)
-        dense_sorted_measured = (
-            changed_count >= _DENSE_CHANGED_LINE_SCAN_THRESHOLD
-            and executed_lines
-            and missing_lines
-            and executed_lines[0] <= executed_lines[-1]
-            and missing_lines[0] <= missing_lines[-1]
-        )
+        measured_changed = None
+        dense_sorted_measured = False
+        if changed_count == 1:
+            changed_line = next(iter(changed))
+            singleton_may_overlap = False
+            if executed_lines:
+                first_line = executed_lines[0]
+                last_line = executed_lines[-1]
+                if first_line > last_line:
+                    first_line = min(executed_lines)
+                    last_line = max(executed_lines)
+                singleton_may_overlap = first_line <= changed_line <= last_line
+            if not singleton_may_overlap and missing_lines:
+                first_line = missing_lines[0]
+                last_line = missing_lines[-1]
+                if first_line > last_line:
+                    first_line = min(missing_lines)
+                    last_line = max(missing_lines)
+                singleton_may_overlap = first_line <= changed_line <= last_line
+            if not singleton_may_overlap:
+                return [], [], []
+        else:
+            dense_sorted_measured = (
+                changed_count >= _DENSE_CHANGED_LINE_SCAN_THRESHOLD
+                and executed_lines
+                and missing_lines
+                and executed_lines[0] <= executed_lines[-1]
+                and missing_lines[0] <= missing_lines[-1]
+            )
         measured_line_count = len(executed_lines) + len(missing_lines) if dense_sorted_measured else 0
         if (
             dense_sorted_measured
@@ -338,7 +360,7 @@ def _measurable_changed_lines(
             missing_lookup = changed.intersection(missing_lines)
             measured_changed = list(executed_lookup)
             measured_changed.extend(missing_lookup)
-        else:
+        elif changed_count != 1:
             if not _line_ranges_may_overlap(changed, executed_lines, missing_lines):
                 return [], [], []
             measured_changed = None
@@ -359,8 +381,8 @@ def _measurable_changed_lines(
             sorted_line_list_contains = _sorted_line_list_contains
             if (
                 measured_line_count
-                and len(changed) >= _DENSE_CHANGED_LINE_SCAN_THRESHOLD
-                and len(changed) * 4 >= measured_line_count
+                and changed_count >= _DENSE_CHANGED_LINE_SCAN_THRESHOLD
+                and changed_count * 4 >= measured_line_count
             ):
                 if isinstance(changed, (set, frozenset)):
                     executed_lookup = changed.intersection(executed_lines)
