@@ -58,3 +58,18 @@ work from local model scan probes.
 Validation remains the focused runtime-utils pytest selection, changed-scope
 coverage for `runtime_utils.py`, `test_runtime_utils.py`, and the registered probe
 script, plus the local and CI `runtime-utils-top-level-weight-streaming` probe.
+
+## 2026-07-20 indexed relative shard join slice
+
+This follow-up Python slice keeps the same runtime resident-byte probe and
+extends it with indexed safetensors metrics. `_indexed_safetensors_shard_bytes(...)`
+now resolves relative shard names with `model_dir.joinpath(shard_name)` instead
+of constructing `Path(shard_name)` and then rejoining it to the model directory.
+Absolute shard names still use `Path(shard_name)`, duplicate shard suppression and
+missing-file handling are unchanged, and flat top-level bundle scanning remains
+covered by the existing metrics.
+
+The registered probe now reports `indexed_elapsed_ms_mean` and
+`indexed_peak_bytes_mean` alongside the flat-bundle metrics. Validation remains
+the focused runtime-utils pytest selection, changed-scope coverage, and the local
+and CI `runtime-utils-top-level-weight-streaming` probe.
