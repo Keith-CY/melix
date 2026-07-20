@@ -210,7 +210,7 @@ class ToolDescriptor:
         return common_pb2.ToolDefinition(
             name=self.name,
             description=self.description,
-            json_schema=self.json_schema(),
+            json_schema=self._cached_schema,
         )
 
 

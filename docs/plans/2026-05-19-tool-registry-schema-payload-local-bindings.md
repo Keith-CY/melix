@@ -232,6 +232,25 @@ Expected effect:
 - leave policy-aware selection, registry selection, OpenAI schema generation,
   and protobuf config materialization unchanged.
 
+## Follow-up Slice: Worker Tool Definition Cached Schema
+
+The 2026-07-20 follow-up keeps worker `ToolConfig` materialization behavior
+unchanged, but `ToolDescriptor.as_worker_tool_definition()` now reads the cached
+schema string directly instead of calling the public `json_schema()` accessor for
+each descriptor. The accessor still returns the same cached string for external
+callers; the protobuf materialization hot path only avoids per-tool Python method
+dispatch while preserving fresh `ToolConfig` copies and schema bytes.
+
+Expected effect:
+
+- reduce `tool-registry-schema-bytes-cache`
+  `built_in_tool_config_elapsed_ms_mean` for first materialization of registry
+  worker configs;
+- preserve `json_schema()` public API behavior and returned protobuf config
+  isolation;
+- leave registry selection, OpenAI schema generation, and schema payload copying
+  unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.

@@ -360,6 +360,22 @@ def test_tool_registry_worker_config_reuses_isolated_template_copy() -> None:
     assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
 
 
+def test_tool_registry_worker_config_reuses_cached_descriptor_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ToolRegistry(built_in_tool_registry().tools)
+    expected_schema = built_in_tool_registry().tools[0].json_schema()
+
+    def fail_json_schema(self: ToolDescriptor) -> str:  # pragma: no cover - regression sentinel
+        raise AssertionError("worker ToolConfig should use cached descriptor schema strings")
+
+    monkeypatch.setattr(ToolDescriptor, "json_schema", fail_json_schema)
+
+    config = registry.as_worker_tool_config()
+
+    assert config.tools[0].json_schema == expected_schema
+
+
 def test_built_in_tool_config_full_tuple_selection_returns_full_template_copy() -> None:
     selected_config = built_in_tool_config(tuple(list(BUILTIN_AGENTIC_TOOL_NAMES)))
     selected_config.tools.pop()
