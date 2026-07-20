@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 import os
@@ -132,6 +133,42 @@ def test_dataset_ingest_unbounded_source_reader_uses_single_binary_read(
     monkeypatch.setattr(dataset_preparation_module, "open", counted_open, raising=False)
 
     assert _read_source_text(source_path) == "hello\nworld\n"
+    assert counting_file.read_calls == 1
+
+
+def test_dataset_ingest_source_reader_preserves_builtins_open_patch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "notes.txt"
+    source_path.write_text("unused", encoding="utf-8")
+
+    class CountingBinaryFile:
+        read_calls = 0
+
+        def __enter__(self) -> "CountingBinaryFile":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            self.read_calls += 1
+            assert size == -1
+            return b"patched via builtins.open\n"
+
+    counting_file = CountingBinaryFile()
+
+    def counted_open(path: str | os.PathLike[str], mode: str = "r", *args: object, **kwargs: object) -> CountingBinaryFile:
+        assert os.fspath(path) == os.fspath(source_path)
+        assert mode == "rb"
+        assert args == ()
+        assert kwargs == {}
+        return counting_file
+
+    monkeypatch.setattr(builtins, "open", counted_open)
+
+    assert _read_source_text(source_path) == "patched via builtins.open\n"
     assert counting_file.read_calls == 1
 
 
