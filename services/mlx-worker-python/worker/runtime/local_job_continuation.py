@@ -244,6 +244,39 @@ class LocalJobContinuationStore:
         saved = self.save_record(result.record, expected_revision=record.revision)
         return LocalJobContinuationReconciliation(record=saved, receipt=result.receipt)
 
+    def _reconcile_scanned_record(
+        self,
+        job_id: str,
+        path_text: str,
+        *,
+        live_evidence: LocalJobLiveEvidence | None = None,
+    ) -> LocalJobContinuationReconciliation | None:
+        record = self._load_scanned_record(job_id, path_text)
+        if record is None:
+            return None
+
+        result = reconcile_local_job_continuation(record, live_evidence=live_evidence)
+        if result.record == record:
+            return result
+
+        saved = self.save_record(result.record, expected_revision=record.revision)
+        return LocalJobContinuationReconciliation(record=saved, receipt=result.receipt)
+
+    def _load_scanned_record(
+        self,
+        job_id: str,
+        path_text: str,
+    ) -> LocalJobContinuationRecord | None:
+        safe_job_id = _safe_job_id(job_id)
+        if safe_job_id != job_id or job_id == ".json":
+            return self.load_record(job_id)
+        try:
+            with open(path_text, "rb") as record_file:
+                content = record_file.read()
+        except FileNotFoundError:
+            return None
+        return LocalJobContinuationRecord.from_dict(json.loads(content))
+
     def claim_followup(
         self,
         job_id: str,
@@ -360,8 +393,8 @@ class LocalJobContinuationStore:
         )
         root_fspath = self._root_fspath
         try:
-            record_job_ids: list[str] = []
-            record_job_ids_append = record_job_ids.append
+            scanned_records: list[tuple[str, str]] = []
+            scanned_records_append = scanned_records.append
             json_suffix = ".json"
             json_suffix_length = len(json_suffix)
             for entry in os.scandir(root_fspath):
@@ -375,23 +408,43 @@ class LocalJobContinuationStore:
                     # The scan has already filtered this to a .json file name.
                     # Slice directly rather than calling Path.stem or a helper for
                     # every record in large follow-up stores.
-                    record_job_ids_append(json_suffix if name == json_suffix else name[:-json_suffix_length])
-            record_job_ids.sort()
+                    job_id = json_suffix if name == json_suffix else name[:-json_suffix_length]
+                    entry_path = getattr(entry, "path", None)
+                    scanned_records_append(
+                        (
+                            job_id,
+                            os.fspath(entry_path)
+                            if entry_path is not None
+                            else os.path.join(root_fspath, name),
+                        )
+                    )
+            scanned_records.sort(key=lambda record: record[0])
         except FileNotFoundError:
             return LocalJobContinuationFollowupScan(candidates=(), receipts=())
-        reconcile_record = self.reconcile_record
+        public_reconcile_record = self.reconcile_record
+        use_public_reconcile = (
+            "reconcile_record" in self.__dict__ or "load_record" in self.__dict__
+        )
+        scanned_reconcile_record = self._reconcile_scanned_record
         receipts_append = receipts.append
         candidates_append = candidates.append
         candidate_type = LocalJobContinuationFollowupCandidate
         candidate_receipt = _followup_candidate_scan_receipt
         unreadable_record_receipt = _unreadable_record_scan_receipt
-        for job_id in record_job_ids:
+        for job_id, path_text in scanned_records:
             try:
                 live_evidence = None if live_evidence_get is None else live_evidence_get(job_id)
-                reconciliation = reconcile_record(
-                    job_id,
-                    live_evidence=live_evidence,
-                )
+                if use_public_reconcile:
+                    reconciliation = public_reconcile_record(
+                        job_id,
+                        live_evidence=live_evidence,
+                    )
+                else:
+                    reconciliation = scanned_reconcile_record(
+                        job_id,
+                        path_text,
+                        live_evidence=live_evidence,
+                    )
             except LocalJobContinuationStoreError as exc:
                 receipts_append(exc.receipt)
                 continue
