@@ -237,8 +237,9 @@ def _weight_file_size(path: Path) -> int:
     if not _is_model_weight_filename(path.name):
         return 0
     try:
-        if not path.is_file():
+        stat_result = path.stat()
+        if not stat.S_ISREG(stat_result.st_mode):
             return 0
-        return path.stat().st_size
+        return stat_result.st_size
     except OSError:
         return 0
