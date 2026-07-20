@@ -3795,6 +3795,12 @@
         "warn_pct": 0.0
       },
       {
+        "key": "worker_crash_manifest_gets_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
         "key": "tail_scan_elapsed_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",

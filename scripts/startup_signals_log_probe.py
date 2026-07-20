@@ -32,13 +32,24 @@ def _write_logs(root: Path) -> dict[str, str | int]:
     }
 
 
+class CountingManifest:
+    def __init__(self, payload: dict[str, str | int]) -> None:
+        self._payload = payload
+        self.get_calls = 0
+
+    def get(self, key: str, default: str | int | None = None) -> str | int | None:
+        self.get_calls += 1
+        return self._payload.get(key, default)
+
+
 def _measure_case(
     manifest: dict[str, str | int],
     *,
     error_text: str,
     expected_classification: str,
     iterations: int,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float]:
+    counting_manifest = CountingManifest(manifest)
     original_reader: Callable[..., str] = startup_signals._read_last_nonempty_line
     original_exists = Path.exists
     read_count = 0
@@ -59,7 +70,7 @@ def _measure_case(
     try:
         started = time.perf_counter()
         for _ in range(iterations):
-            report = startup_signals.classify_startup_failure(manifest, error_text=error_text)
+            report = startup_signals.classify_startup_failure(counting_manifest, error_text=error_text)
             if report.classification != expected_classification:
                 raise AssertionError(
                     f"expected {expected_classification}, got {report.classification}"
@@ -68,7 +79,7 @@ def _measure_case(
     finally:
         startup_signals._read_last_nonempty_line = original_reader
         Path.exists = original_exists
-    return elapsed_ms, float(read_count), float(exists_count)
+    return elapsed_ms, float(read_count), float(exists_count), float(counting_manifest.get_calls)
 
 
 def _measure_tail_scan(log_path: Path, *, iterations: int) -> tuple[float, float]:
@@ -163,6 +174,7 @@ def main() -> int:
     worker_elapsed: list[float] = []
     worker_reads: list[float] = []
     worker_exists: list[float] = []
+    worker_gets: list[float] = []
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         root = Path(tmp_dir)
@@ -170,7 +182,7 @@ def main() -> int:
         tail_log = root / "trailing-whitespace.log"
         tail_log.write_bytes(b"startup booted\nfinal startup line" + (b" \t\r\n" * 20000))
         for _ in range(samples):
-            elapsed, reads, exists = _measure_case(
+            elapsed, reads, exists, gets = _measure_case(
                 manifest,
                 error_text="bind() failed: Address already in use",
                 expected_classification="host_port_conflict",
@@ -180,7 +192,7 @@ def main() -> int:
             conflict_reads.append(reads / iterations)
             conflict_exists.append(exists / iterations)
 
-            elapsed, reads, exists = _measure_case(
+            elapsed, reads, exists, gets = _measure_case(
                 manifest,
                 error_text="handshake failed",
                 expected_classification="control_plane_crash",
@@ -190,7 +202,7 @@ def main() -> int:
             control_reads.append(reads / iterations)
             control_exists.append(exists / iterations)
 
-            elapsed, reads, exists = _measure_case(
+            elapsed, reads, exists, gets = _measure_case(
                 manifest,
                 error_text="fatal error: control plane crashed",
                 expected_classification="control_plane_crash",
@@ -200,7 +212,7 @@ def main() -> int:
             direct_control_reads.append(reads / iterations)
             direct_control_exists.append(exists / iterations)
 
-            elapsed, reads, exists = _measure_case(
+            elapsed, reads, exists, gets = _measure_case(
                 {
                     "http_port": 12436,
                     "ready_probe_url": "http://127.0.0.1:12436/v1/models",
@@ -215,7 +227,7 @@ def main() -> int:
 
             worker_manifest = dict(manifest)
             worker_manifest.pop("control_plane_stderr_path")
-            elapsed, reads, exists = _measure_case(
+            elapsed, reads, exists, gets = _measure_case(
                 worker_manifest,
                 error_text="handshake failed",
                 expected_classification="worker_crash",
@@ -224,6 +236,7 @@ def main() -> int:
             worker_elapsed.append(elapsed)
             worker_reads.append(reads / iterations)
             worker_exists.append(exists / iterations)
+            worker_gets.append(gets / iterations)
 
         tail_elapsed_mean, tail_peak_mean = _measure_tail_scan(tail_log, iterations=iterations)
         report_alloc_elapsed_mean, report_alloc_peak_mean, report_has_dict_mean = (
@@ -280,6 +293,7 @@ def main() -> int:
                 "worker_crash_elapsed_ms_mean": round(statistics.fmean(worker_elapsed), 6),
                 "worker_crash_log_path_exists_checks_mean": round(statistics.fmean(worker_exists), 6),
                 "worker_crash_log_reads_mean": round(statistics.fmean(worker_reads), 6),
+                "worker_crash_manifest_gets_mean": round(statistics.fmean(worker_gets), 6),
             },
             sort_keys=True,
         )

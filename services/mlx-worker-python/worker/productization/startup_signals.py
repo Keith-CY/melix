@@ -547,9 +547,7 @@ def classify_startup_failure(
             )
             if worker_crash:
                 primary_log_path = str(
-                    manifest.get("python_worker_stderr_path")
-                    or manifest.get("swift_text_worker_stderr_path")
-                    or ""
+                    python_worker_stderr_path or swift_text_worker_stderr_path or ""
                 )
                 summary = "A worker crashed before Melix became ready."
                 detail = "Inspect the worker logs and restart Melix after fixing the failing runtime."

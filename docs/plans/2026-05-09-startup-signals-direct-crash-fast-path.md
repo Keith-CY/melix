@@ -13,12 +13,17 @@ This slice extends the probe with direct-control-plane-crash metrics:
 - `direct_control_crash_elapsed_ms_mean`
 - `direct_control_crash_log_reads_mean`
 
+This incremental worker-crash primary-log-path slice also adds:
+
+- `worker_crash_manifest_gets_mean`
+
 The existing focused `test_command`, `coverage_command`, and `probe_command` remain attached to the probe.
 
 ## Expected Behavior
 
 - Direct host-port-conflict error text still short-circuits all log reads.
 - Direct crash-pattern error text now classifies as `control_plane_crash` without reading stale control-plane or worker logs.
+- Worker crash classification reuses the worker log path values already read from the manifest when selecting `primary_log_path`.
 - Log-backed control-plane and worker crash classification remain unchanged when direct error text is generic.
 
 ## Verification Plan

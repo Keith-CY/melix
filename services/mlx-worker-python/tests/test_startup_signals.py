@@ -706,6 +706,34 @@ def test_classify_startup_failure_reports_worker_crash(tmp_path: Path) -> None:
     assert "Traceback" in report.log_excerpt
 
 
+def test_classify_startup_failure_reuses_worker_log_paths_for_primary_path(tmp_path: Path) -> None:
+    python_worker_stderr = tmp_path / "python-worker.stderr.log"
+    python_worker_stderr.write_text("Traceback: worker bootstrap failed\n", encoding="utf-8")
+
+    class CountingManifest(dict[str, object]):
+        def __init__(self) -> None:
+            super().__init__(
+                {
+                    "http_port": 11434,
+                    "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+                    "python_worker_stderr_path": str(python_worker_stderr),
+                }
+            )
+            self.get_calls = 0
+
+        def get(self, key: str, default: object = None) -> object:
+            self.get_calls += 1
+            return super().get(key, default)
+
+    manifest = CountingManifest()
+
+    report = classify_startup_failure(manifest, error_text="handshake failed")
+
+    assert report.classification == "worker_crash"
+    assert report.primary_log_path == str(python_worker_stderr)
+    assert manifest.get_calls == 9
+
+
 def test_classify_startup_failure_skips_logs_when_error_text_reports_host_port_conflict(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
