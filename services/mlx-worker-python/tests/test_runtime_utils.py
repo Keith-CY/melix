@@ -433,6 +433,23 @@ def test_top_level_weight_file_bytes_handles_direntry_non_files_and_errors() -> 
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("MODEL.BIN")) == 13
 
 
+def test_weight_file_size_uses_single_stat_for_file_type_and_size(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    weight_file = tmp_path / "model.safetensors"
+    weight_file.write_bytes(b"weights")
+
+    def fail_is_file(self: Path):  # pragma: no cover - regression guard must stay uncalled
+        _ = self
+        raise AssertionError("weight file size should use Path.stat once")
+
+    monkeypatch.setattr(runtime_utils.Path, "is_file", fail_is_file)
+
+    assert runtime_utils._weight_file_size(weight_file) == len(b"weights")
+    assert runtime_utils._weight_file_size(tmp_path) == 0
+
+
 def test_estimate_model_weight_resident_bytes_ignores_malformed_index_and_unreadable_directory(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

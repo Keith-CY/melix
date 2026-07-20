@@ -73,3 +73,17 @@ The registered probe now reports `indexed_elapsed_ms_mean` and
 `indexed_peak_bytes_mean` alongside the flat-bundle metrics. Validation remains
 the focused runtime-utils pytest selection, changed-scope coverage, and the local
 and CI `runtime-utils-top-level-weight-streaming` probe.
+
+## 2026-07-20 weight-file stat-once slice
+
+This follow-up Python slice keeps the same runtime resident-byte probe and
+narrows `_weight_file_size(...)`, the shared helper for single-file model paths
+and indexed safetensors shard accounting. Weight files now use one
+`Path.stat()` result for both regular-file validation and byte size instead of
+calling `Path.is_file()` before `Path.stat()`. Suffix filtering, symlink-following
+semantics, missing-file handling, non-regular file rejection, and flat-bundle
+`os.scandir()` behavior remain unchanged.
+
+Validation remains the focused runtime-utils pytest selection, changed-scope
+coverage, and the local and CI `runtime-utils-top-level-weight-streaming` probe;
+the indexed metrics are the primary performance signal for this slice.
