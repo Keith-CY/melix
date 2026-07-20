@@ -1416,6 +1416,25 @@ def test_agentic_tool_selection_explicit_web_deny_blocks_keyword_visit_with_poli
         "resolved_disabled_tools": ["visit"],
         "requested_tools": ["visit"],
     }
+    result.receipt["tool_policy_receipt"]["explicit_denies"].append("mutated")
+    result.receipt["tool_policy_receipt"]["resolved_disabled_tools"].append("mutated")
+    result.receipt["tool_policy_receipt"]["requested_tools"].append("mutated")
+    repeated = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Visit https://example.com/docs and summarize the page.",
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=False,
+        )
+    )
+    assert repeated.receipt["tool_policy_receipt"] == {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": False,
+        "explicit_allows": [],
+        "explicit_denies": ["web"],
+        "resolved_disabled_tools": ["visit"],
+        "requested_tools": ["visit"],
+    }
     assert "https://example.com" not in json.dumps(result.receipt)
 
 

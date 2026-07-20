@@ -79,6 +79,9 @@ ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES = ("local_compute",)
 _EMPTY_AGENTIC_TOOL_NAME_SET: frozenset[str] = frozenset()
 NETWORK_CAPABLE_AGENTIC_TOOL_NAMES = ("visit",)
 _NETWORK_CAPABLE_AGENTIC_TOOL_NAME_SET = frozenset(NETWORK_CAPABLE_AGENTIC_TOOL_NAMES)
+_NETWORK_CAPABLE_AGENTIC_TOOL_NAME_LIST = list(NETWORK_CAPABLE_AGENTIC_TOOL_NAMES)
+_WEB_POLICY_EXPLICIT_ALLOW_LIST = ["web"]
+_WEB_POLICY_EXPLICIT_DENY_LIST = ["web"]
 _KEYWORD_MATCHABLE_TOOL_NAMES = tuple(
     tool_name
     for tool_name in SELECTABLE_AGENTIC_TOOL_NAMES
@@ -1126,15 +1129,23 @@ def _agentic_tool_policy_receipt(
     if selection_input.allow_web is None and not disabled_tool_names and not denied_tool_names:
         return None
     disabled_tool_names = disabled_tool_names or _EMPTY_AGENTIC_TOOL_NAME_SET
-    disabled = [
-        tool_name for tool_name in SELECTABLE_AGENTIC_TOOL_NAMES if tool_name in disabled_tool_names
-    ]
-    requested = list(dict.fromkeys(denied_tool_names or ()))
+    copy_list = _COPY_LIST
+    if disabled_tool_names is _NETWORK_CAPABLE_AGENTIC_TOOL_NAME_SET:
+        disabled = copy_list(_NETWORK_CAPABLE_AGENTIC_TOOL_NAME_LIST)
+    else:
+        disabled = [
+            tool_name for tool_name in SELECTABLE_AGENTIC_TOOL_NAMES if tool_name in disabled_tool_names
+        ]
+    requested = copy_list(denied_tool_names) if denied_tool_names else []
     return {
         "schema_version": "melix.agentic_tool_policy.v1",
         "allow_web": selection_input.allow_web,
-        "explicit_allows": ["web"] if selection_input.allow_web is True else [],
-        "explicit_denies": ["web"] if selection_input.allow_web is False else [],
+        "explicit_allows": copy_list(_WEB_POLICY_EXPLICIT_ALLOW_LIST)
+        if selection_input.allow_web is True
+        else [],
+        "explicit_denies": copy_list(_WEB_POLICY_EXPLICIT_DENY_LIST)
+        if selection_input.allow_web is False
+        else [],
         "resolved_disabled_tools": disabled,
         "requested_tools": requested,
     }
