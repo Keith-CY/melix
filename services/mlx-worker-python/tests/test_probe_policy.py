@@ -98,6 +98,19 @@ def test_probe_policy_reuses_normalized_string_cache_for_invalid_values() -> Non
     assert ProbePolicy.from_value("   ") is ProbePolicy.from_value("")
 
 
+def test_probe_policy_exact_invalid_minimal_strings_skip_cached_normalization() -> None:
+    _probe_policy_from_uncached_string.cache_clear()
+    invalid_policy = ProbePolicy.from_value("unsupported-mode")
+
+    assert invalid_policy.mode is ProbeMode.MINIMAL
+    assert invalid_policy.source_value == "unsupported-mode"
+    assert invalid_policy.fallback_applied is True
+    assert ProbePolicy.from_value("unsupported-mode") is invalid_policy
+    assert _probe_policy_from_uncached_string.cache_info().hits == 0
+    for index in range(65):
+        assert ProbePolicy.from_value(f"unsupported-mode-{index}").fallback_applied is True
+
+
 def test_probe_policy_empty_values_reuse_default_policy_cache() -> None:
     minimal_policy = ProbePolicy.from_value("")
 
