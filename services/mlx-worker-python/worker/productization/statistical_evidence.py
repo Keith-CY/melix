@@ -83,14 +83,17 @@ def build_category_breakdown(
 ) -> dict[str, dict[str, object]]:
     category_totals: dict[str, list[int]] = {}
     category_totals_get = category_totals.get
-    is_instance = isinstance
     string_type = str
+    value_type = type
+    is_instance = isinstance
     for row in rows:
         try:
             raw_category_label = row["category_label"]
         except KeyError:
             continue
-        if is_instance(raw_category_label, string_type):
+        if value_type(raw_category_label) is string_type:
+            category_label = raw_category_label.strip()
+        elif is_instance(raw_category_label, string_type):
             category_label = raw_category_label.strip()
         else:
             category_label = string_type(raw_category_label).strip()
