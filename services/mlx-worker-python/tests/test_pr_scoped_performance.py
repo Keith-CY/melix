@@ -4223,6 +4223,7 @@ def test_runtime_utils_top_level_weights_probe_script_emits_metrics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("MELIX_RUNTIME_UTILS_WEIGHT_FILES", "8")
+    monkeypatch.setenv("MELIX_RUNTIME_UTILS_INDEXED_SHARDS", "4")
     monkeypatch.setenv("MELIX_RUNTIME_UTILS_WEIGHT_ITERATIONS", "2")
     monkeypatch.setenv("MELIX_RUNTIME_UTILS_WEIGHT_SAMPLES", "1")
 
@@ -4235,11 +4236,16 @@ def test_runtime_utils_top_level_weights_probe_script_emits_metrics(
     assert exc_info.value.code == 0
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["file_count"] == 8.0
+    assert metrics["indexed_shard_count"] == 4.0
     assert metrics["iterations"] == 2.0
     assert metrics["expected_bytes"] > 0
+    assert metrics["indexed_expected_bytes"] > 0
     assert metrics["checksum"] == metrics["expected_bytes"] * metrics["iterations"]
+    assert metrics["indexed_checksum"] == metrics["indexed_expected_bytes"] * metrics["iterations"]
     assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["indexed_elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["indexed_peak_bytes_mean"] > 0
 
 
 def test_mlx_text_stop_kwarg_signature_probe_script_emits_metrics(

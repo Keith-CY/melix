@@ -267,6 +267,43 @@ def test_estimate_model_weight_resident_bytes_uses_indexed_unique_shards(tmp_pat
     assert runtime_utils.estimate_model_weight_resident_bytes(str(bundle)) == 18
 
 
+def test_indexed_safetensors_shard_bytes_joins_relative_names_without_path_round_trip(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "indexed-model"
+    bundle.mkdir()
+    shard = bundle / "model-00001-of-00001.safetensors"
+    shard.write_bytes(b"weights")
+    (bundle / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"layers.0.weight": shard.name}}),
+        encoding="utf-8",
+    )
+    original_path = runtime_utils.Path
+
+    def fail_relative_path_constructor(value: str | os.PathLike[str]) -> Path:
+        if value == shard.name:  # pragma: no cover - regression guard must stay uncalled
+            raise AssertionError("relative index shard names should join without Path() round trip")
+        return original_path(value)
+
+    monkeypatch.setattr(runtime_utils, "Path", fail_relative_path_constructor)
+
+    assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"weights")
+
+
+def test_indexed_safetensors_shard_bytes_preserves_absolute_shard_paths(tmp_path) -> None:
+    bundle = tmp_path / "indexed-model"
+    bundle.mkdir()
+    shard = tmp_path / "external-model-00001-of-00001.safetensors"
+    shard.write_bytes(b"absolute-weights")
+    (bundle / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"layers.0.weight": str(shard)}}),
+        encoding="utf-8",
+    )
+
+    assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"absolute-weights")
+
+
 def test_estimate_model_weight_resident_bytes_skips_expanduser_for_plain_paths(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
