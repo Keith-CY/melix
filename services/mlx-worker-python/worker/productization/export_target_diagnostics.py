@@ -590,6 +590,7 @@ def _build_redacted_excerpt(
     used_bytes = 0
     last_source_path = ""
     last_source_prefix = ""
+    redact_text = _redact_text
     try:
         resolved_target_root = layout.target_root.resolve(strict=False)
     except OSError:
@@ -599,12 +600,13 @@ def _build_redacted_excerpt(
         if output_line_count >= bounded_lines:
             summary.truncated = True
             break
-        redacted = _redact_text(source_line.text, resolved_target_root, resolved_target_root_text, summary)
-        if source_line.source_path == last_source_path:
+        source_path = source_line.source_path
+        redacted = redact_text(source_line.text, resolved_target_root, resolved_target_root_text, summary)
+        if source_path == last_source_path:
             source_prefix = last_source_prefix
         else:
-            last_source_path = source_line.source_path
-            source_prefix = f"[{source_line.source_path}] "
+            last_source_path = source_path
+            source_prefix = f"[{source_path}] "
             last_source_prefix = source_prefix
         rendered = source_prefix + redacted
         if rendered.isascii():
