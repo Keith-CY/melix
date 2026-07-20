@@ -245,6 +245,16 @@ def test_dataset_quality_message_rows_skip_completion_key_lookup() -> None:
     assert _sample_output_lengths([], [row]) == [8]
 
 
+def test_dataset_quality_two_message_rows_preserve_content_lengths() -> None:
+    assert _sample_output_lengths(
+        [],
+        [
+            {"messages": [{"content": "hello"}, {"content": "world"}]},
+            {"messages": [{"content": "hello"}, {"content": 678}]},
+        ],
+    ) == [10, 8]
+
+
 def test_dataset_quality_length_stats_accumulates_total_inline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
