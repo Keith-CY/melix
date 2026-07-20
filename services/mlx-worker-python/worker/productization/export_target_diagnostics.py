@@ -294,7 +294,7 @@ _DIAGNOSIS_FAST_PHRASE_PATTERNS = (
     ("runtime load failed", _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_LOAD_FAILED]),
     ("model load failed", _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_LOAD_FAILED]),
 )
-_DIAGNOSIS_EXACT_FAST_TEXT_PATTERNS = {
+_DIAGNOSIS_EXACT_TEXT_PATTERNS = {
     "runtime load failed while opening model": _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_LOAD_FAILED],
     "unsupported architecture arm64 required": _DIAGNOSIS_PATTERN_BY_CODE[CODE_UNSUPPORTED_ARCHITECTURE],
     "duplicate tensor name decoder.layers.0": _DIAGNOSIS_PATTERN_BY_CODE[CODE_DUPLICATE_TENSOR_NAME],
@@ -303,7 +303,10 @@ _DIAGNOSIS_EXACT_FAST_TEXT_PATTERNS = {
     "invalid runtime path /tmp/melix/bad-target": _DIAGNOSIS_PATTERN_BY_CODE[CODE_INVALID_RUNTIME_PATH],
     "generation smoke timed out after deadline exceeded": _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_TIMEOUT],
     "permission denied opening model weights": _DIAGNOSIS_PATTERN_BY_CODE[CODE_PERMISSION_DENIED],
-    "metal out of memory during load": _DIAGNOSIS_PATTERN_BY_CODE[CODE_INSUFFICIENT_MEMORY],
+    "Metal out of memory during load": _DIAGNOSIS_PATTERN_BY_CODE[CODE_INSUFFICIENT_MEMORY],
+}
+_DIAGNOSIS_EXACT_FAST_TEXT_PATTERNS = {
+    text.lower(): pattern for text, pattern in _DIAGNOSIS_EXACT_TEXT_PATTERNS.items()
 }
 
 
@@ -851,6 +854,7 @@ def _diagnoses_from_excerpt(
     seen_codes_add = seen_codes.add
     patterns = _DIAGNOSIS_PATTERNS
     fast_phrase_patterns = _DIAGNOSIS_FAST_PHRASE_PATTERNS
+    exact_text_patterns = _DIAGNOSIS_EXACT_TEXT_PATTERNS
     exact_fast_text_patterns = _DIAGNOSIS_EXACT_FAST_TEXT_PATTERNS
     source_lines_local = source_lines
     has_diagnosis_marker = _has_diagnosis_marker
@@ -861,8 +865,12 @@ def _diagnoses_from_excerpt(
         if remaining_known_code_count == 0:
             break
         text = source_lines_local[index].text
-        lowered_text = text.lower()
-        fast_pattern = exact_fast_text_patterns.get(lowered_text)
+        fast_pattern = exact_text_patterns.get(text)
+        if fast_pattern is None:
+            lowered_text = text.lower()
+            fast_pattern = exact_fast_text_patterns.get(lowered_text)
+        else:
+            lowered_text = ""
         if fast_pattern is not None:
             pattern_code = fast_pattern.code
             if pattern_code in seen_codes:

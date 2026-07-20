@@ -77,6 +77,27 @@ def test_export_target_diagnostics_common_phrase_fast_path_skips_regex_table(
     assert diagnoses[0]["matched_pattern_id"] == "runtime-load-failed-v1"
 
 
+def test_export_target_diagnostics_exact_source_text_fast_path_skips_regex_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(export_target_diagnostics_module, "_DIAGNOSIS_PATTERNS", ())
+    source_lines = [
+        _SourceLine(
+            source_path="logs/ollama-create.log",
+            text="Metal out of memory during load",
+        ),
+    ]
+
+    diagnoses = _diagnoses_from_excerpt(
+        source_lines,
+        {0: 1},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert [diagnosis["code"] for diagnosis in diagnoses] == [CODE_INSUFFICIENT_MEMORY]
+    assert diagnoses[0]["matched_pattern_id"] == "insufficient-memory-v1"
+
+
 def test_export_target_diagnostics_source_line_extension_matches_split_helper() -> None:
     lines: list[_SourceLine] = []
 

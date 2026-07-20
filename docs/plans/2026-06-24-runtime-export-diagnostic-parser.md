@@ -254,6 +254,13 @@ directly when it is already non-whitespace, and only falls back to the existing
 left-strip behavior for indented or blank lines. Prompt/response labels,
 case-insensitive branches, and private-preview redaction semantics stay the same.
 
+A follow-up 2026-07-20 exact-source-text diagnosis slice keeps diagnosis
+semantics and matched pattern ids unchanged while checking a preserved exact
+source-text table before the lowercase exact table. Fixture-like common lines
+that already match the canonical source spelling now skip `str.lower()` entirely;
+case variants and non-exact lines continue through the same lowercase exact,
+marker, phrase, and regex fallbacks.
+
 Focused verification:
 
 ```bash
