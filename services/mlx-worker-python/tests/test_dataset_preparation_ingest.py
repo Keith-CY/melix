@@ -254,8 +254,16 @@ def test_dataset_ingest_record_reuses_source_id_cache() -> None:
     assert cache_info.hits == 1
     assert cache_info.misses == 1
     assert first_record["source_id"] == second_record["source_id"]
-    assert first_record["source_id"] == hashlib.sha256(b"same.txt").hexdigest()[:16]
+    assert first_record["source_id"] == hashlib.sha256(os.fsencode("same.txt")).hexdigest()[:16]
     assert first_record["content_sha256"] != second_record["content_sha256"]
+
+
+def test_dataset_ingest_record_source_id_uses_filesystem_encoding_for_surrogates() -> None:
+    _record_source_id.cache_clear()
+
+    path_text = "surrogate-\udcff.txt"
+
+    assert _record_source_id(path_text) == hashlib.sha256(os.fsencode(path_text)).hexdigest()[:16]
 
 
 def test_dataset_ingest_record_accepts_pre_normalized_text(

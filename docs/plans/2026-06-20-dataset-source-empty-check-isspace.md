@@ -81,3 +81,7 @@ value unchanged.
 
 Success remains gated by the registered focused tests, changed-scope coverage,
 local Linux probe output for `record_elapsed_ms_*`, and PR-scoped performance CI.
+A 2026-07-20 review follow-up switches cached source-id hashing to `os.fsencode(...)`
+so arbitrary filesystem path strings with surrogate escapes use Python's filesystem
+encoding/error policy rather than hard-coded UTF-8 strict encoding; normal path IDs
+remain unchanged.

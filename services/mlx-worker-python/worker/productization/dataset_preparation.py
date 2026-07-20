@@ -1547,7 +1547,7 @@ def _record_content_digest_and_size(normalized_text: str) -> tuple[str, int]:
 
 @lru_cache(maxsize=8192)
 def _record_source_id(path_text: str) -> str:
-    return _SHA256(path_text.encode("utf-8")).hexdigest()[:16]
+    return _SHA256(os.fsencode(path_text)).hexdigest()[:16]
 
 
 def _failure_id(reason: str, name: str) -> str:
