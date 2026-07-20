@@ -68,3 +68,16 @@ The registered `dataset-source-records-scandir` probe fixture now includes all
 structured ingest suffixes (`.jsonl`, `.json`, `.csv`, `.tsv`) so local Linux
 and PR-scoped CI probe classification timing covers the optimized path before
 the slice is merged.
+
+## 2026-07-20 follow-up: source-id digest cache
+
+This Python-only follow-up keeps the same registered `dataset-source-records-scandir`
+probe and narrows to `_record(...)` source-id construction. Repeated source record
+materialization for stable paths previously encoded and hashed the path text on
+every pass even though the source-id is deterministic for a path. This slice adds
+a bounded LRU cache for the path-text-to-source-id digest while keeping content
+digest caching, metadata copying, normalized text handling, and the public source-id
+value unchanged.
+
+Success remains gated by the registered focused tests, changed-scope coverage,
+local Linux probe output for `record_elapsed_ms_*`, and PR-scoped performance CI.
