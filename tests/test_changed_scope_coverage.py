@@ -613,6 +613,92 @@ def test_measurable_changed_lines_checks_singletons_before_range_overlap(
     assert missed == []
 
 
+def test_measurable_changed_lines_singleton_skips_range_helper_for_measured_lists(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 100, 2)),
+                "missing_lines": list(range(2, 101, 2)),
+            }
+        }
+    }
+
+    def fail_range_overlap(*args: object, **kwargs: object) -> bool:  # pragma: no cover
+        raise AssertionError("singleton changed sets should check measured bounds directly")
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("out-of-range singleton changed line should not read source")
+
+    monkeypatch.setattr(changed_scope_coverage, "_line_ranges_may_overlap", fail_range_overlap)
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {101},
+    )
+
+    assert measurable == []
+    assert covered == []
+    assert missed == []
+
+
+def test_measurable_changed_lines_singleton_handles_reversed_executed_bounds(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 7)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [5, 3, 1],
+                "missing_lines": [],
+            }
+        }
+    }
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {3},
+    )
+
+    assert measurable == [3]
+    assert covered == [3]
+    assert missed == []
+
+
+def test_measurable_changed_lines_singleton_handles_reversed_missing_bounds(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 7)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [],
+                "missing_lines": [6, 4, 2],
+            }
+        }
+    }
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {4},
+    )
+
+    assert measurable == [4]
+    assert covered == []
+    assert missed == [4]
+
+
 def test_line_ranges_may_overlap_single_changed_line_avoids_changed_minmax(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -805,6 +891,38 @@ def test_measurable_changed_lines_uses_dense_membership_scan(
         raise AssertionError("dense changed sets should scan measured lists with set membership")
 
     monkeypatch.setattr(changed_scope_coverage, "_sorted_line_list_contains", fail_sorted_contains)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        set(range(1, 81)),
+    )
+
+    assert measurable == list(range(1, 81))
+    assert covered == list(range(1, 80, 2))
+    assert missed == list(range(2, 81, 2))
+
+
+def test_measurable_changed_lines_dense_sets_skip_range_bounds_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 81)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 80, 2)),
+                "missing_lines": list(range(2, 81, 2)),
+            }
+        }
+    }
+
+    def fail_range_overlap(*args: object, **kwargs: object) -> bool:  # pragma: no cover
+        raise AssertionError("dense changed sets should intersect measured lines before range bounds scans")
+
+    monkeypatch.setattr(changed_scope_coverage, "_line_ranges_may_overlap", fail_range_overlap)
 
     measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
         tmp_path,
