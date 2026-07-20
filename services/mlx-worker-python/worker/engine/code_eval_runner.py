@@ -304,9 +304,17 @@ def _count_plain_assert_statement_lines(test_code: str) -> int:
         while cursor < end and test_code[cursor] in " \t":
             cursor += 1
         if cursor < end:
-            if not test_code.startswith("assert", cursor):
-                return 0
             after_index = cursor + 6
+            if (
+                after_index > end
+                or test_code[cursor] != "a"
+                or test_code[cursor + 1] != "s"
+                or test_code[cursor + 2] != "s"
+                or test_code[cursor + 3] != "e"
+                or test_code[cursor + 4] != "r"
+                or test_code[cursor + 5] != "t"
+            ):
+                return 0
             after = test_code[after_index] if after_index < end else "\n"
             if after == "_" or (after != " " and after != "\t" and after.isalnum()):
                 return 0

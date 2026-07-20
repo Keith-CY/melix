@@ -586,6 +586,7 @@ def test_count_tests_plain_assert_fast_path_defers_mixed_statements() -> None:
 
 
 def test_plain_assert_line_counter_rejects_identifier_prefix() -> None:
+    assert code_eval_runner._count_plain_assert_statement_lines("asser") == 0
     assert code_eval_runner._count_plain_assert_statement_lines("assert_valid_name") == 0
 
 
