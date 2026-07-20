@@ -1897,7 +1897,7 @@ def _append_rows_output_lengths(
                 if type(message_0) is dict_ and type(message_1) is dict_:
                     content_0 = message_0.get("content", "")
                     content_1 = message_1.get("content", "")
-                    if type(content_0) is str and type(content_1) is str:
+                    if type(content_0) is str_ and type(content_1) is str_:
                         total = len_(content_0) + len_(content_1)
                         append(total)
                         output_length_total += total
@@ -1911,14 +1911,14 @@ def _append_rows_output_lengths(
                         content = item.get("content", "")
                     except AttributeError:
                         continue
-                if type(content) is str:
+                if type(content) is str_:
                     total += len_(content)
                 else:
                     total += len_(str_(content))
             append(total)
             output_length_total += total
         else:
-            if type(completion) is str:
+            if type(completion) is str_:
                 length = len_(completion)
             else:
                 length = len_(str_(completion))
