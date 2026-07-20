@@ -159,3 +159,14 @@ blank-estimator omission, integer coercion, fallback behavior for partial/custom
 mappings, and alias key order stay unchanged. The registered
 `trajectory-provenance-copy-elision` probe remains the local Linux and CI
 validation gate for this small Python-only slice.
+
+## 2026-07-20 follow-up: exact-int token alias fast path
+
+This follow-up remains limited to `_agentic_sft_token_metric_aliases(...)` inside
+`worker.trajectory_provenance`. The common exact `agentic_sft_token_metrics` dict
+shape now returns already-clean string estimator aliases with exact `int` token
+counts directly, avoiding repeated integer coercion calls in the registered
+adapter-manifest micro path. Bool and non-int numeric-like values still fall back
+through the existing coercion branch, preserving previous alias semantics and key
+order. The registered `trajectory-provenance-copy-elision` probe remains the
+local Linux and CI validation gate for this small Python-only slice.
