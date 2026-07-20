@@ -322,11 +322,13 @@ def _detect_custom_loader_requirement(model_spec: common_pb2.ModelSpec) -> tuple
     config_detection = CONFIG_JSON_ABSENT_DETECTION
     if config_path is not None:
         config_path_text, stat_path = config_path
+        os_stat = _OS_STAT
+        stat_isreg = _STAT_ISREG
         try:
-            config_stat = _OS_STAT(stat_path)
+            config_stat = os_stat(stat_path)
         except OSError:
             config_stat = None
-        if config_stat is not None and _STAT_ISREG(config_stat.st_mode):
+        if config_stat is not None and stat_isreg(config_stat.st_mode):
             config_detection = _detect_custom_loader_requirement_for_stat(
                 config_path_text,
                 config_stat.st_mtime_ns,
