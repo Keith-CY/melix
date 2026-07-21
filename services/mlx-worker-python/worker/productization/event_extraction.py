@@ -2897,10 +2897,13 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
             raise json.JSONDecodeError("Extra data", response_text, end_index)
         return parsed
 
-    if response_length and response_text[0] == "`" and response_text.startswith(_JSON_FENCE_PREFIX):
+    response_startswith = response_text.startswith
+    json_fence_prefix = _JSON_FENCE_PREFIX
+    json_fence_prefix_length = _JSON_FENCE_PREFIX_LENGTH
+    if response_length and response_text[0] == "`" and response_startswith(json_fence_prefix):
         parsed, end_index = raw_decode(
             response_text,
-            _JSON_FENCE_PREFIX_LENGTH,
+            json_fence_prefix_length,
         )
         if not has_only_optional_closing_fence(response_text, end_index, response_length):
             raise json.JSONDecodeError("Extra data", response_text, end_index)
@@ -2916,10 +2919,10 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
             raise json.JSONDecodeError("Extra data", response_text, end_index)
         return parsed
 
-    if response_text.startswith(_JSON_FENCE_PREFIX, response_start):
+    if response_startswith(json_fence_prefix, response_start):
         parsed, end_index = raw_decode(
             response_text,
-            response_start + _JSON_FENCE_PREFIX_LENGTH,
+            response_start + json_fence_prefix_length,
         )
         if not has_only_optional_closing_fence(response_text, end_index, response_length):
             raise json.JSONDecodeError("Extra data", response_text, end_index)
@@ -2927,7 +2930,7 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
             raise ValueError("LLM response must be a JSON object")
         return parsed
 
-    if response_text.startswith("```", response_start):
+    if response_startswith("```", response_start):
         newline_index = response_text.find("\n", response_start)
         if newline_index >= 0:
             parsed, end_index = raw_decode(response_text, newline_index + 1)
