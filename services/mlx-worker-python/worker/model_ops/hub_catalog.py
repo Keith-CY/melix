@@ -573,7 +573,7 @@ def _repo_id_contains_mlx(repo_id: str) -> bool:
 def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     raw_library_name = payload.get("library_name")
     library_name = raw_library_name if isinstance(raw_library_name, str) else ""
-    if library_name in _EXACT_MLX_LIBRARY_NAMES or (
+    if library_name == "mlx" or library_name == "MLX" or (
         library_name and _is_mlx_atom(library_name)
     ):
         return True
