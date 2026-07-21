@@ -325,21 +325,28 @@ def _count_plain_assert_statement_lines(test_code: str) -> int:
     return count
 
 
-def _may_contain_assert_statement(test_code: str) -> bool:
-    cursor = test_code.find("assert")
+def _may_contain_assert_statement(
+    test_code: str,
+    *,
+    _find=str.find,
+    _isalnum=str.isalnum,
+    _line_spacing=_ASSERT_LINE_SPACING,
+    _preceding_boundaries=_ASSERT_PRECEDING_BOUNDARIES,
+) -> bool:
+    cursor = _find(test_code, "assert")
     if cursor < 0:
         return False
     text_length = len(test_code)
     while cursor >= 0:
         after_index = cursor + 6
         after = test_code[after_index] if after_index < text_length else "\n"
-        if after != "_" and not after.isalnum():
+        if after != "_" and not _isalnum(after):
             before_index = cursor - 1
-            while before_index >= 0 and test_code[before_index] in _ASSERT_LINE_SPACING:
+            while before_index >= 0 and test_code[before_index] in _line_spacing:
                 before_index -= 1
-            if before_index < 0 or test_code[before_index] in _ASSERT_PRECEDING_BOUNDARIES:
+            if before_index < 0 or test_code[before_index] in _preceding_boundaries:
                 return True
-        cursor = test_code.find("assert", after_index)
+        cursor = _find(test_code, "assert", after_index)
     return False
 
 
