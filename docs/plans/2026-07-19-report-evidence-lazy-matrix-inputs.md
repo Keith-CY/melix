@@ -32,3 +32,15 @@ GitHub Actions PR-scoped performance remains the final registered probe validati
 The 2026-07-19 follow-up remains inside `worker.productization.report_evidence_gate` and keeps the same registered `report-evidence-gate-run-kind-set-membership` probe. `_slowest_probe_phases()` now appends the first five candidate rows directly and heapifies once before replacement comparisons, instead of calling `heapq.heappush()` for each seed row. The top-five ordering, side labels, typed duration handling, and tie ordering remain unchanged.
 
 Expected effect: lower `slowest_probe_phase_elapsed_ms_mean` in the registered probe, with the broader gate metrics non-regressive.
+
+## Follow-up: probe phase bucket constants
+
+The 2026-07-21 follow-up remains inside `worker.productization.report_evidence_gate`
+and keeps the same registered `report-evidence-gate-run-kind-set-membership` probe.
+`_probe_phases()` now reuses module-level probe-side and bucket tuples instead of
+reallocating those constants on every scan. Clean string phases keep the duplicate-
+membership short circuit, while stripped strings, non-string phases, and dict
+subclasses retain the existing behavior.
+
+Expected effect: lower `probe_phases_elapsed_ms_mean` in the registered probe, with
+the broader report evidence gate metrics non-regressive.
