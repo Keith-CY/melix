@@ -414,6 +414,52 @@ def test_load_trajectory_provenance_from_snapshot_manifest_fast_paths_defaulted_
     }
 
 
+def test_load_trajectory_provenance_from_snapshot_manifest_short_circuits_common_metric_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_trace_digest": "abc123",
+                "trajectory_quality_metrics": {"reward_coverage_count": 2},
+                "agentic_sft_token_metrics": {"source_trace_count": 2},
+            }
+        ).encode("utf-8")
+    )
+
+    def fail_fallback_extract(
+        _manifest: Mapping[str, object],
+        *,
+        snapshot_manifest_path: Path | str | None = None,
+        copy_nested: bool,
+    ) -> dict[str, object]:
+        raise AssertionError(
+            "common metric-only manifest loads should return before optional-field scanning"
+        )
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_trajectory_provenance_from_snapshot_manifest",
+        fail_fallback_extract,
+    )
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+        "trajectory_quality_metrics": {"reward_coverage_count": 2},
+        "agentic_sft_token_metrics": {"source_trace_count": 2},
+    }
+
+
 def test_load_trajectory_provenance_from_snapshot_manifest_short_circuits_clean_dict(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

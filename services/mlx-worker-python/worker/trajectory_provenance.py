@@ -503,6 +503,25 @@ def load_trajectory_provenance_from_snapshot_manifest(
                 and not trace_digest[0].isspace()
                 and not trace_digest[-1].isspace()
             ):
+                if len(payload) == 6:
+                    trajectory_quality_metrics = manifest_get("trajectory_quality_metrics")
+                    agentic_sft_token_metrics = manifest_get("agentic_sft_token_metrics")
+                    if (
+                        trajectory_quality_metrics is not None
+                        and trajectory_quality_metrics != ""
+                        and agentic_sft_token_metrics is not None
+                        and agentic_sft_token_metrics != ""
+                    ):
+                        return {
+                            "trajectory_dataset_id": dataset_id,
+                            "trajectory_dataset_version": dataset_version,
+                            "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+                            "trajectory_snapshot_manifest_path": manifest_path_text,
+                            "trajectory_split": "train",
+                            "trajectory_trace_digest": trace_digest,
+                            "trajectory_quality_metrics": trajectory_quality_metrics,
+                            "agentic_sft_token_metrics": agentic_sft_token_metrics,
+                        }
                 schema_version = manifest_get("trajectory_schema_version")
                 if schema_version is None:
                     schema_version = "melix.agentic_tool_trace.v1"
