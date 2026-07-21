@@ -624,14 +624,11 @@ class BenchmarkStore:
             dump_json = json.JSONEncoder(separators=(",", ":")).encode
             normalize_csv_value = _csv_value
             write_csv_row = csv_writer.writerow
-            fieldnames_tuple = tuple(fieldnames)
             for row in rows:
                 payload = row.to_dict()
                 write_jsonl(dump_json(payload) + "\n")
                 payload_get = payload.get
-                write_csv_row(
-                    [normalize_csv_value(payload_get(field, "")) for field in fieldnames_tuple]
-                )
+                write_csv_row(normalize_csv_value(payload_get(field, "")) for field in fieldnames)
 
     @staticmethod
     def _attach_matrix_tool_turn_summary_fields(
