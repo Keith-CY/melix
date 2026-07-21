@@ -1459,8 +1459,16 @@ class RequestStreamAssembler:
     @staticmethod
     @lru_cache(maxsize=16)
     def _pipe_channel_name(header: str) -> str:
-        parts = header.strip().split(None, 1)
-        return parts[0].lower() if parts else ""
+        start = 0
+        header_len = len(header)
+        while start < header_len and header[start].isspace():
+            start += 1
+        if start == header_len:
+            return ""
+        end = start + 1
+        while end < header_len and not header[end].isspace():
+            end += 1
+        return header[start:end].lower()
 
     @classmethod
     def _legacy_pipe_channel_header_body(cls, header: str, channel_name: str) -> str | None:

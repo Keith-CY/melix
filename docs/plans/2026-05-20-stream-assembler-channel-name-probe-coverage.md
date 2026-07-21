@@ -25,6 +25,19 @@ Local Linux registered probe samples on this host:
 - delta: `-0.1247741796153905` ms, `3.014826555637104%` faster.
 - `channel_name_calls_mean`: unchanged at `13.0`.
 
+## 2026-07-21 indexed channel-name scan follow-up
+
+`origin/main` still uses CPython `strip().split(None, 1)[0].lower()` for `_pipe_channel_name(...)`. This follow-up narrows the parser-mode slice to a direct index scan that skips leading whitespace, advances to the first trailing whitespace, and lowercases only the channel token. Behavior remains equivalent for empty headers, leading whitespace, mixed-case channel names, tab-separated metadata, and headers without metadata; the hot path avoids allocating the stripped header and split list for each uncached Harmony channel header.
+
+The registered `stream-assembler-parser-mode-cache` probe remains the governing PR-scoped performance probe. It already watches `stream_assembler.py`, `test_stream_assembler.py`, `test_pr_scoped_performance.py`, and `scripts/stream_assembler_parser_mode_probe.py`, with focused `test_command`, `coverage_command`, and `probe_command` entries.
+
+Local Linux registered probe samples on this host (`MELIX_STREAM_ASSEMBLER_PARSER_MODE_SAMPLES=512`):
+
+- baseline `origin/main`: `3.8412028070524684`, `3.7652363143934053`, `3.956838053454703` ms; mean `3.8544257249668587` ms.
+- indexed channel-name scan: `3.64667875919622`, `3.702656364566792`, `3.761872156701429` ms; mean `3.7037357601548135` ms.
+- delta: `-0.1506899648120452` ms, `3.910830471295034%` faster.
+- `channel_name_calls_mean`: unchanged at `13.0`.
+
 ## Verification plan
 
 1. Run the registered focused test command for `stream-assembler-parser-mode-cache`.
