@@ -11,6 +11,8 @@ from worker.productization.benchmark_evaluation_report import validate_report_pa
 REPORT_EVIDENCE_GATE_SCHEMA_VERSION = "melix.report_evidence_gate.v1"
 _EMPTY_PROBE_PHASES: frozenset[str] = frozenset()
 _JSON_LOADS = json.loads
+_PROBE_PHASE_BUCKETS = ("slowest_phases", "failed_phases", "skipped_phases", "fallback_phases")
+_PROBE_PHASE_SIDES = ("baseline", "candidate")
 
 DEFAULT_RELEASE_EVIDENCE_MATRIX: dict[str, dict[str, object]] = {
     "serving_benchmark": {
@@ -627,13 +629,12 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
         return phases
     phases_add = phases.add
     to_string = str
-    buckets = ("slowest_phases", "failed_phases", "skipped_phases", "fallback_phases")
-    for side in ("baseline", "candidate"):
+    for side in _PROBE_PHASE_SIDES:
         side_summary = probe_summary.get(side)
         if not isinstance(side_summary, dict):
             continue
         side_summary_get = side_summary.get
-        for bucket in buckets:
+        for bucket in _PROBE_PHASE_BUCKETS:
             rows = side_summary_get(bucket)
             if not isinstance(rows, list):
                 continue
