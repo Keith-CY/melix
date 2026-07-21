@@ -1,5 +1,6 @@
 from pathlib import Path
 from threading import Event
+from typing import SupportsIndex
 from urllib.error import URLError
 
 import pytest
@@ -366,6 +367,47 @@ def test_ocr_single_image_token_count_reuses_same_request_cache(
     assert runtime.prompt_token_count(equivalent_request) == len(prompt_text.split()) + 16
     assert runtime.prompt_token_count(equivalent_request) == len(prompt_text.split()) + 16
     assert token_count_calls == 1
+
+
+def test_vlm_cache_identity_fingerprint_uses_tail_scan_without_split_list() -> None:
+    class SplitTrackingIdentity(str):
+        rsplit_calls = 0
+
+        def rsplit(self, sep: str | None = None, maxsplit: SupportsIndex = -1) -> list[str]:
+            type(self).rsplit_calls += 1
+            return super().rsplit(sep, maxsplit)
+
+    request = PreparedVisionRequest(
+        prompt_text="Describe the image.",
+        images=[
+            PreparedImageInput(
+                bytes_data=b"synthetic image bytes",
+                source_kind="inline",
+                reference="inline:image.png",
+                mime_type="image/png",
+                format="png",
+                filename="image.png",
+                sha256_hex="a" * 64,
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=128,
+        preprocess_peak_memory_bytes=128,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    cache_identity = SplitTrackingIdentity(f"model:rev:q8:text:off:{'f' * 64}")
+
+    assert (
+        DeterministicVLMRuntime._cache_identity_fingerprint_hash_hex(
+            cache_identity=cache_identity,
+            prepared_request=request,
+        )
+        == "f" * 64
+    )
+    assert SplitTrackingIdentity.rsplit_calls == 1
 
 
 def test_vlm_completion_token_count_scans_without_split_list(monkeypatch: pytest.MonkeyPatch) -> None:
