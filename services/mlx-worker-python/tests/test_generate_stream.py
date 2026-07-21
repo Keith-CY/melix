@@ -108,12 +108,18 @@ def test_text_native_mtp_parser_metrics_fast_paths_empty_events() -> None:
 
     assert engine_core_module._non_negative_int("invalid") == 0
     assert engine_core_module._cached_prompt_tokens_from_event(None) == 0
-    assert engine_core_module._media_feature_usage_from_probe(None) == {
-        "media_feature_cache_hits": 0,
-        "media_feature_cache_misses": 0,
-        "media_feature_encoder_calls_saved": 0,
-        "media_feature_work_saved_bytes": 0,
-    }
+    assert engine_core_module._media_feature_usage_from_probe(None) is None
+    assert (
+        engine_core_module._media_feature_usage_from_probe(
+            SimpleNamespace(
+                media_feature_cache_hits=0,
+                media_feature_cache_misses=0,
+                media_feature_encoder_calls_saved=0,
+                media_feature_work_saved_bytes=0,
+            )
+        )
+        is None
+    )
     assert engine_core_module._usage_delta(
         prompt_tokens=8,
         completion_tokens=2,

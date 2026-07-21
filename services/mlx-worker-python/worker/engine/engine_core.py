@@ -194,9 +194,9 @@ def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> in
     return _non_negative_int(value)
 
 
-def _media_feature_usage_from_probe(probe: object | None) -> dict[str, int]:
+def _media_feature_usage_from_probe(probe: object | None) -> dict[str, int] | None:
     if probe is None:
-        return _EMPTY_MEDIA_FEATURE_USAGE
+        return None
     usage = {
         "media_feature_cache_hits": 0,
         "media_feature_cache_misses": 0,
@@ -210,7 +210,9 @@ def _media_feature_usage_from_probe(probe: object | None) -> dict[str, int]:
             key,
             key.replace("media_feature_", "image_feature_"),
         )
-    return usage
+    if any(usage.values()):
+        return usage
+    return None
 
 
 def _last_media_feature_probe(runtime: object, runtime_kind: str) -> object | None:
