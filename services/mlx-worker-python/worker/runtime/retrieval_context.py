@@ -144,7 +144,9 @@ def project_retrieval_contexts(
     dict_type = dict
     bool_type = bool
     strip_text = str.strip
+    isdigit_text = str.isdigit
     type_of = type
+    len_of = len
     public_source_prefix = _PUBLIC_SOURCE_PREFIX
     public_source_prefix_length = _PUBLIC_SOURCE_PREFIX_LENGTH
 
@@ -183,7 +185,7 @@ def project_retrieval_contexts(
                     if normalized_source_id[:public_source_prefix_length] == public_source_prefix:
                         source_suffix = normalized_source_id[public_source_prefix_length:]
                         source_is_public = (
-                            source_suffix.isdigit() and len(normalized_source_id) <= 96
+                            isdigit_text(source_suffix) and len_of(normalized_source_id) <= 96
                         )
                         if not source_is_public:
                             source_is_public = is_public_source_id(normalized_source_id)
@@ -309,10 +311,12 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     user_payload_update = user_payload.update
     dict_copy = dict.copy
     strip_text = str.strip
+    isdigit_text = str.isdigit
     str_type = str
     dict_type = dict
     bool_type = bool
     type_of = type
+    len_of = len
     public_source_prefix = _PUBLIC_SOURCE_PREFIX
     public_source_prefix_length = _PUBLIC_SOURCE_PREFIX_LENGTH
 
@@ -384,7 +388,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                     if normalized_source_id[:public_source_prefix_length] == public_source_prefix:
                         source_suffix = normalized_source_id[public_source_prefix_length:]
                         source_is_public = (
-                            source_suffix.isdigit() and len(normalized_source_id) <= 96
+                            isdigit_text(source_suffix) and len_of(normalized_source_id) <= 96
                         )
                         if not source_is_public:
                             source_is_public = is_public_source_id(normalized_source_id)
