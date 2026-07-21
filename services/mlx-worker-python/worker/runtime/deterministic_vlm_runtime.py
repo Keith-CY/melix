@@ -1014,7 +1014,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         prepared_request: PreparedVisionRequest,
     ) -> str:
         if prepared_request.images or prepared_request.videos:
-            return cache_identity.split(":")[-1]
+            return cache_identity.rsplit(":", 1)[1]
         return prepared_request.multimodal_hash_hex
 
     def _block_table_for(
