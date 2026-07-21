@@ -44,3 +44,15 @@ subclasses retain the existing behavior.
 
 Expected effect: lower `probe_phases_elapsed_ms_mean` in the registered probe, with
 the broader report evidence gate metrics non-regressive.
+
+## Follow-up: matrix role probe-phase lookup binding
+
+The 2026-07-21 matrix-role lookup follow-up remains inside
+`worker.productization.report_evidence_gate._report_matrix_roles` and keeps the
+same registered `report-evidence-gate-run-kind-set-membership` probe. The hot
+mixed-rule loop already binds `rule.get` for run-kind, metric-prefix, target-field,
+and rule dispatch checks; this slice reuses that same local binding for the lazy
+`probe_phases` materialization guard instead of performing one extra method lookup.
+
+Expected effect: lower `matrix_roles_elapsed_ms_mean` in the registered probe with
+unchanged emitted role counts and unchanged broader report evidence gate metrics.

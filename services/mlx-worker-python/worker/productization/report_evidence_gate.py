@@ -331,7 +331,7 @@ def _report_matrix_roles(
             targets = _dict_list(report.get("targets"))
         if metrics is None:
             metrics = _dict_list(report.get("metrics"))
-        if rule.get("probe_phases") and probe_phases is None:
+        if rule_get("probe_phases") and probe_phases is None:
             probe_phases = _probe_phases(report)
         if _rule_matches_report(
             rule=rule,
