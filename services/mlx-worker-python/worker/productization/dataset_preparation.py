@@ -1879,6 +1879,12 @@ def _append_rows_output_lengths(
     lengths: list[int],
     rows: list[dict[str, Any]],
 ) -> int:
+    try:
+        first_row = rows[0]
+    except IndexError:
+        return 0
+    if type(first_row) is dict and "completion" in first_row:
+        return _append_exact_dict_completion_output_lengths(lengths, rows)
     append = lengths.append
     len_ = len
     str_ = str
@@ -1924,6 +1930,32 @@ def _append_rows_output_lengths(
                 length = len_(str_(completion))
             append(length)
             output_length_total += length
+    return output_length_total
+
+
+def _append_exact_dict_completion_output_lengths(
+    lengths: list[int],
+    rows: list[dict[str, Any]],
+) -> int:
+    append = lengths.append
+    len_ = len
+    str_ = str
+    output_length_total = 0
+    for row in rows:
+        if type(row) is not dict:
+            output_length_total += _append_rows_output_lengths(lengths, [row])
+            continue
+        try:
+            completion = row["completion"]
+        except KeyError:
+            output_length_total += _append_rows_output_lengths(lengths, [row])
+            continue
+        if type(completion) is str_:
+            length = len_(completion)
+        else:
+            length = len_(str_(completion))
+        append(length)
+        output_length_total += length
     return output_length_total
 
 

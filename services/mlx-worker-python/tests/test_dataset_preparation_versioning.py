@@ -233,6 +233,16 @@ def test_dataset_quality_completion_rows_use_get_sentinel_fast_path() -> None:
     assert _sample_output_lengths([row], []) == [5]
 
 
+def test_dataset_quality_exact_dict_completion_fast_path_preserves_subclass_fallback() -> None:
+    class CompletionRow(dict[str, object]):
+        pass
+
+    assert _sample_output_lengths(
+        [{"completion": "abc"}, CompletionRow({"completion": "hello"})],
+        [],
+    ) == [3, 5]
+
+
 def test_dataset_quality_message_rows_skip_completion_key_lookup() -> None:
     class MessageRow(dict[str, object]):
         def __getitem__(self, key: str) -> object:  # pragma: no cover - regression tripwire
