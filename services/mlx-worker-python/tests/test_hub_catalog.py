@@ -152,6 +152,24 @@ def test_mlx_library_exact_detection_skips_atom_helper(monkeypatch: pytest.Monke
     ) is True
     assert calls == 1
 
+    assert hub_catalog._payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation"],
+            "cardData": {"library_name": "mlx"},
+        }
+    ) is True
+    assert calls == 1
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation"],
+            "cardData": {"library_name": "MLX"},
+        }
+    ) is True
+    assert calls == 1
+
 
 def test_mlx_repo_id_detection_preserves_case_insensitive_matches() -> None:
     assert _repo_id_contains_mlx("plain/model") is False

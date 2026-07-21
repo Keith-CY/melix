@@ -77,9 +77,6 @@ _COMMON_4BIT_OPTIQ_EXCLUDED_TAGS = {
     "float16",
     "qat",
 }
-_EXACT_MLX_LIBRARY_NAMES = frozenset({"MLX", "mlx"})
-
-
 @dataclass(frozen=True, slots=True)
 class HubModelSummaryRecord:
     repo_id: str
@@ -591,7 +588,8 @@ def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
         not library_name
         and isinstance(raw_card_library_name, str)
         and (
-            raw_card_library_name in _EXACT_MLX_LIBRARY_NAMES
+            raw_card_library_name == "mlx"
+            or raw_card_library_name == "MLX"
             or _is_mlx_atom(raw_card_library_name)
         )
     ):
@@ -613,7 +611,7 @@ def _is_mlx_compatible(
     lowered_tags = _normalized_lowered_tags(tags, lowered_tags)
     if "mlx" in lowered_tags:
         return True
-    if library_name in _EXACT_MLX_LIBRARY_NAMES or _is_mlx_atom(library_name):
+    if library_name == "mlx" or library_name == "MLX" or _is_mlx_atom(library_name):
         return True
     if _repo_id_contains_mlx(repo_id):
         return True
