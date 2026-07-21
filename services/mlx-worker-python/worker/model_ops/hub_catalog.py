@@ -1013,12 +1013,12 @@ def _direct_size_hint_from_line(text: str, value_start: int) -> int:
 
 @lru_cache(maxsize=4096)
 def _direct_explicit_size_hint_from_text(text: str) -> int:
+    marker_index = text.find("Model size: ", 0, 64)
+    if marker_index >= 0:
+        return _direct_size_hint_from_line(text, marker_index + 12)
     marker_index = text.find("MODEL SIZE | ")
     if marker_index >= 0:
         return _direct_size_hint_from_line(text, marker_index + 13)
-    marker_index = text.find("Model size: ")
-    if marker_index >= 0:
-        return _direct_size_hint_from_line(text, marker_index + 12)
     marker_index = text.find("MODEL SIZE")
     if marker_index < 0:
         marker_index = text.find("Model size")
