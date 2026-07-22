@@ -34,6 +34,24 @@ def test_pipe_channel_name_caches_repeated_headers() -> None:
     RequestStreamAssembler._pipe_channel_name.cache_clear()
 
 
+def test_token_count_compression_reuses_cached_weight_shape() -> None:
+    stream_assembler._cached_compress_delta_token_counts.cache_clear()
+    weights = [
+        384 if index % 3 == 0 else 128 if index % 3 == 1 else 1
+        for index in range(192)
+    ]
+    expected = RequestStreamAssembler._compress_delta_token_counts(weights, 8192)
+
+    assert RequestStreamAssembler._compress_delta_token_counts(list(weights), 8192) == expected
+    assert sum(expected) == 8192
+
+    cache_info = stream_assembler._cached_compress_delta_token_counts.cache_info()
+    assert cache_info.hits == 1
+    assert cache_info.misses == 1
+
+    stream_assembler._cached_compress_delta_token_counts.cache_clear()
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _token_count_routing_probe() -> None:
     assembler = RequestStreamAssembler(
