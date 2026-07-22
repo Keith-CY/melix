@@ -14,6 +14,8 @@ public enum MelixOperatorServerSessionLifecycle: String, Codable, Sendable {
 }
 
 public struct MelixOperatorServerServingDefaultsState: Codable, Equatable, Sendable {
+    public static let builtInMaxTokens = 1_024
+
     public var temperature: Double
     public var topP: Double
     public var maxTokens: Int
@@ -30,7 +32,7 @@ public struct MelixOperatorServerServingDefaultsState: Codable, Equatable, Senda
     public init(
         temperature: Double = 0.7,
         topP: Double = 1.0,
-        maxTokens: Int = 256,
+        maxTokens: Int = Self.builtInMaxTokens,
         streamIntervalTokens: Int = 1,
         maxConcurrentRequests: Int = 4,
         concurrentProcessingEnabled: Bool = true,
@@ -76,7 +78,8 @@ public struct MelixOperatorServerServingDefaultsState: Codable, Equatable, Senda
         self.init(
             temperature: try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.7,
             topP: try container.decodeIfPresent(Double.self, forKey: .topP) ?? 1.0,
-            maxTokens: try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 256,
+            maxTokens: try container.decodeIfPresent(Int.self, forKey: .maxTokens)
+                ?? Self.builtInMaxTokens,
             streamIntervalTokens: try container.decodeIfPresent(Int.self, forKey: .streamIntervalTokens) ?? 1,
             maxConcurrentRequests: try container.decodeIfPresent(Int.self, forKey: .maxConcurrentRequests) ?? 4,
             concurrentProcessingEnabled: try container.decodeIfPresent(Bool.self, forKey: .concurrentProcessingEnabled) ?? true,

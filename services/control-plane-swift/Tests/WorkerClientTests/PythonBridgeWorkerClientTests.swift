@@ -1416,7 +1416,8 @@ struct PythonBridgeWorkerClientTests {
 
     @Test("bootstrap worker preparation carries OCR profile metadata into worker model specs")
     func bootstrapWorkerPreparationCarriesOCRProfileMetadataIntoWorkerModelSpecs() throws {
-        let summary = ModelCatalog.devOCRModel()
+        var summary = ModelCatalog.devOCRModel()
+        summary.settings.ext["melix.generation_config.top_k"] = "40"
 
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
 
@@ -1426,6 +1427,7 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["ocr_auto_prompt"] == "Extract the text from the image exactly as written.")
         #expect(spec.ext["ocr_stop_sequences"] == "<ocr:end>")
         #expect(spec.ext["ocr_sampling_profile_id"] == "ocr-deterministic")
+        #expect(spec.ext["melix.generation_config.top_k"] == "40")
     }
 
     @Test("bootstrap worker preparation builds generic OCR specs and carries generation-config metadata")
@@ -1443,6 +1445,7 @@ struct PythonBridgeWorkerClientTests {
         summary.settings.ext["melix.generation_config.source"] = "/tmp/registry-root/mlx-community/Vision-OCR/8bit/generation_config.json"
         summary.settings.ext["melix.generation_config.temperature"] = "0.15"
         summary.settings.ext["melix.generation_config.top_p"] = "0.92"
+        summary.settings.ext["melix.generation_config.top_k"] = "40"
         summary.settings.ext["melix.generation_config.max_tokens"] = "384"
 
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
@@ -1452,6 +1455,7 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.modelPath == "/tmp/registry-root/mlx-community/Vision-OCR/8bit")
         #expect(spec.ext["melix.generation_config.temperature"] == "0.15")
         #expect(spec.ext["melix.generation_config.top_p"] == "0.92")
+        #expect(spec.ext["melix.generation_config.top_k"] == "40")
         #expect(spec.ext["melix.generation_config.max_tokens"] == "384")
     }
 

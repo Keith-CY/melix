@@ -403,6 +403,11 @@ class RequestStreamAssembler:
         self._json_started = False
         self._assistant_parts: list[str] = []
         self._reasoning_parts: list[str] = []
+        self._active_reasoning_close_tag = ""
+        self._active_reasoning_body_parts: list[str] = []
+        self._active_reasoning_parts_start = 0
+        self._active_reasoning_pending_whitespace = ""
+        self._active_reasoning_has_content = False
         self._tool_fragment_index = 0
         self._emitted_tool_keys: set[tuple[str, str]] = set()
         self._metrics: dict[str, int | str] = {
@@ -478,6 +483,7 @@ class RequestStreamAssembler:
                     not self._tool_rescue_enabled_value
                     and not self._is_json_only_structured_output_value
                     and not self._buffer
+                    and not self._active_reasoning_close_tag
                     and not fragment.parser_observation
                     and "<" not in byte_delta
                 ):
@@ -512,6 +518,7 @@ class RequestStreamAssembler:
             if (
                 not self._is_json_only_structured_output_value
                 and not self._buffer
+                and not self._active_reasoning_close_tag
                 and not fragment.parser_observation
                 and "<" not in delta
             ):
@@ -555,6 +562,7 @@ class RequestStreamAssembler:
         elif (
             not self._is_json_only_structured_output_value
             and not self._buffer
+            and not self._active_reasoning_close_tag
             and not fragment.parser_observation
             and "<" not in delta
             and "[" not in delta
@@ -892,6 +900,13 @@ class RequestStreamAssembler:
         metrics = self._metrics
         rescue_enabled = self._tool_rescue_enabled_value
         while self._buffer:
+            if self._active_reasoning_close_tag:
+                reasoning_deltas, channel_closed = self._drain_active_reasoning(final=final)
+                deltas.extend(reasoning_deltas)
+                if channel_closed:
+                    continue
+                break
+
             if rescue_enabled:
                 rescue_step = self._drain_rescue_before_standard_tag(final)
                 if rescue_step is not None:
@@ -948,46 +963,13 @@ class RequestStreamAssembler:
                 deltas.append(self._content_delta(content))
                 continue
 
-            if tag == self._THINK_OPEN or tag == self._PIPE_REASONING_OPEN:
+            if tag == self._THINK_OPEN:
                 if self.channel_state.pending_marker_tail:
                     self.channel_state.clear_marker_tail()
-                if channel_state.preferred_channel_source != "tool_call_tag":
-                    channel_state.preferred_channel_source = "reasoning_tag"
-                close_tag = (
-                    self._PIPE_REASONING_CLOSE
-                    if tag == self._PIPE_REASONING_OPEN
-                    else self._THINK_CLOSE
+                self._start_active_reasoning(
+                    open_tag=self._THINK_OPEN,
+                    close_tag=self._THINK_CLOSE,
                 )
-                close_index = self._buffer.find(close_tag, len(tag))
-                if close_index < 0:
-                    if final:
-                        self._metrics["malformed_reasoning_count"] += 1
-                        self._metrics["reasoning_channel_recovery_count"] += 1
-                        body = self._buffer[len(tag) :]
-                        hidden, visible = self._recover_unclosed_reasoning_body(body)
-                        if hidden:
-                            if self._reasoning_enabled:
-                                self._reasoning_parts.append(hidden)
-                            else:
-                                self._metrics["suppressed_reasoning_count"] += 1
-                                self._metrics["reasoning_parser_bypassed_count"] += 1
-                        self._buffer = ""
-                        if visible:
-                            deltas.append(self._content_delta(visible))
-                    break
-                body = self._buffer[len(tag) : close_index]
-                self._buffer = self._buffer[close_index + len(close_tag) :]
-                if body.strip() == "":
-                    self._metrics["empty_thinking_sentinel_count"] += 1
-                    continue
-                # Parse reasoning tags even when reasoning is disabled so
-                # hidden preambles never fall through as public content.
-                if self._reasoning_enabled:
-                    self._reasoning_parts.append(body)
-                    deltas.append(AssemblyDelta(reasoning_text=body, raw_text=body))
-                else:
-                    self._metrics["suppressed_reasoning_count"] += 1
-                    self._metrics["reasoning_parser_bypassed_count"] += 1
                 continue
 
             if tag == self._TOOL_OPEN or tag == self._PIPE_TOOL_OPEN:
@@ -1019,6 +1001,16 @@ class RequestStreamAssembler:
             if tag == self._PIPE_CHANNEL_OPEN:
                 if self.channel_state.pending_marker_tail:
                     self.channel_state.clear_marker_tail()
+                if (
+                    self._tool_parser_mode == "gemma"
+                    and self._buffer.startswith(self._PIPE_REASONING_OPEN)
+                ):
+                    self._metrics["harmony_channel_hidden_count"] += 1
+                    self._start_active_reasoning(
+                        open_tag=self._PIPE_REASONING_OPEN,
+                        close_tag=self._PIPE_REASONING_CLOSE,
+                    )
+                    continue
                 channel_deltas = self._drain_pipe_channel(final=final)
                 if channel_deltas is None:
                     break
@@ -1026,7 +1018,103 @@ class RequestStreamAssembler:
                 continue
 
             break
+        if final and self._active_reasoning_close_tag:
+            reasoning_deltas, _channel_closed = self._drain_active_reasoning(final=True)
+            deltas.extend(reasoning_deltas)
         return deltas
+
+    def _start_active_reasoning(self, *, open_tag: str, close_tag: str) -> None:
+        self._buffer = self._buffer[len(open_tag) :]
+        self.channel_state.record_reasoning_source()
+        self._active_reasoning_close_tag = close_tag
+        self._active_reasoning_body_parts = []
+        self._active_reasoning_parts_start = len(self._reasoning_parts)
+        self._active_reasoning_pending_whitespace = ""
+        self._active_reasoning_has_content = False
+
+    def _drain_active_reasoning(self, *, final: bool) -> tuple[list[AssemblyDelta], bool]:
+        close_tag = self._active_reasoning_close_tag
+        close_index = self._buffer.find(close_tag)
+        if close_index >= 0:
+            body = self._buffer[:close_index]
+            self._buffer = self._buffer[close_index + len(close_tag) :]
+            if self.channel_state.pending_marker_tail:
+                self.channel_state.clear_marker_tail()
+            deltas = self._stream_active_reasoning_body(body)
+            if not self._active_reasoning_has_content:
+                self._metrics["empty_thinking_sentinel_count"] += 1
+            elif not self._reasoning_enabled:
+                self._metrics["suppressed_reasoning_count"] += 1
+                self._metrics["reasoning_parser_bypassed_count"] += 1
+            self._clear_active_reasoning()
+            return deltas, True
+
+        held_suffix = self._longest_marker_prefix_suffix(self._buffer, close_tag)
+        if held_suffix:
+            body = self._buffer[: -len(held_suffix)]
+            self._buffer = held_suffix
+        else:
+            body = self._buffer
+            self._buffer = ""
+
+        if final:
+            if body:
+                self._active_reasoning_body_parts.append(body)
+            full_body = "".join(self._active_reasoning_body_parts)
+            del self._reasoning_parts[self._active_reasoning_parts_start :]
+            self._metrics["malformed_reasoning_count"] += 1
+            self._metrics["reasoning_channel_recovery_count"] += 1
+            hidden, visible = self._recover_unclosed_reasoning_body(full_body)
+            if hidden:
+                if self._reasoning_enabled:
+                    self._reasoning_parts.append(hidden)
+                else:
+                    self._metrics["suppressed_reasoning_count"] += 1
+                    self._metrics["reasoning_parser_bypassed_count"] += 1
+            if self.channel_state.pending_marker_tail:
+                self.channel_state.flush_terminal_marker_tail()
+            self._buffer = ""
+            self._clear_active_reasoning()
+            return ([self._content_delta(visible)] if visible else []), True
+
+        deltas = self._stream_active_reasoning_body(body)
+        if held_suffix:
+            self._record_prefix_hold(held_suffix)
+        elif self.channel_state.pending_marker_tail:
+            self.channel_state.clear_marker_tail()
+        return deltas, False
+
+    def _stream_active_reasoning_body(self, body: str) -> list[AssemblyDelta]:
+        if not body:
+            return []
+        self._active_reasoning_body_parts.append(body)
+        if not self._active_reasoning_has_content:
+            self._active_reasoning_pending_whitespace += body
+            if not self._active_reasoning_pending_whitespace.strip():
+                return []
+            body = self._active_reasoning_pending_whitespace
+            self._active_reasoning_pending_whitespace = ""
+            self._active_reasoning_has_content = True
+        if not self._reasoning_enabled:
+            return []
+        self._reasoning_parts.append(body)
+        return [AssemblyDelta(reasoning_text=body, raw_text=body)]
+
+    def _clear_active_reasoning(self) -> None:
+        self._active_reasoning_close_tag = ""
+        self._active_reasoning_body_parts = []
+        self._active_reasoning_parts_start = 0
+        self._active_reasoning_pending_whitespace = ""
+        self._active_reasoning_has_content = False
+
+    @staticmethod
+    def _longest_marker_prefix_suffix(text: str, marker: str) -> str:
+        maximum_length = min(len(text), len(marker) - 1)
+        for length in range(maximum_length, 0, -1):
+            suffix = text[-length:]
+            if marker.startswith(suffix):
+                return suffix
+        return ""
 
     def _drain_rescue_before_standard_tag(
         self,

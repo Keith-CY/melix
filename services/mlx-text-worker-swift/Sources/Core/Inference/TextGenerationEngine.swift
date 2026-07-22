@@ -23,7 +23,7 @@ struct TextGenerationEngine: Sendable {
 
         do {
             let runtimeStream = try await registry.generateEvents(
-                modelHandle: request.execution.modelHandle,
+                execution: request.execution,
                 messages: request.messages,
                 sampling: request.sampling,
                 shouldAbort: { abortHandle.isAborted }
@@ -34,7 +34,8 @@ struct TextGenerationEngine: Sendable {
             var completionTokens = 0
             var outputState = FilteredTextOutputState()
             var tokensPerSecond: Double?
-            var outputFilter = HarmonyChannelOutputFilter()
+            var finishReason = "stop"
+            var outputFilter = HarmonyChannelOutputFilter(execution: request.execution)
             var harmonyFilterTotalMicros = 0
             var harmonyFilterCallCount = 0
             var grpcWriteTotalMicros = 0
@@ -102,6 +103,7 @@ struct TextGenerationEngine: Sendable {
                     promptTokens = max(promptTokens, summary.promptTokens)
                     completionTokens = max(completionTokens, summary.completionTokens)
                     tokensPerSecond = summary.tokensPerSecond
+                    finishReason = summary.finishReason
                 }
             }
 
@@ -124,7 +126,7 @@ struct TextGenerationEngine: Sendable {
             }
 
             var completed = Melix_Worker_V1_Completed()
-            completed.finishReason = abortHandle.isAborted ? "cancelled" : "stop"
+            completed.finishReason = abortHandle.isAborted ? "cancelled" : finishReason
             completed.assistantText = outputState.assistantText
             completed.reasoningText = outputState.reasoningText
 

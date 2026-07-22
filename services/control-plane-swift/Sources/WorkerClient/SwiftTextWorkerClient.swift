@@ -27,6 +27,11 @@ public protocol SwiftTextWorkerRPCRunning: Sendable {
         request: Melix_Worker_V1_GetRuntimeStatsRequest
     ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse
 
+    func listLoadedModels(
+        socketPath: String,
+        request: Melix_Worker_V1_ListLoadedModelsRequest
+    ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse
+
     func cacheStats(
         socketPath: String,
         request: Melix_Worker_V1_GetCacheStatsRequest
@@ -58,6 +63,7 @@ public struct SwiftTextWorkerClient:
     PhaseAwareWorkerClientProtocol,
     CacheIntrospectingWorkerClientProtocol,
     RuntimeIntrospectingWorkerClientProtocol,
+    LoadedModelsIntrospectingWorkerClientProtocol,
     Sendable
 {
     private let socketPath: String
@@ -102,6 +108,13 @@ public struct SwiftTextWorkerClient:
         try await runner.runtimeStats(
             socketPath: socketPath,
             request: Melix_Worker_V1_GetRuntimeStatsRequest()
+        )
+    }
+
+    public func listLoadedModels() async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
+        try await runner.listLoadedModels(
+            socketPath: socketPath,
+            request: Melix_Worker_V1_ListLoadedModelsRequest()
         )
     }
 
@@ -188,6 +201,15 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
     ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
         try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _ in
             try await runtimeClient.getRuntimeStats(request)
+        }
+    }
+
+    public func listLoadedModels(
+        socketPath: String,
+        request: Melix_Worker_V1_ListLoadedModelsRequest
+    ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
+        try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _ in
+            try await runtimeClient.listLoadedModels(request)
         }
     }
 

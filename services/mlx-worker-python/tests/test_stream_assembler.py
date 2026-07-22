@@ -2079,9 +2079,11 @@ def test_truncated_reasoning_is_recoverable_and_not_public_content() -> None:
         tool_parser_mode="qwen",
     )
 
-    assert assembler.accept(StreamFragment(raw_text="<think>unfinished")) == []
+    deltas = assembler.accept(StreamFragment(raw_text="<think>unfinished"))
     completed = assembler.completed()
 
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == ["unfinished"]
+    assert [delta.content_text for delta in deltas if delta.content_text] == []
     assert completed.assistant_text == ""
     assert completed.reasoning_text == ""
     assert completed.metrics["malformed_reasoning_count"] == 1
@@ -2454,6 +2456,101 @@ def test_empty_thinking_block_is_suppressed_as_thinking_off_sentinel() -> None:
     assert completed.metrics["reasoning_leak_count"] == 0
 
 
+def test_think_reasoning_streams_before_close_and_holds_only_close_marker_suffix() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-streaming-think-body",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<think>")) == []
+    assert assembler._buffer == ""
+
+    first = assembler.accept(StreamFragment(raw_text="<think>plan step"))
+    assert [delta.reasoning_text for delta in first if delta.reasoning_text] == ["plan step"]
+    assert assembler._buffer == ""
+
+    split_close = assembler.accept(StreamFragment(raw_text="<think>plan step</thi"))
+    assert split_close == []
+    assert assembler._buffer == "</thi"
+
+    final = assembler.accept(StreamFragment(raw_text="<think>plan step</think>READY"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in final if delta.content_text] == ["READY"]
+    assert completed.reasoning_text == "plan step"
+    assert completed.assistant_text == "READY"
+    assert completed.metrics["reasoning_leak_count"] == 0
+
+
+def test_gemma_reasoning_streams_before_split_channel_close_without_markup_leak() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-streaming-gemma-thought-body",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="gemma",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<|channel>thought")) == []
+    assert assembler._buffer == ""
+
+    first = assembler.accept(StreamFragment(raw_text="<|channel>thought\nplan step"))
+    assert [delta.reasoning_text for delta in first if delta.reasoning_text] == ["\nplan step"]
+    assert assembler._buffer == ""
+
+    split_close = assembler.accept(
+        StreamFragment(raw_text="<|channel>thought\nplan step<chan")
+    )
+    assert split_close == []
+    assert assembler._buffer == "<chan"
+
+    final = assembler.accept(
+        StreamFragment(raw_text="<|channel>thought\nplan step<channel|>READY")
+    )
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in final if delta.content_text] == ["READY"]
+    assert completed.reasoning_text == "\nplan step"
+    assert completed.assistant_text == "READY"
+    assert completed.metrics["harmony_channel_hidden_count"] == 1
+    assert completed.metrics["harmony_channel_markup_leak_count"] == 0
+
+
+def test_disabled_gemma_reasoning_never_leaks_while_channel_is_streaming() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-disabled-streaming-gemma-thought-body",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="gemma",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<|channel>thought")) == []
+    assert assembler._buffer == ""
+
+    first = assembler.accept(StreamFragment(raw_text="<|channel>thought\nhidden plan"))
+    assert first == []
+    assert assembler._buffer == ""
+
+    split_close = assembler.accept(
+        StreamFragment(raw_text="<|channel>thought\nhidden plan<channel")
+    )
+    assert split_close == []
+    assert assembler._buffer == "<channel"
+
+    final = assembler.accept(
+        StreamFragment(raw_text="<|channel>thought\nhidden plan<channel|>READY")
+    )
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in final if delta.content_text] == ["READY"]
+    assert completed.reasoning_text == ""
+    assert completed.assistant_text == "READY"
+    assert completed.metrics["suppressed_reasoning_count"] == 1
+    assert completed.metrics["reasoning_parser_bypassed_count"] == 1
+    assert completed.metrics["reasoning_leak_count"] == 0
+
+
 def test_pipe_reasoning_channel_is_suppressed_and_visible_tail_emitted() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-pipe-reasoning-channel",
@@ -2502,9 +2599,15 @@ def test_unclosed_reasoning_channel_recovers_visible_answer_tail_at_eos() -> Non
         tool_parser_mode="qwen",
     )
 
-    assert assembler.accept(StreamFragment(raw_text="<think>plan step\n\nFinal answer")) == []
+    deltas = assembler.accept(
+        StreamFragment(raw_text="<think>plan step\n\nFinal answer")
+    )
     completed = assembler.completed()
 
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == [
+        "plan step\n\nFinal answer"
+    ]
+    assert [delta.content_text for delta in deltas if delta.content_text] == []
     assert completed.reasoning_text == "plan step"
     assert completed.assistant_text == "Final answer"
     assert completed.metrics["malformed_reasoning_count"] == 1

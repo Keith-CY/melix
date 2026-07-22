@@ -62,6 +62,7 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
     }
 
     public let modelID: String
+    public let serverSessionID: String
     public let messages: [Message]
     public let enableThinking: Bool?
     public let reasoningEffort: String?
@@ -74,6 +75,7 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
 
     public init(
         modelID: String,
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
         messages: [Message],
         enableThinking: Bool? = nil,
         reasoningEffort: String? = nil,
@@ -85,6 +87,10 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
         remoteTarget: RemoteTarget? = nil
     ) {
         self.modelID = modelID
+        let normalizedServerSessionID = serverSessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.serverSessionID = normalizedServerSessionID.isEmpty
+            ? ServerSessionRuntimeStore.defaultServerSessionID
+            : normalizedServerSessionID
         self.messages = messages
         self.enableThinking = enableThinking
         self.reasoningEffort = reasoningEffort

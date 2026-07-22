@@ -783,6 +783,7 @@ public enum BootstrapWorkerPreparation {
         "melix.generation_config.source",
         "melix.generation_config.temperature",
         "melix.generation_config.top_p",
+        "melix.generation_config.top_k",
         "melix.generation_config.max_tokens",
         "melix.generation_config.do_sample",
     ]

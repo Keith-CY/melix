@@ -160,6 +160,7 @@ public actor ControlPlaneService {
     private let requestCoordinator: RequestCoordinator?
     private let remoteProviderClient: any RemoteProviderChatClient
     private let chatTranslator: ChatRequestTranslator
+    private let textExecutionModelResolver: TextExecutionModelResolver
     private let mcpToolCatalog: MCPToolCatalog
     private let audioAssetManager: AudioAssetManager
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
@@ -249,6 +250,7 @@ public actor ControlPlaneService {
         }
         self.remoteProviderClient = remoteProviderClient
         self.chatTranslator = chatTranslator
+        self.textExecutionModelResolver = TextExecutionModelResolver(modelCatalog: modelCatalog)
         self.mcpToolCatalog = mcpToolCatalog
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
@@ -333,7 +335,9 @@ public actor ControlPlaneService {
             throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: request coordinator is not configured")
         }
 
-        switch await prepareDefaultServerSessionForServingActivity() {
+        switch await prepareServerSessionForServingActivity(
+            serverSessionID: request.serverSessionID
+        ) {
         case .blocked(let code, let message):
             let detail = message.isEmpty ? code : "\(code): \(message)"
             throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: \(detail)")
@@ -351,9 +355,12 @@ public actor ControlPlaneService {
             } catch {
                 throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: resume failed: \(error)")
             }
+            let executionModelID = execution.modelID.isEmpty ? request.modelID : execution.modelID
             return ControlPlaneChatExecution(
                 requestID: execution.requestID,
-                modelID: execution.modelID,
+                modelID: await textExecutionModelResolver.servedModelID(
+                    forExecutionModelID: executionModelID
+                ),
                 stream: mappedChatStream(from: execution.stream),
                 lifecycle: execution.lifecycle
             )
@@ -376,11 +383,17 @@ public actor ControlPlaneService {
                 chatTemplateKwargs: request.chatTemplateKwargs
             )
         )
-        let routeKindOverride = await startChatLoadRouteKindOverride(for: normalized)
+        let responseModelID = normalized.model
+        let executionModelID = await textExecutionModelResolver.executionModelID(
+            for: responseModelID,
+            requestModalities: routeModalities(for: normalized)
+        )
+        let executionRequest = normalized.replacingModel(executionModelID)
+        let routeKindOverride = await startChatLoadRouteKindOverride(for: executionRequest)
         let modelHandle: String
         do {
             modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
-                modelID: normalized.model,
+                modelID: executionModelID,
                 modelCatalog: modelCatalog,
                 workerRegistry: workerRegistry,
                 metricsStore: metricsStore,
@@ -393,9 +406,9 @@ public actor ControlPlaneService {
                 message: ModelRuntimeAvailability.missingRuntimeCacheMessage
             )
         } catch {
-            throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: lazy text load failed for \(normalized.model): \(error)")
+            throw ControlPlaneChatExecutionError.unavailableReason("chat_unavailable: lazy text load failed for \(responseModelID): \(error)")
         }
-        let resolvedModel = await modelCatalog.model(id: normalized.model)
+        let resolvedModel = await modelCatalog.model(id: executionModelID)
         let modelToolParser: ToolParserSelection? = if let resolvedModel {
             ToolParserSelection(modelSettings: resolvedModel.settings)
         } else {
@@ -420,14 +433,14 @@ public actor ControlPlaneService {
             nil
         }
         let translated = try chatTranslator.translate(
-            normalized,
+            executionRequest,
             modelHandle: modelHandle,
             modelToolParser: modelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
             modelSamplingPolicy: modelSamplingPolicy,
             gatewayServingDefaults: await gatewayServingDefaultsStore.requestedDefaults(
-                serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID
+                serverSessionID: request.serverSessionID
             ).resolvingAccelerationCompatibility(for: resolvedModel),
             mcpToolCatalog: mcpToolCatalog
         )
@@ -435,7 +448,7 @@ public actor ControlPlaneService {
 
         return ControlPlaneChatExecution(
             requestID: execution.requestID,
-            modelID: execution.modelID,
+            modelID: responseModelID,
             stream: mappedChatStream(from: execution.stream),
             lifecycle: execution.lifecycle
         )
@@ -682,7 +695,11 @@ public actor ControlPlaneService {
                workerRegistry != nil {
                 await publishModelStateChanged(evicting)
             }
-            let model = await handleModelUnload(modelID: unload.modelID, reason: "operator_unload")
+            let model = await handleModelUnload(
+                modelID: unload.modelID,
+                reason: "operator_unload",
+                force: true
+            )
             if workerRegistry != nil {
                 await publishModelStateChanged(model)
             }
@@ -1820,15 +1837,12 @@ public actor ControlPlaneService {
                 Date().timeIntervalSince(startedAt) * 1000,
                 forKey: "gateway.config_apply_ms"
             )
-            let requiresRestart = command.serverSessionID == gatewayRuntimeBinding.activeServerSessionID
-                && (
-                    command.host != gatewayRuntimeBinding.host
-                        || command.port != gatewayRuntimeBinding.port
-                        || LocalServerSecurityPolicy.normalizedAllowedHosts(command.allowedHosts)
-                            != gatewayRuntimeBinding.allowedHosts
-                        || LocalServerSecurityPolicy.normalizedAllowedOrigins(command.allowedOrigins)
-                            != gatewayRuntimeBinding.allowedOrigins
-                )
+            let requiresRestart = command.host != gatewayRuntimeBinding.host
+                || command.port != gatewayRuntimeBinding.port
+                || LocalServerSecurityPolicy.normalizedAllowedHosts(command.allowedHosts)
+                    != gatewayRuntimeBinding.allowedHosts
+                || LocalServerSecurityPolicy.normalizedAllowedOrigins(command.allowedOrigins)
+                    != gatewayRuntimeBinding.allowedOrigins
             await metricsStore.set(requiresRestart ? 1 : 0, forKey: "gateway.config_requires_restart_count")
 
             var reply = Melix_Controlplane_V1_ServerReply()
@@ -2152,7 +2166,7 @@ public actor ControlPlaneService {
             : command.negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let requestTimeoutSeconds = imageDefaults.requestTimeoutSeconds
 
-        switch await prepareDefaultServerSessionForServingActivity() {
+        switch await prepareServerSessionForServingActivity() {
         case .blocked(let code, let message):
             return errorResponse(for: request, code: code, message: message)
         case .ready(let publishStateChanged):
@@ -2337,7 +2351,7 @@ public actor ControlPlaneService {
             return errorResponse(for: request, code: "invalid_argument", message: "Image edit source is required.")
         }
         let startedAt = Date()
-        switch await prepareDefaultServerSessionForServingActivity() {
+        switch await prepareServerSessionForServingActivity() {
         case .blocked(let code, let message):
             return errorResponse(for: request, code: code, message: message)
         case .ready(let publishStateChanged):
@@ -4727,7 +4741,8 @@ public actor ControlPlaneService {
 
     private func handleModelUnload(
         modelID: String,
-        reason: String
+        reason: String,
+        force: Bool
     ) async -> Melix_Controlplane_V1_ModelSummary {
         guard let workerRegistry,
               let handle = await modelCatalog.storedDispatchHandle(for: modelID),
@@ -4741,6 +4756,7 @@ public actor ControlPlaneService {
 
         var workerRequest = Melix_Worker_V1_UnloadModelRequest()
         workerRequest.modelHandle = handle
+        workerRequest.force = force
 
         do {
             let response = try await workerClient.unloadModel(request: workerRequest)
@@ -4797,7 +4813,11 @@ public actor ControlPlaneService {
                 await publishModelStateChanged(evicting)
             }
 
-            let unloaded = await handleModelUnload(modelID: decision.modelID, reason: decision.reason)
+            let unloaded = await handleModelUnload(
+                modelID: decision.modelID,
+                reason: decision.reason,
+                force: false
+            )
             if workerRegistry != nil {
                 await publishModelStateChanged(unloaded)
             }
@@ -4843,15 +4863,26 @@ public actor ControlPlaneService {
         }
     }
 
-    private func prepareDefaultServerSessionForServingActivity() async -> ServingSessionPreparation {
+    private func prepareServerSessionForServingActivity(
+        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+    ) async -> ServingSessionPreparation {
+        let normalizedServerSessionID = serverSessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedServerSessionID = normalizedServerSessionID.isEmpty
+            ? ServerSessionRuntimeStore.defaultServerSessionID
+            : normalizedServerSessionID
         let runtimeSessions = await serverSessionRuntimeStore.snapshot(
             hasActiveRequests: await schedulerReadModel.hasActiveRequests()
         )
-        let defaultSession = runtimeSessions.first(where: {
-            $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID
-        }) ?? runtimeSessions.first ?? ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 0)
+        let existingSession = runtimeSessions.first(where: {
+            $0.serverSessionID == resolvedServerSessionID
+        })
+        let targetSession = existingSession ?? ServerSessionRuntimeStore.defaultRuntimeSession(
+            serverSessionID: resolvedServerSessionID,
+            updatedAtUnixMS: 0
+        )
+        let createdSession = existingSession == nil
 
-        switch defaultSession.lifecycleState {
+        switch targetSession.lifecycleState {
         case .paused:
             return .blocked(
                 code: "server_paused",
@@ -4869,16 +4900,16 @@ public actor ControlPlaneService {
             )
         case .sleeping:
             _ = await serverSessionRuntimeStore.noteRequestActivity(
-                serverSessionID: defaultSession.serverSessionID,
+                serverSessionID: targetSession.serverSessionID,
                 wakeReason: .requestActivity
             )
             return .ready(publishStateChanged: true)
         default:
             _ = await serverSessionRuntimeStore.noteRequestActivity(
-                serverSessionID: defaultSession.serverSessionID,
+                serverSessionID: targetSession.serverSessionID,
                 wakeReason: .requestActivity
             )
-            return .ready(publishStateChanged: false)
+            return .ready(publishStateChanged: createdSession)
         }
     }
 

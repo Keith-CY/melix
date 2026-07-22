@@ -878,7 +878,7 @@ def test_allowed_tools_receipt_reuses_static_omitted_receipt() -> None:
             {
                 "assistant_text": "",
                 "reasoning_text": "",
-                "reasoning_finalized": "false",
+                "reasoning_finalized": "true",
                 "tool_calls_finalized": "false",
                 "malformed_channel_recovered": "true",
                 "malformed_reasoning_count": "1",

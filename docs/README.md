@@ -73,6 +73,7 @@ These are the authoritative interface and architecture definitions. Do not move 
 
 | Plan | What It Covers |
 |---|---|
+| [Gemma 4 Cross-Surface Chat Routing Repair](plans/2026-07-18-gemma4-cross-surface-chat-routing.md) | Shared Gemma 4 text companion resolution and real CLI, HTTP, and macOS Chat acceptance |
 | [Runtime-Aware Export And Serving Verification Plan](plans/2026-06-21-runtime-aware-export-and-serving-verification.md) | M3 export target manifests, layout, retention, post-export smoke policy, diagnostics, waiver semantics, and serving evidence |
 | [Export Artifact Layout And Retention Policy](plans/2026-06-24-export-artifact-layout-retention.md) | Runtime export target layout, retention reports, cleanup dry-run/apply behavior, and byte-accounting metrics |
 | [Cross-Runtime Model Inventory Plan](plans/2026-06-24-cross-runtime-model-inventory.md) | M4 source descriptors, scan receipts, usability classification, browse-to-admit receipts, cancellable pulls, and inventory metrics |

@@ -126,13 +126,14 @@ enum OnDemandModelLoader {
                 metricsStore: metricsStore
             )
         }
-        if let routeKindOverride {
-            if let handle = await modelCatalog.dispatchHandle(for: modelID, routeKind: routeKindOverride) {
-                _ = await modelCatalog.markModelUsed(id: modelID)
-                return handle
-            }
-        } else if let handle = await modelCatalog.dispatchHandle(for: modelID) {
-            _ = await modelCatalog.markModelUsed(id: modelID)
+        if let handle = await reusableDispatchHandle(
+            modelID: modelID,
+            model: model,
+            routeKindOverride: routeKindOverride,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore
+        ) {
             return handle
         }
         if !evictBeforeReadyHandle {
@@ -166,8 +167,14 @@ enum OnDemandModelLoader {
             throw OnDemandModelLoadError.workerUnavailable
         }
         applyRouteOverrideMetadata(route, model: model, to: &modelSpec)
-        if let handle = await modelCatalog.dispatchHandle(for: modelID, routeKind: route) {
-            _ = await modelCatalog.markModelUsed(id: modelID)
+        if let handle = await reusableDispatchHandle(
+            modelID: modelID,
+            model: model,
+            routeKindOverride: route,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore
+        ) {
             return handle
         }
         guard let workerClient = await workerRegistry.client(for: route) else {
@@ -291,6 +298,77 @@ enum OnDemandModelLoader {
         )
 
         return response.modelHandle
+    }
+
+    private static func reusableDispatchHandle(
+        modelID: String,
+        model: Melix_Controlplane_V1_ModelSummary,
+        routeKindOverride: WorkerRouteKind?,
+        modelCatalog: ModelCatalog,
+        workerRegistry: WorkerRegistry?,
+        metricsStore: MetricsStore
+    ) async -> String? {
+        let route: WorkerRouteKind?
+        if let routeKindOverride {
+            route = routeKindOverride
+        } else if let workerRegistry {
+            route = await workerRegistry.route(for: model)
+        } else {
+            route = nil
+        }
+
+        let handle: String?
+        if let route {
+            handle = await modelCatalog.dispatchHandle(for: modelID, routeKind: route)
+        } else {
+            handle = await modelCatalog.dispatchHandle(for: modelID)
+        }
+        guard let handle else {
+            return nil
+        }
+
+        guard let workerRegistry,
+              let route,
+              let workerClient = await workerRegistry.client(for: route),
+              let introspectingClient = workerClient as? any LoadedModelsIntrospectingWorkerClientProtocol else {
+            _ = await modelCatalog.markModelUsed(id: modelID)
+            return handle
+        }
+
+        let validationStartedAt = Date()
+        let loadedModels: Melix_Worker_V1_ListLoadedModelsResponse
+        do {
+            loadedModels = try await introspectingClient.listLoadedModels()
+        } catch {
+            await metricsStore.set(
+                Date().timeIntervalSince(validationStartedAt) * 1000,
+                forKey: "control_plane.model_handle_validation_ms"
+            )
+            await metricsStore.increment("control_plane.model_handle_validation_failure_count")
+            _ = await modelCatalog.markModelUsed(id: modelID)
+            return handle
+        }
+        await metricsStore.set(
+            Date().timeIntervalSince(validationStartedAt) * 1000,
+            forKey: "control_plane.model_handle_validation_ms"
+        )
+
+        let loadedHandles = Set(
+            loadedModels.modelHandles
+                + loadedModels.loadedModels.map(\.modelHandle)
+        )
+        guard !loadedHandles.contains(handle) else {
+            _ = await modelCatalog.markModelUsed(id: modelID)
+            return handle
+        }
+
+        if await modelCatalog.invalidateDispatchHandle(
+            for: modelID,
+            expectedDispatchHandle: handle
+        ) {
+            await metricsStore.increment("control_plane.model_stale_handle_recovery_count")
+        }
+        return nil
     }
 
     private static func applyRouteOverrideMetadata(

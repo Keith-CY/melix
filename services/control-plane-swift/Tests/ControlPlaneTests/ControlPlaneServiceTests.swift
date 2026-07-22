@@ -561,6 +561,48 @@ struct ControlPlaneServiceTests {
         #expect(listener.requestedPort == UInt32(MelixGatewayDefaults.port))
     }
 
+    @Test("applying a secondary gateway owner reports listener restart drift against the shared runtime")
+    func applyingSecondaryGatewayOwnerReportsListenerRestartDriftAgainstSharedRuntime() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-gateway-secondary-owner-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            metricsStore: metricsStore,
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+                defaults: [:]
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434)
+        )
+
+        let response = try await service.execute(
+            makeApplyGatewayConfigRequest(
+                serverSessionID: "server-session-secondary",
+                host: "0.0.0.0",
+                port: 18_080,
+                defaultModelID: "melix-dev-text",
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 60
+            )
+        )
+        let secondary = try #require(
+            response.server.snapshot.gatewayConfig.listeners.first {
+                $0.serverSessionID == "server-session-secondary"
+            }
+        )
+
+        #expect(response.ok)
+        #expect(secondary.activeBinding)
+        #expect(secondary.effectiveHost == "127.0.0.1")
+        #expect(secondary.effectivePort == 11_434)
+        #expect(secondary.requiresRestart)
+        #expect(await metricsStore.value(forKey: "gateway.config_requires_restart_count") == 1)
+    }
+
     @Test("execute rejects gateway config target mismatches and typed payload validation failures")
     func executeRejectsGatewayConfigTargetMismatchesAndTypedPayloadValidationFailures() async throws {
         let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
@@ -1507,6 +1549,90 @@ struct ControlPlaneServiceTests {
         #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.lifecycleState == .ready)
         #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.powerState == .active)
         #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.wakeReason == .requestActivity)
+    }
+
+    @Test("startChat uses the requested server session lifecycle and activity")
+    func startChatUsesRequestedServerSessionLifecycleAndActivity() async throws {
+        let selectedServerSessionID = "server-session-blue"
+        var defaultSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        defaultSession.lifecycleState = .paused
+        var selectedSession = ServerSessionRuntimeStore.defaultRuntimeSession(
+            serverSessionID: selectedServerSessionID,
+            updatedAtUnixMS: 1_000
+        )
+        selectedSession.lifecycleState = .sleeping
+        selectedSession.powerState = .deepSleep
+        let runtimeStore = ServerSessionRuntimeStore(
+            runtimeSessions: [defaultSession, selectedSession],
+            nowUnixMS: { 3_000 }
+        )
+        let modelCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await modelCatalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::local")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeCompletedExecuteEvent(
+                requestID: "chat-selected-session-lifecycle",
+                finishReason: "stop",
+                assistant: "awake",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            serverSessionRuntimeStore: runtimeStore,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-selected-session-lifecycle" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                serverSessionID: selectedServerSessionID,
+                messages: [.init(role: "user", content: "wake only the selected session")]
+            )
+        )
+        _ = try await Array(execution.stream)
+        let wakeSnapshotResponse = try await service.execute(makeServerSnapshotRequest())
+        var snapshot = wakeSnapshotResponse.server.snapshot
+        let unchangedDefault = try #require(snapshot.runtimeSessions.first(where: {
+            $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID
+        }))
+        let awakenedSelected = try #require(snapshot.runtimeSessions.first(where: {
+            $0.serverSessionID == selectedServerSessionID
+        }))
+
+        #expect(unchangedDefault.lifecycleState == .paused)
+        #expect(awakenedSelected.lifecycleState == .ready)
+        #expect(awakenedSelected.powerState == .active)
+        #expect(awakenedSelected.wakeReason == .requestActivity)
+
+        _ = await runtimeStore.startServerSession(
+            serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID
+        )
+        _ = await runtimeStore.pauseServerSession(serverSessionID: selectedServerSessionID)
+
+        do {
+            _ = try await service.startChat(
+                ControlPlaneChatRequest(
+                    modelID: "melix-dev-text",
+                    serverSessionID: selectedServerSessionID,
+                    messages: [.init(role: "user", content: "the selected session is paused")]
+                )
+            )
+            Issue.record("Expected the selected paused Server Session to block chat dispatch")
+        } catch let error as ControlPlaneChatExecutionError {
+            #expect(String(describing: error).contains("server_paused"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        let pausedSnapshotResponse = try await service.execute(makeServerSnapshotRequest())
+        snapshot = pausedSnapshotResponse.server.snapshot
+        #expect(snapshot.runtimeSessions.first(where: {
+            $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID
+        })?.lifecycleState == .ready)
+        #expect(snapshot.runtimeSessions.first(where: {
+            $0.serverSessionID == selectedServerSessionID
+        })?.lifecycleState == .paused)
     }
 
     @Test("startChat syncs managed registry models before lazy load")
@@ -2776,9 +2902,11 @@ struct ControlPlaneServiceTests {
 
         let response = try await service.execute(makeUnloadModelRequest(modelID: "melix-dev-text"))
         let events = try await eventTask.value
+        let unloadRequest = try #require(await workerClient.unloadRequests.first)
         await service.unsubscribe(subscription.subscriptionID)
 
         #expect(response.ok)
+        #expect(unloadRequest.force)
         #expect(events.map(\.modelState.state) == [.modelEvicting, .modelUnloaded])
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
     }
@@ -2911,6 +3039,7 @@ struct ControlPlaneServiceTests {
             "unload:melix-old-text::local",
             "load:melix-dev-text",
         ])
+        #expect(await workerClient.unloadRequests.map(\.force) == [false])
         #expect(evicted.state == .modelUnloaded)
         #expect(evicted.residency.transitionReason == "ttl_expired")
         #expect(loaded.state == .modelWarm)
@@ -2972,6 +3101,7 @@ struct ControlPlaneServiceTests {
         let ready = try #require(await catalog.model(id: "melix-dev-text"))
 
         #expect(unloadRequests.map(\.modelHandle) == ["melix-old-text::local"])
+        #expect(unloadRequests.map(\.force) == [false])
         #expect(generated.execution.modelHandle == "melix-dev-text::local")
         #expect(evicted.state == .modelUnloaded)
         #expect(evicted.residency.transitionReason == "ttl_expired")
@@ -8851,17 +8981,26 @@ struct ControlPlaneServiceTests {
 
     @Test("startChat can resume a disconnected request through resumeRequestID")
     func startChatCanResumeADisconnectedRequestThroughResumeRequestID() async throws {
-        let modelCatalog = ModelCatalog()
-        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        var gemma4 = ModelCatalog.devVLMModel()
+        gemma4.modelID = "mlx-community/gemma-4-31b-it-4bit"
+        gemma4.settings.ext["vision_family_id"] = "gemma4-v1"
+        gemma4.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        gemma4.settings.ext["melix.model_path"] = "/tmp/gemma-4-31b-it-4bit"
+        let modelCatalog = ModelCatalog(seedModels: [gemma4])
         let textClient = BlockingAbortTextWorkerClient()
+        let vlmClient = ScriptedChatWorkerClient(events: [])
         let service = ControlPlaneService(
             modelCatalog: modelCatalog,
-            workerRegistry: WorkerRegistry(defaultTextClient: textClient)
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: vlmClient,
+                modelCatalog: modelCatalog
+            )
         )
 
         let initial = try await service.startChat(
             ControlPlaneChatRequest(
-                modelID: "melix-dev-text",
+                modelID: gemma4.modelID,
                 messages: [.init(role: "user", content: "hello")]
             )
         )
@@ -8878,7 +9017,7 @@ struct ControlPlaneServiceTests {
 
         let resumed = try await service.startChat(
             ControlPlaneChatRequest(
-                modelID: "melix-dev-text",
+                modelID: gemma4.modelID,
                 messages: [.init(role: "user", content: "hello")],
                 resumeRequestID: initial.requestID
             )
@@ -8897,6 +9036,7 @@ struct ControlPlaneServiceTests {
         let resumedEvents = try await resumedCollector.value
 
         #expect(resumed.requestID == initial.requestID)
+        #expect(resumed.modelID == gemma4.modelID)
         #expect(resumedEvents.contains(where: {
             if case .tokenDelta("resumed") = $0 { return true }
             return false
@@ -8952,6 +9092,18 @@ struct ControlPlaneServiceTests {
             defaults: [:]
         )
         try await servingDefaultsStore.apply(command: makeApplyServingDefaultsCommand(
+            temperature: 0.11,
+            topP: 0.81,
+            maxTokens: 111,
+            streamIntervalTokens: 1,
+            maxConcurrentRequests: 2,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 2,
+            completionBatchSize: 2
+        ))
+        let selectedServerSessionID = "server-session-blue"
+        try await servingDefaultsStore.apply(command: makeApplyServingDefaultsCommand(
+            serverSessionID: selectedServerSessionID,
             temperature: 0.44,
             topP: 0.93,
             maxTokens: 320,
@@ -8983,6 +9135,7 @@ struct ControlPlaneServiceTests {
         let execution = try await service.startChat(
             ControlPlaneChatRequest(
                 modelID: "melix-dev-text",
+                serverSessionID: selectedServerSessionID,
                 messages: [.init(role: "user", content: "Hello")]
             )
         )
@@ -9237,6 +9390,98 @@ struct ControlPlaneServiceTests {
         // ScriptedChatWorkerClient echoes the loaded handle; loader tests cover suffixed Python handles.
         #expect(generated.execution.modelHandle == "melix-dev-vlm")
         #expect(model?.state == .modelWarm)
+    }
+
+    @Test("startChat routes MLX Gemma 4 text requests through the shared text companion")
+    func startChatRoutesMLXGemma4TextRequestsThroughTextCompanion() async throws {
+        var gemma4 = ModelCatalog.devVLMModel()
+        gemma4.modelID = "mlx-community/gemma-4-31b-it-4bit"
+        gemma4.settings.alias = "Gemma 4 31B 4-bit"
+        gemma4.settings.ext["vision_family_id"] = "gemma4-v1"
+        gemma4.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        gemma4.settings.ext["melix.model_path"] = "/tmp/gemma-4-31b-it-4bit"
+
+        let modelCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), gemma4])
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeTokenExecuteEvent(requestID: "chat-gemma4-companion", text: "ready"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-gemma4-companion",
+                finishReason: "stop",
+                assistant: "ready",
+                reasoning: ""
+            ),
+        ])
+        let vlmClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: vlmClient,
+                modelCatalog: modelCatalog
+            ),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-gemma4-companion" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: gemma4.modelID,
+                messages: [.init(role: "user", content: "Reply with ready.")]
+            )
+        )
+        let events = try await Array(execution.stream)
+
+        let loadRequest = try #require(await textClient.lastLoadModelRequest)
+        let generateRequest = try #require(await textClient.lastGenerateRequest)
+        let companion = try #require(await modelCatalog.model(id: "\(gemma4.modelID)#text"))
+
+        #expect(execution.modelID == gemma4.modelID)
+        #expect(events.contains(.tokenDelta("ready")))
+        #expect(loadRequest.model.modelID == "\(gemma4.modelID)#text")
+        #expect(loadRequest.model.modelKind == "text")
+        #expect(loadRequest.model.ext["melix.companion.source_model_id"] == gemma4.modelID)
+        #expect(loadRequest.model.ext["melix.capability.route_kind"] == "swift_text")
+        #expect(generateRequest.execution.modelHandle == "\(gemma4.modelID)#text")
+        #expect(companion.routeClass == .workerRouteSwiftText)
+        #expect(await vlmClient.lastLoadModelRequest == nil)
+        #expect(await vlmClient.lastGenerateRequest == nil)
+    }
+
+    @Test("startChat keeps the served Gemma 4 id in text companion load failures")
+    func startChatKeepsServedGemma4IDInTextCompanionLoadFailures() async throws {
+        var gemma4 = ModelCatalog.devVLMModel()
+        gemma4.modelID = "mlx-community/gemma-4-31b-it-4bit"
+        gemma4.settings.ext["vision_family_id"] = "gemma4-v1"
+        gemma4.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        gemma4.settings.ext["melix.model_path"] = "/tmp/gemma-4-31b-it-4bit"
+
+        let modelCatalog = ModelCatalog(seedModels: [gemma4])
+        let textClient = ModelLifecycleWorkerClient()
+        await textClient.setLoadError(WorkerClientError.unavailable)
+        let vlmClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: vlmClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        do {
+            _ = try await service.startChat(
+                ControlPlaneChatRequest(
+                    modelID: gemma4.modelID,
+                    messages: [.init(role: "user", content: "hello")]
+                )
+            )
+            Issue.record("Expected the companion load failure to surface")
+        } catch let error as ControlPlaneChatExecutionError {
+            let message = String(describing: error)
+            #expect(message.contains(gemma4.modelID))
+            #expect(message.contains("#text") == false)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
     }
 
     @Test("startChat lazy text loads preserve adapter-set hash in worker requests")
@@ -11283,6 +11528,7 @@ private actor BlockingAbortTextWorkerClient: WorkerRoutingClient {
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
         var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
         response.modelHandle = request.model.modelID
         return response
     }
